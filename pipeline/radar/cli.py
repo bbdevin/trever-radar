@@ -32,6 +32,12 @@ def cmd_import_daily(args):
     sys.exit(1 if bad else 0)
 
 
+def cmd_export_json(args):
+    from .export.json_export import export_json
+    info = export_json(args.out)
+    print(f"exported {info['stocks']} stocks for {info['date']} -> {info['out']}")
+
+
 def cmd_status(_args):
     init_db()
     with get_engine().connect() as conn:
@@ -67,6 +73,10 @@ def main(argv=None):
     imp.set_defaults(fn=cmd_import_daily)
 
     sub.add_parser("status", help="recent import logs + table counts").set_defaults(fn=cmd_status)
+
+    exp = sub.add_parser("export-json", help="write web/public/data/*.json for the frontend")
+    exp.add_argument("--out", default=None, help="output dir (default web/public/data)")
+    exp.set_defaults(fn=cmd_export_json)
 
     args = p.parse_args(argv)
     args.fn(args)

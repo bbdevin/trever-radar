@@ -10,7 +10,9 @@ web/public/data/
 
 # node
 web/node_modules/
-web/dist/
+web/.next/
+web/out/
+web/next-env.d.ts
 
 # secrets
 .env

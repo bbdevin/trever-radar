@@ -34,7 +34,7 @@ GitHub Actions(每交易日 17:30 台北時間)
 
 | 原(06) | 新(本文) | 原因 |
 |---|---|---|
-| Laravel + Inertia + Vue 單體 | **Python 管線 + Vue 3 + Vite 靜態 SPA** | 免費雲上沒有堪用的 PHP 常駐環境;批次產品不需要常駐後端 |
+| Laravel + Inertia + Vue 單體 | **Python 管線 + Next.js 15 靜態輸出(`output: 'export'`)** | 免費雲上沒有堪用的 PHP 常駐環境;批次產品不需要常駐後端;前端框架依使用者指定用 Next.js,但僅用其靜態輸出,不用 SSR/API routes(維持零伺服器) |
 | PostgreSQL 16 | **SQLite**(SQLAlchemy Core,連線字串可換 PG) | 零服務;未來有預算換 Postgres 只改 DSN |
 | Laravel Queue/Scheduler | GitHub Actions cron + Python 管線內部步驟鏈 | |
 | Breeze 登入 | Cloudflare Access(email 白名單) | 零程式碼 |
