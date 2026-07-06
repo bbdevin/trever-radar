@@ -1,9 +1,10 @@
+import Sparkline from "@/components/Sparkline";
 import type { RadarStock } from "@/lib/types";
 import { MARKET_LABEL, chgClass, fmtE8, fmtLots, fmtPct } from "@/lib/format";
 
 export default function StockCard({ s }: { s: RadarStock }) {
   return (
-    <div className="card">
+    <a className="card" href={`/stock?id=${s.id}`}>
       <div className="row1">
         <span className="sid">{s.id}</span>
         <span className="sname">{s.name}</span>
@@ -12,6 +13,10 @@ export default function StockCard({ s }: { s: RadarStock }) {
           <div className="close">{s.close.toLocaleString("zh-TW")}</div>
           <div className={`chg ${chgClass(s.chg_pct)}`}>{fmtPct(s.chg_pct)}</div>
         </div>
+      </div>
+      <div className="sparkrow">
+        <Sparkline data={s.spark} />
+        <span className="k">近{Math.min(s.spark?.length ?? 0, 30)}日</span>
       </div>
       <div className="stats">
         <div className="item">
@@ -36,6 +41,6 @@ export default function StockCard({ s }: { s: RadarStock }) {
           ? "分數載入中"
           : "綜合評分建置中 — 完成後此處顯示:權證/技術/法人/題材分項與觸發理由"}
       </div>
-    </div>
+    </a>
   );
 }

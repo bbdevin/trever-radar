@@ -94,6 +94,43 @@ def _import_margin(conn, rows, date: str) -> int:
     return upsert(conn, schema.daily_margins, out)
 
 
+def backfill(days: int, datasets: list[str] | None = None) -> dict:
+    """Import the last `days` trading days (skips weekends and already-imported dates).
+
+    Runs oldest-last (walks backwards from today). Holidays cost one probe each and
+    are logged as 'empty'. Safe to interrupt and re-run: already-present dates skip.
+    """
+    from datetime import date as date_cls, timedelta
+
+    from sqlalchemy import text
+
+    init_db()
+    with get_engine().connect() as conn:
+        have = {r[0] for r in conn.execute(text("SELECT DISTINCT date FROM daily_prices"))}
+    cur = datetime.now(ZoneInfo(config.TZ)).date()
+    done = imported = probes = 0
+    # scan cap: trading days ≈ 5/7 of calendar days; generous margin for holidays
+    for _ in range(days * 2 + 40):
+        if done >= days:
+            break
+        ds = cur.strftime("%Y%m%d")
+        if cur.weekday() >= 5:  # Sat/Sun: no request
+            cur -= timedelta(days=1)
+            continue
+        if iso(ds) in have:
+            done += 1
+            cur -= timedelta(days=1)
+            continue
+        results = import_daily(ds, datasets or ["quotes"])
+        probes += 1
+        if any(r["dataset"] == "quotes" and r["status"] == "ok" for r in results):
+            done += 1
+            imported += 1
+            print(f"backfill {iso(ds)} ok ({done}/{days})", flush=True)
+        cur -= timedelta(days=1)
+    return {"trading_days": done, "imported": imported, "probes": probes}
+
+
 def import_daily(date: str, datasets: list[str] | None = None) -> list[dict]:
     """date: YYYYMMDD. datasets subset of {quotes, insti, margin}; None = all."""
     wanted = set(datasets or ["quotes", "insti", "margin"])

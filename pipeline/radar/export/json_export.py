@@ -54,7 +54,12 @@ def export_json(out_dir: Path | None = None) -> dict:
             chg_pct = None
             if prev_close:
                 chg_pct = round((close - prev_close) / prev_close * 100, 2)
+            spark = [row[0] for row in conn.execute(text(
+                "SELECT close FROM (SELECT close, date FROM daily_prices "
+                "WHERE stock_id = :s AND close IS NOT NULL AND date <= :d "
+                "ORDER BY date DESC LIMIT 30) ORDER BY date"), {"s": sid, "d": d})]
             stocks.append({
+                "spark": spark,
                 "id": sid, "name": name, "market": market,
                 "close": close, "chg_pct": chg_pct,
                 "turnover": turnover, "volume_lots": (volume or 0) // 1000,
@@ -104,4 +109,23 @@ def export_json(out_dir: Path | None = None) -> dict:
     }
     (out / "radar.json").write_text(json.dumps(radar, ensure_ascii=False), encoding="utf-8")
     (out / "meta.json").write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
+
+    # 個股 K 線 JSON(目前僅雷達清單內的股票;之後擴大到候選池)
+    stock_dir = out / "stocks"
+    stock_dir.mkdir(exist_ok=True)
+    with engine.connect() as conn:
+        for s in stocks:
+            candles = conn.execute(text(
+                "SELECT date, open, high, low, close, volume, turnover FROM daily_prices "
+                "WHERE stock_id = :s AND close IS NOT NULL ORDER BY date"), {"s": s["id"]}).fetchall()
+            payload = {
+                "id": s["id"], "name": s["name"], "market": s["market"],
+                "candles": [
+                    {"t": c[0], "o": c[1], "h": c[2], "l": c[3], "c": c[4],
+                     "v": (c[5] or 0) // 1000, "amt": c[6]}
+                    for c in candles
+                ],
+            }
+            (stock_dir / f"{s['id']}.json").write_text(
+                json.dumps(payload, ensure_ascii=False), encoding="utf-8")
     return {"out": str(out), "date": d, "stocks": len(stocks)}

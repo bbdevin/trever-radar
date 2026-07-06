@@ -32,6 +32,13 @@ def cmd_import_daily(args):
     sys.exit(1 if bad else 0)
 
 
+def cmd_backfill(args):
+    from .importer import backfill
+    info = backfill(args.days, args.datasets.split(","))
+    print(f"backfill done: {info['trading_days']} trading days present "
+          f"({info['imported']} newly imported, {info['probes']} probes)")
+
+
 def cmd_export_json(args):
     from .export.json_export import export_json
     info = export_json(args.out)
@@ -73,6 +80,11 @@ def main(argv=None):
     imp.set_defaults(fn=cmd_import_daily)
 
     sub.add_parser("status", help="recent import logs + table counts").set_defaults(fn=cmd_status)
+
+    bf = sub.add_parser("backfill", help="import last N trading days of history")
+    bf.add_argument("--days", type=int, default=240)
+    bf.add_argument("--datasets", default="quotes", help="comma list, default quotes")
+    bf.set_defaults(fn=cmd_backfill)
 
     exp = sub.add_parser("export-json", help="write web/public/data/*.json for the frontend")
     exp.add_argument("--out", default=None, help="output dir (default web/public/data)")

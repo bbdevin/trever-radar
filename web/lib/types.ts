@@ -1,4 +1,22 @@
+export interface Candle {
+  t: string; // YYYY-MM-DD
+  o: number;
+  h: number;
+  l: number;
+  c: number;
+  v: number; // 張
+  amt: number; // 元
+}
+
+export interface StockJson {
+  id: string;
+  name: string;
+  market: "twse" | "tpex";
+  candles: Candle[];
+}
+
 export interface RadarStock {
+  spark: number[]; // 近 30 日收盤
   id: string;
   name: string;
   market: "twse" | "tpex";

@@ -11,12 +11,17 @@ def get_engine():
     global _engine
     if _engine is None:
         config.DATA_DIR.mkdir(parents=True, exist_ok=True)
-        _engine = create_engine(config.DB_URL)
+        # timeout: wait for locks instead of failing while backfill writes in parallel
+        _engine = create_engine(config.DB_URL, connect_args={"timeout": 30})
     return _engine
 
 
 def init_db():
-    metadata.create_all(get_engine())
+    engine = get_engine()
+    metadata.create_all(engine)
+    if engine.dialect.name == "sqlite":
+        with engine.begin() as conn:
+            conn.exec_driver_sql("PRAGMA journal_mode=WAL")  # readers don't block the writer
 
 
 def upsert(conn, table, rows: list[dict], chunk: int = 800) -> int:

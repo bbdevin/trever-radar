@@ -80,6 +80,29 @@ a { color: var(--accent); text-decoration: none; }
   padding: 14px 16px; display: flex; flex-direction: column; gap: 10px;
 }
 .card:hover { background: var(--surface-2); }
+a.card { color: inherit; display: flex; }
+
+.sparkrow { display: flex; align-items: center; gap: 8px; }
+.sparkrow .k { font-size: 11px; color: var(--ink-3); }
+.spark-empty { font-size: 11px; color: var(--ink-3); }
+
+/* ── 個股頁 ── */
+.stock-head {
+  display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+  padding: 18px 0 12px;
+}
+.stock-head .back { font-size: 13px; color: var(--ink-3); margin-right: 6px; }
+.stock-head .back:hover { color: var(--ink-2); }
+.stock-head .sid { font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.stock-head .sname { font-size: 18px; font-weight: 700; }
+.stock-head .close { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; margin-left: 8px; }
+.stock-head .chg { font-size: 14px; font-weight: 650; }
+.stock-head .meta { font-size: 12.5px; color: var(--ink-3); margin-left: auto; }
+.chart-wrap {
+  width: 100%; height: 440px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+  padding: 8px;
+}
 .card .row1 { display: flex; align-items: baseline; gap: 8px; }
 .card .sid { font-weight: 700; font-size: 15px; font-variant-numeric: tabular-nums; }
 .card .sname { font-size: 15px; font-weight: 600; }
