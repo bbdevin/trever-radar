@@ -6,6 +6,8 @@ __pycache__/
 # data artifacts (SQLite is rebuildable; JSON is generated)
 data/*.db
 data/*.db-journal
+data/*.db-shm
+data/*.db-wal
 web/public/data/
 
 # node
@@ -13,6 +15,7 @@ web/node_modules/
 web/.next/
 web/out/
 web/next-env.d.ts
+web/*.tsbuildinfo
 
 # secrets
 .env
