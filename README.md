@@ -21,7 +21,14 @@ py -m venv .venv
 .venv\Scripts\python -m radar import-daily              # 匯入今日(台北時間)
 .venv\Scripts\python -m radar import-daily --date 20260703
 .venv\Scripts\python -m radar import-daily --datasets insti,margin
+.venv\Scripts\python -m radar backfill --days 240       # 官方端點回補近一年
+.venv\Scripts\python -m radar deep-backfill --top 30    # FinMind 上市以來全歷史(每檔一請求)
+.venv\Scripts\python -m radar deep-backfill --all       # 全市場深歷史(建議先設免費 token)
+.venv\Scripts\python -m radar export-json               # 產出前端 JSON
 .venv\Scripts\python -m radar status                    # 匯入紀錄 + 各表筆數
 ```
+
+FinMind 免費 token(提高額度,`deep-backfill --all` 建議):至 finmindtrade.com 免費註冊
+→ 取得 token → 設環境變數 `RADAR_FINMIND_TOKEN`。
 
 資料集:`quotes`(日K+權證,TWSE 約 14:00 後)、`insti`(法人,約 16:00 後)、`margin`(融資券,約 16:30 後)。尚未公布顯示 `empty`,可重跑補齊(upsert 冪等)。

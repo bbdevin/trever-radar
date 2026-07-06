@@ -131,6 +131,68 @@ def backfill(days: int, datasets: list[str] | None = None) -> dict:
     return {"trading_days": done, "imported": imported, "probes": probes}
 
 
+def deep_backfill(ids: list[str] | None = None, top: int | None = None,
+                  all_stocks: bool = False, sleep_s: float = 7.0) -> dict:
+    """Since-IPO history via FinMind, one request per stock.
+
+    Selection: explicit ids > --top N by latest turnover > --all (type stock/etf).
+    Anonymous quota is low; a free token (RADAR_FINMIND_TOKEN) allows ~600 req/hr.
+    On quota exhaustion: stops cleanly; re-run later — already-full stocks are skipped
+    via a cheap freshness check (earliest date < 2010 means history already present).
+    """
+    import time as time_mod
+
+    from sqlalchemy import text
+
+    from .providers import finmind
+
+    init_db()
+    engine = get_engine()
+    with engine.connect() as conn:
+        if ids:
+            targets = [(i, None) for i in ids]
+        else:
+            q = ("SELECT s.id, MIN(p.date) FROM stocks s "
+                 "JOIN daily_prices p ON p.stock_id = s.id "
+                 "WHERE s.type IN ('stock','etf') GROUP BY s.id")
+            rows = conn.execute(text(q)).fetchall()
+            if top:
+                latest = conn.execute(text(
+                    "SELECT stock_id FROM daily_prices WHERE date = "
+                    "(SELECT MAX(date) FROM daily_prices) AND turnover IS NOT NULL "
+                    "ORDER BY turnover DESC LIMIT :n"), {"n": top}).fetchall()
+                wanted = {r[0] for r in latest}
+                targets = [(sid, mind) for sid, mind in rows if sid in wanted]
+            elif all_stocks:
+                targets = list(rows)
+            else:
+                raise SystemExit("deep-backfill needs --ids, --top or --all")
+
+    done = skipped = failed = 0
+    for sid, min_date in targets:
+        if min_date and min_date < "2010-01-01":
+            skipped += 1     # deep history already present
+            continue
+        try:
+            price_rows = finmind.fetch_daily_history(sid)
+        except finmind.RateLimitedError as e:
+            print(f"quota hit at {sid}: {e} — stopping; re-run later to continue", flush=True)
+            break
+        except Exception as e:  # noqa: BLE001
+            failed += 1
+            print(f"deep {sid} FAILED: {str(e)[:120]}", flush=True)
+            continue
+        with engine.begin() as conn:
+            n = upsert(conn, schema.daily_prices, price_rows)
+            _log(conn, "finmind", "history", price_rows[-1]["date"].replace("-", ""),
+                 n, "ok")
+        done += 1
+        print(f"deep {sid} ok: {len(price_rows)} rows since {price_rows[0]['date']} "
+              f"({done} done)", flush=True)
+        time_mod.sleep(sleep_s)
+    return {"done": done, "skipped": skipped, "failed": failed}
+
+
 def import_daily(date: str, datasets: list[str] | None = None) -> list[dict]:
     """date: YYYYMMDD. datasets subset of {quotes, insti, margin}; None = all."""
     wanted = set(datasets or ["quotes", "insti", "margin"])

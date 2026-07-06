@@ -39,6 +39,14 @@ def cmd_backfill(args):
           f"({info['imported']} newly imported, {info['probes']} probes)")
 
 
+def cmd_deep_backfill(args):
+    from .importer import deep_backfill
+    ids = args.ids.split(",") if args.ids else None
+    info = deep_backfill(ids=ids, top=args.top, all_stocks=args.all, sleep_s=args.sleep)
+    print(f"deep-backfill: {info['done']} fetched, {info['skipped']} already deep, "
+          f"{info['failed']} failed")
+
+
 def cmd_export_json(args):
     from .export.json_export import export_json
     info = export_json(args.out)
@@ -85,6 +93,13 @@ def main(argv=None):
     bf.add_argument("--days", type=int, default=240)
     bf.add_argument("--datasets", default="quotes", help="comma list, default quotes")
     bf.set_defaults(fn=cmd_backfill)
+
+    dp = sub.add_parser("deep-backfill", help="since-IPO history via FinMind (1 request/stock)")
+    dp.add_argument("--ids", default=None, help="comma list, e.g. 2330,2317")
+    dp.add_argument("--top", type=int, default=None, help="top N by latest-day turnover")
+    dp.add_argument("--all", action="store_true", help="all stocks/ETFs (needs free token for quota)")
+    dp.add_argument("--sleep", type=float, default=7.0, help="seconds between requests")
+    dp.set_defaults(fn=cmd_deep_backfill)
 
     exp = sub.add_parser("export-json", help="write web/public/data/*.json for the frontend")
     exp.add_argument("--out", default=None, help="output dir (default web/public/data)")

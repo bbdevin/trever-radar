@@ -29,7 +29,8 @@
 
 | 資料 | 來源 | 備註 |
 |---|---|---|
-| 日K+權證每日成交 | TWSE `MI_INDEX`(type=ALL)/ TPEx 日成交 | 全市場單日一請求 |
+| 日K+權證每日成交 | TWSE `MI_INDEX`(type=ALL)/ TPEx 日成交 | 全市場單日一請求;近一年回補用 `backfill` |
+| 上市以來深歷史日K | FinMind `TaiwanStockPrice`(免費,匿名可用,每檔一請求)| `deep-backfill`;免費註冊 token(RADAR_FINMIND_TOKEN)提高額度到約 600 req/hr |
 | 法人買賣超 | TWSE `T86` / TPEx | |
 | 融資融券 | TWSE `MI_MARGN` / TPEx | |
 | 注意/處置 | TWSE/TPEx 公告 | |
