@@ -1,0 +1,17 @@
+# python
+pipeline/.venv/
+__pycache__/
+*.pyc
+
+# data artifacts (SQLite is rebuildable; JSON is generated)
+data/*.db
+data/*.db-journal
+web/public/data/
+
+# node
+web/node_modules/
+web/dist/
+
+# secrets
+.env
+.env.*
