@@ -34,7 +34,10 @@ gh run watch --repo bbdevin/trever-radar     # 看進度,約 5-10 分鐘
 
 完成後網站在:**https://trever-radar.pages.dev**
 
-### 4. 鎖上登入(重要——合規關鍵,不要跳過)
+### 4. 鎖上登入(2026-07-07 使用者決定:先公開、之後再鎖)
+
+目前狀態:**網站公開**(僅靠網址不外流 + noindex/robots.txt 擋搜尋引擎)。
+要分享給朋友、或想恢復私有時,照以下步驟開 Access(隨時可做,約 10 分鐘):
 
 Cloudflare Access 免費 50 人,訪客要輸入 email 收一次性 PIN 才能進:
 
