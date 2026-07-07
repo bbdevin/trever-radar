@@ -6,6 +6,7 @@ export interface Candle {
   c: number;
   v: number; // 張
   amt: number; // 元
+  af: number; // backward adjustment factor
 }
 
 export interface WarrantSummary {

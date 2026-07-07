@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import text
 
 from .. import config
-from ..db import get_engine
+from ..db import get_engine, init_db
 
 DEFAULT_OUT = config.ROOT / "web" / "public" / "data"
 
@@ -28,6 +28,7 @@ MIN_WARRANT_TURNOVER = 1_000_000
 def export_json(out_dir: Path | None = None) -> dict:
     out = Path(out_dir) if out_dir else DEFAULT_OUT
     out.mkdir(parents=True, exist_ok=True)
+    init_db()
     engine = get_engine()
     with engine.connect() as conn:
         dates = [r[0] for r in conn.execute(text(
@@ -227,7 +228,7 @@ def export_json(out_dir: Path | None = None) -> dict:
     with engine.connect() as conn:
         for s in union.values():
             candles = conn.execute(text(
-                "SELECT date, open, high, low, close, volume, turnover FROM daily_prices "
+                "SELECT date, open, high, low, close, volume, turnover, adj_factor FROM daily_prices "
                 "WHERE stock_id = :s AND close IS NOT NULL ORDER BY date"), {"s": s["id"]}).fetchall()
             warrant_history = conn.execute(text("""
                 SELECT date, call_turnover, put_turnover, call_count, put_count
@@ -251,7 +252,7 @@ def export_json(out_dir: Path | None = None) -> dict:
                 "id": s["id"], "name": s["name"], "market": s["market"],
                 "candles": [
                     {"t": c[0], "o": c[1], "h": c[2], "l": c[3], "c": c[4],
-                     "v": (c[5] or 0) // 1000, "amt": c[6]}
+                     "v": (c[5] or 0) // 1000, "amt": c[6], "af": c[7] or 1.0}
                     for c in candles
                 ],
                 "warrant": s["warrant"],

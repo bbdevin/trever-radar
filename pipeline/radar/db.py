@@ -22,6 +22,16 @@ def init_db():
     if engine.dialect.name == "sqlite":
         with engine.begin() as conn:
             conn.exec_driver_sql("PRAGMA journal_mode=WAL")  # readers don't block the writer
+            _migrate_sqlite(conn)
+
+
+def _migrate_sqlite(conn):
+    """Small additive migrations for existing SQLite files."""
+    cols = {r[1] for r in conn.exec_driver_sql("PRAGMA table_info(daily_prices)").fetchall()}
+    if "adj_factor" not in cols:
+        conn.exec_driver_sql(
+            "ALTER TABLE daily_prices ADD COLUMN adj_factor REAL NOT NULL DEFAULT 1.0"
+        )
 
 
 def upsert(conn, table, rows: list[dict], chunk: int = 800) -> int:

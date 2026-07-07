@@ -23,6 +23,7 @@
 - [x] `import-warrant-master`:權證主檔(TWSE t187ap37_L + TPEx OpenAPI;標的/履約價/行使比例/到期日;TWSE 以名稱反查代號,匹配率 94.5%)
 - [x] `aggregate-warrants`:warrant_stock_daily 彙總(認購/認售金額量檔數,排除牛熊證;已回填 240 日,每晚增量)
 - [x] `export-json`:radar/meta/個股 K 線 JSON + 權證異動榜 + 個股權證 60 日趨勢/熱門權證明細
+- [x] `compute-adjustments`:用 FinMind `TaiwanStockDividendResult` 免費資料計算 `daily_prices.adj_factor`(除權息前後價比累乘;已用 2330 實測)
 - [x] upsert 只更新帶入欄位(防止日常匯入洗掉補充欄位)
 - [x] SQLite WAL + busy timeout(回補與匯出可並行)
 
@@ -40,20 +41,20 @@
 
 ## 未完成(依優先序)
 
-1. **還原價**(除權息調整)→ 技術指標正確性的前提
-2. **技術指標**(MA/RSI/KD/MACD/20日高/箱型)+ golden-file 測試
-3. **評分模組**(04 規格;V1-Free 權重:權證30/技術30/法人融資25/題材15)→ 觀察清單 + 理由文字
-4. 題材標籤(人工維護表)+ 題材熱度
-5. 探索頁、自選股、訊號歷史回填
-6. `deep-backfill --all` 全市場深歷史(使用者本機或雲端跑一晚)
-7. 分點功能(等付費 FinMind 贊助決定,規格已備於 04/09)
-8. V2 盤中(Fugle + 本機 worker)
+1. **技術指標**(MA/RSI/KD/MACD/20日高/箱型)+ golden-file 測試;價格請用 `close * adj_factor`
+2. **評分模組**(04 規格;V1-Free 權重:權證30/技術30/法人融資25/題材15)→ 觀察清單 + 理由文字
+3. 題材標籤(人工維護表)+ 題材熱度
+4. 探索頁、自選股、訊號歷史回填
+5. `deep-backfill --all` 全市場深歷史 + `compute-adjustments --all` 分批補全市場還原因子(使用者本機或雲端跑一晚;注意 FinMind 600 req/hr 額度)
+6. 分點功能(等付費 FinMind 贊助決定,規格已備於 04/09)
+7. V2 盤中(Fugle + 本機 worker)
 
 ## 已知債務 / 注意
 
 - 個股 JSON 一檔約 0.5MB(全歷史);擴到數百檔時改「預設 5 年 + 按需載入」
 - 權證榜目前是「認購成交金額 / 20 日均值」的異動排序,尚不是 04 定義的完整 0–100 權證分;完整分數與 reasons/risks 等評分模組一起做
 - 權證 warrant_daily 約 1,000 萬列/年增速;彙總表已建,依 05 規劃明細僅留 2 年(清理排程未寫)
+- 還原價資料層已完成,但尚未接 nightly 全市場自動跑;目前用 `compute-adjustments --ids/--top/--all` 手動或分批補。`TaiwanStockPriceAdj` 是付費資料,本案改用免費 `TaiwanStockDividendResult` 自算
 - 已下市權證不在主檔,kind 靠代號尾碼推斷可能誤標(認售尾碼不只 P,還有 T/Q/S 等)→ 歷史認購/認售比略失真;認售佔比極低,影響小
 - Actions 有 Node 20 → 24 的 deprecation 警告(actions 版本升級,無急迫)
 - 本機 dev 與雲端 DB 已分岔:雲端為正式真相,本機僅開發;push 部署會從 Actions cache/release DB 產出線上 JSON
@@ -62,3 +63,4 @@
 
 - 2026-07-07 `842b4e0 feat: add warrant radar UI`:首頁新增權證榜,股票卡/個股頁接上權證摘要、趨勢與熱門權證明細。
 - 2026-07-07 `ed363b1 ci: deploy site on main push`:正式分支 push 會觸發 Cloudflare Pages 部署;已確認 GitHub Actions `nightly-radar` push run 成功。
+- 2026-07-07 還原價資料層:新增 `daily_prices.adj_factor`、SQLite additive migration、`compute-adjustments` CLI、單元測試;2330 實測 6 筆除息事件/8031 日價列更新成功。

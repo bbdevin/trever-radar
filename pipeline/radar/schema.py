@@ -48,6 +48,7 @@ daily_prices = Table(
     Column("high", Float),
     Column("low", Float),
     Column("close", Float),
+    Column("adj_factor", Float, nullable=False, server_default="1.0"),
     Column("volume", Integer),                     # 股
     Column("turnover", Integer),                   # 元
     Column("transactions", Integer),

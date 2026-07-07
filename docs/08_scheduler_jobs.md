@@ -8,6 +8,7 @@
 - `workflow_dispatch`:同 schedule,可手動重跑並觸發 DB 備份。
 - `push` 到 `main`:還原 Actions cache/release DB → **跳過資料匯入** → `export-json` → Next build → Cloudflare Pages deploy。用途是程式/UI 修正立刻上正式版,不在非收盤時間誤抓資料。
 - 本機開發仍走同一 CLI:`cd pipeline; .venv\Scripts\python -m radar export-json`,前端讀 `web/public/data/*.json`。
+- 還原因子目前用 `compute-adjustments --ids/--top/--all` 手動/分批補,尚未接 nightly 全市場自動排程;原因是 FinMind 免費額度約 600 req/hr,每檔一請求。
 
 ## 1. 盤後管線(V1,交易日執行)
 

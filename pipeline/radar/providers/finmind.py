@@ -59,3 +59,25 @@ def fetch_daily_history(stock_id: str, start_date: str = "1990-01-01") -> list[d
         "turnover": r.get("Trading_money"),
         "transactions": r.get("Trading_turnover"),
     } for r in data]
+
+
+def fetch_dividend_results(stock_id: str, start_date: str = "1990-01-01") -> list[dict]:
+    """TaiwanStockDividendResult rows used to compute backward adjustment factors."""
+    params = {"dataset": "TaiwanStockDividendResult", "data_id": stock_id,
+              "start_date": start_date}
+    token = os.environ.get("RADAR_FINMIND_TOKEN")
+    if token:
+        params["token"] = token
+    j = get_json(API, params)
+    status = j.get("status")
+    if status == 402 or "quota" in str(j.get("msg", "")).lower():
+        raise RateLimitedError(f"finmind quota hit: {j.get('msg')}")
+    if status != 200:
+        raise RuntimeError(f"finmind dividend {stock_id}: status={status} msg={j.get('msg')}")
+    return [{
+        "date": r.get("date"),
+        "before_price": r.get("before_price"),
+        "after_price": r.get("after_price") or r.get("reference_price"),
+        "kind": r.get("stock_or_cache_dividend"),
+        "value": r.get("stock_and_cache_dividend"),
+    } for r in (j.get("data") or []) if r.get("date")]

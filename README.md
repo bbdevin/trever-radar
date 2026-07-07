@@ -28,11 +28,15 @@ py -m venv .venv
 .venv\Scripts\python -m radar deep-backfill --top 30    # FinMind 上市以來全歷史(每檔一請求)
 .venv\Scripts\python -m radar deep-backfill --all       # 全市場深歷史(建議設 token)
 .venv\Scripts\python -m radar import-stock-info         # 產業別
+.venv\Scripts\python -m radar compute-adjustments --ids 2330
+.venv\Scripts\python -m radar compute-adjustments --top 60 --sleep 6.2
 .venv\Scripts\python -m radar export-json               # 產出前端 JSON(含四榜/個股K線/權證資料)
 .venv\Scripts\python -m radar status                    # 匯入紀錄 + 各表筆數
 ```
 
 資料公布時間:日K/權證 ~14:00 後、法人 ~16:00 後、融資券 ~16:30 後;尚未公布顯示 `empty`,重跑即補(upsert 冪等)。
+
+`compute-adjustments` 使用 FinMind 免費的 `TaiwanStockDividendResult` 每檔一請求,把 `daily_prices.adj_factor` 補齊;`TaiwanStockPriceAdj` 是付費資料,不用。
 
 FinMind token(免費註冊,600 req/hr):環境變數 `RADAR_FINMIND_TOKEN`(本機 `setx`;雲端已設 GitHub secret)。
 

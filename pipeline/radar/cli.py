@@ -60,6 +60,15 @@ def cmd_aggregate_warrants(args):
     print(f"warrant_stock_daily rows written: {n}")
 
 
+def cmd_compute_adjustments(args):
+    from .adjustments import compute_adjustments
+    ids = args.ids.split(",") if args.ids else None
+    info = compute_adjustments(ids=ids, top=args.top, all_stocks=args.all,
+                               start_date=args.start_date, sleep_s=args.sleep)
+    print(f"adjustments: {info['done']} stocks, {info['events']} events, "
+          f"{info['rows']} rows updated, {info['failed']} failed")
+
+
 def cmd_import_stock_info(_args):
     from .importer import import_stock_info
     print(f"industry filled for {import_stock_info()} stocks")
@@ -126,6 +135,15 @@ def main(argv=None):
     ag = sub.add_parser("aggregate-warrants", help="rebuild warrant_stock_daily")
     ag.add_argument("--date", default=None, help="YYYYMMDD; omit = rebuild all dates")
     ag.set_defaults(fn=cmd_aggregate_warrants)
+
+    adj = sub.add_parser("compute-adjustments",
+                         help="compute daily_prices.adj_factor from dividend results")
+    adj.add_argument("--ids", default=None, help="comma list, e.g. 2330,2317")
+    adj.add_argument("--top", type=int, default=None, help="top N by latest-day turnover")
+    adj.add_argument("--all", action="store_true", help="all stocks/ETFs with daily_prices")
+    adj.add_argument("--start-date", default="1990-01-01", help="YYYY-MM-DD")
+    adj.add_argument("--sleep", type=float, default=1.0, help="seconds between FinMind requests")
+    adj.set_defaults(fn=cmd_compute_adjustments)
 
     sub.add_parser("import-stock-info",
                    help="fill stocks.industry via FinMind (one request)"
