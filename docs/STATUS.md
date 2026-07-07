@@ -25,6 +25,7 @@
 - [x] `export-json`:radar/meta/個股 K 線 JSON + 權證異動榜 + 個股權證 60 日趨勢/熱門權證明細
 - [x] `compute-adjustments`:用 FinMind `TaiwanStockDividendResult` 免費資料計算 `daily_prices.adj_factor`(除權息前後價比累乘;已用 2330 實測)
 - [x] `compute-indicators`:以還原價計算 MA5/10/20/60、RSI14、KD、MACD、20日新高、60日箱型、ADV20、volume_ratio、tech_score、reasons/risks
+- [x] `compute-scores`:盤後綜合分數(權證30/技術30/法人25 加權,分項缺資料自動重分配權重;風險扣分:短線過熱/爆量長上影/開高走低/RSI過熱/外資連賣/融資過熱;法人買超設佔成交量1%顯著性門檻)→ `daily_scores` + 理由/風險 JSON;首頁「綜合」榜(預設 tab)
 - [x] upsert 只更新帶入欄位(防止日常匯入洗掉補充欄位)
 - [x] SQLite WAL + busy timeout(回補與匯出可並行)
 
@@ -43,9 +44,9 @@
 
 ## 未完成(依優先序)
 
-1. **評分模組**(04 規格;V1-Free 權重:權證30/技術30/法人融資25/題材15)→ 觀察清單 + 理由文字
+1. **訊號績效回填**(daily_scores 的 1/3/5/10/20 日後續報酬 → 驗證權重與門檻)
 2. 題材標籤(人工維護表)+ 題材熱度
-3. 探索頁、自選股、訊號歷史回填
+3. 探索頁、自選股、觀察價/失效價
 4. `deep-backfill --all` 全市場深歷史 + `compute-adjustments --all` 分批補全市場還原因子(使用者本機或雲端跑一晚;注意 FinMind 600 req/hr 額度)
 5. 分點功能(等付費 FinMind 贊助決定,規格已備於 04/09)
 6. V2 盤中(Fugle + 本機 worker)
@@ -58,6 +59,8 @@
 - 還原價資料層已完成,但尚未接 nightly 全市場自動跑;目前用 `compute-adjustments --ids/--top/--all` 手動或分批補。`TaiwanStockPriceAdj` 是付費資料,本案改用免費 `TaiwanStockDividendResult` 自算
 - 技術指標已接 nightly `compute-indicators --all`;若某些股票尚未補還原因子,會先以 `adj_factor=1` 計算,之後補因子再重算即可
 - 已下市權證不在主檔,kind 靠代號尾碼推斷可能誤標(認售尾碼不只 P,還有 T/Q/S 等)→ 歷史認購/認售比略失真;認售佔比極低,影響小
+- 評分門檻(65 分觀察線、法人 1% 顯著性、權證倍數分段)為 04 起始值,待訊號績效回填後校準;目前寧缺勿濫,達標日常 0–5 檔屬預期
+- `compute-adjustments` 逐列 UPDATE,跑 --all 會慢;改 executemany 批次後再跑全市場
 - Actions 有 Node 20 → 24 的 deprecation 警告(actions 版本升級,無急迫)
 - 本機 dev 與雲端 DB 已分岔:雲端為正式真相,本機僅開發;push 部署會從 Actions cache/release DB 產出線上 JSON
 
