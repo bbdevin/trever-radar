@@ -47,6 +47,11 @@ def cmd_deep_backfill(args):
           f"{info['failed']} failed")
 
 
+def cmd_import_stock_info(_args):
+    from .importer import import_stock_info
+    print(f"industry filled for {import_stock_info()} stocks")
+
+
 def cmd_export_json(args):
     from .export.json_export import export_json
     info = export_json(args.out)
@@ -100,6 +105,10 @@ def main(argv=None):
     dp.add_argument("--all", action="store_true", help="all stocks/ETFs (needs free token for quota)")
     dp.add_argument("--sleep", type=float, default=7.0, help="seconds between requests")
     dp.set_defaults(fn=cmd_deep_backfill)
+
+    sub.add_parser("import-stock-info",
+                   help="fill stocks.industry via FinMind (one request)"
+                   ).set_defaults(fn=cmd_import_stock_info)
 
     exp = sub.add_parser("export-json", help="write web/public/data/*.json for the frontend")
     exp.add_argument("--out", default=None, help="output dir (default web/public/data)")

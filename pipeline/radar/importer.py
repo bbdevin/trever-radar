@@ -193,6 +193,25 @@ def deep_backfill(ids: list[str] | None = None, top: int | None = None,
     return {"done": done, "skipped": skipped, "failed": failed}
 
 
+def import_stock_info() -> int:
+    """Fill stocks.industry from FinMind TaiwanStockInfo (one request)."""
+    from sqlalchemy import text
+
+    from .providers import finmind
+
+    init_db()
+    mapping = finmind.fetch_stock_info()
+    n = 0
+    with get_engine().begin() as conn:
+        for sid, ind in mapping.items():
+            r = conn.execute(text(
+                "UPDATE stocks SET industry = :ind WHERE id = :sid"), {"ind": ind, "sid": sid})
+            n += r.rowcount
+        _log(conn, "finmind", "stock_info",
+             datetime.now(ZoneInfo(config.TZ)).strftime("%Y%m%d"), n, "ok")
+    return n
+
+
 def import_daily(date: str, datasets: list[str] | None = None) -> list[dict]:
     """date: YYYYMMDD. datasets subset of {quotes, insti, margin}; None = all."""
     wanted = set(datasets or ["quotes", "insti", "margin"])

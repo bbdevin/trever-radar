@@ -15,6 +15,24 @@ class RateLimitedError(Exception):
     pass
 
 
+def fetch_stock_info() -> dict[str, str]:
+    """TaiwanStockInfo — one request, whole market. Returns {stock_id: industry_category}."""
+    params = {"dataset": "TaiwanStockInfo"}
+    token = os.environ.get("RADAR_FINMIND_TOKEN")
+    if token:
+        params["token"] = token
+    j = get_json(API, params)
+    if j.get("status") != 200:
+        raise RuntimeError(f"finmind TaiwanStockInfo: status={j.get('status')} msg={j.get('msg')}")
+    out: dict[str, str] = {}
+    for r in j.get("data") or []:
+        sid = str(r.get("stock_id", "")).strip()
+        ind = (r.get("industry_category") or "").strip()
+        if sid and ind and sid not in out:   # first category wins when duplicated
+            out[sid] = ind
+    return out
+
+
 def fetch_daily_history(stock_id: str, start_date: str = "1990-01-01") -> list[dict]:
     """Return rows shaped for the daily_prices table (each row carries its own date)."""
     params = {"dataset": "TaiwanStockPrice", "data_id": stock_id, "start_date": start_date}

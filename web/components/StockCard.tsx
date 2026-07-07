@@ -9,6 +9,7 @@ export default function StockCard({ s }: { s: RadarStock }) {
         <span className="sid">{s.id}</span>
         <span className="sname">{s.name}</span>
         <span className="chip">{MARKET_LABEL[s.market] ?? s.market}</span>
+        {s.industry && <span className="chip">{s.industry}</span>}
         <div className="price">
           <div className="close">{s.close.toLocaleString("zh-TW")}</div>
           <div className={`chg ${chgClass(s.chg_pct)}`}>{fmtPct(s.chg_pct)}</div>
@@ -32,8 +33,8 @@ export default function StockCard({ s }: { s: RadarStock }) {
           <span className="v">{fmtLots(s.trust_net_lots)}</span>
         </div>
         <div className="item">
-          <span className="k">融資增減(張)</span>
-          <span className="v">{fmtLots(s.margin_chg_lots)}</span>
+          <span className="k">量比(20日)</span>
+          <span className="v">{s.volume_ratio != null ? `${s.volume_ratio.toFixed(1)}×` : "—"}</span>
         </div>
       </div>
       <div className="score-slot">

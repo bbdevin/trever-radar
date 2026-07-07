@@ -25,15 +25,20 @@ def init_db():
 
 
 def upsert(conn, table, rows: list[dict], chunk: int = 800) -> int:
-    """SQLite upsert on primary key. Returns number of rows written."""
+    """SQLite upsert on primary key. Returns number of rows written.
+
+    Only columns present in the row dicts are updated on conflict — columns the
+    import doesn't carry (e.g. stocks.industry) keep their existing values.
+    """
     if not rows:
         return 0
     pk = [c.name for c in table.primary_key.columns]
+    row_cols = [k for k in rows[0].keys() if k not in pk]
     written = 0
     for i in range(0, len(rows), chunk):
         batch = rows[i : i + chunk]
         stmt = sqlite_insert(table).values(batch)
-        update_cols = {c.name: stmt.excluded[c.name] for c in table.columns if c.name not in pk}
+        update_cols = {name: stmt.excluded[name] for name in row_cols}
         if update_cols:
             stmt = stmt.on_conflict_do_update(index_elements=pk, set_=update_cols)
         else:

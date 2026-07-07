@@ -1,7 +1,8 @@
 """Export frontend JSON files from SQLite.
 
-Until the scoring module exists, radar.json lists top-30 stocks by turnover
-(real prices/insti/margin data, scores=null) so the UI can render live data.
+Until the scoring module exists, the radar page shows dynamic day-driven lists
+(hot by turnover / surge by volume ratio / strong by change) plus a sector
+money-flow panel built from industry sums vs their 20-day averages.
 """
 import json
 from datetime import datetime
@@ -15,11 +16,11 @@ from ..db import get_engine
 
 DEFAULT_OUT = config.ROOT / "web" / "public" / "data"
 
-
-def _latest_dates(conn) -> list[str]:
-    rows = conn.execute(text(
-        "SELECT DISTINCT date FROM daily_prices ORDER BY date DESC LIMIT 2")).fetchall()
-    return [r[0] for r in rows]
+HOT_N = 15
+SURGE_N = 15
+STRONG_N = 15
+MIN_TURNOVER = 1e8          # 榜單門檻:成交金額 1 億
+SURGE_MIN_RATIO = 1.5
 
 
 def export_json(out_dir: Path | None = None) -> dict:
@@ -27,49 +28,110 @@ def export_json(out_dir: Path | None = None) -> dict:
     out.mkdir(parents=True, exist_ok=True)
     engine = get_engine()
     with engine.connect() as conn:
-        dates = _latest_dates(conn)
+        dates = [r[0] for r in conn.execute(text(
+            "SELECT DISTINCT date FROM daily_prices ORDER BY date DESC LIMIT 22"))]
         if not dates:
             raise RuntimeError("no data in daily_prices; run import-daily first")
         d = dates[0]
         prev = dates[1] if len(dates) > 1 else None
+        base20 = dates[1:21]                       # 前 20 個交易日(不含今日)
 
-        items = conn.execute(text("""
-            SELECT p.stock_id, s.name, s.market, p.close, p.turnover, p.volume,
-                   p.transactions, pp.close AS prev_close,
-                   i.foreign_net, i.trust_net,
-                   m.margin_balance, m.margin_prev
+        rows = conn.execute(text("""
+            SELECT p.stock_id, s.name, s.market, s.industry, p.close, p.turnover,
+                   p.volume, p.transactions, pp.close AS prev_close,
+                   i.foreign_net, i.trust_net, m.margin_balance, m.margin_prev,
+                   a.avg_vol20
             FROM daily_prices p
             JOIN stocks s ON s.id = p.stock_id AND s.type = 'stock'
             LEFT JOIN daily_prices pp ON pp.stock_id = p.stock_id AND pp.date = :prev
             LEFT JOIN daily_institutional i ON i.stock_id = p.stock_id AND i.date = :d
             LEFT JOIN daily_margins m ON m.stock_id = p.stock_id AND m.date = :d
+            LEFT JOIN (
+                SELECT stock_id, AVG(volume) AS avg_vol20 FROM daily_prices
+                WHERE date >= :d20 AND date < :d GROUP BY stock_id
+            ) a ON a.stock_id = p.stock_id
             WHERE p.date = :d AND p.close IS NOT NULL
-            ORDER BY p.turnover DESC LIMIT 30
-        """), {"d": d, "prev": prev}).fetchall()
+        """), {"d": d, "prev": prev, "d20": base20[-1] if base20 else d}).fetchall()
 
-        stocks = []
-        for r in items:
-            (sid, name, market, close, turnover, volume, tx,
-             prev_close, f_net, t_net, mb, mp) = r
-            chg_pct = None
-            if prev_close:
-                chg_pct = round((close - prev_close) / prev_close * 100, 2)
-            spark = [row[0] for row in conn.execute(text(
-                "SELECT close FROM (SELECT close, date FROM daily_prices "
-                "WHERE stock_id = :s AND close IS NOT NULL AND date <= :d "
-                "ORDER BY date DESC LIMIT 30) ORDER BY date"), {"s": sid, "d": d})]
-            stocks.append({
-                "spark": spark,
-                "id": sid, "name": name, "market": market,
+        all_stocks = []
+        for r in rows:
+            (sid, name, market, industry, close, turnover, volume, tx,
+             prev_close, f_net, t_net, mb, mp, avg_vol20) = r
+            chg_pct = round((close - prev_close) / prev_close * 100, 2) if prev_close else None
+            vol_ratio = None
+            if avg_vol20 and avg_vol20 > 0 and volume:
+                vol_ratio = round(volume / avg_vol20, 2)
+            all_stocks.append({
+                "id": sid, "name": name, "market": market, "industry": industry,
                 "close": close, "chg_pct": chg_pct,
                 "turnover": turnover, "volume_lots": (volume or 0) // 1000,
-                "transactions": tx,
+                "volume_ratio": vol_ratio, "transactions": tx,
                 "foreign_net_lots": None if f_net is None else f_net // 1000,
                 "trust_net_lots": None if t_net is None else t_net // 1000,
                 "margin_chg_lots": None if (mb is None or mp is None) else mb - mp,
-                "scores": None,          # scoring module not built yet
-                "reasons": [], "risks": [],
+                "scores": None, "reasons": [], "risks": [],
             })
+
+        # ── 三榜(動態,依今日行情) ──
+        hot = sorted(all_stocks, key=lambda s: s["turnover"] or 0, reverse=True)[:HOT_N]
+        surge = sorted(
+            [s for s in all_stocks
+             if (s["turnover"] or 0) >= MIN_TURNOVER
+             and (s["volume_ratio"] or 0) >= SURGE_MIN_RATIO],
+            key=lambda s: s["volume_ratio"], reverse=True)[:SURGE_N]
+        strong = sorted(
+            [s for s in all_stocks
+             if (s["turnover"] or 0) >= MIN_TURNOVER and (s["chg_pct"] or 0) > 0],
+            key=lambda s: s["chg_pct"], reverse=True)[:STRONG_N]
+
+        union: dict[str, dict] = {}
+        for s in hot + surge + strong:
+            union[s["id"]] = s
+        for s in union.values():
+            s["spark"] = [row[0] for row in conn.execute(text(
+                "SELECT close FROM (SELECT close, date FROM daily_prices "
+                "WHERE stock_id = :s AND close IS NOT NULL AND date <= :d "
+                "ORDER BY date DESC LIMIT 30) ORDER BY date"), {"s": s["id"], "d": d})]
+
+        # ── 族群資金流(官方產業別;題材標籤之後人工維護再加) ──
+        sector_today: dict[str, dict] = {}
+        for s in all_stocks:
+            ind = s["industry"]
+            if not ind:
+                continue
+            g = sector_today.setdefault(ind, {"turnover": 0, "up": 0, "down": 0,
+                                              "chgs": [], "stocks": []})
+            g["turnover"] += s["turnover"] or 0
+            if s["chg_pct"] is not None:
+                g["chgs"].append(s["chg_pct"])
+                if s["chg_pct"] > 0:
+                    g["up"] += 1
+                elif s["chg_pct"] < 0:
+                    g["down"] += 1
+            g["stocks"].append(s)
+
+        prior = {r[0]: r[1] for r in conn.execute(text("""
+            SELECT s.industry, SUM(p.turnover) * 1.0 / COUNT(DISTINCT p.date)
+            FROM daily_prices p
+            JOIN stocks s ON s.id = p.stock_id AND s.type = 'stock'
+            WHERE p.date >= :d20 AND p.date < :d AND s.industry IS NOT NULL
+            GROUP BY s.industry
+        """), {"d": d, "d20": base20[-1] if base20 else d})}
+
+        total_today = sum(g["turnover"] for g in sector_today.values()) or 1
+        sectors = []
+        for ind, g in sector_today.items():
+            top = sorted(g["stocks"], key=lambda s: s["turnover"] or 0, reverse=True)[:3]
+            sectors.append({
+                "name": ind,
+                "turnover": g["turnover"],
+                "share": round(g["turnover"] / total_today * 100, 1),
+                "vs20": round(g["turnover"] / prior[ind], 2) if prior.get(ind) else None,
+                "avg_chg": round(sum(g["chgs"]) / len(g["chgs"]), 2) if g["chgs"] else None,
+                "up": g["up"], "down": g["down"],
+                "top": [{"id": s["id"], "name": s["name"], "chg_pct": s["chg_pct"]} for s in top],
+            })
+        sectors.sort(key=lambda x: x["turnover"], reverse=True)
 
         summary = conn.execute(text("""
             SELECT s.market,
@@ -85,20 +147,26 @@ def export_json(out_dir: Path | None = None) -> dict:
 
         logs = conn.execute(text("""
             SELECT source, dataset, date, rows, status, MAX(run_at)
-            FROM import_logs GROUP BY source, dataset, date
-            ORDER BY date DESC, source, dataset LIMIT 12
+            FROM import_logs WHERE dataset IN ('quotes','insti','margin')
+            GROUP BY source, dataset, date ORDER BY date DESC, source, dataset LIMIT 12
         """)).fetchall()
 
     now = datetime.now(ZoneInfo(config.TZ)).isoformat(timespec="seconds")
     radar = {
         "data_date": d,
         "generated_at": now,
-        "note": "評分模組建置中,暫以成交金額排序顯示",
+        "note": "評分模組建置中;三榜為當日行情動態排序",
         "summary": [
             {"market": m, "turnover": t, "up": up, "down": down}
             for m, t, up, down in summary
         ],
-        "stocks": stocks,
+        "sectors": sectors[:12],
+        "lists": {
+            "hot": [s["id"] for s in hot],
+            "surge": [s["id"] for s in surge],
+            "strong": [s["id"] for s in strong],
+        },
+        "stocks": list(union.values()),
     }
     meta = {
         "generated_at": now,
@@ -110,11 +178,11 @@ def export_json(out_dir: Path | None = None) -> dict:
     (out / "radar.json").write_text(json.dumps(radar, ensure_ascii=False), encoding="utf-8")
     (out / "meta.json").write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
 
-    # 個股 K 線 JSON(目前僅雷達清單內的股票;之後擴大到候選池)
+    # 個股 K 線 JSON(榜單聯集)
     stock_dir = out / "stocks"
     stock_dir.mkdir(exist_ok=True)
     with engine.connect() as conn:
-        for s in stocks:
+        for s in union.values():
             candles = conn.execute(text(
                 "SELECT date, open, high, low, close, volume, turnover FROM daily_prices "
                 "WHERE stock_id = :s AND close IS NOT NULL ORDER BY date"), {"s": s["id"]}).fetchall()
@@ -128,4 +196,4 @@ def export_json(out_dir: Path | None = None) -> dict:
             }
             (stock_dir / f"{s['id']}.json").write_text(
                 json.dumps(payload, ensure_ascii=False), encoding="utf-8")
-    return {"out": str(out), "date": d, "stocks": len(stocks)}
+    return {"out": str(out), "date": d, "stocks": len(union)}
