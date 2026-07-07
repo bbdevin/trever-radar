@@ -1,6 +1,6 @@
 # 上線部署指南(全免費)
 
-架構:GitHub Actions(每交易日 17:30 / 21:00 台北自動抓資料 + 建站)→ Cloudflare Pages(靜態網站)→ Cloudflare Access(email 白名單登入)。
+架構:GitHub Actions(每交易日 17:30 / 21:00 台北自動抓資料 + 建站;`main` push 只重建/部署、不抓資料)→ Cloudflare Pages(靜態網站)→ Cloudflare Access(email 白名單登入)。
 
 DB 以 Actions cache 續存、GitHub Release 週備份;首跑會從 release 種子還原(本機資料已上傳)。
 
@@ -50,7 +50,7 @@ Cloudflare Access 免費 50 人,訪客要輸入 email 收一次性 PIN 才能進
 
 ## 之後的日常
 
-什麼都不用做。每交易日 17:30 自動更新 + 部署,21:00 補一次晚公布的資料。手機開網址就能看。
+什麼都不用做。每交易日 17:30 自動更新 + 部署,21:00 補一次晚公布的資料。程式或 UI 修正 push 到 `main` 會立刻用現有 DB 重建 JSON 並部署,不會重抓資料。手機開網址就能看。
 
 ## 備援與注意
 

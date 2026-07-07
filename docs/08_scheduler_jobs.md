@@ -1,5 +1,14 @@
 # 08 排程與資料流程
 
+## 0. 現行 V1-Free 工作流(2026-07-07)
+
+實作檔:`.github/workflows/nightly-radar.yml`。
+
+- `schedule`:每交易日 17:30 / 21:00 台北時間,還原 Actions cache/release DB → 匯入今日資料 → 更新權證主檔與當日彙總 → `export-json` → Next build → Cloudflare Pages deploy → 保存 DB cache,週五/手動時備份 release。
+- `workflow_dispatch`:同 schedule,可手動重跑並觸發 DB 備份。
+- `push` 到 `main`:還原 Actions cache/release DB → **跳過資料匯入** → `export-json` → Next build → Cloudflare Pages deploy。用途是程式/UI 修正立刻上正式版,不在非收盤時間誤抓資料。
+- 本機開發仍走同一 CLI:`cd pipeline; .venv\Scripts\python -m radar export-json`,前端讀 `web/public/data/*.json`。
+
 ## 1. 盤後管線(V1,交易日執行)
 
 依賴關係用 Laravel job chain / batch,單一步驟失敗自動重試 3 次(間隔 10 分鐘),仍失敗 → 告警 + 後續步驟依「降級規則」續跑或中止。

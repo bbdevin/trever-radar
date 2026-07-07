@@ -4,7 +4,7 @@
 
 > 本系統僅彙整公開市場資料供個人研究,非投資建議;訊號不保證獲利;投資人應自行判斷並承擔風險。
 
-**正式站**:https://radar.techtrever.com — GitHub Actions 每交易日 17:30 / 21:00(台北)自動更新,平常不需人工操作。
+**正式站**:https://radar.techtrever.com — GitHub Actions 每交易日 17:30 / 21:00(台北)自動更新;`main` push 會用現有 DB 重建並部署前端,平常不需人工操作。
 
 ## 結構
 
@@ -28,7 +28,7 @@ py -m venv .venv
 .venv\Scripts\python -m radar deep-backfill --top 30    # FinMind 上市以來全歷史(每檔一請求)
 .venv\Scripts\python -m radar deep-backfill --all       # 全市場深歷史(建議設 token)
 .venv\Scripts\python -m radar import-stock-info         # 產業別
-.venv\Scripts\python -m radar export-json               # 產出前端 JSON
+.venv\Scripts\python -m radar export-json               # 產出前端 JSON(含四榜/個股K線/權證資料)
 .venv\Scripts\python -m radar status                    # 匯入紀錄 + 各表筆數
 ```
 
@@ -47,4 +47,4 @@ npm run build   # 靜態輸出到 out/
 
 ## 部署
 
-全自動,見 [DEPLOY.md](DEPLOY.md)。手動觸發:`gh workflow run nightly-radar --repo bbdevin/trever-radar`。
+全自動,見 [DEPLOY.md](DEPLOY.md)。push `main` 會部署程式/UI 更新;手動完整重跑資料:`gh workflow run nightly-radar --repo bbdevin/trever-radar`。
