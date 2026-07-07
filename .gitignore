@@ -8,6 +8,7 @@ data/*.db
 data/*.db-journal
 data/*.db-shm
 data/*.db-wal
+data/*.gz
 web/public/data/
 
 # node
