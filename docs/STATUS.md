@@ -49,7 +49,7 @@
 1. **訊號績效回填**(daily_scores 的 1/3/5/10/20 日後續報酬 → 驗證權重與門檻)
 2. 題材標籤(人工維護表)+ 題材熱度
 3. 探索頁、自選股、觀察價/失效價
-4. `deep-backfill --all` 全市場深歷史 + `compute-adjustments --all` 分批補全市場還原因子(使用者本機或雲端跑一晚;注意 FinMind 600 req/hr 額度)
+4. ~~deep-backfill --all~~ **執行中**:FinMind 註冊 token(600/hr)已設本機+雲端 secret;`data-backfill` workflow(手動觸發)正在雲端跑全市場上市以來歷史(約 4.5 小時,可中斷續跑);完成後手動觸發 `task=adjust` 補全市場還原因子:`gh workflow run data-backfill -f task=adjust`
 5. **分點排行與追蹤**(規格 docs/13):資料已解鎖——`import-branch-trades` 每晚爬富邦公開頁(評分池前 80 檔前 15 大買賣超),`branch_trades` 累積中。待做:今日動向頁 → branch_stock_stats → 可信度排行榜(需累積 2–3 個月才有統計效力)→ 權證分點
 6. V2 盤中(Fugle + 本機 worker)
 
