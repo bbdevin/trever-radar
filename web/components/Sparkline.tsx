@@ -1,30 +1,32 @@
-/** 近 30 日收盤迷你走勢(SVG,紅漲綠跌依首尾比較) */
-export default function Sparkline({ data }: { data: number[] }) {
+/** 近 30 日收盤迷你走勢:面積漸層 + 線(紅漲綠跌依首尾) */
+export default function Sparkline({ data, id }: { data: number[]; id: string }) {
   if (!data || data.length < 2) {
     return <span className="spark-empty">走勢累積中</span>;
   }
-  const w = 120;
-  const h = 30;
+  const w = 200;
+  const h = 34;
   const min = Math.min(...data);
   const max = Math.max(...data);
-  const pts = data
-    .map((v, i) => {
-      const x = (i / (data.length - 1)) * w;
-      const norm = max === min ? 0.5 : (v - min) / (max - min);
-      const y = h - 2 - norm * (h - 4);
-      return `${x.toFixed(1)},${y.toFixed(1)}`;
-    })
-    .join(" ");
+  const pt = (v: number, i: number) => {
+    const x = (i / (data.length - 1)) * w;
+    const norm = max === min ? 0.5 : (v - min) / (max - min);
+    const y = h - 3 - norm * (h - 6);
+    return [x, y] as const;
+  };
+  const pts = data.map((v, i) => pt(v, i).map((n) => n.toFixed(1)).join(",")).join(" ");
   const up = data[data.length - 1] >= data[0];
+  const color = up ? "var(--up)" : "var(--down)";
+  const gid = `sg-${id}`;
   return (
-    <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} aria-hidden="true">
-      <polyline
-        points={pts}
-        fill="none"
-        stroke={up ? "var(--up)" : "var(--down)"}
-        strokeWidth="1.5"
-        strokeLinejoin="round"
-      />
+    <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" aria-hidden="true">
+      <defs>
+        <linearGradient id={gid} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={up ? "#e66767" : "#0ca30c"} stopOpacity="0.28" />
+          <stop offset="100%" stopColor={up ? "#e66767" : "#0ca30c"} stopOpacity="0" />
+        </linearGradient>
+      </defs>
+      <polygon points={`0,${h} ${pts} ${w},${h}`} fill={`url(#${gid})`} stroke="none" />
+      <polyline points={pts} fill="none" stroke={color} strokeWidth="1.6" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
     </svg>
   );
 }

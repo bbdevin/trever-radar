@@ -1,16 +1,35 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { IconFlame, IconTrend, IconZap } from "@/components/Icons";
 import SectorPanel from "@/components/SectorPanel";
 import StockCard from "@/components/StockCard";
 import type { ListKey, MetaJson, RadarJson } from "@/lib/types";
 import { DATASET_LABEL, SOURCE_LABEL, fmtE8 } from "@/lib/format";
 
-const TABS: { key: ListKey; label: string; hint: string }[] = [
-  { key: "hot", label: "熱門", hint: "成交金額最大" },
-  { key: "surge", label: "爆量", hint: "量比 = 今日量/20日均量,≥1.5 且金額 ≥1億" },
-  { key: "strong", label: "強勢", hint: "漲幅排序,金額 ≥1億" },
+const TABS: { key: ListKey; label: string; hint: string; icon: typeof IconFlame }[] = [
+  { key: "hot", label: "熱門", hint: "成交金額最大", icon: IconFlame },
+  { key: "surge", label: "爆量", hint: "量比 = 今日量/20日均量,≥1.5 且金額 ≥1億", icon: IconZap },
+  { key: "strong", label: "強勢", hint: "漲幅排序,金額 ≥1億", icon: IconTrend },
 ];
+
+function Skeleton() {
+  return (
+    <>
+      <div className="strip">
+        {[0, 1, 2].map((i) => (
+          <div className="sk sk-strip" key={i} />
+        ))}
+      </div>
+      <div className="sk sk-panel" />
+      <div className="grid">
+        {[0, 1, 2, 3, 4, 5].map((i) => (
+          <div className="sk sk-card" key={i} />
+        ))}
+      </div>
+    </>
+  );
+}
 
 export default function RadarPage() {
   const [radar, setRadar] = useState<RadarJson | null>(null);
@@ -43,7 +62,7 @@ export default function RadarPage() {
       </div>
     );
   }
-  if (!radar) return <div className="state">載入中…</div>;
+  if (!radar) return <Skeleton />;
 
   const missing = (meta?.datasets ?? []).filter(
     (d) => d.date === radar.data_date && d.status !== "ok",
@@ -87,17 +106,22 @@ export default function RadarPage() {
       <SectorPanel sectors={radar.sectors} />
 
       <div className="tabbar">
-        {TABS.map((t) => (
-          <button
-            key={t.key}
-            className={tab === t.key ? "tab active" : "tab"}
-            onClick={() => setTab(t.key)}
-            title={t.hint}
-          >
-            {t.label}
-            <small>{radar.lists?.[t.key]?.length ?? 0}</small>
-          </button>
-        ))}
+        <div className="seg" role="tablist">
+          {TABS.map((t) => (
+            <button
+              key={t.key}
+              role="tab"
+              aria-selected={tab === t.key}
+              className={tab === t.key ? "tab active" : "tab"}
+              onClick={() => setTab(t.key)}
+              title={t.hint}
+            >
+              <t.icon size={15} />
+              {t.label}
+              <small>{radar.lists?.[t.key]?.length ?? 0}</small>
+            </button>
+          ))}
+        </div>
         <span className="tabhint">{TABS.find((t) => t.key === tab)?.hint}</span>
       </div>
 
