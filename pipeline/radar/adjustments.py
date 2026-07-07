@@ -101,13 +101,12 @@ def compute_adjustments(ids: list[str] | None = None, top: int | None = None,
             if not dates:
                 continue
             factors = factors_for_dates(dates, events)
-            for d, factor in factors.items():
-                r = conn.execute(text("""
-                    UPDATE daily_prices
-                    SET adj_factor = :factor
-                    WHERE stock_id = :sid AND date = :d
-                """), {"sid": sid, "d": d, "factor": factor})
-                rows_updated += r.rowcount
+            params = [{"sid": sid, "d": d, "factor": f} for d, f in factors.items()]
+            if params:  # executemany:全市場跑才不會被逐列 UPDATE 拖死
+                conn.execute(text(
+                    "UPDATE daily_prices SET adj_factor = :factor "
+                    "WHERE stock_id = :sid AND date = :d"), params)
+                rows_updated += len(params)
             _log(conn, "finmind", "adj_factor", today, len(events), "ok")
 
         done += 1
