@@ -289,6 +289,61 @@ def aggregate_warrants(date: str | None = None) -> int:
         return r.rowcount
 
 
+def import_branch_trades(date: str | None = None, top: int = 80,
+                         ids: list[str] | None = None) -> dict:
+    """富邦公開頁抓分點進出(每股一請求,節流 3 秒;80 檔約 4 分鐘)。
+
+    池 = 當日 daily_scores 前 top 檔(綜合分排序);無分數時退回成交金額前 top。
+    """
+    from sqlalchemy import text
+
+    from .providers import fubon
+
+    init_db()
+    engine = get_engine()
+    if date is None:
+        with engine.connect() as conn:
+            date = conn.execute(text(
+                "SELECT MAX(date) FROM daily_prices")).scalar().replace("-", "")
+    iso_d = iso(date)
+
+    with engine.connect() as conn:
+        if ids:
+            targets = ids
+        else:
+            targets = [r[0] for r in conn.execute(text(
+                "SELECT stock_id FROM daily_scores WHERE date = :d "
+                "ORDER BY final DESC LIMIT :n"), {"d": iso_d, "n": top})]
+            if not targets:
+                targets = [r[0] for r in conn.execute(text(
+                    "SELECT p.stock_id FROM daily_prices p "
+                    "JOIN stocks s ON s.id = p.stock_id AND s.type = 'stock' "
+                    "WHERE p.date = :d ORDER BY p.turnover DESC LIMIT :n"),
+                    {"d": iso_d, "n": top})]
+
+    done = empty = failed = written = 0
+    for sid in targets:
+        try:
+            rows = fubon.fetch_branch_trades(sid, date)
+        except NoDataError:
+            empty += 1
+            continue
+        except Exception as e:  # noqa: BLE001
+            failed += 1
+            print(f"branch {sid} FAILED: {str(e)[:100]}", flush=True)
+            continue
+        with engine.begin() as conn:
+            written += upsert(conn, schema.branch_trades, rows)
+        done += 1
+    with engine.begin() as conn:
+        _log(conn, "fubon", "branch", date, written,
+             "ok" if failed == 0 else "error",
+             error=None if failed == 0 else f"{failed} stocks failed")
+    print(f"branch trades {iso_d}: {done} stocks ok, {empty} empty, "
+          f"{failed} failed, {written} rows", flush=True)
+    return {"done": done, "empty": empty, "failed": failed, "rows": written}
+
+
 def import_daily(date: str, datasets: list[str] | None = None) -> list[dict]:
     """date: YYYYMMDD. datasets subset of {quotes, insti, margin}; None = all."""
     wanted = set(datasets or ["quotes", "insti", "margin"])

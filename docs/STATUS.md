@@ -25,6 +25,8 @@
 - [x] `export-json`:radar/meta/個股 K 線 JSON + 權證異動榜 + 個股權證 60 日趨勢/熱門權證明細
 - [x] `compute-adjustments`:用 FinMind `TaiwanStockDividendResult` 免費資料計算 `daily_prices.adj_factor`(除權息前後價比累乘;已用 2330 實測)
 - [x] `compute-indicators`:以還原價計算 MA5/10/20/60、RSI14、KD、MACD、20日新高、60日箱型、ADV20、volume_ratio、tech_score、reasons/risks
+- [x] `import-branch-trades`:富邦公開頁分點進出(每股前15大買/賣超,張+佔比;每晚評分池80檔;2026-07-07 起累積)
+- [x] K 線圖升級:均線 5/10/20/季/半年/年 + 布林(預設開、可勾選關、localStorage 記偏好)、副圖 MACD/KD/RSI 切換、十字游標 OHLC+均線 legend、指標以全歷史計算再切區間
 - [x] `compute-scores`:盤後綜合分數(權證30/技術30/法人25 加權,分項缺資料自動重分配權重;風險扣分:短線過熱/爆量長上影/開高走低/RSI過熱/外資連賣/融資過熱;法人買超設佔成交量1%顯著性門檻)→ `daily_scores` + 理由/風險 JSON;首頁「綜合」榜(預設 tab)
 - [x] upsert 只更新帶入欄位(防止日常匯入洗掉補充欄位)
 - [x] SQLite WAL + busy timeout(回補與匯出可並行)
@@ -48,7 +50,7 @@
 2. 題材標籤(人工維護表)+ 題材熱度
 3. 探索頁、自選股、觀察價/失效價
 4. `deep-backfill --all` 全市場深歷史 + `compute-adjustments --all` 分批補全市場還原因子(使用者本機或雲端跑一晚;注意 FinMind 600 req/hr 額度)
-5. **分點排行與追蹤**(2026-07-07 使用者需求,完整規格已寫於 **docs/13**:手動種子名單〔富邦新店/凱基三多/元大大天母/永豐金內湖/凱基信義〕+ 可信度演算法自動入選 + 今日動向表 + 權證分點視角)——**卡在資料:需 FinMind 贊助月付約 NT$300–600,使用者點頭即開工**
+5. **分點排行與追蹤**(規格 docs/13):資料已解鎖——`import-branch-trades` 每晚爬富邦公開頁(評分池前 80 檔前 15 大買賣超),`branch_trades` 累積中。待做:今日動向頁 → branch_stock_stats → 可信度排行榜(需累積 2–3 個月才有統計效力)→ 權證分點
 6. V2 盤中(Fugle + 本機 worker)
 
 ## 已知債務 / 注意

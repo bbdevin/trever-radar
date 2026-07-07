@@ -76,6 +76,12 @@ def cmd_compute_indicators(args):
     print(f"indicators: {info['done']} stocks, {info['rows']} rows written")
 
 
+def cmd_import_branch_trades(args):
+    from .importer import import_branch_trades
+    ids = args.ids.split(",") if args.ids else None
+    import_branch_trades(args.date, args.top, ids)
+
+
 def cmd_compute_scores(args):
     from .compute.scores import compute_scores
     info = compute_scores(args.date)
@@ -169,6 +175,13 @@ def main(argv=None):
     sub.add_parser("import-stock-info",
                    help="fill stocks.industry via FinMind (one request)"
                    ).set_defaults(fn=cmd_import_stock_info)
+
+    bt = sub.add_parser("import-branch-trades",
+                        help="scrape top-15 branch buys/sells (fubon public page)")
+    bt.add_argument("--date", default=None, help="YYYYMMDD; default latest trading day")
+    bt.add_argument("--top", type=int, default=80, help="pool size by composite score")
+    bt.add_argument("--ids", default=None, help="comma list overrides pool")
+    bt.set_defaults(fn=cmd_import_branch_trades)
 
     sc = sub.add_parser("compute-scores", help="V1 composite daily scores (docs/04)")
     sc.add_argument("--date", default=None, help="YYYYMMDD; default latest trading day")

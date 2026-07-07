@@ -313,6 +313,33 @@ main { min-height: 62vh; }
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg);
   padding: 8px; box-shadow: var(--shadow-card);
 }
+.chart-wrap.tall { height: clamp(420px, 66vh, 680px); border-top-left-radius: 0; }
+
+/* K線工具列:均線/布林勾選 + 副圖切換 */
+.chart-toolbar {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  padding: 8px 2px;
+}
+.chip-toggle {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 12px; font-weight: 600; color: var(--ink-3);
+  border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px;
+  cursor: pointer; user-select: none; background: var(--surface);
+}
+.chip-toggle input { display: none; }
+.chip-toggle.on { color: var(--c, var(--ink)); border-color: var(--c, var(--border-strong)); }
+.chip-toggle.on::before { content: "✓ "; font-size: 10px; }
+.chip-toggle.sub { border-radius: 8px; }
+.chip-toggle.sub.on { color: var(--ink); background: var(--surface-3); border-color: var(--border-strong); }
+.toolbar-sep { width: 1px; height: 18px; background: var(--line); margin: 0 4px; }
+
+.chart-shell { position: relative; }
+.chart-legend {
+  position: absolute; top: 6px; left: 10px; z-index: 5;
+  font-size: 11.5px; color: var(--ink-2); font-family: var(--font-num);
+  pointer-events: none; max-width: 92%; line-height: 1.5;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.7);
+}
 
 .tech-panel {
   display: grid; gap: 10px; margin-top: 14px;

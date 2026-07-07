@@ -68,6 +68,11 @@ jobs:
         working-directory: pipeline
         run: python -m radar compute-scores
 
+      - name: Branch trades (fubon public page, score-pool top 80)
+        if: github.event_name != 'push'
+        working-directory: pipeline
+        run: python -m radar import-branch-trades --top 80
+
       - name: Export frontend JSON
         working-directory: pipeline
         run: python -m radar export-json

@@ -30,11 +30,10 @@ function StockView() {
       .catch(() => setError(true));
   }, [id]);
 
-  const candles = useMemo(() => {
-    if (!data) return [];
+  const visibleDays = useMemo(() => {
     const days = RANGES.find((r) => r.key === range)?.days ?? Infinity;
-    return days === Infinity ? data.candles : data.candles.slice(-days);
-  }, [data, range]);
+    return days === Infinity ? Number.MAX_SAFE_INTEGER : days;
+  }, [range]);
 
   if (!id) return <div className="state">網址缺少股票代號(?id=2330)</div>;
   if (error)
@@ -116,7 +115,7 @@ function StockView() {
           </div>
         )}
       </div>
-      {view === "chart" ? <KChart candles={candles} /> : <WarrantPanel data={data} />}
+      {view === "chart" ? <KChart candles={cs} visibleDays={visibleDays} /> : <WarrantPanel data={data} />}
       {view === "chart" && (
         <TechnicalPanel data={data} />
       )}
