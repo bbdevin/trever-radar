@@ -45,6 +45,36 @@ def fetch_daily_quotes(date: str) -> list[Quote]:
     return quotes
 
 
+def fetch_warrant_master() -> list[dict]:
+    """t187ap37_L 上市權證基本資料彙總表(OpenAPI,全量,無日期參數)。
+
+    標的欄位是「名稱」非代號 → caller 需用 stocks 表反查 stock_id。
+    行使比例欄位為「每仟單位配發數量」→ 除以 1000 正規化成每單位。
+    """
+    rows = get_json("https://openapi.twse.com.tw/v1/opendata/t187ap37_L")
+    if not isinstance(rows, list) or not rows:
+        raise RuntimeError("twse t187ap37_L: unexpected payload")
+    out = []
+    for r in rows:
+        code = str(r.get("權證代號", "")).strip()
+        if not code:
+            continue
+        roc = str(r.get("履約截止日", "")).strip()   # e.g. 1150730
+        maturity = None
+        if len(roc) == 7 and roc.isdigit():
+            maturity = f"{int(roc[:3]) + 1911}-{roc[3:5]}-{roc[5:7]}"
+        ratio = to_float(r.get("最新標的履約配發數量(每仟單位權證)"))
+        out.append({
+            "id": code,
+            "kind": "put" if str(r.get("權證類型", "")).strip() == "認售" else "call",
+            "underlying_name": str(r.get("標的證券/指數", "")).strip(),
+            "strike": to_float(r.get("最新履約價格(元)/履約指數")),
+            "exercise_ratio": None if ratio is None else ratio / 1000.0,
+            "maturity_date": maturity,
+        })
+    return out
+
+
 def fetch_institutional(date: str) -> list[InstiRow]:
     """T86 三大法人買賣超(股). foreign = 外陸資(不含外資自營) + 外資自營."""
     j = get_json(f"{BASE}/fund/T86", {"date": date, "selectType": "ALL", "response": "json"})

@@ -50,6 +50,38 @@ def fetch_daily_quotes(date: str) -> list[Quote]:
     return quotes
 
 
+def fetch_warrant_master() -> list[dict]:
+    """TPEx OpenAPI 權證發行基本資料(一般 + 牛熊 + 展延型)。直接含標的代號。"""
+    from ..classify import warrant_kind
+
+    out = []
+    for path, cbbc in (("tpex_warrant_issue", False),
+                       ("tpex_warrant_wcb_issue", True),
+                       ("tpex_warrant_wxy_issue", True)):
+        rows = get_json(f"https://www.tpex.org.tw/openapi/v1/{path}")
+        if not isinstance(rows, list):
+            continue
+        for r in rows:
+            code = str(r.get("Code", "")).strip()
+            if not code:
+                continue
+            exp = str(r.get("ExpiryDate", "")).strip()  # YYYYMMDD
+            maturity = f"{exp[:4]}-{exp[4:6]}-{exp[6:8]}" if len(exp) == 8 and exp.isdigit() else None
+            if cbbc:
+                kind = warrant_kind(code)               # 牛熊/展延依代號尾碼
+            else:
+                kind = "put" if str(r.get("Type", "")).strip() == "認售" else "call"
+            out.append({
+                "id": code,
+                "kind": kind,
+                "stock_id": str(r.get("UnderlyingStockCode", "")).strip() or None,
+                "strike": to_float(r.get("LatestExercisePrice")),
+                "exercise_ratio": to_float(r.get("Latest ExerciseRatio")),
+                "maturity_date": maturity,
+            })
+    return out
+
+
 def fetch_institutional(date: str) -> list[InstiRow]:
     """insti/dailyTrade sect=EW. 24 positional columns:
     0代號 1名稱 | 2-4 外陸資(不含自營) | 5-7 外資自營 | 8-10 外資合計

@@ -66,6 +66,20 @@ warrant_daily = Table(
     Index("ix_warrant_daily_date", "date"),
 )
 
+warrant_stock_daily = Table(
+    "warrant_stock_daily",
+    metadata,
+    Column("stock_id", Text, primary_key=True),
+    Column("date", Text, primary_key=True),
+    Column("call_turnover", Integer),              # 認購成交金額(元),排除牛熊證
+    Column("call_volume", Integer),
+    Column("call_count", Integer),                 # 有成交的認購檔數
+    Column("put_turnover", Integer),
+    Column("put_volume", Integer),
+    Column("put_count", Integer),
+    Index("ix_warrant_stock_daily_date", "date"),
+)
+
 daily_institutional = Table(
     "daily_institutional",
     metadata,

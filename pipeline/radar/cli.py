@@ -47,6 +47,19 @@ def cmd_deep_backfill(args):
           f"{info['failed']} failed")
 
 
+def cmd_import_warrant_master(_args):
+    from .importer import import_warrant_master
+    info = import_warrant_master()
+    print(f"warrant master: {info['total']} rows "
+          f"(twse matched {info['twse_matched']}, unmatched {info['twse_unmatched']})")
+
+
+def cmd_aggregate_warrants(args):
+    from .importer import aggregate_warrants
+    n = aggregate_warrants(args.date)
+    print(f"warrant_stock_daily rows written: {n}")
+
+
 def cmd_import_stock_info(_args):
     from .importer import import_stock_info
     print(f"industry filled for {import_stock_info()} stocks")
@@ -105,6 +118,14 @@ def main(argv=None):
     dp.add_argument("--all", action="store_true", help="all stocks/ETFs (needs free token for quota)")
     dp.add_argument("--sleep", type=float, default=7.0, help="seconds between requests")
     dp.set_defaults(fn=cmd_deep_backfill)
+
+    sub.add_parser("import-warrant-master",
+                   help="warrant master: underlying/strike/maturity (TWSE+TPEx OpenAPI)"
+                   ).set_defaults(fn=cmd_import_warrant_master)
+
+    ag = sub.add_parser("aggregate-warrants", help="rebuild warrant_stock_daily")
+    ag.add_argument("--date", default=None, help="YYYYMMDD; omit = rebuild all dates")
+    ag.set_defaults(fn=cmd_aggregate_warrants)
 
     sub.add_parser("import-stock-info",
                    help="fill stocks.industry via FinMind (one request)"

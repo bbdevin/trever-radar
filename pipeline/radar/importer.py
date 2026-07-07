@@ -212,6 +212,83 @@ def import_stock_info() -> int:
     return n
 
 
+def import_warrant_master() -> dict:
+    """權證主檔:TPEx 直接含標的代號;TWSE 只有標的名稱 → 用 stocks.name 反查。"""
+    from sqlalchemy import text
+
+    init_db()
+    engine = get_engine()
+    today = datetime.now(ZoneInfo(config.TZ)).strftime("%Y%m%d")
+
+    twse_rows = twse.fetch_warrant_master()
+    tpex_rows = tpex.fetch_warrant_master()
+
+    with engine.begin() as conn:
+        name_to_id = {r[1]: r[0] for r in conn.execute(text(
+            "SELECT id, name FROM stocks WHERE type IN ('stock','etf')"))}
+        matched = unmatched = 0
+        rows = []
+        for r in twse_rows:
+            sid = name_to_id.get(r.pop("underlying_name"))
+            if sid:
+                matched += 1
+            else:
+                unmatched += 1        # 指數型或名稱不一致 → stock_id NULL
+            r["stock_id"] = sid
+            rows.append(r)
+        rows.extend(tpex_rows)         # TPEx 直接含標的代號
+        # 只更新主檔欄位;name/market 由每日行情匯入維護(upsert 只碰帶入欄位)
+        from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+        n = 0
+        for i in range(0, len(rows), 800):
+            batch = rows[i : i + 800]
+            stmt = sqlite_insert(schema.warrants).values([
+                {"id": r["id"], "name": "", "market": "", "kind": r["kind"],
+                 "stock_id": r["stock_id"], "strike": r["strike"],
+                 "exercise_ratio": r["exercise_ratio"], "maturity_date": r["maturity_date"]}
+                for r in batch])
+            stmt = stmt.on_conflict_do_update(index_elements=["id"], set_={
+                "kind": stmt.excluded.kind, "stock_id": stmt.excluded.stock_id,
+                "strike": stmt.excluded.strike, "exercise_ratio": stmt.excluded.exercise_ratio,
+                "maturity_date": stmt.excluded.maturity_date,
+            })
+            conn.execute(stmt)
+            n += len(batch)
+        _log(conn, "twse+tpex", "warrant_master", today, n, "ok")
+    return {"total": n, "twse_matched": matched, "twse_unmatched": unmatched}
+
+
+def aggregate_warrants(date: str | None = None) -> int:
+    """warrant_daily × warrants → warrant_stock_daily(排除牛熊證;date=None 重建全部)。"""
+    from sqlalchemy import text
+
+    init_db()
+    where = "AND d.date = :d" if date else ""
+    params = {"d": iso(date)} if date else {}
+    with get_engine().begin() as conn:
+        if date:
+            conn.execute(text("DELETE FROM warrant_stock_daily WHERE date = :d"), params)
+        else:
+            conn.execute(text("DELETE FROM warrant_stock_daily"))
+        r = conn.execute(text(f"""
+            INSERT INTO warrant_stock_daily
+                (stock_id, date, call_turnover, call_volume, call_count,
+                 put_turnover, put_volume, put_count)
+            SELECT w.stock_id, d.date,
+                SUM(CASE WHEN w.kind = 'call' THEN COALESCE(d.turnover, 0) ELSE 0 END),
+                SUM(CASE WHEN w.kind = 'call' THEN COALESCE(d.volume, 0) ELSE 0 END),
+                SUM(CASE WHEN w.kind = 'call' AND COALESCE(d.turnover, 0) > 0 THEN 1 ELSE 0 END),
+                SUM(CASE WHEN w.kind = 'put' THEN COALESCE(d.turnover, 0) ELSE 0 END),
+                SUM(CASE WHEN w.kind = 'put' THEN COALESCE(d.volume, 0) ELSE 0 END),
+                SUM(CASE WHEN w.kind = 'put' AND COALESCE(d.turnover, 0) > 0 THEN 1 ELSE 0 END)
+            FROM warrant_daily d
+            JOIN warrants w ON w.id = d.warrant_id
+            WHERE w.stock_id IS NOT NULL AND w.kind IN ('call', 'put') {where}
+            GROUP BY w.stock_id, d.date
+        """), params)
+        return r.rowcount
+
+
 def import_daily(date: str, datasets: list[str] | None = None) -> list[dict]:
     """date: YYYYMMDD. datasets subset of {quotes, insti, margin}; None = all."""
     wanted = set(datasets or ["quotes", "insti", "margin"])
