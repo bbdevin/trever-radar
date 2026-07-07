@@ -8,11 +8,46 @@ export interface Candle {
   amt: number; // 元
 }
 
+export interface WarrantSummary {
+  call_turnover: number;
+  call_volume: number;
+  call_count: number;
+  put_turnover: number;
+  put_volume: number;
+  put_count: number;
+  call_avg20: number | null;
+  call_turnover_ratio: number | null;
+  put_call_ratio: number | null;
+}
+
+export interface WarrantHistoryPoint {
+  t: string;
+  call_turnover: number;
+  put_turnover: number;
+  call_count: number;
+  put_count: number;
+}
+
+export interface ActiveWarrant {
+  id: string;
+  name: string;
+  kind: "call" | "put";
+  strike: number | null;
+  exercise_ratio: number | null;
+  maturity_date: string | null;
+  close: number | null;
+  volume_lots: number;
+  turnover: number;
+}
+
 export interface StockJson {
   id: string;
   name: string;
   market: "twse" | "tpex";
   candles: Candle[];
+  warrant: WarrantSummary | null;
+  warrant_history: WarrantHistoryPoint[];
+  active_warrants: ActiveWarrant[];
 }
 
 export interface SectorFlow {
@@ -26,7 +61,7 @@ export interface SectorFlow {
   top: { id: string; name: string; chg_pct: number | null }[];
 }
 
-export type ListKey = "hot" | "surge" | "strong";
+export type ListKey = "hot" | "surge" | "strong" | "warrant";
 
 export interface RadarStock {
   spark: number[]; // 近 30 日收盤
@@ -43,6 +78,7 @@ export interface RadarStock {
   foreign_net_lots: number | null;
   trust_net_lots: number | null;
   margin_chg_lots: number | null;
+  warrant: WarrantSummary | null;
   scores: null | Record<string, number>; // null until scoring module ships
   reasons: string[];
   risks: string[];

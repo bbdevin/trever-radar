@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { IconFlame, IconTrend, IconZap } from "@/components/Icons";
+import { IconFlame, IconPulse, IconTrend, IconZap } from "@/components/Icons";
 import SectorPanel from "@/components/SectorPanel";
 import StockCard from "@/components/StockCard";
 import type { ListKey, MetaJson, RadarJson } from "@/lib/types";
@@ -11,6 +11,7 @@ const TABS: { key: ListKey; label: string; hint: string; icon: typeof IconFlame 
   { key: "hot", label: "熱門", hint: "成交金額最大", icon: IconFlame },
   { key: "surge", label: "爆量", hint: "量比 = 今日量/20日均量,≥1.5 且金額 ≥1億", icon: IconZap },
   { key: "strong", label: "強勢", hint: "漲幅排序,金額 ≥1億", icon: IconTrend },
+  { key: "warrant", label: "權證", hint: "認購權證成交金額相對20日均值放大", icon: IconPulse },
 ];
 
 function Skeleton() {

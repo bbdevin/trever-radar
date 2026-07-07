@@ -255,6 +255,12 @@ main { min-height: 62vh; }
 .stats .v { font-size: 13px; color: var(--ink-2); font-weight: 600; }
 
 .score-slot { border-top: 1px dashed var(--line); padding-top: 8px; font-size: 11.5px; color: var(--ink-3); }
+.warrant-mini {
+  display: grid; grid-template-columns: 1.35fr 0.55fr 0.8fr 0.55fr; gap: 6px;
+  align-items: center; color: var(--ink-3);
+}
+.warrant-mini b { color: var(--ink-2); font-weight: 750; }
+.warrant-mini span { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* ═══ 骨架載入 ═══ */
 .sk { position: relative; overflow: hidden; background: var(--surface-2); border-radius: 8px; }
@@ -296,6 +302,44 @@ main { min-height: 62vh; }
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg);
   padding: 8px; box-shadow: var(--shadow-card);
 }
+
+.stock-toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
+.stock-toolbar .range-bar { margin-bottom: 0; }
+.stock-tabs { display: flex; gap: 2px; padding: 3px; width: fit-content;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 999px; }
+.stock-tabs button {
+  background: transparent; border: 0; color: var(--ink-2);
+  padding: 5px 13px; border-radius: 999px; font-size: 12.5px; font-weight: 600;
+}
+.stock-tabs button.active { background: var(--surface-3); color: var(--ink); box-shadow: inset 0 0 0 1px var(--border-strong); }
+
+.warrant-panel {
+  display: grid; gap: 12px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg);
+  padding: 14px; box-shadow: var(--shadow-card);
+}
+.warrant-summary { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+@media (min-width: 768px) { .warrant-summary { grid-template-columns: repeat(4, 1fr); } }
+.warrant-stat {
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 10px 11px; background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+}
+.warrant-stat .k { font-size: 11px; color: var(--ink-3); }
+.warrant-stat .v { font-size: 16px; font-weight: 750; color: var(--ink); }
+.warrant-bars { display: flex; align-items: flex-end; gap: 3px; height: 120px; padding: 8px 2px 0; }
+.warrant-day { display: grid; align-items: end; grid-template-rows: 1fr 1fr; gap: 1px; flex: 1; min-width: 3px; height: 100%; }
+.warrant-day .call { background: var(--up); border-radius: 3px 3px 0 0; min-height: 1px; opacity: 0.8; }
+.warrant-day .put { background: var(--down); border-radius: 0 0 3px 3px; min-height: 1px; opacity: 0.75; }
+.warrant-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.warrant-table th, .warrant-table td { padding: 8px 6px; border-top: 1px solid var(--line); text-align: right; }
+.warrant-table th:first-child, .warrant-table td:first-child,
+.warrant-table th:nth-child(2), .warrant-table td:nth-child(2) { text-align: left; }
+.warrant-table th { color: var(--ink-3); font-weight: 600; }
+.warrant-table td { color: var(--ink-2); }
+.warrant-kind { font-size: 10.5px; border-radius: 6px; padding: 1px 6px; }
+.warrant-kind.call { color: var(--up); background: var(--up-bg); }
+.warrant-kind.put { color: var(--down); background: var(--down-bg); }
 
 /* ═══ 狀態與 footer ═══ */
 .state { padding: 46px 0; text-align: center; color: var(--ink-3); font-size: 14px; }

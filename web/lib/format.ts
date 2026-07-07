@@ -17,6 +17,11 @@ export function fmtPct(n: number | null | undefined): string {
   return `${arrow}${Math.abs(n).toFixed(2)}%`;
 }
 
+export function fmtX(n: number | null | undefined): string {
+  if (n == null) return "—";
+  return `${n.toFixed(1)}x`;
+}
+
 /** 台股慣例:紅漲綠跌 */
 export function chgClass(n: number | null | undefined): string {
   if (n == null || n === 0) return "flat";

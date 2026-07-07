@@ -5,7 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { IconArrowLeft } from "@/components/Icons";
 import KChart from "@/components/KChart";
 import type { StockJson } from "@/lib/types";
-import { MARKET_LABEL, chgClass, fmtE8, fmtPct } from "@/lib/format";
+import { MARKET_LABEL, chgClass, fmtE8, fmtPct, fmtX } from "@/lib/format";
 
 const RANGES = [
   { key: "1m", label: "1月", days: 22 },
@@ -20,6 +20,7 @@ function StockView() {
   const [data, setData] = useState<StockJson | null>(null);
   const [error, setError] = useState(false);
   const [range, setRange] = useState<(typeof RANGES)[number]["key"]>("1y");
+  const [view, setView] = useState<"chart" | "warrant">("chart");
 
   useEffect(() => {
     if (!id) return;
@@ -80,25 +81,125 @@ function StockView() {
           資料 <span className="num">{cs.length.toLocaleString("zh-TW")}</span> 個交易日(自 {cs[0].t})
         </span>
       </div>
-      <div className="range-bar" role="tablist">
-        {RANGES.map((r) => (
+      <div className="stock-toolbar">
+        <div className="stock-tabs" role="tablist">
           <button
-            key={r.key}
             role="tab"
-            aria-selected={range === r.key}
-            className={range === r.key ? "active" : ""}
-            onClick={() => setRange(r.key)}
+            aria-selected={view === "chart"}
+            className={view === "chart" ? "active" : ""}
+            onClick={() => setView("chart")}
           >
-            {r.label}
+            K線
           </button>
+          <button
+            role="tab"
+            aria-selected={view === "warrant"}
+            className={view === "warrant" ? "active" : ""}
+            onClick={() => setView("warrant")}
+          >
+            權證
+          </button>
+        </div>
+        {view === "chart" && (
+          <div className="range-bar" role="tablist">
+            {RANGES.map((r) => (
+              <button
+                key={r.key}
+                role="tab"
+                aria-selected={range === r.key}
+                className={range === r.key ? "active" : ""}
+                onClick={() => setRange(r.key)}
+              >
+                {r.label}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+      {view === "chart" ? <KChart candles={candles} /> : <WarrantPanel data={data} />}
+      {view === "chart" && (
+        <div className="notice" style={{ marginTop: 14 }}>
+          <span className="tag" style={{ color: "var(--ink-3)" }}>預告</span>
+          <span>均線、布林、訊號標記與分點足跡將於評分模組與分點資料接上後疊加於此圖。</span>
+        </div>
+      )}
+    </>
+  );
+}
+
+function WarrantPanel({ data }: { data: StockJson }) {
+  const maxTurnover = Math.max(
+    1,
+    ...data.warrant_history.map((p) => Math.max(p.call_turnover, p.put_turnover)),
+  );
+
+  if (!data.warrant) {
+    return <div className="state">目前沒有可彙總的權證成交資料</div>;
+  }
+
+  return (
+    <div className="warrant-panel">
+      <div className="warrant-summary">
+        <div className="warrant-stat">
+          <span className="k">認購成交</span>
+          <span className="v">{fmtE8(data.warrant.call_turnover)}</span>
+        </div>
+        <div className="warrant-stat">
+          <span className="k">20日倍數</span>
+          <span className="v">{fmtX(data.warrant.call_turnover_ratio)}</span>
+        </div>
+        <div className="warrant-stat">
+          <span className="k">認售成交</span>
+          <span className="v">{fmtE8(data.warrant.put_turnover)}</span>
+        </div>
+        <div className="warrant-stat">
+          <span className="k">有成交檔數</span>
+          <span className="v">
+            {data.warrant.call_count} / {data.warrant.put_count}
+          </span>
+        </div>
+      </div>
+
+      <div className="warrant-bars" aria-label="權證60日成交金額">
+        {data.warrant_history.map((p) => (
+          <div className="warrant-day" key={p.t} title={`${p.t} 認購 ${fmtE8(p.call_turnover)} / 認售 ${fmtE8(p.put_turnover)}`}>
+            <span className="call" style={{ height: `${Math.max(2, (p.call_turnover / maxTurnover) * 100)}%` }} />
+            <span className="put" style={{ height: `${Math.max(2, (p.put_turnover / maxTurnover) * 100)}%` }} />
+          </div>
         ))}
       </div>
-      <KChart candles={candles} />
-      <div className="notice" style={{ marginTop: 14 }}>
-        <span className="tag" style={{ color: "var(--ink-3)" }}>預告</span>
-        <span>均線、布林、訊號標記與分點足跡將於評分模組與分點資料接上後疊加於此圖。</span>
-      </div>
-    </>
+
+      {data.active_warrants.length > 0 ? (
+        <table className="warrant-table">
+          <thead>
+            <tr>
+              <th>代號</th>
+              <th>名稱</th>
+              <th>類型</th>
+              <th>履約價</th>
+              <th>到期日</th>
+              <th>成交</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.active_warrants.map((w) => (
+              <tr key={w.id}>
+                <td className="num">{w.id}</td>
+                <td>{w.name}</td>
+                <td>
+                  <span className={`warrant-kind ${w.kind}`}>{w.kind === "call" ? "認購" : "認售"}</span>
+                </td>
+                <td className="num">{w.strike == null ? "—" : w.strike.toLocaleString("zh-TW")}</td>
+                <td className="num">{w.maturity_date ?? "—"}</td>
+                <td className="num">{fmtE8(w.turnover)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ) : (
+        <div className="state">今日沒有權證成交明細</div>
+      )}
+    </div>
   );
 }
 
