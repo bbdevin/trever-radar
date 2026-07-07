@@ -41,16 +41,42 @@ export default function StockCard({ s }: { s: RadarStock }) {
         </div>
       </div>
       <div className="score-slot">
-        {s.warrant ? (
+        {s.scores ? (
+          <div className="score-block">
+            <div className="score-line">
+              <span className={`score-final ${s.scores.final >= 65 ? "pass" : ""}`}>
+                {s.scores.final}
+              </span>
+              <span className="score-parts">
+                權證 {s.scores.warrant ?? "—"} · 技術 {s.scores.tech ?? "—"} · 法人{" "}
+                {s.scores.inst ?? "—"}
+                {s.scores.risk_penalty < 0 && (
+                  <em className="score-risk"> 風險 {s.scores.risk_penalty}</em>
+                )}
+              </span>
+            </div>
+            {s.reasons.slice(0, 2).map((t) => (
+              <div className="reason" key={t}>
+                {t}
+              </div>
+            ))}
+            {s.risks.slice(0, 1).map((t) => (
+              <div className="risk" key={t}>
+                {t}
+              </div>
+            ))}
+          </div>
+        ) : s.warrant ? (
           <div className="warrant-mini">
             <span>
               權證認購 <b>{fmtE8(s.warrant.call_turnover)}</b>
             </span>
             <span>{fmtX(s.warrant.call_turnover_ratio)}</span>
-            <span>購/售 {s.warrant.put_call_ratio == null ? "—" : `${(1 / Math.max(s.warrant.put_call_ratio, 0.01)).toFixed(1)}`}</span>
             <span>{s.warrant.call_count} 檔</span>
           </div>
-        ) : s.scores ? "分數載入中" : "綜合評分建置中 — 完成後顯示分項分數、觸發理由與風險提醒"}
+        ) : (
+          "未達評分門檻(20日均額 <3,000萬)"
+        )}
       </div>
     </a>
   );

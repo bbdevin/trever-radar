@@ -83,7 +83,15 @@ export interface SectorFlow {
   top: { id: string; name: string; chg_pct: number | null }[];
 }
 
-export type ListKey = "hot" | "surge" | "strong" | "warrant";
+export type ListKey = "score" | "hot" | "surge" | "strong" | "warrant";
+
+export interface ScoreBreakdown {
+  final: number;
+  warrant: number | null;
+  tech: number | null;
+  inst: number | null;
+  risk_penalty: number;
+}
 
 export interface RadarStock {
   spark: number[]; // 近 30 日收盤
@@ -102,7 +110,7 @@ export interface RadarStock {
   margin_chg_lots: number | null;
   warrant: WarrantSummary | null;
   technical: TechnicalSummary | null;
-  scores: null | Record<string, number>; // null until scoring module ships
+  scores: ScoreBreakdown | null; // null = 該股當日未評分(流動性門檻未過等)
   reasons: string[];
   risks: string[];
 }

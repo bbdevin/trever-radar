@@ -48,7 +48,9 @@ def export_json(out_dir: Path | None = None) -> dict:
                    w.put_turnover, w.put_volume, w.put_count,
                    wa.avg_call_turnover,
                    ti.tech_score, ti.ma20, ti.ma60, ti.rsi14, ti.volume_ratio AS tech_volume_ratio,
-                   ti.reasons AS tech_reasons, ti.risks AS tech_risks
+                   ti.reasons AS tech_reasons, ti.risks AS tech_risks,
+                   ds.final AS score_final, ds.warrant_score, ds.inst_score,
+                   ds.risk_penalty, ds.reasons AS score_reasons, ds.risks AS score_risks
             FROM daily_prices p
             JOIN stocks s ON s.id = p.stock_id AND s.type = 'stock'
             LEFT JOIN daily_prices pp ON pp.stock_id = p.stock_id AND pp.date = :prev
@@ -56,6 +58,7 @@ def export_json(out_dir: Path | None = None) -> dict:
             LEFT JOIN daily_margins m ON m.stock_id = p.stock_id AND m.date = :d
             LEFT JOIN warrant_stock_daily w ON w.stock_id = p.stock_id AND w.date = :d
             LEFT JOIN indicators_daily ti ON ti.stock_id = p.stock_id AND ti.date = :d
+            LEFT JOIN daily_scores ds ON ds.stock_id = p.stock_id AND ds.date = :d
             LEFT JOIN (
                 SELECT stock_id, AVG(volume) AS avg_vol20 FROM daily_prices
                 WHERE date >= :d20 AND date < :d GROUP BY stock_id
@@ -76,7 +79,9 @@ def export_json(out_dir: Path | None = None) -> dict:
              call_turnover, call_volume, call_count,
              put_turnover, put_volume, put_count, avg_call_turnover,
              tech_score, tech_ma20, tech_ma60, tech_rsi14, tech_volume_ratio,
-             tech_reasons, tech_risks) = r
+             tech_reasons, tech_risks,
+             score_final, warrant_score, inst_score,
+             risk_penalty, score_reasons, score_risks) = r
             chg_pct = round((close - prev_close) / prev_close * 100, 2) if prev_close else None
             vol_ratio = None
             if avg_vol20 and avg_vol20 > 0 and volume:
@@ -120,10 +125,21 @@ def export_json(out_dir: Path | None = None) -> dict:
                 "margin_chg_lots": None if (mb is None or mp is None) else mb - mp,
                 "warrant": warrant,
                 "technical": technical,
-                "scores": None, "reasons": [], "risks": [],
+                "scores": None if score_final is None else {
+                    "final": score_final,
+                    "warrant": warrant_score,
+                    "tech": tech_score,
+                    "inst": inst_score,
+                    "risk_penalty": risk_penalty,
+                },
+                "reasons": [x["text"] for x in json.loads(score_reasons or "[]")[:4]],
+                "risks": [x["text"] for x in json.loads(score_risks or "[]")[:3]],
             })
 
-        # ── 三榜(動態,依今日行情) ──
+        # ── 榜單(動態,依今日行情) ──
+        score = sorted(
+            [s for s in all_stocks if s["scores"]],
+            key=lambda s: (s["scores"]["final"], s["turnover"] or 0), reverse=True)[:30]
         hot = sorted(all_stocks, key=lambda s: s["turnover"] or 0, reverse=True)[:HOT_N]
         surge = sorted(
             [s for s in all_stocks
@@ -145,7 +161,7 @@ def export_json(out_dir: Path | None = None) -> dict:
         )[:WARRANT_N]
 
         union: dict[str, dict] = {}
-        for s in hot + surge + strong + warrant:
+        for s in score + hot + surge + strong + warrant:
             union[s["id"]] = s
         for s in union.values():
             s["spark"] = [row[0] for row in conn.execute(text(
@@ -215,13 +231,14 @@ def export_json(out_dir: Path | None = None) -> dict:
     radar = {
         "data_date": d,
         "generated_at": now,
-        "note": "評分模組建置中;三榜為當日行情動態排序",
+        "note": "綜合分=權證/技術/法人加權−風險扣分(分點與題材未接入,權重自動重分配);≥65 為觀察門檻",
         "summary": [
             {"market": m, "turnover": t, "up": up, "down": down}
             for m, t, up, down in summary
         ],
         "sectors": sectors[:12],
         "lists": {
+            "score": [s["id"] for s in score],
             "hot": [s["id"] for s in hot],
             "surge": [s["id"] for s in surge],
             "strong": [s["id"] for s in strong],

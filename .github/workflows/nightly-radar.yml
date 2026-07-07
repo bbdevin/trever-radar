@@ -60,8 +60,13 @@ jobs:
           python -m radar aggregate-warrants --date "$(TZ=Asia/Taipei date +%Y%m%d)"
 
       - name: Compute technical indicators
+        if: github.event_name != 'push'   # 全歷史重算,push 部署不需要
         working-directory: pipeline
         run: python -m radar compute-indicators --all
+
+      - name: Compute daily scores
+        working-directory: pipeline
+        run: python -m radar compute-scores
 
       - name: Export frontend JSON
         working-directory: pipeline

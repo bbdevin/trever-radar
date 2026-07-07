@@ -255,6 +255,17 @@ main { min-height: 62vh; }
 .stats .v { font-size: 13px; color: var(--ink-2); font-weight: 600; }
 
 .score-slot { border-top: 1px dashed var(--line); padding-top: 8px; font-size: 11.5px; color: var(--ink-3); }
+.score-block { display: flex; flex-direction: column; gap: 4px; }
+.score-line { display: flex; align-items: center; gap: 10px; }
+.score-final {
+  font-family: var(--font-num); font-size: 20px; font-weight: 800;
+  color: var(--ink-2); min-width: 34px;
+}
+.score-final.pass { color: var(--warn); }
+.score-parts { font-size: 11px; color: var(--ink-3); }
+.score-risk { font-style: normal; color: var(--up); }
+.score-block .reason { font-size: 12px; color: var(--ink-2); line-height: 1.45; }
+.score-block .risk { font-size: 12px; color: var(--up); }
 .warrant-mini {
   display: grid; grid-template-columns: 1.35fr 0.55fr 0.8fr 0.55fr; gap: 6px;
   align-items: center; color: var(--ink-3);

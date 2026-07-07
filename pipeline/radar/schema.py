@@ -132,6 +132,22 @@ indicators_daily = Table(
     Index("ix_indicators_daily_date", "date"),
 )
 
+daily_scores = Table(
+    "daily_scores",
+    metadata,
+    Column("stock_id", Text, primary_key=True),
+    Column("date", Text, primary_key=True),
+    Column("warrant_score", Integer),              # 0-100,無權證資料則 NULL
+    Column("tech_score", Integer),
+    Column("inst_score", Integer),                 # 法人+融資
+    Column("theme_score", Integer),                # 題材(未實作,NULL → 權重重分配)
+    Column("risk_penalty", Integer),               # 0 ~ -40
+    Column("final", Integer, nullable=False),      # clamp(加權 + 扣分, 0, 100)
+    Column("reasons", Text),                       # JSON [{code,points,text,value}]
+    Column("risks", Text),                         # JSON [{code,points,text,value}]
+    Index("ix_daily_scores_date", "date"),
+)
+
 import_logs = Table(
     "import_logs",
     metadata,

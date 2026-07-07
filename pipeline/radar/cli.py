@@ -76,6 +76,13 @@ def cmd_compute_indicators(args):
     print(f"indicators: {info['done']} stocks, {info['rows']} rows written")
 
 
+def cmd_compute_scores(args):
+    from .compute.scores import compute_scores
+    info = compute_scores(args.date)
+    print(f"scores {info['date']}: {info['scored']} scored, "
+          f"{info['watchlist']} reach watchlist threshold (>=65)")
+
+
 def cmd_import_stock_info(_args):
     from .importer import import_stock_info
     print(f"industry filled for {import_stock_info()} stocks")
@@ -162,6 +169,10 @@ def main(argv=None):
     sub.add_parser("import-stock-info",
                    help="fill stocks.industry via FinMind (one request)"
                    ).set_defaults(fn=cmd_import_stock_info)
+
+    sc = sub.add_parser("compute-scores", help="V1 composite daily scores (docs/04)")
+    sc.add_argument("--date", default=None, help="YYYYMMDD; default latest trading day")
+    sc.set_defaults(fn=cmd_compute_scores)
 
     exp = sub.add_parser("export-json", help="write web/public/data/*.json for the frontend")
     exp.add_argument("--out", default=None, help="output dir (default web/public/data)")

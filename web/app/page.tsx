@@ -1,13 +1,14 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { IconFlame, IconPulse, IconTrend, IconZap } from "@/components/Icons";
+import { IconFlame, IconPulse, IconRadar, IconTrend, IconZap } from "@/components/Icons";
 import SectorPanel from "@/components/SectorPanel";
 import StockCard from "@/components/StockCard";
 import type { ListKey, MetaJson, RadarJson } from "@/lib/types";
 import { DATASET_LABEL, SOURCE_LABEL, fmtE8 } from "@/lib/format";
 
 const TABS: { key: ListKey; label: string; hint: string; icon: typeof IconFlame }[] = [
+  { key: "score", label: "綜合", hint: "盤後綜合分數:權證/技術/法人加權−風險扣分,≥65 為觀察門檻", icon: IconRadar },
   { key: "hot", label: "熱門", hint: "成交金額最大", icon: IconFlame },
   { key: "surge", label: "爆量", hint: "量比 = 今日量/20日均量,≥1.5 且金額 ≥1億", icon: IconZap },
   { key: "strong", label: "強勢", hint: "漲幅排序,金額 ≥1億", icon: IconTrend },
@@ -36,7 +37,7 @@ export default function RadarPage() {
   const [radar, setRadar] = useState<RadarJson | null>(null);
   const [meta, setMeta] = useState<MetaJson | null>(null);
   const [error, setError] = useState(false);
-  const [tab, setTab] = useState<ListKey>("hot");
+  const [tab, setTab] = useState<ListKey>("score");
 
   useEffect(() => {
     fetch("/data/radar.json")
