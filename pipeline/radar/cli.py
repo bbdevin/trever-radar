@@ -69,6 +69,13 @@ def cmd_compute_adjustments(args):
           f"{info['rows']} rows updated, {info['failed']} failed")
 
 
+def cmd_compute_indicators(args):
+    from .compute.indicators import compute_indicators
+    ids = args.ids.split(",") if args.ids else None
+    info = compute_indicators(ids=ids, top=args.top, all_stocks=args.all)
+    print(f"indicators: {info['done']} stocks, {info['rows']} rows written")
+
+
 def cmd_import_stock_info(_args):
     from .importer import import_stock_info
     print(f"industry filled for {import_stock_info()} stocks")
@@ -144,6 +151,13 @@ def main(argv=None):
     adj.add_argument("--start-date", default="1990-01-01", help="YYYY-MM-DD")
     adj.add_argument("--sleep", type=float, default=1.0, help="seconds between FinMind requests")
     adj.set_defaults(fn=cmd_compute_adjustments)
+
+    ind = sub.add_parser("compute-indicators",
+                         help="compute indicators_daily from adjusted daily_prices")
+    ind.add_argument("--ids", default=None, help="comma list, e.g. 2330,2317")
+    ind.add_argument("--top", type=int, default=None, help="top N by latest-day turnover")
+    ind.add_argument("--all", action="store_true", help="all stocks/ETFs with daily_prices")
+    ind.set_defaults(fn=cmd_compute_indicators)
 
     sub.add_parser("import-stock-info",
                    help="fill stocks.industry via FinMind (one request)"

@@ -7,6 +7,26 @@ export interface Candle {
   v: number; // 張
   amt: number; // 元
   af: number; // backward adjustment factor
+  ma5: number | null;
+  ma20: number | null;
+  ma60: number | null;
+}
+
+export interface ReasonItem {
+  code: string;
+  points?: number;
+  text: string;
+  value?: number | string | null;
+}
+
+export interface TechnicalSummary {
+  score: number;
+  ma20: number | null;
+  ma60: number | null;
+  rsi14: number | null;
+  volume_ratio: number | null;
+  reasons: ReasonItem[];
+  risks: ReasonItem[];
 }
 
 export interface WarrantSummary {
@@ -46,6 +66,7 @@ export interface StockJson {
   name: string;
   market: "twse" | "tpex";
   candles: Candle[];
+  technical: TechnicalSummary | null;
   warrant: WarrantSummary | null;
   warrant_history: WarrantHistoryPoint[];
   active_warrants: ActiveWarrant[];
@@ -80,6 +101,7 @@ export interface RadarStock {
   trust_net_lots: number | null;
   margin_chg_lots: number | null;
   warrant: WarrantSummary | null;
+  technical: TechnicalSummary | null;
   scores: null | Record<string, number>; // null until scoring module ships
   reasons: string[];
   risks: string[];

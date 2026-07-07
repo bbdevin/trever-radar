@@ -106,6 +106,32 @@ daily_margins = Table(
     Index("ix_daily_margins_date", "date"),
 )
 
+indicators_daily = Table(
+    "indicators_daily",
+    metadata,
+    Column("stock_id", Text, primary_key=True),
+    Column("date", Text, primary_key=True),
+    Column("ma5", Float),
+    Column("ma10", Float),
+    Column("ma20", Float),
+    Column("ma60", Float),
+    Column("rsi14", Float),
+    Column("k9", Float),
+    Column("d9", Float),
+    Column("macd", Float),
+    Column("macd_signal", Float),
+    Column("macd_hist", Float),
+    Column("high20", Float),
+    Column("box_high60", Float),
+    Column("box_low60", Float),
+    Column("adv20", Float),
+    Column("volume_ratio", Float),
+    Column("tech_score", Integer),
+    Column("reasons", Text),
+    Column("risks", Text),
+    Index("ix_indicators_daily_date", "date"),
+)
+
 import_logs = Table(
     "import_logs",
     metadata,

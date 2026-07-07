@@ -46,13 +46,16 @@ def export_json(out_dir: Path | None = None) -> dict:
                    a.avg_vol20,
                    w.call_turnover, w.call_volume, w.call_count,
                    w.put_turnover, w.put_volume, w.put_count,
-                   wa.avg_call_turnover
+                   wa.avg_call_turnover,
+                   ti.tech_score, ti.ma20, ti.ma60, ti.rsi14, ti.volume_ratio AS tech_volume_ratio,
+                   ti.reasons AS tech_reasons, ti.risks AS tech_risks
             FROM daily_prices p
             JOIN stocks s ON s.id = p.stock_id AND s.type = 'stock'
             LEFT JOIN daily_prices pp ON pp.stock_id = p.stock_id AND pp.date = :prev
             LEFT JOIN daily_institutional i ON i.stock_id = p.stock_id AND i.date = :d
             LEFT JOIN daily_margins m ON m.stock_id = p.stock_id AND m.date = :d
             LEFT JOIN warrant_stock_daily w ON w.stock_id = p.stock_id AND w.date = :d
+            LEFT JOIN indicators_daily ti ON ti.stock_id = p.stock_id AND ti.date = :d
             LEFT JOIN (
                 SELECT stock_id, AVG(volume) AS avg_vol20 FROM daily_prices
                 WHERE date >= :d20 AND date < :d GROUP BY stock_id
@@ -71,7 +74,9 @@ def export_json(out_dir: Path | None = None) -> dict:
             (sid, name, market, industry, close, turnover, volume, tx,
              prev_close, f_net, t_net, mb, mp, avg_vol20,
              call_turnover, call_volume, call_count,
-             put_turnover, put_volume, put_count, avg_call_turnover) = r
+             put_turnover, put_volume, put_count, avg_call_turnover,
+             tech_score, tech_ma20, tech_ma60, tech_rsi14, tech_volume_ratio,
+             tech_reasons, tech_risks) = r
             chg_pct = round((close - prev_close) / prev_close * 100, 2) if prev_close else None
             vol_ratio = None
             if avg_vol20 and avg_vol20 > 0 and volume:
@@ -94,6 +99,17 @@ def export_json(out_dir: Path | None = None) -> dict:
                     "call_turnover_ratio": ratio,
                     "put_call_ratio": round(put_turnover / call_turnover, 2) if call_turnover > 0 else None,
                 }
+            technical = None
+            if tech_score is not None:
+                technical = {
+                    "score": tech_score,
+                    "ma20": tech_ma20,
+                    "ma60": tech_ma60,
+                    "rsi14": tech_rsi14,
+                    "volume_ratio": tech_volume_ratio,
+                    "reasons": json.loads(tech_reasons or "[]"),
+                    "risks": json.loads(tech_risks or "[]"),
+                }
             all_stocks.append({
                 "id": sid, "name": name, "market": market, "industry": industry,
                 "close": close, "chg_pct": chg_pct,
@@ -103,6 +119,7 @@ def export_json(out_dir: Path | None = None) -> dict:
                 "trust_net_lots": None if t_net is None else t_net // 1000,
                 "margin_chg_lots": None if (mb is None or mp is None) else mb - mp,
                 "warrant": warrant,
+                "technical": technical,
                 "scores": None, "reasons": [], "risks": [],
             })
 
@@ -228,8 +245,11 @@ def export_json(out_dir: Path | None = None) -> dict:
     with engine.connect() as conn:
         for s in union.values():
             candles = conn.execute(text(
-                "SELECT date, open, high, low, close, volume, turnover, adj_factor FROM daily_prices "
-                "WHERE stock_id = :s AND close IS NOT NULL ORDER BY date"), {"s": s["id"]}).fetchall()
+                "SELECT p.date, p.open, p.high, p.low, p.close, p.volume, p.turnover, p.adj_factor, "
+                "       i.ma5, i.ma20, i.ma60 "
+                "FROM daily_prices p "
+                "LEFT JOIN indicators_daily i ON i.stock_id = p.stock_id AND i.date = p.date "
+                "WHERE p.stock_id = :s AND p.close IS NOT NULL ORDER BY p.date"), {"s": s["id"]}).fetchall()
             warrant_history = conn.execute(text("""
                 SELECT date, call_turnover, put_turnover, call_count, put_count
                 FROM warrant_stock_daily
@@ -252,9 +272,11 @@ def export_json(out_dir: Path | None = None) -> dict:
                 "id": s["id"], "name": s["name"], "market": s["market"],
                 "candles": [
                     {"t": c[0], "o": c[1], "h": c[2], "l": c[3], "c": c[4],
-                     "v": (c[5] or 0) // 1000, "amt": c[6], "af": c[7] or 1.0}
+                     "v": (c[5] or 0) // 1000, "amt": c[6], "af": c[7] or 1.0,
+                     "ma5": c[8], "ma20": c[9], "ma60": c[10]}
                     for c in candles
                 ],
+                "technical": s["technical"],
                 "warrant": s["warrant"],
                 "warrant_history": [
                     {"t": r[0], "call_turnover": r[1] or 0, "put_turnover": r[2] or 0,

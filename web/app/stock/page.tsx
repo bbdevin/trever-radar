@@ -118,12 +118,41 @@ function StockView() {
       </div>
       {view === "chart" ? <KChart candles={candles} /> : <WarrantPanel data={data} />}
       {view === "chart" && (
-        <div className="notice" style={{ marginTop: 14 }}>
-          <span className="tag" style={{ color: "var(--ink-3)" }}>預告</span>
-          <span>均線、布林、訊號標記與分點足跡將於評分模組與分點資料接上後疊加於此圖。</span>
-        </div>
+        <TechnicalPanel data={data} />
       )}
     </>
+  );
+}
+
+function TechnicalPanel({ data }: { data: StockJson }) {
+  const t = data.technical;
+  if (!t) {
+    return (
+      <div className="notice" style={{ marginTop: 14 }}>
+        <span className="tag" style={{ color: "var(--ink-3)" }}>技術</span>
+        <span>尚未產出技術指標;請先跑 compute-indicators。</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="tech-panel">
+      <div className="tech-score">
+        <span className="k">技術分</span>
+        <span className="v">{t.score}</span>
+      </div>
+      <div className="tech-stats">
+        <span>MA20 <b>{t.ma20 == null ? "—" : t.ma20.toFixed(2)}</b></span>
+        <span>MA60 <b>{t.ma60 == null ? "—" : t.ma60.toFixed(2)}</b></span>
+        <span>RSI14 <b>{t.rsi14 == null ? "—" : t.rsi14.toFixed(1)}</b></span>
+        <span>量比 <b>{fmtX(t.volume_ratio)}</b></span>
+      </div>
+      <div className="tech-reasons">
+        {t.reasons.length > 0 ? t.reasons.map((r) => (
+          <span key={r.code}>{r.text}</span>
+        )) : <span>未觸發技術加分條件</span>}
+      </div>
+    </div>
   );
 }
 

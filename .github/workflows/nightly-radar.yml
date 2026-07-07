@@ -59,6 +59,10 @@ jobs:
           python -m radar import-warrant-master
           python -m radar aggregate-warrants --date "$(TZ=Asia/Taipei date +%Y%m%d)"
 
+      - name: Compute technical indicators
+        working-directory: pipeline
+        run: python -m radar compute-indicators --all
+
       - name: Export frontend JSON
         working-directory: pipeline
         run: python -m radar export-json

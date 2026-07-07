@@ -24,6 +24,7 @@
 - [x] `aggregate-warrants`:warrant_stock_daily 彙總(認購/認售金額量檔數,排除牛熊證;已回填 240 日,每晚增量)
 - [x] `export-json`:radar/meta/個股 K 線 JSON + 權證異動榜 + 個股權證 60 日趨勢/熱門權證明細
 - [x] `compute-adjustments`:用 FinMind `TaiwanStockDividendResult` 免費資料計算 `daily_prices.adj_factor`(除權息前後價比累乘;已用 2330 實測)
+- [x] `compute-indicators`:以還原價計算 MA5/10/20/60、RSI14、KD、MACD、20日新高、60日箱型、ADV20、volume_ratio、tech_score、reasons/risks
 - [x] upsert 只更新帶入欄位(防止日常匯入洗掉補充欄位)
 - [x] SQLite WAL + busy timeout(回補與匯出可並行)
 
@@ -31,6 +32,7 @@
 - [x] 今日雷達:市場總覽卡、**族群資金流面板**(產業別金額佔比 / vs20日均 / 廣度 / 龍頭)、**熱門/爆量/強勢/權證四榜**
 - [x] 股票卡:權證認購成交金額、20日倍數、購售比、成交檔數摘要
 - [x] 個股頁:上市以來 K 線 + 成交量(lightweight-charts)、區間切換 1月/3月/1年/5年/全部、**權證 Tab**(60 日認購/認售金額趨勢 + 當日熱門權證明細)
+- [x] 個股頁 K 線疊加 MA5/20/60,下方顯示技術分、MA20/60、RSI14、量比與觸發理由
 - [x] 現代 fintech UI:深色、玻璃頂欄、手機底部導航、SVG 圖示、Manrope 數字字體、骨架屏、RWD 375–1440
 - [x] 台股慣例紅漲綠跌、免責聲明常駐
 
@@ -41,13 +43,12 @@
 
 ## 未完成(依優先序)
 
-1. **技術指標**(MA/RSI/KD/MACD/20日高/箱型)+ golden-file 測試;價格請用 `close * adj_factor`
-2. **評分模組**(04 規格;V1-Free 權重:權證30/技術30/法人融資25/題材15)→ 觀察清單 + 理由文字
-3. 題材標籤(人工維護表)+ 題材熱度
-4. 探索頁、自選股、訊號歷史回填
-5. `deep-backfill --all` 全市場深歷史 + `compute-adjustments --all` 分批補全市場還原因子(使用者本機或雲端跑一晚;注意 FinMind 600 req/hr 額度)
-6. 分點功能(等付費 FinMind 贊助決定,規格已備於 04/09)
-7. V2 盤中(Fugle + 本機 worker)
+1. **評分模組**(04 規格;V1-Free 權重:權證30/技術30/法人融資25/題材15)→ 觀察清單 + 理由文字
+2. 題材標籤(人工維護表)+ 題材熱度
+3. 探索頁、自選股、訊號歷史回填
+4. `deep-backfill --all` 全市場深歷史 + `compute-adjustments --all` 分批補全市場還原因子(使用者本機或雲端跑一晚;注意 FinMind 600 req/hr 額度)
+5. 分點功能(等付費 FinMind 贊助決定,規格已備於 04/09)
+6. V2 盤中(Fugle + 本機 worker)
 
 ## 已知債務 / 注意
 
@@ -55,6 +56,7 @@
 - 權證榜目前是「認購成交金額 / 20 日均值」的異動排序,尚不是 04 定義的完整 0–100 權證分;完整分數與 reasons/risks 等評分模組一起做
 - 權證 warrant_daily 約 1,000 萬列/年增速;彙總表已建,依 05 規劃明細僅留 2 年(清理排程未寫)
 - 還原價資料層已完成,但尚未接 nightly 全市場自動跑;目前用 `compute-adjustments --ids/--top/--all` 手動或分批補。`TaiwanStockPriceAdj` 是付費資料,本案改用免費 `TaiwanStockDividendResult` 自算
+- 技術指標已接 nightly `compute-indicators --all`;若某些股票尚未補還原因子,會先以 `adj_factor=1` 計算,之後補因子再重算即可
 - 已下市權證不在主檔,kind 靠代號尾碼推斷可能誤標(認售尾碼不只 P,還有 T/Q/S 等)→ 歷史認購/認售比略失真;認售佔比極低,影響小
 - Actions 有 Node 20 → 24 的 deprecation 警告(actions 版本升級,無急迫)
 - 本機 dev 與雲端 DB 已分岔:雲端為正式真相,本機僅開發;push 部署會從 Actions cache/release DB 產出線上 JSON
@@ -64,3 +66,4 @@
 - 2026-07-07 `842b4e0 feat: add warrant radar UI`:首頁新增權證榜,股票卡/個股頁接上權證摘要、趨勢與熱門權證明細。
 - 2026-07-07 `ed363b1 ci: deploy site on main push`:正式分支 push 會觸發 Cloudflare Pages 部署;已確認 GitHub Actions `nightly-radar` push run 成功。
 - 2026-07-07 還原價資料層:新增 `daily_prices.adj_factor`、SQLite additive migration、`compute-adjustments` CLI、單元測試;2330 實測 6 筆除息事件/8031 日價列更新成功。
+- 2026-07-07 技術指標資料層/UI:新增 `indicators_daily`、`compute-indicators`、技術分 reasons/risks、MA5/20/60 K 線疊線與個股頁技術摘要;本機 Top80 實算 18.5 萬列成功。

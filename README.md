@@ -30,6 +30,8 @@ py -m venv .venv
 .venv\Scripts\python -m radar import-stock-info         # 產業別
 .venv\Scripts\python -m radar compute-adjustments --ids 2330
 .venv\Scripts\python -m radar compute-adjustments --top 60 --sleep 6.2
+.venv\Scripts\python -m radar compute-indicators --ids 2330
+.venv\Scripts\python -m radar compute-indicators --all
 .venv\Scripts\python -m radar export-json               # 產出前端 JSON(含四榜/個股K線/權證資料)
 .venv\Scripts\python -m radar status                    # 匯入紀錄 + 各表筆數
 ```

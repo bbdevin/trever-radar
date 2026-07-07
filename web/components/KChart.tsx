@@ -13,7 +13,7 @@ export default function KChart({ candles }: { candles: Candle[] }) {
     let disposed = false;
 
     import("lightweight-charts").then(
-      ({ createChart, CandlestickSeries, HistogramSeries, ColorType }) => {
+      ({ createChart, CandlestickSeries, HistogramSeries, LineSeries, ColorType }) => {
         if (disposed || !ref.current) return;
         chart = createChart(ref.current, {
           autoSize: true,
@@ -41,6 +41,12 @@ export default function KChart({ candles }: { candles: Candle[] }) {
         candleSeries.setData(
           candles.map((c) => ({ time: c.t, open: c.o, high: c.h, low: c.l, close: c.c })),
         );
+        const ma5 = chart.addSeries(LineSeries, { color: "#fab219", lineWidth: 1, priceLineVisible: false });
+        ma5.setData(candles.filter((c) => c.ma5 != null).map((c) => ({ time: c.t, value: c.ma5! })));
+        const ma20 = chart.addSeries(LineSeries, { color: "#35b5c9", lineWidth: 1, priceLineVisible: false });
+        ma20.setData(candles.filter((c) => c.ma20 != null).map((c) => ({ time: c.t, value: c.ma20! })));
+        const ma60 = chart.addSeries(LineSeries, { color: "#898781", lineWidth: 1, priceLineVisible: false });
+        ma60.setData(candles.filter((c) => c.ma60 != null).map((c) => ({ time: c.t, value: c.ma60! })));
         const volSeries = chart.addSeries(HistogramSeries, {
           priceScaleId: "vol",
           priceFormat: { type: "volume" },
