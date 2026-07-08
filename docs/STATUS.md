@@ -8,7 +8,7 @@
 |---|---|
 | 正式網址 | https://radar.techtrever.com(= https://trever-radar.pages.dev) |
 | 公開狀態 | 公開網址、noindex + robots.txt;Access 未開(使用者決定,要鎖照 DEPLOY.md §4) |
-| 自動排程 | GitHub Actions 分批抓資料 (14:30 抓價/權證、17:30 抓法人/分點/算分、21:30 抓融資) → 匯出 JSON → 建站 → 部署; `main` push 會直接用現有快取 DB 重建站 |
+| 自動排程 | GitHub Actions 已拆解為三條管線：15:30 基本行情 (`daily-market`)、16:30 權證 (`daily-warrants`)、18:30 分點與結算部署 (`daily-branches`)，各帶有 timeout 防呆與獨立 DB cache 傳遞 |
 | Repo | github.com/bbdevin/trever-radar(私有) |
 | DB | SQLite,Actions cache 續存 + release `db-backup` 週備份(週五/手動觸發時) |
 

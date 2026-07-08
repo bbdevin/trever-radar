@@ -1,14 +1,23 @@
 # 08 排程與資料流程
 
-## 0. 現行 V1-Free 工作流(2026-07-07)
+## 0. 現行 V1-Free 工作流 (GitHub Actions)
 
-實作檔:`.github/workflows/nightly-radar.yml`。
+為了解決單一 Pipeline 執行過久、容易卡死的問題，我們將每日任務拆解為三個獨立的 GitHub Actions workflows，各自負責不同的資料範疇並設定了 timeout 保護機制：
 
-- `schedule`:每交易日 17:30 / 21:00 台北時間,還原 Actions cache/release DB → 匯入今日資料 → 更新權證主檔與當日彙總 → `compute-indicators --all` → `compute-scores` → `compute-performance` → `export-json` → Next build → Cloudflare Pages deploy → 保存 DB cache,週五/手動時備份 release。
-- `workflow_dispatch`:同 schedule,可手動重跑並觸發 DB 備份。
-- `push` 到 `main`:還原 Actions cache/release DB → **跳過資料匯入** → `compute-scores` → `compute-performance` → `export-json` → Next build → Cloudflare Pages deploy。用途是程式/UI 修正立刻上正式版,不在非收盤時間誤抓資料。
-- 本機開發仍走同一 CLI:`cd pipeline; .venv\Scripts\python -m radar export-json`,前端讀 `web/public/data/*.json`。
-- 還原因子目前用 `compute-adjustments --ids/--top/--all` 手動/分批補,尚未接 nightly 全市場自動排程;原因是 FinMind 免費額度約 600 req/hr,每檔一請求。技術指標本身是本地 DB 計算,已接 nightly/push。
+1. **`daily-market.yml` (大盤與基本行情)**
+   - `schedule`: 每交易日 15:30 台北時間
+   - 負責抓取當日報價 (`quotes`)、三大法人 (`insti`)、計算技術指標 (`compute-indicators`)、每週一更新題材 (`import-themes`)。
+2. **`daily-warrants.yml` (權證資料)**
+   - `schedule`: 每交易日 16:30 台北時間
+   - 負責更新權證主檔 (`import-warrant-master`) 與當日權證彙總 (`aggregate-warrants`)。
+3. **`daily-branches.yml` (分點與評分結算)**
+   - `schedule`: 每交易日 18:30 台北時間
+   - 負責抓取融資券 (`margin`)、預載與更新分點名單 (`seed-branches`, `import-branch-trades`)、計算分點勝率 (`compute-branch-stats`)。
+   - 接著進行全局評分結算 (`compute-scores`, `compute-performance`)、匯出前端 JSON (`export-json`)。
+   - 最後執行網站 Build 並部署至 Cloudflare Pages。
+
+- **資料庫快取傳遞**：每個 Workflow 開始時會從 release (`db-backup`) 下載最新的 `radar.db`，並在結束時壓縮覆蓋回 release，實現跨 Workflow 的資料庫狀態傳遞。
+- 本機開發仍走同一 CLI:`cd pipeline; .venv\Scripts\python -m radar export-json`，前端讀 `web/public/data/*.json`。
 
 ## 1. 盤後管線(V1,交易日執行)
 

@@ -1,0 +1,82 @@
+name: daily-market
+
+on:
+  schedule:
+    - cron: "30 7 * * 1-5"   # 15:30 Taipei: Quotes, Insti
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: radar-db
+  cancel-in-progress: false
+
+jobs:
+  market:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      PYTHONUNBUFFERED: "1"
+      RADAR_FINMIND_TOKEN: ${{ secrets.RADAR_FINMIND_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Restore SQLite cache
+        uses: actions/cache/restore@v4
+        with:
+          path: data/radar.db
+          key: radar-db-${{ github.run_id }}
+          restore-keys: radar-db-
+
+      - name: Seed DB from release backup
+        if: hashFiles('data/radar.db') == ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download db-backup --pattern radar.db.gz --dir data || true
+          if [ -f data/radar.db.gz ]; then gunzip data/radar.db.gz; fi
+
+      - name: Install dependencies
+        run: pip install -r pipeline/requirements.txt
+
+      - name: Import today's data (Quotes)
+        working-directory: pipeline
+        run: python -m radar import-daily --datasets quotes
+
+      - name: Import today's data (Insti)
+        working-directory: pipeline
+        run: python -m radar import-daily --datasets insti
+
+      - name: Compute technical indicators
+        working-directory: pipeline
+        run: python -m radar compute-indicators --all
+
+      - name: Weekly concept-theme refresh (Mon)
+        working-directory: pipeline
+        run: |
+          if [ "$(TZ=Asia/Taipei date +%u)" = "1" ]; then
+            python -m radar import-themes
+          fi
+
+      - name: Save SQLite cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: data/radar.db
+          key: radar-db-${{ github.run_id }}
+
+      - name: Daily DB backup to release
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ -f data/radar.db ]; then
+            gzip -kf data/radar.db
+            gh release create db-backup --notes "rolling SQLite backup" 2>/dev/null || true
+            gh release upload db-backup data/radar.db.gz --clobber
+          fi

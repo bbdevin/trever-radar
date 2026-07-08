@@ -1,0 +1,53 @@
+name: daily-warrants
+
+on:
+  schedule:
+    - cron: "30 8 * * 1-5"   # 16:30 Taipei: Warrants
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: radar-db
+  cancel-in-progress: false
+
+jobs:
+  warrants:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PYTHONUNBUFFERED: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Seed DB from release backup
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download db-backup --pattern radar.db.gz --dir data || true
+          if [ -f data/radar.db.gz ]; then gunzip data/radar.db.gz; fi
+
+      - name: Install dependencies
+        run: pip install -r pipeline/requirements.txt
+
+      - name: Warrant master + daily aggregate
+        working-directory: pipeline
+        run: |
+          python -m radar import-warrant-master
+          python -m radar aggregate-warrants --date "$(TZ=Asia/Taipei date +%Y%m%d)"
+
+      - name: Daily DB backup to release
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ -f data/radar.db ]; then
+            gzip -kf data/radar.db
+            gh release create db-backup --notes "rolling SQLite backup" 2>/dev/null || true
+            gh release upload db-backup data/radar.db.gz --clobber
+          fi
