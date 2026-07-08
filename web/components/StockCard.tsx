@@ -12,12 +12,23 @@ export default function StockCard({ s }: { s: RadarStock }) {
             {s.id} · {MARKET_LABEL[s.market] ?? s.market}
             {s.industry ? ` · ${s.industry}` : ""}
           </span>
+          <div className="themes">
+            {s.themes?.slice(0, 3).map((t) => (
+              <span key={t} className="theme-badge">{t}</span>
+            ))}
+          </div>
         </div>
         <div className="price">
           <div className={`close ${chgClass(s.chg_pct)}`}>{s.close.toLocaleString("zh-TW")}</div>
           <span className={`chg-badge ${chgClass(s.chg_pct)}`}>{fmtPct(s.chg_pct)}</span>
         </div>
       </div>
+      {s.description && (
+        <div className="desc-block">
+          {s.description}
+        </div>
+      )}
+
       <div className="sparkrow">
         <Sparkline data={s.spark} id={s.id} />
         <span className="k">近{Math.min(s.spark?.length ?? 0, 30)}日</span>

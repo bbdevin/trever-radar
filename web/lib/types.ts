@@ -121,6 +121,8 @@ export interface RadarStock {
   name: string;
   market: "twse" | "tpex";
   industry: string | null;
+  description?: string | null;
+  themes?: string[];
   close: number;
   chg_pct: number | null;
   volume_ratio: number | null; // 今日量 / 20 日均量

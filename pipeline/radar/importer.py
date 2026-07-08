@@ -418,3 +418,45 @@ def import_daily(date: str, datasets: list[str] | None = None) -> list[dict]:
         results.append(_run("tpex", "margin", date,
                             lambda c: _import_margin(c, tpex.fetch_margin(date), date)))
     return results
+
+
+def import_descriptions(limit: int | None = None) -> dict:
+    """補充爬取各股的基本資料(營收比重)"""
+    import time
+    from sqlalchemy import select, update
+    from . import schema, config
+    from .providers import fubon
+
+    with get_engine().begin() as conn:
+        q = select(schema.stocks.c.id).where(
+            schema.stocks.c.is_active == 1,
+            schema.stocks.c.type.in_(["stock", "etf"]),
+            schema.stocks.c.description.is_(None)
+        )
+        if limit:
+            q = q.limit(limit)
+        missing_ids = [r[0] for r in conn.execute(q)]
+        
+    if not missing_ids:
+        print("No missing descriptions to update.")
+        return {"done": 0, "failed": 0}
+
+    print(f"Fetching descriptions for {len(missing_ids)} stocks...")
+    done = 0
+    failed = 0
+    with get_engine().begin() as conn:
+        for i, sid in enumerate(missing_ids):
+            desc = fubon.fetch_company_profile(sid)
+            if desc:
+                conn.execute(
+                    update(schema.stocks).where(schema.stocks.c.id == sid).values(description=desc)
+                )
+                done += 1
+            else:
+                failed += 1
+            if (i + 1) % 10 == 0:
+                print(f"Descriptions: {i+1}/{len(missing_ids)} (done: {done}, failed: {failed})", flush=True)
+            time.sleep(1) # Be polite
+
+    print(f"Descriptions: {done} updated, {failed} failed.")
+    return {"done": done, "failed": failed}

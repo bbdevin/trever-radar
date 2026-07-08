@@ -23,6 +23,7 @@ stocks = Table(
     Column("market", Text, nullable=False),        # twse / tpex
     Column("type", Text, nullable=False),          # stock / etf / etn / other
     Column("industry", Text),
+    Column("description", Text),                   # 公司主要業務說明/營收比重
     Column("is_active", Integer, nullable=False, default=1),
 )
 

@@ -5,6 +5,7 @@ import type { SectorFlow } from "@/lib/types";
 import { chgClass, fmtE8, fmtPct } from "@/lib/format";
 
 type Mode = "industry" | "theme";
+type SortBy = "volume" | "price";
 
 /** 相對 20 日常態的偏離 %(+96 = 資金量能 1.96×) */
 function dev(g: SectorFlow): number | null {
@@ -17,6 +18,7 @@ const CAP = 150; // 條長上限 ±150%
     右紅=資金湧入、左綠=退潮;條長=偏離幅度、列序=強度。 */
 export default function MoneyFlow({ sectors, themes }: { sectors: SectorFlow[]; themes?: SectorFlow[] }) {
   const [mode, setMode] = useState<Mode>("industry");
+  const [sortBy, setSortBy] = useState<SortBy>("volume");
   const [selected, setSelected] = useState<string | null>(null);
   const hasThemes = !!themes?.length;
 
@@ -24,13 +26,24 @@ export default function MoneyFlow({ sectors, themes }: { sectors: SectorFlow[]; 
     const src = (mode === "theme" && hasThemes ? themes! : sectors).filter(
       (g) => g.vs20 != null && g.turnover >= (mode === "theme" ? 1e9 : 2e9),
     );
-    const ins = src.filter((g) => (g.vs20 as number) >= 1.15)
-      .sort((a, b) => (b.vs20 as number) - (a.vs20 as number)).slice(0, 7);
-    const outs = src.filter((g) => (g.vs20 as number) <= 0.85)
-      .sort((a, b) => (a.vs20 as number) - (b.vs20 as number)).slice(0, 7);
-    const all = [...ins, ...outs].map((g) => Math.min(Math.abs(dev(g) ?? 0), CAP));
+    let ins = src;
+    let outs = src;
+    
+    if (sortBy === "volume") {
+      ins = src.filter((g) => (g.vs20 as number) >= 1.15)
+        .sort((a, b) => (b.vs20 as number) - (a.vs20 as number)).slice(0, 7);
+      outs = src.filter((g) => (g.vs20 as number) <= 0.85)
+        .sort((a, b) => (a.vs20 as number) - (b.vs20 as number)).slice(0, 7);
+    } else {
+      ins = src.filter((g) => g.avg_chg != null && g.avg_chg >= 1.5)
+        .sort((a, b) => b.avg_chg! - a.avg_chg!).slice(0, 7);
+      outs = src.filter((g) => g.avg_chg != null && g.avg_chg <= -1.5)
+        .sort((a, b) => a.avg_chg! - b.avg_chg!).slice(0, 7);
+    }
+    
+    const all = [...ins, ...outs].map((g) => Math.min(Math.abs(sortBy === "volume" ? (dev(g) ?? 0) : ((g.avg_chg ?? 0) * 10)), CAP));
     return { inflow: ins, outflow: outs, maxAbs: Math.max(...all, 30) };
-  }, [mode, sectors, themes, hasThemes]);
+  }, [mode, sortBy, sectors, themes, hasThemes]);
 
   const sel =
     [...inflow, ...outflow].find((g) => g.name === selected) ??
@@ -38,7 +51,7 @@ export default function MoneyFlow({ sectors, themes }: { sectors: SectorFlow[]; 
     null;
 
   const Row = ({ g, side }: { g: SectorFlow; side: "in" | "out" }) => {
-    const d = Math.min(Math.abs(dev(g) ?? 0), CAP);
+    const d = sortBy === "volume" ? Math.min(Math.abs(dev(g) ?? 0), CAP) : Math.min(Math.abs((g.avg_chg ?? 0) * 10), CAP);
     const width = (d / maxAbs) * 100;
     return (
       <button
@@ -79,8 +92,21 @@ export default function MoneyFlow({ sectors, themes }: { sectors: SectorFlow[]; 
             題材
           </button>
         </div>
-        <span className="flow-hint">基準=近20日平均成交金額;+80% = 今日資金比平時多八成、−20% = 比平時少兩成</span>
+        <div className="seg small" style={{ marginLeft: "auto" }}>
+          <button className={sortBy === "volume" ? "tab active" : "tab"} onClick={() => { setSortBy("volume"); setSelected(null); }}>
+            資金量能
+          </button>
+          <button className={sortBy === "price" ? "tab active" : "tab"} onClick={() => { setSortBy("price"); setSelected(null); }}>
+            漲跌幅
+          </button>
+        </div>
       </div>
+      <span className="flow-hint">
+        {sortBy === "volume" 
+          ? "基準=近20日平均成交金額;+80% = 今日資金比平時多八成、−20% = 比平時少兩成"
+          : "依據該族群個股平均漲跌幅排序，找出族群性大漲或大跌板塊"
+        }
+      </span>
 
       {inflow.length === 0 && outflow.length === 0 ? (
         <div className="state" style={{ padding: "20px 0" }}>
@@ -89,14 +115,14 @@ export default function MoneyFlow({ sectors, themes }: { sectors: SectorFlow[]; 
       ) : (
         <div className="flow-cols">
           <div className="flow-col col-out">
-            <div className="flow-col-title out">流出 ↓ 比平時冷清</div>
+            <div className="flow-col-title out">{sortBy === "volume" ? "流出 ↓ 比平時冷清" : "弱勢 ↓ 族群性下跌"}</div>
             {outflow.length ? outflow.map((g) => <Row key={g.name} g={g} side="out" />)
-              : <div className="fr-none">無明顯退潮</div>}
+              : <div className="fr-none">無明顯{sortBy === "volume" ? "退潮" : "弱勢"}</div>}
           </div>
           <div className="flow-col">
-            <div className="flow-col-title in">流入 ↑ 比平時熱絡</div>
+            <div className="flow-col-title in">{sortBy === "volume" ? "流入 ↑ 比平時熱絡" : "強勢 ↑ 族群性上漲"}</div>
             {inflow.length ? inflow.map((g) => <Row key={g.name} g={g} side="in" />)
-              : <div className="fr-none">無明顯湧入</div>}
+              : <div className="fr-none">無明顯{sortBy === "volume" ? "湧入" : "強勢"}</div>}
           </div>
         </div>
       )}

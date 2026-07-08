@@ -144,6 +144,12 @@ def cmd_status(_args):
             print(f"{name:<22} {n}")
 
 
+def cmd_import_descriptions(args):
+    from .importer import import_descriptions
+    info = import_descriptions(args.limit)
+    print(f"descriptions updated: {info['done']}, failed: {info['failed']}")
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(prog="radar", description="Trever Radar data pipeline")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -202,6 +208,10 @@ def main(argv=None):
     th = sub.add_parser("import-themes", help="concept-stock groups (fubon public page)")
     th.add_argument("--limit", type=int, default=None, help="only first N groups (testing)")
     th.set_defaults(fn=cmd_import_themes)
+
+    desc = sub.add_parser("import-descriptions", help="Pull company profiles from Fubon")
+    desc.add_argument("--limit", type=int, default=None)
+    desc.set_defaults(fn=cmd_import_descriptions)
 
     sub.add_parser("seed-branches",
                    help="seed manual tracked-branch list (docs/13)"

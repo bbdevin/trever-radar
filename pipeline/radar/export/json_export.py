@@ -53,7 +53,7 @@ def export_json(out_dir: Path | None = None) -> dict:
         }
 
         rows = conn.execute(text("""
-            SELECT p.stock_id, s.name, s.market, s.industry, p.close, p.turnover,
+            SELECT p.stock_id, s.name, s.market, s.industry, s.description, p.close, p.turnover,
                    p.volume, p.transactions, pp.close AS prev_close,
                    i.foreign_net, i.trust_net, m.margin_balance, m.margin_prev,
                    a.avg_vol20,
@@ -88,7 +88,7 @@ def export_json(out_dir: Path | None = None) -> dict:
 
         all_stocks = []
         for r in rows:
-            (sid, name, market, industry, close, turnover, volume, tx,
+            (sid, name, market, industry, description, close, turnover, volume, tx,
              prev_close, f_net, t_net, mb, mp, avg_vol20,
              call_turnover, call_volume, call_count,
              put_turnover, put_volume, put_count, avg_call_turnover,
@@ -131,6 +131,7 @@ def export_json(out_dir: Path | None = None) -> dict:
                 }
             all_stocks.append({
                 "id": sid, "name": name, "market": market, "industry": industry,
+                "description": description,
                 "close": close, "chg_pct": chg_pct,
                 "turnover": turnover, "volume_lots": (volume or 0) // 1000,
                 "volume_ratio": vol_ratio, "transactions": tx,
@@ -247,6 +248,10 @@ def export_json(out_dir: Path | None = None) -> dict:
 
         # ── 題材/概念股資金流(富邦概念股分類;成分重疊,share 僅供相對比較) ──
         by_id = {s["id"]: s for s in all_stocks}
+        # Initialize themes array for all stocks
+        for s in all_stocks:
+            s["themes"] = []
+            
         theme_groups: dict[str, dict] = {}
         for name, sid in conn.execute(text(
                 "SELECT t.name, st.stock_id FROM stock_themes st "
@@ -254,6 +259,7 @@ def export_json(out_dir: Path | None = None) -> dict:
             s = by_id.get(sid)
             if s is None:
                 continue
+            s["themes"].append(name) # Attach theme name to the stock
             g = theme_groups.setdefault(name, {"turnover": 0, "up": 0, "down": 0,
                                                "chgs": [], "stocks": []})
             g["turnover"] += s["turnover"] or 0
@@ -327,10 +333,10 @@ def export_json(out_dir: Path | None = None) -> dict:
     (out / "radar.json").write_text(json.dumps(radar, ensure_ascii=False), encoding="utf-8")
     (out / "meta.json").write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
 
-    # 全市場搜尋索引(id/名稱/市場/產業;compact 陣列省體積)
+    # 全市場搜尋索引(id/名稱/市場/產業/描述;compact 陣列省體積)
     with engine.connect() as conn:
-        idx = [[r[0], r[1], r[2], r[3] or ""] for r in conn.execute(text(
-            "SELECT id, name, market, industry FROM stocks "
+        idx = [[r[0], r[1], r[2], r[3] or "", r[4] or ""] for r in conn.execute(text(
+            "SELECT id, name, market, industry, description FROM stocks "
             "WHERE type IN ('stock','etf') AND is_active = 1 ORDER BY id"))]
     (out / "stocks_index.json").write_text(
         json.dumps(idx, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")

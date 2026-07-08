@@ -70,3 +70,26 @@ def fetch_branch_trades(stock_id: str, date: str) -> list[dict]:
             "source": "fubon",
         })
     return rows
+
+
+def fetch_company_profile(stock_id: str) -> str | None:
+    """抓取 MoneyDJ 的公司基本資料(營收比重)"""
+    import html
+    url = f"https://fubon-ebrokerdj.fbs.com.tw/z/zc/zca/zca_{stock_id}.djhtm"
+    try:
+        raw = get_text(url)
+    except Exception:
+        return None
+    
+    text = re.sub(r'<[^>]+>', ' ', raw)
+    text = html.unescape(text)
+    text = re.sub(r'\s+', ' ', text)
+    
+    m = re.search(r'營收比重(.*?)(?:\(| \d{4}年| $)', text)
+    if m:
+        s = m.group(1).strip()
+        s = re.sub(r'\s*\(\d{4}.*$', '', s)
+        s = re.sub(r'\s*$', '', s)
+        if s and s not in ("N/A", "--", "---"):
+            return s
+    return None
