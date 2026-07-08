@@ -35,6 +35,23 @@ def export_json(out_dir: Path | None = None) -> dict:
         prev = dates[1] if len(dates) > 1 else None
         base20 = dates[1:21]                       # 前 20 個交易日(不含今日)
 
+        # 各資料集「有效資料日」:公布時間不同,晚到的先用最近一日並在前端標示
+        def latest(table: str) -> str | None:
+            return conn.execute(text(
+                f"SELECT MAX(date) FROM {table} WHERE date <= :d"), {"d": d}).scalar()
+
+        i_date = latest("daily_institutional")
+        m_date = latest("daily_margins")
+        w_date = latest("warrant_stock_daily")
+        b_date = latest("branch_trades")
+        freshness = {
+            "quotes": {"date": d, "stale": False},
+            "insti": {"date": i_date, "stale": i_date != d},
+            "margin": {"date": m_date, "stale": m_date != d},
+            "warrant": {"date": w_date, "stale": w_date != d},
+            "branch": {"date": b_date, "stale": b_date != d},
+        }
+
         rows = conn.execute(text("""
             SELECT p.stock_id, s.name, s.market, s.industry, p.close, p.turnover,
                    p.volume, p.transactions, pp.close AS prev_close,
@@ -50,9 +67,9 @@ def export_json(out_dir: Path | None = None) -> dict:
             FROM daily_prices p
             JOIN stocks s ON s.id = p.stock_id AND s.type = 'stock'
             LEFT JOIN daily_prices pp ON pp.stock_id = p.stock_id AND pp.date = :prev
-            LEFT JOIN daily_institutional i ON i.stock_id = p.stock_id AND i.date = :d
-            LEFT JOIN daily_margins m ON m.stock_id = p.stock_id AND m.date = :d
-            LEFT JOIN warrant_stock_daily w ON w.stock_id = p.stock_id AND w.date = :d
+            LEFT JOIN daily_institutional i ON i.stock_id = p.stock_id AND i.date = :i_date
+            LEFT JOIN daily_margins m ON m.stock_id = p.stock_id AND m.date = :m_date
+            LEFT JOIN warrant_stock_daily w ON w.stock_id = p.stock_id AND w.date = :w_date
             LEFT JOIN indicators_daily ti ON ti.stock_id = p.stock_id AND ti.date = :d
             LEFT JOIN daily_scores ds ON ds.stock_id = p.stock_id AND ds.date = :d
             LEFT JOIN (
@@ -66,7 +83,8 @@ def export_json(out_dir: Path | None = None) -> dict:
                 GROUP BY stock_id
             ) wa ON wa.stock_id = p.stock_id
             WHERE p.date = :d AND p.close IS NOT NULL
-        """), {"d": d, "prev": prev, "d20": base20[-1] if base20 else d}).fetchall()
+        """), {"d": d, "prev": prev, "d20": base20[-1] if base20 else d,
+               "i_date": i_date, "m_date": m_date, "w_date": w_date}).fetchall()
 
         all_stocks = []
         for r in rows:
@@ -276,6 +294,7 @@ def export_json(out_dir: Path | None = None) -> dict:
     radar = {
         "data_date": d,
         "generated_at": now,
+        "freshness": freshness,
         "note": "綜合分=分點/權證/技術/法人/題材加權−風險扣分;≥65 為觀察門檻",
         "summary": [
             {"market": m, "turnover": t, "up": up, "down": down}

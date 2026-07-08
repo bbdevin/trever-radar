@@ -1,8 +1,10 @@
-name: daily-warrants
+name: daily-insti
+
+# 16:10 台北:法人買賣超 ~16:00 公布;權證主檔同時段更新 → 匯入後重算分數並部署。
 
 on:
   schedule:
-    - cron: "30 8 * * 1-5"   # 16:30 Taipei: Warrants
+    - cron: "10 8 * * 1-5"   # 16:10 Taipei
   workflow_dispatch:
 
 permissions:
@@ -13,7 +15,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  warrants:
+  insti:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
@@ -45,11 +47,41 @@ jobs:
       - name: Install dependencies
         run: pip install -r pipeline/requirements.txt
 
-      - name: Warrant master + daily aggregate
+      - name: Import institutional flows
         working-directory: pipeline
+        run: python -m radar import-daily --datasets insti
+
+      - name: Warrant master refresh
+        working-directory: pipeline
+        run: python -m radar import-warrant-master
+
+      - name: Recompute daily scores
+        working-directory: pipeline
+        run: python -m radar compute-scores
+
+      - name: Export frontend JSON
+        working-directory: pipeline
+        run: python -m radar export-json
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Build site
+        working-directory: web
         run: |
-          python -m radar import-warrant-master
-          python -m radar aggregate-warrants --date "$(TZ=Asia/Taipei date +%Y%m%d)"
+          npm ci
+          npm run build
+
+      - name: Deploy to Cloudflare Pages
+        working-directory: web
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          npx wrangler pages deploy out --project-name trever-radar --commit-dirty=true
 
       - name: Save SQLite cache
         if: always()
@@ -57,5 +89,3 @@ jobs:
         with:
           path: data/radar.db
           key: radar-db-${{ github.run_id }}
-
-# DB 備份集中在 daily-branches(當日最後一跑)週五執行

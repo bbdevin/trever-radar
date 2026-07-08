@@ -142,6 +142,7 @@ export interface RadarJson {
   generated_at: string;
   note: string;
   summary: { market: string; turnover: number; up: number; down: number }[];
+  freshness?: Record<string, { date: string | null; stale: boolean }>; // 各資料集有效日
   sectors: SectorFlow[];
   themes?: SectorFlow[]; // 概念股資金流(成分重疊)
   lists: Record<ListKey, string[]>;

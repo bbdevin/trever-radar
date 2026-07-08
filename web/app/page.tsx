@@ -66,16 +66,22 @@ export default function RadarPage() {
   }
   if (!radar) return <Skeleton />;
 
-  const missing = (meta?.datasets ?? []).filter(
-    (d) => d.date === radar.data_date && d.status !== "ok",
-  );
+  const FRESH_LABEL: Record<string, string> = {
+    insti: "法人", margin: "融資券", warrant: "權證", branch: "分點",
+  };
+  const stale = Object.entries(radar.freshness ?? {})
+    .filter(([k, v]) => k !== "quotes" && v.stale && v.date)
+    .map(([k, v]) => ({ label: FRESH_LABEL[k] ?? k, date: v.date! }));
 
   return (
     <>
       <div className="strip">
         <div className="item">
           <span className="k">資料日</span>
-          <span className="v">{radar.data_date}</span>
+          <span className="v">
+            {radar.data_date}
+            {stale.length > 0 && <span className="sub stale-mark">部分待更新</span>}
+          </span>
         </div>
         {radar.summary.map((m) => (
           <div className="item" key={m.market}>
@@ -90,17 +96,12 @@ export default function RadarPage() {
         ))}
       </div>
 
-      {missing.length > 0 && (
+      {stale.length > 0 && (
         <div className="notice">
-          <span className="tag info">
-            資料狀態
-          </span>
+          <span className="tag info">資料狀態</span>
           <span>
-            尚未取得:
-            {missing
-              .map((d) => `${SOURCE_LABEL[d.source] ?? d.source}${DATASET_LABEL[d.dataset] ?? d.dataset}`)
-              .join("、")}
-            (交易所公布後重跑匯入即補齊)
+            {stale.map((s) => `${s.label}今日尚未公布,暫用 ${s.date}`).join("；")}
+            (依交易所公布時間分批自動更新)
           </span>
         </div>
       )}
