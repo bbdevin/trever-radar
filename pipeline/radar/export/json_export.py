@@ -188,8 +188,13 @@ def export_json(out_dir: Path | None = None) -> dict:
         if len(warrant) < 15: warrant = warrant_all[:15]
         warrant = warrant[:40]
 
+        mark_all = sorted(
+            [s for s in all_stocks if s["technical"] and any(r.get("code") == "T6_MARK_STRATEGY" for r in s["technical"]["reasons"])],
+            key=lambda s: s["turnover"] or 0, reverse=True)
+        mark = mark_all[:40]
+
         union: dict[str, dict] = {}
-        for s in score + hot + surge + strong + warrant:
+        for s in score + hot + surge + strong + warrant + mark:
             union[s["id"]] = s
         for s in union.values():
             s["spark"] = [row[0] for row in conn.execute(text(
@@ -308,6 +313,7 @@ def export_json(out_dir: Path | None = None) -> dict:
             "surge": [s["id"] for s in surge],
             "strong": [s["id"] for s in strong],
             "warrant": [s["id"] for s in warrant],
+            "mark": [s["id"] for s in mark],
         },
         "stocks": list(union.values()),
     }

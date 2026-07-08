@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { IconFlame, IconPulse, IconRadar, IconTrend, IconZap } from "@/components/Icons";
+import { IconFlame, IconPulse, IconRadar, IconTrend, IconZap, IconStar } from "@/components/Icons";
 import MoneyFlow from "@/components/MoneyFlow";
 import StockCard from "@/components/StockCard";
 import type { ListKey, MetaJson, RadarJson } from "@/lib/types";
@@ -9,6 +9,7 @@ import { DATASET_LABEL, SOURCE_LABEL, fmtE8 } from "@/lib/format";
 
 const TABS: { key: ListKey; label: string; hint: string; icon: typeof IconFlame }[] = [
   { key: "score", label: "綜合", hint: "盤後綜合分數:分點/權證/技術/法人加權−風險扣分,≥65 為觀察門檻", icon: IconRadar },
+  { key: "mark", label: "Mark策略", hint: "20日內曾漲停, MACD零軸以上金叉, 5日內爆量", icon: IconStar },
   { key: "hot", label: "熱門", hint: "成交金額最大", icon: IconFlame },
   { key: "surge", label: "爆量", hint: "量比 = 今日量/20日均量,≥1.5 且金額 ≥1億", icon: IconZap },
   { key: "strong", label: "強勢", hint: "漲幅排序,金額 ≥1億", icon: IconTrend },
