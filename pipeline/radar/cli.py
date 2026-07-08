@@ -80,6 +80,11 @@ def cmd_import_themes(args):
     import_themes(args.limit)
 
 
+def cmd_seed_branches(_args):
+    from .seed_branches import run
+    run()
+
+
 def cmd_import_branch_trades(args):
     from .importer import import_branch_trades
     ids = args.ids.split(",") if args.ids else None
@@ -197,6 +202,10 @@ def main(argv=None):
     th = sub.add_parser("import-themes", help="concept-stock groups (fubon public page)")
     th.add_argument("--limit", type=int, default=None, help="only first N groups (testing)")
     th.set_defaults(fn=cmd_import_themes)
+
+    sub.add_parser("seed-branches",
+                   help="seed manual tracked-branch list (docs/13)"
+                   ).set_defaults(fn=cmd_seed_branches)
 
     bt = sub.add_parser("import-branch-trades",
                         help="scrape top-15 branch buys/sells (fubon public page)")
