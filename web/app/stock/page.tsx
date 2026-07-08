@@ -16,6 +16,17 @@ const RANGES = [
   { key: "all", label: "全部", days: Infinity },
 ] as const;
 
+const BRANCH_RANGES = [
+  { label: "1日", days: 1 },
+  { label: "3日", days: 3 },
+  { label: "5日", days: 5 },
+  { label: "10日", days: 10 },
+  { label: "20日", days: 20 },
+  { label: "60日", days: 60 },
+  { label: "120日", days: 120 },
+  { label: "240日", days: 240 },
+] as const;
+
 function StockView() {
   const id = useSearchParams().get("id");
   const [data, setData] = useState<StockJson | null>(null);
@@ -133,20 +144,73 @@ function StockView() {
 }
 
 function BranchPanel({ data }: { data: StockJson }) {
+  const [days, setDays] = useState<number | "custom">(1);
+  const [customDays, setCustomDays] = useState<string>("5");
+  const [expandedBranch, setExpandedBranch] = useState<string | null>(null);
+
+  const activeDays = days === "custom" ? parseInt(customDays) || 1 : days;
+
+  const agg = useMemo(() => {
+    if (!data.branch_history?.length) {
+      const buyers = data.branches.filter((b) => b.net > 0).sort((a,b) => b.net - a.net);
+      const sellers = data.branches.filter((b) => b.net < 0).sort((a,b) => a.net - b.net);
+      return { 
+        buyers, sellers, 
+        top13Buy: buyers.slice(0, 13).map(b => ({name: b.name, buy: b.buy, sell: b.sell, net: b.net, history: []})),
+        top13Sell: sellers.slice(0, 13).map(b => ({name: b.name, buy: b.buy, sell: b.sell, net: b.net, history: []}))
+      };
+    }
+    
+    const sliced = data.branch_history.slice(0, activeDays);
+    const map: Record<string, { buy: number, sell: number, net: number }> = {};
+    const allDates = sliced.map(s => s.t).reverse();
+
+    for (const day of sliced) {
+      for (const b of day.branches) {
+        if (!map[b.n]) map[b.n] = { buy: 0, sell: 0, net: 0 };
+        map[b.n].buy += b.b;
+        map[b.n].sell += b.s;
+        map[b.n].net += b.net;
+      }
+    }
+
+    const arr = Object.keys(map).map(name => ({ name, ...map[name] }));
+    const buyers = arr.filter(x => x.net > 0).sort((a, b) => b.net - a.net);
+    const sellers = arr.filter(x => x.net < 0).sort((a, b) => a.net - b.net);
+    
+    const top13Buy = buyers.slice(0, 13).map(b => {
+      const history = allDates.map(dt => {
+        const dObj = sliced.find(s => s.t === dt);
+        const bObj = dObj?.branches.find(x => x.n === b.name);
+        return { t: dt, net: bObj ? bObj.net : 0 };
+      });
+      return { ...b, history };
+    });
+
+    const top13Sell = sellers.slice(0, 13).map(b => {
+      const history = allDates.map(dt => {
+        const dObj = sliced.find(s => s.t === dt);
+        const bObj = dObj?.branches.find(x => x.n === b.name);
+        return { t: dt, net: bObj ? bObj.net : 0 };
+      });
+      return { ...b, history };
+    });
+
+    return { buyers, sellers, top13Buy, top13Sell };
+  }, [data.branch_history, data.branches, activeDays]);
+
   const score = data.scores?.branch ?? null;
   const branchReasons = (data.reasons ?? []).filter((t) => t.includes("分點"));
-  const branchRisks = (data.risks ?? []).filter((t) => t.includes("分點") || t.includes("倒貨"));
-  const buyers = data.branches.filter((b) => b.net > 0);
-  const sellers = data.branches.filter((b) => b.net < 0);
-  const net = data.branches.reduce((sum, b) => sum + (b.net || 0), 0);
 
-  if (!data.branches.length && score == null) {
+  if (!data.branches.length && !data.branch_history?.length && score == null) {
     return (
       <div className="state">
         尚無此股分點資料。免費資料目前只抓評分池前80檔的前15大買賣超,會隨每日累積增加。
       </div>
     );
   }
+
+  const netTotal = agg.buyers.reduce((sum, b) => sum + b.net, 0) + agg.sellers.reduce((sum, b) => sum + b.net, 0);
 
   return (
     <div className="branch-panel">
@@ -156,16 +220,16 @@ function BranchPanel({ data }: { data: StockJson }) {
           <span className="v">{score ?? "—"}</span>
         </div>
         <div className="branch-stat">
-          <span className="k">買超分點</span>
-          <span className="v">{buyers.length}</span>
+          <span className="k">{activeDays}日買超分點</span>
+          <span className="v">{agg.buyers.length}</span>
         </div>
         <div className="branch-stat">
-          <span className="k">賣超分點</span>
-          <span className="v">{sellers.length}</span>
+          <span className="k">{activeDays}日賣超分點</span>
+          <span className="v">{agg.sellers.length}</span>
         </div>
         <div className="branch-stat">
-          <span className="k">前15淨流</span>
-          <span className={`v ${net > 0 ? "up" : net < 0 ? "down" : ""}`}>{fmtLots(net)}張</span>
+          <span className="k">{activeDays}日淨流</span>
+          <span className={`v ${netTotal > 0 ? "up" : netTotal < 0 ? "down" : ""}`}>{fmtLots(netTotal)}張</span>
         </div>
       </div>
 
@@ -176,43 +240,105 @@ function BranchPanel({ data }: { data: StockJson }) {
           <span>今日未觸發分點加分條件</span>
         )}
       </div>
-      {branchRisks.length > 0 && (
-        <div className="branch-risks">
-          {branchRisks.map((t) => <span key={t}>{t}</span>)}
-        </div>
-      )}
 
-      {data.branches.length > 0 ? (
-        <table className="branch-table">
-          <thead>
-            <tr>
-              <th>分點</th>
-              <th>買張</th>
-              <th>賣張</th>
-              <th>淨張</th>
-              <th>佔比</th>
-            </tr>
-          </thead>
-          <tbody>
-            {data.branches.map((b) => (
-              <tr key={b.name}>
-                <td>{b.name}</td>
-                <td className="num">{b.buy.toLocaleString("zh-TW")}</td>
-                <td className="num">{b.sell.toLocaleString("zh-TW")}</td>
-                <td className={`num ${b.net > 0 ? "up" : b.net < 0 ? "down" : "flat"}`}>
-                  {fmtLots(b.net)}
-                </td>
-                <td className="num">{b.pct == null ? "—" : `${b.pct.toFixed(2)}%`}</td>
-              </tr>
+      <div className="branch-toolbar">
+        <div className="range-bar" role="tablist">
+          {BRANCH_RANGES.map(r => (
+            <button
+              key={r.days}
+              role="tab"
+              aria-selected={days === r.days}
+              className={days === r.days ? "active" : ""}
+              onClick={() => setDays(r.days)}
+            >
+              {r.label}
+            </button>
+          ))}
+          <div className={`custom-range ${days === "custom" ? "active" : ""}`}>
+            <button
+              role="tab"
+              aria-selected={days === "custom"}
+              onClick={() => setDays("custom")}
+            >
+              自訂
+            </button>
+            {days === "custom" && (
+              <input 
+                type="number" 
+                min={1} 
+                max={240} 
+                value={customDays} 
+                onChange={e => setCustomDays(e.target.value)} 
+                className="custom-input"
+                placeholder="天數"
+              />
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="bento-grid">
+        <div className="bento-card buy-card">
+          <h3 className="bento-title up">前 13 大買超分點</h3>
+          <div className="bento-list">
+            {agg.top13Buy.map(b => (
+              <BranchRow 
+                key={b.name} 
+                b={b} 
+                expanded={expandedBranch === b.name} 
+                onToggle={() => setExpandedBranch(expandedBranch === b.name ? null : b.name)} 
+              />
             ))}
-          </tbody>
-        </table>
-      ) : (
-        <div className="state">此股今日沒有分點明細列</div>
-      )}
+            {agg.top13Buy.length === 0 && <div className="state">無買超紀錄</div>}
+          </div>
+        </div>
+        <div className="bento-card sell-card">
+          <h3 className="bento-title down">前 13 大賣超分點</h3>
+          <div className="bento-list">
+            {agg.top13Sell.map(b => (
+              <BranchRow 
+                key={b.name} 
+                b={b} 
+                expanded={expandedBranch === b.name} 
+                onToggle={() => setExpandedBranch(expandedBranch === b.name ? null : b.name)} 
+              />
+            ))}
+            {agg.top13Sell.length === 0 && <div className="state">無賣超紀錄</div>}
+          </div>
+        </div>
+      </div>
+      
       <div className="branch-note">
         分點資料來自免費公開頁的前15大買賣超裁剪版,不是全市場全量分點;T+1 盤後資料,僅供籌碼觀察。
       </div>
+    </div>
+  );
+}
+
+function BranchRow({ b, expanded, onToggle }: { b: any, expanded: boolean, onToggle: () => void }) {
+  const maxNet = b.history?.length ? Math.max(...b.history.map((h: any) => Math.abs(h.net))) || 1 : 1;
+  return (
+    <div className={`bento-item ${expanded ? 'expanded' : ''}`}>
+      <div className="bento-item-header cursor-pointer" onClick={onToggle}>
+        <span className="n">{b.name}</span>
+        <span className={`net ${b.net > 0 ? "up" : b.net < 0 ? "down" : "flat"}`}>
+          {fmtLots(b.net)}張
+        </span>
+      </div>
+      {expanded && b.history && (
+        <div className="bento-item-chart">
+          {b.history.map((h: any) => (
+            <div className="b-bar-wrapper" key={h.t} title={`${h.t} 淨${h.net > 0 ? '買' : '賣'}: ${Math.abs(h.net)}張`}>
+              <div className="b-bar-container up">
+                {h.net > 0 && <div className="b-bar up" style={{ height: `${(h.net / maxNet) * 100}%` }} />}
+              </div>
+              <div className="b-bar-container down">
+                {h.net < 0 && <div className="b-bar down" style={{ height: `${(Math.abs(h.net) / maxNet) * 100}%` }} />}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

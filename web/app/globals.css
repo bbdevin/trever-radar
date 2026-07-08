@@ -604,6 +604,61 @@ main { min-height: 62vh; }
 }
 .site-footer { border-top: 1px solid var(--line); padding: 16px 0 26px; font-size: 11.5px; color: var(--ink-3); }
 
+/* ═══ 籌碼日報 Bento Grid ═══ */
+.bento-grid {
+  display: grid; gap: 14px;
+  grid-template-columns: 1fr;
+}
+@media (min-width: 768px) { .bento-grid { grid-template-columns: 1fr 1fr; } }
+.bento-card {
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--r-md);
+  padding: 12px; display: flex; flex-direction: column; gap: 10px;
+}
+.bento-title { font-size: 14.5px; font-weight: 750; text-align: center; border-bottom: 1px solid var(--line); padding-bottom: 8px; margin-bottom: 4px; }
+.bento-list { display: flex; flex-direction: column; gap: 6px; }
+.bento-item {
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-sm);
+  transition: box-shadow 0.2s, border-color 0.2s;
+  overflow: hidden;
+}
+.bento-item:hover { border-color: var(--border-strong); box-shadow: 0 2px 6px rgba(0,0,0,0.2); }
+.bento-item-header {
+  display: flex; justify-content: space-between; align-items: baseline;
+  padding: 8px 10px; font-size: 12.5px; user-select: none;
+}
+.bento-item-header .n { color: var(--ink-2); font-weight: 650; }
+.bento-item-header .net { font-family: var(--font-num); font-weight: 750; }
+.bento-item-chart {
+  display: flex; align-items: center; gap: 2px;
+  height: 48px; padding: 0 10px 8px;
+  border-top: 1px solid var(--line); margin-top: 4px; padding-top: 8px;
+}
+.b-bar-wrapper { flex: 1; display: flex; flex-direction: column; height: 100%; min-width: 2px; }
+.b-bar-container { flex: 1; display: flex; align-items: flex-end; width: 100%; }
+.b-bar-container.up { align-items: flex-end; padding-bottom: 1px; }
+.b-bar-container.down { align-items: flex-start; padding-top: 1px; }
+.b-bar { width: 100%; border-radius: 2px; min-height: 1px; transition: height 0.3s ease; }
+.b-bar.up { background: var(--up); opacity: 0.85; }
+.b-bar.down { background: var(--down); opacity: 0.85; }
+
+.branch-toolbar { margin-bottom: 14px; }
+.custom-range {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: transparent; border-radius: 999px; padding-right: 4px;
+}
+.custom-range.active { background: var(--surface-3); box-shadow: inset 0 0 0 1px var(--border-strong); }
+.custom-range button {
+  background: transparent; border: 0; color: var(--ink-2);
+  padding: 5px 13px; border-radius: 999px; font-size: 12.5px; font-weight: 600;
+}
+.custom-range.active button { color: var(--ink); }
+.custom-input {
+  width: 50px; background: var(--surface); color: var(--ink);
+  border: 1px solid var(--line); border-radius: 6px; padding: 2px 6px;
+  font-size: 12px; font-family: var(--font-num); outline: none;
+}
+.custom-input:focus { border-color: var(--accent); }
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }

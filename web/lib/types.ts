@@ -78,6 +78,15 @@ export interface StockJson {
   risks: string[];
   technical: TechnicalSummary | null;
   branches: BranchRow[];
+  branch_history?: {
+    t: string;
+    branches: {
+      n: string;
+      b: number;
+      s: number;
+      net: number;
+    }[];
+  }[];
   warrant: WarrantSummary | null;
   warrant_history: WarrantHistoryPoint[];
   active_warrants: ActiveWarrant[];
