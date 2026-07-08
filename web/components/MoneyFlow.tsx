@@ -48,7 +48,9 @@ export default function MoneyFlow({ sectors, themes }: { sectors: SectorFlow[]; 
         <span className="fr-name">{g.name}</span>
         <span className="fr-track">
           <span className={`fr-bar ${side}`} style={{ width: `${Math.max(width, 6)}%` }} />
-          <span className="fr-x">{g.vs20!.toFixed(1)}×</span>
+          <span className="fr-x" title={`今日成交金額為近20日平均的 ${g.vs20!.toFixed(2)} 倍`}>
+            {dev(g)! > 0 ? "+" : ""}{dev(g)}%
+          </span>
         </span>
         <span className="fr-meta">
           <b className="num">{fmtE8(g.turnover)}</b>
@@ -77,7 +79,7 @@ export default function MoneyFlow({ sectors, themes }: { sectors: SectorFlow[]; 
             題材
           </button>
         </div>
-        <span className="flow-hint">與 20 日常態量能相比:右紅=資金湧入、左綠=退潮;條長=偏離幅度</span>
+        <span className="flow-hint">基準=近20日平均成交金額;+80% = 今日資金比平時多八成、−20% = 比平時少兩成</span>
       </div>
 
       {inflow.length === 0 && outflow.length === 0 ? (
@@ -87,12 +89,12 @@ export default function MoneyFlow({ sectors, themes }: { sectors: SectorFlow[]; 
       ) : (
         <div className="flow-cols">
           <div className="flow-col col-out">
-            <div className="flow-col-title out">流出 ↓</div>
+            <div className="flow-col-title out">流出 ↓ 比平時冷清</div>
             {outflow.length ? outflow.map((g) => <Row key={g.name} g={g} side="out" />)
               : <div className="fr-none">無明顯退潮</div>}
           </div>
           <div className="flow-col">
-            <div className="flow-col-title in">流入 ↑</div>
+            <div className="flow-col-title in">流入 ↑ 比平時熱絡</div>
             {inflow.length ? inflow.map((g) => <Row key={g.name} g={g} side="in" />)
               : <div className="fr-none">無明顯湧入</div>}
           </div>

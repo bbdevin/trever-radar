@@ -25,6 +25,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pipeline/requirements.txt
 
       - name: Restore SQLite cache
         uses: actions/cache/restore@v4
@@ -52,9 +54,9 @@ jobs:
         working-directory: pipeline
         run: python -m radar import-daily --datasets insti
 
-      - name: Compute technical indicators
+      - name: Compute technical indicators (incremental)
         working-directory: pipeline
-        run: python -m radar compute-indicators --all
+        run: python -m radar compute-indicators --all --days 5
 
       - name: Weekly concept-theme refresh (Mon)
         working-directory: pipeline
@@ -70,13 +72,4 @@ jobs:
           path: data/radar.db
           key: radar-db-${{ github.run_id }}
 
-      - name: Daily DB backup to release
-        if: always()
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          if [ -f data/radar.db ]; then
-            gzip -kf data/radar.db
-            gh release create db-backup --notes "rolling SQLite backup" 2>/dev/null || true
-            gh release upload db-backup data/radar.db.gz --clobber
-          fi
+# DB 備份集中在 daily-branches(當日最後一跑)週五執行;此處不重複 gzip 1GB 上傳

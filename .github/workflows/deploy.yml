@@ -24,6 +24,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pipeline/requirements.txt
 
       - name: Restore SQLite cache
         uses: actions/cache/restore@v4
@@ -58,6 +60,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+          cache: npm
+          cache-dependency-path: web/package-lock.json
 
       - name: Build site
         working-directory: web

@@ -24,8 +24,18 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pipeline/requirements.txt
 
-      - name: Seed DB from release backup
+      - name: Restore SQLite cache
+        uses: actions/cache/restore@v4
+        with:
+          path: data/radar.db
+          key: radar-db-${{ github.run_id }}
+          restore-keys: radar-db-
+
+      - name: Seed DB from release backup (cache miss)
+        if: hashFiles('data/radar.db') == ''
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -41,13 +51,11 @@ jobs:
           python -m radar import-warrant-master
           python -m radar aggregate-warrants --date "$(TZ=Asia/Taipei date +%Y%m%d)"
 
-      - name: Daily DB backup to release
+      - name: Save SQLite cache
         if: always()
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          if [ -f data/radar.db ]; then
-            gzip -kf data/radar.db
-            gh release create db-backup --notes "rolling SQLite backup" 2>/dev/null || true
-            gh release upload db-backup data/radar.db.gz --clobber
-          fi
+        uses: actions/cache/save@v4
+        with:
+          path: data/radar.db
+          key: radar-db-${{ github.run_id }}
+
+# DB 備份集中在 daily-branches(當日最後一跑)週五執行

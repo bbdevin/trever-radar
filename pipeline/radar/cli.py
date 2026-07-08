@@ -72,8 +72,7 @@ def cmd_compute_adjustments(args):
 def cmd_compute_indicators(args):
     from .compute.indicators import compute_indicators
     ids = args.ids.split(",") if args.ids else None
-    info = compute_indicators(ids=ids, top=args.top, all_stocks=args.all)
-    print(f"indicators: {info['done']} stocks, {info['rows']} rows written")
+    compute_indicators(ids=ids, top=args.top, all_stocks=args.all, days=args.days)
 
 
 def cmd_import_themes(args):
@@ -187,6 +186,8 @@ def main(argv=None):
     ind.add_argument("--ids", default=None, help="comma list, e.g. 2330,2317")
     ind.add_argument("--top", type=int, default=None, help="top N by latest-day turnover")
     ind.add_argument("--all", action="store_true", help="all stocks/ETFs with daily_prices")
+    ind.add_argument("--days", type=int, default=None,
+                     help="incremental: only recompute/write the last N dates (nightly use 5)")
     ind.set_defaults(fn=cmd_compute_indicators)
 
     sub.add_parser("import-stock-info",

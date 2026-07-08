@@ -46,6 +46,7 @@
 - [x] 台股慣例紅漲綠跌、免責聲明常駐
 
 ### 基礎設施
+- [x] 管線效能優化(docs/15):指標增量計算(`--days 5`,全市場 26 秒,原全歷史重算數十分)、release 備份週五化(原三支 workflow 每日各 gzip 1GB)、修正 daily-warrants/branches 繞過 cache 的分岔 bug、pip/npm 快取
 - [x] GitHub Actions 全自動管線 + Cloudflare Pages 部署 + 自訂網域
 - [x] `main` push 觸發正式部署;push 事件跳過資料匯入,只用 cache/release DB 匯出 JSON、build、deploy
 - [x] FinMind 免費 token(600 req/hr,`RADAR_FINMIND_TOKEN`,GitHub secret 已設)

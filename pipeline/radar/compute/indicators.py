@@ -222,27 +222,60 @@ def score_technical(**x) -> tuple[int, list[dict], list[dict]]:
     return min(score, 100), reasons, risks
 
 
+# 增量模式的暖機窗:MA240 + 60日箱型 + 緩衝;EMA(MACD)在 300+ 根後殘差可忽略
+WARMUP_BARS = 340
+
+
 def compute_indicators(ids: list[str] | None = None, top: int | None = None,
-                       all_stocks: bool = False) -> dict:
+                       all_stocks: bool = False, days: int | None = None) -> dict:
+    """days=None → 全歷史重算(還原因子變動後用);days=N → 增量:
+    只取每檔最後 WARMUP+N 根計算、只回寫最後 N 根,且指標已是最新的股票直接跳過。"""
     init_db()
     engine = get_engine()
     with engine.connect() as conn:
         targets = _targets(conn, ids, top, all_stocks)
+        skipped = 0
+        if days:
+            fresh = {r[0] for r in conn.execute(text("""
+                SELECT p.stock_id FROM
+                  (SELECT stock_id, MAX(date) AS md FROM daily_prices GROUP BY stock_id) p
+                JOIN
+                  (SELECT stock_id, MAX(date) AS mi FROM indicators_daily GROUP BY stock_id) i
+                ON i.stock_id = p.stock_id AND i.mi >= p.md
+            """))}
+            before = len(targets)
+            targets = [t for t in targets if t not in fresh]
+            skipped = before - len(targets)
 
     written = done = 0
     for sid in targets:
         with engine.connect() as conn:
-            price_rows = [dict(r._mapping) for r in conn.execute(text("""
-                SELECT stock_id, date, open, high, low, close, adj_factor, volume
-                FROM daily_prices
-                WHERE stock_id = :sid AND close IS NOT NULL
-                ORDER BY date
-            """), {"sid": sid})]
+            if days:
+                price_rows = [dict(r._mapping) for r in conn.execute(text("""
+                    SELECT * FROM (
+                        SELECT stock_id, date, open, high, low, close, adj_factor, volume
+                        FROM daily_prices
+                        WHERE stock_id = :sid AND close IS NOT NULL
+                        ORDER BY date DESC LIMIT :lim
+                    ) ORDER BY date
+                """), {"sid": sid, "lim": WARMUP_BARS + days})]
+            else:
+                price_rows = [dict(r._mapping) for r in conn.execute(text("""
+                    SELECT stock_id, date, open, high, low, close, adj_factor, volume
+                    FROM daily_prices
+                    WHERE stock_id = :sid AND close IS NOT NULL
+                    ORDER BY date
+                """), {"sid": sid})]
         rows = compute_series(price_rows)
+        if days:
+            rows = rows[-days:]
         with engine.begin() as conn:
             written += upsert(conn, schema.indicators_daily, rows)
         done += 1
-        print(f"indicators {sid} ok: {len(rows)} rows", flush=True)
+        if not days:
+            print(f"indicators {sid} ok: {len(rows)} rows", flush=True)
+    print(f"indicators: {done} computed, {skipped if days else 0} already fresh, "
+          f"{written} rows written", flush=True)
     return {"done": done, "rows": written}
 
 
