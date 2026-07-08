@@ -44,7 +44,13 @@ docker run -d --name radar-backfill --restart unless-stopped \
   bash -c "pip install -r requirements.txt && python -m radar backfill-branches --top 500 --days 490 --sleep 1.0"
 docker logs -f radar-backfill   # Ctrl+C 離開,背景照跑
 
-# 約 3 天後回寫(gh auth login 後):
+# 約 3 天後、回寫前:先把 VPS 這份 DB 缺的近幾日行情/法人/融資券補齊
+# (VPS 跑的 3 天裡雲端照常進新資料,回寫會整份覆蓋,不補會產生缺口)
+docker run --rm -v $(pwd)/pipeline:/app/pipeline -v $(pwd)/data:/app/data -w /app/pipeline python:3.11 \
+  bash -c "pip install -r requirements.txt && python -m radar backfill --days 7 && \
+           for d in \$(seq 0 6); do python -m radar import-daily --date \$(date -d \"-\$d day\" +%Y%m%d) --datasets insti,margin || true; done"
+
+# 回寫(gh auth login 後):
 gzip -kf data/radar.db
 gh release upload db-backup data/radar.db.gz --clobber
 gh cache delete --all --repo bbdevin/trever-radar   # 關鍵:讓雲端改用新資料庫
