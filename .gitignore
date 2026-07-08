@@ -24,3 +24,6 @@ web/*.tsbuildinfo
 
 # stray logs
 *.log
+
+radar.db
+tsmc.html
