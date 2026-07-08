@@ -14,7 +14,7 @@ export default function StockCard({ s }: { s: RadarStock }) {
           </span>
         </div>
         <div className="price">
-          <div className="close">{s.close.toLocaleString("zh-TW")}</div>
+          <div className={`close ${chgClass(s.chg_pct)}`}>{s.close.toLocaleString("zh-TW")}</div>
           <span className={`chg-badge ${chgClass(s.chg_pct)}`}>{fmtPct(s.chg_pct)}</span>
         </div>
       </div>
@@ -48,9 +48,7 @@ export default function StockCard({ s }: { s: RadarStock }) {
                 {s.scores.final}
               </span>
               <span className="score-parts">
-                分點 {s.scores.branch ?? "—"} · 權證 {s.scores.warrant ?? "—"} · 技術{" "}
-                {s.scores.tech ?? "—"} · 法人 {s.scores.inst ?? "—"} · 題材{" "}
-                {s.scores.theme ?? "—"}
+                {s.scores.branch ?? "—"} · {s.scores.warrant ?? "—"} · {s.scores.tech ?? "—"} · {s.scores.inst ?? "—"} · {s.scores.theme ?? "—"}
                 {s.scores.risk_penalty < 0 && (
                   <em className="score-risk"> 風險 {s.scores.risk_penalty}</em>
                 )}
@@ -70,7 +68,7 @@ export default function StockCard({ s }: { s: RadarStock }) {
         ) : s.warrant ? (
           <div className="warrant-mini">
             <span>
-              權證認購 <b>{fmtE8(s.warrant.call_turnover)}</b>
+              認購 <b>{fmtE8(s.warrant.call_turnover)}</b>
             </span>
             <span>{fmtX(s.warrant.call_turnover_ratio)}</span>
             <span>{s.warrant.call_count} 檔</span>
