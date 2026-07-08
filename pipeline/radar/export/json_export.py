@@ -134,32 +134,41 @@ def export_json(out_dir: Path | None = None) -> dict:
                 "risks": [x["text"] for x in json.loads(score_risks or "[]")[:3]],
             })
 
-        # ── 榜單(動態,依今日行情) ──
-        score = sorted(
-            [s for s in all_stocks if s["scores"] and s["scores"]["final"] >= 65],
+        # ── 榜單(動態,依今日行情,保底15檔,上限40檔) ──
+        score_all = sorted(
+            [s for s in all_stocks if s["scores"]],
             key=lambda s: (s["scores"]["final"], s["turnover"] or 0), reverse=True)
-        hot = sorted(
-            [s for s in all_stocks if (s["turnover"] or 0) >= 1_000_000_000],
-            key=lambda s: s["turnover"] or 0, reverse=True)
-        surge = sorted(
-            [s for s in all_stocks
-             if (s["turnover"] or 0) >= MIN_TURNOVER
-             and (s["volume_ratio"] or 0) >= SURGE_MIN_RATIO],
+        score = [s for s in score_all if s["scores"]["final"] >= 65]
+        if len(score) < 15: score = score_all[:15]
+        score = score[:40]
+
+        hot_all = sorted(
+            [s for s in all_stocks if s["turnover"] is not None],
+            key=lambda s: s["turnover"], reverse=True)
+        hot = [s for s in hot_all if s["turnover"] >= 1_000_000_000]
+        if len(hot) < 15: hot = hot_all[:15]
+        hot = hot[:40]
+
+        surge_all = sorted(
+            [s for s in all_stocks if (s["turnover"] or 0) >= MIN_TURNOVER and s["volume_ratio"] is not None],
             key=lambda s: s["volume_ratio"], reverse=True)
-        strong = sorted(
-            [s for s in all_stocks
-             if (s["turnover"] or 0) >= MIN_TURNOVER and (s["chg_pct"] or 0) >= 5.0],
+        surge = [s for s in surge_all if s["volume_ratio"] >= SURGE_MIN_RATIO]
+        if len(surge) < 15: surge = surge_all[:15]
+        surge = surge[:40]
+
+        strong_all = sorted(
+            [s for s in all_stocks if (s["turnover"] or 0) >= MIN_TURNOVER and s["chg_pct"] is not None],
             key=lambda s: s["chg_pct"], reverse=True)
-        warrant = sorted(
-            [s for s in all_stocks
-             if s["warrant"] and s["warrant"]["call_turnover"] >= MIN_WARRANT_TURNOVER
-             and (s["warrant"]["call_turnover_ratio"] or 0) >= 1.5],
-            key=lambda s: (
-                s["warrant"]["call_turnover_ratio"] or 0,
-                s["warrant"]["call_turnover"],
-            ),
-            reverse=True,
-        )
+        strong = [s for s in strong_all if s["chg_pct"] >= 5.0]
+        if len(strong) < 15: strong = strong_all[:15]
+        strong = strong[:40]
+
+        warrant_all = sorted(
+            [s for s in all_stocks if s["warrant"] and s["warrant"]["call_turnover"] >= MIN_WARRANT_TURNOVER],
+            key=lambda s: (s["warrant"]["call_turnover_ratio"] or 0, s["warrant"]["call_turnover"]), reverse=True)
+        warrant = [s for s in warrant_all if (s["warrant"]["call_turnover_ratio"] or 0) >= 1.5]
+        if len(warrant) < 15: warrant = warrant_all[:15]
+        warrant = warrant[:40]
 
         union: dict[str, dict] = {}
         for s in score + hot + surge + strong + warrant:
