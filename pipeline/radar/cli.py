@@ -88,7 +88,13 @@ def cmd_seed_branches(_args):
 def cmd_import_branch_trades(args):
     from .importer import import_branch_trades
     ids = args.ids.split(",") if args.ids else None
-    import_branch_trades(args.date, args.top, ids)
+    import_branch_trades(args.date, args.top, ids, sleep_s=args.sleep)
+
+
+def cmd_backfill_branches(args):
+    from .importer import backfill_branches
+    backfill_branches(top=args.top, days=args.days, sleep_s=args.sleep,
+                      max_minutes=args.max_minutes)
 
 
 def cmd_compute_scores(args):
@@ -218,11 +224,20 @@ def main(argv=None):
                    ).set_defaults(fn=cmd_seed_branches)
 
     bt = sub.add_parser("import-branch-trades",
-                        help="scrape top-15 branch buys/sells (fubon public page)")
+                        help="scrape top-15 branch buys/sells (MoneyDJ mirrors)")
     bt.add_argument("--date", default=None, help="YYYYMMDD; default latest trading day")
     bt.add_argument("--top", type=int, default=80, help="pool size by composite score")
     bt.add_argument("--ids", default=None, help="comma list overrides pool")
+    bt.add_argument("--sleep", type=float, default=1.2, help="overall request interval")
     bt.set_defaults(fn=cmd_import_branch_trades)
+
+    bb = sub.add_parser("backfill-branches",
+                        help="march-back branch history (resumable, mirror-rotated)")
+    bb.add_argument("--top", type=int, default=300, help="stocks by latest turnover")
+    bb.add_argument("--days", type=int, default=60, help="trading days depth")
+    bb.add_argument("--sleep", type=float, default=1.2)
+    bb.add_argument("--max-minutes", type=int, default=None, help="stop cleanly after N minutes")
+    bb.set_defaults(fn=cmd_backfill_branches)
 
     sc = sub.add_parser("compute-scores", help="V1 composite daily scores (docs/04)")
     sc.add_argument("--date", default=None, help="YYYYMMDD; default latest trading day")

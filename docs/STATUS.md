@@ -58,6 +58,7 @@
 
 1. 探索頁、自選股、觀察價/失效價
 2. ~~deep-backfill --all~~ **執行中**:FinMind 註冊 token(600/hr)已設本機+雲端 secret;`data-backfill` workflow(手動觸發)正在雲端跑全市場上市以來歷史(約 4.5 小時,可中斷續跑);完成後手動觸發 `task=adjust` 補全市場還原因子:`gh workflow run data-backfill -f task=adjust`
+3a. **分點資料擴容**(2026-07-08,docs/vps_backfill_plan.md 修訂版):MoneyDJ 鏡像輪替(富邦+元富,可擴)、每日池 80→**500 檔**(--sleep 1.2)、`backfill-branches` 歷史 march-back(斷點續傳+限時)已接凌晨 01:10,約一週自動補齊 Top300×60 交易日;VPS 為加速選項非必需。首頁新增**弱勢榜**;/branch 新增**權證分點 tab**(近40日對單一權證淨買 ≥300 張);修 /stock/ 與 /branch/ 死連結
 3. **分點排行與追蹤**(規格 docs/13):資料已解鎖且分點分已接入——`import-branch-trades` 每晚爬富邦公開頁(評分池前 80 檔前 15 大買賣超),`branch_trades` 累積中。待做:今日動向頁 → branch_stock_stats → 可信度排行榜(需累積 2–3 個月才有統計效力)→ 地緣/關鍵分點人工名單
 4. V2 盤中(Fugle + 本機 worker)
 

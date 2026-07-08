@@ -15,7 +15,7 @@ on:
         required: true
         default: "deep"
         type: choice
-        options: [deep, adjust, themes]
+        options: [deep, adjust, themes, branches-history]
       sleep:
         description: "FinMind 請求間隔秒數(600/hr 上限 → ≥6)"
         required: false
@@ -66,6 +66,11 @@ jobs:
         if: github.event_name == 'schedule' || inputs.task == 'deep'
         working-directory: pipeline
         run: python -m radar deep-backfill --all --sleep "${{ inputs.sleep || '6.5' }}"
+
+      - name: Branch history march-back (top 300 × 60 trading days, resumable)
+        if: github.event_name == 'schedule' || inputs.task == 'branches-history'
+        working-directory: pipeline
+        run: python -m radar backfill-branches --top 300 --days 60 --sleep 1.2 --max-minutes 90
 
       - name: Weekly adjustment factors + full indicator recompute (Sat)
         if: github.event_name == 'schedule'

@@ -194,8 +194,14 @@ def export_json(out_dir: Path | None = None) -> dict:
             key=lambda s: s["turnover"] or 0, reverse=True)
         mark = mark_all[:40]
 
+        # 弱勢榜:跌幅排序(門檻同強勢,鏡像邏輯)
+        weak = [s for s in reversed(strong_all) if (s["chg_pct"] or 0) <= -5.0]
+        if len(weak) < 15:
+            weak = list(reversed(strong_all))[:15]
+        weak = weak[:40]
+
         union: dict[str, dict] = {}
-        for s in score + hot + surge + strong + warrant + mark:
+        for s in score + hot + surge + strong + weak + warrant + mark:
             union[s["id"]] = s
         for s in union.values():
             s["spark"] = [row[0] for row in conn.execute(text(
@@ -318,6 +324,7 @@ def export_json(out_dir: Path | None = None) -> dict:
             "hot": [s["id"] for s in hot],
             "surge": [s["id"] for s in surge],
             "strong": [s["id"] for s in strong],
+            "weak": [s["id"] for s in weak],
             "warrant": [s["id"] for s in warrant],
             "mark": [s["id"] for s in mark],
         },
@@ -484,3 +491,25 @@ def _export_branches(out: Path, engine, date: str):
             
         (branches_dir / "today.json").write_text(
             json.dumps(movements, ensure_ascii=False), encoding="utf-8")
+
+        # 權證分點異動:近 40 個交易日,分點對單一權證的大額淨買(≥300 張)
+        d40 = conn.execute(text(
+            "SELECT MIN(date) FROM (SELECT DISTINCT date FROM daily_prices "
+            "ORDER BY date DESC LIMIT 40)")).scalar()
+        movers = [dict(r._mapping) for r in conn.execute(text("""
+            SELECT b.branch_name,
+                   b.stock_id AS warrant_id, w.name AS warrant_name, w.kind,
+                   w.stock_id AS underlying_id, s.name AS underlying_name,
+                   SUM(b.net_lots) AS net_lots, SUM(b.buy_lots) AS buy_lots,
+                   COUNT(*) AS active_days, MAX(b.date) AS last_date
+            FROM branch_trades b
+            JOIN warrants w ON w.id = b.stock_id
+            LEFT JOIN stocks s ON s.id = w.stock_id
+            WHERE LENGTH(b.stock_id) = 6 AND b.date >= :d40
+            GROUP BY b.branch_name, b.stock_id
+            HAVING SUM(b.net_lots) >= 300
+            ORDER BY SUM(b.net_lots) DESC
+            LIMIT 60
+        """), {"d40": d40})]
+        (branches_dir / "warrant_movers.json").write_text(
+            json.dumps(movers, ensure_ascii=False), encoding="utf-8")

@@ -289,8 +289,79 @@ def aggregate_warrants(date: str | None = None) -> int:
         return r.rowcount
 
 
+def backfill_branches(top: int = 300, days: int = 60, sleep_s: float = 1.2,
+                      max_minutes: int | None = None) -> dict:
+    """分點歷史 march-back:由最近交易日往回補 `days` 個交易日的前 15 大買賣超。
+
+    可續跑:每個日期先查已有哪些股票,只補缺的;補齊的日期成本趨近零。
+    max_minutes:給 GitHub Actions 夜間窗口的安全閥,到時乾淨停下,下次續跑。
+    """
+    import time as time_mod
+
+    from sqlalchemy import text
+
+    from .providers import fubon
+
+    init_db()
+    engine = get_engine()
+    deadline = time_mod.monotonic() + max_minutes * 60 if max_minutes else None
+
+    with engine.connect() as conn:
+        trade_dates = [r[0] for r in conn.execute(text(
+            "SELECT DISTINCT date FROM daily_prices ORDER BY date DESC LIMIT :n"),
+            {"n": days})]
+        targets = [r[0] for r in conn.execute(text(
+            "SELECT p.stock_id FROM daily_prices p "
+            "JOIN stocks s ON s.id = p.stock_id AND s.type = 'stock' "
+            "WHERE p.date = (SELECT MAX(date) FROM daily_prices) "
+            "AND p.turnover IS NOT NULL ORDER BY p.turnover DESC LIMIT :n"),
+            {"n": top})]
+
+    fetched = skipped_dates = failed = 0
+    stopped = None
+    for d_iso in trade_dates:                       # 新 → 舊,近期資料價值最高
+        date = d_iso.replace("-", "")
+        with engine.connect() as conn:
+            have = {r[0] for r in conn.execute(text(
+                "SELECT DISTINCT stock_id FROM branch_trades WHERE date = :d"),
+                {"d": d_iso})}
+        missing = [sid for sid in targets if sid not in have]
+        if not missing:
+            skipped_dates += 1
+            continue
+        for sid in missing:
+            if deadline and time_mod.monotonic() > deadline:
+                stopped = f"time budget reached at {d_iso}"
+                break
+            try:
+                rows = fubon.fetch_branch_trades(sid, date, throttle=sleep_s)
+            except NoDataError:
+                continue
+            except Exception as e:  # noqa: BLE001
+                failed += 1
+                if failed > 30:
+                    stopped = f"too many failures at {d_iso}: {str(e)[:80]}"
+                    break
+                continue
+            with engine.begin() as conn:
+                upsert(conn, schema.branch_trades, rows)
+            fetched += 1
+        print(f"backfill-branches {d_iso}: missing={len(missing)} done, "
+              f"total fetched={fetched}", flush=True)
+        if stopped:
+            break
+    with engine.begin() as conn:
+        _log(conn, "fubon", "branch_hist",
+             datetime.now(ZoneInfo(config.TZ)).strftime("%Y%m%d"),
+             fetched, "ok" if not stopped else "empty", error=stopped)
+    print(f"backfill-branches: fetched={fetched}, complete_dates={skipped_dates}/"
+          f"{len(trade_dates)}, failed={failed}, stopped={stopped}", flush=True)
+    return {"fetched": fetched, "failed": failed, "stopped": stopped}
+
+
 def import_branch_trades(date: str | None = None, top: int = 80,
-                         ids: list[str] | None = None, warrants: int = 15) -> dict:
+                         ids: list[str] | None = None, warrants: int = 15,
+                         sleep_s: float = 1.2) -> dict:
     """富邦公開頁抓分點進出(每筆一請求,節流 3 秒)。
 
     池 = 當日 daily_scores 前 top 檔(綜合分排序);無分數時退回成交金額前 top。
@@ -331,7 +402,7 @@ def import_branch_trades(date: str | None = None, top: int = 80,
     done = empty = failed = written = 0
     for sid in targets:
         try:
-            rows = fubon.fetch_branch_trades(sid, date)
+            rows = fubon.fetch_branch_trades(sid, date, throttle=sleep_s)
         except NoDataError:
             empty += 1
             continue

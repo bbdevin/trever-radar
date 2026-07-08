@@ -60,6 +60,13 @@ export const IconTrend = ({ size = 16, className }: P) => (
   </svg>
 );
 
+export const IconTrendDown = ({ size = 16, className }: P) => (
+  <svg {...base(size)} className={className}>
+    <path d="M3 7l6 6 4-4 8 8" />
+    <path d="M15 17h6v-6" />
+  </svg>
+);
+
 export const IconArrowLeft = ({ size = 18, className }: P) => (
   <svg {...base(size)} className={className}>
     <path d="M19 12H5" />

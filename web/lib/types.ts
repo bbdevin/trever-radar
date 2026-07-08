@@ -103,7 +103,7 @@ export interface SectorFlow {
   top: { id: string; name: string; chg_pct: number | null; turnover?: number }[];
 }
 
-export type ListKey = "score" | "hot" | "surge" | "strong" | "warrant" | "mark";
+export type ListKey = "score" | "hot" | "surge" | "strong" | "weak" | "warrant" | "mark";
 
 export interface ScoreBreakdown {
   final: number;

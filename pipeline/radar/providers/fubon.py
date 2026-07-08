@@ -8,6 +8,22 @@ import re
 from ..http import get_text
 from . import NoDataError
 
+# MoneyDJ 平台鏡像站(同一套 zco 頁,資料一致——實測富邦/元富回傳位元級相同)。
+# 輪替分散負載:整體 1.2 秒/請求時,單站有效節奏 = 1.2 × 站數。
+MIRROR_HOSTS = [
+    "https://fubon-ebrokerdj.fbs.com.tw",
+    "https://newjust.masterlink.com.tw",
+]
+_mirror_i = 0
+
+
+def _next_host() -> str:
+    global _mirror_i
+    host = MIRROR_HOSTS[_mirror_i % len(MIRROR_HOSTS)]
+    _mirror_i += 1
+    return host
+
+
 BASE = "https://fubon-ebrokerdj.fbs.com.tw/z/zc/zco/zco.djhtm"
 THEME_LIST = "https://fubon-ebrokerdj.fbs.com.tw/z/zh/zha/zha.djhtm"
 THEME_MEMBERS = "https://fubon-ebrokerdj.fbs.com.tw/z/zh/zhc/zhc.djhtm"
@@ -44,10 +60,11 @@ def _num(s: str) -> int:
     return int(s.replace(",", "") or 0)
 
 
-def fetch_branch_trades(stock_id: str, date: str) -> list[dict]:
-    """date: YYYYMMDD → 該日前 15 大買/賣超分點(合計最多 30 列)。"""
+def fetch_branch_trades(stock_id: str, date: str, throttle: float | None = None) -> list[dict]:
+    """date: YYYYMMDD → 該日前 15 大買/賣超分點(合計最多 30 列)。鏡像站輪替。"""
     dj = f"{int(date[:4])}-{int(date[4:6])}-{int(date[6:8])}"   # 頁面用 2026-7-6 格式
-    html = get_text(BASE, {"a": stock_id, "e": dj, "f": dj})
+    url = f"{_next_host()}/z/zc/zco/zco.djhtm"
+    html = get_text(url, {"a": stock_id, "e": dj, "f": dj}, throttle=throttle)
     matches = _ROW.findall(html)
     if not matches:
         raise NoDataError(f"fubon zco {stock_id} {date}: no branch rows")

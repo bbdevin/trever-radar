@@ -9,11 +9,12 @@ _session.headers["User-Agent"] = config.USER_AGENT
 _last_request_at = 0.0
 
 
-def _get(url: str, params: dict | None = None):
+def _get(url: str, params: dict | None = None, throttle: float | None = None):
     global _last_request_at
     last_err: Exception | None = None
+    interval = config.THROTTLE_SECONDS if throttle is None else throttle
     for attempt in range(1, config.HTTP_RETRIES + 1):
-        wait = config.THROTTLE_SECONDS - (time.monotonic() - _last_request_at)
+        wait = interval - (time.monotonic() - _last_request_at)
         if wait > 0:
             time.sleep(wait)
         try:
@@ -32,8 +33,12 @@ def get_json(url: str, params: dict | None = None):
     return _get(url, params).json()
 
 
-def get_text(url: str, params: dict | None = None, encoding: str = "big5") -> str:
-    """GET with throttle + retry, decoded text (MoneyDJ 系頁面為 Big5)。"""
-    r = _get(url, params)
+def get_text(url: str, params: dict | None = None, encoding: str = "big5",
+             throttle: float | None = None) -> str:
+    """GET with throttle + retry, decoded text (MoneyDJ 系頁面為 Big5)。
+
+    throttle 可覆寫全域間隔:搭配鏡像站輪替時,整體節奏快、單站節奏仍禮貌。
+    """
+    r = _get(url, params, throttle=throttle)
     r.encoding = encoding
     return r.text

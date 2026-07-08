@@ -27,9 +27,23 @@ type Movement = {
 
 type TodayMovements = Record<string, Movement[]>;
 
+type WarrantMover = {
+  branch_name: string;
+  warrant_id: string;
+  warrant_name: string;
+  kind: "call" | "put";
+  underlying_id: string | null;
+  underlying_name: string | null;
+  net_lots: number;
+  buy_lots: number;
+  active_days: number;
+  last_date: string;
+};
+
 const TABS = [
   { key: "rankings", label: "排行榜", hint: "分點操作勝率與可信度排行", icon: IconFlame },
   { key: "today", label: "今日動向", hint: "追蹤分點於最近交易日的買超明細", icon: IconZap },
+  { key: "warrant", label: "權證分點", hint: "近40個交易日對單一權證淨買 ≥300 張的分點(多為發行商造市,重點看非發行商)", icon: IconTrend },
 ];
 
 function Skeleton() {
@@ -50,9 +64,10 @@ function Skeleton() {
 }
 
 export default function BranchPage() {
-  const [tab, setTab] = useState<"rankings" | "today">("rankings");
+  const [tab, setTab] = useState<"rankings" | "today" | "warrant">("rankings");
   const [rankings, setRankings] = useState<Ranking[] | null>(null);
   const [today, setToday] = useState<TodayMovements | null>(null);
+  const [movers, setMovers] = useState<WarrantMover[]>([]);
   const [error, setError] = useState(false);
 
   useEffect(() => {
@@ -60,11 +75,16 @@ export default function BranchPage() {
       .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
       .then(setRankings)
       .catch(() => setError(true));
-      
+
     fetch("/data/branches/today.json")
       .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
       .then(setToday)
       .catch(() => setError(true));
+
+    fetch("/data/branches/warrant_movers.json")
+      .then((r) => (r.ok ? r.json() : []))
+      .then(setMovers)
+      .catch(() => {});
   }, []);
 
   if (error) {
@@ -120,7 +140,7 @@ export default function BranchPage() {
       {tab === "rankings" && (
         <div className="grid">
           {rankings.map((r) => (
-            <a href={`/branch/${r.branch_name}`} key={r.branch_name} className="card" style={{ display: "block", textDecoration: "none" }}>
+            <div key={r.branch_name} className="card" style={{ display: "block" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
                 <h3 style={{ fontSize: 18, color: "var(--ink)", margin: 0 }}>{r.branch_name}</h3>
                 {r.is_daytrade === 1 && (
@@ -151,7 +171,37 @@ export default function BranchPage() {
                   <div className="num" style={{ color: "var(--accent-2)" }}>{r.rank_score}</div>
                 </div>
               </div>
-            </a>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {tab === "warrant" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {movers.length === 0 && (
+            <div className="state">
+              近期無權證分點大額淨買紀錄(資料自每日成交前15大上市權證累積;上櫃權證無免費來源)
+            </div>
+          )}
+          {movers.map((m) => (
+            <div key={`${m.branch_name}-${m.warrant_id}`} className="card" style={{ display: "grid", gridTemplateColumns: "1.2fr 1.6fr 1fr 1fr", gap: 10, alignItems: "center", padding: "10px 14px" }}>
+              <div style={{ fontWeight: 650 }}>{m.branch_name}</div>
+              <div>
+                <a href={m.underlying_id ? `/stock?id=${m.underlying_id}` : "#"} style={{ color: "var(--ink)" }}>
+                  {m.underlying_name ?? "—"}
+                </a>{" "}
+                <span style={{ color: "var(--ink-3)", fontSize: 12 }} className="sid">
+                  {m.warrant_name}({m.warrant_id})
+                </span>{" "}
+                <span className={`warrant-kind ${m.kind}`}>{m.kind === "call" ? "認購" : "認售"}</span>
+              </div>
+              <div className="num" style={{ textAlign: "right", color: "var(--up)", fontWeight: 700 }}>
+                淨買 {m.net_lots.toLocaleString("zh-TW")} 張
+              </div>
+              <div style={{ textAlign: "right", color: "var(--ink-3)", fontSize: 12 }}>
+                {m.active_days} 個交易日 · 最近 {m.last_date}
+              </div>
+            </div>
           ))}
         </div>
       )}
@@ -164,11 +214,11 @@ export default function BranchPage() {
           {Object.entries(today).map(([branchName, trades]) => (
             <div key={branchName} className="card" style={{ padding: 16 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, borderBottom: "1px solid var(--border)", paddingBottom: 12 }}>
-                <a href={`/branch/${branchName}`} style={{ fontSize: 18, fontWeight: 600, color: "var(--ink)" }}>{branchName}</a>
+                <span style={{ fontSize: 18, fontWeight: 600, color: "var(--ink)" }}>{branchName}</span>
               </div>
               <div style={{ display: "grid", gap: 8 }}>
                 {trades.map((t) => (
-                  <a href={`/stock/${t.stock_id}`} key={t.stock_id} style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr", gap: 8, alignItems: "center", padding: "6px 8px", background: "var(--surface-2)", borderRadius: 6, textDecoration: "none" }}>
+                  <a href={`/stock?id=${t.stock_id}`} key={t.stock_id} style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr", gap: 8, alignItems: "center", padding: "6px 8px", background: "var(--surface-2)", borderRadius: 6, textDecoration: "none" }}>
                     <div>
                       <span style={{ color: "var(--ink)" }}>{t.stock_name}</span>{" "}
                       <span style={{ color: "var(--ink-3)", fontSize: 12 }} className="sid">{t.stock_id}</span>

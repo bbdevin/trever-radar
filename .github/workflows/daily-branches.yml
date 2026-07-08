@@ -54,9 +54,9 @@ jobs:
         working-directory: pipeline
         run: python -m radar seed-branches
 
-      - name: Branch trades (fubon public page, score-pool top 80)
+      - name: Branch trades (MoneyDJ mirrors, score-pool top 500)
         working-directory: pipeline
-        run: python -m radar import-branch-trades --top 80
+        run: python -m radar import-branch-trades --top 500 --sleep 1.2
 
       - name: Compute branch stats
         working-directory: pipeline
