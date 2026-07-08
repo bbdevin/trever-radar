@@ -15,7 +15,7 @@ concurrency:
 jobs:
   branches_and_deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 40
     env:
       PYTHONUNBUFFERED: "1"
     steps:

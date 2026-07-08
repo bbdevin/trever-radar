@@ -15,7 +15,7 @@ concurrency:
 jobs:
   market:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     env:
       PYTHONUNBUFFERED: "1"
       RADAR_FINMIND_TOKEN: ${{ secrets.RADAR_FINMIND_TOKEN }}
