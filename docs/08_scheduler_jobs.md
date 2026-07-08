@@ -1,23 +1,23 @@
 # 08 排程與資料流程
 
-## 0. 現行 V1-Free 工作流 (GitHub Actions)
+## 0. 現行 V1-Free 排程總表(2026-07-08 定案,單一真相)
 
-為了解決單一 Pipeline 執行過久、容易卡死的問題，我們將每日任務拆解為三個獨立的 GitHub Actions workflows，各自負責不同的資料範疇並設定了 timeout 保護機制：
+依交易所公布時間分批,每階段跑完直接部署;晚到的資料集由前端 `freshness` 標「暫用前一日」。
+所有資料 workflow 共用 `radar-db` 併發群(依序執行);**手動觸發請一次一支,等跑完再下一支**,否則排隊互相取消。
 
-1. **`daily-market.yml` (大盤與基本行情)**
-   - `schedule`: 每交易日 15:30 台北時間
-   - 負責抓取當日報價 (`quotes`)、三大法人 (`insti`)、計算技術指標 (`compute-indicators`)、每週一更新題材 (`import-themes`)。
-2. **`daily-warrants.yml` (權證資料)**
-   - `schedule`: 每交易日 16:30 台北時間
-   - 負責更新權證主檔 (`import-warrant-master`) 與當日權證彙總 (`aggregate-warrants`)。
-3. **`daily-branches.yml` (分點與評分結算)**
-   - `schedule`: 每交易日 18:30 台北時間
-   - 負責抓取融資券 (`margin`)、預載與更新分點名單 (`seed-branches`, `import-branch-trades`)、計算分點勝率 (`compute-branch-stats`)。
-   - 接著進行全局評分結算 (`compute-scores`, `compute-performance`)、匯出前端 JSON (`export-json`)。
-   - 最後執行網站 Build 並部署至 Cloudflare Pages。
+| 台北時間 | workflow | 內容 | 部署 |
+|---|---|---|---|
+| 平日 14:10 | `daily-market` | 日K+權證成交(14:00 公布)→ 當日權證彙總 → 指標增量(--days 5)→ 綜合分 →(週一)概念股更新 | ✓ 資料日變當天 |
+| 平日 16:10 | `daily-insti` | 法人買賣超(16:00 公布)+ 權證主檔 → 重算分數 | ✓ |
+| 平日 17:40 | `daily-branches` | 融資券 + 法人補抓 + 分點爬蟲(80檔+15權證)+ 分點統計 + 分數 + 績效回填 | ✓ |
+| 平日 21:00 | `daily-branches`(第二輪) | 同上,補晚公布/前段失敗(全部冪等) | ✓ |
+| 每天 01:10 | `data-backfill` | 深歷史增量(已拉深自動跳過 → 日常近零請求,只補新上市/缺漏) | ✗ |
+| 週六 01:10 | `data-backfill`(同支) | + 全市場還原因子重抓(除權息)+ 指標全歷史重算 + DB 備份 | ✗ |
+| 週五 17:40/21:00 | `daily-branches` 內 | DB 備份上傳 release `db-backup` | — |
+| push `main` | `deploy` | 用現有雲端 DB:分數+績效+export+build+deploy(不抓資料) | ✓ |
 
-- **資料庫快取傳遞**：每個 Workflow 開始時會從 release (`db-backup`) 下載最新的 `radar.db`，並在結束時壓縮覆蓋回 release，實現跨 Workflow 的資料庫狀態傳遞。
-- 本機開發仍走同一 CLI:`cd pipeline; .venv\Scripts\python -m radar export-json`，前端讀 `web/public/data/*.json`。
+- **DB 續存**:Actions cache 為主(每支跑完必存、下一支接續),cache miss 才從 release `db-backup` 種子還原;release 備份僅週五/週六/手動更新。
+- 本機開發:同一套 CLI,`python -m radar export-json` 後前端讀 `web/public/data/*.json`;本機 DB 僅開發用,**正式真相在雲端**。
 
 ## 1. 盤後管線(V1,交易日執行)
 
