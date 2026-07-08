@@ -4,12 +4,13 @@ import { useEffect, useMemo, useState } from "react";
 import { IconFlame, IconPulse, IconRadar, IconTrend, IconZap, IconStar } from "@/components/Icons";
 import MoneyFlow from "@/components/MoneyFlow";
 import StockCard from "@/components/StockCard";
+import { useSession, signInWithGoogle } from "@/lib/useSession";
 import type { ListKey, MetaJson, RadarJson } from "@/lib/types";
 import { DATASET_LABEL, SOURCE_LABEL, fmtE8 } from "@/lib/format";
 
 const TABS: { key: ListKey; label: string; hint: string; icon: typeof IconFlame }[] = [
   { key: "score", label: "綜合", hint: "盤後綜合分數:分點/權證/技術/法人加權−風險扣分,≥65 為觀察門檻", icon: IconRadar },
-  { key: "mark", label: "Mark策略", hint: "20日內曾漲停, MACD零軸以上金叉, 5日內爆量", icon: IconStar },
+  { key: "mark", label: "策略", hint: "策略: 20日內曾漲停/大漲, MACD金叉, 5日內爆量", icon: IconStar },
   { key: "hot", label: "熱門", hint: "成交金額最大", icon: IconFlame },
   { key: "surge", label: "爆量", hint: "量比 = 今日量/20日均量,≥1.5 且金額 ≥1億", icon: IconZap },
   { key: "strong", label: "強勢", hint: "漲幅排序,金額 ≥1億", icon: IconTrend },
@@ -39,6 +40,7 @@ export default function RadarPage() {
   const [meta, setMeta] = useState<MetaJson | null>(null);
   const [error, setError] = useState(false);
   const [tab, setTab] = useState<ListKey>("score");
+  const { session, loading } = useSession();
 
   useEffect(() => {
     fetch("/data/radar.json")
@@ -129,7 +131,14 @@ export default function RadarPage() {
         <span className="tabhint">{TABS.find((t) => t.key === tab)?.hint}</span>
       </div>
 
-      {shown.length === 0 ? (
+      {tab === "mark" && !loading && !session ? (
+        <div className="state" style={{ display: "flex", flexDirection: "column", gap: 16, alignItems: "center" }}>
+          <span>進階策略榜單為會員專屬功能，請先登入 Google 帳號解鎖。</span>
+          <button onClick={signInWithGoogle} style={{ padding: "8px 16px", borderRadius: 6, border: "1px solid var(--border, #444)", background: "var(--panel, #222)", color: "var(--fg, #fff)", cursor: "pointer", fontSize: 14 }}>
+            使用 Google 登入
+          </button>
+        </div>
+      ) : shown.length === 0 ? (
         <div className="state">此榜今日無符合條件的股票</div>
       ) : (
         <div className="grid">

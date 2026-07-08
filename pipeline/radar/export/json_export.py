@@ -189,7 +189,7 @@ def export_json(out_dir: Path | None = None) -> dict:
         warrant = warrant[:40]
 
         mark_all = sorted(
-            [s for s in all_stocks if s["technical"] and any(r.get("code") == "T6_MARK_STRATEGY" for r in s["technical"]["reasons"])],
+            [s for s in all_stocks if s["technical"] and any(r.get("code") in ("T6_MARK_STRATEGY", "T6_MARK_STRATEGY_RELAXED") for r in s["technical"]["reasons"])],
             key=lambda s: s["turnover"] or 0, reverse=True)
         mark = mark_all[:40]
 

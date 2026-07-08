@@ -108,27 +108,36 @@ def compute_series(price_rows: Iterable[dict]) -> list[dict]:
         )
 
         is_limit_up_20d = False
+        is_surge_7pct_20d = False
         if i >= 1:
             for j in range(max(1, i - 19), i + 1):
                 if closes[j] is not None and closes[j-1] is not None:
                     if closes[j] >= round(closes[j-1] * 1.095, 2):
                         is_limit_up_20d = True
-                        break
+                    if closes[j] >= round(closes[j-1] * 1.07, 2):
+                        is_surge_7pct_20d = True
 
         has_volume_surge_5d = False
+        has_volume_surge_1_5x_5d = False
         if i >= 20:
             for j in range(max(20, i - 4), i + 1):
                 adv_j = _prev_avg(volumes, j, 20)
-                if adv_j and volumes[j] is not None and volumes[j] >= adv_j * 2:
-                    has_volume_surge_5d = True
-                    break
+                if adv_j and volumes[j] is not None:
+                    if volumes[j] >= adv_j * 2:
+                        has_volume_surge_5d = True
+                    if volumes[j] >= adv_j * 1.5:
+                        has_volume_surge_1_5x_5d = True
 
         is_macd_golden_cross = False
-        if macd_hist is not None and prev_macd_hist is not None and macd is not None:
-            if macd_hist > 0 >= prev_macd_hist and macd > 0:
-                is_macd_golden_cross = True
+        is_macd_golden_cross_any = False
+        if macd_hist is not None and prev_macd_hist is not None:
+            if macd_hist > 0 >= prev_macd_hist:
+                is_macd_golden_cross_any = True
+                if macd is not None and macd > 0:
+                    is_macd_golden_cross = True
 
         is_mark_strategy = is_limit_up_20d and has_volume_surge_5d and is_macd_golden_cross
+        is_mark_strategy_relaxed = is_surge_7pct_20d and has_volume_surge_1_5x_5d and is_macd_golden_cross_any
 
         score, reasons, risks = score_technical(
             idx=i,
@@ -152,6 +161,7 @@ def compute_series(price_rows: Iterable[dict]) -> list[dict]:
             prev_k=prev_k,
             prev_d=prev_d,
             is_mark_strategy=is_mark_strategy,
+            is_mark_strategy_relaxed=is_mark_strategy_relaxed,
         )
 
         out.append({
@@ -244,7 +254,9 @@ def score_technical(**x) -> tuple[int, list[dict], list[dict]]:
             add(5, "T5_KD_GOLDEN_LOW", "KD於50以下黃金交叉", _round(x["k9"], 2))
 
     if x.get("is_mark_strategy"):
-        add(20, "T6_MARK_STRATEGY", "Mark策略(20日內曾漲停, MACD零上金叉, 5日內爆量)")
+        add(20, "T6_MARK_STRATEGY", "策略(20日內曾漲停, MACD零上金叉, 5日內爆量)")
+    elif x.get("is_mark_strategy_relaxed"):
+        add(15, "T6_MARK_STRATEGY_RELAXED", "相近策略(20日內曾大漲, MACD金叉, 5日微量增)")
 
     return min(score, 100), reasons, risks
 
