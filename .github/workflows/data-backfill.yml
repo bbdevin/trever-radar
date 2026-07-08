@@ -8,11 +8,11 @@ on:
   workflow_dispatch:
     inputs:
       task:
-        description: "deep(上市以來日K)| adjust(還原因子)"
+        description: "deep(上市以來日K)| adjust(還原因子)| themes(概念股分類)"
         required: true
         default: "deep"
         type: choice
-        options: [deep, adjust]
+        options: [deep, adjust, themes]
       sleep:
         description: "FinMind 請求間隔秒數(600/hr 上限 → ≥6)"
         required: false
@@ -66,6 +66,11 @@ jobs:
         if: inputs.task == 'adjust'
         working-directory: pipeline
         run: python -m radar compute-adjustments --all --sleep "${{ inputs.sleep }}"
+
+      - name: Concept themes
+        if: inputs.task == 'themes'
+        working-directory: pipeline
+        run: python -m radar import-themes
 
       - name: Save SQLite cache
         if: always()

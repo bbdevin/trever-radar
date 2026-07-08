@@ -344,6 +344,52 @@ def import_branch_trades(date: str | None = None, top: int = 80,
     return {"done": done, "empty": empty, "failed": failed, "rows": written}
 
 
+def import_themes(limit: int | None = None) -> dict:
+    """概念股分類(富邦公開頁):清單 1 請求 + 每類 1 請求(3 秒節流)。
+
+    全量約數百類 → 15 分鐘級;每週更新一次即可(成分變動慢)。
+    """
+    from sqlalchemy import text
+
+    from .providers import fubon
+
+    init_db()
+    engine = get_engine()
+    now = datetime.now(ZoneInfo(config.TZ)).isoformat(timespec="seconds")
+    today = datetime.now(ZoneInfo(config.TZ)).strftime("%Y%m%d")
+
+    theme_list = fubon.fetch_theme_list()
+    if limit:
+        theme_list = theme_list[:limit]
+
+    done = failed = links = 0
+    for code, name in theme_list:
+        try:
+            members = fubon.fetch_theme_members(code)
+        except Exception as e:  # noqa: BLE001
+            failed += 1
+            print(f"theme {code} {name} FAILED: {str(e)[:80]}", flush=True)
+            continue
+        if not members:
+            continue
+        with engine.begin() as conn:
+            upsert(conn, schema.themes, [{
+                "id": code, "name": name, "source": "fubon", "updated_at": now}])
+            conn.execute(text("DELETE FROM stock_themes WHERE theme_id = :t"), {"t": code})
+            upsert(conn, schema.stock_themes,
+                   [{"theme_id": code, "stock_id": sid} for sid in members])
+        done += 1
+        links += len(members)
+        if done % 25 == 0:
+            print(f"themes {done}/{len(theme_list)} ...", flush=True)
+    with engine.begin() as conn:
+        _log(conn, "fubon", "themes", today, links,
+             "ok" if failed == 0 else "error",
+             error=None if failed == 0 else f"{failed} themes failed")
+    print(f"themes: {done} groups, {links} memberships, {failed} failed", flush=True)
+    return {"themes": done, "links": links, "failed": failed}
+
+
 def import_daily(date: str, datasets: list[str] | None = None) -> list[dict]:
     """date: YYYYMMDD. datasets subset of {quotes, insti, margin}; None = all."""
     wanted = set(datasets or ["quotes", "insti", "margin"])

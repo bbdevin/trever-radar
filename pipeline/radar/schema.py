@@ -132,6 +132,23 @@ indicators_daily = Table(
     Index("ix_indicators_daily_date", "date"),
 )
 
+themes = Table(
+    "themes",
+    metadata,
+    Column("id", Text, primary_key=True),          # 來源分類代碼,例 C023322
+    Column("name", Text, nullable=False),          # 例:矽晶圓
+    Column("source", Text, nullable=False, server_default="fubon"),
+    Column("updated_at", Text),
+)
+
+stock_themes = Table(
+    "stock_themes",
+    metadata,
+    Column("theme_id", Text, primary_key=True),
+    Column("stock_id", Text, primary_key=True),
+    Index("ix_stock_themes_stock", "stock_id"),
+)
+
 branch_trades = Table(
     "branch_trades",
     metadata,

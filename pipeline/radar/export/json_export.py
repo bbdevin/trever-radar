@@ -195,19 +195,54 @@ def export_json(out_dir: Path | None = None) -> dict:
         """), {"d": d, "d20": base20[-1] if base20 else d})}
 
         total_today = sum(g["turnover"] for g in sector_today.values()) or 1
-        sectors = []
-        for ind, g in sector_today.items():
-            top = sorted(g["stocks"], key=lambda s: s["turnover"] or 0, reverse=True)[:3]
-            sectors.append({
-                "name": ind,
+
+        def group_payload(name, g, prior_avg):
+            top = sorted(g["stocks"], key=lambda s: s["turnover"] or 0, reverse=True)[:8]
+            return {
+                "name": name,
                 "turnover": g["turnover"],
                 "share": round(g["turnover"] / total_today * 100, 1),
-                "vs20": round(g["turnover"] / prior[ind], 2) if prior.get(ind) else None,
+                "vs20": round(g["turnover"] / prior_avg, 2) if prior_avg else None,
                 "avg_chg": round(sum(g["chgs"]) / len(g["chgs"]), 2) if g["chgs"] else None,
                 "up": g["up"], "down": g["down"],
-                "top": [{"id": s["id"], "name": s["name"], "chg_pct": s["chg_pct"]} for s in top],
-            })
+                "top": [{"id": s["id"], "name": s["name"], "chg_pct": s["chg_pct"],
+                         "turnover": s["turnover"]} for s in top],
+            }
+
+        sectors = [group_payload(ind, g, prior.get(ind)) for ind, g in sector_today.items()]
         sectors.sort(key=lambda x: x["turnover"], reverse=True)
+
+        # ── 題材/概念股資金流(富邦概念股分類;成分重疊,share 僅供相對比較) ──
+        by_id = {s["id"]: s for s in all_stocks}
+        theme_groups: dict[str, dict] = {}
+        for name, sid in conn.execute(text(
+                "SELECT t.name, st.stock_id FROM stock_themes st "
+                "JOIN themes t ON t.id = st.theme_id")):
+            s = by_id.get(sid)
+            if s is None:
+                continue
+            g = theme_groups.setdefault(name, {"turnover": 0, "up": 0, "down": 0,
+                                               "chgs": [], "stocks": []})
+            g["turnover"] += s["turnover"] or 0
+            if s["chg_pct"] is not None:
+                g["chgs"].append(s["chg_pct"])
+                if s["chg_pct"] > 0:
+                    g["up"] += 1
+                elif s["chg_pct"] < 0:
+                    g["down"] += 1
+            g["stocks"].append(s)
+        theme_prior = {r[0]: r[1] for r in conn.execute(text("""
+            SELECT t.name, SUM(p.turnover) * 1.0 / COUNT(DISTINCT p.date)
+            FROM daily_prices p
+            JOIN stock_themes st ON st.stock_id = p.stock_id
+            JOIN themes t ON t.id = st.theme_id
+            WHERE p.date >= :d20 AND p.date < :d
+            GROUP BY t.name
+        """), {"d": d, "d20": base20[-1] if base20 else d})}
+        themes = [group_payload(name, g, theme_prior.get(name))
+                  for name, g in theme_groups.items()
+                  if len(g["stocks"]) >= 3 and g["turnover"] >= 5e8]
+        themes.sort(key=lambda x: x["turnover"], reverse=True)
 
         summary = conn.execute(text("""
             SELECT s.market,
@@ -236,7 +271,8 @@ def export_json(out_dir: Path | None = None) -> dict:
             {"market": m, "turnover": t, "up": up, "down": down}
             for m, t, up, down in summary
         ],
-        "sectors": sectors[:12],
+        "sectors": sectors[:16],
+        "themes": themes[:36],
         "lists": {
             "score": [s["id"] for s in score],
             "hot": [s["id"] for s in hot],

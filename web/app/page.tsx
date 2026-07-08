@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { IconFlame, IconPulse, IconRadar, IconTrend, IconZap } from "@/components/Icons";
-import SectorPanel from "@/components/SectorPanel";
+import MoneyFlow from "@/components/MoneyFlow";
 import StockCard from "@/components/StockCard";
 import type { ListKey, MetaJson, RadarJson } from "@/lib/types";
 import { DATASET_LABEL, SOURCE_LABEL, fmtE8 } from "@/lib/format";
@@ -105,7 +105,7 @@ export default function RadarPage() {
         </div>
       )}
 
-      <SectorPanel sectors={radar.sectors} />
+      <MoneyFlow sectors={radar.sectors} themes={radar.themes} />
 
       <div className="tabbar">
         <div className="seg" role="tablist">

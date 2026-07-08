@@ -75,12 +75,12 @@ export interface StockJson {
 export interface SectorFlow {
   name: string;
   turnover: number;
-  share: number; // 佔全市場 %
-  vs20: number | null; // 今日金額 / 20 日均
+  share: number; // 佔全市場 %(題材成分重疊,僅供相對比較)
+  vs20: number | null; // 今日金額 / 20 日均 → 資金流入/流出
   avg_chg: number | null;
   up: number;
   down: number;
-  top: { id: string; name: string; chg_pct: number | null }[];
+  top: { id: string; name: string; chg_pct: number | null; turnover?: number }[];
 }
 
 export type ListKey = "score" | "hot" | "surge" | "strong" | "warrant";
@@ -121,6 +121,7 @@ export interface RadarJson {
   note: string;
   summary: { market: string; turnover: number; up: number; down: number }[];
   sectors: SectorFlow[];
+  themes?: SectorFlow[]; // 概念股資金流(成分重疊)
   lists: Record<ListKey, string[]>;
   stocks: RadarStock[];
 }

@@ -9,6 +9,28 @@ from ..http import get_text
 from . import NoDataError
 
 BASE = "https://fubon-ebrokerdj.fbs.com.tw/z/zc/zco/zco.djhtm"
+THEME_LIST = "https://fubon-ebrokerdj.fbs.com.tw/z/zh/zha/zha.djhtm"
+THEME_MEMBERS = "https://fubon-ebrokerdj.fbs.com.tw/z/zh/zhc/zhc.djhtm"
+
+_THEME_LINK = re.compile(r'zhc\.djhtm\?a=(C\d+)"[^>]*>([^<]{1,20})</a>', re.IGNORECASE)
+_MEMBER = re.compile(r"GenLink2stk\('A[SO]?(\d{4,6}[A-Z]?)','[^']+'\)")
+
+
+def fetch_theme_list() -> list[tuple[str, str]]:
+    """概念股分類清單 [(code, name), ...],約數百類。"""
+    html = get_text(THEME_LIST)
+    seen: dict[str, str] = {}
+    for code, name in _THEME_LINK.findall(html):
+        seen.setdefault(code, name.strip())
+    if not seen:
+        raise NoDataError("fubon zha: no theme links")
+    return list(seen.items())
+
+
+def fetch_theme_members(code: str) -> list[str]:
+    """單一概念股分類的成分股代號(僅個股,4 碼)。"""
+    html = get_text(THEME_MEMBERS, {"a": code})
+    return sorted({m for m in _MEMBER.findall(html) if len(m) == 4 and m.isdigit()})
 
 _ROW = re.compile(
     r'zco0\.djhtm\?a=[^&"]*&(?:amp;)?b=([^&"]+)&(?:amp;)?BHID=([^"&]+)"[^>]*>([^<]+)</a></TD>\s*'

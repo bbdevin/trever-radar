@@ -76,6 +76,11 @@ def cmd_compute_indicators(args):
     print(f"indicators: {info['done']} stocks, {info['rows']} rows written")
 
 
+def cmd_import_themes(args):
+    from .importer import import_themes
+    import_themes(args.limit)
+
+
 def cmd_import_branch_trades(args):
     from .importer import import_branch_trades
     ids = args.ids.split(",") if args.ids else None
@@ -175,6 +180,10 @@ def main(argv=None):
     sub.add_parser("import-stock-info",
                    help="fill stocks.industry via FinMind (one request)"
                    ).set_defaults(fn=cmd_import_stock_info)
+
+    th = sub.add_parser("import-themes", help="concept-stock groups (fubon public page)")
+    th.add_argument("--limit", type=int, default=None, help="only first N groups (testing)")
+    th.set_defaults(fn=cmd_import_themes)
 
     bt = sub.add_parser("import-branch-trades",
                         help="scrape top-15 branch buys/sells (fubon public page)")

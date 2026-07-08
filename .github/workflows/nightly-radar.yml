@@ -73,6 +73,14 @@ jobs:
         working-directory: pipeline
         run: python -m radar import-branch-trades --top 80
 
+      - name: Weekly concept-theme refresh (Mon)
+        if: github.event_name != 'push'
+        working-directory: pipeline
+        run: |
+          if [ "$(TZ=Asia/Taipei date +%u)" = "1" ]; then
+            python -m radar import-themes
+          fi
+
       - name: Export frontend JSON
         working-directory: pipeline
         run: python -m radar export-json
