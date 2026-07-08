@@ -47,12 +47,7 @@ export default function StockCard({ s }: { s: RadarStock }) {
               <span className={`score-final ${s.scores.final >= 65 ? "pass" : ""}`}>
                 {s.scores.final}
               </span>
-              <span className="score-parts">
-                {s.scores.branch ?? "—"} · {s.scores.warrant ?? "—"} · {s.scores.tech ?? "—"} · {s.scores.inst ?? "—"} · {s.scores.theme ?? "—"}
-                {s.scores.risk_penalty < 0 && (
-                  <em className="score-risk"> 風險 {s.scores.risk_penalty}</em>
-                )}
-              </span>
+              <span className="k" style={{ marginLeft: "4px" }}>綜合評分</span>
             </div>
             {s.reasons.slice(0, 2).map((t) => (
               <div className="reason" key={t}>

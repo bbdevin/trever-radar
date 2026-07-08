@@ -453,7 +453,7 @@ main { min-height: 62vh; }
   color: var(--ink-2); min-width: 34px;
 }
 .score-final.pass { color: var(--warn); }
-.score-parts { font-size: 11px; color: var(--ink-3); }
+
 .score-risk { font-style: normal; color: var(--up); }
 .score-block .reason { font-size: 12px; color: var(--ink-2); line-height: 1.45; }
 .score-block .risk { font-size: 12px; color: var(--up); }
