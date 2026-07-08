@@ -26,11 +26,21 @@
 2. ❌ 低估 GitHub Actions:凌晨窗口 + `--max-minutes` + 斷點續傳 = 不用管 6 小時上限,一週自動補完。VPS 從「必需」降級為「想更快/想更深時的加速器」
 3. ✅ 其餘正確:斷點續傳、逐批寫入防 OOM、Docker 免污染主機、跑完 `gh release upload db-backup --clobber` 回寫——**注意:上傳後要刪掉 Actions 舊 cache(`gh cache delete --all`),否則雲端下次仍用舊 cache,VPS 成果不生效**
 
-## 3. VPS 執行指令(2 年深度版;2026-07-08 更新:鏡像已擴至 5 站)
+## 3. VPS 執行指令(2026-07-09 更新:5 年分階段方案)
 
-目標:**Top 500 檔 × 2 年(約 490 交易日)分點明細** = 約 24.5 萬請求。
-5 站輪替 + 整體 1.0 秒/請求 → 單站 5 秒一次(非常禮貌)→ **總時約 68–72 小時 ≈ 3 天** ✓。
-中斷再跑同一指令即續傳(已補的日期自動跳過)。
+**來源深度實測**:zco 頁資料回到 **2021 年中**(2330 於 2021-07 有、2019-07 無)→ 「5 年」= 免費來源的物理上限。
+
+**請求量與時間**(5 站輪替、整體 1.0 秒/請求 = 單站 5 秒一次;全部可中斷續傳):
+
+| 階段 | 範圍 | 請求量 | VPS 連跑 |
+|---|---|---|---|
+| **P1(先跑這個)** | Top 500 × 2 年 | ~24.5 萬 | **~3 天** → 立刻可用 |
+| P2(接續同指令改參數) | Top 1200(≈日均額 3,000 萬以上全部)× 5 年 | ~146 萬 | ~17 天 |
+| P3(真・全部) | ~2,000 檔 × 5 年 | ~240 萬 | ~28 天;冷門股分點幾乎無訊號,**不建議** |
+
+march-back 由新到舊逐日補:P2 跑到第 3 天時「全部 1200 檔 × 近一年」就已可用,價值漸進解鎖,不必等跑完。
+
+⚠️ **架構前置(P2 之前要做,交給開發端)**:5 年全量會讓 DB 增 7–9GB,炸掉 release 單檔 2GB 與 Actions cache 10GB 上限 → 分點歷史需拆獨立檔(branch_hist.db)或搬 Cloudflare R2(免費 10GB)。P1 的 2 年量(約 +1.5GB)還在現行架構安全範圍。
 
 ```bash
 git clone https://github.com/bbdevin/trever-radar.git && cd trever-radar
@@ -38,11 +48,15 @@ mkdir -p data
 curl -L https://github.com/bbdevin/trever-radar/releases/download/db-backup/radar.db.gz -o data/radar.db.gz
 gunzip data/radar.db.gz
 
+# P1:Top 500 × 2 年(~3 天)
 docker run -d --name radar-backfill --restart unless-stopped \
   -v $(pwd)/pipeline:/app/pipeline -v $(pwd)/data:/app/data \
   -w /app/pipeline python:3.11 \
   bash -c "pip install -r requirements.txt && python -m radar backfill-branches --top 500 --days 490 --sleep 1.0"
 docker logs -f radar-backfill   # Ctrl+C 離開,背景照跑
+
+# P2(P1 跑完、且開發端完成 DB 分檔改造後再啟):Top 1200 × 5 年
+#   docker rm -f radar-backfill 後用同指令,參數改 --top 1200 --days 1215
 
 # 約 3 天後、回寫前:先把 VPS 這份 DB 缺的近幾日行情/法人/融資券補齊
 # (VPS 跑的 3 天裡雲端照常進新資料,回寫會整份覆蓋,不補會產生缺口)

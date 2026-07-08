@@ -64,6 +64,8 @@
 
 ## 已知債務 / 注意
 
+- **分點 5 年全量的架構前置**(vps_backfill_plan §3 P2 之前必做):DB 將 +7–9GB → 炸 release 單檔 2GB 與 Actions cache 10GB → 分點歷史拆 branch_hist.db 或搬 Cloudflare R2(免費 10GB);P1(2年,+1.5GB)還安全
+
 - 個股 JSON 一檔約 0.5MB(全歷史);擴到數百檔時改「預設 5 年 + 按需載入」
 - 權證榜目前是「認購成交金額 / 20 日均值」的異動排序,尚不是 04 定義的完整 0–100 權證分;完整分數與 reasons/risks 等評分模組一起做
 - 權證 warrant_daily 約 1,000 萬列/年增速;彙總表已建,依 05 規劃明細僅留 2 年(清理排程未寫)
