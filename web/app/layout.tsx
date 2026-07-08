@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Manrope } from "next/font/google";
 import BottomNav from "@/components/BottomNav";
+import SearchBox from "@/components/SearchBox";
 import { IconRadar } from "@/components/Icons";
 import "./globals.css";
 
@@ -42,6 +43,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 <em>盤後找籌碼,盤中看發動</em>
               </span>
             </a>
+            <div className="header-actions">
+              <SearchBox />
+            </div>
             <nav className="nav">
               {NAV.map((n) =>
                 n.href ? (

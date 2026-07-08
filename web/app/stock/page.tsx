@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Fragment, Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { IconArrowLeft } from "@/components/Icons";
 import KChart from "@/components/KChart";
@@ -156,6 +156,7 @@ function TechnicalPanel({ data }: { data: StockJson }) {
 }
 
 function WarrantPanel({ data }: { data: StockJson }) {
+  const [expanded, setExpanded] = useState<string | null>(null);
   const maxTurnover = Math.max(
     1,
     ...data.warrant_history.map((p) => Math.max(p.call_turnover, p.put_turnover)),
@@ -211,16 +212,46 @@ function WarrantPanel({ data }: { data: StockJson }) {
           </thead>
           <tbody>
             {data.active_warrants.map((w) => (
-              <tr key={w.id}>
-                <td className="num">{w.id}</td>
-                <td>{w.name}</td>
-                <td>
-                  <span className={`warrant-kind ${w.kind}`}>{w.kind === "call" ? "認購" : "認售"}</span>
-                </td>
-                <td className="num">{w.strike == null ? "—" : w.strike.toLocaleString("zh-TW")}</td>
-                <td className="num">{w.maturity_date ?? "—"}</td>
-                <td className="num">{fmtE8(w.turnover)}</td>
-              </tr>
+              <Fragment key={w.id}>
+                <tr
+                  className="warrant-row-toggle"
+                  onClick={() => setExpanded(expanded === w.id ? null : w.id)}
+                  title={w.branches?.length ? "點擊展開分點進出" : "此權證無分點資料(上櫃權證無來源)"}
+                >
+                  <td className="num">{w.id}</td>
+                  <td>
+                    {w.name}
+                    {!!w.branches?.length && <span className="chip" style={{ marginLeft: 6 }}>分點</span>}
+                  </td>
+                  <td>
+                    <span className={`warrant-kind ${w.kind}`}>{w.kind === "call" ? "認購" : "認售"}</span>
+                  </td>
+                  <td className="num">{w.strike == null ? "—" : w.strike.toLocaleString("zh-TW")}</td>
+                  <td className="num">{w.maturity_date ?? "—"}</td>
+                  <td className="num">{fmtE8(w.turnover)}</td>
+                </tr>
+                {expanded === w.id && (
+                  <tr className="warrant-branches">
+                    <td colSpan={6}>
+                      {w.branches?.length ? (
+                        <div className="wb-grid">
+                          {w.branches.map((b) => (
+                            <span className="wb-item" key={b.name}>
+                              <span className="n">{b.name}</span>
+                              <span className={`net ${b.net > 0 ? "up" : b.net < 0 ? "down" : "flat"}`}>
+                                {b.net > 0 ? "+" : ""}{b.net.toLocaleString("zh-TW")}張
+                              </span>
+                            </span>
+                          ))}
+                          <span className="wb-empty">※ 權證分點多為發行商造市部位,重點看非發行商大額買超</span>
+                        </div>
+                      ) : (
+                        <span className="wb-empty">此權證無分點資料(僅上市權證有免費來源,且僅榜單熱門權證每晚抓取)</span>
+                      )}
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
             ))}
           </tbody>
         </table>

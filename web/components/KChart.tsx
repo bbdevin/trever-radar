@@ -3,6 +3,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Candle } from "@/lib/types";
 import { bollinger, kd, macd, rsi, sma } from "@/lib/indicators";
+import { barsForDays, resample, type Timeframe } from "@/lib/resample";
+
+const TF_DEFS: { key: Timeframe; label: string }[] = [
+  { key: "D", label: "日K" },
+  { key: "W", label: "週K" },
+  { key: "M", label: "月K" },
+];
 
 const MA_DEFS = [
   { key: "ma5", n: 5, label: "5日", color: "#3987e5" },
@@ -19,11 +26,13 @@ interface Settings {
   ma: Record<MaKey, boolean>;
   boll: boolean;
   sub: SubKey;
+  tf: Timeframe;
 }
 const DEFAULT_SETTINGS: Settings = {
   ma: { ma5: true, ma10: true, ma20: true, ma60: true, ma120: true, ma240: true },
   boll: true,
   sub: "macd",
+  tf: "D",
 };
 const LS_KEY = "trever.chart.settings.v1";
 
@@ -52,11 +61,14 @@ export default function KChart({ candles, visibleDays }: { candles: Candle[]; vi
     if (typeof window !== "undefined") localStorage.setItem(LS_KEY, JSON.stringify(settings));
   }, [settings]);
 
+  // 依週期重取樣(日K→週/月K),指標對重取樣後序列計算 → 週K的MA20=20週線(主流慣例)
+  const bars = useMemo(() => resample(candles, settings.tf), [candles, settings.tf]);
+
   // 指標一律以「全歷史」計算,再切可視區間 → 區間邊緣的均線/布林不失真
   const calc = useMemo(() => {
-    const closes = candles.map((c) => c.c as number | null);
-    const highs = candles.map((c) => c.h as number | null);
-    const lows = candles.map((c) => c.l as number | null);
+    const closes = bars.map((c) => c.c as number | null);
+    const highs = bars.map((c) => c.h as number | null);
+    const lows = bars.map((c) => c.l as number | null);
     return {
       ma: Object.fromEntries(MA_DEFS.map((m) => [m.key, sma(closes, m.n)])) as Record<MaKey, (number | null)[]>,
       boll: bollinger(closes, 20, 2),
@@ -64,15 +76,16 @@ export default function KChart({ candles, visibleDays }: { candles: Candle[]; vi
       rsi: rsi(closes, 14),
       kd: kd(highs, lows, closes, 9),
     };
-  }, [candles]);
+  }, [bars]);
 
   useEffect(() => {
-    if (!ref.current || candles.length === 0) return;
+    if (!ref.current || bars.length === 0) return;
     let disposed = false;
     let chart: import("lightweight-charts").IChartApi | undefined;
-    const start = Math.max(0, candles.length - visibleDays);
+    const visibleBars = barsForDays(visibleDays, settings.tf);
+    const start = Math.max(0, bars.length - visibleBars);
     const idx = (arr: (number | null)[]) =>
-      arr.slice(start).map((v, i) => ({ time: candles[start + i].t, value: v }))
+      arr.slice(start).map((v, i) => ({ time: bars[start + i].t, value: v }))
         .filter((p): p is { time: string; value: number } => p.value != null);
 
     import("lightweight-charts").then((lw) => {
@@ -91,7 +104,7 @@ export default function KChart({ candles, visibleDays }: { candles: Candle[]; vi
         timeScale: { borderColor: "#383835" },
         crosshair: { mode: 0 },
       });
-      const view = candles.slice(start);
+      const view = bars.slice(start);
 
       const candleSeries = chart.addSeries(CandlestickSeries, {
         upColor: UP, borderUpColor: UP, wickUpColor: UP,
@@ -136,7 +149,7 @@ export default function KChart({ candles, visibleDays }: { candles: Candle[]; vi
       panes[2]?.setStretchFactor?.(12);
 
       // legend:十字游標顯示 OHLC 與均線值
-      const byTime = new Map(candles.map((c, i) => [c.t, i]));
+      const byTime = new Map(bars.map((c, i) => [c.t, i]));
       chart.subscribeCrosshairMove((param) => {
         const el = legendRef.current;
         if (!el) return;
@@ -146,8 +159,8 @@ export default function KChart({ candles, visibleDays }: { candles: Candle[]; vi
           el.textContent = "";
           return;
         }
-        const c = candles[i];
-        const prev = i > 0 ? candles[i - 1].c : null;
+        const c = bars[i];
+        const prev = i > 0 ? bars[i - 1].c : null;
         const chg = prev ? (((c.c - prev) / prev) * 100).toFixed(2) : "—";
         const mas = MA_DEFS.filter((m) => settings.ma[m.key])
           .map((m) => {
@@ -168,11 +181,23 @@ export default function KChart({ candles, visibleDays }: { candles: Candle[]; vi
       disposed = true;
       chart?.remove();
     };
-  }, [candles, calc, settings, visibleDays]);
+  }, [bars, calc, settings, visibleDays]);
 
   return (
     <div>
       <div className="chart-toolbar">
+        <span className="seg tiny">
+          {TF_DEFS.map((t) => (
+            <button
+              key={t.key}
+              className={`tab ${settings.tf === t.key ? "active" : ""}`}
+              onClick={() => setSettings((s) => ({ ...s, tf: t.key }))}
+            >
+              {t.label}
+            </button>
+          ))}
+        </span>
+        <span className="toolbar-sep" />
         {MA_DEFS.map((m) => (
           <label key={m.key} className={`chip-toggle ${settings.ma[m.key] ? "on" : ""}`} style={{ "--c": m.color } as React.CSSProperties}>
             <input

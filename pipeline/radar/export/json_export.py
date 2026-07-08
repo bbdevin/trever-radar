@@ -292,23 +292,53 @@ def export_json(out_dir: Path | None = None) -> dict:
     (out / "radar.json").write_text(json.dumps(radar, ensure_ascii=False), encoding="utf-8")
     (out / "meta.json").write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
 
-    # 個股 K 線 JSON(榜單聯集)
+    # 全市場搜尋索引(id/名稱/市場/產業;compact 陣列省體積)
+    with engine.connect() as conn:
+        idx = [[r[0], r[1], r[2], r[3] or ""] for r in conn.execute(text(
+            "SELECT id, name, market, industry FROM stocks "
+            "WHERE type IN ('stock','etf') AND is_active = 1 ORDER BY id"))]
+    (out / "stocks_index.json").write_text(
+        json.dumps(idx, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+
+    # 個股 K 線 JSON:榜單聯集=全歷史;其餘評分池=近 600 根(控部署體積)
     stock_dir = out / "stocks"
     stock_dir.mkdir(exist_ok=True)
+    by_id_all = {s["id"]: s for s in all_stocks}
     with engine.connect() as conn:
-        for s in union.values():
-            candles = conn.execute(text(
-                "SELECT p.date, p.open, p.high, p.low, p.close, p.volume, p.turnover, p.adj_factor, "
-                "       i.ma5, i.ma20, i.ma60 "
-                "FROM daily_prices p "
-                "LEFT JOIN indicators_daily i ON i.stock_id = p.stock_id AND i.date = p.date "
-                "WHERE p.stock_id = :s AND p.close IS NOT NULL ORDER BY p.date"), {"s": s["id"]}).fetchall()
+        pool_ids = [r[0] for r in conn.execute(text(
+            "SELECT stock_id FROM daily_scores WHERE date = :d"), {"d": d})]
+        # 權證分點(當日,權證代號=6碼)→ {權證id: 前8大進出}
+        wb: dict[str, list] = {}
+        for r in conn.execute(text(
+            "SELECT stock_id, branch_name, buy_lots, sell_lots, net_lots "
+            "FROM branch_trades WHERE date = :d AND LENGTH(stock_id) = 6"), {"d": d}):
+            wb.setdefault(r[0], []).append(
+                {"name": r[1], "buy": r[2], "sell": r[3], "net": r[4]})
+        for rows_list in wb.values():
+            rows_list.sort(key=lambda x: -abs(x["net"] or 0))
+            del rows_list[8:]
+
+        export_ids = list(dict.fromkeys(list(union.keys()) + pool_ids))
+        for sid in export_ids:
+            s = by_id_all.get(sid)
+            if s is None:
+                continue
+            if sid in union:
+                candles = conn.execute(text(
+                    "SELECT p.date, p.open, p.high, p.low, p.close, p.volume, p.turnover, p.adj_factor "
+                    "FROM daily_prices p WHERE p.stock_id = :s AND p.close IS NOT NULL "
+                    "ORDER BY p.date"), {"s": sid}).fetchall()
+            else:
+                candles = list(reversed(conn.execute(text(
+                    "SELECT p.date, p.open, p.high, p.low, p.close, p.volume, p.turnover, p.adj_factor "
+                    "FROM daily_prices p WHERE p.stock_id = :s AND p.close IS NOT NULL "
+                    "ORDER BY p.date DESC LIMIT 600"), {"s": sid}).fetchall()))
             warrant_history = conn.execute(text("""
                 SELECT date, call_turnover, put_turnover, call_count, put_count
                 FROM warrant_stock_daily
                 WHERE stock_id = :s
                 ORDER BY date DESC LIMIT 60
-            """), {"s": s["id"]}).fetchall()
+            """), {"s": sid}).fetchall()
             active_warrants = conn.execute(text("""
                 SELECT w.id, w.name, w.kind, w.strike, w.exercise_ratio, w.maturity_date,
                        d.close, d.volume, d.turnover
@@ -320,13 +350,12 @@ def export_json(out_dir: Path | None = None) -> dict:
                   AND d.turnover > 0
                 ORDER BY d.turnover DESC
                 LIMIT 12
-            """), {"s": s["id"], "d": d}).fetchall()
+            """), {"s": sid, "d": d}).fetchall()
             payload = {
-                "id": s["id"], "name": s["name"], "market": s["market"],
+                "id": sid, "name": s["name"], "market": s["market"],
                 "candles": [
                     {"t": c[0], "o": c[1], "h": c[2], "l": c[3], "c": c[4],
-                     "v": (c[5] or 0) // 1000, "amt": c[6], "af": c[7] or 1.0,
-                     "ma5": c[8], "ma20": c[9], "ma60": c[10]}
+                     "v": (c[5] or 0) // 1000, "amt": c[6], "af": c[7] or 1.0}
                     for c in candles
                 ],
                 "technical": s["technical"],
@@ -339,10 +368,11 @@ def export_json(out_dir: Path | None = None) -> dict:
                 "active_warrants": [
                     {"id": r[0], "name": r[1], "kind": r[2], "strike": r[3],
                      "exercise_ratio": r[4], "maturity_date": r[5], "close": r[6],
-                     "volume_lots": (r[7] or 0) // 1000, "turnover": r[8] or 0}
+                     "volume_lots": (r[7] or 0) // 1000, "turnover": r[8] or 0,
+                     "branches": wb.get(r[0], [])}
                     for r in active_warrants
                 ],
             }
-            (stock_dir / f"{s['id']}.json").write_text(
+            (stock_dir / f"{sid}.json").write_text(
                 json.dumps(payload, ensure_ascii=False), encoding="utf-8")
-    return {"out": str(out), "date": d, "stocks": len(union)}
+    return {"out": str(out), "date": d, "stocks": len(export_ids)}

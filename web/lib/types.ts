@@ -6,10 +6,15 @@ export interface Candle {
   c: number;
   v: number; // 張
   amt: number; // 元
-  af: number; // backward adjustment factor
-  ma5: number | null;
-  ma20: number | null;
-  ma60: number | null;
+  af: number; // backward adjustment factor(均線等指標由前端以全序列計算)
+}
+
+/** 分點進出(張;權證列可展開) */
+export interface BranchRow {
+  name: string;
+  buy: number;
+  sell: number;
+  net: number;
 }
 
 export interface ReasonItem {
@@ -59,6 +64,7 @@ export interface ActiveWarrant {
   close: number | null;
   volume_lots: number;
   turnover: number;
+  branches?: BranchRow[]; // 該權證當日前8大分點進出(僅上市權證有來源)
 }
 
 export interface StockJson {

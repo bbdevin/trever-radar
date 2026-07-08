@@ -290,10 +290,11 @@ def aggregate_warrants(date: str | None = None) -> int:
 
 
 def import_branch_trades(date: str | None = None, top: int = 80,
-                         ids: list[str] | None = None) -> dict:
-    """富邦公開頁抓分點進出(每股一請求,節流 3 秒;80 檔約 4 分鐘)。
+                         ids: list[str] | None = None, warrants: int = 15) -> dict:
+    """富邦公開頁抓分點進出(每筆一請求,節流 3 秒)。
 
     池 = 當日 daily_scores 前 top 檔(綜合分排序);無分數時退回成交金額前 top。
+    另抓當日成交金額前 `warrants` 大的上市權證(權證分點;上櫃權證該頁無資料)。
     """
     from sqlalchemy import text
 
@@ -320,6 +321,12 @@ def import_branch_trades(date: str | None = None, top: int = 80,
                     "JOIN stocks s ON s.id = p.stock_id AND s.type = 'stock' "
                     "WHERE p.date = :d ORDER BY p.turnover DESC LIMIT :n"),
                     {"d": iso_d, "n": top})]
+        if warrants > 0 and not ids:
+            targets += [r[0] for r in conn.execute(text(
+                "SELECT d.warrant_id FROM warrant_daily d "
+                "JOIN warrants w ON w.id = d.warrant_id "
+                "WHERE d.date = :d AND w.market = 'twse' AND w.kind IN ('call','put') "
+                "ORDER BY d.turnover DESC LIMIT :n"), {"d": iso_d, "n": warrants})]
 
     done = empty = failed = written = 0
     for sid in targets:
