@@ -48,6 +48,10 @@ def _migrate_sqlite(conn):
     for name, sql_type in score_additions.items():
         if name not in score_cols:
             conn.exec_driver_sql(f"ALTER TABLE daily_scores ADD COLUMN {name} {sql_type}")
+            
+    stock_cols = {r[1] for r in conn.exec_driver_sql("PRAGMA table_info(stocks)").fetchall()}
+    if "description" not in stock_cols:
+        conn.exec_driver_sql("ALTER TABLE stocks ADD COLUMN description TEXT")
 
 
 def upsert(conn, table, rows: list[dict], chunk: int = 800) -> int:
