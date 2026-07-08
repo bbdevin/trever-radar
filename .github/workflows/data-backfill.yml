@@ -67,10 +67,10 @@ jobs:
         working-directory: pipeline
         run: python -m radar deep-backfill --all --sleep "${{ inputs.sleep || '6.5' }}"
 
-      - name: Branch history march-back (top 300 × 120 trading days, resumable)
+      - name: Branch history march-back (top 500 × 2 years, resumable nightly chunks)
         if: github.event_name == 'schedule' || inputs.task == 'branches-history'
         working-directory: pipeline
-        run: python -m radar backfill-branches --top 300 --days 120 --sleep 1.0 --max-minutes 280
+        run: python -m radar backfill-branches --top 500 --days 490 --sleep 1.0 --max-minutes 280
 
       - name: Weekly adjustment factors + full indicator recompute (Sat)
         if: github.event_name == 'schedule'
