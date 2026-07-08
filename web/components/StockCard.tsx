@@ -49,7 +49,8 @@ export default function StockCard({ s }: { s: RadarStock }) {
               </span>
               <span className="score-parts">
                 分點 {s.scores.branch ?? "—"} · 權證 {s.scores.warrant ?? "—"} · 技術{" "}
-                {s.scores.tech ?? "—"} · 法人 {s.scores.inst ?? "—"}
+                {s.scores.tech ?? "—"} · 法人 {s.scores.inst ?? "—"} · 題材{" "}
+                {s.scores.theme ?? "—"}
                 {s.scores.risk_penalty < 0 && (
                   <em className="score-risk"> 風險 {s.scores.risk_penalty}</em>
                 )}

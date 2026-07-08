@@ -15,7 +15,7 @@ from sqlalchemy import text
 from .. import config, schema
 from ..db import get_engine, init_db, upsert
 
-WEIGHTS = {"branch": 0.35, "warrant": 0.20, "tech": 0.20, "inst": 0.15}  # theme 0.10 缺席
+WEIGHTS = {"branch": 0.35, "warrant": 0.20, "tech": 0.20, "inst": 0.15, "theme": 0.10}
 MIN_ADV20_TURNOVER = 30_000_000      # 前置過濾:20日均成交金額 3,000 萬
 WARRANT_MIN_BASE = 1_000_000         # 權證基期門檻:20日均認購金額 < 100 萬 → 封頂 40
 
@@ -269,9 +269,97 @@ def risk_deductions(chg5_pct, chg10_pct, open_, high, close, prev_close,
     return max(penalty, -40), risks
 
 
-def combine(branch, warrant, tech, inst) -> int | None:
+def score_themes(theme_stocks: dict[str, list[str]],
+                 theme_prices: dict[str, dict[str, tuple]],
+                 theme_dates: list[str],
+                 d: str) -> dict[str, int]:
+    """計算所有題材於目標日期 d 的熱度分數 (0-100)。"""
+    if len(theme_dates) < 2:
+        return {}
+    prev_d = theme_dates[1]
+    prior_dates = theme_dates[1:]
+
+    theme_metrics = {}
+    for tid, sids in theme_stocks.items():
+        changes = []
+        turnovers_today = []
+        turnovers_hist = {dt: 0.0 for dt in prior_dates}
+        total_valid_stocks = 0
+        up_count = 0
+
+        for sid in sids:
+            s_data = theme_prices.get(sid, {})
+            today_data = s_data.get(d)
+            if not today_data or today_data[0] is None:
+                continue
+
+            prev_data = s_data.get(prev_d)
+            if prev_data and prev_data[0] is not None and prev_data[0] > 0:
+                chg = (today_data[0] / prev_data[0] - 1) * 100
+                changes.append(chg)
+                total_valid_stocks += 1
+                if chg > 0:
+                    up_count += 1
+
+            turnovers_today.append(today_data[1])
+            for dt in prior_dates:
+                dt_data = s_data.get(dt)
+                if dt_data and dt_data[1] is not None:
+                    turnovers_hist[dt] += dt_data[1]
+
+        if total_valid_stocks < 3:
+            continue
+
+        avg_chg = sum(changes) / len(changes) if changes else 0.0
+        up_ratio = up_count / total_valid_stocks if total_valid_stocks > 0 else 0.0
+
+        today_total_to = sum(turnovers_today)
+        hist_total_tos = [turnovers_hist[dt] for dt in prior_dates if turnovers_hist[dt] > 0]
+        avg_hist_to = sum(hist_total_tos) / len(hist_total_tos) if hist_total_tos else 0.0
+
+        turnover_ratio = today_total_to / avg_hist_to if avg_hist_to > 0 else 1.0
+
+        theme_metrics[tid] = {
+            "avg_chg": avg_chg,
+            "up_ratio": up_ratio,
+            "turnover_ratio": turnover_ratio
+        }
+
+    if not theme_metrics:
+        return {}
+
+    # Calculate means and standard deviations
+    avg_chgs = [m["avg_chg"] for m in theme_metrics.values()]
+    turnover_ratios = [m["turnover_ratio"] for m in theme_metrics.values()]
+
+    mean_chg = sum(avg_chgs) / len(avg_chgs)
+    mean_tr = sum(turnover_ratios) / len(turnover_ratios)
+
+    var_chg = sum((x - mean_chg) ** 2 for x in avg_chgs) / len(avg_chgs)
+    var_tr = sum((x - mean_tr) ** 2 for x in turnover_ratios) / len(turnover_ratios)
+
+    std_chg = var_chg ** 0.5
+    std_tr = var_tr ** 0.5
+
+    theme_scores = {}
+    for tid, m in theme_metrics.items():
+        z_chg = (m["avg_chg"] - mean_chg) / std_chg if std_chg > 0 else 0.0
+        z_tr = (m["turnover_ratio"] - mean_tr) / std_tr if std_tr > 0 else 0.0
+
+        # Clip z-scores to [-3.0, 3.0] to handle extreme outliers
+        z_chg_clipped = max(-3.0, min(3.0, z_chg))
+        z_tr_clipped = max(-3.0, min(3.0, z_tr))
+
+        raw = 0.4 * z_chg_clipped + 0.3 * m["up_ratio"] + 0.3 * z_tr_clipped
+        score = max(0.0, min(100.0, (raw + 2.0) / 4.0 * 100))
+        theme_scores[tid] = int(round(score))
+
+    return theme_scores
+
+
+def combine(branch, warrant, tech, inst, theme) -> int | None:
     parts = [(s, WEIGHTS[k]) for k, s in
-             (("branch", branch), ("warrant", warrant), ("tech", tech), ("inst", inst))
+             (("branch", branch), ("warrant", warrant), ("tech", tech), ("inst", inst), ("theme", theme))
              if s is not None]
     if not parts:
         return None
@@ -354,6 +442,33 @@ def compute_scores(date: str | None = None) -> dict:
                 "sell_lots": r[5], "net_lots": r[6], "pct": r[7],
             })
 
+        # 題材所需之價格與成交額 (近 21 個交易日)
+        theme_dates = dates[di:di + 21]
+        lo_theme_date = theme_dates[-1]
+        theme_prices: dict[str, dict[str, tuple]] = {}
+        for r in conn.execute(text(
+            "SELECT stock_id, date, close, turnover FROM daily_prices "
+            "WHERE date >= :lo AND date <= :d AND close IS NOT NULL"),
+                {"lo": lo_theme_date, "d": d}):
+            theme_prices.setdefault(r[0], {})[r[1]] = (r[2], r[3] or 0)
+
+        # 題材與個股對照
+        theme_stocks = {}
+        for r in conn.execute(text("SELECT theme_id, stock_id FROM stock_themes")):
+            theme_stocks.setdefault(r[0], []).append(r[1])
+
+        # 題材名稱對照
+        theme_names = {r[0]: r[1] for r in conn.execute(text("SELECT id, name FROM themes"))}
+
+        # 題材今日分數計算
+        theme_scores_by_id = score_themes(theme_stocks, theme_prices, theme_dates, d)
+
+        # 映射 stock_id -> list of theme_ids
+        stock_to_themes = {}
+        for tid, sids in theme_stocks.items():
+            for sid in sids:
+                stock_to_themes.setdefault(sid, []).append(tid)
+
     out_rows = []
     for sid in stocks:
         if (adv.get(sid) or 0) < MIN_ADV20_TURNOVER:
@@ -416,23 +531,42 @@ def compute_scores(date: str | None = None) -> dict:
         i_score, i_reasons, i_risks = score_inst(
             f_net, f_streak3, t_net, t_streak3, total_net, volume, margin_use)
 
+        # 題材
+        t_ids = stock_to_themes.get(sid, [])
+        valid_t_scores = [theme_scores_by_id[tid] for tid in t_ids if tid in theme_scores_by_id]
+        theme_score = max(valid_t_scores) if valid_t_scores else None
+
+        theme_reasons = []
+        if theme_score is not None and theme_score >= 70:
+            best_theme_name = "未知題材"
+            for tid in t_ids:
+                if tid in theme_scores_by_id and theme_scores_by_id[tid] == theme_score:
+                    best_theme_name = theme_names.get(tid, tid)
+                    break
+            theme_reasons.append({
+                "code": "T_THEME_HOT",
+                "points": 10,
+                "text": f"所屬題材【{best_theme_name}】強勢，熱度分數 {theme_score}",
+                "value": theme_score
+            })
+
         penalty, r_risks = risk_deductions(
             chg5, chg10, open_, high, close, prev_close, t_vr, t_risks,
             f_sell5, margin_use)
 
-        base = combine(b_score, w_score, t_score, i_score)
+        base = combine(b_score, w_score, t_score, i_score, theme_score)
         if base is None:
             continue
         final = max(0, min(100, base + penalty))
 
         top_tech = sorted(t_reasons, key=lambda r: -r.get("points", 0))[:3]
-        reasons = b_reasons + w_reasons + top_tech + i_reasons
+        reasons = b_reasons + w_reasons + top_tech + i_reasons + theme_reasons
         risks = b_risks + w_risks + t_risks + i_risks + r_risks
         out_rows.append({
             "stock_id": sid, "date": d,
             "branch_score": b_score, "warrant_score": w_score,
             "tech_score": t_score, "inst_score": i_score,
-            "theme_score": None, "risk_penalty": penalty, "final": final,
+            "theme_score": theme_score, "risk_penalty": penalty, "final": final,
             "reasons": json.dumps(reasons, ensure_ascii=False),
             "risks": json.dumps(risks, ensure_ascii=False),
         })

@@ -102,6 +102,7 @@ export interface ScoreBreakdown {
   warrant: number | null;
   tech: number | null;
   inst: number | null;
+  theme: number | null;
   risk_penalty: number;
 }
 
