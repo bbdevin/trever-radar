@@ -5,6 +5,8 @@ name: data-backfill
 # 兩個任務都可中斷續跑(已完成的股票會跳過 / 冪等重算)。
 
 on:
+  schedule:
+    - cron: "0 17 8 7 *"  # 7月8日 17:00 UTC (台灣 7/9 凌晨 01:00) 執行一次
   workflow_dispatch:
     inputs:
       task:
@@ -58,17 +60,17 @@ jobs:
         run: pip install -r pipeline/requirements.txt
 
       - name: Deep backfill (since IPO)
-        if: inputs.task == 'deep'
+        if: github.event_name == 'schedule' || inputs.task == 'deep'
         working-directory: pipeline
-        run: python -m radar deep-backfill --all --sleep "${{ inputs.sleep }}"
+        run: python -m radar deep-backfill --all --sleep "${{ inputs.sleep || '6.5' }}"
 
       - name: Adjustment factors
-        if: inputs.task == 'adjust'
+        if: github.event_name == 'schedule' || inputs.task == 'adjust'
         working-directory: pipeline
-        run: python -m radar compute-adjustments --all --sleep "${{ inputs.sleep }}"
+        run: python -m radar compute-adjustments --all --sleep "${{ inputs.sleep || '6.5' }}"
 
       - name: Concept themes
-        if: inputs.task == 'themes'
+        if: github.event_name != 'schedule' && inputs.task == 'themes'
         working-directory: pipeline
         run: python -m radar import-themes
 
