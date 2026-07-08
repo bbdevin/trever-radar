@@ -21,3 +21,6 @@ web/*.tsbuildinfo
 # secrets
 .env
 .env.*
+
+# stray logs
+*.log
