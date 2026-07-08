@@ -1,84 +1,176 @@
-# 分點歷史回補計畫(2026-07-08 修訂版;原 VPS 方案評估附後)
+# VPS 分點歷史回補 — 手把手操作手冊(2026-07-09)
 
-## 0. 免費分點資料來源清查結論
+> 目的:把「每檔股票的分點進出明細」抓到 **2 年深**(P1),之後再擴到 5 年(P2)。
+> 你只需要:一台能 SSH 的 VPS(已裝 Docker)+ 一支手機。全程免費。
+> 每一步都是「複製 → 貼上 → 按 Enter」。看到不一樣的輸出就停下來,把畫面貼給 AI。
 
-| 來源 | 內容 | 免費? | 判定 |
-|---|---|---|---|
-| **MoneyDJ zco 頁(多券商鏡像)** | 每股每日前 15 大買/賣超分點,可按日查,無登入無驗證碼 | ✓ | **現行採用**;實測富邦與元富鏡像資料位元級一致 → 輪替分散負載 |
-| TWSE bsr(官方) | 全量分點日報 | ✓ 但有 CAPTCHA | 不做破解(已定案) |
-| TPEx 官方分點 | 上櫃逐檔 | ✓ | 備援候選,未接 |
-| FinMind `TaiwanStockTradingDailyReport` | 全市場全歷史、結構化 | ✗ 贊助 NT$300–600/月 | **想要「全市場×多年」的唯一正解**;免費路線做不到就升級這條 |
-| Goodinfo/HiStock/CMoney 爬蟲 | 各種整理表 | 條款禁止 | 不做 |
+---
 
-結論:免費路線 = MoneyDJ 鏡像輪替;範圍務實訂為「**Top 500 每日 + Top 300 × 60 交易日歷史**」。要 2 年×500 檔請直接付 FinMind,別跟爬蟲過不去。
+## 事前理解(30 秒版)
 
-## 1. 已實作(2026-07-08,取代原方案的程式碼部分)
+- 抓什麼:MoneyDJ 公開分點頁,5 個券商鏡像站輪流打,每秒 1 個請求(單站 5 秒一次,很禮貌)
+- P1 = 成交金額前 500 檔 × 2 年 ≈ 24.5 萬個請求 ≈ **連跑 3 天**
+- 中斷沒關係:重跑同一個指令會自動從缺的地方繼續
+- 資料來源實測只回溯到 2021 年中 → 5 年就是免費上限,更早沒有
+- 跑完會自動推播通知到你手機
 
-1. **鏡像輪替**:`providers/fubon.py` `MIRROR_HOSTS`(富邦+元富,可擴充)——整體 1.2 秒/請求時單站有效節奏 2.4 秒,比原方案「1.5 秒全打富邦」對單站更禮貌
-2. **每日池擴大**:`import-branch-trades --top 500 --sleep 1.2`(80→500 檔;約 10–12 分鐘,已接 daily-branches)
-3. **`backfill-branches`**:歷史 march-back(新→舊),斷點續傳(逐日比對缺漏、補齊的日期零成本)、`--max-minutes` 時間閥
-4. **分工定案(2026-07-08,額度數學)**:GitHub Actions 免費額度 2,000 分/月;每日增量(四時段+凌晨深歷史增量)約 45 分/日 ≈ 1,100 分/月 ✓,但歷史深挖 280 分/晚 × 15 晚 = 4,200 分 ✗ 直接爆表 → **歷史深挖一律走 VPS(§3),Actions 只做每日增量**;workflow 的 branches-history 任務僅保留手動觸發供小量補洞
+---
 
-## 2. 原 RackNerd VPS 方案評估
+## Step 0:手機先裝通知(2 分鐘)
 
-**方向可行,三處修正:**
-1. ❌「25 萬次請求全打富邦、1.5 秒間隔跑 104 小時」——單一來源高頻連打 4 天,正是最容易被封 IP 的模式;「唯一完美解法」結論不成立。✅ 修正:鏡像輪替(N 站 = 單站壓力 ÷N)+ 範圍縮到有統計價值的量(300×60 日 ≈ 1.8 萬請求,不是 25 萬)
-2. ❌ 低估 GitHub Actions:凌晨窗口 + `--max-minutes` + 斷點續傳 = 不用管 6 小時上限,一週自動補完。VPS 從「必需」降級為「想更快/想更深時的加速器」
-3. ✅ 其餘正確:斷點續傳、逐批寫入防 OOM、Docker 免污染主機、跑完 `gh release upload db-backup --clobber` 回寫——**注意:上傳後要刪掉 Actions 舊 cache(`gh cache delete --all`),否則雲端下次仍用舊 cache,VPS 成果不生效**
+1. 手機商店搜尋 **ntfy** 安裝(免費、免註冊)
+2. 打開 App → 右下 **+** → Subscribe to topic
+3. 主題名輸入一個**只有你知道的長字串**,例如:`trever-radar-x8k2m9q7`
+   (主題名就是密碼,太短會被別人猜到亂發通知)
+4. 記住這個字串,Step 2 會用到
 
-## 3. VPS 執行指令(2026-07-09 更新:5 年分階段方案)
+---
 
-**來源深度實測**:zco 頁資料回到 **2021 年中**(2330 於 2021-07 有、2019-07 無)→ 「5 年」= 免費來源的物理上限。
+## Step 1:SSH 進 VPS,下載專案與資料庫(5 分鐘)
 
-**請求量與時間**(5 站輪替、整體 1.0 秒/請求 = 單站 5 秒一次;全部可中斷續傳):
-
-| 階段 | 範圍 | 請求量 | VPS 連跑 |
-|---|---|---|---|
-| **P1(先跑這個)** | Top 500 × 2 年 | ~24.5 萬 | **~3 天** → 立刻可用 |
-| P2(接續同指令改參數) | Top 1200(≈日均額 3,000 萬以上全部)× 5 年 | ~146 萬 | ~17 天 |
-| P3(真・全部) | ~2,000 檔 × 5 年 | ~240 萬 | ~28 天;冷門股分點幾乎無訊號,**不建議** |
-
-march-back 由新到舊逐日補:P2 跑到第 3 天時「全部 1200 檔 × 近一年」就已可用,價值漸進解鎖,不必等跑完。
-
-⚠️ **架構前置(P2 之前要做,交給開發端)**:5 年全量會讓 DB 增 7–9GB,炸掉 release 單檔 2GB 與 Actions cache 10GB 上限 → 分點歷史需拆獨立檔(branch_hist.db)或搬 Cloudflare R2(免費 10GB)。P1 的 2 年量(約 +1.5GB)還在現行架構安全範圍。
+逐段貼上:
 
 ```bash
-git clone https://github.com/bbdevin/trever-radar.git && cd trever-radar
+git clone https://github.com/bbdevin/trever-radar.git
+cd trever-radar
 mkdir -p data
 curl -L https://github.com/bbdevin/trever-radar/releases/download/db-backup/radar.db.gz -o data/radar.db.gz
 gunzip data/radar.db.gz
+```
 
-# P1:Top 500 × 2 年(~3 天)
+- `git clone` 是私有 repo,會要求登入:帳號輸入 `bbdevin`,密碼要用 GitHub **Personal Access Token**(github.com → Settings → Developer settings → Personal access tokens → Generate new token (classic),勾 `repo` 權限,產生後複製貼上當密碼)
+- 成功標準:`ls data` 看得到 `radar.db`(約 1GB)
+
+---
+
+## Step 2:啟動回補(1 分鐘,之後它自己跑 3 天)
+
+**先把第一行的主題名改成你 Step 0 取的那個**,再整段貼上:
+
+```bash
+NTFY=trever-radar-x8k2m9q7
+
 docker run -d --name radar-backfill --restart unless-stopped \
   -v $(pwd)/pipeline:/app/pipeline -v $(pwd)/data:/app/data \
   -w /app/pipeline python:3.11 \
-  bash -c "pip install -r requirements.txt && python -m radar backfill-branches --top 500 --days 490 --sleep 1.0"
-docker logs -f radar-backfill   # Ctrl+C 離開,背景照跑
+  bash -c "pip install -r requirements.txt && \
+    if python -m radar backfill-branches --top 500 --days 490 --sleep 1.0; then \
+      curl -s -H 'Title: Radar P1 完成' -d '分點2年回補完成,回VPS執行 Step 4 上傳' ntfy.sh/$NTFY; \
+    else \
+      curl -s -H 'Title: Radar P1 中斷' -H 'Priority: high' -d '執行 docker logs radar-backfill 查原因' ntfy.sh/$NTFY; \
+    fi"
+```
 
-# P2(P1 跑完、且開發端完成 DB 分檔改造後再啟):Top 1200 × 5 年
-#   docker rm -f radar-backfill 後用同指令,參數改 --top 1200 --days 1215
+- 成功標準:輸出一長串容器 ID(64 個字母數字)
+- 之後**可以直接關掉 SSH 視窗**,它在背景跑;VPS 重開機也會自動續跑
+- 想確認通知通不通,先手動測一發:
+  ```bash
+  curl -d "測試:通知管道正常" ntfy.sh/$NTFY
+  ```
+  手機應該幾秒內跳出來。沒跳 = 主題名打錯或 App 沒訂閱。
 
-# 約 3 天後、回寫前:先把 VPS 這份 DB 缺的近幾日行情/法人/融資券補齊
-# (VPS 跑的 3 天裡雲端照常進新資料,回寫會整份覆蓋,不補會產生缺口)
+---
+
+## Step 3:隨時看進度(可選)
+
+```bash
+docker logs --tail 5 radar-backfill
+```
+
+會看到類似:
+
+```
+backfill-branches 2026-05-14: missing=496 done, total fetched=41230
+```
+
+**日期越走越舊 = 進度**。從今天往回走,走到 **2024 年 7 月附近**就是完成(490 個交易日)。
+
+想看精確數字(已累積幾個交易日/最舊到哪天):
+
+```bash
+docker run --rm -v $(pwd)/data:/d python:3.11 \
+  python -c "import sqlite3; print(sqlite3.connect('/d/radar.db').execute('SELECT COUNT(DISTINCT date), MIN(date) FROM branch_trades').fetchone())"
+```
+
+輸出 `(490, '2024-07-xx')` 左右 = 完成。
+
+---
+
+## Step 4:手機收到「P1 完成」後 → 上傳回雲端(10 分鐘)
+
+SSH 回 VPS,逐段貼:
+
+### 4a. 補齊 VPS 跑的 3 天裡缺的每日行情(不做會有 3 天缺口)
+
+```bash
+cd ~/trever-radar
 docker run --rm -v $(pwd)/pipeline:/app/pipeline -v $(pwd)/data:/app/data -w /app/pipeline python:3.11 \
   bash -c "pip install -r requirements.txt && python -m radar backfill --days 7 && \
-           for d in \$(seq 0 6); do python -m radar import-daily --date \$(date -d \"-\$d day\" +%Y%m%d) --datasets insti,margin || true; done"
+    for i in 0 1 2 3 4 5 6; do python -m radar import-daily --date \$(date -d \"-\$i day\" +%Y%m%d) --datasets insti,margin || true; done"
+```
 
-# 回寫(gh auth login 後):
+### 4b. 安裝 GitHub CLI 並登入(依你系統二選一)
+
+```bash
+# Debian/Ubuntu:
+type -p curl >/dev/null || sudo apt install curl -y
+curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null
+sudo apt update && sudo apt install gh -y
+
+# AlmaLinux/Rocky/CentOS:
+sudo dnf install 'dnf-command(config-manager)' -y
+sudo dnf config-manager --add-repo https://cli.github.com/packages/rpm/gh-cli.repo
+sudo dnf install gh -y
+```
+
+```bash
+gh auth login
+# 選 GitHub.com → HTTPS → Paste an authentication token → 貼 Step 1 的同一個 token
+```
+
+### 4c. 上傳 + 讓雲端改用新資料庫(關鍵兩行都要跑)
+
+```bash
 gzip -kf data/radar.db
-gh release upload db-backup data/radar.db.gz --clobber
-gh cache delete --all --repo bbdevin/trever-radar   # 關鍵:讓雲端改用新資料庫
+gh release upload db-backup data/radar.db.gz --clobber --repo bbdevin/trever-radar
+gh cache delete --all --repo bbdevin/trever-radar     # 不跑這行,雲端會繼續用舊資料庫!
 docker rm -f radar-backfill
 ```
 
-注意:VPS 跑的期間,雲端每日排程照常寫自己的 cache DB;回寫時雲端「當天新增的分點/行情」會被 VPS 版蓋掉 → **回寫後立刻手動觸發一次 daily-market 與 daily-branches** 補回當日,或挑週末回寫最乾淨。
+### 4d. 回報
 
-### n8n 有幫助嗎?
+跟 AI 說「P1 上傳完成」→ AI 會驗證雲端接手、觸發重算分點統計。之後**網站個股頁的分點 tab 就有 2 年進出明細與「2年」聚合**,關鍵分點勝率/買低賣高統計開始有樣本。
 
-沒有必要。這是一支自帶續傳的批次腳本,`docker run -d` 就是全部;n8n 是流程編排工具,包在外面只是多一層殼。它未來的正確用途:LINE 推播 webhook、爬蟲掛掉時發通知——留著,別用在這。
+---
 
-## 4. 風險與禮貌守則
+## P2:擴到 5 年 × 1,200 檔(P1 之後,先等開發端一件事)
 
-- 鏡像站非官方 API:改版會斷(parser 掛掉會進 import_logs 告警);請求率守住整體 ≥1.2 秒、單站 ≥2.4 秒
-- 只有前 15 大分點(追主力夠用);上櫃權證無此來源
-- 統計效力:可信度分數需事件 ≥10——60 日深度 + 每日累積,約 2–4 週後排行榜開始可信
+- ⚠️ 前置:5 年全量會讓資料庫 +7–9GB,超過現行免費架構上限(GitHub Release 單檔 2GB、Actions cache 10GB)→ **開發端要先把分點歷史拆成獨立檔**。做完會通知你。
+- 屆時指令 = Step 2 同一段,參數改:`--top 1200 --days 1215`,約連跑 **17 天**(march-back 由新到舊,跑到第 3 天時「1,200 檔 × 近一年」就已可用,不用等跑完)
+- P3(全部 ~2,000 檔)不建議:日均額 3 千萬以下的冷門股分點稀疏,無統計意義
+
+---
+
+## FAQ
+
+| 問題 | 答案 |
+|---|---|
+| 中斷/斷線/重開機? | 不用管,`--restart unless-stopped` + 斷點續傳,自己會繼續 |
+| 跑的 3 天網站會壞嗎? | 不會,雲端每日排程照常;VPS 是平行作業,最後才合併 |
+| 手機通知沒來但 log 顯示完成? | 手動跑 Step 2 最後那行 curl 測試;主題名兩邊要一致 |
+| 為什麼不用 n8n? | 批次腳本自帶排程/續傳,n8n 包外面只是多層殼;n8n 留給之後的 LINE 推播 |
+| 想更快? | 別。1 秒/請求已是 5 站輪替下的禮貌上限,更快 = 被封 IP = 全部歸零 |
+
+---
+
+## 附錄:免費來源清查與方案評估(背景)
+
+| 來源 | 判定 |
+|---|---|
+| MoneyDJ zco × 5 鏡像(富邦/元富/永豐金/國泰/凱基,實測資料位元級一致) | **採用**;深度上限 ~2021 年中(5 年) |
+| TWSE bsr 官方 | CAPTCHA,不破解(已定案) |
+| FinMind 分點資料集 | 付費贊助 NT$300–600/月;要「超過 5 年或全市場無腦全量」才考慮 |
+| Goodinfo/CMoney 等 | 條款禁止,不做 |
+
+原始 RackNerd 方案(25 萬請求全打富邦單站、宣稱唯一解)的三處修正:鏡像輪替攤負載、範圍分階段、GitHub Actions 承擔每日增量(額度數學:歷史深挖 280 分/晚 × 15 晚 = 4,200 分 > 免費 2,000 分/月,故深挖歸 VPS、增量歸 Actions)。
