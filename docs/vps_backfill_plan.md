@@ -17,7 +17,7 @@
 1. **鏡像輪替**:`providers/fubon.py` `MIRROR_HOSTS`(富邦+元富,可擴充)——整體 1.2 秒/請求時單站有效節奏 2.4 秒,比原方案「1.5 秒全打富邦」對單站更禮貌
 2. **每日池擴大**:`import-branch-trades --top 500 --sleep 1.2`(80→500 檔;約 10–12 分鐘,已接 daily-branches)
 3. **`backfill-branches`**:歷史 march-back(新→舊),斷點續傳(逐日比對缺漏、補齊的日期零成本)、`--max-minutes` 時間閥
-4. **凌晨自動**:data-backfill 每天 01:10 跑 `backfill-branches --top 300 --days 60 --max-minutes 90`——每晚啃 90 分鐘,**約 5–7 個交易夜自動補完 60 日深度**,之後每晚零成本略過
+4. **分工定案(2026-07-08,額度數學)**:GitHub Actions 免費額度 2,000 分/月;每日增量(四時段+凌晨深歷史增量)約 45 分/日 ≈ 1,100 分/月 ✓,但歷史深挖 280 分/晚 × 15 晚 = 4,200 分 ✗ 直接爆表 → **歷史深挖一律走 VPS(§3),Actions 只做每日增量**;workflow 的 branches-history 任務僅保留手動觸發供小量補洞
 
 ## 2. 原 RackNerd VPS 方案評估
 

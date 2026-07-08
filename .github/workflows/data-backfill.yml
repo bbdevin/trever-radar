@@ -67,10 +67,12 @@ jobs:
         working-directory: pipeline
         run: python -m radar deep-backfill --all --sleep "${{ inputs.sleep || '6.5' }}"
 
-      - name: Branch history march-back (top 500 × 2 years, resumable nightly chunks)
-        if: github.event_name == 'schedule' || inputs.task == 'branches-history'
+      # 分點歷史深挖不排程:280分/晚×15晚=4,200分,遠超免費額度 2,000 分/月。
+      # 歷史深挖走 VPS(docs/vps_backfill_plan.md §3);此步僅供手動小量補洞。
+      - name: Branch history march-back (manual only; deep haul belongs on the VPS)
+        if: github.event_name != 'schedule' && inputs.task == 'branches-history'
         working-directory: pipeline
-        run: python -m radar backfill-branches --top 500 --days 490 --sleep 1.0 --max-minutes 280
+        run: python -m radar backfill-branches --top 500 --days 490 --sleep 1.0 --max-minutes 90
 
       - name: Weekly adjustment factors + full indicator recompute (Sat)
         if: github.event_name == 'schedule'
