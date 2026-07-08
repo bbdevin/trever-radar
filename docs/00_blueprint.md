@@ -2,7 +2,7 @@
 
 盤後找籌碼,盤中看發動。私人籌碼異常偵測管線,≤10 人,非投顧、不下單。
 
-> **2026-07-06 修訂**:使用者決定開發期零花費。V1 改為零成本架構(Python+SQLite+靜態JSON+GitHub Actions+Cloudflare Pages),分點功能延後至有預算時啟用。詳見 12_zero_cost_pivot.md;本表 V1 欄的 Laravel/FinMind 付費項目暫不適用。
+> **2026-07-06 修訂**:使用者決定開發期零花費。V1 改為零成本架構(Python+SQLite+靜態JSON+GitHub Actions+Cloudflare Pages)。2026-07-08 已用富邦公開頁前15大買賣超先行接入免費裁剪版分點分;全量 FinMind 分點仍待有預算時啟用。詳見 12_zero_cost_pivot.md;本表 V1 欄的 Laravel/FinMind 付費項目暫不適用。
 
 | 面向 | V1(盤後雷達,~8週) | V2(盤中發動,+6–8週) | V3(智慧與回測,視價值) |
 |---|---|---|---|

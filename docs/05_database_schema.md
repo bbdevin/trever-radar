@@ -44,7 +44,7 @@
 
 | 表 | 用途 |
 |---|---|
-| `daily_scores` | 每股每日:warrant/branch/tech/theme/inst 各分項、risk_penalty、final、reasons(JSONB)、risks(JSONB)、entry_price(次日開盤)、fwd_1d/3d/5d/10d/20d(批次回填) — V1-Free 直接作為回測資產 |
+| `daily_scores` | 每股每日:branch/warrant/tech/theme/inst 各分項、risk_penalty、final、reasons(JSONB)、risks(JSONB)、entry_price(次日開盤)、fwd_1d/3d/5d/10d/20d(批次回填) — V1-Free 直接作為回測資產 |
 | `daily_watchlist` | 每日觀察清單快照:rank, score, entry_price/fwd 欄可由 `daily_scores` 衍生;V1-Free 暫不另建 |
 | `intraday_pool` | 每日監控池(股票、入池原因、盤後分) |
 | `intraday_events` | 大單事件:time, price, amount, side, cum_5m, active_ratio |

@@ -49,7 +49,7 @@ def export_json(out_dir: Path | None = None) -> dict:
                    wa.avg_call_turnover,
                    ti.tech_score, ti.ma20, ti.ma60, ti.rsi14, ti.volume_ratio AS tech_volume_ratio,
                    ti.reasons AS tech_reasons, ti.risks AS tech_risks,
-                   ds.final AS score_final, ds.warrant_score, ds.inst_score,
+                   ds.final AS score_final, ds.branch_score, ds.warrant_score, ds.inst_score,
                    ds.risk_penalty, ds.reasons AS score_reasons, ds.risks AS score_risks
             FROM daily_prices p
             JOIN stocks s ON s.id = p.stock_id AND s.type = 'stock'
@@ -80,7 +80,7 @@ def export_json(out_dir: Path | None = None) -> dict:
              put_turnover, put_volume, put_count, avg_call_turnover,
              tech_score, tech_ma20, tech_ma60, tech_rsi14, tech_volume_ratio,
              tech_reasons, tech_risks,
-             score_final, warrant_score, inst_score,
+             score_final, branch_score, warrant_score, inst_score,
              risk_penalty, score_reasons, score_risks) = r
             chg_pct = round((close - prev_close) / prev_close * 100, 2) if prev_close else None
             vol_ratio = None
@@ -127,6 +127,7 @@ def export_json(out_dir: Path | None = None) -> dict:
                 "technical": technical,
                 "scores": None if score_final is None else {
                     "final": score_final,
+                    "branch": branch_score,
                     "warrant": warrant_score,
                     "tech": tech_score,
                     "inst": inst_score,
@@ -266,7 +267,7 @@ def export_json(out_dir: Path | None = None) -> dict:
     radar = {
         "data_date": d,
         "generated_at": now,
-        "note": "綜合分=權證/技術/法人加權−風險扣分(分點與題材未接入,權重自動重分配);≥65 為觀察門檻",
+        "note": "綜合分=分點/權證/技術/法人加權−風險扣分(題材未接入,權重自動重分配);≥65 為觀察門檻",
         "summary": [
             {"market": m, "turnover": t, "up": up, "down": down}
             for m, t, up, down in summary

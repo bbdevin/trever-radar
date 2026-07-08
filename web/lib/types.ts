@@ -93,6 +93,7 @@ export type ListKey = "score" | "hot" | "surge" | "strong" | "warrant";
 
 export interface ScoreBreakdown {
   final: number;
+  branch: number | null;
   warrant: number | null;
   tech: number | null;
   inst: number | null;

@@ -1,6 +1,6 @@
-"""V1-Free 盤後綜合分數(docs/04;分點/題材缺席 → 權重自動重分配)。
+"""V1-Free 盤後綜合分數(docs/04;題材缺席 → 權重自動重分配)。
 
-權重:權證 0.30、技術 0.30、法人融資 0.25、題材 0.15(未實作)。
+權重:分點 0.35、權證 0.20、技術 0.20、法人融資 0.15、題材 0.10(未實作)。
 分項為 NULL(無資料)時,以可用分項權重重新歸一化;風險扣分最後套用。
 純函式 score_*() 可單元測試;compute_scores() 負責取數與落地。
 """
@@ -15,7 +15,7 @@ from sqlalchemy import text
 from .. import config, schema
 from ..db import get_engine, init_db, upsert
 
-WEIGHTS = {"warrant": 0.30, "tech": 0.30, "inst": 0.25}   # theme 0.15 缺席
+WEIGHTS = {"branch": 0.35, "warrant": 0.20, "tech": 0.20, "inst": 0.15}  # theme 0.10 缺席
 MIN_ADV20_TURNOVER = 30_000_000      # 前置過濾:20日均成交金額 3,000 萬
 WARRANT_MIN_BASE = 1_000_000         # 權證基期門檻:20日均認購金額 < 100 萬 → 封頂 40
 
@@ -111,6 +111,127 @@ def score_inst(f_today, f_streak3, t_today, t_streak3, total_net, volume,
     return min(score, 100), reasons, risks
 
 
+def _volume_lots(volumes_by_date, date):
+    volume = volumes_by_date.get(date)
+    return volume / 1000 if volume else None
+
+
+def _branch_rows(rows_by_date, date):
+    return rows_by_date.get(date, [])
+
+
+def score_branch(rows_by_date, dates, volumes_by_date):
+    """分點籌碼分(V1-free,以前15大分點近似04 §2)。"""
+    today = dates[0] if dates else None
+    today_rows = _branch_rows(rows_by_date, today)
+    if not today_rows:
+        return None, [], []
+
+    score = 0
+    penalty = 0
+    reasons, risks = [], []
+    volume_lots = _volume_lots(volumes_by_date, today)
+    buy_rows = sorted(
+        [r for r in today_rows if (r.get("net_lots") or 0) > 0],
+        key=lambda r: r["net_lots"],
+        reverse=True,
+    )
+
+    def add(points, code, txt, value=None):
+        nonlocal score
+        score += points
+        reasons.append({"code": code, "points": points, "text": txt, "value": value})
+
+    def hit(points, code, txt, value=None):
+        nonlocal penalty
+        penalty += points
+        risks.append({"code": code, "points": -points, "text": txt, "value": value})
+
+    # B1:單一分點連買。用張數/成交量近似成交值佔比。
+    best = None
+    for row in buy_rows:
+        key = row["branch_key"]
+        streak = 0
+        cum_lots = 0
+        cum_volume = 0
+        branch_name = row["branch_name"]
+        for date in dates:
+            match = next((r for r in _branch_rows(rows_by_date, date)
+                          if r["branch_key"] == key), None)
+            if not match or (match.get("net_lots") or 0) <= 0:
+                break
+            v_lots = _volume_lots(volumes_by_date, date)
+            streak += 1
+            cum_lots += match["net_lots"] or 0
+            cum_volume += v_lots or 0
+        share = cum_lots / cum_volume if cum_volume > 0 else 0
+        if streak >= 3 and share >= 0.03:
+            candidate = (streak, cum_lots, branch_name, share)
+            if best is None or candidate[0] > best[0] or candidate[1] > best[1]:
+                best = candidate
+    if best:
+        streak, cum_lots, branch_name, share = best
+        points = 30 if streak >= 5 else 20
+        add(points, "B1_BRANCH_STREAK",
+            f"分點【{branch_name}】連{streak}日買超{cum_lots:,.0f}張,佔期間成交量{share:.1%}",
+            {"branch": branch_name, "streak": streak, "lots": round(cum_lots)})
+
+    # B2:多分點同步大買。
+    if volume_lots:
+        significant = [r for r in buy_rows if (r["net_lots"] or 0) / volume_lots >= 0.01]
+        if len(significant) >= 3:
+            names = "、".join(r["branch_name"] for r in significant[:3])
+            add(15, "B2_MULTI_BRANCH",
+                f"{len(significant)}個分點同步買超逾成交量1%({names})",
+                len(significant))
+
+    # B3:買方集中度躍升。
+    if volume_lots:
+        buy_conc = sum((r["net_lots"] or 0) for r in buy_rows[:5]) / volume_lots
+        prior = []
+        for date in dates[1:21]:
+            v_lots = _volume_lots(volumes_by_date, date)
+            if not v_lots:
+                continue
+            rows = sorted(
+                [r for r in _branch_rows(rows_by_date, date) if (r.get("net_lots") or 0) > 0],
+                key=lambda r: r["net_lots"],
+                reverse=True,
+            )
+            if rows:
+                prior.append(sum((r["net_lots"] or 0) for r in rows[:5]) / v_lots)
+        avg_conc = sum(prior) / len(prior) if prior else None
+        if avg_conc and buy_conc >= 0.15 and buy_conc >= avg_conc * 1.5:
+            add(15, "B3_BUY_CONCENTRATION",
+                f"前5大買超分點佔成交量{buy_conc:.0%},為近期均值{buy_conc / avg_conc:.1f}倍",
+                round(buy_conc, 3))
+
+    # B6:前15大分點大戶淨流連3日為正。
+    flows = []
+    for date in dates[:3]:
+        rows = _branch_rows(rows_by_date, date)
+        if rows:
+            flows.append(sum(r.get("net_lots") or 0 for r in rows))
+    if len(flows) == 3 and all(f > 0 for f in flows):
+        add(10, "B6_BIG_MONEY_FLOW", "前15大分點大戶淨流連3日為正",
+            round(sum(flows)))
+
+    # 扣分:昨日大買分點今日反手大賣。
+    yesterday_rows = _branch_rows(rows_by_date, dates[1]) if len(dates) > 1 else []
+    for prev in sorted([r for r in yesterday_rows if (r.get("net_lots") or 0) > 0],
+                       key=lambda r: r["net_lots"], reverse=True)[:5]:
+        today_match = next((r for r in today_rows if r["branch_key"] == prev["branch_key"]), None)
+        if today_match and (today_match.get("net_lots") or 0) < 0 \
+                and abs(today_match["net_lots"]) >= prev["net_lots"] * 0.7:
+            hit(20, "B_RISK_REVERSAL",
+                f"分點【{prev['branch_name']}】昨日大買後今日反手賣出,疑似倒貨",
+                prev["branch_name"])
+            break
+
+    final = max(0, min(100, score - penalty))
+    return final, reasons, risks
+
+
 def risk_deductions(chg5_pct, chg10_pct, open_, high, close, prev_close,
                     volume_ratio, tech_risks, f_streak5_sell, margin_use):
     penalty = 0
@@ -148,9 +269,10 @@ def risk_deductions(chg5_pct, chg10_pct, open_, high, close, prev_close,
     return max(penalty, -40), risks
 
 
-def combine(warrant, tech, inst) -> int | None:
+def combine(branch, warrant, tech, inst) -> int | None:
     parts = [(s, WEIGHTS[k]) for k, s in
-             (("warrant", warrant), ("tech", tech), ("inst", inst)) if s is not None]
+             (("branch", branch), ("warrant", warrant), ("tech", tech), ("inst", inst))
+             if s is not None]
     if not parts:
         return None
     wsum = sum(w for _, w in parts)
@@ -179,6 +301,13 @@ def compute_scores(date: str | None = None) -> dict:
             "WHERE date >= :lo AND date <= :d AND close IS NOT NULL"),
                 {"lo": recent[-1], "d": d}):
             prices.setdefault(r[0], {})[r[1]] = r
+
+        volumes: dict[str, dict[str, int]] = {}
+        for r in conn.execute(text(
+            "SELECT stock_id, date, volume FROM daily_prices "
+            "WHERE date >= :lo AND date <= :d AND volume IS NOT NULL"),
+                {"lo": base20_start, "d": d}):
+            volumes.setdefault(r[0], {})[r[1]] = r[2]
 
         adv = {r[0]: r[1] for r in conn.execute(text(
             "SELECT stock_id, AVG(turnover) FROM daily_prices "
@@ -215,6 +344,16 @@ def compute_scores(date: str | None = None) -> dict:
             "SELECT stock_id, margin_balance, margin_limit FROM daily_margins "
             "WHERE date = :d"), {"d": d})}
 
+        branches: dict[str, dict[str, list[dict]]] = {}
+        for r in conn.execute(text(
+            "SELECT stock_id, date, branch_key, branch_name, buy_lots, sell_lots, net_lots, pct "
+            "FROM branch_trades WHERE date >= :lo AND date <= :d AND LENGTH(stock_id) = 4"),
+                {"lo": base20_start, "d": d}):
+            branches.setdefault(r[0], {}).setdefault(r[1], []).append({
+                "branch_key": r[2], "branch_name": r[3], "buy_lots": r[4],
+                "sell_lots": r[5], "net_lots": r[6], "pct": r[7],
+            })
+
     out_rows = []
     for sid in stocks:
         if (adv.get(sid) or 0) < MIN_ADV20_TURNOVER:
@@ -249,6 +388,10 @@ def compute_scores(date: str | None = None) -> dict:
             w_today[4] if w_today else 0, avg_to, avg_vol,
             w_ratio(1), w_ratio(2), chg, chg5)
 
+        # 分點
+        b_score, b_reasons, b_risks = score_branch(
+            branches.get(sid, {}), dates[di:di + 21], volumes.get(sid, {}))
+
         # 技術
         t = tech.get(sid)
         t_score = t[1] if t else None
@@ -277,17 +420,18 @@ def compute_scores(date: str | None = None) -> dict:
             chg5, chg10, open_, high, close, prev_close, t_vr, t_risks,
             f_sell5, margin_use)
 
-        base = combine(w_score, t_score, i_score)
+        base = combine(b_score, w_score, t_score, i_score)
         if base is None:
             continue
         final = max(0, min(100, base + penalty))
 
         top_tech = sorted(t_reasons, key=lambda r: -r.get("points", 0))[:3]
-        reasons = w_reasons + top_tech + i_reasons
-        risks = w_risks + t_risks + i_risks + r_risks
+        reasons = b_reasons + w_reasons + top_tech + i_reasons
+        risks = b_risks + w_risks + t_risks + i_risks + r_risks
         out_rows.append({
             "stock_id": sid, "date": d,
-            "warrant_score": w_score, "tech_score": t_score, "inst_score": i_score,
+            "branch_score": b_score, "warrant_score": w_score,
+            "tech_score": t_score, "inst_score": i_score,
             "theme_score": None, "risk_penalty": penalty, "final": final,
             "reasons": json.dumps(reasons, ensure_ascii=False),
             "risks": json.dumps(risks, ensure_ascii=False),

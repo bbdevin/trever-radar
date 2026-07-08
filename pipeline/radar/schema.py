@@ -171,6 +171,7 @@ daily_scores = Table(
     metadata,
     Column("stock_id", Text, primary_key=True),
     Column("date", Text, primary_key=True),
+    Column("branch_score", Integer),               # 分點籌碼分,無分點資料則 NULL
     Column("warrant_score", Integer),              # 0-100,無權證資料則 NULL
     Column("tech_score", Integer),
     Column("inst_score", Integer),                 # 法人+融資

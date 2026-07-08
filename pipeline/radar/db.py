@@ -35,6 +35,7 @@ def _migrate_sqlite(conn):
 
     score_cols = {r[1] for r in conn.exec_driver_sql("PRAGMA table_info(daily_scores)").fetchall()}
     score_additions = {
+        "branch_score": "INTEGER",
         "entry_date": "TEXT",
         "entry_price": "REAL",
         "fwd_1d": "REAL",

@@ -8,7 +8,7 @@ import type { ListKey, MetaJson, RadarJson } from "@/lib/types";
 import { DATASET_LABEL, SOURCE_LABEL, fmtE8 } from "@/lib/format";
 
 const TABS: { key: ListKey; label: string; hint: string; icon: typeof IconFlame }[] = [
-  { key: "score", label: "綜合", hint: "盤後綜合分數:權證/技術/法人加權−風險扣分,≥65 為觀察門檻", icon: IconRadar },
+  { key: "score", label: "綜合", hint: "盤後綜合分數:分點/權證/技術/法人加權−風險扣分,≥65 為觀察門檻", icon: IconRadar },
   { key: "hot", label: "熱門", hint: "成交金額最大", icon: IconFlame },
   { key: "surge", label: "爆量", hint: "量比 = 今日量/20日均量,≥1.5 且金額 ≥1億", icon: IconZap },
   { key: "strong", label: "強勢", hint: "漲幅排序,金額 ≥1億", icon: IconTrend },
@@ -139,7 +139,7 @@ export default function RadarPage() {
 
       <div className="notice warn" style={{ marginTop: 4 }}>
         <span className="tag">建置中</span>
-        <span>{radar.note}。評分模組完成後,將加入「盤後綜合分數」榜與觸發理由、風險提醒。</span>
+        <span>{radar.note}。分點資料為免費公開頁裁剪前15大買賣超,統計效力會隨每日累積提升。</span>
       </div>
     </>
   );
