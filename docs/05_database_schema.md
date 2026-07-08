@@ -44,14 +44,14 @@
 
 | 表 | 用途 |
 |---|---|
-| `daily_scores` | 每股每日:warrant/branch/tech/theme/inst 各分項、risk_penalty、final、reasons(JSONB)、risks(JSONB) — 只存 final ≥ 40 或曾入池者,約 300 檔/日 |
-| `daily_watchlist` | 每日觀察清單快照:rank, score, entry_price(次日開盤,批次回填), fwd_1d/3d/5d/10d/20d(回填) |
+| `daily_scores` | 每股每日:warrant/branch/tech/theme/inst 各分項、risk_penalty、final、reasons(JSONB)、risks(JSONB)、entry_price(次日開盤)、fwd_1d/3d/5d/10d/20d(批次回填) — V1-Free 直接作為回測資產 |
+| `daily_watchlist` | 每日觀察清單快照:rank, score, entry_price/fwd 欄可由 `daily_scores` 衍生;V1-Free 暫不另建 |
 | `intraday_pool` | 每日監控池(股票、入池原因、盤後分) |
 | `intraday_events` | 大單事件:time, price, amount, side, cum_5m, active_ratio |
 | `intraday_signals` | 盤中訊號:level, triggered_at, price, reasons(JSONB), is_chase_warning, fwd 回填欄 |
 | `signal_rule_stats` | 各規則代碼的滾動勝率統計(回測輸出) |
 
-`daily_prices.adj_factor` 現行由 `compute-adjustments` 以 FinMind `TaiwanStockDividendResult` 免費資料計算;技術指標使用 `close * adj_factor` 等還原價欄位,原始 OHLC 保留不覆蓋。
+`daily_prices.adj_factor` 現行由 `compute-adjustments` 以 FinMind `TaiwanStockDividendResult` 免費資料計算;技術指標與 `compute-performance` 的進出場報酬使用 `price * adj_factor` 還原價欄位,原始 OHLC 保留不覆蓋。
 
 ## 5. 盤中行情(V2,固定大小,滾動清理)
 

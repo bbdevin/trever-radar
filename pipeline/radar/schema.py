@@ -179,6 +179,14 @@ daily_scores = Table(
     Column("final", Integer, nullable=False),      # clamp(加權 + 扣分, 0, 100)
     Column("reasons", Text),                       # JSON [{code,points,text,value}]
     Column("risks", Text),                         # JSON [{code,points,text,value}]
+    Column("entry_date", Text),                    # 次一交易日(進場基準)
+    Column("entry_price", Float),                  # 次一交易日開盤價
+    Column("fwd_1d", Float),                       # entry日起第1/3/5/10/20個交易日收盤報酬%
+    Column("fwd_3d", Float),
+    Column("fwd_5d", Float),
+    Column("fwd_10d", Float),
+    Column("fwd_20d", Float),
+    Column("fwd_updated_at", Text),
     Index("ix_daily_scores_date", "date"),
 )
 

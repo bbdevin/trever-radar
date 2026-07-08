@@ -4,9 +4,9 @@
 
 實作檔:`.github/workflows/nightly-radar.yml`。
 
-- `schedule`:每交易日 17:30 / 21:00 台北時間,還原 Actions cache/release DB → 匯入今日資料 → 更新權證主檔與當日彙總 → `export-json` → Next build → Cloudflare Pages deploy → 保存 DB cache,週五/手動時備份 release。
+- `schedule`:每交易日 17:30 / 21:00 台北時間,還原 Actions cache/release DB → 匯入今日資料 → 更新權證主檔與當日彙總 → `compute-indicators --all` → `compute-scores` → `compute-performance` → `export-json` → Next build → Cloudflare Pages deploy → 保存 DB cache,週五/手動時備份 release。
 - `workflow_dispatch`:同 schedule,可手動重跑並觸發 DB 備份。
-- `push` 到 `main`:還原 Actions cache/release DB → **跳過資料匯入** → `compute-indicators --all` → `export-json` → Next build → Cloudflare Pages deploy。用途是程式/UI 修正立刻上正式版,不在非收盤時間誤抓資料。
+- `push` 到 `main`:還原 Actions cache/release DB → **跳過資料匯入** → `compute-scores` → `compute-performance` → `export-json` → Next build → Cloudflare Pages deploy。用途是程式/UI 修正立刻上正式版,不在非收盤時間誤抓資料。
 - 本機開發仍走同一 CLI:`cd pipeline; .venv\Scripts\python -m radar export-json`,前端讀 `web/public/data/*.json`。
 - 還原因子目前用 `compute-adjustments --ids/--top/--all` 手動/分批補,尚未接 nightly 全市場自動排程;原因是 FinMind 免費額度約 600 req/hr,每檔一請求。技術指標本身是本地 DB 計算,已接 nightly/push。
 

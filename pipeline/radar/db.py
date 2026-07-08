@@ -33,6 +33,21 @@ def _migrate_sqlite(conn):
             "ALTER TABLE daily_prices ADD COLUMN adj_factor REAL NOT NULL DEFAULT 1.0"
         )
 
+    score_cols = {r[1] for r in conn.exec_driver_sql("PRAGMA table_info(daily_scores)").fetchall()}
+    score_additions = {
+        "entry_date": "TEXT",
+        "entry_price": "REAL",
+        "fwd_1d": "REAL",
+        "fwd_3d": "REAL",
+        "fwd_5d": "REAL",
+        "fwd_10d": "REAL",
+        "fwd_20d": "REAL",
+        "fwd_updated_at": "TEXT",
+    }
+    for name, sql_type in score_additions.items():
+        if name not in score_cols:
+            conn.exec_driver_sql(f"ALTER TABLE daily_scores ADD COLUMN {name} {sql_type}")
+
 
 def upsert(conn, table, rows: list[dict], chunk: int = 800) -> int:
     """SQLite upsert on primary key. Returns number of rows written.

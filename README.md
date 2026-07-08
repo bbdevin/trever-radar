@@ -32,6 +32,8 @@ py -m venv .venv
 .venv\Scripts\python -m radar compute-adjustments --top 60 --sleep 6.2
 .venv\Scripts\python -m radar compute-indicators --ids 2330
 .venv\Scripts\python -m radar compute-indicators --all
+.venv\Scripts\python -m radar compute-scores              # 產生盤後綜合分
+.venv\Scripts\python -m radar compute-performance         # 回填 daily_scores 後續報酬
 .venv\Scripts\python -m radar export-json               # 產出前端 JSON(含四榜/個股K線/權證資料)
 .venv\Scripts\python -m radar status                    # 匯入紀錄 + 各表筆數
 ```

@@ -68,6 +68,10 @@ jobs:
         working-directory: pipeline
         run: python -m radar compute-scores
 
+      - name: Backfill score performance
+        working-directory: pipeline
+        run: python -m radar compute-performance
+
       - name: Branch trades (fubon public page, score-pool top 80)
         if: github.event_name != 'push'
         working-directory: pipeline
