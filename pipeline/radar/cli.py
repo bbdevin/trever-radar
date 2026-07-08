@@ -101,6 +101,11 @@ def cmd_compute_performance(args):
           f"{info['complete_20d']} have 20d returns")
 
 
+def cmd_compute_branch_stats(args):
+    from .compute.compute_branch_stats import compute_all
+    compute_all()
+
+
 def cmd_import_stock_info(_args):
     from .importer import import_stock_info
     print(f"industry filled for {import_stock_info()} stocks")
@@ -208,6 +213,10 @@ def main(argv=None):
     perf.add_argument("--date", default=None, help="YYYYMMDD; refresh one signal date")
     perf.add_argument("--all", action="store_true", help="refresh every score row")
     perf.set_defaults(fn=cmd_compute_performance)
+
+    bs = sub.add_parser("compute-branch-stats",
+                        help="compute stats for tracked branches")
+    bs.set_defaults(fn=cmd_compute_branch_stats)
 
     exp = sub.add_parser("export-json", help="write web/public/data/*.json for the frontend")
     exp.add_argument("--out", default=None, help="output dir (default web/public/data)")

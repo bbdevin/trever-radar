@@ -24,8 +24,8 @@ export const viewport: Viewport = {
 
 const NAV = [
   { label: "今日雷達", href: "/", active: true },
+  { label: "分點排行", href: "/branch" },
   { label: "盤中雷達", planned: "V2" },
-  { label: "探索", planned: "近期" },
   { label: "自選", planned: "近期" },
 ];
 

@@ -407,4 +407,40 @@ def export_json(out_dir: Path | None = None) -> dict:
             }
             (stock_dir / f"{sid}.json").write_text(
                 json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+                
+    # ── Export Branches ──
+    _export_branches(out, engine, d)
+
     return {"out": str(out), "date": d, "stocks": len(export_ids)}
+
+def _export_branches(out: Path, engine, date: str):
+    branches_dir = out / "branches"
+    branches_dir.mkdir(exist_ok=True)
+    with engine.connect() as conn:
+        # Rankings
+        rankings = [dict(r._mapping) for r in conn.execute(text(
+            "SELECT branch_name, as_of, rank_score, win_rate, avg_ret5, samples, style, is_daytrade "
+            "FROM branch_rankings ORDER BY rank_score DESC, samples DESC"
+        ))]
+        (branches_dir / "rankings.json").write_text(
+            json.dumps(rankings, ensure_ascii=False), encoding="utf-8")
+            
+        # Today's Movements
+        today_trades = [dict(r._mapping) for r in conn.execute(text("""
+            SELECT b.branch_name, b.stock_id, s.name as stock_name, b.buy_lots, b.sell_lots, b.net_lots, b.pct
+            FROM branch_trades b
+            JOIN stocks s ON s.id = b.stock_id
+            WHERE b.date = :d AND b.branch_name IN (SELECT branch_name FROM tracked_branches)
+            ORDER BY b.branch_name, b.net_lots DESC
+        """), {"d": date})]
+        
+        # Group by branch
+        movements = {}
+        for r in today_trades:
+            bname = r["branch_name"]
+            if bname not in movements:
+                movements[bname] = []
+            movements[bname].append(r)
+            
+        (branches_dir / "today.json").write_text(
+            json.dumps(movements, ensure_ascii=False), encoding="utf-8")

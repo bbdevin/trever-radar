@@ -3,6 +3,7 @@
 Volumes: daily_prices.volume in shares(股); margin tables in lots(張, 交易單位).
 """
 from sqlalchemy import (
+    Boolean,
     Column,
     Float,
     Index,
@@ -203,4 +204,40 @@ import_logs = Table(
     Column("status", Text, nullable=False),        # ok / empty / error
     Column("error", Text),
     Column("duration_ms", Integer),
+)
+
+tracked_branches = Table(
+    "tracked_branches",
+    metadata,
+    Column("branch_name", Text, primary_key=True),
+    Column("source", Text, nullable=False), # manual, auto
+    Column("note", Text),
+    Column("added_at", Text)
+)
+
+branch_stock_stats = Table(
+    "branch_stock_stats",
+    metadata,
+    Column("branch_name", Text, primary_key=True),
+    Column("stock_id", Text, primary_key=True),
+    Column("events_count", Integer),
+    Column("win_rate", Float),
+    Column("avg_ret5", Float),
+    Column("is_daytrade_suspect", Boolean),
+    Column("last_active_date", Text),
+    Column("updated_at", Text)
+)
+
+branch_rankings = Table(
+    "branch_rankings",
+    metadata,
+    Column("branch_name", Text, primary_key=True),
+    Column("as_of", Text, primary_key=True),
+    Column("rank_score", Float),
+    Column("win_rate", Float),
+    Column("avg_ret5", Float),
+    Column("samples", Integer),
+    Column("style", Text), # swing, short, daytrade
+    Column("is_daytrade", Boolean),
+    Column("source", Text)
 )

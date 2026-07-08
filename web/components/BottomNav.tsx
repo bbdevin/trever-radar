@@ -5,8 +5,8 @@ import { IconCompass, IconPulse, IconRadar, IconStar } from "@/components/Icons"
 
 const ITEMS = [
   { label: "雷達", href: "/", icon: IconRadar },
+  { label: "分點", href: "/branch", icon: IconCompass },
   { label: "盤中", icon: IconPulse, badge: "V2" },
-  { label: "探索", icon: IconCompass, badge: "近期" },
   { label: "自選", icon: IconStar, badge: "近期" },
 ];
 
