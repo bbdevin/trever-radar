@@ -16,13 +16,9 @@ from ..db import get_engine, init_db
 
 DEFAULT_OUT = config.ROOT / "web" / "public" / "data"
 
-HOT_N = 15
-SURGE_N = 15
-STRONG_N = 15
-WARRANT_N = 15
-MIN_TURNOVER = 1e8          # 榜單門檻:成交金額 1 億
+MIN_TURNOVER = 100_000_000          # 榜單門檻:成交金額 1 億
 SURGE_MIN_RATIO = 1.5
-MIN_WARRANT_TURNOVER = 1_000_000
+MIN_WARRANT_TURNOVER = 20_000_000
 
 
 def export_json(out_dir: Path | None = None) -> dict:
@@ -140,27 +136,30 @@ def export_json(out_dir: Path | None = None) -> dict:
 
         # ── 榜單(動態,依今日行情) ──
         score = sorted(
-            [s for s in all_stocks if s["scores"]],
-            key=lambda s: (s["scores"]["final"], s["turnover"] or 0), reverse=True)[:30]
-        hot = sorted(all_stocks, key=lambda s: s["turnover"] or 0, reverse=True)[:HOT_N]
+            [s for s in all_stocks if s["scores"] and s["scores"]["final"] >= 65],
+            key=lambda s: (s["scores"]["final"], s["turnover"] or 0), reverse=True)
+        hot = sorted(
+            [s for s in all_stocks if (s["turnover"] or 0) >= 1_000_000_000],
+            key=lambda s: s["turnover"] or 0, reverse=True)
         surge = sorted(
             [s for s in all_stocks
              if (s["turnover"] or 0) >= MIN_TURNOVER
              and (s["volume_ratio"] or 0) >= SURGE_MIN_RATIO],
-            key=lambda s: s["volume_ratio"], reverse=True)[:SURGE_N]
+            key=lambda s: s["volume_ratio"], reverse=True)
         strong = sorted(
             [s for s in all_stocks
-             if (s["turnover"] or 0) >= MIN_TURNOVER and (s["chg_pct"] or 0) > 0],
-            key=lambda s: s["chg_pct"], reverse=True)[:STRONG_N]
+             if (s["turnover"] or 0) >= MIN_TURNOVER and (s["chg_pct"] or 0) >= 5.0],
+            key=lambda s: s["chg_pct"], reverse=True)
         warrant = sorted(
             [s for s in all_stocks
-             if s["warrant"] and s["warrant"]["call_turnover"] >= MIN_WARRANT_TURNOVER],
+             if s["warrant"] and s["warrant"]["call_turnover"] >= MIN_WARRANT_TURNOVER
+             and (s["warrant"]["call_turnover_ratio"] or 0) >= 1.5],
             key=lambda s: (
                 s["warrant"]["call_turnover_ratio"] or 0,
                 s["warrant"]["call_turnover"],
             ),
             reverse=True,
-        )[:WARRANT_N]
+        )
 
         union: dict[str, dict] = {}
         for s in score + hot + surge + strong + warrant:

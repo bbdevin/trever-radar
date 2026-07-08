@@ -8,7 +8,7 @@
 |---|---|
 | 正式網址 | https://radar.techtrever.com(= https://trever-radar.pages.dev) |
 | 公開狀態 | 公開網址、noindex + robots.txt;Access 未開(使用者決定,要鎖照 DEPLOY.md §4) |
-| 自動排程 | GitHub Actions 每交易日 17:30 / 21:00(台北)抓資料 → 建站 → 部署;`main` push 會直接用現有 DB 匯出 JSON → 建站 → 部署 |
+| 自動排程 | GitHub Actions 分批抓資料 (14:30 抓價/權證、17:30 抓法人/分點/算分、21:30 抓融資) → 匯出 JSON → 建站 → 部署; `main` push 會直接用現有快取 DB 重建站 |
 | Repo | github.com/bbdevin/trever-radar(私有) |
 | DB | SQLite,Actions cache 續存 + release `db-backup` 週備份(週五/手動觸發時) |
 
@@ -82,3 +82,17 @@
 - 2026-07-08 分點 UI 補齊:個股 JSON 輸出 `branches/scores/reasons/risks`,個股頁新增分點 Tab 顯示分點分、理由、風險與前15大買賣超明細。
 - 2026-07-08 題材分數接入:新增題材熱度評分純函數 `score_themes`、更新評分權重（加入題材 10% 權重）、個股頁/卡片 UI 整合與單元測試。
 - 2026-07-08 籌碼日報:在個股頁分點 Tab 擴充籌碼日報功能，包含 1-240 日/自訂天數的前 13 大分點買賣超聚合計算，實作 Bento Grid 科技感 UI 與點擊展開的分點紅綠柱狀圖。
+- 2026-07-08 架構與視覺升級:拆分 GitHub Actions 自動排程（14:30, 17:30, 21:30）依資料出爐時間更新；重構 `.notice` UI 為 Glassmorphism 現代設計；首頁榜單移除寫死數量改為動態閾值（綜合分>=65、強勢>=5%）。
+
+## 系統模組與功能對應表 (Pipeline Models Mapping)
+
+| Pipeline Module (CLI) | 實作的系統功能 |
+|---|---|
+| `import-daily` | 每日市場收盤價 (`quotes`)、三大法人買賣超 (`insti`)、融資融券餘額 (`margin`) |
+| `import-warrant-master` | 每日發行的權證主檔更新，用於配對標的與到期日 |
+| `aggregate-warrants` | 每日計算個股認購/認售權證的總成交金額與量比，輸出至首頁權證榜 |
+| `import-branch-trades` | 每日下午抓取盤後分點前 15 大進出明細，支撐籌碼日報與分點評分 |
+| `import-themes` | 每日/每週抓取概念股與產業題材分類，用於首頁熱力圖與題材分 |
+| `compute-indicators` | 計算還原價 MA5/10/20/60、RSI、MACD、乖離率等技術指標 |
+| `compute-scores` | 綜合評分引擎 (分點35/權證20/技術20/法人15/題材10)，產生分數與理由/風險 JSON |
+| `export-json` | 根據動態閾值產生各類排行榜單 (hot, surge, strong, warrant)，與單檔股票明細 (K線、分點) |

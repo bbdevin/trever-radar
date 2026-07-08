@@ -92,7 +92,7 @@ export default function RadarPage() {
 
       {missing.length > 0 && (
         <div className="notice">
-          <span className="tag" style={{ color: "var(--ink-3)" }}>
+          <span className="tag info">
             資料狀態
           </span>
           <span>
@@ -138,8 +138,8 @@ export default function RadarPage() {
       )}
 
       <div className="notice warn" style={{ marginTop: 4 }}>
-        <span className="tag">建置中</span>
-        <span>{radar.note}。分點資料為免費公開頁裁剪前15大買賣超,統計效力會隨每日累積提升。</span>
+        <span className="tag">免責聲明</span>
+        <span>{radar.note}。本系統資訊僅供參考，不構成投資建議。分點資料目前涵蓋熱門股，效力隨每日數據累積提升。</span>
       </div>
     </>
   );

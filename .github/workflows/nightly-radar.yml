@@ -5,8 +5,9 @@ on:
     branches:
       - main
   schedule:
-    - cron: "30 9 * * 1-5"   # 17:30 台北:日K/權證已出,法人 16:00、融資券 16:30 後
-    - cron: "0 13 * * 1-5"   # 21:00 台北:補當日較晚公布或首跑失敗的資料
+    - cron: "30 6 * * 1-5"   # 14:30 台北: 收盤價、權證發行量
+    - cron: "30 9 * * 1-5"   # 17:30 台北: 法人、分點
+    - cron: "30 13 * * 1-5"  # 21:30 台北: 融資券、當日補跑
   workflow_dispatch:
 
 permissions:
@@ -47,10 +48,10 @@ jobs:
       - name: Install pipeline deps
         run: pip install -r pipeline/requirements.txt
 
-      - name: Import today's data
+      - name: Import today's data (Quotes)
         if: github.event_name != 'push'
         working-directory: pipeline
-        run: python -m radar import-daily
+        run: python -m radar import-daily --datasets quotes
 
       - name: Warrant master + daily aggregate
         if: github.event_name != 'push'
@@ -60,25 +61,37 @@ jobs:
           python -m radar aggregate-warrants --date "$(TZ=Asia/Taipei date +%Y%m%d)"
 
       - name: Compute technical indicators
-        if: github.event_name != 'push'   # 全歷史重算,push 部署不需要
+        if: github.event_name != 'push'
         working-directory: pipeline
         run: python -m radar compute-indicators --all
 
+      - name: Import today's data (Insti)
+        if: github.event_name != 'push' && github.event.schedule != '30 6 * * 1-5'
+        working-directory: pipeline
+        run: python -m radar import-daily --datasets insti
+
+      - name: Branch trades (fubon public page, score-pool top 80)
+        if: github.event_name != 'push' && github.event.schedule != '30 6 * * 1-5'
+        working-directory: pipeline
+        run: python -m radar import-branch-trades --top 80
+
+      - name: Import today's data (Margin)
+        if: github.event_name != 'push' && github.event.schedule == '30 13 * * 1-5'
+        working-directory: pipeline
+        run: python -m radar import-daily --datasets margin
+
       - name: Compute daily scores
+        if: github.event_name != 'push' && github.event.schedule != '30 6 * * 1-5'
         working-directory: pipeline
         run: python -m radar compute-scores
 
       - name: Backfill score performance
+        if: github.event_name != 'push' && github.event.schedule != '30 6 * * 1-5'
         working-directory: pipeline
         run: python -m radar compute-performance
 
-      - name: Branch trades (fubon public page, score-pool top 80)
-        if: github.event_name != 'push'
-        working-directory: pipeline
-        run: python -m radar import-branch-trades --top 80
-
       - name: Weekly concept-theme refresh (Mon)
-        if: github.event_name != 'push'
+        if: github.event_name != 'push' && github.event.schedule != '30 6 * * 1-5'
         working-directory: pipeline
         run: |
           if [ "$(TZ=Asia/Taipei date +%u)" = "1" ]; then

@@ -208,13 +208,41 @@ main { min-height: 62vh; }
 
 /* ═══ 提示列 ═══ */
 .notice {
-  display: flex; gap: 8px; align-items: baseline;
-  font-size: 12.5px; color: var(--ink-2);
-  padding: 10px 14px; margin-bottom: 12px;
-  border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface);
+  display: flex; gap: 10px; align-items: baseline;
+  font-size: 13px; color: var(--ink-1); font-weight: 500;
+  padding: 14px 18px; margin-bottom: 16px;
+  border-radius: var(--r-md);
+  background: linear-gradient(135deg, color-mix(in srgb, var(--ink-1) 4%, var(--surface)), var(--surface));
+  border: 1px solid color-mix(in srgb, var(--ink-1) 8%, transparent);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.04);
+  transition: all 0.3s ease;
+  line-height: 1.6;
 }
-.notice.warn { border-color: rgba(250, 178, 25, 0.3); }
-.notice .tag { color: var(--warn); font-weight: 650; white-space: nowrap; }
+.notice:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.08);
+  border-color: color-mix(in srgb, var(--ink-1) 16%, transparent);
+}
+.notice.warn { 
+  background: linear-gradient(135deg, color-mix(in srgb, var(--warn) 8%, var(--surface)), var(--surface));
+  border-color: color-mix(in srgb, var(--warn) 20%, transparent); 
+}
+.notice .tag { 
+  color: var(--warn); 
+  font-weight: 750; 
+  white-space: nowrap; 
+  background: color-mix(in srgb, var(--warn) 15%, transparent);
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-size: 11.5px;
+  letter-spacing: 0.3px;
+}
+.notice .tag.info {
+  color: var(--ink-1);
+  background: color-mix(in srgb, var(--ink-1) 10%, transparent);
+}
 
 /* ═══ 族群資金流 ═══ */
 .sector-panel {
