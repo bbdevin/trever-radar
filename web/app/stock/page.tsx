@@ -5,7 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { IconArrowLeft } from "@/components/Icons";
 import KChart from "@/components/KChart";
 import type { StockJson } from "@/lib/types";
-import { MARKET_LABEL, chgClass, fmtE8, fmtPct, fmtX } from "@/lib/format";
+import { MARKET_LABEL, chgClass, fmtE8, fmtLots, fmtPct, fmtX } from "@/lib/format";
 import { signInWithGoogle, useSession } from "@/lib/useSession";
 
 const RANGES = [
@@ -21,7 +21,7 @@ function StockView() {
   const [data, setData] = useState<StockJson | null>(null);
   const [error, setError] = useState(false);
   const [range, setRange] = useState<(typeof RANGES)[number]["key"]>("1y");
-  const [view, setView] = useState<"chart" | "warrant">("chart");
+  const [view, setView] = useState<"chart" | "branch" | "warrant">("chart");
 
   useEffect(() => {
     if (!id) return;
@@ -93,6 +93,14 @@ function StockView() {
           </button>
           <button
             role="tab"
+            aria-selected={view === "branch"}
+            className={view === "branch" ? "active" : ""}
+            onClick={() => setView("branch")}
+          >
+            分點
+          </button>
+          <button
+            role="tab"
             aria-selected={view === "warrant"}
             className={view === "warrant" ? "active" : ""}
             onClick={() => setView("warrant")}
@@ -116,11 +124,96 @@ function StockView() {
           </div>
         )}
       </div>
-      {view === "chart" ? <KChart candles={cs} visibleDays={visibleDays} /> : <WarrantPanel data={data} />}
-      {view === "chart" && (
-        <TechnicalPanel data={data} />
-      )}
+      {view === "chart" && <KChart candles={cs} visibleDays={visibleDays} />}
+      {view === "branch" && <BranchPanel data={data} />}
+      {view === "warrant" && <WarrantPanel data={data} />}
+      {view === "chart" && <TechnicalPanel data={data} />}
     </>
+  );
+}
+
+function BranchPanel({ data }: { data: StockJson }) {
+  const score = data.scores?.branch ?? null;
+  const branchReasons = (data.reasons ?? []).filter((t) => t.includes("分點"));
+  const branchRisks = (data.risks ?? []).filter((t) => t.includes("分點") || t.includes("倒貨"));
+  const buyers = data.branches.filter((b) => b.net > 0);
+  const sellers = data.branches.filter((b) => b.net < 0);
+  const net = data.branches.reduce((sum, b) => sum + (b.net || 0), 0);
+
+  if (!data.branches.length && score == null) {
+    return (
+      <div className="state">
+        尚無此股分點資料。免費資料目前只抓評分池前80檔的前15大買賣超,會隨每日累積增加。
+      </div>
+    );
+  }
+
+  return (
+    <div className="branch-panel">
+      <div className="branch-summary">
+        <div className="branch-score">
+          <span className="k">分點分</span>
+          <span className="v">{score ?? "—"}</span>
+        </div>
+        <div className="branch-stat">
+          <span className="k">買超分點</span>
+          <span className="v">{buyers.length}</span>
+        </div>
+        <div className="branch-stat">
+          <span className="k">賣超分點</span>
+          <span className="v">{sellers.length}</span>
+        </div>
+        <div className="branch-stat">
+          <span className="k">前15淨流</span>
+          <span className={`v ${net > 0 ? "up" : net < 0 ? "down" : ""}`}>{fmtLots(net)}張</span>
+        </div>
+      </div>
+
+      <div className="branch-reasons">
+        {branchReasons.length > 0 ? (
+          branchReasons.map((t) => <span key={t}>{t}</span>)
+        ) : (
+          <span>今日未觸發分點加分條件</span>
+        )}
+      </div>
+      {branchRisks.length > 0 && (
+        <div className="branch-risks">
+          {branchRisks.map((t) => <span key={t}>{t}</span>)}
+        </div>
+      )}
+
+      {data.branches.length > 0 ? (
+        <table className="branch-table">
+          <thead>
+            <tr>
+              <th>分點</th>
+              <th>買張</th>
+              <th>賣張</th>
+              <th>淨張</th>
+              <th>佔比</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.branches.map((b) => (
+              <tr key={b.name}>
+                <td>{b.name}</td>
+                <td className="num">{b.buy.toLocaleString("zh-TW")}</td>
+                <td className="num">{b.sell.toLocaleString("zh-TW")}</td>
+                <td className={`num ${b.net > 0 ? "up" : b.net < 0 ? "down" : "flat"}`}>
+                  {fmtLots(b.net)}
+                </td>
+                <td className="num">{b.pct == null ? "—" : `${b.pct.toFixed(2)}%`}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ) : (
+        <div className="state">此股今日沒有分點明細列</div>
+      )}
+      <div className="branch-note">
+        分點資料來自免費公開頁的前15大買賣超裁剪版,不是全市場全量分點;T+1 盤後資料,僅供籌碼觀察。
+      </div>
+    </div>
   );
 }
 

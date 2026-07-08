@@ -352,6 +352,12 @@ def export_json(out_dir: Path | None = None) -> dict:
                 ORDER BY d.turnover DESC
                 LIMIT 12
             """), {"s": sid, "d": d}).fetchall()
+            stock_branches = conn.execute(text("""
+                SELECT branch_name, buy_lots, sell_lots, net_lots, pct
+                FROM branch_trades
+                WHERE stock_id = :s AND date = :d
+                ORDER BY net_lots DESC
+            """), {"s": sid, "d": d}).fetchall()
             payload = {
                 "id": sid, "name": s["name"], "market": s["market"],
                 "candles": [
@@ -360,6 +366,14 @@ def export_json(out_dir: Path | None = None) -> dict:
                     for c in candles
                 ],
                 "technical": s["technical"],
+                "scores": s["scores"],
+                "reasons": s.get("reasons", []),
+                "risks": s.get("risks", []),
+                "branches": [
+                    {"name": r[0], "buy": r[1] or 0, "sell": r[2] or 0,
+                     "net": r[3] or 0, "pct": r[4]}
+                    for r in stock_branches
+                ],
                 "warrant": s["warrant"],
                 "warrant_history": [
                     {"t": r[0], "call_turnover": r[1] or 0, "put_turnover": r[2] or 0,

@@ -15,6 +15,7 @@ export interface BranchRow {
   buy: number;
   sell: number;
   net: number;
+  pct?: number | null;
 }
 
 export interface ReasonItem {
@@ -72,7 +73,11 @@ export interface StockJson {
   name: string;
   market: "twse" | "tpex";
   candles: Candle[];
+  scores: ScoreBreakdown | null;
+  reasons: string[];
+  risks: string[];
   technical: TechnicalSummary | null;
+  branches: BranchRow[];
   warrant: WarrantSummary | null;
   warrant_history: WarrantHistoryPoint[];
   active_warrants: ActiveWarrant[];
