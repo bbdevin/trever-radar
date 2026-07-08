@@ -6,6 +6,7 @@ import { IconArrowLeft } from "@/components/Icons";
 import KChart from "@/components/KChart";
 import type { StockJson } from "@/lib/types";
 import { MARKET_LABEL, chgClass, fmtE8, fmtPct, fmtX } from "@/lib/format";
+import { signInWithGoogle, useSession } from "@/lib/useSession";
 
 const RANGES = [
   { key: "1m", label: "1月", days: 22 },
@@ -157,6 +158,7 @@ function TechnicalPanel({ data }: { data: StockJson }) {
 
 function WarrantPanel({ data }: { data: StockJson }) {
   const [expanded, setExpanded] = useState<string | null>(null);
+  const { session } = useSession();
   const maxTurnover = Math.max(
     1,
     ...data.warrant_history.map((p) => Math.max(p.call_turnover, p.put_turnover)),
@@ -233,7 +235,11 @@ function WarrantPanel({ data }: { data: StockJson }) {
                 {expanded === w.id && (
                   <tr className="warrant-branches">
                     <td colSpan={6}>
-                      {w.branches?.length ? (
+                      {!session ? (
+                        <button className="login-inline" onClick={signInWithGoogle}>
+                          以 Google 登入後查看分點進出明細
+                        </button>
+                      ) : w.branches?.length ? (
                         <div className="wb-grid">
                           {w.branches.map((b) => (
                             <span className="wb-item" key={b.name}>

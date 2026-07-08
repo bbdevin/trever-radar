@@ -3,53 +3,65 @@
 import { useMemo, useState } from "react";
 import type { SectorFlow } from "@/lib/types";
 import { chgClass, fmtE8, fmtPct } from "@/lib/format";
-import { squarify } from "@/lib/treemap";
 
 type Mode = "industry" | "theme";
-const W = 100; // 虛擬座標,以百分比鋪排
-const H = 46;
 
-function tileFill(chg: number | null): string {
-  if (chg == null) return "var(--surface-2)";
-  const a = Math.min(0.16 + (Math.abs(chg) / 3) * 0.42, 0.6);
-  return chg > 0 ? `rgba(230,103,103,${a})` : chg < 0 ? `rgba(12,163,12,${a})` : "var(--surface-2)";
+/** 相對 20 日常態的偏離 %(+96 = 資金量能 1.96×) */
+function dev(g: SectorFlow): number | null {
+  return g.vs20 == null ? null : Math.round((g.vs20 - 1) * 100);
 }
 
-function flowBadge(vs20: number | null) {
-  if (vs20 == null) return null;
-  if (vs20 >= 1.2) return <span className="flow-badge in">▲{vs20.toFixed(1)}×</span>;
-  if (vs20 <= 0.8) return <span className="flow-badge out">▼{vs20.toFixed(1)}×</span>;
-  return <span className="flow-badge">{vs20.toFixed(1)}×</span>;
-}
+const CAP = 150; // 條長上限 ±150%
 
-/** 資金流 Treemap:格子大小=成交金額、顏色=平均漲跌、▲▼=相對20日均量能 */
+/** 資金流向 v2:以 20 日常態為中軸的流入/流出對向條。
+    右紅=資金湧入、左綠=退潮;條長=偏離幅度、列序=強度。 */
 export default function MoneyFlow({ sectors, themes }: { sectors: SectorFlow[]; themes?: SectorFlow[] }) {
   const [mode, setMode] = useState<Mode>("industry");
   const [selected, setSelected] = useState<string | null>(null);
   const hasThemes = !!themes?.length;
 
-  const groups = useMemo(() => {
-    const src = mode === "theme" && hasThemes ? themes! : sectors;
-    return src.slice(0, mode === "theme" ? 20 : 14);
-  }, [mode, sectors, themes, hasThemes]);
-
-  const rects = useMemo(() => squarify(groups.map((g) => Math.max(g.turnover, 1)), W, H), [groups]);
-
-  const leaders = useMemo(() => {
+  const { inflow, outflow, maxAbs } = useMemo(() => {
     const src = (mode === "theme" && hasThemes ? themes! : sectors).filter(
-      (g) => g.vs20 != null && g.turnover >= (mode === "theme" ? 1e9 : 3e9),
+      (g) => g.vs20 != null && g.turnover >= (mode === "theme" ? 1e9 : 2e9),
     );
-    const inflow = [...src].sort((a, b) => (b.vs20 ?? 0) - (a.vs20 ?? 0)).slice(0, 3)
-      .filter((g) => (g.vs20 ?? 0) >= 1.15);
-    const outflow = [...src].sort((a, b) => (a.vs20 ?? 0) - (b.vs20 ?? 0)).slice(0, 3)
-      .filter((g) => (g.vs20 ?? 0) <= 0.85);
-    return { inflow, outflow };
+    const ins = src.filter((g) => (g.vs20 as number) >= 1.15)
+      .sort((a, b) => (b.vs20 as number) - (a.vs20 as number)).slice(0, 7);
+    const outs = src.filter((g) => (g.vs20 as number) <= 0.85)
+      .sort((a, b) => (a.vs20 as number) - (b.vs20 as number)).slice(0, 7);
+    const all = [...ins, ...outs].map((g) => Math.min(Math.abs(dev(g) ?? 0), CAP));
+    return { inflow: ins, outflow: outs, maxAbs: Math.max(...all, 30) };
   }, [mode, sectors, themes, hasThemes]);
 
-  const sel = groups.find((g) => g.name === selected) ?? null;
+  const sel =
+    [...inflow, ...outflow].find((g) => g.name === selected) ??
+    (mode === "theme" && hasThemes ? themes! : sectors).find((g) => g.name === selected) ??
+    null;
+
+  const Row = ({ g, side }: { g: SectorFlow; side: "in" | "out" }) => {
+    const d = Math.min(Math.abs(dev(g) ?? 0), CAP);
+    const width = (d / maxAbs) * 100;
+    return (
+      <button
+        className={`fr ${side} ${selected === g.name ? "selected" : ""}`}
+        onClick={() => setSelected(selected === g.name ? null : g.name)}
+      >
+        <span className="fr-name">{g.name}</span>
+        <span className="fr-track">
+          <span className={`fr-bar ${side}`} style={{ width: `${Math.max(width, 6)}%` }} />
+          <span className="fr-x">{g.vs20!.toFixed(1)}×</span>
+        </span>
+        <span className="fr-meta">
+          <b className="num">{fmtE8(g.turnover)}</b>
+          <span className={`num ${chgClass(g.avg_chg)}`}>
+            {g.avg_chg != null ? `${g.avg_chg > 0 ? "+" : ""}${g.avg_chg.toFixed(1)}%` : "—"}
+          </span>
+        </span>
+      </button>
+    );
+  };
 
   return (
-    <section className="sector-panel">
+    <section className="sector-panel flow2">
       <div className="flow-head">
         <h2>資金流向</h2>
         <div className="seg small">
@@ -65,66 +77,27 @@ export default function MoneyFlow({ sectors, themes }: { sectors: SectorFlow[]; 
             題材
           </button>
         </div>
-        <span className="flow-hint">大小=成交金額 · 顏色=漲跌 · ▲▼=相對20日均量能</span>
+        <span className="flow-hint">與 20 日常態量能相比:右紅=資金湧入、左綠=退潮;條長=偏離幅度</span>
       </div>
 
-      {(leaders.inflow.length > 0 || leaders.outflow.length > 0) && (
-        <div className="flow-leaders">
-          {leaders.inflow.length > 0 && (
-            <span>
-              <em className="in">資金湧入</em>
-              {leaders.inflow.map((g) => (
-                <button key={g.name} className="leader" onClick={() => setSelected(g.name)}>
-                  {g.name} {g.vs20!.toFixed(1)}×
-                </button>
-              ))}
-            </span>
-          )}
-          {leaders.outflow.length > 0 && (
-            <span>
-              <em className="out">退潮</em>
-              {leaders.outflow.map((g) => (
-                <button key={g.name} className="leader" onClick={() => setSelected(g.name)}>
-                  {g.name} {g.vs20!.toFixed(1)}×
-                </button>
-              ))}
-            </span>
-          )}
+      {inflow.length === 0 && outflow.length === 0 ? (
+        <div className="state" style={{ padding: "20px 0" }}>
+          今日各{mode === "theme" ? "題材" : "產業"}量能都貼近 20 日常態,無明顯資金移動
+        </div>
+      ) : (
+        <div className="flow-cols">
+          <div className="flow-col col-out">
+            <div className="flow-col-title out">流出 ↓</div>
+            {outflow.length ? outflow.map((g) => <Row key={g.name} g={g} side="out" />)
+              : <div className="fr-none">無明顯退潮</div>}
+          </div>
+          <div className="flow-col">
+            <div className="flow-col-title in">流入 ↑</div>
+            {inflow.length ? inflow.map((g) => <Row key={g.name} g={g} side="in" />)
+              : <div className="fr-none">無明顯湧入</div>}
+          </div>
         </div>
       )}
-
-      <div className="treemap" role="list">
-        {groups.map((g, i) => {
-          const r = rects[i];
-          if (!r || r.w <= 0.2 || r.h <= 0.2) return null;
-          const big = r.w * r.h > 40;
-          return (
-            <button
-              key={g.name}
-              role="listitem"
-              className={`tile ${selected === g.name ? "selected" : ""}`}
-              style={{
-                left: `${r.x}%`,
-                top: `${(r.y / H) * 100}%`,
-                width: `${r.w}%`,
-                height: `${(r.h / H) * 100}%`,
-                background: tileFill(g.avg_chg),
-              }}
-              onClick={() => setSelected(selected === g.name ? null : g.name)}
-              title={`${g.name} ${fmtE8(g.turnover)}｜均${g.avg_chg ?? "—"}%｜量能${g.vs20 ?? "—"}×`}
-            >
-              <span className="t-name">{g.name}</span>
-              {big && <span className="t-amt">{fmtE8(g.turnover)}</span>}
-              {big && (
-                <span className={`t-chg ${chgClass(g.avg_chg)}`}>
-                  {g.avg_chg != null ? `${g.avg_chg > 0 ? "+" : ""}${g.avg_chg.toFixed(1)}%` : "—"}
-                </span>
-              )}
-              {flowBadge(g.vs20)}
-            </button>
-          );
-        })}
-      </div>
 
       {sel && (
         <div className="drill">

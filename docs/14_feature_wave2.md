@@ -22,7 +22,27 @@
 - **UI**:個股頁權證 Tab 的熱門權證表 → 龍頭權證列可展開「分點進出」小表(分點|買張|賣張|淨張)。
 - **判讀提醒(UI 標註)**:權證分點大宗是發行商造市部位,異常訊號要看「非發行商分點」的大額買超。
 
-## 4. 登入管理(Google OAuth)⏸ 等使用者開通金鑰
+## 4. 登入管理(Google OAuth)✅ 2026-07-08 金鑰已提供,實作中
+
+### 登入閘門矩陣(定案)
+
+| 功能 | 免登入 | 登入後 |
+|---|---|---|
+| 榜單/資金流向/搜尋/K線(日週月) | ✓ | ✓ |
+| 個股權證明細列表 | ✓ | ✓ |
+| **權證/個股分點進出明細(展開)** | ✗ 顯示「登入查看」 | ✓ |
+| 自選股(未來,存 Supabase) | ✗ | ✓ |
+| LINE 推播綁定(未來) | ✗ | ✓ |
+| 名單/系統管理(未來) | ✗ | 僅 admin email |
+
+原則:公開資料的「彙整視圖」開放;「加工深度資訊」(分點明細、個人化)要登入。前端閘門是體驗層非安全層(docs/10/12 已定調)。
+
+### 安全註記(2026-07-08)
+
+- 使用者曾在對話貼出 `sb_secret_` 秘密金鑰 → **必須到 Dashboard rotate**;程式碼只用 publishable key(公開級,可進 repo)。
+- Supabase Auth 設定待辦:Authentication → URL Configuration → Site URL 填 `https://radar.techtrever.com`,Redirect URLs 加 `https://radar.techtrever.com/**` 與 `http://localhost:3000/**`;Providers → Google 需已啟用(Client ID/Secret 來自 GCP)。
+
+### 原使用者待辦(保留供參)
 
 - **選型:Supabase Auth 免費層**(50,000 MAU,Google OAuth 內建,純前端 SDK 相容靜態站)。Cloudflare Access 仍是「真隔離」選項,但使用者要的是站內登入體驗 + 名單管理 → Supabase。
 - **架構**:前端加 AuthGate(未登入 → 登入頁;Google 登入後查 `allowed_users` 表,不在名單顯示「待核准」);admin 頁面管名單(Supabase RLS:僅 admin email 可寫)。
@@ -34,7 +54,7 @@
   4. 給我:Project URL + anon public key(可公開級金鑰)
 - **不做**:自建帳密、email 註冊流(Google only,10 人夠用)。
 
-## 5. LINE 推播機器人 📋 規劃(之後獨立回合)
+## 5. LINE 推播機器人 📋 規劃(2026-07-08 使用者指示:排最後,其他功能完成後再做)
 
 - **選型**:LINE Notify 已停服 → 用 **Messaging API 免費層(500 則推播/月)**。10 人 × 每日 1 則 ≈ 220 則/月 ✓。
 - **架構(維持零伺服器例外最小化)**:

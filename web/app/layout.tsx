@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Manrope } from "next/font/google";
+import AuthButton from "@/components/AuthButton";
 import BottomNav from "@/components/BottomNav";
 import SearchBox from "@/components/SearchBox";
 import { IconRadar } from "@/components/Icons";
@@ -45,6 +46,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             </a>
             <div className="header-actions">
               <SearchBox />
+              <AuthButton />
             </div>
             <nav className="nav">
               {NAV.map((n) =>
