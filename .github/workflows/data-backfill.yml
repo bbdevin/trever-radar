@@ -22,7 +22,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: nightly-radar
+  group: radar-db
   cancel-in-progress: false
 
 jobs:
