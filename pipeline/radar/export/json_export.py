@@ -409,7 +409,7 @@ def export_json(out_dir: Path | None = None) -> dict:
             branch_history_rows = conn.execute(text("""
                 SELECT date, branch_name, buy_lots, sell_lots, net_lots
                 FROM branch_trades
-                WHERE stock_id = :s AND date >= date(:d, '-365 days')
+                WHERE stock_id = :s AND date >= date(:d, '-730 days')
                 ORDER BY date DESC
             """), {"s": sid, "d": d}).fetchall()
             history_by_date: dict[str, list] = {}
@@ -417,9 +417,10 @@ def export_json(out_dir: Path | None = None) -> dict:
                 history_by_date.setdefault(r[0], []).append({
                     "n": r[1], "b": r[2] or 0, "s": r[3] or 0, "net": r[4] or 0
                 })
+            # 2 年深度;每日僅留淨額前 12 分點,控制 JSON 體積
             branch_history = [
-                {"t": dt, "branches": sorted(branches, key=lambda x: -abs(x["net"]))}
-                for dt, branches in sorted(history_by_date.items(), reverse=True)[:240]
+                {"t": dt, "branches": sorted(branches, key=lambda x: -abs(x["net"]))[:12]}
+                for dt, branches in sorted(history_by_date.items(), reverse=True)[:480]
             ]
             payload = {
                 "id": sid, "name": s["name"], "market": s["market"],

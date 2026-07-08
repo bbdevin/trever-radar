@@ -26,7 +26,11 @@
 2. ❌ 低估 GitHub Actions:凌晨窗口 + `--max-minutes` + 斷點續傳 = 不用管 6 小時上限,一週自動補完。VPS 從「必需」降級為「想更快/想更深時的加速器」
 3. ✅ 其餘正確:斷點續傳、逐批寫入防 OOM、Docker 免污染主機、跑完 `gh release upload db-backup --clobber` 回寫——**注意:上傳後要刪掉 Actions 舊 cache(`gh cache delete --all`),否則雲端下次仍用舊 cache,VPS 成果不生效**
 
-## 3. VPS 執行指令(修正版;想加速或加深時才需要)
+## 3. VPS 執行指令(2 年深度版;2026-07-08 更新:鏡像已擴至 5 站)
+
+目標:**Top 500 檔 × 2 年(約 490 交易日)分點明細** = 約 24.5 萬請求。
+5 站輪替 + 整體 1.0 秒/請求 → 單站 5 秒一次(非常禮貌)→ **總時約 68–72 小時 ≈ 3 天** ✓。
+中斷再跑同一指令即續傳(已補的日期自動跳過)。
 
 ```bash
 git clone https://github.com/bbdevin/trever-radar.git && cd trever-radar
@@ -34,17 +38,24 @@ mkdir -p data
 curl -L https://github.com/bbdevin/trever-radar/releases/download/db-backup/radar.db.gz -o data/radar.db.gz
 gunzip data/radar.db.gz
 
-docker run -d --name radar-backfill \
+docker run -d --name radar-backfill --restart unless-stopped \
   -v $(pwd)/pipeline:/app/pipeline -v $(pwd)/data:/app/data \
   -w /app/pipeline python:3.11 \
-  bash -c "pip install -r requirements.txt && python -m radar backfill-branches --top 500 --days 120 --sleep 1.2"
-# 進度:docker logs -f radar-backfill(500檔×120日 ≈ 6萬請求 ≈ 20小時,非 4 天)
+  bash -c "pip install -r requirements.txt && python -m radar backfill-branches --top 500 --days 490 --sleep 1.0"
+docker logs -f radar-backfill   # Ctrl+C 離開,背景照跑
 
-# 跑完回寫(gh auth login 後):
+# 約 3 天後回寫(gh auth login 後):
 gzip -kf data/radar.db
 gh release upload db-backup data/radar.db.gz --clobber
 gh cache delete --all --repo bbdevin/trever-radar   # 關鍵:讓雲端改用新資料庫
+docker rm -f radar-backfill
 ```
+
+注意:VPS 跑的期間,雲端每日排程照常寫自己的 cache DB;回寫時雲端「當天新增的分點/行情」會被 VPS 版蓋掉 → **回寫後立刻手動觸發一次 daily-market 與 daily-branches** 補回當日,或挑週末回寫最乾淨。
+
+### n8n 有幫助嗎?
+
+沒有必要。這是一支自帶續傳的批次腳本,`docker run -d` 就是全部;n8n 是流程編排工具,包在外面只是多一層殼。它未來的正確用途:LINE 推播 webhook、爬蟲掛掉時發通知——留著,別用在這。
 
 ## 4. 風險與禮貌守則
 

@@ -25,6 +25,7 @@ const BRANCH_RANGES = [
   { label: "60日", days: 60 },
   { label: "120日", days: 120 },
   { label: "240日", days: 240 },
+  { label: "2年", days: 480 },
 ] as const;
 
 function StockView() {

@@ -13,6 +13,9 @@ from . import NoDataError
 MIRROR_HOSTS = [
     "https://fubon-ebrokerdj.fbs.com.tw",
     "https://newjust.masterlink.com.tw",
+    "https://stockchannelnew.sinotrade.com.tw",
+    "https://djinfo.cathaysec.com.tw",
+    "https://kgieworld.moneydj.com",
 ]
 _mirror_i = 0
 

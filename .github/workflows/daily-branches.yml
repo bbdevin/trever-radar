@@ -56,7 +56,7 @@ jobs:
 
       - name: Branch trades (MoneyDJ mirrors, score-pool top 500)
         working-directory: pipeline
-        run: python -m radar import-branch-trades --top 500 --sleep 1.2
+        run: python -m radar import-branch-trades --top 500 --sleep 1.0
 
       - name: Compute branch stats
         working-directory: pipeline
