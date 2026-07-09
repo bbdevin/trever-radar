@@ -8,9 +8,21 @@
 |---|---|
 | 正式網址 | https://radar.techtrever.com(= https://trever-radar.pages.dev) |
 | 公開狀態 | 公開網址、noindex + robots.txt;Access 未開(使用者決定,要鎖照 DEPLOY.md §4) |
-| 自動排程 | GitHub Actions 已拆解為三條管線：15:30 基本行情 (`daily-market`)、16:30 權證 (`daily-warrants`)、18:30 分點與結算部署 (`daily-branches`)，各帶有 timeout 防呆與獨立 DB cache 傳遞 |
+| 自動排程 | GitHub Actions 5 支 workflow(現行時間表以 `docs/08_scheduler_jobs.md` §0 為單一真相):14:10 `daily-market`、16:10 `daily-insti`、17:40+21:00 `daily-branches`、每日 01:10 `data-backfill`、push main 觸發 `deploy`;各帶 timeout 防呆與共用 `radar-db` cache 續存鏈 |
 | Repo | github.com/bbdevin/trever-radar(私有) |
 | DB | SQLite,Actions cache 續存 + release `db-backup` 週備份(週五/手動觸發時) |
+
+## AI Workflow Status
+
+2026-07-09 起,本專案開發流程改為**不依賴 Fable 或任一單一模型**的多 agent 協作,完整規則見根目錄 `AGENTS.md`、`docs/17_no_fable_workflow.md`、`docs/18_handoff_template.md`。
+
+- **Claude Code**:主力執行者(有額度時)。
+- **AGY(Google model)**:fallback planner / secondary executor,Claude Code 沒額度時接手,不擴張 MVP、不重寫架構。
+- **Codex**:independent reviewer,只 review git diff/安全性/測試覆蓋,不代表可自動 merge。
+- **Cursor**:IDE 控制中心,看檔案、看 diff、管 branch、人工確認。
+- **人類使用者**:唯一能決定 merge / deploy / 架構變更 / 資料刪除重建的人。
+
+下一步:先完成 AI workflow 文件整理本身(本次任務),之後功能開發任務排序仍照本檔「未完成(依優先序)」清單走,**不因引入多 agent 流程而直接大改既有功能**。
 
 ## 已完成 ✅
 

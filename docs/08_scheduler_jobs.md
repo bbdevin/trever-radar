@@ -19,27 +19,7 @@
 - **DB 續存**:Actions cache 為主(每支跑完必存、下一支接續),cache miss 才從 release `db-backup` 種子還原;release 備份僅週五/週六/手動更新。
 - 本機開發:同一套 CLI,`python -m radar export-json` 後前端讀 `web/public/data/*.json`;本機 DB 僅開發用,**正式真相在雲端**。
 
-## 1. 盤後管線(V1,交易日執行)
-
-依賴關係用 Laravel job chain / batch,單一步驟失敗自動重試 3 次(間隔 10 分鐘),仍失敗 → 告警 + 後續步驟依「降級規則」續跑或中止。
-
-| 時間 | Job | 內容 | 失敗降級 |
-|---|---|---|---|
-| 14:30 | ImportDailyPrices | TWSE MI_INDEX + TPEx 日成交(含權證價量) | 中止管線(基礎資料) |
-| 14:40 | ImportAlertStocks | 注意/處置 | 續跑,標記缺 |
-| 15:10 | ImportInstitutional | 法人 T86 + TPEx | 續跑 |
-| 15:30 | ImportWarrantMaster | 權證主檔增量(新發行/到期) | 續跑 |
-| 16:30 | ImportMargins | 融資券(公布較晚) | 續跑 |
-| 17:00 | ImportBranchTrades | FinMind 分點 → 裁剪入 branch_trades_top/watch | 重試至 18:00;仍失敗 → 出「無分點版」清單並大字標註 |
-| 17:30 | DataHealthCheck | 各表筆數/缺漏/合理性;寫 import_logs;異常 → Telegram | — |
-| 17:40 | ComputeIndicators | 還原價調整 → 技術指標 → adv20 → 量比基準曲線(給 V2) | — |
-| 17:50 | ComputeScores | 權證分 → 分點分(含 branch_stock_stats 增量更新)→ 技術/題材/法人分 → 風險 → 綜合分 + reasons | — |
-| 18:10 | BuildWatchlist | 觀察清單 Top30 + 權證特別榜 + 明日監控池(綜合分≥55 前 60 檔 + 全體自選)| — |
-| 18:20 | NotifyDaily | Telegram 推「今日清單已產生 + 前 5 名摘要 + 資料完整度」 | — |
-| 21:00 | BackfillReturns | 回填歷史清單/訊號的 fwd 報酬(V2) | — |
-| 02:00 | Housekeeping | pg_dump 備份、滾動刪除(warrant_daily>2年、bars>60日)、log 清理 | — |
-
-註:各所公布時間偶有延遲,每個 Import job 先打「資料日期檢查」,拿到的還是舊資料就延後重試,不硬吞。非交易日(假日/颱風)以 TWSE 行事曆 + 當日有無資料雙重判斷,自動跳過。
+> §1(舊版盤後管線,Laravel job chain 格式)已刪除——與 §0 矛盾且從未實作,§0 是唯一真相。以下 §2/§3 是 V2 尚未實作的設計參考,保留。
 
 ## 2. 盤中管線(V2,08:55–13:35)
 

@@ -12,7 +12,7 @@
 - `pipeline/` — Python 資料管線(抓取 → SQLite → 匯出 JSON)
 - `web/` — 前端(Next.js 15 靜態輸出 + lightweight-charts)
 - `data/` — SQLite 與產出物(不進 git;雲端以 Actions cache + release 備份續存)
-- `.github/workflows/nightly-radar.yml` — 每日自動管線 + Cloudflare Pages 部署(見 `DEPLOY.md`)
+- `.github/workflows/` — 5 支自動管線(`daily-market`14:10/`daily-insti`16:10/`daily-branches`17:40+21:00/`data-backfill`01:10/`deploy`)+ Cloudflare Pages 部署;時間表單一真相見 `docs/08_scheduler_jobs.md` §0(見 `DEPLOY.md`)
 
 ## Pipeline 指令
 
@@ -55,4 +55,4 @@ npm run build   # 靜態輸出到 out/
 
 ## 部署
 
-全自動,見 [DEPLOY.md](DEPLOY.md)。push `main` 會部署程式/UI 更新;手動完整重跑資料:`gh workflow run nightly-radar --repo bbdevin/trever-radar`。
+全自動,見 [DEPLOY.md](DEPLOY.md)。push `main` 會部署程式/UI 更新;手動重跑某階段:`gh workflow run daily-branches --repo bbdevin/trever-radar`(其餘同理換 workflow 名,見 `docs/08_scheduler_jobs.md` §0)。

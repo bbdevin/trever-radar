@@ -1,48 +1,47 @@
-# 11 AI 輔助開發與 Token 策略
+# 11 AI 輔助開發流程(2026-07-09 改版)
 
-## 1. 核心原則
+> **主流程已改為 No-Fable workflow,完整規則見 `AGENTS.md` + `docs/17_no_fable_workflow.md` + `docs/18_handoff_template.md`。本檔不重複那三份的內容,只放本專案的技術棧對照與省 token 細節。**
+>
+> ⚠️ 舊版本檔(2026-07-06 前)寫的是 Laravel/PHP 技術棧(`Modules/Scoring/*.php`、`php artisan`、pint/phpstan/phpunit、trunk-based+PR)。**那套從未被實際採用**——專案定案技術棧是 Python(見 `docs/12_zero_cost_pivot.md`),以下已全部改寫對應。
 
-1. **文件即上下文**:AI 每次任務只讀 `project-context.md`(<150 行)+ 該任務對應的 1 份規格文件 + 目標檔案。永遠不丟整個專案。
-2. **規則進文件,不進對話**:任何架構決策做完立刻寫進 project-context.md 的「已做取捨」;下次任何模型(大小不拘)接手都從文件出發,對話歷史可拋棄。
-3. **純函式評分層是省 token 的關鍵**:`Modules/Scoring` 無 I/O、無框架依賴,AI 修改評分規則時只需讀 04 文件 + 單一 Score 類 + 其測試,300 行上下文搞定。
-4. **小模型可讀**:文件用表格與短句;每個模組資料夾放 10 行內的 `README.md`(這模組做什麼、入口在哪、別碰什麼)。
+## 1. 核心原則(與舊版一致,原則不變)
 
-## 2. 每類任務的「該讀檔案清單」
+1. **文件即上下文**:AI 每次任務只讀 `docs/project-context.md`(<150 行)+ 該任務對應的規格文件 + 目標檔案。永遠不丟整個專案。
+2. **規則進文件,不進對話**:任何架構決策做完立刻寫進 `project-context.md` 的「已做取捨」;下次任何模型接手都從文件出發,對話歷史可拋棄。
+3. **純函式評分層是省 token 的關鍵**:`pipeline/radar/compute/*` 無 I/O、無框架依賴,AI 修改評分規則時只需讀 `04` 文件 + 對應 compute 模組 + 其測試,不用理解整個系統。
+4. **小模型可讀**:文件用表格與短句。
+
+## 2. 每類任務的「該讀檔案清單」(技術棧已更新為 Python/Next.js)
 
 | 任務 | 讀 |
 |---|---|
-| 改評分規則 | project-context + 04 + `Modules/Scoring/{該類}Score.php` + 對應 test |
-| 加資料源 | project-context + 03 + `DataProviders/Contracts/{介面}` + 一個現有實作當範本 |
-| 改前端頁 | project-context + 07 對應章節 + 該 Page.vue + 該頁 API controller |
-| 改排程 | project-context + 08 + 該 Job |
-| 改資料表 | project-context + 05 + migration(**改 05 文件先於改 code**) |
+| 改評分規則 | `project-context` + `04` + `pipeline/radar/compute/scores.py` + `pipeline/tests/test_scores.py` |
+| 改技術指標 | `project-context` + `04`§6 + `pipeline/radar/compute/indicators.py` + `pipeline/tests/test_indicators.py` |
+| 加資料源 | `project-context` + `03` + `vps_backfill_plan.md`(分點來源現況)+ `pipeline/radar/providers/` 內一個現有實作當範本 |
+| 改前端頁 | `project-context` + `07` 對應章節 + 該頁面檔案(`web/app/*`)+ 對應元件(`web/components/*`) |
+| 改排程 | `project-context` + `08`§0 + `.github/workflows/*.yml`(**改前先讀 `AGENTS.md` 危險清單**) |
+| 改資料表 | `project-context` + `05` + `pipeline/radar/schema.py`(**改 `05` 文件先於改 code**) |
 
 ## 3. 防 AI 改壞(比省 token 更重要)
 
-1. **Golden-file 測試**:`tests/fixtures/` 放固定日資料集(CSV),評分輸出快照比對;AI 動評分必跑,分數變了就會被看見——變動要嘛是預期(更新快照 + 在 PR 說明),要嘛是 bug。
-2. Provider 測試:每個 Provider 用錄下的真實 API response(fixture)測 parser;來源改版時 fixture 更新即回歸。
-3. CI(GitHub Actions):pint + phpstan(level 6)+ phpunit;不綠不併。
-4. **一次一模組**:給 AI 的任務切到「單一模組單一行為」;跨模組需求先拆單。禁止「順手重構」——重構是獨立任務。
-5. 驗收腳本:`php artisan radar:dry-run --date=2026-07-03` 用 fixture 全流程跑一遍出清單,人眼比對。
+1. **Golden-file / pytest 測試**:`pipeline/tests/` 已有 `test_adjustments.py`、`test_indicators.py`、`test_performance.py`、`test_scores.py`、`test_theme_score.py`——固定輸入資料集,評分輸出快照比對。AI 動評分必跑,分數變了就會被看見——變動要嘛是預期(更新快照 + 在摘要說明),要嘛是 bug。
+2. Provider 測試:每個 provider 用錄下的真實 API response 測 parser;來源改版時 fixture 更新即回歸(現況:尚未每個 provider 都有測試,新增 provider 時應補)。
+3. CI:目前無強制 CI gate(尚未設 GitHub Actions CI workflow 跑 pytest)。**改動評分/指標邏輯後,本機手動跑 `pytest pipeline/tests/` 確認全過,並在交接摘要寫明測試結果。**
+4. **一次一模組**:給 AI 的任務切到「單一模組單一行為」;跨模組需求先拆單。禁止「順手重構」——重構是獨立任務(呼應 `AGENTS.md` Golden Rule 4)。
+5. 驗收:目前用 `python -m radar export-json` 產出 JSON 後人眼比對前端顯示,尚無自動化 dry-run 驗收腳本。
 
-## 4. 分支與節奏
+## 4. 分支與節奏(現況,非規劃)
 
-- trunk-based:`main` 保護,短分支(`feat/warrant-score`)+ PR + CI;自己開發也走 PR(給 AI code review 的掛載點)。
-- Conventional Commits;每版打 tag(v0.1 = 匯入齊、v0.2 = 評分齊、v0.3 = 清單頁 = V1 MVP)。
-- `CHANGELOG.md` 記「決策變更」而非流水帳。
+- **實際流程**:目前是直接在 `main` 上 commit 並 push(**不是** trunk-based+PR)。`main` push 會直接觸發 `deploy.yml` 正式部署——這是 `AGENTS.md` 列的頭號危險項,任何 push 前都要三思。
+- Conventional Commits 風格(`feat:`/`fix:`/`docs:`/`chore:`)已在使用,維持。
+- 沒有 `CHANGELOG.md`;決策變更記錄在 `docs/STATUS.md`「最近完成」區與 `project-context.md`「已做的關鍵取捨」。
 
-## 5. V1 開發順序(每步可獨立驗收)
+## 5. 歷史回補策略(省 API/請求額度,原則不變)
 
-1. 專案骨架 + Docker + Breeze + CI(1 週)
-2. 股票主檔 + 日K Provider(TWSE/TPEx)+ import_logs + 健檢(1 週)
-3. 其餘盤後 Provider(法人/融資券/權證/注意處置)+ FinMind 分點(1–1.5 週)
-4. 指標計算 + 還原價(0.5 週)
-5. Scoring 全模組 + golden-file 測試(1.5 週)★ 最重要
-6. 觀察清單管線 + 首頁(1 週)
-7. 個股頁 + 籌碼 K 線 V1(1.5 週)
-8. 探索頁 Tabs + 自選 + 系統頁(1 週)
-→ 合計約 8 週兼職。每步結束更新對應文件。
+- FinMind 免費額度約 600 req/hr:`deep-backfill` 已做斷點續傳(已拉深的股票自動跳過)。
+- 分點資料(MoneyDJ 鏡像,見 `vps_backfill_plan.md`):夜間 GitHub Actions 增量 + 大量回補交給使用者 VPS(額度數學見 `docs/15`——GitHub Actions 免費額度撐不住大量長跑任務)。
+- 冷門股/池外股票:lazy 補(現況見 `STATUS.md` 已知債務)。
 
-## 6. 歷史回補策略(省 API 額度)
+## 6. 開發順序(歷史記錄,V1 已大致完成)
 
-FinMind 免費額度有限:回補腳本做成可斷點續傳的 queue job(記錄已完成 stock×dataset×年份),夜間慢慢跑,一週內補完 1 年資料;分點資料最花額度,先補監控會用到的(市值前 800 檔),冷門股 lazy 補(首次被點開個股頁時排隊補)。
+原規劃 8 週順序(專案骨架→資料 Provider→指標→Scoring→觀察清單→個股頁→探索頁)已大致走完,現況以 `docs/STATUS.md` 的「已完成」清單為準,不在此重複。後續開發任務排序改看 `STATUS.md`「未完成(依優先序)」。
