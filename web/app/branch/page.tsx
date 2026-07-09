@@ -29,11 +29,20 @@ type Movement = {
 
 type TodayMovements = Record<string, Movement[]>;
 
+type WarrantBreakdown = {
+  warrant_id: string;
+  warrant_name: string;
+  kind: "call" | "put";
+  net_lots: number;
+  net_amount: number;
+};
+
 type WarrantBranch = {
   branch_name: string;
   underlying_id: string;
   underlying_name: string;
   net_amount: number;
+  breakdown?: WarrantBreakdown[];
 };
 
 const TABS = [
@@ -72,6 +81,81 @@ function TabPill({ active, onClick, title, icon: Icon, label }: { active: boolea
       <Icon size={15} className="opacity-85" />
       {label}
     </button>
+  );
+}
+
+function WarrantBranchCard({ m }: { m: WarrantBranch }) {
+  const [expanded, setExpanded] = useState(false);
+  const hasBreakdown = m.breakdown && m.breakdown.length > 0;
+
+  return (
+    <div className="flex flex-col rounded-[var(--r-lg)] border border-border bg-card/60 backdrop-blur-md shadow-sm hover:shadow-[var(--shadow-card)] transition-all overflow-hidden">
+      {/* 觸發區塊 */}
+      <button 
+        className="p-4 flex flex-col gap-2 text-left w-full focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        onClick={() => setExpanded(!expanded)}
+      >
+        <div className="flex justify-between items-start w-full">
+          <div className="font-bold text-foreground text-lg">{m.branch_name}</div>
+          <div className={cn("px-2 py-1 rounded-md font-bold text-[11.5px]", m.net_amount > 0 ? "bg-up/15 text-up" : "bg-down/15 text-down")}>
+            {m.net_amount > 0 ? "大買" : "大賣"}
+          </div>
+        </div>
+        <div className="flex justify-between items-end mt-2 w-full">
+          <a href={`/stock?id=${m.underlying_id}`} className="flex items-baseline gap-1.5 hover:opacity-80 z-10 relative" onClick={(e) => e.stopPropagation()}>
+            <span className="text-foreground font-semibold">{m.underlying_name}</span>
+            <span className="text-xs text-muted-foreground">{m.underlying_id}</span>
+          </a>
+          <div className="flex items-center gap-2">
+            <div className={cn("text-[17px] font-bold num tracking-tight", m.net_amount > 0 ? "text-up" : "text-down")}>
+              {(Math.abs(m.net_amount) / 10000).toLocaleString('zh-TW', { maximumFractionDigits: 0 })} 萬
+            </div>
+          </div>
+        </div>
+        {hasBreakdown && (
+          <div className="w-full flex justify-center mt-2 opacity-50 hover:opacity-100 transition-opacity">
+            <div className={cn("h-1 w-8 rounded-full bg-border transition-transform duration-300", expanded ? "bg-foreground" : "")} />
+          </div>
+        )}
+      </button>
+
+      {/* 展開明細 */}
+      {hasBreakdown && (
+        <div className={cn(
+          "grid transition-[grid-template-rows] duration-300 ease-out", 
+          expanded ? "grid-rows-[1fr]" : "grid-rows-[0fr]"
+        )}>
+          <div className="overflow-hidden bg-secondary/40 border-t border-border">
+            <div className="p-3 flex flex-col gap-1.5">
+              <div className="grid grid-cols-[1.5fr_1fr_1fr] items-center px-2 py-1 pb-1.5 text-[11.5px] font-semibold text-muted-foreground border-b border-border">
+                <div>權證 (張數)</div>
+                <div className="text-right">淨買賣金額</div>
+                <div className="text-right">佔總額</div>
+              </div>
+              {m.breakdown?.map(b => (
+                <div key={b.warrant_id} className="grid grid-cols-[1.5fr_1fr_1fr] items-center px-2 py-1.5 rounded-md hover:bg-secondary transition-colors">
+                  <div className="flex flex-col">
+                    <div className="flex items-baseline gap-1">
+                      <span className="text-foreground text-[13px]">{b.warrant_name}</span>
+                      <span className={cn("text-[10px] px-1 rounded-sm", b.kind === "call" ? "bg-up/15 text-up" : "bg-down/15 text-down")}>
+                        {b.kind === "call" ? "購" : "售"}
+                      </span>
+                    </div>
+                    <span className="text-xs text-muted-foreground">淨 {b.net_lots > 0 ? "+" : ""}{b.net_lots} 張</span>
+                  </div>
+                  <div className={cn("text-right num font-semibold text-[13.5px]", b.net_amount > 0 ? "text-up" : "text-down")}>
+                    {(Math.abs(b.net_amount) / 10000).toLocaleString('zh-TW', { maximumFractionDigits: 1 })} 萬
+                  </div>
+                  <div className="text-right num text-xs text-muted-foreground">
+                    {Math.round(Math.abs(b.net_amount) / Math.abs(m.net_amount) * 100)}%
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -204,28 +288,9 @@ export default function BranchPage() {
               此區間內無淨買賣超 500 萬以上之權證分點大戶
             </div>
           )}
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 items-start">
             {warrantBranches[warrantTimeframe]?.map((m, idx) => (
-              <div
-                key={`${m.branch_name}-${m.underlying_id}-${idx}`}
-                className="flex flex-col gap-2 rounded-[var(--r-lg)] border border-border bg-card/60 backdrop-blur-md p-4 shadow-sm hover:shadow-[var(--shadow-card)] transition-all"
-              >
-                <div className="flex justify-between items-start">
-                  <div className="font-bold text-foreground text-lg">{m.branch_name}</div>
-                  <div className={cn("px-2 py-1 rounded-md font-bold text-[11.5px]", m.net_amount > 0 ? "bg-up/15 text-up" : "bg-down/15 text-down")}>
-                    {m.net_amount > 0 ? "大買" : "大賣"}
-                  </div>
-                </div>
-                <div className="flex justify-between items-end mt-2">
-                  <a href={`/stock?id=${m.underlying_id}`} className="flex items-baseline gap-1.5 hover:opacity-80">
-                    <span className="text-foreground font-semibold">{m.underlying_name}</span>
-                    <span className="text-xs text-muted-foreground">{m.underlying_id}</span>
-                  </a>
-                  <div className={cn("text-[17px] font-bold num tracking-tight", m.net_amount > 0 ? "text-up" : "text-down")}>
-                    {(Math.abs(m.net_amount) / 10000).toLocaleString('zh-TW', { maximumFractionDigits: 0 })} 萬
-                  </div>
-                </div>
-              </div>
+              <WarrantBranchCard key={`${m.branch_name}-${m.underlying_id}-${idx}`} m={m} />
             ))}
           </div>
         </div>

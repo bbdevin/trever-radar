@@ -554,23 +554,29 @@ def _export_warrant_branches(out: Path, engine, date: str, base20: list[str]):
 
         # Calculate estimated NTD amount: net_lots * 1000 * price
         # Since warrant_daily might miss some days, we fallback to 1.0 if unknown, though usually it's there.
+        # We query per warrant to provide breakdown.
         rows = conn.execute(text("""
             SELECT 
                 b.branch_name,
                 w.stock_id AS underlying_id,
                 s.name AS underlying_name,
+                b.stock_id AS warrant_id,
+                w.name AS warrant_name,
+                w.kind,
+                SUM(CASE WHEN b.date >= :d1 THEN b.net_lots ELSE 0 END) AS net_lots_1d,
                 SUM(CASE WHEN b.date >= :d1 THEN b.net_lots * 1000 * COALESCE(wd.close, 1.0) ELSE 0 END) AS net_amt_1d,
+                SUM(CASE WHEN b.date >= :d2 THEN b.net_lots ELSE 0 END) AS net_lots_2d,
                 SUM(CASE WHEN b.date >= :d2 THEN b.net_lots * 1000 * COALESCE(wd.close, 1.0) ELSE 0 END) AS net_amt_2d,
+                SUM(CASE WHEN b.date >= :d5 THEN b.net_lots ELSE 0 END) AS net_lots_5d,
                 SUM(CASE WHEN b.date >= :d5 THEN b.net_lots * 1000 * COALESCE(wd.close, 1.0) ELSE 0 END) AS net_amt_5d,
+                SUM(CASE WHEN b.date >= :d30 THEN b.net_lots ELSE 0 END) AS net_lots_30d,
                 SUM(CASE WHEN b.date >= :d30 THEN b.net_lots * 1000 * COALESCE(wd.close, 1.0) ELSE 0 END) AS net_amt_30d
             FROM branch_trades b
             JOIN warrants w ON w.id = b.stock_id
             LEFT JOIN stocks s ON s.id = w.stock_id
             LEFT JOIN warrant_daily wd ON wd.warrant_id = b.stock_id AND wd.date = b.date
             WHERE LENGTH(b.stock_id) = 6 AND b.date >= :d30
-            GROUP BY b.branch_name, w.stock_id, s.name
-            HAVING ABS(SUM(CASE WHEN b.date >= :d5 THEN b.net_lots * 1000 * COALESCE(wd.close, 1.0) ELSE 0 END)) >= 5000000
-                OR ABS(SUM(CASE WHEN b.date >= :d30 THEN b.net_lots * 1000 * COALESCE(wd.close, 1.0) ELSE 0 END)) >= 5000000
+            GROUP BY b.branch_name, w.stock_id, s.name, b.stock_id, w.name, w.kind
         """), {"d1": d1, "d2": d2, "d5": d5, "d30": d30}).fetchall()
 
         # Group by timeframe for frontend
@@ -578,22 +584,38 @@ def _export_warrant_branches(out: Path, engine, date: str, base20: list[str]):
             "1d": [], "2d": [], "5d": [], "30d": []
         }
         
+        grouped = {}
         for r in rows:
             m = dict(r._mapping)
-            base_obj = {
-                "branch_name": m["branch_name"],
-                "underlying_id": m["underlying_id"],
-                "underlying_name": m["underlying_name"],
-            }
+            key = (m["branch_name"], m["underlying_id"], m["underlying_name"])
+            if key not in grouped:
+                grouped[key] = []
+            grouped[key].append(m)
             
-            if abs(m["net_amt_1d"]) >= 5000000:
-                results["1d"].append({**base_obj, "net_amount": int(m["net_amt_1d"])})
-            if abs(m["net_amt_2d"]) >= 5000000:
-                results["2d"].append({**base_obj, "net_amount": int(m["net_amt_2d"])})
-            if abs(m["net_amt_5d"]) >= 5000000:
-                results["5d"].append({**base_obj, "net_amount": int(m["net_amt_5d"])})
-            if abs(m["net_amt_30d"]) >= 5000000:
-                results["30d"].append({**base_obj, "net_amount": int(m["net_amt_30d"])})
+        for (branch_name, underlying_id, underlying_name), warrants in grouped.items():
+            for tf in ["1d", "2d", "5d", "30d"]:
+                total_amt = sum(w[f"net_amt_{tf}"] for w in warrants)
+                if abs(total_amt) >= 5000000:
+                    breakdown = []
+                    for w in warrants:
+                        w_amt = w[f"net_amt_{tf}"]
+                        if abs(w_amt) > 0:
+                            breakdown.append({
+                                "warrant_id": w["warrant_id"],
+                                "warrant_name": w["warrant_name"],
+                                "kind": w["kind"],
+                                "net_lots": int(w[f"net_lots_{tf}"]),
+                                "net_amount": int(w_amt)
+                            })
+                    breakdown.sort(key=lambda x: -abs(x["net_amount"]))
+                    
+                    results[tf].append({
+                        "branch_name": branch_name,
+                        "underlying_id": underlying_id,
+                        "underlying_name": underlying_name,
+                        "net_amount": int(total_amt),
+                        "breakdown": breakdown
+                    })
                 
         # Sort each list by absolute net amount
         for k in results:
