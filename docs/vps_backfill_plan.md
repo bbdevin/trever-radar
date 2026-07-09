@@ -6,6 +6,30 @@
 
 ---
 
+## ⚠️ 2026-07-09:遇到「database disk image is malformed」怎麼辦
+
+**已修好,不是你操作錯。** 根因:資料庫開 WAL 模式,備份只打包主檔、沒合併 WAL 側檔,導致下載下來的 `radar.db.gz` 本身就不完整。已修管線(每次備份前強制合併 WAL)並重新產出一份乾淨備份。
+
+你要做的:
+1. **刪掉 VPS 上舊的容器和資料庫**:
+   ```bash
+   docker rm -f radar-backfill
+   rm -f data/radar.db data/radar.db.gz data/radar.db-wal data/radar.db-shm
+   ```
+2. **重新下載**(Step 1 的下載指令再跑一次):
+   ```bash
+   curl -L https://github.com/bbdevin/trever-radar/releases/download/db-backup/radar.db.gz -o data/radar.db.gz
+   gunzip data/radar.db.gz
+   ```
+3. **檢查完整性**(確認這次是好的再啟動):
+   ```bash
+   docker run --rm -v $(pwd)/data:/d python:3.11 python -c "import sqlite3; print(sqlite3.connect('/d/radar.db').execute('PRAGMA integrity_check').fetchone())"
+   ```
+   輸出 `('ok',)` 才能繼續;不是的話跟 AI 說,先別跑 Step 2。
+4. 確認 OK 後,照 **Step 2** 重新啟動回補(指令不變)。
+
+---
+
 ## 事前理解(30 秒版)
 
 - 抓什麼:MoneyDJ 公開分點頁,5 個券商鏡像站輪流打,每秒 1 個請求(單站 5 秒一次,很禮貌)
