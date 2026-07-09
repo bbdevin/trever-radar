@@ -84,77 +84,161 @@ function TabPill({ active, onClick, title, icon: Icon, label }: { active: boolea
   );
 }
 
-function WarrantBranchCard({ m }: { m: WarrantBranch }) {
-  const [expanded, setExpanded] = useState(false);
-  const hasBreakdown = m.breakdown && m.breakdown.length > 0;
+function StockGroupCard({ stockId, stockName, totalAmt, branches }: { stockId: string, stockName: string, totalAmt: number, branches: WarrantBranch[] }) {
+  const [expandedBranch, setExpandedBranch] = useState<string | null>(null);
 
   return (
     <div className="flex flex-col rounded-[var(--r-lg)] border border-border bg-card/60 backdrop-blur-md shadow-sm hover:shadow-[var(--shadow-card)] transition-all overflow-hidden">
-      {/* 觸發區塊 */}
-      <button 
-        className="p-4 flex flex-col gap-2 text-left w-full focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        onClick={() => setExpanded(!expanded)}
-      >
-        <div className="flex justify-between items-start w-full">
-          <div className="font-bold text-foreground text-lg">{m.branch_name}</div>
-          <div className={cn("px-2 py-1 rounded-md font-bold text-[11.5px]", m.net_amount > 0 ? "bg-up/15 text-up" : "bg-down/15 text-down")}>
-            {m.net_amount > 0 ? "大買" : "大賣"}
-          </div>
+      <div className="p-4 flex justify-between items-center bg-secondary/30 border-b border-border">
+        <a href={`/stock?id=${stockId}`} className="flex items-baseline gap-1.5 hover:opacity-80">
+          <span className="text-foreground font-bold text-lg">{stockName}</span>
+          <span className="text-xs text-muted-foreground">{stockId}</span>
+        </a>
+        <div className="flex flex-col items-end">
+          <span className="text-[10px] text-muted-foreground">總淨額</span>
+          <span className={cn("text-[15px] font-bold num tracking-tight", totalAmt > 0 ? "text-up" : "text-down")}>
+            {(Math.abs(totalAmt) / 10000).toLocaleString('zh-TW', { maximumFractionDigits: 0 })} 萬
+          </span>
         </div>
-        <div className="flex justify-between items-end mt-2 w-full">
-          <a href={`/stock?id=${m.underlying_id}`} className="flex items-baseline gap-1.5 hover:opacity-80 z-10 relative" onClick={(e) => e.stopPropagation()}>
-            <span className="text-foreground font-semibold">{m.underlying_name}</span>
-            <span className="text-xs text-muted-foreground">{m.underlying_id}</span>
-          </a>
-          <div className="flex items-center gap-2">
-            <div className={cn("text-[17px] font-bold num tracking-tight", m.net_amount > 0 ? "text-up" : "text-down")}>
-              {(Math.abs(m.net_amount) / 10000).toLocaleString('zh-TW', { maximumFractionDigits: 0 })} 萬
-            </div>
-          </div>
-        </div>
-        {hasBreakdown && (
-          <div className="w-full flex justify-center mt-2 opacity-50 hover:opacity-100 transition-opacity">
-            <div className={cn("h-1 w-8 rounded-full bg-border transition-transform duration-300", expanded ? "bg-foreground" : "")} />
-          </div>
-        )}
-      </button>
-
-      {/* 展開明細 */}
-      {hasBreakdown && (
-        <div className={cn(
-          "grid transition-[grid-template-rows] duration-300 ease-out", 
-          expanded ? "grid-rows-[1fr]" : "grid-rows-[0fr]"
-        )}>
-          <div className="overflow-hidden bg-secondary/40 border-t border-border">
-            <div className="p-3 flex flex-col gap-1.5">
-              <div className="grid grid-cols-[1.5fr_1fr_1fr] items-center px-2 py-1 pb-1.5 text-[11.5px] font-semibold text-muted-foreground border-b border-border">
-                <div>權證 (張數)</div>
-                <div className="text-right">淨買賣金額</div>
-                <div className="text-right">佔總額</div>
-              </div>
-              {m.breakdown?.map(b => (
-                <div key={b.warrant_id} className="grid grid-cols-[1.5fr_1fr_1fr] items-center px-2 py-1.5 rounded-md hover:bg-secondary transition-colors">
-                  <div className="flex flex-col">
-                    <div className="flex items-baseline gap-1">
-                      <span className="text-foreground text-[13px]">{b.warrant_name}</span>
-                      <span className={cn("text-[10px] px-1 rounded-sm", b.kind === "call" ? "bg-up/15 text-up" : "bg-down/15 text-down")}>
-                        {b.kind === "call" ? "購" : "售"}
-                      </span>
-                    </div>
-                    <span className="text-xs text-muted-foreground">淨 {b.net_lots > 0 ? "+" : ""}{b.net_lots} 張</span>
-                  </div>
-                  <div className={cn("text-right num font-semibold text-[13.5px]", b.net_amount > 0 ? "text-up" : "text-down")}>
-                    {(Math.abs(b.net_amount) / 10000).toLocaleString('zh-TW', { maximumFractionDigits: 1 })} 萬
-                  </div>
-                  <div className="text-right num text-xs text-muted-foreground">
-                    {Math.round(Math.abs(b.net_amount) / Math.abs(m.net_amount) * 100)}%
+      </div>
+      
+      <div className="flex flex-col">
+        {branches.map((b) => {
+          const isExpanded = expandedBranch === b.branch_name;
+          const hasBreakdown = b.breakdown && b.breakdown.length > 0;
+          return (
+            <div key={b.branch_name} className="flex flex-col border-b border-border last:border-0">
+              <button 
+                className="px-4 py-3 flex items-center justify-between hover:bg-secondary/40 transition-colors text-left focus:outline-none"
+                onClick={() => setExpandedBranch(isExpanded ? null : b.branch_name)}
+              >
+                <div className="flex items-center gap-2">
+                  <span className="font-semibold text-[14px] text-foreground">{b.branch_name}</span>
+                  <div className={cn("px-1.5 py-0.5 rounded-[4px] font-bold text-[10px]", b.net_amount > 0 ? "bg-up/15 text-up" : "bg-down/15 text-down")}>
+                    {b.net_amount > 0 ? "買" : "賣"}
                   </div>
                 </div>
-              ))}
+                <div className="flex items-center gap-3">
+                  <span className={cn("text-[14px] font-bold num tracking-tight", b.net_amount > 0 ? "text-up" : "text-down")}>
+                    {(Math.abs(b.net_amount) / 10000).toLocaleString('zh-TW', { maximumFractionDigits: 0 })} 萬
+                  </span>
+                  {hasBreakdown && (
+                    <div className={cn("transition-transform duration-300 text-muted-foreground opacity-50", isExpanded && "rotate-180 opacity-100")}>
+                      ▼
+                    </div>
+                  )}
+                </div>
+              </button>
+              
+              {hasBreakdown && (
+                <div className={cn("grid transition-[grid-template-rows] duration-300 ease-out", isExpanded ? "grid-rows-[1fr]" : "grid-rows-[0fr]")}>
+                  <div className="overflow-hidden bg-secondary/30">
+                    <div className="px-3 pb-3 flex flex-col gap-1">
+                      {b.breakdown?.map(brk => (
+                        <div key={brk.warrant_id} className="grid grid-cols-[1.5fr_1fr_1fr] items-center px-2 py-1.5 rounded-md hover:bg-secondary transition-colors">
+                          <div className="flex flex-col">
+                            <div className="flex items-baseline gap-1">
+                              <span className="text-foreground text-[12.5px]">{brk.warrant_name}</span>
+                              <span className={cn("text-[10px] px-1 rounded-sm", brk.kind === "call" ? "bg-up/15 text-up" : "bg-down/15 text-down")}>
+                                {brk.kind === "call" ? "購" : "售"}
+                              </span>
+                            </div>
+                          </div>
+                          <div className={cn("text-right num font-semibold text-[12.5px]", brk.net_amount > 0 ? "text-up" : "text-down")}>
+                            {(Math.abs(brk.net_amount) / 10000).toLocaleString('zh-TW', { maximumFractionDigits: 1 })} 萬
+                          </div>
+                          <div className="text-right num text-[11px] text-muted-foreground">
+                            {Math.round(Math.abs(brk.net_amount) / Math.abs(b.net_amount) * 100)}%
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
-          </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function BranchGroupCard({ branchName, totalAmt, stocks }: { branchName: string, totalAmt: number, stocks: WarrantBranch[] }) {
+  const [expandedStock, setExpandedStock] = useState<string | null>(null);
+
+  return (
+    <div className="flex flex-col rounded-[var(--r-lg)] border border-border bg-card/60 backdrop-blur-md shadow-sm hover:shadow-[var(--shadow-card)] transition-all overflow-hidden">
+      <div className="p-4 flex justify-between items-center bg-secondary/30 border-b border-border">
+        <span className="text-foreground font-bold text-lg">{branchName}</span>
+        <div className="flex flex-col items-end">
+          <span className="text-[10px] text-muted-foreground">總淨額</span>
+          <span className={cn("text-[15px] font-bold num tracking-tight", totalAmt > 0 ? "text-up" : "text-down")}>
+            {(Math.abs(totalAmt) / 10000).toLocaleString('zh-TW', { maximumFractionDigits: 0 })} 萬
+          </span>
         </div>
-      )}
+      </div>
+      
+      <div className="flex flex-col">
+        {stocks.map((s) => {
+          const isExpanded = expandedStock === s.underlying_id;
+          const hasBreakdown = s.breakdown && s.breakdown.length > 0;
+          return (
+            <div key={s.underlying_id} className="flex flex-col border-b border-border last:border-0">
+              <button 
+                className="px-4 py-3 flex items-center justify-between hover:bg-secondary/40 transition-colors text-left focus:outline-none"
+                onClick={() => setExpandedStock(isExpanded ? null : s.underlying_id)}
+              >
+                <div className="flex items-center gap-2">
+                  <a href={`/stock?id=${s.underlying_id}`} className="font-semibold text-[14px] text-foreground hover:opacity-80 z-10" onClick={(e) => e.stopPropagation()}>
+                    {s.underlying_name}
+                  </a>
+                  <div className={cn("px-1.5 py-0.5 rounded-[4px] font-bold text-[10px]", s.net_amount > 0 ? "bg-up/15 text-up" : "bg-down/15 text-down")}>
+                    {s.net_amount > 0 ? "買" : "賣"}
+                  </div>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className={cn("text-[14px] font-bold num tracking-tight", s.net_amount > 0 ? "text-up" : "text-down")}>
+                    {(Math.abs(s.net_amount) / 10000).toLocaleString('zh-TW', { maximumFractionDigits: 0 })} 萬
+                  </span>
+                  {hasBreakdown && (
+                    <div className={cn("transition-transform duration-300 text-muted-foreground opacity-50", isExpanded && "rotate-180 opacity-100")}>
+                      ▼
+                    </div>
+                  )}
+                </div>
+              </button>
+              
+              {hasBreakdown && (
+                <div className={cn("grid transition-[grid-template-rows] duration-300 ease-out", isExpanded ? "grid-rows-[1fr]" : "grid-rows-[0fr]")}>
+                  <div className="overflow-hidden bg-secondary/30">
+                    <div className="px-3 pb-3 flex flex-col gap-1">
+                      {s.breakdown?.map(brk => (
+                        <div key={brk.warrant_id} className="grid grid-cols-[1.5fr_1fr_1fr] items-center px-2 py-1.5 rounded-md hover:bg-secondary transition-colors">
+                          <div className="flex flex-col">
+                            <div className="flex items-baseline gap-1">
+                              <span className="text-foreground text-[12.5px]">{brk.warrant_name}</span>
+                              <span className={cn("text-[10px] px-1 rounded-sm", brk.kind === "call" ? "bg-up/15 text-up" : "bg-down/15 text-down")}>
+                                {brk.kind === "call" ? "購" : "售"}
+                              </span>
+                            </div>
+                          </div>
+                          <div className={cn("text-right num font-semibold text-[12.5px]", brk.net_amount > 0 ? "text-up" : "text-down")}>
+                            {(Math.abs(brk.net_amount) / 10000).toLocaleString('zh-TW', { maximumFractionDigits: 1 })} 萬
+                          </div>
+                          <div className="text-right num text-[11px] text-muted-foreground">
+                            {Math.round(Math.abs(brk.net_amount) / Math.abs(s.net_amount) * 100)}%
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -167,6 +251,7 @@ export default function BranchPage() {
     "1d": [], "2d": [], "5d": [], "30d": [], "120d": []
   });
   const [warrantTimeframe, setWarrantTimeframe] = useState<"1d" | "2d" | "5d" | "30d" | "120d">("1d");
+  const [viewMode, setViewMode] = useState<"by_stock" | "by_branch">("by_stock");
   const [error, setError] = useState(false);
 
   useEffect(() => {
@@ -264,43 +349,115 @@ export default function BranchPage() {
         </div>
       )}
 
-      {tab === "warrant" && (
-        <div className="flex flex-col gap-4 pb-7 animate-in fade-in duration-300">
-          <div className="flex justify-center mb-2">
-            <div className="flex bg-secondary p-1 rounded-full border border-border shadow-inner">
-              {[
-                { k: "1d", l: "近 1 日" },
-                { k: "2d", l: "近 2 日" },
-                { k: "5d", l: "近 5 日" },
-                { k: "30d", l: "近 30 日" },
-                { k: "120d", l: "近 120 日 (半年)" }
-              ].map(t => (
-                <button
-                  key={t.k}
-                  onClick={() => setWarrantTimeframe(t.k as any)}
-                  className={cn(
-                    "px-4 py-1.5 rounded-full text-[13px] font-semibold transition-all",
-                    warrantTimeframe === t.k ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
-                  )}
-                >
-                  {t.l}
-                </button>
+      {tab === "warrant" && (() => {
+        const data = warrantBranches[warrantTimeframe] || [];
+        
+        let content;
+        if (data.length === 0) {
+          content = (
+            <div className="py-[46px] text-center text-sm text-muted-foreground">
+              此區間內無淨買賣超 500 萬以上之權證大戶
+            </div>
+          );
+        } else if (viewMode === "by_stock") {
+          const grouped = data.reduce((acc, curr) => {
+            if (!acc[curr.underlying_id]) {
+              acc[curr.underlying_id] = {
+                stockId: curr.underlying_id,
+                stockName: curr.underlying_name,
+                totalAmt: 0,
+                branches: []
+              };
+            }
+            acc[curr.underlying_id].totalAmt += curr.net_amount;
+            acc[curr.underlying_id].branches.push(curr);
+            return acc;
+          }, {} as Record<string, { stockId: string, stockName: string, totalAmt: number, branches: WarrantBranch[] }>);
+          
+          const sortedStocks = Object.values(grouped).sort((a, b) => Math.abs(b.totalAmt) - Math.abs(a.totalAmt));
+          sortedStocks.forEach(s => s.branches.sort((a, b) => Math.abs(b.net_amount) - Math.abs(a.net_amount)));
+          
+          content = (
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 items-start">
+              {sortedStocks.map(s => (
+                <StockGroupCard key={s.stockId} stockId={s.stockId} stockName={s.stockName} totalAmt={s.totalAmt} branches={s.branches} />
               ))}
             </div>
-          </div>
+          );
+        } else {
+          const grouped = data.reduce((acc, curr) => {
+            if (!acc[curr.branch_name]) {
+              acc[curr.branch_name] = {
+                branchName: curr.branch_name,
+                totalAmt: 0,
+                stocks: []
+              };
+            }
+            acc[curr.branch_name].totalAmt += curr.net_amount;
+            acc[curr.branch_name].stocks.push(curr);
+            return acc;
+          }, {} as Record<string, { branchName: string, totalAmt: number, stocks: WarrantBranch[] }>);
           
-          {warrantBranches[warrantTimeframe]?.length === 0 && (
-            <div className="py-[46px] text-center text-sm text-muted-foreground">
-              此區間內無淨買賣超 500 萬以上之權證分點大戶
+          const sortedBranches = Object.values(grouped).sort((a, b) => Math.abs(b.totalAmt) - Math.abs(a.totalAmt));
+          sortedBranches.forEach(b => b.stocks.sort((a, b) => Math.abs(b.net_amount) - Math.abs(a.net_amount)));
+
+          content = (
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 items-start">
+              {sortedBranches.map(b => (
+                <BranchGroupCard key={b.branchName} branchName={b.branchName} totalAmt={b.totalAmt} stocks={b.stocks} />
+              ))}
             </div>
-          )}
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 items-start">
-            {warrantBranches[warrantTimeframe]?.map((m, idx) => (
-              <WarrantBranchCard key={`${m.branch_name}-${m.underlying_id}-${idx}`} m={m} />
-            ))}
+          );
+        }
+
+        return (
+          <div className="flex flex-col gap-4 pb-7 animate-in fade-in duration-300">
+            <div className="flex flex-col sm:flex-row justify-between items-center gap-3 mb-2">
+              <div className="flex bg-secondary p-1 rounded-full border border-border shadow-inner">
+                {[
+                  { k: "1d", l: "近 1 日" },
+                  { k: "2d", l: "近 2 日" },
+                  { k: "5d", l: "近 5 日" },
+                  { k: "30d", l: "近 30 日" },
+                  { k: "120d", l: "近 120 日" }
+                ].map(t => (
+                  <button
+                    key={t.k}
+                    onClick={() => setWarrantTimeframe(t.k as any)}
+                    className={cn(
+                      "px-3 py-1.5 rounded-full text-[12.5px] font-semibold transition-all",
+                      warrantTimeframe === t.k ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+                    )}
+                  >
+                    {t.l}
+                  </button>
+                ))}
+              </div>
+              <div className="flex bg-secondary p-1 rounded-full border border-border shadow-inner">
+                <button
+                  onClick={() => setViewMode("by_stock")}
+                  className={cn(
+                    "px-4 py-1.5 rounded-full text-[12.5px] font-semibold transition-all",
+                    viewMode === "by_stock" ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+                  )}
+                >
+                  🏢 依標的檢視
+                </button>
+                <button
+                  onClick={() => setViewMode("by_branch")}
+                  className={cn(
+                    "px-4 py-1.5 rounded-full text-[12.5px] font-semibold transition-all",
+                    viewMode === "by_branch" ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+                  )}
+                >
+                  👤 依分點檢視
+                </button>
+              </div>
+            </div>
+            {content}
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {tab === "today" && (
         <div className="flex flex-col gap-6 pb-7">
