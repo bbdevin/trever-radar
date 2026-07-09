@@ -60,6 +60,7 @@
 - [x] **觀察價/失效價**(2026-07-10,04 §10):`daily_scores` 新增 `watch_price`/`stop_price`,股票卡與個股頁技術面板顯示
 - [x] **自選股**(2026-07-10):Supabase `watchlist` 表 + RLS(見 `docs/sql/watchlist.sql`,需人工在 Supabase 執行一次);全站 Context 只查一次、卡片與個股頁 ★ 按鈕、新頁 `/watchlist`
 - [x] **探索頁**(2026-07-10,部分):新頁 `/explore`,先做**集中度**(前5大買超分點佔量躍升排行,新純函式 `buy_concentration` 從既有 B3 評分邏輯抽出)與**題材**(重用首頁資金流 `themes` 資料)兩個 tab;地緣/關鍵分點/分點績效榜/權證異動因需人工名單或與 `/branch` 重疊,暫緩
+- [x] **UI 全面遷移 Tailwind CSS v4 + shadcn/ui**(2026-07-10):全站 6 頁 + 所有元件從手刻 CSS class 改為 Tailwind utility(僅保留 `.container`/`.num`/裸 `.up`/`.down`/`.flat`/`fadeUp` keyframe 等仍被動態或跨頁共用的少量 class);icon 除品牌 logo 外全改 `lucide-react`;搜尋面板改 shadcn `Command`,登入選單改 `DropdownMenu`,個股頁權證明細表改 **TanStack Table**(可排序 + 展開列);K 線圖仍為 lightweight-charts(未改動);deep design token 對照見 `docs/07_frontend_pages.md`。過程中修掉兩個遷移期間才會暴露的既有 bug:①舊 `.grid` class 與 Tailwind 內建 `grid`/`grid-cols-*` utility 同名碰撞(unlayered 規則蓋過 layered utility),導致多處 4 欄版面被壓成 3 欄;②`@theme inline` 的 `--color-border`/`--color-accent` 一度被誤指到 legacy token,深色模式因數值巧合未現形但會壞掉淺色模式。深色為預設主題,淺色 token 已備妥但站上尚無切換 UI(留待之後加)。
 
 ### 基礎設施
 - [x] **凌晨長任務常態化**:data-backfill 每天 01:10 深歷史增量(已拉深跳過,日常近零請求);週六 01:10 加跑全市場還原因子 + 指標全重算 + DB 備份;排程總表 = docs/08 §0
@@ -111,6 +112,7 @@
 - 2026-07-08 Mark策略演算法與獨立榜單: 新增「Mark策略」演算法（20日內漲停、5日內爆量、MACD零上金叉），於 `indicators.py` 中進行嚴格判定，並在前端首頁新增獨立的「Mark策略」頁籤。
 - 2026-07-09 排程觸發改 Cloudflare Worker:實測發現 GitHub 原生 `schedule:` 延遲 2.5–3.5 小時,新增 `cloudflare-trigger/`(Cloudflare Worker,單一 10 分鐘 cron + 程式碼比對時間表)取代;4 支既有 workflow 拿掉 `schedule:`,新增 `daily-margin.yml`(22:10 台北融資券保底輪);修正隨手發現的 `daily-branches`/`data-backfill` 備份步驟隱性依賴 `event_name=='schedule'` 的 bug(原本手動觸發會意外覆蓋週備份);Worker 已部署並以 `gh run list` 驗證觸發成功;修補 Worker `fetch()` 端點原本無驗證可被任何人觸發 workflow 的漏洞,加上 token 驗證。
 - 2026-07-10 觀察價/失效價 + 自選股 + 探索頁(集中度/題材):`daily_scores` 新增 `watch_price`/`stop_price`/`buy_concentration`/`concentration_avg20`(additive migration);純函式 `watch_stop_prices`/`buy_concentration` 各有單元測試,`buy_concentration` 從既有 B3 評分邏輯抽出重用;`export-json` 帶出至股票卡/個股頁/新的 `radar.json.concentration` 榜;前端新增 Supabase-backed 自選股(`web/lib/watchlist.tsx` Context + `WatchlistButton` + `/watchlist` 頁,需人工執行 `docs/sql/watchlist.sql` 建表)與 `/explore` 頁(集中度+題材 2 個 tab,地緣/關鍵分點/分點績效榜/權證異動因人工名單或與 `/branch` 重疊而暫緩);全專案 `npm run build`(含 static export)與 16 項 pytest 皆過。
+- 2026-07-10 前端 UI 遷移 Tailwind CSS v4 + shadcn/ui(尚未 commit):分階段(header/nav/搜尋/auth → 首頁 → 個股頁 → branch/explore/watchlist → 清理舊 CSS)把全站手刻 CSS 換成 Tailwind utility + shadcn 元件,視覺目標是與遷移前逐頁比對不走樣(每階段皆截圖比對深色模式,並用本機 DB 產出的真實資料而非空狀態驗證);過程中發現並修掉兩個遷移期間才浮現的既有 bug——① 舊 `.grid` class 名稱與 Tailwind 內建 `grid`/`grid-cols-*` utility 直接碰撞,unlayered 規則蓋過 Tailwind 的 layered utility,導致多處 4 欄版面被壓成 3 欄且會換行,已刪除該舊規則;② shadcn `@theme inline` 的 `--color-border`/`--color-accent` 一度被誤指到 legacy brand token,深色模式因數值巧合沒發作,但淺色模式的邊框/hover 底色會全部跑掉,已修正並補上 body 背景色改用 shadcn token,讓淺色模式（目前僅供之後接 UI 切換用，站上還沒有 toggle）真正可用。`npm run build` 全過,globals.css 從 912 行清到約 210 行。
 
 ## 系統模組與功能對應表 (Pipeline Models Mapping)
 

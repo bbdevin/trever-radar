@@ -1,5 +1,7 @@
 # 07 前端頁面與 UI/UX
 
+> **實作層(2026-07-10 更新)**:全站 UI 已從手刻 CSS 遷移為 **Tailwind CSS v4 + shadcn/ui**(底層 `@base-ui/react`、icon 用 `lucide-react`、表格用 `@tanstack/react-table`)。K 線圖仍用 `lightweight-charts`(專業金融圖表,未改動)。品牌色/字體維持不變,只是換底層實作,詳見 `web/app/globals.css` 開頭的 token 定義與 `docs/STATUS.md` 對應日期的完成記錄。深色為預設主題,淺色 token 已備妥但站上尚無切換 UI。本檔以下內容是頁面資訊架構/UX 藍圖,不隨實作技術異動。
+
 ## 0. 資訊架構(重整過,非 15 個平行頁面)
 
 你列了 15 頁;10 人私用系統做 15 個一級頁面會稀釋開發量也難導航。重整為 **5 個一級區 + 個股頁作為樞紐**:

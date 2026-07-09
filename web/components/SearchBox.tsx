@@ -1,6 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Search } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Command, CommandDialog, CommandEmpty, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 
 type IndexRow = [string, string, string, string]; // [id, name, market, industry]
 
@@ -11,8 +13,6 @@ export default function SearchBox() {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
   const [index, setIndex] = useState<IndexRow[] | null>(null);
-  const [cursor, setCursor] = useState(0);
-  const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!open || index) return;
@@ -22,10 +22,6 @@ export default function SearchBox() {
       .catch(() => setIndex([]));
   }, [open, index]);
 
-  useEffect(() => {
-    if (open) inputRef.current?.focus();
-  }, [open]);
-
   // 全域快捷鍵 "/" 開啟
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -33,7 +29,6 @@ export default function SearchBox() {
         e.preventDefault();
         setOpen(true);
       }
-      if (e.key === "Escape") setOpen(false);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -47,8 +42,6 @@ export default function SearchBox() {
     return [...byId, ...byName].slice(0, 12);
   }, [index, q]);
 
-  useEffect(() => setCursor(0), [q]);
-
   const go = (id: string) => {
     setOpen(false);
     setQ("");
@@ -57,52 +50,35 @@ export default function SearchBox() {
 
   return (
     <>
-      <button className="search-trigger" onClick={() => setOpen(true)} aria-label="搜尋股票" title="搜尋(/)">
-        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-          <circle cx="11" cy="11" r="7" />
-          <path d="m21 21-4.3-4.3" />
-        </svg>
-        <span className="st-label">搜尋</span>
-        <kbd>/</kbd>
+      <button
+        className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground hover:border-foreground/20"
+        onClick={() => setOpen(true)}
+        aria-label="搜尋股票"
+        title="搜尋(/)"
+      >
+        <Search size={15} strokeWidth={2} />
+        <span className="hidden sm:inline">搜尋</span>
+        <kbd className="hidden rounded border border-border px-1 font-mono text-[10px] text-muted-foreground sm:inline">/</kbd>
       </button>
-      {open && (
-        <div className="search-overlay" onClick={() => setOpen(false)}>
-          <div className="search-panel" onClick={(e) => e.stopPropagation()}>
-            <input
-              ref={inputRef}
-              value={q}
-              placeholder="輸入代號或名稱,例:2330、台積電"
-              onChange={(e) => setQ(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "ArrowDown") setCursor((c) => Math.min(c + 1, results.length - 1));
-                else if (e.key === "ArrowUp") setCursor((c) => Math.max(c - 1, 0));
-                else if (e.key === "Enter" && results[cursor]) go(results[cursor][0]);
-              }}
-            />
-            <div className="search-results">
-              {q.trim() === "" && <div className="sr-empty">輸入代號或名稱開始搜尋</div>}
-              {q.trim() !== "" && index && results.length === 0 && (
-                <div className="sr-empty">找不到「{q}」</div>
-              )}
-              {results.map((r, i) => (
-                <button
-                  key={r[0]}
-                  className={`sr-item ${i === cursor ? "active" : ""}`}
-                  onMouseEnter={() => setCursor(i)}
-                  onClick={() => go(r[0])}
-                >
-                  <span className="sr-id">{r[0]}</span>
-                  <span className="sr-name">{r[1]}</span>
-                  <span className="sr-meta">
-                    {MARKET[r[2]] ?? r[2]}
-                    {r[3] ? ` · ${r[3]}` : ""}
-                  </span>
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
+      <CommandDialog open={open} onOpenChange={setOpen} title="搜尋股票" description="輸入代號或名稱搜尋個股">
+        <Command shouldFilter={false}>
+          <CommandInput value={q} onValueChange={setQ} placeholder="輸入代號或名稱,例:2330、台積電" />
+          <CommandList>
+            {q.trim() === "" && <CommandEmpty>輸入代號或名稱開始搜尋</CommandEmpty>}
+            {q.trim() !== "" && index && results.length === 0 && <CommandEmpty>找不到「{q}」</CommandEmpty>}
+            {results.map((r) => (
+              <CommandItem key={r[0]} value={r[0]} onSelect={() => go(r[0])}>
+                <span className="min-w-[52px] font-mono font-bold">{r[0]}</span>
+                <span className="font-semibold">{r[1]}</span>
+                <span className="ml-auto text-xs text-muted-foreground">
+                  {MARKET[r[2]] ?? r[2]}
+                  {r[3] ? ` · ${r[3]}` : ""}
+                </span>
+              </CommandItem>
+            ))}
+          </CommandList>
+        </Command>
+      </CommandDialog>
     </>
   );
 }

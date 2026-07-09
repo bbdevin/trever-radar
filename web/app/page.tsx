@@ -4,7 +4,10 @@ import { useEffect, useMemo, useState } from "react";
 import { IconFlame, IconPulse, IconRadar, IconTrend, IconTrendDown, IconZap, IconStar } from "@/components/Icons";
 import MoneyFlow from "@/components/MoneyFlow";
 import StockCard from "@/components/StockCard";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Skeleton } from "@/components/ui/skeleton";
 import { useSession, signInWithGoogle } from "@/lib/useSession";
+import { cn } from "@/lib/utils";
 import type { ListKey, MetaJson, RadarJson } from "@/lib/types";
 import { DATASET_LABEL, SOURCE_LABEL, fmtE8 } from "@/lib/format";
 
@@ -18,18 +21,18 @@ const TABS: { key: ListKey; label: string; hint: string; icon: typeof IconFlame 
   { key: "warrant", label: "權證", hint: "認購權證成交金額相對20日均值放大", icon: IconPulse },
 ];
 
-function Skeleton() {
+function LoadingSkeleton() {
   return (
     <>
-      <div className="strip">
+      <div className="my-3.5 flex gap-2.5 overflow-x-auto">
         {[0, 1, 2].map((i) => (
-          <div className="sk sk-strip" key={i} />
+          <Skeleton key={i} className="h-[68px] w-full min-w-[150px] shrink-0 rounded-[var(--r-md)]" />
         ))}
       </div>
-      <div className="sk sk-panel" />
-      <div className="grid">
+      <Skeleton className="mb-3.5 h-[180px] rounded-[var(--r-lg)]" />
+      <div className="grid grid-cols-1 gap-2.5 pb-7 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
         {[0, 1, 2, 3, 4, 5].map((i) => (
-          <div className="sk sk-card" key={i} />
+          <Skeleton key={i} className="h-[148px] rounded-[var(--r-lg)]" />
         ))}
       </div>
     </>
@@ -62,13 +65,19 @@ export default function RadarPage() {
 
   if (error) {
     return (
-      <div className="state">
-        找不到資料檔。請先執行管線:<code>python -m radar import-daily</code> 再{" "}
-        <code>python -m radar export-json</code>
+      <div className="py-[46px] text-center text-sm text-muted-foreground">
+        找不到資料檔。請先執行管線:
+        <code className="rounded-md border border-border bg-card px-1.5 py-0.5 text-[12.5px] text-[color:var(--ink-2)]">
+          python -m radar import-daily
+        </code>{" "}
+        再{" "}
+        <code className="rounded-md border border-border bg-card px-1.5 py-0.5 text-[12.5px] text-[color:var(--ink-2)]">
+          python -m radar export-json
+        </code>
       </div>
     );
   }
-  if (!radar) return <Skeleton />;
+  if (!radar) return <LoadingSkeleton />;
 
   const FRESH_LABEL: Record<string, string> = {
     insti: "法人", margin: "融資券", warrant: "權證", branch: "分點",
@@ -79,21 +88,24 @@ export default function RadarPage() {
 
   return (
     <>
-      <div className="strip">
-        <div className="item">
-          <span className="k">資料日</span>
-          <span className="v">
+      <div className="my-3.5 grid auto-cols-[minmax(150px,1fr)] grid-flow-col gap-2.5 overflow-x-auto [scroll-snap-type:x_proximity] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        <div className="flex snap-start flex-col gap-0.5 rounded-[var(--r-md)] border border-border bg-card p-3 shadow-[var(--shadow-card)]">
+          <span className="text-[11.5px] text-muted-foreground">資料日</span>
+          <span className="num text-[17px] font-bold">
             {radar.data_date}
-            {stale.length > 0 && <span className="sub stale-mark">部分待更新</span>}
+            {stale.length > 0 && <span className="ml-1.5 text-[12px] font-medium text-warn">部分待更新</span>}
           </span>
         </div>
         {radar.summary.map((m) => (
-          <div className="item" key={m.market}>
-            <span className="k">{SOURCE_LABEL[m.market] ?? m.market}成交金額</span>
-            <span className="v">
+          <div
+            key={m.market}
+            className="flex snap-start flex-col gap-0.5 rounded-[var(--r-md)] border border-border bg-card p-3 shadow-[var(--shadow-card)]"
+          >
+            <span className="text-[11.5px] text-muted-foreground">{SOURCE_LABEL[m.market] ?? m.market}成交金額</span>
+            <span className="num text-[17px] font-bold">
               {fmtE8(m.turnover)}
-              <span className="sub">
-                <span className="up">↑{m.up}</span> / <span className="down">↓{m.down}</span> 家
+              <span className="ml-1.5 text-[12px] font-medium text-[color:var(--ink-2)]">
+                <span className="text-up">↑{m.up}</span> / <span className="text-down">↓{m.down}</span> 家
               </span>
             </span>
           </div>
@@ -101,58 +113,75 @@ export default function RadarPage() {
       </div>
 
       {stale.length > 0 && (
-        <div className="notice">
-          <span className="tag info">資料狀態</span>
-          <span>
-            {stale.map((s) => `${s.label}今日尚未公布,暫用 ${s.date}`).join("；")}
-            (依交易所公布時間分批自動更新)
-          </span>
-        </div>
+        <Alert className="mb-4 bg-card">
+          <AlertDescription className="flex flex-wrap items-baseline gap-2.5 text-[13px] text-foreground">
+            <span className="shrink-0 rounded-md bg-[color:var(--ink-2)]/10 px-2 py-0.5 text-[11.5px] font-bold tracking-[0.3px] text-[color:var(--ink-2)]">
+              資料狀態
+            </span>
+            <span>
+              {stale.map((s) => `${s.label}今日尚未公布,暫用 ${s.date}`).join("；")}
+              (依交易所公布時間分批自動更新)
+            </span>
+          </AlertDescription>
+        </Alert>
       )}
 
       <MoneyFlow sectors={radar.sectors} themes={radar.themes} />
 
-      <div className="tabbar">
-        <div className="seg" role="tablist">
+      <div className="my-1.5 mb-3 flex items-center gap-2.5">
+        <div
+          role="tablist"
+          className="flex max-w-full gap-0.5 overflow-x-auto rounded-full border border-border bg-card p-[3px] whitespace-nowrap [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        >
           {TABS.map((t) => (
             <button
               key={t.key}
               role="tab"
               aria-selected={tab === t.key}
-              className={tab === t.key ? "tab active" : "tab"}
+              className={cn(
+                "inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[13.5px] font-semibold text-muted-foreground transition-colors",
+                tab === t.key && "bg-muted text-foreground shadow-[inset_0_0_0_1px_var(--border-strong)]",
+              )}
               onClick={() => setTab(t.key)}
               title={t.hint}
             >
-              <t.icon size={15} />
+              <t.icon size={15} className="opacity-85" />
               {t.label}
-              <small>{radar.lists?.[t.key]?.length ?? 0}</small>
+              <small className="num text-[11px] text-muted-foreground">{radar.lists?.[t.key]?.length ?? 0}</small>
             </button>
           ))}
         </div>
-        <span className="tabhint">{TABS.find((t) => t.key === tab)?.hint}</span>
+        <span className="hidden text-xs text-muted-foreground lg:inline">{TABS.find((t) => t.key === tab)?.hint}</span>
       </div>
 
       {tab === "mark" && !loading && !session ? (
-        <div className="state" style={{ display: "flex", flexDirection: "column", gap: 16, alignItems: "center" }}>
+        <div className="flex flex-col items-center gap-4 py-[46px] text-center text-sm text-muted-foreground">
           <span>進階策略榜單為會員專屬功能，請先登入 Google 帳號解鎖。</span>
-          <button onClick={signInWithGoogle} style={{ padding: "8px 16px", borderRadius: 6, border: "1px solid var(--border, #444)", background: "var(--panel, #222)", color: "var(--fg, #fff)", cursor: "pointer", fontSize: 14 }}>
+          <button
+            onClick={signInWithGoogle}
+            className="rounded-md border border-border bg-card px-4 py-2 text-sm text-foreground"
+          >
             使用 Google 登入
           </button>
         </div>
       ) : shown.length === 0 ? (
-        <div className="state">此榜今日無符合條件的股票</div>
+        <div className="py-[46px] text-center text-sm text-muted-foreground">此榜今日無符合條件的股票</div>
       ) : (
-        <div className="grid">
-          {shown.map((s) => (
-            <StockCard key={s.id} s={s} />
+        <div className="grid grid-cols-1 gap-2.5 pb-7 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          {shown.map((s, i) => (
+            <StockCard key={s.id} s={s} index={i} />
           ))}
         </div>
       )}
 
-      <div className="notice warn" style={{ marginTop: 4 }}>
-        <span className="tag">免責聲明</span>
-        <span>{radar.note}。本系統資訊僅供參考，不構成投資建議。分點資料目前涵蓋熱門股，效力隨每日數據累積提升。</span>
-      </div>
+      <Alert className="mt-1 bg-card">
+        <AlertDescription className="flex flex-wrap items-baseline gap-2.5 text-[13px] text-foreground">
+          <span className="shrink-0 rounded-md bg-warn/15 px-2 py-0.5 text-[11.5px] font-bold tracking-[0.3px] text-warn">
+            免責聲明
+          </span>
+          <span>{radar.note}。本系統資訊僅供參考，不構成投資建議。分點資料目前涵蓋熱門股，效力隨每日數據累積提升。</span>
+        </AlertDescription>
+      </Alert>
     </>
   );
 }

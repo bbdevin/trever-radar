@@ -1,7 +1,7 @@
 /** 近 30 日收盤迷你走勢:面積漸層 + 線(紅漲綠跌依首尾) */
 export default function Sparkline({ data, id }: { data: number[]; id: string }) {
   if (!data || data.length < 2) {
-    return <span className="spark-empty">走勢累積中</span>;
+    return <span className="text-[11px] text-muted-foreground">走勢累積中</span>;
   }
   const w = 200;
   const h = 34;

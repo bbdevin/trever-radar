@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { Candle } from "@/lib/types";
 import { bollinger, kd, macd, rsi, sma } from "@/lib/indicators";
 import { barsForDays, resample, type Timeframe } from "@/lib/resample";
+import { cn } from "@/lib/utils";
 
 const TF_DEFS: { key: Timeframe; label: string }[] = [
   { key: "D", label: "日K" },
@@ -183,23 +184,33 @@ export default function KChart({ candles, visibleDays }: { candles: Candle[]; vi
     };
   }, [bars, calc, settings, visibleDays]);
 
+  const chipBase =
+    "inline-flex items-center gap-1 rounded-full border border-[color:var(--line)] bg-card px-2.5 py-[3px] text-xs font-semibold text-muted-foreground cursor-pointer select-none [&_input]:hidden before:content-none has-checked:before:content-['✓_'] has-checked:before:text-[10px] aria-pressed:before:content-['✓_'] aria-pressed:before:text-[10px]";
+
   return (
     <div>
-      <div className="chart-toolbar">
-        <span className="seg tiny">
+      <div className="flex flex-wrap items-center gap-1.5 px-0.5 py-2">
+        <span className="inline-flex gap-0.5 rounded-lg border border-border bg-card p-0.5">
           {TF_DEFS.map((t) => (
             <button
               key={t.key}
-              className={`tab ${settings.tf === t.key ? "active" : ""}`}
+              className={cn(
+                "rounded-md px-2.5 py-1 text-xs font-semibold text-muted-foreground",
+                settings.tf === t.key && "bg-muted text-foreground shadow-[inset_0_0_0_1px_var(--border-strong)]",
+              )}
               onClick={() => setSettings((s) => ({ ...s, tf: t.key }))}
             >
               {t.label}
             </button>
           ))}
         </span>
-        <span className="toolbar-sep" />
+        <span className="mx-1 h-[18px] w-px bg-[color:var(--line)]" />
         {MA_DEFS.map((m) => (
-          <label key={m.key} className={`chip-toggle ${settings.ma[m.key] ? "on" : ""}`} style={{ "--c": m.color } as React.CSSProperties}>
+          <label
+            key={m.key}
+            className={chipBase}
+            style={settings.ma[m.key] ? { color: m.color, borderColor: m.color } : undefined}
+          >
             <input
               type="checkbox"
               checked={settings.ma[m.key]}
@@ -210,7 +221,7 @@ export default function KChart({ candles, visibleDays }: { candles: Candle[]; vi
             {m.label}
           </label>
         ))}
-        <label className={`chip-toggle ${settings.boll ? "on" : ""}`} style={{ "--c": "#898781" } as React.CSSProperties}>
+        <label className={chipBase} style={settings.boll ? { color: "#898781", borderColor: "#898781" } : undefined}>
           <input
             type="checkbox"
             checked={settings.boll}
@@ -218,20 +229,30 @@ export default function KChart({ candles, visibleDays }: { candles: Candle[]; vi
           />
           布林
         </label>
-        <span className="toolbar-sep" />
+        <span className="mx-1 h-[18px] w-px bg-[color:var(--line)]" />
         {(["macd", "kd", "rsi"] as SubKey[]).map((k) => (
           <button
             key={k}
-            className={`chip-toggle sub ${settings.sub === k ? "on" : ""}`}
+            className={cn(
+              "rounded-lg",
+              chipBase,
+              settings.sub === k && "border-[color:var(--border-strong)] bg-muted text-foreground",
+            )}
             onClick={() => setSettings((s) => ({ ...s, sub: k }))}
           >
             {k.toUpperCase()}
           </button>
         ))}
       </div>
-      <div className="chart-shell">
-        <div ref={legendRef} className="chart-legend" />
-        <div ref={ref} className="chart-wrap tall" />
+      <div className="relative">
+        <div
+          ref={legendRef}
+          className="num pointer-events-none absolute top-1.5 left-2.5 z-[5] max-w-[92%] text-[11.5px] leading-[1.5] text-[color:var(--ink-2)] [text-shadow:0_1px_2px_rgba(0,0,0,0.7)]"
+        />
+        <div
+          ref={ref}
+          className="w-full rounded-t-none rounded-b-[var(--r-lg)] border border-border bg-card p-2 shadow-[var(--shadow-card)] [height:clamp(420px,66vh,680px)]"
+        />
       </div>
     </div>
   );

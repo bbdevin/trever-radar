@@ -2,8 +2,11 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { IconCompass, IconFlame } from "@/components/Icons";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Skeleton } from "@/components/ui/skeleton";
 import type { RadarJson } from "@/lib/types";
 import { MARKET_LABEL, chgClass, fmtE8, fmtPct, fmtX } from "@/lib/format";
+import { cn } from "@/lib/utils";
 
 const TABS = [
   { key: "concentration", label: "集中度", hint: "前5大買超分點佔成交量比,躍升幅度排序", icon: IconCompass },
@@ -11,6 +14,8 @@ const TABS = [
 ] as const;
 
 type TabKey = (typeof TABS)[number]["key"];
+
+const CHG_TEXT: Record<string, string> = { up: "text-up", down: "text-down", flat: "text-foreground" };
 
 export default function ExplorePage() {
   const [radar, setRadar] = useState<RadarJson | null>(null);
@@ -25,32 +30,31 @@ export default function ExplorePage() {
   }, []);
 
   if (error) {
-    return (
-      <div className="state">
-        <p>資料載入失敗,請稍後再試。</p>
-      </div>
-    );
+    return <div className="py-[46px] text-center text-sm text-muted-foreground">資料載入失敗,請稍後再試。</div>;
   }
-  if (!radar) return <div className="sk sk-strip" style={{ margin: "16px 0" }} />;
+  if (!radar) return <Skeleton className="my-4 h-[68px] rounded-[var(--r-md)]" />;
 
   return (
     <>
-      <div className="tabbar">
-        <div className="seg" role="tablist">
+      <div className="my-1.5 mb-3 flex items-center gap-2.5">
+        <div role="tablist" className="flex gap-0.5 rounded-full border border-border bg-card p-[3px]">
           {TABS.map((t) => (
             <button
               key={t.key}
               role="tab"
               aria-selected={tab === t.key}
-              className={tab === t.key ? "tab active" : "tab"}
               onClick={() => setTab(t.key)}
+              className={cn(
+                "inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[13.5px] font-semibold text-muted-foreground transition-colors",
+                tab === t.key && "bg-muted text-foreground shadow-[inset_0_0_0_1px_var(--border-strong)]",
+              )}
             >
-              <t.icon size={16} />
+              <t.icon size={16} className="opacity-85" />
               {t.label}
             </button>
           ))}
         </div>
-        <span className="tabhint">{TABS.find((t) => t.key === tab)?.hint}</span>
+        <span className="hidden text-xs text-muted-foreground lg:inline">{TABS.find((t) => t.key === tab)?.hint}</span>
       </div>
 
       {tab === "concentration" && <ConcentrationTab radar={radar} />}
@@ -59,33 +63,45 @@ export default function ExplorePage() {
   );
 }
 
+function EmptyNotice({ tag, children }: { tag: string; children: React.ReactNode }) {
+  return (
+    <Alert className="mt-3.5 bg-card">
+      <AlertDescription className="flex flex-wrap items-baseline gap-2.5 text-[13px] text-foreground">
+        <span className="shrink-0 rounded-md bg-[color:var(--ink-2)]/10 px-2 py-0.5 text-[11.5px] font-bold tracking-[0.3px] text-[color:var(--ink-2)]">{tag}</span>
+        <span>{children}</span>
+      </AlertDescription>
+    </Alert>
+  );
+}
+
 function ConcentrationTab({ radar }: { radar: RadarJson }) {
   const rows = radar.concentration ?? [];
   if (rows.length === 0) {
-    return (
-      <div className="notice" style={{ marginTop: 14 }}>
-        <span className="tag" style={{ color: "var(--ink-3)" }}>集中度</span>
-        <span>今日無符合條件的集中度資料(需有分點與成交量紀錄)。</span>
-      </div>
-    );
+    return <EmptyNotice tag="集中度">今日無符合條件的集中度資料(需有分點與成交量紀錄)。</EmptyNotice>;
   }
   return (
-    <div className="explore-table">
-      <div className="explore-row explore-head">
+    <div className="mt-1 flex flex-col gap-1.5 pb-7">
+      <div className="grid grid-cols-[1.6fr_1fr_1fr_1fr] gap-2 px-3.5 text-[11.5px] text-muted-foreground">
         <span>股票</span>
         <span>前5大買超佔量</span>
         <span>20日均</span>
         <span>躍升幅度</span>
       </div>
       {rows.map((r) => (
-        <a key={r.id} className="explore-row" href={`/stock?id=${r.id}`}>
-          <span className="ex-id">
-            <b>{r.name}</b>
-            <small>{r.id} · {MARKET_LABEL[r.market] ?? r.market}</small>
+        <a
+          key={r.id}
+          href={`/stock?id=${r.id}`}
+          className="num grid grid-cols-[1.6fr_1fr_1fr_1fr] items-center gap-2 rounded-[var(--r-md)] border border-border bg-card px-3.5 py-2.5 text-[13px] text-[color:var(--ink-2)]"
+        >
+          <span className="flex flex-col gap-0.5 font-sans">
+            <b className="text-sm font-bold text-foreground">{r.name}</b>
+            <small className="text-[11px] text-muted-foreground">
+              {r.id} · {MARKET_LABEL[r.market] ?? r.market}
+            </small>
           </span>
           <span>{(r.buy_concentration * 100).toFixed(1)}%</span>
           <span>{(r.concentration_avg20 * 100).toFixed(1)}%</span>
-          <span className="ex-strong">{fmtX(r.vs20)}</span>
+          <span className="font-bold text-warn">{fmtX(r.vs20)}</span>
         </a>
       ))}
     </div>
@@ -93,21 +109,13 @@ function ConcentrationTab({ radar }: { radar: RadarJson }) {
 }
 
 function ThemeTab({ radar }: { radar: RadarJson }) {
-  const themes = useMemo(
-    () => [...(radar.themes ?? [])].sort((a, b) => b.turnover - a.turnover),
-    [radar.themes],
-  );
+  const themes = useMemo(() => [...(radar.themes ?? [])].sort((a, b) => b.turnover - a.turnover), [radar.themes]);
   if (themes.length === 0) {
-    return (
-      <div className="notice" style={{ marginTop: 14 }}>
-        <span className="tag" style={{ color: "var(--ink-3)" }}>題材</span>
-        <span>今日無符合門檻的題材資料。</span>
-      </div>
-    );
+    return <EmptyNotice tag="題材">今日無符合門檻的題材資料。</EmptyNotice>;
   }
   return (
-    <div className="explore-table">
-      <div className="explore-row explore-head theme-head">
+    <div className="mt-1 flex flex-col gap-1.5 pb-7">
+      <div className="grid grid-cols-[1.4fr_0.9fr_0.9fr_0.9fr_0.9fr] gap-2 px-3.5 text-[11.5px] text-muted-foreground">
         <span>題材</span>
         <span>成交金額</span>
         <span>vs20日均</span>
@@ -118,17 +126,21 @@ function ThemeTab({ radar }: { radar: RadarJson }) {
         const total = t.up + t.down;
         const upRatio = total > 0 ? (t.up / total) * 100 : null;
         return (
-          <div key={t.name} className="explore-row theme-head">
-            <span className="ex-id"><b>{t.name}</b></span>
+          <div key={t.name} className="num grid grid-cols-[1.4fr_0.9fr_0.9fr_0.9fr_0.9fr] items-center gap-2 rounded-[var(--r-md)] border border-border bg-card px-3.5 py-2.5 text-[13px] text-[color:var(--ink-2)]">
+            <span className="font-sans font-bold text-foreground">{t.name}</span>
             <span>{fmtE8(t.turnover)}</span>
-            <span className={t.vs20 != null && t.vs20 >= 1 ? "ex-strong" : ""}>{fmtX(t.vs20)}</span>
-            <span className={chgClass(t.avg_chg)}>{fmtPct(t.avg_chg)}</span>
+            <span className={t.vs20 != null && t.vs20 >= 1 ? "font-bold text-warn" : undefined}>{fmtX(t.vs20)}</span>
+            <span className={CHG_TEXT[chgClass(t.avg_chg)]}>{fmtPct(t.avg_chg)}</span>
             <span>{upRatio == null ? "—" : `${upRatio.toFixed(0)}%`}</span>
-            <div className="theme-top">
+            <div className="col-span-full mt-1.5 flex flex-wrap gap-1.5 border-t border-dashed border-[color:var(--line)] pt-2">
               {t.top.slice(0, 5).map((s) => (
-                <a key={s.id} href={`/stock?id=${s.id}`} className="theme-top-chip">
+                <a
+                  key={s.id}
+                  href={`/stock?id=${s.id}`}
+                  className="inline-flex items-center gap-1.5 rounded-full border border-border bg-secondary px-2.5 py-1 font-sans text-[11.5px] text-[color:var(--ink-2)]"
+                >
                   {s.name}
-                  <em className={chgClass(s.chg_pct)}>{fmtPct(s.chg_pct)}</em>
+                  <em className={cn("not-italic", CHG_TEXT[chgClass(s.chg_pct)])}>{fmtPct(s.chg_pct)}</em>
                 </a>
               ))}
             </div>

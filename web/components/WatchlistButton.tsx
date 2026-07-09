@@ -3,6 +3,7 @@
 import { IconStar } from "@/components/Icons";
 import { useWatchlist } from "@/lib/watchlist";
 import { signInWithGoogle, useSession } from "@/lib/useSession";
+import { cn } from "@/lib/utils";
 
 /**
  * ★ 加入/移除自選股。未登入時點擊觸發 Google 登入,不彈跳提示打斷操作。
@@ -26,7 +27,10 @@ export default function WatchlistButton({ stockId, size = 18 }: { stockId: strin
     <span
       role="button"
       tabIndex={0}
-      className={active ? "watchlist-btn active" : "watchlist-btn"}
+      className={cn(
+        "inline-grid size-[30px] shrink-0 place-items-center rounded-full border border-border bg-card p-0 text-muted-foreground transition-colors hover:text-[color:var(--ink-2)] hover:border-[color:var(--border-strong)]",
+        active && "text-warn border-warn [&_svg]:fill-current",
+      )}
       title={session ? (active ? "移除自選" : "加入自選") : "登入後可加入自選股"}
       onClick={(e) => {
         e.preventDefault();

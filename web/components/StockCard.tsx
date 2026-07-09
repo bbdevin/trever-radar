@@ -2,94 +2,122 @@ import Sparkline from "@/components/Sparkline";
 import WatchlistButton from "@/components/WatchlistButton";
 import type { RadarStock } from "@/lib/types";
 import { MARKET_LABEL, chgClass, fmtE8, fmtLots, fmtPct, fmtX } from "@/lib/format";
+import { cn } from "@/lib/utils";
 
-export default function StockCard({ s }: { s: RadarStock }) {
+const CHG_TEXT: Record<string, string> = { up: "text-up", down: "text-down", flat: "text-foreground" };
+const CHG_BADGE: Record<string, string> = {
+  up: "text-up bg-up/15",
+  down: "text-down bg-down/15",
+  flat: "text-foreground bg-secondary",
+};
+
+export default function StockCard({ s, index = 99 }: { s: RadarStock; index?: number }) {
+  const cls = chgClass(s.chg_pct);
   return (
-    <a className="card" href={`/stock?id=${s.id}`}>
-      <div className="row1">
-        <div className="idblock">
-          <span className="sname">{s.name}</span>
-          <span className="sid">
+    <a
+      href={`/stock?id=${s.id}`}
+      style={index < 6 ? { animationDelay: `${0.02 + index * 0.03}s` } : undefined}
+      className="group flex cursor-pointer flex-col gap-2.5 rounded-[var(--r-lg)] border border-border bg-card p-3.5 shadow-[var(--shadow-card)] transition-[transform,border-color,box-shadow] duration-150 animate-[fadeUp_0.35s_ease_backwards] hover:-translate-y-0.5 hover:border-[color:var(--border-strong)] hover:shadow-[var(--shadow-lift)] active:scale-[0.985]"
+    >
+      <div className="flex items-center gap-2">
+        <div className="flex min-w-0 flex-col">
+          <span className="truncate text-[15.5px] font-bold text-foreground">{s.name}</span>
+          <span className="text-xs text-muted-foreground">
             {s.id} · {MARKET_LABEL[s.market] ?? s.market}
             {s.industry ? ` · ${s.industry}` : ""}
           </span>
-          <div className="themes">
-            {s.themes?.slice(0, 3).map((t) => (
-              <span key={t} className="theme-badge">{t}</span>
-            ))}
-          </div>
+          {!!s.themes?.length && (
+            <div className="mt-1 flex flex-wrap gap-1">
+              {s.themes.slice(0, 3).map((t) => (
+                <span key={t} className="whitespace-nowrap rounded-full bg-muted px-1.5 py-px text-[10px] font-semibold text-warn">
+                  {t}
+                </span>
+              ))}
+            </div>
+          )}
         </div>
-        <div className="price">
-          <div className={`close ${chgClass(s.chg_pct)}`}>{s.close.toLocaleString("zh-TW")}</div>
-          <span className={`chg-badge ${chgClass(s.chg_pct)}`}>{fmtPct(s.chg_pct)}</span>
+        <div className="ml-auto shrink-0 text-right">
+          <div className={cn("num text-[21px] font-extrabold tracking-[-0.3px]", CHG_TEXT[cls])}>
+            {s.close.toLocaleString("zh-TW")}
+          </div>
+          <span className={cn("num mt-0.5 inline-block rounded-full px-2 py-px text-[12.5px] font-bold", CHG_BADGE[cls])}>
+            {fmtPct(s.chg_pct)}
+          </span>
         </div>
         <WatchlistButton stockId={s.id} />
       </div>
+
       {s.description && (
-        <div className="desc-block">
+        <div className="line-clamp-2 overflow-hidden rounded-lg bg-secondary px-2.5 py-2 text-xs leading-[1.4] text-muted-foreground">
           {s.description}
         </div>
       )}
 
-      <div className="sparkrow">
-        <Sparkline data={s.spark} id={s.id} />
-        <span className="k">近{Math.min(s.spark?.length ?? 0, 30)}日</span>
+      <div className="flex items-center gap-2">
+        <div className="h-[34px] flex-1 [&_svg]:h-[34px] [&_svg]:w-full">
+          <Sparkline data={s.spark} id={s.id} />
+        </div>
+        <span className="whitespace-nowrap text-[10.5px] text-muted-foreground">
+          近{Math.min(s.spark?.length ?? 0, 30)}日
+        </span>
       </div>
-      <div className="stats">
-        <div className="item">
-          <span className="k">成交金額</span>
-          <span className="v">{fmtE8(s.turnover)}</span>
+
+      <div className="grid grid-cols-4 gap-2">
+        <div className="flex flex-col gap-px">
+          <span className="text-[10.5px] text-muted-foreground">成交金額</span>
+          <span className="num text-[13px] font-semibold text-[color:var(--ink-2)]">{fmtE8(s.turnover)}</span>
         </div>
-        <div className="item">
-          <span className="k">量比(20日)</span>
-          <span className="v">{s.volume_ratio != null ? `${s.volume_ratio.toFixed(1)}×` : "—"}</span>
+        <div className="flex flex-col gap-px">
+          <span className="text-[10.5px] text-muted-foreground">量比(20日)</span>
+          <span className="num text-[13px] font-semibold text-[color:var(--ink-2)]">
+            {s.volume_ratio != null ? `${s.volume_ratio.toFixed(1)}×` : "—"}
+          </span>
         </div>
-        <div className="item">
-          <span className="k">外資(張)</span>
-          <span className="v">{fmtLots(s.foreign_net_lots)}</span>
+        <div className="flex flex-col gap-px">
+          <span className="text-[10.5px] text-muted-foreground">外資(張)</span>
+          <span className="num text-[13px] font-semibold text-[color:var(--ink-2)]">{fmtLots(s.foreign_net_lots)}</span>
         </div>
-        <div className="item">
-          <span className="k">投信(張)</span>
-          <span className="v">{fmtLots(s.trust_net_lots)}</span>
+        <div className="flex flex-col gap-px">
+          <span className="text-[10.5px] text-muted-foreground">投信(張)</span>
+          <span className="num text-[13px] font-semibold text-[color:var(--ink-2)]">{fmtLots(s.trust_net_lots)}</span>
         </div>
       </div>
-      <div className="score-slot">
+
+      <div className="border-t border-dashed border-[color:var(--line)] pt-2 text-[11.5px] text-muted-foreground">
         {s.scores ? (
-          <div className="score-block">
-            <div className="score-line">
-              <span className={`score-final ${s.scores.final >= 65 ? "pass" : ""}`}>
+          <div className="flex flex-col gap-1">
+            <div className="flex items-center gap-2.5">
+              <span className={cn("num text-xl font-extrabold text-[color:var(--ink-2)]", s.scores.final >= 65 && "text-warn")}>
                 {s.scores.final}
               </span>
-              <span className="k" style={{ marginLeft: "4px" }}>綜合評分</span>
+              <span className="ml-1 text-[10.5px] text-muted-foreground">綜合評分</span>
             </div>
             {(s.scores.watch_price != null || s.scores.stop_price != null) && (
-              <div className="watch-stop-line">
+              <div className="num flex gap-2.5 text-[11.5px]">
                 {s.scores.watch_price != null && (
-                  <span className="watch-price">觀察 {s.scores.watch_price.toFixed(2)}</span>
+                  <span className="text-[color:var(--accent-2)]">觀察 {s.scores.watch_price.toFixed(2)}</span>
                 )}
-                {s.scores.stop_price != null && (
-                  <span className="stop-price">失效 {s.scores.stop_price.toFixed(2)}</span>
-                )}
+                {s.scores.stop_price != null && <span className="text-up">失效 {s.scores.stop_price.toFixed(2)}</span>}
               </div>
             )}
             {s.reasons.slice(0, 2).map((t) => (
-              <div className="reason" key={t}>
+              <div className="text-xs leading-[1.45] text-[color:var(--ink-2)]" key={t}>
                 {t}
               </div>
             ))}
             {s.risks.slice(0, 1).map((t) => (
-              <div className="risk" key={t}>
+              <div className="text-xs text-up" key={t}>
                 {t}
               </div>
             ))}
           </div>
         ) : s.warrant ? (
-          <div className="warrant-mini">
+          <div className="grid grid-cols-[1.35fr_0.55fr_0.8fr_0.55fr] items-center gap-1.5 text-muted-foreground">
             <span>
-              認購 <b>{fmtE8(s.warrant.call_turnover)}</b>
+              認購 <b className="font-bold text-[color:var(--ink-2)]">{fmtE8(s.warrant.call_turnover)}</b>
             </span>
-            <span>{fmtX(s.warrant.call_turnover_ratio)}</span>
-            <span>{s.warrant.call_count} 檔</span>
+            <span className="truncate">{fmtX(s.warrant.call_turnover_ratio)}</span>
+            <span className="truncate">{s.warrant.call_count} 檔</span>
           </div>
         ) : (
           "未達評分門檻(20日均額 <3,000萬)"

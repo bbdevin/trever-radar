@@ -19,7 +19,7 @@
 ## 技術棧(2026-07-06 定案,取代舊 Laravel 方案)
 
 - 管線:Python 3.11 + requests + pandas + SQLAlchemy Core + SQLite(`pipeline/`)
-- 前端:Next.js 15(App Router)+ TypeScript + React,**`output: 'export'` 靜態輸出**(零伺服器原則不變)+ lightweight-charts(`web/`)(2026-07-06 依使用者指定由 Vue 改為 Next.js)
+- 前端:Next.js 15(App Router)+ TypeScript + React,**`output: 'export'` 靜態輸出**(零伺服器原則不變)+ lightweight-charts(`web/`)(2026-07-06 依使用者指定由 Vue 改為 Next.js)。UI 實作為 Tailwind CSS v4 + shadcn/ui(2026-07-10 由純手刻 CSS 遷移,底層元件用 `@base-ui/react` + `lucide-react` icon;K 線圖仍用 lightweight-charts,未改用 shadcn/Recharts;分點/權證明細表格改 TanStack Table;深色為預設主題,淺色 token 已備妥但站上尚無切換 UI)
 - 前端資料 = 管線每晚產出的靜態 JSON(`web/public/data/`),無後端 API
 - 排程:GitHub Actions cron(台北 17:30/21:00);`main` push 會用現有 DB 匯出 JSON、build、deploy,但跳過資料匯入
 - 部署:Cloudflare Pages + Access(email 白名單登入);Vercel 為備選
