@@ -164,9 +164,9 @@ export default function BranchPage() {
   const [rankings, setRankings] = useState<Ranking[] | null>(null);
   const [today, setToday] = useState<TodayMovements | null>(null);
   const [warrantBranches, setWarrantBranches] = useState<Record<string, WarrantBranch[]>>({
-    "1d": [], "2d": [], "5d": [], "30d": []
+    "1d": [], "2d": [], "5d": [], "30d": [], "120d": []
   });
-  const [warrantTimeframe, setWarrantTimeframe] = useState<"1d" | "2d" | "5d" | "30d">("5d");
+  const [warrantTimeframe, setWarrantTimeframe] = useState<"1d" | "2d" | "5d" | "30d" | "120d">("1d");
   const [error, setError] = useState(false);
 
   useEffect(() => {
@@ -181,7 +181,7 @@ export default function BranchPage() {
       .catch(() => setError(true));
 
     fetch("/data/branches/warrant_branches.json")
-      .then((r) => (r.ok ? r.json() : { "1d": [], "2d": [], "5d": [], "30d": [] }))
+      .then((r) => (r.ok ? r.json() : { "1d": [], "2d": [], "5d": [], "30d": [], "120d": [] }))
       .then(setWarrantBranches)
       .catch(() => {});
   }, []);
@@ -268,16 +268,22 @@ export default function BranchPage() {
         <div className="flex flex-col gap-4 pb-7 animate-in fade-in duration-300">
           <div className="flex justify-center mb-2">
             <div className="flex bg-secondary p-1 rounded-full border border-border shadow-inner">
-              {(["1d", "2d", "5d", "30d"] as const).map(tf => (
+              {[
+                { k: "1d", l: "近 1 日" },
+                { k: "2d", l: "近 2 日" },
+                { k: "5d", l: "近 5 日" },
+                { k: "30d", l: "近 30 日" },
+                { k: "120d", l: "近 120 日 (半年)" }
+              ].map(t => (
                 <button
-                  key={tf}
-                  onClick={() => setWarrantTimeframe(tf)}
+                  key={t.k}
+                  onClick={() => setWarrantTimeframe(t.k as any)}
                   className={cn(
                     "px-4 py-1.5 rounded-full text-[13px] font-semibold transition-all",
-                    warrantTimeframe === tf ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+                    warrantTimeframe === t.k ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
                   )}
                 >
-                  近 {tf.replace('d', ' 日')}
+                  {t.l}
                 </button>
               ))}
             </div>

@@ -93,8 +93,12 @@ def cmd_import_branch_trades(args):
 
 def cmd_backfill_branches(args):
     from .importer import backfill_branches
-    backfill_branches(top=args.top, days=args.days, sleep_s=args.sleep,
-                      max_minutes=args.max_minutes)
+    backfill_branches(args.top, args.days, args.sleep, args.max_minutes)
+
+
+def cmd_backfill_warrant_branches(args):
+    from .importer import backfill_warrant_branches
+    backfill_warrant_branches(args.top, args.days, args.sleep, args.max_minutes)
 
 
 def cmd_compute_scores(args):
@@ -238,6 +242,14 @@ def main(argv=None):
     bb.add_argument("--sleep", type=float, default=1.2)
     bb.add_argument("--max-minutes", type=int, default=None, help="stop cleanly after N minutes")
     bb.set_defaults(fn=cmd_backfill_branches)
+
+    bwb = sub.add_parser("backfill-warrant-branches",
+                         help="march-back warrant branch history (resumable)")
+    bwb.add_argument("--top", type=int, default=200, help="top warrants by latest turnover")
+    bwb.add_argument("--days", type=int, default=120, help="trading days depth (half year)")
+    bwb.add_argument("--sleep", type=float, default=1.2)
+    bwb.add_argument("--max-minutes", type=int, default=None, help="stop cleanly after N minutes")
+    bwb.set_defaults(fn=cmd_backfill_warrant_branches)
 
     sc = sub.add_parser("compute-scores", help="V1 composite daily scores (docs/04)")
     sc.add_argument("--date", default=None, help="YYYYMMDD; default latest trading day")

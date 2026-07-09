@@ -186,6 +186,26 @@ docker rm -f radar-backfill
 
 ---
 
+## 隱藏版：權證大戶半年回補 (2026-07-10 新增)
+
+如果您想要觀察「過去半年權證大戶佈局後尚未出清」的籌碼，我們新增了一支專用指令。這支指令會針對「大盤成交值前 200 大的活躍權證」，往回深挖 120 個交易日 (半年) 的分點進出。
+
+**預估時間**：約 6.5 小時 (中斷一樣可隨時續傳)。
+
+**啟動指令** (同 Step 2，只需替換指令本體)：
+
+```bash
+docker run -d --name radar-warrant-backfill --restart unless-stopped \
+  -v $(pwd)/pipeline:/app/pipeline -v $(pwd)/data:/app/data \
+  -w /app/pipeline python:3.11 \
+  bash -c "pip install -r requirements.txt && \
+    python -m radar backfill-warrant-branches --top 200 --days 120 --sleep 1.2"
+```
+
+> **注意**：這支指令**不強制要求**跑完才能用網站，只要它在跑，您每次打包上傳後，網站上的 `120D` 數據就會越來越完整！
+
+---
+
 ## P2:擴到 5 年 × 1,200 檔(P1 之後,先等開發端一件事)
 
 - ⚠️ 前置:5 年全量會讓資料庫 +7–9GB,超過現行免費架構上限(GitHub Release 單檔 2GB、Actions cache 10GB)→ **開發端要先把分點歷史拆成獨立檔**。做完會通知你。

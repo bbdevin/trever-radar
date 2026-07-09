@@ -543,14 +543,15 @@ def _export_warrant_branches(out: Path, engine, date: str, base20: list[str]):
     branches_dir = out / "branches"
     branches_dir.mkdir(exist_ok=True)
     with engine.connect() as conn:
-        dates = [r[0] for r in conn.execute(text("SELECT DISTINCT date FROM daily_prices ORDER BY date DESC LIMIT 30"))]
+        dates = [r[0] for r in conn.execute(text("SELECT DISTINCT date FROM daily_prices ORDER BY date DESC LIMIT 120"))]
         if not dates:
             return
         
         d1 = dates[0]
         d2 = dates[1] if len(dates) > 1 else d1
         d5 = dates[4] if len(dates) > 4 else d2
-        d30 = dates[-1]
+        d30 = dates[29] if len(dates) > 29 else dates[-1]
+        d120 = dates[-1]
 
         # Calculate estimated NTD amount: net_lots * 1000 * price
         # Since warrant_daily might miss some days, we fallback to 1.0 if unknown, though usually it's there.
@@ -570,18 +571,20 @@ def _export_warrant_branches(out: Path, engine, date: str, base20: list[str]):
                 SUM(CASE WHEN b.date >= :d5 THEN b.net_lots ELSE 0 END) AS net_lots_5d,
                 SUM(CASE WHEN b.date >= :d5 THEN b.net_lots * 1000 * COALESCE(wd.close, 1.0) ELSE 0 END) AS net_amt_5d,
                 SUM(CASE WHEN b.date >= :d30 THEN b.net_lots ELSE 0 END) AS net_lots_30d,
-                SUM(CASE WHEN b.date >= :d30 THEN b.net_lots * 1000 * COALESCE(wd.close, 1.0) ELSE 0 END) AS net_amt_30d
+                SUM(CASE WHEN b.date >= :d30 THEN b.net_lots * 1000 * COALESCE(wd.close, 1.0) ELSE 0 END) AS net_amt_30d,
+                SUM(CASE WHEN b.date >= :d120 THEN b.net_lots ELSE 0 END) AS net_lots_120d,
+                SUM(CASE WHEN b.date >= :d120 THEN b.net_lots * 1000 * COALESCE(wd.close, 1.0) ELSE 0 END) AS net_amt_120d
             FROM branch_trades b
             JOIN warrants w ON w.id = b.stock_id
             LEFT JOIN stocks s ON s.id = w.stock_id
             LEFT JOIN warrant_daily wd ON wd.warrant_id = b.stock_id AND wd.date = b.date
-            WHERE LENGTH(b.stock_id) = 6 AND b.date >= :d30
+            WHERE LENGTH(b.stock_id) = 6 AND b.date >= :d120
             GROUP BY b.branch_name, w.stock_id, s.name, b.stock_id, w.name, w.kind
-        """), {"d1": d1, "d2": d2, "d5": d5, "d30": d30}).fetchall()
+        """), {"d1": d1, "d2": d2, "d5": d5, "d30": d30, "d120": d120}).fetchall()
 
         # Group by timeframe for frontend
         results = {
-            "1d": [], "2d": [], "5d": [], "30d": []
+            "1d": [], "2d": [], "5d": [], "30d": [], "120d": []
         }
         
         grouped = {}
@@ -593,7 +596,7 @@ def _export_warrant_branches(out: Path, engine, date: str, base20: list[str]):
             grouped[key].append(m)
             
         for (branch_name, underlying_id, underlying_name), warrants in grouped.items():
-            for tf in ["1d", "2d", "5d", "30d"]:
+            for tf in ["1d", "2d", "5d", "30d", "120d"]:
                 total_amt = sum(w[f"net_amt_{tf}"] for w in warrants)
                 if abs(total_amt) >= 5000000:
                     breakdown = []
