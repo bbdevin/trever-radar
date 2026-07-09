@@ -29,23 +29,17 @@ type Movement = {
 
 type TodayMovements = Record<string, Movement[]>;
 
-type WarrantMover = {
+type WarrantBranch = {
   branch_name: string;
-  warrant_id: string;
-  warrant_name: string;
-  kind: "call" | "put";
-  underlying_id: string | null;
-  underlying_name: string | null;
-  net_lots: number;
-  buy_lots: number;
-  active_days: number;
-  last_date: string;
+  underlying_id: string;
+  underlying_name: string;
+  net_amount: number;
 };
 
 const TABS = [
   { key: "rankings", label: "排行榜", hint: "分點操作勝率與可信度排行", icon: IconFlame },
   { key: "today", label: "今日動向", hint: "追蹤分點於最近交易日的買超明細", icon: IconZap },
-  { key: "warrant", label: "權證分點", hint: "近40個交易日對單一權證淨買 ≥300 張的分點(多為發行商造市,重點看非發行商)", icon: IconTrend },
+  { key: "warrant", label: "權證大戶", hint: "追蹤分點針對單一標的之多檔權證，累計買賣超達 500 萬的動向", icon: IconTrend },
 ] as const;
 
 function LoadingSkeleton() {
@@ -85,7 +79,10 @@ export default function BranchPage() {
   const [tab, setTab] = useState<"rankings" | "today" | "warrant">("rankings");
   const [rankings, setRankings] = useState<Ranking[] | null>(null);
   const [today, setToday] = useState<TodayMovements | null>(null);
-  const [movers, setMovers] = useState<WarrantMover[]>([]);
+  const [warrantBranches, setWarrantBranches] = useState<Record<string, WarrantBranch[]>>({
+    "1d": [], "2d": [], "5d": [], "30d": []
+  });
+  const [warrantTimeframe, setWarrantTimeframe] = useState<"1d" | "2d" | "5d" | "30d">("5d");
   const [error, setError] = useState(false);
 
   useEffect(() => {
@@ -99,9 +96,9 @@ export default function BranchPage() {
       .then(setToday)
       .catch(() => setError(true));
 
-    fetch("/data/branches/warrant_movers.json")
-      .then((r) => (r.ok ? r.json() : []))
-      .then(setMovers)
+    fetch("/data/branches/warrant_branches.json")
+      .then((r) => (r.ok ? r.json() : { "1d": [], "2d": [], "5d": [], "30d": [] }))
+      .then(setWarrantBranches)
       .catch(() => {});
   }, []);
 
@@ -184,35 +181,53 @@ export default function BranchPage() {
       )}
 
       {tab === "warrant" && (
-        <div className="flex flex-col gap-2 pb-7">
-          {movers.length === 0 && (
+        <div className="flex flex-col gap-4 pb-7 animate-in fade-in duration-300">
+          <div className="flex justify-center mb-2">
+            <div className="flex bg-secondary p-1 rounded-full border border-border shadow-inner">
+              {(["1d", "2d", "5d", "30d"] as const).map(tf => (
+                <button
+                  key={tf}
+                  onClick={() => setWarrantTimeframe(tf)}
+                  className={cn(
+                    "px-4 py-1.5 rounded-full text-[13px] font-semibold transition-all",
+                    warrantTimeframe === tf ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+                  )}
+                >
+                  近 {tf.replace('d', ' 日')}
+                </button>
+              ))}
+            </div>
+          </div>
+          
+          {warrantBranches[warrantTimeframe]?.length === 0 && (
             <div className="py-[46px] text-center text-sm text-muted-foreground">
-              近期無權證分點大額淨買紀錄(資料自每日成交前15大上市權證累積;上櫃權證無免費來源)
+              此區間內無淨買賣超 500 萬以上之權證分點大戶
             </div>
           )}
-          {movers.map((m) => (
-            <div
-              key={`${m.branch_name}-${m.warrant_id}`}
-              className="grid grid-cols-[1.2fr_1.6fr_1fr_1fr] items-center gap-2.5 rounded-[var(--r-lg)] border border-border bg-card px-3.5 py-2.5 shadow-[var(--shadow-card)]"
-            >
-              <div className="font-semibold text-foreground">{m.branch_name}</div>
-              <div>
-                <a href={m.underlying_id ? `/stock?id=${m.underlying_id}` : "#"} className="text-foreground hover:underline">
-                  {m.underlying_name ?? "—"}
-                </a>{" "}
-                <span className="text-xs text-muted-foreground">
-                  {m.warrant_name}({m.warrant_id})
-                </span>{" "}
-                <span className={cn("rounded-md px-1.5 py-px text-[10.5px]", m.kind === "call" ? "text-up bg-up/15" : "text-down bg-down/15")}>
-                  {m.kind === "call" ? "認購" : "認售"}
-                </span>
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+            {warrantBranches[warrantTimeframe]?.map((m, idx) => (
+              <div
+                key={`${m.branch_name}-${m.underlying_id}-${idx}`}
+                className="flex flex-col gap-2 rounded-[var(--r-lg)] border border-border bg-card/60 backdrop-blur-md p-4 shadow-sm hover:shadow-[var(--shadow-card)] transition-all"
+              >
+                <div className="flex justify-between items-start">
+                  <div className="font-bold text-foreground text-lg">{m.branch_name}</div>
+                  <div className={cn("px-2 py-1 rounded-md font-bold text-[11.5px]", m.net_amount > 0 ? "bg-up/15 text-up" : "bg-down/15 text-down")}>
+                    {m.net_amount > 0 ? "大買" : "大賣"}
+                  </div>
+                </div>
+                <div className="flex justify-between items-end mt-2">
+                  <a href={`/stock?id=${m.underlying_id}`} className="flex items-baseline gap-1.5 hover:opacity-80">
+                    <span className="text-foreground font-semibold">{m.underlying_name}</span>
+                    <span className="text-xs text-muted-foreground">{m.underlying_id}</span>
+                  </a>
+                  <div className={cn("text-[17px] font-bold num tracking-tight", m.net_amount > 0 ? "text-up" : "text-down")}>
+                    {(Math.abs(m.net_amount) / 10000).toLocaleString('zh-TW', { maximumFractionDigits: 0 })} 萬
+                  </div>
+                </div>
               </div>
-              <div className="num text-right font-bold text-up">淨買 {m.net_lots.toLocaleString("zh-TW")} 張</div>
-              <div className="text-right text-xs text-muted-foreground">
-                {m.active_days} 個交易日 · 最近 {m.last_date}
-              </div>
-            </div>
-          ))}
+            ))}
+          </div>
         </div>
       )}
 

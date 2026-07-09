@@ -481,6 +481,7 @@ def export_json(out_dir: Path | None = None) -> dict:
                 
     # ── Export Branches ──
     _export_branches(out, engine, d)
+    _export_warrant_branches(out, engine, d, base20)
 
     return {"out": str(out), "date": d, "stocks": len(export_ids)}
 
@@ -537,3 +538,66 @@ def _export_branches(out: Path, engine, date: str):
         """), {"d40": d40})]
         (branches_dir / "warrant_movers.json").write_text(
             json.dumps(movers, ensure_ascii=False), encoding="utf-8")
+
+def _export_warrant_branches(out: Path, engine, date: str, base20: list[str]):
+    branches_dir = out / "branches"
+    branches_dir.mkdir(exist_ok=True)
+    with engine.connect() as conn:
+        dates = [r[0] for r in conn.execute(text("SELECT DISTINCT date FROM daily_prices ORDER BY date DESC LIMIT 30"))]
+        if not dates:
+            return
+        
+        d1 = dates[0]
+        d2 = dates[1] if len(dates) > 1 else d1
+        d5 = dates[4] if len(dates) > 4 else d2
+        d30 = dates[-1]
+
+        # Calculate estimated NTD amount: net_lots * 1000 * price
+        # Since warrant_daily might miss some days, we fallback to 1.0 if unknown, though usually it's there.
+        rows = conn.execute(text("""
+            SELECT 
+                b.branch_name,
+                w.stock_id AS underlying_id,
+                s.name AS underlying_name,
+                SUM(CASE WHEN b.date >= :d1 THEN b.net_lots * 1000 * COALESCE(wd.close, 1.0) ELSE 0 END) AS net_amt_1d,
+                SUM(CASE WHEN b.date >= :d2 THEN b.net_lots * 1000 * COALESCE(wd.close, 1.0) ELSE 0 END) AS net_amt_2d,
+                SUM(CASE WHEN b.date >= :d5 THEN b.net_lots * 1000 * COALESCE(wd.close, 1.0) ELSE 0 END) AS net_amt_5d,
+                SUM(CASE WHEN b.date >= :d30 THEN b.net_lots * 1000 * COALESCE(wd.close, 1.0) ELSE 0 END) AS net_amt_30d
+            FROM branch_trades b
+            JOIN warrants w ON w.id = b.stock_id
+            LEFT JOIN stocks s ON s.id = w.stock_id
+            LEFT JOIN warrant_daily wd ON wd.warrant_id = b.stock_id AND wd.date = b.date
+            WHERE LENGTH(b.stock_id) = 6 AND b.date >= :d30
+            GROUP BY b.branch_name, w.stock_id, s.name
+            HAVING ABS(SUM(CASE WHEN b.date >= :d5 THEN b.net_lots * 1000 * COALESCE(wd.close, 1.0) ELSE 0 END)) >= 5000000
+                OR ABS(SUM(CASE WHEN b.date >= :d30 THEN b.net_lots * 1000 * COALESCE(wd.close, 1.0) ELSE 0 END)) >= 5000000
+        """), {"d1": d1, "d2": d2, "d5": d5, "d30": d30}).fetchall()
+
+        # Group by timeframe for frontend
+        results = {
+            "1d": [], "2d": [], "5d": [], "30d": []
+        }
+        
+        for r in rows:
+            m = dict(r._mapping)
+            base_obj = {
+                "branch_name": m["branch_name"],
+                "underlying_id": m["underlying_id"],
+                "underlying_name": m["underlying_name"],
+            }
+            
+            if abs(m["net_amt_1d"]) >= 5000000:
+                results["1d"].append({**base_obj, "net_amount": int(m["net_amt_1d"])})
+            if abs(m["net_amt_2d"]) >= 5000000:
+                results["2d"].append({**base_obj, "net_amount": int(m["net_amt_2d"])})
+            if abs(m["net_amt_5d"]) >= 5000000:
+                results["5d"].append({**base_obj, "net_amount": int(m["net_amt_5d"])})
+            if abs(m["net_amt_30d"]) >= 5000000:
+                results["30d"].append({**base_obj, "net_amount": int(m["net_amt_30d"])})
+                
+        # Sort each list by absolute net amount
+        for k in results:
+            results[k].sort(key=lambda x: -abs(x["net_amount"]))
+
+        (branches_dir / "warrant_branches.json").write_text(
+            json.dumps(results, ensure_ascii=False), encoding="utf-8")
