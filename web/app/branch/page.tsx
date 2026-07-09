@@ -88,43 +88,43 @@ function StockGroupCard({ stockId, stockName, totalAmt, branches }: { stockId: s
   const [expandedBranch, setExpandedBranch] = useState<string | null>(null);
 
   return (
-    <div className="flex flex-col rounded-[var(--r-lg)] border border-border bg-card/60 backdrop-blur-md shadow-sm hover:shadow-[var(--shadow-card)] transition-all overflow-hidden">
-      <div className="p-4 flex justify-between items-center bg-secondary/30 border-b border-border">
+    <div className="flex flex-col rounded-[var(--r-lg)] border border-border bg-card shadow-[var(--shadow-card)] ring-1 ring-border/50 hover:ring-border transition-all duration-300 overflow-hidden">
+      <div className="p-4 pb-3 flex justify-between items-center bg-gradient-to-br from-secondary/80 to-transparent border-b border-border/50">
         <a href={`/stock?id=${stockId}`} className="flex items-baseline gap-1.5 hover:opacity-80">
-          <span className="text-foreground font-bold text-lg">{stockName}</span>
-          <span className="text-xs text-muted-foreground">{stockId}</span>
+          <span className="text-foreground font-extrabold text-xl tracking-tight">{stockName}</span>
+          <span className="text-xs font-semibold text-muted-foreground">{stockId}</span>
         </a>
         <div className="flex flex-col items-end">
-          <span className="text-[10px] text-muted-foreground">總淨額</span>
-          <span className={cn("text-[15px] font-bold num tracking-tight", totalAmt > 0 ? "text-up" : "text-down")}>
+          <span className="text-[10px] uppercase font-bold text-muted-foreground">Total Net</span>
+          <span className={cn("text-xl font-black num tracking-tighter", totalAmt > 0 ? "text-up drop-shadow-[0_2px_4px_rgba(239,68,68,0.2)]" : "text-down drop-shadow-[0_2px_4px_rgba(34,197,94,0.2)]")}>
             {(Math.abs(totalAmt) / 10000).toLocaleString('zh-TW', { maximumFractionDigits: 0 })} 萬
           </span>
         </div>
       </div>
       
-      <div className="flex flex-col">
+      <div className="flex flex-col p-2.5 gap-2 bg-card/40">
         {branches.map((b) => {
           const isExpanded = expandedBranch === b.branch_name;
           const hasBreakdown = b.breakdown && b.breakdown.length > 0;
           return (
-            <div key={b.branch_name} className="flex flex-col border-b border-border last:border-0">
+            <div key={b.branch_name} className="flex flex-col rounded-lg border border-border/60 bg-background/60 shadow-sm hover:shadow-md hover:border-border transition-all duration-300 overflow-hidden group">
               <button 
-                className="px-4 py-3 flex items-center justify-between hover:bg-secondary/40 transition-colors text-left focus:outline-none"
+                className="px-3 py-2.5 flex items-center justify-between hover:bg-secondary/40 transition-colors text-left focus:outline-none"
                 onClick={() => setExpandedBranch(isExpanded ? null : b.branch_name)}
               >
                 <div className="flex items-center gap-2">
-                  <span className="font-semibold text-[14px] text-foreground">{b.branch_name}</span>
-                  <div className={cn("px-1.5 py-0.5 rounded-[4px] font-bold text-[10px]", b.net_amount > 0 ? "bg-up/15 text-up" : "bg-down/15 text-down")}>
+                  <span className="font-bold text-[14.5px] text-foreground tracking-tight group-hover:text-primary transition-colors">{b.branch_name}</span>
+                  <div className={cn("px-1.5 py-0.5 rounded-[4px] font-extrabold text-[9.5px]", b.net_amount > 0 ? "bg-up/15 text-up" : "bg-down/15 text-down")}>
                     {b.net_amount > 0 ? "買" : "賣"}
                   </div>
                 </div>
-                <div className="flex items-center gap-3">
-                  <span className={cn("text-[14px] font-bold num tracking-tight", b.net_amount > 0 ? "text-up" : "text-down")}>
+                <div className="flex items-center gap-2.5">
+                  <span className={cn("text-[14.5px] font-bold num tracking-tight", b.net_amount > 0 ? "text-up" : "text-down")}>
                     {(Math.abs(b.net_amount) / 10000).toLocaleString('zh-TW', { maximumFractionDigits: 0 })} 萬
                   </span>
                   {hasBreakdown && (
-                    <div className={cn("transition-transform duration-300 text-muted-foreground opacity-50", isExpanded && "rotate-180 opacity-100")}>
-                      ▼
+                    <div className={cn("transition-transform duration-300 text-muted-foreground/50 group-hover:text-muted-foreground", isExpanded && "rotate-180 text-foreground")}>
+                      <svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M2.5 4.5L6 8L9.5 4.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
                     </div>
                   )}
                 </div>
@@ -132,22 +132,22 @@ function StockGroupCard({ stockId, stockName, totalAmt, branches }: { stockId: s
               
               {hasBreakdown && (
                 <div className={cn("grid transition-[grid-template-rows] duration-300 ease-out", isExpanded ? "grid-rows-[1fr]" : "grid-rows-[0fr]")}>
-                  <div className="overflow-hidden bg-secondary/30">
-                    <div className="px-3 pb-3 flex flex-col gap-1">
+                  <div className="overflow-hidden bg-secondary/20 border-t border-border/40">
+                    <div className="p-2 flex flex-col gap-1">
                       {b.breakdown?.map(brk => (
-                        <div key={brk.warrant_id} className="grid grid-cols-[1.5fr_1fr_1fr] items-center px-2 py-1.5 rounded-md hover:bg-secondary transition-colors">
+                        <div key={brk.warrant_id} className={cn("grid grid-cols-[1.5fr_1fr_1fr] items-center px-2 py-1.5 rounded-md hover:bg-secondary/60 transition-colors border-l-2", brk.net_amount > 0 ? "border-l-up/60" : "border-l-down/60")}>
                           <div className="flex flex-col">
-                            <div className="flex items-baseline gap-1">
-                              <span className="text-foreground text-[12.5px]">{brk.warrant_name}</span>
-                              <span className={cn("text-[10px] px-1 rounded-sm", brk.kind === "call" ? "bg-up/15 text-up" : "bg-down/15 text-down")}>
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-foreground text-[12.5px] font-medium">{brk.warrant_name}</span>
+                              <span className={cn("text-[9.5px] px-1 py-0.5 rounded-[4px] font-bold leading-none", brk.kind === "call" ? "bg-up/15 text-up" : "bg-down/15 text-down")}>
                                 {brk.kind === "call" ? "購" : "售"}
                               </span>
                             </div>
                           </div>
-                          <div className={cn("text-right num font-semibold text-[12.5px]", brk.net_amount > 0 ? "text-up" : "text-down")}>
+                          <div className={cn("text-right num font-semibold text-[13px] tracking-tight", brk.net_amount > 0 ? "text-up" : "text-down")}>
                             {(Math.abs(brk.net_amount) / 10000).toLocaleString('zh-TW', { maximumFractionDigits: 1 })} 萬
                           </div>
-                          <div className="text-right num text-[11px] text-muted-foreground">
+                          <div className="text-right num text-[11.5px] font-medium text-muted-foreground">
                             {Math.round(Math.abs(brk.net_amount) / Math.abs(b.net_amount) * 100)}%
                           </div>
                         </div>
@@ -168,42 +168,42 @@ function BranchGroupCard({ branchName, totalAmt, stocks }: { branchName: string,
   const [expandedStock, setExpandedStock] = useState<string | null>(null);
 
   return (
-    <div className="flex flex-col rounded-[var(--r-lg)] border border-border bg-card/60 backdrop-blur-md shadow-sm hover:shadow-[var(--shadow-card)] transition-all overflow-hidden">
-      <div className="p-4 flex justify-between items-center bg-secondary/30 border-b border-border">
-        <span className="text-foreground font-bold text-lg">{branchName}</span>
+    <div className="flex flex-col rounded-[var(--r-lg)] border border-border bg-card shadow-[var(--shadow-card)] ring-1 ring-border/50 hover:ring-border transition-all duration-300 overflow-hidden">
+      <div className="p-4 pb-3 flex justify-between items-center bg-gradient-to-br from-secondary/80 to-transparent border-b border-border/50">
+        <span className="text-foreground font-extrabold text-xl tracking-tight">{branchName}</span>
         <div className="flex flex-col items-end">
-          <span className="text-[10px] text-muted-foreground">總淨額</span>
-          <span className={cn("text-[15px] font-bold num tracking-tight", totalAmt > 0 ? "text-up" : "text-down")}>
+          <span className="text-[10px] uppercase font-bold text-muted-foreground">Total Net</span>
+          <span className={cn("text-xl font-black num tracking-tighter", totalAmt > 0 ? "text-up drop-shadow-[0_2px_4px_rgba(239,68,68,0.2)]" : "text-down drop-shadow-[0_2px_4px_rgba(34,197,94,0.2)]")}>
             {(Math.abs(totalAmt) / 10000).toLocaleString('zh-TW', { maximumFractionDigits: 0 })} 萬
           </span>
         </div>
       </div>
       
-      <div className="flex flex-col">
+      <div className="flex flex-col p-2.5 gap-2 bg-card/40">
         {stocks.map((s) => {
           const isExpanded = expandedStock === s.underlying_id;
           const hasBreakdown = s.breakdown && s.breakdown.length > 0;
           return (
-            <div key={s.underlying_id} className="flex flex-col border-b border-border last:border-0">
+            <div key={s.underlying_id} className="flex flex-col rounded-lg border border-border/60 bg-background/60 shadow-sm hover:shadow-md hover:border-border transition-all duration-300 overflow-hidden group">
               <button 
-                className="px-4 py-3 flex items-center justify-between hover:bg-secondary/40 transition-colors text-left focus:outline-none"
+                className="px-3 py-2.5 flex items-center justify-between hover:bg-secondary/40 transition-colors text-left focus:outline-none"
                 onClick={() => setExpandedStock(isExpanded ? null : s.underlying_id)}
               >
                 <div className="flex items-center gap-2">
-                  <a href={`/stock?id=${s.underlying_id}`} className="font-semibold text-[14px] text-foreground hover:opacity-80 z-10" onClick={(e) => e.stopPropagation()}>
+                  <a href={`/stock?id=${s.underlying_id}`} className="font-bold text-[14.5px] text-foreground tracking-tight hover:opacity-80 transition-opacity z-10" onClick={(e) => e.stopPropagation()}>
                     {s.underlying_name}
                   </a>
-                  <div className={cn("px-1.5 py-0.5 rounded-[4px] font-bold text-[10px]", s.net_amount > 0 ? "bg-up/15 text-up" : "bg-down/15 text-down")}>
+                  <div className={cn("px-1.5 py-0.5 rounded-[4px] font-extrabold text-[9.5px]", s.net_amount > 0 ? "bg-up/15 text-up" : "bg-down/15 text-down")}>
                     {s.net_amount > 0 ? "買" : "賣"}
                   </div>
                 </div>
-                <div className="flex items-center gap-3">
-                  <span className={cn("text-[14px] font-bold num tracking-tight", s.net_amount > 0 ? "text-up" : "text-down")}>
+                <div className="flex items-center gap-2.5">
+                  <span className={cn("text-[14.5px] font-bold num tracking-tight", s.net_amount > 0 ? "text-up" : "text-down")}>
                     {(Math.abs(s.net_amount) / 10000).toLocaleString('zh-TW', { maximumFractionDigits: 0 })} 萬
                   </span>
                   {hasBreakdown && (
-                    <div className={cn("transition-transform duration-300 text-muted-foreground opacity-50", isExpanded && "rotate-180 opacity-100")}>
-                      ▼
+                    <div className={cn("transition-transform duration-300 text-muted-foreground/50 group-hover:text-muted-foreground", isExpanded && "rotate-180 text-foreground")}>
+                      <svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M2.5 4.5L6 8L9.5 4.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
                     </div>
                   )}
                 </div>
@@ -211,22 +211,22 @@ function BranchGroupCard({ branchName, totalAmt, stocks }: { branchName: string,
               
               {hasBreakdown && (
                 <div className={cn("grid transition-[grid-template-rows] duration-300 ease-out", isExpanded ? "grid-rows-[1fr]" : "grid-rows-[0fr]")}>
-                  <div className="overflow-hidden bg-secondary/30">
-                    <div className="px-3 pb-3 flex flex-col gap-1">
+                  <div className="overflow-hidden bg-secondary/20 border-t border-border/40">
+                    <div className="p-2 flex flex-col gap-1">
                       {s.breakdown?.map(brk => (
-                        <div key={brk.warrant_id} className="grid grid-cols-[1.5fr_1fr_1fr] items-center px-2 py-1.5 rounded-md hover:bg-secondary transition-colors">
+                        <div key={brk.warrant_id} className={cn("grid grid-cols-[1.5fr_1fr_1fr] items-center px-2 py-1.5 rounded-md hover:bg-secondary/60 transition-colors border-l-2", brk.net_amount > 0 ? "border-l-up/60" : "border-l-down/60")}>
                           <div className="flex flex-col">
-                            <div className="flex items-baseline gap-1">
-                              <span className="text-foreground text-[12.5px]">{brk.warrant_name}</span>
-                              <span className={cn("text-[10px] px-1 rounded-sm", brk.kind === "call" ? "bg-up/15 text-up" : "bg-down/15 text-down")}>
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-foreground text-[12.5px] font-medium">{brk.warrant_name}</span>
+                              <span className={cn("text-[9.5px] px-1 py-0.5 rounded-[4px] font-bold leading-none", brk.kind === "call" ? "bg-up/15 text-up" : "bg-down/15 text-down")}>
                                 {brk.kind === "call" ? "購" : "售"}
                               </span>
                             </div>
                           </div>
-                          <div className={cn("text-right num font-semibold text-[12.5px]", brk.net_amount > 0 ? "text-up" : "text-down")}>
+                          <div className={cn("text-right num font-semibold text-[13px] tracking-tight", brk.net_amount > 0 ? "text-up" : "text-down")}>
                             {(Math.abs(brk.net_amount) / 10000).toLocaleString('zh-TW', { maximumFractionDigits: 1 })} 萬
                           </div>
-                          <div className="text-right num text-[11px] text-muted-foreground">
+                          <div className="text-right num text-[11.5px] font-medium text-muted-foreground">
                             {Math.round(Math.abs(brk.net_amount) / Math.abs(s.net_amount) * 100)}%
                           </div>
                         </div>
@@ -412,8 +412,8 @@ export default function BranchPage() {
 
         return (
           <div className="flex flex-col gap-4 pb-7 animate-in fade-in duration-300">
-            <div className="flex flex-col sm:flex-row justify-between items-center gap-3 mb-2">
-              <div className="flex bg-secondary p-1 rounded-full border border-border shadow-inner">
+            <div className="flex flex-col sm:flex-row justify-between items-center gap-3 mb-4">
+              <div className="flex bg-secondary/80 p-1.5 rounded-full border border-border/60 shadow-inner overflow-x-auto max-w-full">
                 {[
                   { k: "1d", l: "近 1 日" },
                   { k: "2d", l: "近 2 日" },
@@ -425,32 +425,38 @@ export default function BranchPage() {
                     key={t.k}
                     onClick={() => setWarrantTimeframe(t.k as any)}
                     className={cn(
-                      "px-3 py-1.5 rounded-full text-[12.5px] font-semibold transition-all",
-                      warrantTimeframe === t.k ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+                      "px-4 py-1.5 rounded-full text-[13px] font-bold transition-all duration-300 whitespace-nowrap",
+                      warrantTimeframe === t.k 
+                        ? "bg-card text-foreground shadow-sm ring-1 ring-border/50" 
+                        : "text-muted-foreground hover:text-foreground hover:bg-secondary"
                     )}
                   >
                     {t.l}
                   </button>
                 ))}
               </div>
-              <div className="flex bg-secondary p-1 rounded-full border border-border shadow-inner">
+              <div className="flex bg-secondary/80 p-1.5 rounded-full border border-border/60 shadow-inner">
                 <button
                   onClick={() => setViewMode("by_stock")}
                   className={cn(
-                    "px-4 py-1.5 rounded-full text-[12.5px] font-semibold transition-all",
-                    viewMode === "by_stock" ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+                    "px-4 py-1.5 rounded-full text-[13px] font-bold transition-all duration-300",
+                    viewMode === "by_stock" 
+                      ? "bg-card text-foreground shadow-sm ring-1 ring-border/50" 
+                      : "text-muted-foreground hover:text-foreground hover:bg-secondary"
                   )}
                 >
-                  🏢 依標的檢視
+                  🏢 依標的
                 </button>
                 <button
                   onClick={() => setViewMode("by_branch")}
                   className={cn(
-                    "px-4 py-1.5 rounded-full text-[12.5px] font-semibold transition-all",
-                    viewMode === "by_branch" ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+                    "px-4 py-1.5 rounded-full text-[13px] font-bold transition-all duration-300",
+                    viewMode === "by_branch" 
+                      ? "bg-card text-foreground shadow-sm ring-1 ring-border/50" 
+                      : "text-muted-foreground hover:text-foreground hover:bg-secondary"
                   )}
                 >
-                  👤 依分點檢視
+                  👤 依分點
                 </button>
               </div>
             </div>
