@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { Search, Info, TrendingUp, TrendingDown, Building2, User } from "lucide-react";
 import { IconFlame, IconTrend, IconZap } from "@/components/Icons";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -439,24 +440,24 @@ export default function BranchPage() {
                 <button
                   onClick={() => setViewMode("by_stock")}
                   className={cn(
-                    "px-4 py-1.5 rounded-full text-[13px] font-bold transition-all duration-300",
+                    "px-4 py-1.5 rounded-full text-[13px] font-bold transition-all duration-300 flex items-center gap-1.5",
                     viewMode === "by_stock" 
                       ? "bg-card text-foreground shadow-sm ring-1 ring-border/50" 
                       : "text-muted-foreground hover:text-foreground hover:bg-secondary"
                   )}
                 >
-                  🏢 依標的
+                  <Building2 size={16} /> 依標的
                 </button>
                 <button
                   onClick={() => setViewMode("by_branch")}
                   className={cn(
-                    "px-4 py-1.5 rounded-full text-[13px] font-bold transition-all duration-300",
+                    "px-4 py-1.5 rounded-full text-[13px] font-bold transition-all duration-300 flex items-center gap-1.5",
                     viewMode === "by_branch" 
                       ? "bg-card text-foreground shadow-sm ring-1 ring-border/50" 
                       : "text-muted-foreground hover:text-foreground hover:bg-secondary"
                   )}
                 >
-                  👤 依分點
+                  <User size={16} /> 依分點
                 </button>
               </div>
             </div>
