@@ -576,9 +576,11 @@ def _export_warrant_branches(out: Path, engine, date: str, base20: list[str]):
                 SUM(CASE WHEN b.date >= :d120 THEN b.net_lots * 1000 * COALESCE(wd.close, 1.0) ELSE 0 END) AS net_amt_120d
             FROM branch_trades b
             JOIN warrants w ON w.id = b.stock_id
-            LEFT JOIN stocks s ON s.id = w.stock_id
+            JOIN stocks s ON s.id = w.stock_id
             LEFT JOIN warrant_daily wd ON wd.warrant_id = b.stock_id AND wd.date = b.date
             WHERE LENGTH(b.stock_id) = 6 AND b.date >= :d120
+              AND s.type = 'stock'
+              AND s.name NOT LIKE '%指%'
             GROUP BY b.branch_name, w.stock_id, s.name, b.stock_id, w.name, w.kind
         """), {"d1": d1, "d2": d2, "d5": d5, "d30": d30, "d120": d120}).fetchall()
 
