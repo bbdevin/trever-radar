@@ -1,9 +1,11 @@
-name: daily-branches
+name: daily-margin
+
+# 22:10 台北:融資融券(MI_MARGN)保底輪。17:40/21:00 的 daily-branches 已經
+# 會嘗試抓 margin,但公布時間可能晚於 21:00;這支只做 margin + 重算分數,
+# 不含分點爬蟲(較慢),晚一點跑當最後保底。與 daily-branches 的抓取重疊
+# 是刻意的——import-daily 是 upsert,提早抓到就提早顯示,這支只補漏。
 
 on:
-  # 17:40 + 21:00 Taipei triggers moved off native `schedule:` to an
-  # external Cloudflare Worker cron calling `workflow_dispatch` twice a
-  # day at the same wall clock times. See cloudflare-trigger/README.md.
   workflow_dispatch:
 
 permissions:
@@ -14,9 +16,9 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  branches_and_deploy:
+  margin:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 20
     env:
       PYTHONUNBUFFERED: "1"
     steps:
@@ -46,23 +48,11 @@ jobs:
       - name: Install dependencies
         run: pip install -r pipeline/requirements.txt
 
-      - name: Import margin + catch up institutional
+      - name: Import margin (late catch-up)
         working-directory: pipeline
-        run: python -m radar import-daily --datasets insti,margin
+        run: python -m radar import-daily --datasets margin
 
-      - name: Seed tracking branches
-        working-directory: pipeline
-        run: python -m radar seed-branches
-
-      - name: Branch trades (MoneyDJ mirrors, score-pool top 500)
-        working-directory: pipeline
-        run: python -m radar import-branch-trades --top 500 --sleep 1.0
-
-      - name: Compute branch stats
-        working-directory: pipeline
-        run: python -m radar compute-branch-stats
-
-      - name: Compute daily scores
+      - name: Recompute daily scores
         working-directory: pipeline
         run: python -m radar compute-scores
 
@@ -92,7 +82,6 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
-          npx wrangler pages project create trever-radar --production-branch main 2>/dev/null || true
           npx wrangler pages deploy out --project-name trever-radar --commit-dirty=true
 
       - name: Checkpoint SQLite WAL (merge into main file before cache/backup)
@@ -108,14 +97,3 @@ jobs:
         with:
           path: data/radar.db
           key: radar-db-${{ github.run_id }}
-
-      - name: Weekly DB backup to release (Fri)
-        if: always()
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          if [ -f data/radar.db ] && [ "$(TZ=Asia/Taipei date +%u)" = "5" ]; then
-            gzip -kf data/radar.db
-            gh release create db-backup --notes "rolling SQLite backup" 2>/dev/null || true
-            gh release upload db-backup data/radar.db.gz --clobber
-          fi

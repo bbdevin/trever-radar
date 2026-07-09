@@ -18,6 +18,9 @@ web/out/
 web/next-env.d.ts
 web/*.tsbuildinfo
 
+# cloudflare worker local cache
+cloudflare-trigger/.wrangler/
+
 # secrets
 .env
 .env.*

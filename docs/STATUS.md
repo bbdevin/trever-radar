@@ -1,4 +1,4 @@
-# 專案狀態(2026-07-08)
+# 專案狀態(2026-07-09)
 
 > 單一進度真相。每完成一個里程碑就更新本檔。規格細節看各編號文件,別寫在這裡。
 
@@ -8,7 +8,7 @@
 |---|---|
 | 正式網址 | https://radar.techtrever.com(= https://trever-radar.pages.dev) |
 | 公開狀態 | 公開網址、noindex + robots.txt;Access 未開(使用者決定,要鎖照 DEPLOY.md §4) |
-| 自動排程 | GitHub Actions 5 支 workflow(現行時間表以 `docs/08_scheduler_jobs.md` §0 為單一真相):14:10 `daily-market`、16:10 `daily-insti`、17:40+21:00 `daily-branches`、每日 01:10 `data-backfill`、push main 觸發 `deploy`;各帶 timeout 防呆與共用 `radar-db` cache 續存鏈 |
+| 自動排程 | GitHub Actions 6 支 workflow(現行時間表以 `docs/08_scheduler_jobs.md` §0 為單一真相):14:10 `daily-market`、16:10 `daily-insti`、17:40+21:00 `daily-branches`、22:10 `daily-margin`(融資券保底輪)、每日 01:10 `data-backfill`、push main 觸發 `deploy`;各帶 timeout 防呆與共用 `radar-db` cache 續存鏈;觸發來源遷移中,見下方已知債務 |
 | Repo | github.com/bbdevin/trever-radar(私有) |
 | DB | SQLite,Actions cache 續存 + release `db-backup` 週備份(週五/手動觸發時) |
 
@@ -65,6 +65,7 @@
 - [x] GitHub Actions 全自動管線 + Cloudflare Pages 部署 + 自訂網域
 - [x] `main` push 觸發正式部署;push 事件跳過資料匯入,只用 cache/release DB 匯出 JSON、build、deploy
 - [x] FinMind 免費 token(600 req/hr,`RADAR_FINMIND_TOKEN`,GitHub secret 已設)
+- [x] **排程觸發改用 Cloudflare Worker**(2026-07-09):GitHub 原生 `schedule:` 實測延遲 2.5–3.5 小時,6 支資料 workflow 已全數改為 `workflow_dispatch:` only,由 `cloudflare-trigger/`(單一 10 分鐘 cron trigger + 程式碼比對時間表,繞開 Cloudflare 免費方案 3/Worker、5/帳號 的 cron 上限)準時觸發;新增 `daily-margin`(22:10 台北,融資券保底輪)
 
 ## 未完成(依優先序)
 
@@ -88,6 +89,7 @@
 - 分點分 V1 只用「已抓到的前15大買賣超」,不是全市場全量分點;冷門股或未入評分池股票沒有分點史,地緣/關鍵分點/可信度分數尚未納入
 - `compute-adjustments` 逐列 UPDATE,跑 --all 會慢;改 executemany 批次後再跑全市場
 - Actions 有 Node 20 → 24 的 deprecation 警告(actions 版本升級,無急迫)
+- **排程觸發改 Cloudflare Worker,無備援(2026-07-09)**:見 `cloudflare-trigger/README.md`。Worker 或 `GH_TOKEN`(存於 Cloudflare secret 的 fine-grained PAT)一旦壞掉會靜默停止觸發,網站不會報錯只會停止更新——前幾週要偶爾看一下 `gh run list` 或首頁 freshness。`GH_TOKEN` 是每天實際在用的憑證,**不可直接 revoke**,輪替流程見該 README。假日跳過邏輯評估後**決定不做**:管線在非交易日已靠 `NoDataError` 安全空跑(`importer.py` 的 `_run()` 接住例外記 log,不會壞資料),手刻假日曆的「錯殺交易日」風險大於省下的 Actions 分鐘數
 - 本機 dev 與雲端 DB 已分岔:雲端為正式真相,本機僅開發;push 部署會從 Actions cache/release DB 產出線上 JSON
 
 ## 最近完成
@@ -104,6 +106,7 @@
 - 2026-07-08 分點排行與管線優化: 完成 `/branch` 頁面實作（含勝率排行與今日動向），並正式將 GitHub Actions 拆解為 `daily-market`、`daily-warrants`、`daily-branches` 三條獨立管線，同時新增了 `deploy` 管線負責 Push 時的即時部署。
 - 2026-07-08 系統穩定度修正: 修正首頁動態榜單數量邏輯（無論行情好壞皆保底 15 檔，上限 40 檔避免過長）；修復 GitHub Actions 併發限制導致的管線互相取消問題，並將每日抓取管線 Timeout 時間全面延長至 30~40 分鐘。
 - 2026-07-08 Mark策略演算法與獨立榜單: 新增「Mark策略」演算法（20日內漲停、5日內爆量、MACD零上金叉），於 `indicators.py` 中進行嚴格判定，並在前端首頁新增獨立的「Mark策略」頁籤。
+- 2026-07-09 排程觸發改 Cloudflare Worker:實測發現 GitHub 原生 `schedule:` 延遲 2.5–3.5 小時,新增 `cloudflare-trigger/`(Cloudflare Worker,單一 10 分鐘 cron + 程式碼比對時間表)取代;4 支既有 workflow 拿掉 `schedule:`,新增 `daily-margin.yml`(22:10 台北融資券保底輪);修正隨手發現的 `daily-branches`/`data-backfill` 備份步驟隱性依賴 `event_name=='schedule'` 的 bug(原本手動觸發會意外覆蓋週備份);Worker 已部署並以 `gh run list` 驗證觸發成功;修補 Worker `fetch()` 端點原本無驗證可被任何人觸發 workflow 的漏洞,加上 token 驗證。
 
 ## 系統模組與功能對應表 (Pipeline Models Mapping)
 

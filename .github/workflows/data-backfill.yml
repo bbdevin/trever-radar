@@ -6,8 +6,12 @@ name: data-backfill
 # 與日間 workflow 共用 radar-db 併發群,不會同時寫 DB。
 
 on:
-  schedule:
-    - cron: "10 17 * * *"   # 01:10 Taipei(前一日 17:10 UTC)
+  # 01:10 Taipei nightly trigger moved off native `schedule:` to an
+  # external Cloudflare Worker cron calling `workflow_dispatch` (default
+  # inputs: task=deep) at the same wall clock time. See
+  # cloudflare-trigger/README.md. Steps below now key off `inputs.task`
+  # instead of `github.event_name == 'schedule'` since schedule no longer
+  # exists as a trigger.
   workflow_dispatch:
     inputs:
       task:
@@ -63,19 +67,19 @@ jobs:
         run: pip install -r pipeline/requirements.txt
 
       - name: Deep backfill (skips already-deep; nightly cost ≈ new listings only)
-        if: github.event_name == 'schedule' || inputs.task == 'deep'
+        if: inputs.task == 'deep'
         working-directory: pipeline
         run: python -m radar deep-backfill --all --sleep "${{ inputs.sleep || '6.5' }}"
 
       # 分點歷史深挖不排程:280分/晚×15晚=4,200分,遠超免費額度 2,000 分/月。
       # 歷史深挖走 VPS(docs/vps_backfill_plan.md §3);此步僅供手動小量補洞。
       - name: Branch history march-back (manual only; deep haul belongs on the VPS)
-        if: github.event_name != 'schedule' && inputs.task == 'branches-history'
+        if: inputs.task == 'branches-history'
         working-directory: pipeline
         run: python -m radar backfill-branches --top 500 --days 490 --sleep 1.0 --max-minutes 90
 
       - name: Weekly adjustment factors + full indicator recompute (Sat)
-        if: github.event_name == 'schedule'
+        if: inputs.task == 'deep'
         working-directory: pipeline
         run: |
           if [ "$(TZ=Asia/Taipei date +%u)" = "6" ]; then
@@ -84,14 +88,14 @@ jobs:
           fi
 
       - name: Adjustment factors (manual)
-        if: github.event_name != 'schedule' && inputs.task == 'adjust'
+        if: inputs.task == 'adjust'
         working-directory: pipeline
         run: |
           python -m radar compute-adjustments --all --sleep "${{ inputs.sleep || '6.5' }}"
           python -m radar compute-indicators --all
 
       - name: Concept themes
-        if: github.event_name != 'schedule' && inputs.task == 'themes'
+        if: inputs.task == 'themes'
         working-directory: pipeline
         run: python -m radar import-themes
 
@@ -109,12 +113,12 @@ jobs:
           path: data/radar.db
           key: radar-db-${{ github.run_id }}
 
-      - name: Backup DB to release (Sat or manual)
+      - name: Backup DB to release (Sat)
         if: always()
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if [ -f data/radar.db ] && { [ "$(TZ=Asia/Taipei date +%u)" = "6" ] || [ "${{ github.event_name }}" = "workflow_dispatch" ]; }; then
+          if [ -f data/radar.db ] && [ "$(TZ=Asia/Taipei date +%u)" = "6" ]; then
             gzip -kf data/radar.db
             gh release upload db-backup data/radar.db.gz --clobber
           fi

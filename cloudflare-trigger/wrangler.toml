@@ -1,0 +1,10 @@
+name = "trever-radar-scheduler"
+main = "worker.js"
+compatibility_date = "2026-07-09"
+
+# Cloudflare Workers Free plan caps Cron Triggers at 3/Worker and 5/account,
+# not enough for our 6 fire times. So this declares exactly one trigger that
+# ticks every 10 minutes; worker.js's SCHEDULE table matches the current UTC
+# time to decide which GitHub workflow (if any) to dispatch on each tick.
+[triggers]
+crons = ["*/10 * * * *"]

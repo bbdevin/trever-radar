@@ -3,8 +3,9 @@ name: daily-insti
 # 16:10 台北:法人買賣超 ~16:00 公布;權證主檔同時段更新 → 匯入後重算分數並部署。
 
 on:
-  schedule:
-    - cron: "10 8 * * 1-5"   # 16:10 Taipei
+  # 16:10 Taipei trigger moved off native `schedule:` to an external
+  # Cloudflare Worker cron calling `workflow_dispatch`. See
+  # cloudflare-trigger/README.md.
   workflow_dispatch:
 
 permissions:

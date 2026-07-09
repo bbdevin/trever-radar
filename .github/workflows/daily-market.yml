@@ -4,8 +4,10 @@ name: daily-market
 # 法人/融資券/分點尚未公布 → 前端 freshness 標「暫用前一日」,由後續 workflow 分批補。
 
 on:
-  schedule:
-    - cron: "10 6 * * 1-5"   # 14:10 Taipei
+  # 14:10 Taipei trigger moved off native `schedule:` (observed delays of
+  # 2.5-3.5h under Actions load) to an external Cloudflare Worker cron
+  # calling `workflow_dispatch` at the same wall clock time. See
+  # cloudflare-trigger/README.md.
   workflow_dispatch:
 
 permissions:
