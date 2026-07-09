@@ -16,13 +16,31 @@
 
 ---
 
-## Step 0:手機先裝通知(2 分鐘)
+## Step 0:通知管道二選一(2–5 分鐘)
+
+### 方案 A:ntfy(手機裝一個 App,最快)
 
 1. 手機商店搜尋 **ntfy** 安裝(免費、免註冊)
 2. 打開 App → 右下 **+** → Subscribe to topic
 3. 主題名輸入一個**只有你知道的長字串**,例如:`trever-radar-x8k2m9q7`
    (主題名就是密碼,太短會被別人猜到亂發通知)
 4. 記住這個字串,Step 2 會用到
+
+### 方案 B:n8n(不想裝 App;用你 VPS 上已有的 n8n 寄 Email 給你)
+
+1. 開你的 n8n 網頁 → **New workflow**
+2. 加第一個節點:**Webhook**
+   - HTTP Method:`GET`
+   - Path:填 `radar-done`
+3. 加第二個節點(和 Webhook 連起來):**Send Email**(SMTP)或 **Gmail**
+   - Gmail 節點照它的指示按 OAuth 授權一次即可
+   - 收件人:你的信箱;主旨:`Radar 回補通知`
+   - 內文填表達式:`{{ $json.query.msg }}`(會顯示完成或失敗訊息)
+4. 右上把 workflow 切到 **Active**
+5. 點 Webhook 節點,複製 **Production URL**(長得像 `https://你的n8n網址/webhook/radar-done`),Step 2 會用到
+6. 先測試:瀏覽器開 `https://你的n8n網址/webhook/radar-done?msg=測試`,幾秒內應收到信
+
+> 進階:第二個節點想接 **LINE** 也行(HTTP Request 節點打 LINE Messaging API)——那需要先開 LINE 官方帳號 channel,等我們做 LINE 推播功能時會一起弄,現在用 Email 最省事。
 
 ---
 

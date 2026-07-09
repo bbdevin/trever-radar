@@ -95,6 +95,13 @@ jobs:
         working-directory: pipeline
         run: python -m radar import-themes
 
+      - name: Checkpoint SQLite WAL (merge into main file before cache/backup)
+        if: always()
+        run: |
+          if [ -f data/radar.db ]; then
+            sqlite3 data/radar.db "PRAGMA wal_checkpoint(TRUNCATE);"
+          fi
+
       - name: Save SQLite cache
         if: always()
         uses: actions/cache/save@v4

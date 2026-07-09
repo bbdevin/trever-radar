@@ -95,6 +95,13 @@ jobs:
           npx wrangler pages project create trever-radar --production-branch main 2>/dev/null || true
           npx wrangler pages deploy out --project-name trever-radar --commit-dirty=true
 
+      - name: Checkpoint SQLite WAL (merge into main file before cache/backup)
+        if: always()
+        run: |
+          if [ -f data/radar.db ]; then
+            sqlite3 data/radar.db "PRAGMA wal_checkpoint(TRUNCATE);"
+          fi
+
       - name: Save SQLite cache
         if: always()
         uses: actions/cache/save@v4
