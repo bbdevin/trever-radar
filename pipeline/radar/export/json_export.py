@@ -63,7 +63,8 @@ def export_json(out_dir: Path | None = None) -> dict:
                    ti.tech_score, ti.ma20, ti.ma60, ti.rsi14, ti.volume_ratio AS tech_volume_ratio,
                    ti.reasons AS tech_reasons, ti.risks AS tech_risks,
                    ds.final AS score_final, ds.branch_score, ds.warrant_score, ds.inst_score, ds.theme_score,
-                   ds.risk_penalty, ds.reasons AS score_reasons, ds.risks AS score_risks
+                   ds.risk_penalty, ds.reasons AS score_reasons, ds.risks AS score_risks,
+                   ds.watch_price, ds.stop_price
             FROM daily_prices p
             JOIN stocks s ON s.id = p.stock_id AND s.type = 'stock'
             LEFT JOIN daily_prices pp ON pp.stock_id = p.stock_id AND pp.date = :prev
@@ -95,7 +96,8 @@ def export_json(out_dir: Path | None = None) -> dict:
              tech_score, tech_ma20, tech_ma60, tech_rsi14, tech_volume_ratio,
              tech_reasons, tech_risks,
               score_final, branch_score, warrant_score, inst_score, theme_score,
-              risk_penalty, score_reasons, score_risks) = r
+              risk_penalty, score_reasons, score_risks,
+              watch_price, stop_price) = r
             chg_pct = round((close - prev_close) / prev_close * 100, 2) if prev_close else None
             vol_ratio = None
             if avg_vol20 and avg_vol20 > 0 and volume:
@@ -148,6 +150,8 @@ def export_json(out_dir: Path | None = None) -> dict:
                     "inst": inst_score,
                     "theme": theme_score,
                     "risk_penalty": risk_penalty,
+                    "watch_price": watch_price,
+                    "stop_price": stop_price,
                 },
                 "reasons": [x["text"] for x in json.loads(score_reasons or "[]")[:4]],
                 "risks": [x["text"] for x in json.loads(score_risks or "[]")[:3]],
@@ -289,6 +293,24 @@ def export_json(out_dir: Path | None = None) -> dict:
                   if len(g["stocks"]) >= 3 and g["turnover"] >= 5e8]
         themes.sort(key=lambda x: x["turnover"], reverse=True)
 
+        # ── 集中度躍升榜(探索頁) ──
+        conc_rows = conn.execute(text("""
+            SELECT ds.stock_id, s.name, s.market, ds.buy_concentration, ds.concentration_avg20
+            FROM daily_scores ds
+            JOIN stocks s ON s.id = ds.stock_id
+            WHERE ds.date = :d AND ds.buy_concentration IS NOT NULL
+              AND ds.concentration_avg20 IS NOT NULL AND ds.concentration_avg20 > 0
+        """), {"d": d}).fetchall()
+        concentration = sorted((
+            {
+                "id": r[0], "name": r[1], "market": r[2],
+                "buy_concentration": round(r[3], 4),
+                "concentration_avg20": round(r[4], 4),
+                "vs20": round(r[3] / r[4], 2),
+            }
+            for r in conc_rows
+        ), key=lambda x: x["vs20"], reverse=True)[:40]
+
         summary = conn.execute(text("""
             SELECT s.market,
                    SUM(p.turnover),
@@ -319,6 +341,7 @@ def export_json(out_dir: Path | None = None) -> dict:
         ],
         "sectors": sectors[:16],
         "themes": themes[:36],
+        "concentration": concentration,
         "lists": {
             "score": [s["id"] for s in score],
             "hot": [s["id"] for s in hot],

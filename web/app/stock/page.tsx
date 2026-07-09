@@ -4,6 +4,7 @@ import { Fragment, Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { IconArrowLeft } from "@/components/Icons";
 import KChart from "@/components/KChart";
+import WatchlistButton from "@/components/WatchlistButton";
 import type { StockJson } from "@/lib/types";
 import { MARKET_LABEL, chgClass, fmtE8, fmtLots, fmtPct, fmtX } from "@/lib/format";
 import { signInWithGoogle, useSession } from "@/lib/useSession";
@@ -83,6 +84,7 @@ function StockView() {
           <span className="close">{last.c.toLocaleString("zh-TW")}</span>
           <span className={`chg-badge ${chgClass(chg)}`}>{fmtPct(chg)}</span>
         </div>
+        <WatchlistButton stockId={data.id} size={20} />
       </div>
       <div className="stock-meta">
         <span>
@@ -367,6 +369,16 @@ function TechnicalPanel({ data }: { data: StockJson }) {
         <span>RSI14 <b>{t.rsi14 == null ? "—" : t.rsi14.toFixed(1)}</b></span>
         <span>量比 <b>{fmtX(t.volume_ratio)}</b></span>
       </div>
+      {(data.scores?.watch_price != null || data.scores?.stop_price != null) && (
+        <div className="watch-stop-row">
+          {data.scores?.watch_price != null && (
+            <span className="watch-price">觀察價 <b>{data.scores.watch_price.toFixed(2)}</b></span>
+          )}
+          {data.scores?.stop_price != null && (
+            <span className="stop-price">失效價 <b>{data.scores.stop_price.toFixed(2)}</b></span>
+          )}
+        </div>
+      )}
       <div className="tech-reasons">
         {t.reasons.length > 0 ? t.reasons.map((r) => (
           <span key={r.code}>{r.text}</span>

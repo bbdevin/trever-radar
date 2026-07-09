@@ -1,4 +1,5 @@
 import Sparkline from "@/components/Sparkline";
+import WatchlistButton from "@/components/WatchlistButton";
 import type { RadarStock } from "@/lib/types";
 import { MARKET_LABEL, chgClass, fmtE8, fmtLots, fmtPct, fmtX } from "@/lib/format";
 
@@ -22,6 +23,7 @@ export default function StockCard({ s }: { s: RadarStock }) {
           <div className={`close ${chgClass(s.chg_pct)}`}>{s.close.toLocaleString("zh-TW")}</div>
           <span className={`chg-badge ${chgClass(s.chg_pct)}`}>{fmtPct(s.chg_pct)}</span>
         </div>
+        <WatchlistButton stockId={s.id} />
       </div>
       {s.description && (
         <div className="desc-block">
@@ -60,6 +62,16 @@ export default function StockCard({ s }: { s: RadarStock }) {
               </span>
               <span className="k" style={{ marginLeft: "4px" }}>綜合評分</span>
             </div>
+            {(s.scores.watch_price != null || s.scores.stop_price != null) && (
+              <div className="watch-stop-line">
+                {s.scores.watch_price != null && (
+                  <span className="watch-price">觀察 {s.scores.watch_price.toFixed(2)}</span>
+                )}
+                {s.scores.stop_price != null && (
+                  <span className="stop-price">失效 {s.scores.stop_price.toFixed(2)}</span>
+                )}
+              </div>
+            )}
             {s.reasons.slice(0, 2).map((t) => (
               <div className="reason" key={t}>
                 {t}

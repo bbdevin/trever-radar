@@ -105,6 +105,15 @@ export interface SectorFlow {
 
 export type ListKey = "score" | "hot" | "surge" | "strong" | "weak" | "warrant" | "mark";
 
+export interface ConcentrationRow {
+  id: string;
+  name: string;
+  market: "twse" | "tpex";
+  buy_concentration: number; // 前5大買超分點佔今日成交量比
+  concentration_avg20: number; // 近20日均值(不含當日)
+  vs20: number; // 躍升幅度(今日 / 20日均)
+}
+
 export interface ScoreBreakdown {
   final: number;
   branch: number | null;
@@ -113,6 +122,8 @@ export interface ScoreBreakdown {
   inst: number | null;
   theme: number | null;
   risk_penalty: number;
+  watch_price: number | null;
+  stop_price: number | null;
 }
 
 export interface RadarStock {
@@ -147,6 +158,7 @@ export interface RadarJson {
   freshness?: Record<string, { date: string | null; stale: boolean }>; // 各資料集有效日
   sectors: SectorFlow[];
   themes?: SectorFlow[]; // 概念股資金流(成分重疊)
+  concentration?: ConcentrationRow[]; // 集中度躍升榜(探索頁)
   lists: Record<ListKey, string[]>;
   stocks: RadarStock[];
 }

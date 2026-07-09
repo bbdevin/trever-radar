@@ -1,13 +1,14 @@
 "use client";
 
 import { usePathname } from "next/navigation";
-import { IconCompass, IconPulse, IconRadar, IconStar } from "@/components/Icons";
+import { IconCompass, IconPulse, IconRadar, IconStar, IconTrend } from "@/components/Icons";
 
 const ITEMS = [
   { label: "雷達", href: "/", icon: IconRadar },
   { label: "分點", href: "/branch", icon: IconCompass },
+  { label: "探索", href: "/explore", icon: IconTrend },
+  { label: "自選", href: "/watchlist", icon: IconStar },
   { label: "盤中", icon: IconPulse, badge: "V2" },
-  { label: "自選", icon: IconStar, badge: "近期" },
 ];
 
 /** 手機底部導航列(桌機隱藏) */

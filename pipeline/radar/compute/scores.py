@@ -120,6 +120,35 @@ def _branch_rows(rows_by_date, date):
     return rows_by_date.get(date, [])
 
 
+def buy_concentration(rows_by_date, dates, volumes_by_date):
+    """前5大買超分點佔當日成交量比,及近20日均值(不含當日)。查無資料回傳 (None, None)。"""
+    today = dates[0] if dates else None
+    today_rows = _branch_rows(rows_by_date, today)
+    volume_lots = _volume_lots(volumes_by_date, today)
+    if not today_rows or not volume_lots:
+        return None, None
+    buy_rows = sorted(
+        [r for r in today_rows if (r.get("net_lots") or 0) > 0],
+        key=lambda r: r["net_lots"],
+        reverse=True,
+    )
+    buy_conc = sum((r["net_lots"] or 0) for r in buy_rows[:5]) / volume_lots
+    prior = []
+    for date in dates[1:21]:
+        v_lots = _volume_lots(volumes_by_date, date)
+        if not v_lots:
+            continue
+        rows = sorted(
+            [r for r in _branch_rows(rows_by_date, date) if (r.get("net_lots") or 0) > 0],
+            key=lambda r: r["net_lots"],
+            reverse=True,
+        )
+        if rows:
+            prior.append(sum((r["net_lots"] or 0) for r in rows[:5]) / v_lots)
+    avg_conc = sum(prior) / len(prior) if prior else None
+    return buy_conc, avg_conc
+
+
 def score_branch(rows_by_date, dates, volumes_by_date):
     """分點籌碼分(V1-free,以前15大分點近似04 §2)。"""
     today = dates[0] if dates else None
@@ -186,25 +215,11 @@ def score_branch(rows_by_date, dates, volumes_by_date):
                 len(significant))
 
     # B3:買方集中度躍升。
-    if volume_lots:
-        buy_conc = sum((r["net_lots"] or 0) for r in buy_rows[:5]) / volume_lots
-        prior = []
-        for date in dates[1:21]:
-            v_lots = _volume_lots(volumes_by_date, date)
-            if not v_lots:
-                continue
-            rows = sorted(
-                [r for r in _branch_rows(rows_by_date, date) if (r.get("net_lots") or 0) > 0],
-                key=lambda r: r["net_lots"],
-                reverse=True,
-            )
-            if rows:
-                prior.append(sum((r["net_lots"] or 0) for r in rows[:5]) / v_lots)
-        avg_conc = sum(prior) / len(prior) if prior else None
-        if avg_conc and buy_conc >= 0.15 and buy_conc >= avg_conc * 1.5:
-            add(15, "B3_BUY_CONCENTRATION",
-                f"前5大買超分點佔成交量{buy_conc:.0%},為近期均值{buy_conc / avg_conc:.1f}倍",
-                round(buy_conc, 3))
+    buy_conc, avg_conc = buy_concentration(rows_by_date, dates, volumes_by_date)
+    if avg_conc and buy_conc >= 0.15 and buy_conc >= avg_conc * 1.5:
+        add(15, "B3_BUY_CONCENTRATION",
+            f"前5大買超分點佔成交量{buy_conc:.0%},為近期均值{buy_conc / avg_conc:.1f}倍",
+            round(buy_conc, 3))
 
     # B6:前15大分點大戶淨流連3日為正。
     flows = []
@@ -267,6 +282,20 @@ def risk_deductions(chg5_pct, chg10_pct, open_, high, close, prev_close,
         hit(8, "R_MARGIN_HOT", f"融資使用率{margin_use:.0%},融資過熱", round(margin_use, 2))
 
     return max(penalty, -40), risks
+
+
+def watch_stop_prices(high, low, ma5, box_high60):
+    """觀察價/失效價(04 §10)。
+    觀察價 = max(今日高點, 箱型上緣) x 1.005(突破確認)
+    失效價 = min(5日線, 今日低點)
+    """
+    if high is None:
+        return None, None
+    watch_base = max(high, box_high60) if box_high60 is not None else high
+    watch = round(watch_base * 1.005, 2)
+    stop_candidates = [v for v in (ma5, low) if v is not None]
+    stop = round(min(stop_candidates), 2) if stop_candidates else None
+    return watch, stop
 
 
 def score_themes(theme_stocks: dict[str, list[str]],
@@ -418,7 +447,7 @@ def compute_scores(date: str | None = None) -> dict:
             {"lo": base20_start, "d": d})}
 
         tech = {r[0]: r for r in conn.execute(text(
-            "SELECT stock_id, tech_score, volume_ratio, risks, reasons "
+            "SELECT stock_id, tech_score, volume_ratio, risks, reasons, ma5, box_high60 "
             "FROM indicators_daily WHERE date = :d"), {"d": d})}
 
         insti: dict[str, dict[str, tuple]] = {}
@@ -477,7 +506,7 @@ def compute_scores(date: str | None = None) -> dict:
         today = p.get(d)
         if today is None:
             continue
-        _, _, open_, high, _low, close, volume = today
+        _, _, open_, high, low, close, volume = today
 
         def close_ago(n):
             return p[recent[n]][5] if n < len(recent) and recent[n] in p else None
@@ -506,6 +535,8 @@ def compute_scores(date: str | None = None) -> dict:
         # 分點
         b_score, b_reasons, b_risks = score_branch(
             branches.get(sid, {}), dates[di:di + 21], volumes.get(sid, {}))
+        buy_conc, conc_avg20 = buy_concentration(
+            branches.get(sid, {}), dates[di:di + 21], volumes.get(sid, {}))
 
         # 技術
         t = tech.get(sid)
@@ -513,6 +544,9 @@ def compute_scores(date: str | None = None) -> dict:
         t_vr = t[2] if t else None
         t_risks = json.loads(t[3]) if t and t[3] else []
         t_reasons = json.loads(t[4]) if t and t[4] else []
+        ma5 = t[5] if t else None
+        box_high60 = t[6] if t else None
+        watch_price, stop_price = watch_stop_prices(high, low, ma5, box_high60)
 
         # 法人
         ins = insti.get(sid, {})
@@ -569,6 +603,9 @@ def compute_scores(date: str | None = None) -> dict:
             "theme_score": theme_score, "risk_penalty": penalty, "final": final,
             "reasons": json.dumps(reasons, ensure_ascii=False),
             "risks": json.dumps(risks, ensure_ascii=False),
+            "watch_price": watch_price, "stop_price": stop_price,
+            "buy_concentration": round(buy_conc, 4) if buy_conc is not None else None,
+            "concentration_avg20": round(conc_avg20, 4) if conc_avg20 is not None else None,
         })
 
     with engine.begin() as conn:

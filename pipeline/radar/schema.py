@@ -190,6 +190,10 @@ daily_scores = Table(
     Column("fwd_10d", Float),
     Column("fwd_20d", Float),
     Column("fwd_updated_at", Text),
+    Column("watch_price", Float),                  # 觀察價 = max(今日高點, 箱型上緣) x 1.005
+    Column("stop_price", Float),                   # 失效價 = min(5日線, 今日低點)
+    Column("buy_concentration", Float),            # 前5大買超分點佔今日成交量比
+    Column("concentration_avg20", Float),          # 上述比值近20日均(不含當日)
     Index("ix_daily_scores_date", "date"),
 )
 

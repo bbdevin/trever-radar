@@ -44,6 +44,10 @@ def _migrate_sqlite(conn):
         "fwd_10d": "REAL",
         "fwd_20d": "REAL",
         "fwd_updated_at": "TEXT",
+        "watch_price": "REAL",
+        "stop_price": "REAL",
+        "buy_concentration": "REAL",
+        "concentration_avg20": "REAL",
     }
     for name, sql_type in score_additions.items():
         if name not in score_cols:
