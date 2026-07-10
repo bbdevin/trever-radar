@@ -5,6 +5,8 @@ import { Search, Info, TrendingUp, TrendingDown, Building2, User } from "lucide-
 import { IconFlame, IconTrend, IconZap } from "@/components/Icons";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
+import type { RadarJson } from "@/lib/types";
+import { MARKET_LABEL, fmtX } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 type Ranking = {
@@ -110,10 +112,60 @@ type WarrantBranch = {
   breakdown?: WarrantBreakdown[];
 };
 
+function EmptyNotice({ tag, children }: { tag: string; children: React.ReactNode }) {
+  return (
+    <Alert className="mb-4 bg-card">
+      <AlertDescription className="flex flex-wrap items-baseline gap-2.5 text-[13px] text-foreground">
+        <span className="shrink-0 rounded-md bg-[color:var(--ink-2)]/10 px-2 py-0.5 text-[11.5px] font-bold tracking-[0.3px] text-[color:var(--ink-2)]">{tag}</span>
+        <span>{children}</span>
+      </AlertDescription>
+    </Alert>
+  );
+}
+
+function ConcentrationTab({ radar }: { radar: RadarJson | null }) {
+  if (!radar) return <Skeleton className="h-[68px] rounded-[var(--r-md)]" />;
+  const rows = radar.concentration ?? [];
+  if (rows.length === 0) {
+    return <EmptyNotice tag="集中度">今日無符合條件的集中度資料(需有分點與成交量紀錄)。</EmptyNotice>;
+  }
+  return (
+    <div className="flex flex-col gap-1.5 pb-2">
+      <div className="mb-1 flex items-baseline gap-2">
+        <h2 className="text-[15px] font-semibold text-foreground">買超集中度躍升榜</h2>
+        <span className="text-xs text-muted-foreground">前5大買超分點佔成交量比,躍升幅度排序</span>
+      </div>
+      <div className="grid grid-cols-[1.6fr_1fr_1fr_1fr] gap-2 px-3.5 text-[11.5px] text-muted-foreground">
+        <span>股票</span>
+        <span>前5大買超佔量</span>
+        <span>20日均</span>
+        <span>躍升幅度</span>
+      </div>
+      {rows.map((r) => (
+        <a
+          key={r.id}
+          href={`/stock?id=${r.id}`}
+          className="num grid grid-cols-[1.6fr_1fr_1fr_1fr] items-center gap-2 rounded-[var(--r-md)] border border-border bg-card px-3.5 py-2.5 text-[13px] text-[color:var(--ink-2)] transition-colors hover:border-[color:var(--border-strong)]"
+        >
+          <span className="flex flex-col gap-0.5 font-sans">
+            <b className="text-sm font-bold text-foreground">{r.name}</b>
+            <small className="text-[11px] text-muted-foreground">
+              {r.id} · {MARKET_LABEL[r.market] ?? r.market}
+            </small>
+          </span>
+          <span>{(r.buy_concentration * 100).toFixed(1)}%</span>
+          <span>{(r.concentration_avg20 * 100).toFixed(1)}%</span>
+          <span className="font-bold text-warn">{fmtX(r.vs20)}</span>
+        </a>
+      ))}
+    </div>
+  );
+}
+
 const TABS = [
   { key: "rankings", label: "排行榜", hint: "分點操作勝率與可信度排行", icon: IconFlame },
   { key: "today", label: "今日動向", hint: "追蹤分點於最近交易日的買超明細", icon: IconZap },
-  { key: "warrant", label: "權證大戶", hint: "追蹤分點針對單一標的之多檔權證，累計買賣超達 500 萬的動向", icon: IconTrend },
+  { key: "warrant", label: "權證分點異動(實驗)", hint: "追蹤分點針對單一標的之多檔權證，累計買賣超達 500 萬的動向", icon: IconTrend },
 ] as const;
 
 function LoadingSkeleton() {
@@ -309,6 +361,7 @@ function BranchGroupCard({ branchName, totalAmt, stocks }: { branchName: string,
 }
 
 export default function BranchPage() {
+  const [radar, setRadar] = useState<RadarJson | null>(null);
   const [tab, setTab] = useState<"rankings" | "today" | "warrant">("rankings");
   const [rankingsData, setRankingsData] = useState<RankingsData | null>(null);
   const [today, setToday] = useState<TodayMovements | null>(null);
@@ -320,6 +373,11 @@ export default function BranchPage() {
   const [error, setError] = useState(false);
 
   useEffect(() => {
+    fetch("/data/radar.json")
+      .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
+      .then(setRadar)
+      .catch(() => setError(true));
+
     fetch("/data/branches/rankings.json")
       .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
       .then(setRankingsData)
@@ -531,6 +589,11 @@ export default function BranchPage() {
 
       {tab === "today" && (
         <div className="flex flex-col gap-6 pb-7">
+          <ConcentrationTab radar={radar} />
+          
+          <div className="mb-[-12px] flex items-baseline gap-2">
+            <h2 className="text-[15px] font-semibold text-foreground">分點今日買超</h2>
+          </div>
           {Object.entries(today).length === 0 && <div className="py-[46px] text-center text-sm text-muted-foreground">今日無追蹤分點的買超紀錄</div>}
           {Object.entries(today).map(([branchName, trades]) => (
             <div key={branchName} className="rounded-[var(--r-lg)] border border-border bg-card p-4 shadow-[var(--shadow-card)]">

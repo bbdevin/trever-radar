@@ -1,15 +1,14 @@
 "use client";
 
 import { usePathname } from "next/navigation";
-import { IconCompass, IconPulse, IconRadar, IconStar, IconTrend } from "@/components/Icons";
+import { IconCompass, IconRadar, IconStar } from "@/components/Icons";
 import { cn } from "@/lib/utils";
 
-const ITEMS = [
+type NavItem = { label: string; href?: string; icon: any; badge?: string };
+const ITEMS: NavItem[] = [
   { label: "雷達", href: "/", icon: IconRadar },
   { label: "分點", href: "/branch", icon: IconCompass },
-  { label: "探索", href: "/explore", icon: IconTrend },
   { label: "自選", href: "/watchlist", icon: IconStar },
-  { label: "盤中", icon: IconPulse, badge: "V2" },
 ];
 
 const itemClass = "flex min-w-[62px] flex-col items-center gap-0.5 rounded-[10px] px-2.5 py-1 text-[10.5px] text-muted-foreground";

@@ -23,12 +23,11 @@ export const viewport: Viewport = {
   viewportFit: "cover",
 };
 
-const NAV = [
+type NavItem = { label: string; href?: string; active?: boolean; planned?: string };
+const NAV: NavItem[] = [
   { label: "今日雷達", href: "/", active: true },
   { label: "分點排行", href: "/branch" },
-  { label: "探索", href: "/explore" },
   { label: "自選", href: "/watchlist" },
-  { label: "盤中雷達", planned: "V2" },
 ];
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
