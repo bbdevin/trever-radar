@@ -142,6 +142,15 @@ docker run --rm -v $(pwd)/data:/d python:3.11 \
 
 SSH 回 VPS,逐段貼:
 
+### 4a-0. 先更新 VPS 上的程式碼(必跑)
+
+```bash
+cd ~/trever-radar
+git pull
+```
+
+策略/評分邏輯在程式碼裡(例:2026-07-10 的 S1 雙軌還原)——用舊碼重算,算出來的還是舊 reasons。
+
 ### 4a. 補齊 VPS 跑的 3 天裡缺的每日行情(不做會有 3 天缺口)
 
 ```bash
@@ -150,6 +159,17 @@ docker run --rm -v $(pwd)/pipeline:/app/pipeline -v $(pwd)/data:/app/data -w /ap
   bash -c "pip install -r requirements.txt && python -m radar backfill --days 7 && \
     for i in 0 1 2 3 4 5 6; do python -m radar import-daily --date \$(date -d \"-\$i day\" +%Y%m%d) --datasets insti,margin || true; done"
 ```
+
+### 4a-1. 補題材 + 指標全重算(2026-07-10 新增;週六雲端全重算已停用,由此步接手)
+
+```bash
+docker run --rm -v $(pwd)/pipeline:/app/pipeline -v $(pwd)/data:/app/data -w /app/pipeline python:3.11 \
+  bash -c "pip install -r requirements.txt && python -m radar import-themes && python -m radar compute-indicators --all"
+```
+
+- `import-themes`:概念股分類全量(免 token,約幾分鐘);上傳後雲端每週一 14:10 仍會自動更新。
+- `compute-indicators --all`:全市場全歷史指標 + 策略 reasons(純 CPU 免 API,約 10–30 分)——不跑的話,雲端只有下一交易日起的當日增量,歷史策略訊號會缺。
+- 還原因子 `compute-adjustments --all` **不強制**(需 FinMind token 且 3–4 小時);之後改在雲端手動 `gh workflow run data-backfill -f task=adjust` 補即可,除權息旺季建議每 1–2 週跑一次。
 
 ### 4b. 安裝 GitHub CLI 並登入(依你系統二選一)
 
