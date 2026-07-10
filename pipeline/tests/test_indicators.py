@@ -130,5 +130,55 @@ class S1DualTrackTests(unittest.TestCase):
         self.assertNotIn("S1_REBOUND", all_codes)
 
 
+class TestTechnicalBaseScore(unittest.TestCase):
+    def test_s_strategies_do_not_add_to_score(self):
+        # 觸發 S1 嚴謹版
+        score, reasons, _ = score_technical(**tech_kwargs(
+            is_limit_up_20d=True, has_volume_surge_5d=True, is_macd_golden_cross=True
+        ))
+        codes = {r["code"]: r["points"] for r in reasons}
+        self.assertIn("S1_REBOUND", codes)
+        self.assertEqual(score, 0)  # S1 的 20 分不應加到 tech_score
+
+
+class S2_to_S10_Tests(unittest.TestCase):
+    def test_s2_breakout20_positive(self):
+        score, reasons, _ = score_technical(**tech_kwargs(
+            close=120, open_=100, high=121, low=99,
+            volume_ratio=2.5, ma5=110, ma10=105, ma20=101,
+            macd=1, macd_hist=1
+        ))
+        codes = {r["code"]: r["points"] for r in reasons}
+        self.assertIn("S2_BREAKOUT20", codes)
+        self.assertEqual(score, 50) # T1_MA20(10)+T1_BULL_MA(15)+T2_20D_HIGH(15)+T2_VOLUME_BREAKOUT(10)=50
+
+    def test_s3_ma_converge_positive(self):
+        score, reasons, _ = score_technical(**tech_kwargs(
+            close=105, open_=100, high=105, low=100,
+            volume_ratio=1.6, ma5=101, ma10=100, ma20=100,
+            macd_hist=1, prev_macd_hist=0.1, rsi14=60
+        ))
+        codes = {r["code"]: r["points"] for r in reasons}
+        self.assertIn("S3_MA_CONVERGE_BREAKOUT", codes)
+        self.assertNotIn("S2_BREAKOUT20", codes)
+
+    def test_s10_bottom_macd_positive(self):
+        score, reasons, _ = score_technical(**tech_kwargs(
+            close=50, box_high60=100, macd_hist=1, prev_macd_hist=-1,
+            macd=-2, ma20=45, volume_ratio=1.5, rsi14=55
+        ))
+        codes = {r["code"]: r["points"] for r in reasons}
+        self.assertIn("S10_BOTTOM_MACD", codes)
+
+    def test_s10_negative(self):
+        # 跌幅不夠 (close=90, box_high60=100) -> 應反例
+        score, reasons, _ = score_technical(**tech_kwargs(
+            close=90, box_high60=100, macd_hist=1, prev_macd_hist=-1,
+            macd=-2, ma20=85, volume_ratio=1.5, rsi14=55
+        ))
+        codes = {r["code"]: r["points"] for r in reasons}
+        self.assertNotIn("S10_BOTTOM_MACD", codes)
+
+
 if __name__ == "__main__":
     unittest.main()

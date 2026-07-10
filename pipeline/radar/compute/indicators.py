@@ -232,6 +232,9 @@ def score_technical(**x) -> tuple[int, list[dict], list[dict]]:
         score += points
         reasons.append({"code": code, "points": points, "text": text, "value": value})
 
+    def add_strategy(points: int, code: str, text: str, value=None):
+        reasons.append({"code": code, "points": points, "text": text, "value": value})
+
     ma20 = x["ma20"]
     ma60 = x["ma60"]
     if ma20 is not None and close > ma20:
@@ -316,9 +319,9 @@ def score_technical(**x) -> tuple[int, list[dict], list[dict]]:
 
     # S1: 漲停基因二次發動(雙軌:嚴謹 20 分,不中再看放寬 15 分;elif 不重複計分)
     if x.get("is_limit_up_20d") and x.get("has_volume_surge_5d") and x.get("is_macd_golden_cross"):
-        add(20, "S1_REBOUND", "漲停基因二次發動(20日內曾漲停, MACD零上金叉, 5日內爆量)")
+        add_strategy(20, "S1_REBOUND", "漲停基因二次發動(20日內曾漲停, MACD零上金叉, 5日內爆量)")
     elif x.get("is_surge_7pct_20d") and x.get("has_volume_surge_1_5x_5d") and x.get("is_macd_golden_cross_any"):
-        add(15, "S1_REBOUND_RELAXED", "漲停基因二次發動-相近(20日內曾大漲7%, MACD金叉, 5日量增1.5倍)")
+        add_strategy(15, "S1_REBOUND_RELAXED", "漲停基因二次發動-相近(20日內曾大漲7%, MACD金叉, 5日量增1.5倍)")
 
     # S2: 20 日新高爆量突破
     # 突破20日高; 量>2倍; 5>10>20; ma20向上; MACD>0且紅柱; 收盤近最高; 突破K無長上影
@@ -328,7 +331,7 @@ def score_technical(**x) -> tuple[int, list[dict], list[dict]]:
                 body = abs(close - open_)
                 upper = high - max(open_, close)
                 if upper <= body * 0.5:
-                    add(20, "S2_BREAKOUT20", "20日新高爆量突破(多頭排列+爆量+實體長紅)")
+                    add_strategy(20, "S2_BREAKOUT20", "20日新高爆量突破(多頭排列+爆量+實體長紅)")
 
     # S3: 均線糾結突破
     # 5,10,20接近(最高最低<3%); 收盤站上三均線; ma20向上或走平; 量>1.5; 突破10日高; MACD紅柱增強; RSI>50
@@ -339,7 +342,7 @@ def score_technical(**x) -> tuple[int, list[dict], list[dict]]:
                 if vol_ratio > 1.5 and close >= get_max_high(10):
                     if x["macd_hist"] and x["prev_macd_hist"] and x["macd_hist"] > x["prev_macd_hist"]:
                         if rsi14 and rsi14 > 50:
-                            add(20, "S3_MA_CONVERGE_BREAKOUT", "均線糾結突破(均線收斂後帶量發動)")
+                            add_strategy(20, "S3_MA_CONVERGE_BREAKOUT", "均線糾結突破(均線收斂後帶量發動)")
 
     # S4: 波動收斂後突破
     # 10日振幅縮小; 5日均量低於20日均量70%; 布林寬度近60日低檔; 突破20日高; 量>2倍; 收盤近最高
@@ -349,7 +352,7 @@ def score_technical(**x) -> tuple[int, list[dict], list[dict]]:
         if len(prev_5_vols) == 5 and (sum(prev_5_vols)/5) < adv20 * 0.8:
             # check bollinger width (approximation)
             if std20 and ma20 and (std20 * 4 / ma20) < 0.15:
-                add(20, "S4_VOLATILITY_CONTRACTION", "波動收斂後突破(量縮整理後爆量創高)")
+                add_strategy(20, "S4_VOLATILITY_CONTRACTION", "波動收斂後突破(量縮整理後爆量創高)")
 
     # S5: 強勢股量縮回踩
     # 20日內漲幅>15% (close / close[i-20]); 5>10>20; ma20向上; 回踩10或20日線(最低價接近); 量縮; 當日收紅; 站回5日線或破昨高
@@ -358,7 +361,7 @@ def score_technical(**x) -> tuple[int, list[dict], list[dict]]:
         if prev_ma20 and ma20 > prev_ma20 and vol_ratio < 1.0 and close > open_:
             if (low and low <= ma10 * 1.02) or (low and low <= ma20 * 1.02):
                 if close > x["ma5"] or (prev_close and close > prev_close):
-                    add(20, "S5_PULLBACK_SUPPORT", "強勢股量縮回踩(多頭回踩均線不破且轉強)")
+                    add_strategy(20, "S5_PULLBACK_SUPPORT", "強勢股量縮回踩(多頭回踩均線不破且轉強)")
 
     # S6: 高檔平台再突破
     # 整理一段時間(近15日高點-低點 < 10%); close突破15日高; 突破量大於均量
@@ -368,7 +371,7 @@ def score_technical(**x) -> tuple[int, list[dict], list[dict]]:
         if close >= h15 and vol_ratio > 1.2:
             c30 = _val(closes, 30)
             if c30 and l15 > c30 * 1.1: # Before platform there was a rise
-                add(20, "S6_HIGH_BASE_BREAKOUT", "高檔平台再突破(高檔盤堅後再度創高)")
+                add_strategy(20, "S6_HIGH_BASE_BREAKOUT", "高檔平台再突破(高檔盤堅後再度創高)")
 
     # S7: MACD 零軸上金叉
     # DIF>0, Signal>0; DIF穿越Signal; 紅柱轉正; 站上20日線; 突破10日高; 量>1.5; RSI 50-75
@@ -376,7 +379,7 @@ def score_technical(**x) -> tuple[int, list[dict], list[dict]]:
         if x["macd_hist"] and x["macd_hist"] > 0 and x["prev_macd_hist"] and x["prev_macd_hist"] <= 0:
             if ma20 and close > ma20 and close >= get_max_high(10):
                 if vol_ratio > 1.5 and rsi14 and 50 <= rsi14 <= 75:
-                    add(20, "S7_MACD_ZERO_CROSS", "MACD零軸上金叉(多頭趨勢重新加速)")
+                    add_strategy(20, "S7_MACD_ZERO_CROSS", "MACD零軸上金叉(多頭趨勢重新加速)")
 
     # S8: 跳空突破不回補
     # 開盤 > 昨高; 跳空 2%~6%; 當日低點未補缺口; 突破20日高; 量>2倍; 收盤近高
@@ -384,7 +387,7 @@ def score_technical(**x) -> tuple[int, list[dict], list[dict]]:
     if prev_high and open_ > prev_high * 1.02 and open_ < prev_high * 1.06:
         if low and low > prev_high and is_high20 and vol_ratio > 2.0:
             if high and close >= high * 0.98:
-                add(20, "S8_GAP_BREAKOUT", "跳空突破不回補(缺口強勢表態)")
+                add_strategy(20, "S8_GAP_BREAKOUT", "跳空突破不回補(缺口強勢表態)")
 
     # S9: 五日線強勢續攻
     # 近10日漲幅>10%; 近5日收盤在5日線上; 5日線向上; 量增; 突破3日高
@@ -395,7 +398,7 @@ def score_technical(**x) -> tuple[int, list[dict], list[dict]]:
         if all(c is not None and m is not None and c > m for c, m in zip(prev_5_closes, prev_5_ma5s)):
             if x["ma5"] and prev_ma5 and x["ma5"] > prev_ma5 and vol_ratio > 1.0:
                 if close >= get_max_high(3):
-                    add(20, "S9_MA5_TREND", "五日線強勢續攻(沿五日線強勢攀升)")
+                    add_strategy(20, "S9_MA5_TREND", "五日線強勢續攻(沿五日線強勢攀升)")
 
     # S10: 底部 MACD 轉強
     # 近60日跌幅>20%; 負柱狀體縮短; 低檔金叉; 站上20日線; 量增; RSI底背離或>50
@@ -404,7 +407,7 @@ def score_technical(**x) -> tuple[int, list[dict], list[dict]]:
         if x["macd_hist"] and x["prev_macd_hist"] and x["prev_macd_hist"] < 0 and x["macd_hist"] > x["prev_macd_hist"]:
             if macd and macd < 0 and x["macd_hist"] > 0: # just crossed
                 if ma20 and close > ma20 and vol_ratio > 1.0 and rsi14 and rsi14 > 50:
-                    add(20, "S10_BOTTOM_MACD", "底部MACD轉強(跌深止跌轉強)")
+                    add_strategy(20, "S10_BOTTOM_MACD", "底部MACD轉強(跌深止跌轉強)")
 
     return min(score, 100), reasons, risks
 
