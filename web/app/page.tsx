@@ -22,8 +22,7 @@ const TABS: { key: ListKey; label: string; hint: string; icon: typeof IconFlame 
 ];
 
 const STRATEGIES = [
-  { key: "T6_MARK_STRATEGY", label: "綜合策略(嚴謹)", desc: "結合分點、技術、權證的綜合嚴謹策略，需滿足多項嚴格條件" },
-  { key: "T6_MARK_STRATEGY_RELAXED", label: "綜合策略(寬鬆)", desc: "放寬部分指標門檻的綜合寬鬆策略，適合提早捕捉可能發動的標的" },
+
   { key: "S1_REBOUND", label: "漲停二次發動", desc: "近 20 日曾漲停，現價站上均線且 MACD 零上金叉，近日爆量突破" },
   { key: "S2_BREAKOUT20", label: "20日爆量突破", desc: "創 20 日新高，當日爆量且收紅 K，中長期均線多頭排列" },
   { key: "S3_MA_CONVERGE_BREAKOUT", label: "均線糾結突破", desc: "5/10/20 日均線距離極近，當日帶量長紅突破糾結區" },
@@ -62,7 +61,7 @@ export default function RadarPage() {
   const [meta, setMeta] = useState<MetaJson | null>(null);
   const [error, setError] = useState(false);
   const [tab, setTab] = useState<ListKey>("score");
-  const [strategy, setStrategy] = useState<string>("T6_MARK_STRATEGY");
+  const [strategy, setStrategy] = useState<string>("S1_REBOUND");
   const { session, loading } = useSession();
 
   useEffect(() => {

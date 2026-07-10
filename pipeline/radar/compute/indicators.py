@@ -148,8 +148,6 @@ def compute_series(price_rows: Iterable[dict]) -> list[dict]:
                 if macd is not None and macd > 0:
                     is_macd_golden_cross = True
 
-        is_mark_strategy = is_limit_up_20d and has_volume_surge_5d and is_macd_golden_cross
-        is_mark_strategy_relaxed = is_surge_7pct_20d and has_volume_surge_1_5x_5d and is_macd_golden_cross_any
 
         std20 = _stddev(closes, 20, i)
         
@@ -183,8 +181,6 @@ def compute_series(price_rows: Iterable[dict]) -> list[dict]:
             d9=d9,
             prev_k=prev_k,
             prev_d=prev_d,
-            is_mark_strategy=is_mark_strategy,
-            is_mark_strategy_relaxed=is_mark_strategy_relaxed,
         )
 
         out.append({
@@ -276,10 +272,6 @@ def score_technical(**x) -> tuple[int, list[dict], list[dict]]:
         if x["k9"] > x["d9"] and x["prev_k"] <= x["prev_d"] and x["k9"] < 50 and x["d9"] < 50:
             add(5, "T5_KD_GOLDEN_LOW", "KD於50以下黃金交叉", _round(x["k9"], 2))
 
-    if x.get("is_mark_strategy"):
-        add(20, "T6_MARK_STRATEGY", "策略(20日內曾漲停, MACD零上金叉, 5日內爆量)")
-    elif x.get("is_mark_strategy_relaxed"):
-        add(15, "T6_MARK_STRATEGY_RELAXED", "相近策略(20日內曾大漲, MACD金叉, 5日微量增)")
 
     # 新增 10 項技術選股策略
     opens, highs, lows = x["opens"], x["highs"], x["lows"]
@@ -318,7 +310,7 @@ def score_technical(**x) -> tuple[int, list[dict], list[dict]]:
 
     # S1: 漲停基因二次發動
     # 20日內曾漲停(is_limit_up_20d); 漲停後未破底(簡化:近20日低點不遠); 站上10/20日線; 20日線向上或走平; MACD>0金叉; 5日內量>1.8倍; 突破5日高
-    if (x.get("is_limit_up_20d") or x.get("is_mark_strategy")) and ma10 and ma20 and close > ma10 and close > ma20:
+    if (x.get("is_limit_up_20d")) and ma10 and ma20 and close > ma10 and close > ma20:
         if prev_ma20 and ma20 >= prev_ma20 * 0.999: # 向上或走平
             if macd and macd > 0 and x["macd_hist"] and x["macd_hist"] > 0 and x["prev_macd_hist"] and x["prev_macd_hist"] <= 0:
                 if get_max_vol(5) > adv20 * 1.8 and close >= get_max_high(5):

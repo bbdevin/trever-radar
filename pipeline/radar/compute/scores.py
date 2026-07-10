@@ -610,8 +610,8 @@ def compute_scores(date: str | None = None) -> dict:
         final = max(0, min(100, base + penalty))
 
         # 確保所有策略都不被過濾掉
-        strategies = [r for r in t_reasons if r.get("code", "").startswith("S") or "MARK_STRATEGY" in r.get("code", "")]
-        others = [r for r in t_reasons if not (r.get("code", "").startswith("S") or "MARK_STRATEGY" in r.get("code", ""))]
+        strategies = [r for r in t_reasons if r.get("code", "").startswith("S")]
+        others = [r for r in t_reasons if not r.get("code", "").startswith("S")]
         top_tech = strategies + sorted(others, key=lambda r: -r.get("points", 0))[:3]
         
         reasons = b_reasons + w_reasons + top_tech + i_reasons + theme_reasons

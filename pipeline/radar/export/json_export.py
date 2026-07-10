@@ -207,10 +207,11 @@ def export_json(out_dir: Path | None = None) -> dict:
 
         # 策略榜單
         STRATEGY_CODES = [
-            "T6_MARK_STRATEGY", "T6_MARK_STRATEGY_RELAXED", "S1_REBOUND", "S2_BREAKOUT20", "S3_MA_CONVERGE_BREAKOUT",
+            "S1_REBOUND", "S2_BREAKOUT20", "S3_MA_CONVERGE_BREAKOUT",
             "S4_VOLATILITY_CONTRACTION", "S5_PULLBACK_SUPPORT", "S6_HIGH_BASE_BREAKOUT",
-            "S7_MACD_ZERO_CROSS", "S8_GAP_BREAKOUT", "S9_MA5_TREND", "S10_BOTTOM_MACD",
-            "S11_INSTI_BREAKOUT", "S12_BRANCH_ACCUMULATION", "S13_SHORT_SQUEEZE"
+            "S7_MACD_ZERO_CROSS", "S8_GAP_BREAKOUT", "S9_MA5_TREND",
+            "S10_BOTTOM_MACD", "S11_INSTI_BREAKOUT", "S12_BRANCH_ACCUMULATION",
+            "S13_SHORT_SQUEEZE"
         ]
         strategies_lists = {code: [] for code in STRATEGY_CODES}
         for s in all_stocks:
