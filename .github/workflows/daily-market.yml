@@ -61,7 +61,7 @@ jobs:
 
       - name: Compute technical indicators (incremental)
         working-directory: pipeline
-        run: python -m radar compute-indicators --all --days 5
+        run: python -m radar compute-indicators --all
 
       - name: Compute daily scores
         working-directory: pipeline
