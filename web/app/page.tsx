@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { Clock } from "lucide-react";
 import { IconFlame, IconPulse, IconRadar, IconTrend, IconTrendDown, IconZap, IconStar } from "@/components/Icons";
 import MoneyFlow from "@/components/MoneyFlow";
 import StockCard from "@/components/StockCard";
@@ -137,10 +138,11 @@ export default function RadarPage() {
       </div>
 
       {stale.length > 0 && (
-        <Alert className="mb-4 bg-card">
+        <Alert className="mb-4 border-warn/30 bg-warn/5">
           <AlertDescription className="flex flex-wrap items-baseline gap-2.5 text-[13px] text-foreground">
-            <span className="shrink-0 rounded-md bg-[color:var(--ink-2)]/10 px-2 py-0.5 text-[11.5px] font-bold tracking-[0.3px] text-[color:var(--ink-2)]">
-              資料狀態
+            <span className="inline-flex shrink-0 items-center gap-1 rounded-md bg-warn/15 px-2 py-0.5 text-[11.5px] font-bold tracking-[0.3px] text-warn">
+              <Clock size={12} strokeWidth={1.8} />
+              尚未更新
             </span>
             <span>
               {stale.map((s) => `${s.label}今日尚未公布,暫用 ${s.date}`).join("；")}

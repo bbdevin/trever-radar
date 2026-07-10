@@ -135,29 +135,39 @@ function ConcentrationTab({ radar }: { radar: RadarJson | null }) {
         <h2 className="text-[15px] font-semibold text-foreground">買超集中度躍升榜</h2>
         <span className="text-xs text-muted-foreground">前5大買超分點佔成交量比,躍升幅度排序</span>
       </div>
-      <div className="grid grid-cols-[1.6fr_1fr_1fr_1fr] gap-2 px-3.5 text-[11.5px] text-muted-foreground">
-        <span>股票</span>
-        <span>前5大買超佔量</span>
-        <span>20日均</span>
-        <span>躍升幅度</span>
+      <div className="overflow-x-auto rounded-[var(--r-lg)] border border-border bg-card shadow-[var(--shadow-card)]">
+        <table className="w-full border-collapse text-[13px]">
+          <thead>
+            <tr>
+              <th className="px-3.5 py-2.5 text-left font-semibold text-muted-foreground">股票</th>
+              <th className="px-3.5 py-2.5 text-right font-semibold text-muted-foreground">前5大買超佔量</th>
+              <th className="px-3.5 py-2.5 text-right font-semibold text-muted-foreground">20日均</th>
+              <th className="px-3.5 py-2.5 text-right font-semibold text-muted-foreground">躍升幅度</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr
+                key={r.id}
+                onClick={() => { window.location.href = `/stock?id=${r.id}`; }}
+                className="num cursor-pointer border-t border-[color:var(--line)] text-[color:var(--ink-2)] transition-colors duration-200 hover:bg-secondary"
+              >
+                <td className="px-3.5 py-2.5 text-left">
+                  <a href={`/stock?id=${r.id}`} onClick={(e) => e.stopPropagation()} className="flex flex-col gap-0.5 font-sans">
+                    <b className="text-sm font-bold text-foreground">{r.name}</b>
+                    <small className="text-[11px] text-muted-foreground">
+                      {r.id} · {MARKET_LABEL[r.market] ?? r.market}
+                    </small>
+                  </a>
+                </td>
+                <td className="px-3.5 py-2.5 text-right whitespace-nowrap">{(r.buy_concentration * 100).toFixed(1)}%</td>
+                <td className="px-3.5 py-2.5 text-right whitespace-nowrap">{(r.concentration_avg20 * 100).toFixed(1)}%</td>
+                <td className="px-3.5 py-2.5 text-right font-bold whitespace-nowrap text-warn">{fmtX(r.vs20)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
-      {rows.map((r) => (
-        <a
-          key={r.id}
-          href={`/stock?id=${r.id}`}
-          className="num grid min-h-11 cursor-pointer grid-cols-[1.6fr_1fr_1fr_1fr] items-center gap-2 rounded-[var(--r-md)] border border-border bg-card px-3.5 py-2.5 text-[13px] text-[color:var(--ink-2)] transition-colors duration-200 hover:border-[color:var(--border-strong)]"
-        >
-          <span className="flex flex-col gap-0.5 font-sans">
-            <b className="text-sm font-bold text-foreground">{r.name}</b>
-            <small className="text-[11px] text-muted-foreground">
-              {r.id} · {MARKET_LABEL[r.market] ?? r.market}
-            </small>
-          </span>
-          <span>{(r.buy_concentration * 100).toFixed(1)}%</span>
-          <span>{(r.concentration_avg20 * 100).toFixed(1)}%</span>
-          <span className="font-bold text-warn">{fmtX(r.vs20)}</span>
-        </a>
-      ))}
     </div>
   );
 }
@@ -604,21 +614,37 @@ export default function BranchPage() {
               <div className="mb-3 flex items-center justify-between border-b border-border pb-3">
                 <span className="text-lg font-semibold text-foreground">{branchName}</span>
               </div>
-              <div className="grid gap-2">
-                {trades.map((t) => (
-                  <a
-                    href={`/stock?id=${t.stock_id}`}
-                    key={t.stock_id}
-                    className="grid min-h-11 cursor-pointer grid-cols-[2fr_1fr_1fr_1fr] items-center gap-2 rounded-md bg-secondary px-2 py-1.5 no-underline transition-colors duration-200 hover:bg-muted"
-                  >
-                    <div>
-                      <span className="text-foreground">{t.stock_name}</span> <span className="text-xs text-muted-foreground">{t.stock_id}</span>
-                    </div>
-                    <div className="text-right text-up">買 {t.buy_lots}</div>
-                    <div className={cn("text-right", t.net_lots > 0 ? "text-up" : "text-down")}>淨 {t.net_lots}</div>
-                    <div className="text-right text-xs text-[color:var(--ink-2)]">佔比 {t.pct}%</div>
-                  </a>
-                ))}
+              <div className="overflow-x-auto">
+                <table className="w-full border-collapse text-[13px]">
+                  <thead>
+                    <tr>
+                      <th className="px-2 py-2 text-left font-semibold text-muted-foreground">股票</th>
+                      <th className="px-2 py-2 text-right font-semibold text-muted-foreground">買超</th>
+                      <th className="px-2 py-2 text-right font-semibold text-muted-foreground">淨額</th>
+                      <th className="px-2 py-2 text-right font-semibold text-muted-foreground">佔比</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {trades.map((t) => (
+                      <tr
+                        key={t.stock_id}
+                        onClick={() => { window.location.href = `/stock?id=${t.stock_id}`; }}
+                        className="num cursor-pointer border-t border-[color:var(--line)] transition-colors duration-200 hover:bg-secondary"
+                      >
+                        <td className="px-2 py-2.5 text-left font-sans">
+                          <a href={`/stock?id=${t.stock_id}`} onClick={(e) => e.stopPropagation()} className="no-underline">
+                            <span className="text-foreground">{t.stock_name}</span> <span className="text-xs text-muted-foreground">{t.stock_id}</span>
+                          </a>
+                        </td>
+                        <td className="px-2 py-2.5 text-right whitespace-nowrap text-up">{t.buy_lots}</td>
+                        <td className={cn("px-2 py-2.5 text-right whitespace-nowrap", t.net_lots > 0 ? "text-up" : "text-down")}>
+                          {t.net_lots > 0 ? "+" : ""}{t.net_lots}
+                        </td>
+                        <td className="px-2 py-2.5 text-right whitespace-nowrap text-xs text-[color:var(--ink-2)]">{t.pct}%</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             </div>
           ))}

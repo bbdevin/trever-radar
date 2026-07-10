@@ -196,7 +196,7 @@
 | ID | 狀態 | 備註 |
 |---|---|---|
 | V1 | ✅ 完成(2026-07-11) | WP-V1:卡片層級收斂+狀態色條(risk/watch/neutral,僅用既有 token)+觸控/aria-label+骨架屏/教育性空狀態;`npm run build` 過 |
-| V2 | ⏳ 待確認 | |
+| V2 | ✅ 完成(2026-07-11) | WP-V2:權證標竿表補 `aria-sort`+鍵盤可聚焦排序鈕+選中態(inset ring/亮字);`/branch` 集中度榜與今日買超遷語意化 `<table>`(對齊權證表、`overflow-x-auto` 手機可橫滑、不裁代號/漲跌);首頁 stale 標示改琥珀 `Clock` 徽章。卡片列(分點前13/權證大戶群組)不硬遷;無新依賴、未改配色 token 語意;`npm run build` 過 |
 | V3 | ⏳ 低優先 | |
 | F1 | ⏳ 待 Armed | |
 | F2 | ⏳ 待確認 | 可與 Armed A1 同波評估 |

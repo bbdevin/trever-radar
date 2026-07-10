@@ -503,22 +503,37 @@ function WarrantPanel({ data }: { data: StockJson }) {
             <thead>
               {table.getHeaderGroups().map((hg) => (
                 <tr key={hg.id}>
-                  {hg.headers.map((header, i) => (
-                    <th
-                      key={header.id}
-                      onClick={header.column.getToggleSortingHandler()}
-                      className={cn(
-                        "cursor-pointer border-t border-[color:var(--line)] px-1.5 py-2 font-semibold text-muted-foreground select-none",
-                        i < 2 ? "text-left" : "text-right",
-                      )}
-                    >
-                      <span className={cn("inline-flex items-center gap-0.5", i >= 2 && "justify-end")}>
-                        {flexRender(header.column.columnDef.header, header.getContext())}
-                        {header.column.getIsSorted() === "asc" && <ChevronUp size={12} />}
-                        {header.column.getIsSorted() === "desc" && <ChevronDown size={12} />}
-                      </span>
-                    </th>
-                  ))}
+                  {hg.headers.map((header, i) => {
+                    const sorted = header.column.getIsSorted();
+                    const canSort = header.column.getCanSort();
+                    return (
+                      <th
+                        key={header.id}
+                        aria-sort={sorted === "asc" ? "ascending" : sorted === "desc" ? "descending" : canSort ? "none" : undefined}
+                        className={cn(
+                          "border-t border-[color:var(--line)] px-1.5 py-2 font-semibold text-muted-foreground select-none",
+                          i < 2 ? "text-left" : "text-right",
+                          sorted && "text-foreground shadow-[inset_0_0_0_1px_var(--border-strong)]",
+                        )}
+                      >
+                        {canSort ? (
+                          <button
+                            type="button"
+                            onClick={header.column.getToggleSortingHandler()}
+                            className={cn("inline-flex items-center gap-0.5", i >= 2 && "w-full justify-end")}
+                          >
+                            {flexRender(header.column.columnDef.header, header.getContext())}
+                            {sorted === "asc" && <ChevronUp size={12} />}
+                            {sorted === "desc" && <ChevronDown size={12} />}
+                          </button>
+                        ) : (
+                          <span className={cn("inline-flex items-center gap-0.5", i >= 2 && "justify-end")}>
+                            {flexRender(header.column.columnDef.header, header.getContext())}
+                          </span>
+                        )}
+                      </th>
+                    );
+                  })}
                 </tr>
               ))}
             </thead>

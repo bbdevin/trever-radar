@@ -125,6 +125,7 @@
 - 2026-07-10 Armed 追蹤規劃落檔(`docs/22`):確認下一產品方向為狀態池(Quiet→Armed→Triggered→Extended→Faded),首頁「未發動/已發動」、重用 S12/W3/B3,不新增策略/不抬綜合分;程式未實作,排在 Access + B Phase 1–3 之後。
 - 2026-07-10 功能·視覺 backlog 落檔(`docs/23`):ui-ux-pro-max 對齊後寫入 V1–V3 / F1–F4 與 WP-* Executor 工作包;拒絕新配色與 Inter 全站字體;程式未實作。
 - 2026-07-10 B 方案 Phase 1 (UI 刪減與合併):集中度併入 `/branch` 今日動向、題材只留首頁、移除 `/explore` 與空殼盤中導航、權證大戶降級為「權證分點異動(實驗)」、移除未使用依賴 `recharts`。
+- 2026-07-11 WP-V2 榜單/表格一致性(docs/23 §2 V2,只動 UI 不動資料語意):①權證明細標竿表補排序回饋——表頭可排序欄改鍵盤可聚焦 `<button>` + `aria-sort=ascending/descending`,選中欄加 inset ring + 亮字選中態;②`/branch` 集中度榜與「今日買超」兩個 div-grid 真表格遷成語意化 `<table>/<thead>/<tbody>`(對齊權證表字級/分隔線,`overflow-x-auto` 手機可橫滑,不裁代號/漲跌,淨額補 +/- 號),分點前13大買賣超與權證大戶群組維持卡片列不硬遷;③首頁 stale freshness 標示改琥珀徽章 + lucide `Clock`(用既有 `--warn` token,不新增色票)。無新增依賴,`npm run build` 過。
 
 ## 系統模組與功能對應表 (Pipeline Models Mapping)
 
