@@ -489,11 +489,19 @@ def _export_branches(out: Path, engine, date: str):
     branches_dir = out / "branches"
     branches_dir.mkdir(exist_ok=True)
     with engine.connect() as conn:
-        # Rankings
-        rankings = [dict(r._mapping) for r in conn.execute(text(
-            "SELECT branch_name, as_of, rank_score, win_rate, avg_ret5, samples, style, is_daytrade "
-            "FROM branch_rankings ORDER BY rank_score DESC, samples DESC"
+        # Rankings：只取最新一次快照(branch_rankings 保留歷史,§5)。
+        # 隔日沖分點另列 daytrade 清單,不混入主榜(§3b:它們是反指標/風險訊號)。
+        rows = [dict(r._mapping) for r in conn.execute(text(
+            "SELECT branch_name, as_of, rank_score, win_rate, avg_ret5, samples, style, is_daytrade, source "
+            "FROM branch_rankings "
+            "WHERE as_of = (SELECT MAX(as_of) FROM branch_rankings) "
+            "ORDER BY rank_score DESC, samples DESC"
         ))]
+        rankings = {
+            "as_of": rows[0]["as_of"] if rows else None,
+            "rankings": [r for r in rows if not r["is_daytrade"]],
+            "daytrade": [r for r in rows if r["is_daytrade"]],
+        }
         (branches_dir / "rankings.json").write_text(
             json.dumps(rankings, ensure_ascii=False), encoding="utf-8")
             

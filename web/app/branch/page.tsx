@@ -16,7 +16,71 @@ type Ranking = {
   samples: number;
   style: string;
   is_daytrade: number;
+  source: string;
 };
+
+type RankingsData = {
+  as_of: string | null;
+  rankings: Ranking[];
+  daytrade: Ranking[];
+};
+
+const MIN_SAMPLES = 10; // 樣本 < 10 顯示「樣本不足」(docs/13 §4)
+
+const SOURCE_BADGE: Record<string, { label: string; cls: string }> = {
+  manual: { label: "手動", cls: "bg-warn/10 text-warn" },
+  auto: { label: "自動", cls: "bg-primary/10 text-primary" },
+  candidate: { label: "候選", cls: "bg-muted text-muted-foreground" },
+};
+
+function RankCard({ r }: { r: Ranking }) {
+  const enoughSamples = r.samples >= MIN_SAMPLES;
+  const badge = SOURCE_BADGE[r.source] ?? SOURCE_BADGE.candidate;
+  return (
+    <div className={cn(
+      "flex flex-col gap-3 rounded-[var(--r-lg)] border bg-card p-3.5 shadow-[var(--shadow-card)]",
+      r.is_daytrade === 1 ? "border-down/40" : "border-border",
+    )}>
+      <div className="flex items-center justify-between gap-2">
+        <h3 className="text-lg text-foreground">{r.branch_name}</h3>
+        <div className="flex items-center gap-1.5">
+          <span className={cn("rounded-md px-1.5 py-0.5 text-[10.5px] font-bold", badge.cls)}>{badge.label}</span>
+          {r.is_daytrade === 1 && <span className="rounded-md bg-down/10 px-2 py-0.5 text-[11.5px] font-bold text-down">隔日沖</span>}
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <div className="text-xs text-muted-foreground">勝率 (5日)</div>
+          {enoughSamples ? (
+            <div className={cn("text-lg font-semibold", r.win_rate != null ? (r.win_rate > 50 ? "text-up" : "text-down") : "text-[color:var(--ink-2)]")}>
+              {r.win_rate != null ? `${r.win_rate.toFixed(1)}%` : "-"}
+            </div>
+          ) : (
+            <div className="text-[13px] font-medium text-[color:var(--ink-2)]">樣本不足</div>
+          )}
+        </div>
+        <div>
+          <div className="text-xs text-muted-foreground">平均報酬 (5日)</div>
+          {enoughSamples ? (
+            <div className={cn("text-lg font-semibold", r.avg_ret5 != null ? (r.avg_ret5 > 0 ? "text-up" : "text-down") : "text-[color:var(--ink-2)]")}>
+              {r.avg_ret5 != null ? `${r.avg_ret5.toFixed(1)}%` : "-"}
+            </div>
+          ) : (
+            <div className="text-[13px] font-medium text-[color:var(--ink-2)]">樣本不足</div>
+          )}
+        </div>
+        <div>
+          <div className="text-xs text-muted-foreground">事件數</div>
+          <div className="num text-foreground">{r.samples}</div>
+        </div>
+        <div>
+          <div className="text-xs text-muted-foreground">可信度分數</div>
+          <div className={cn("num", r.rank_score >= 70 ? "text-warn" : "text-[color:var(--accent-2)]")}>{r.rank_score}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 type Movement = {
   branch_name: string;
@@ -246,7 +310,7 @@ function BranchGroupCard({ branchName, totalAmt, stocks }: { branchName: string,
 
 export default function BranchPage() {
   const [tab, setTab] = useState<"rankings" | "today" | "warrant">("rankings");
-  const [rankings, setRankings] = useState<Ranking[] | null>(null);
+  const [rankingsData, setRankingsData] = useState<RankingsData | null>(null);
   const [today, setToday] = useState<TodayMovements | null>(null);
   const [warrantBranches, setWarrantBranches] = useState<Record<string, WarrantBranch[]>>({
     "1d": [], "2d": [], "5d": [], "30d": [], "120d": []
@@ -258,7 +322,7 @@ export default function BranchPage() {
   useEffect(() => {
     fetch("/data/branches/rankings.json")
       .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
-      .then(setRankings)
+      .then(setRankingsData)
       .catch(() => setError(true));
 
     fetch("/data/branches/today.json")
@@ -284,16 +348,19 @@ export default function BranchPage() {
       </div>
     );
   }
-  if (!rankings || !today) return <LoadingSkeleton />;
+  if (!rankingsData || !today) return <LoadingSkeleton />;
 
-  const hasDataWarning = rankings.some((r) => r.win_rate === null);
+  const mainRankings = rankingsData.rankings;
+  const daytradeRankings = rankingsData.daytrade;
+  const totalBranches = mainRankings.length + daytradeRankings.length;
+  const hasDataWarning = [...mainRankings, ...daytradeRankings].some((r) => r.samples < MIN_SAMPLES);
 
   return (
     <>
       <div className="my-3.5 flex gap-2.5">
         <div className="flex flex-col gap-0.5 rounded-[var(--r-md)] border border-border bg-card p-3 shadow-[var(--shadow-card)]">
           <span className="text-[11.5px] text-muted-foreground">資料狀態</span>
-          <span className="num text-[17px] font-bold">追蹤 {rankings.length} 個分點</span>
+          <span className="num text-[17px] font-bold">入榜 {totalBranches} 個分點</span>
         </div>
       </div>
 
@@ -316,37 +383,33 @@ export default function BranchPage() {
       </div>
 
       {tab === "rankings" && (
-        <div className="grid grid-cols-1 gap-2.5 pb-7 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-          {rankings.map((r) => (
-            <div key={r.branch_name} className="flex flex-col gap-3 rounded-[var(--r-lg)] border border-border bg-card p-3.5 shadow-[var(--shadow-card)]">
-              <div className="flex items-center justify-between">
-                <h3 className="text-lg text-foreground">{r.branch_name}</h3>
-                {r.is_daytrade === 1 && <span className="rounded-md bg-warn/10 px-2 py-0.5 text-[11.5px] font-bold text-warn">疑似隔日沖</span>}
+        <div className="flex flex-col gap-5 pb-7">
+          {mainRankings.length === 0 && (
+            <div className="py-[46px] text-center text-sm text-muted-foreground">
+              尚無分點達入榜門檻(累積事件 ≥ 5)。資料持續累積中。
+            </div>
+          )}
+          {mainRankings.length > 0 && (
+            <div className="grid grid-cols-1 gap-2.5 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+              {mainRankings.map((r) => (
+                <RankCard key={r.branch_name} r={r} />
+              ))}
+            </div>
+          )}
+
+          {daytradeRankings.length > 0 && (
+            <div className="flex flex-col gap-2.5">
+              <div className="flex items-baseline gap-2">
+                <h2 className="text-[15px] font-semibold text-down">隔日沖分點</h2>
+                <span className="text-xs text-muted-foreground">買超次日高比率回吐,列為反指標/風險訊號,不排進主榜</span>
               </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <div className="text-xs text-muted-foreground">勝率 (5日)</div>
-                  <div className={cn("text-lg font-semibold", r.win_rate ? (r.win_rate > 50 ? "text-up" : "text-down") : "text-[color:var(--ink-2)]")}>
-                    {r.win_rate ? `${r.win_rate.toFixed(1)}%` : "-"}
-                  </div>
-                </div>
-                <div>
-                  <div className="text-xs text-muted-foreground">平均報酬 (5日)</div>
-                  <div className={cn("text-lg font-semibold", r.avg_ret5 ? (r.avg_ret5 > 0 ? "text-up" : "text-down") : "text-[color:var(--ink-2)]")}>
-                    {r.avg_ret5 ? `${r.avg_ret5.toFixed(1)}%` : "-"}
-                  </div>
-                </div>
-                <div>
-                  <div className="text-xs text-muted-foreground">交易筆數</div>
-                  <div className="num text-foreground">{r.samples}</div>
-                </div>
-                <div>
-                  <div className="text-xs text-muted-foreground">可信度分數</div>
-                  <div className="num text-[color:var(--accent-2)]">{r.rank_score}</div>
-                </div>
+              <div className="grid grid-cols-1 gap-2.5 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                {daytradeRankings.map((r) => (
+                  <RankCard key={r.branch_name} r={r} />
+                ))}
               </div>
             </div>
-          ))}
+          )}
         </div>
       )}
 
