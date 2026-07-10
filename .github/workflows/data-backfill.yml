@@ -2,7 +2,9 @@ name: data-backfill
 
 # 凌晨長任務(FinMind 免費額度 600 req/hr,皆可中斷續跑):
 # 每天 01:10 台北:deep-backfill(已拉深的股票自動跳過 → 日常只補新上市/缺漏,近零請求)
-# 每週六 01:10:全市場還原因子重抓(除權息更新)+ 指標全歷史重算
+# 週六全市場還原因子重抓 + 指標全歷史重算已於 2026-07-10 停用,改在使用者 VPS 執行後
+# 依 docs/vps_backfill_plan.md Step 4 上傳 release + 清 cache 回灌雲端;雲端保留手動
+# task=adjust 作為 fallback(注意與 VPS 共用同一 FinMind token 額度,勿同時跑)。
 # 與日間 workflow 共用 radar-db 併發群,不會同時寫 DB。
 
 on:
@@ -78,14 +80,7 @@ jobs:
         working-directory: pipeline
         run: python -m radar backfill-branches --top 500 --days 490 --sleep 1.0 --max-minutes 90
 
-      - name: Weekly adjustment factors + full indicator recompute (Sat)
-        if: inputs.task == 'deep'
-        working-directory: pipeline
-        run: |
-          if [ "$(TZ=Asia/Taipei date +%u)" = "6" ]; then
-            python -m radar compute-adjustments --all --sleep "${{ inputs.sleep || '6.5' }}"
-            python -m radar compute-indicators --all
-          fi
+      # 週六全重算步驟已移除(2026-07-10):改由 VPS 跑後回灌;手動 fallback 用 task=adjust。
 
       - name: Adjustment factors (manual)
         if: inputs.task == 'adjust'

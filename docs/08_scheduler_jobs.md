@@ -15,7 +15,7 @@
 | 平日 21:00 | `daily-branches`(第二輪) | 同上,補晚公布/前段失敗(全部冪等) | ✓ |
 | 平日 22:10 | `daily-margin`(新) | 融資券保底輪:只補 margin(不含分點爬蟲)+ 重算分數,因 TWSE MI_MARGN 公布時間可能晚於 21:00 | ✓ |
 | 每天 01:10 | `data-backfill` | 深歷史增量(已拉深自動跳過 → 日常近零請求,只補新上市/缺漏) | ✗ |
-| 週六 01:10 | `data-backfill`(同支) | + 全市場還原因子重抓(除權息)+ 指標全歷史重算 + DB 備份 | ✗ |
+| 週六 01:10 | `data-backfill`(同支) | + DB 備份上傳 release。**全市場還原因子+指標全重算已停用(2026-07-10)**:改在使用者 VPS 執行,算完依 `vps_backfill_plan.md` Step 4 上傳 release + `gh cache delete --all` 回灌;雲端 fallback = 手動 `task=adjust`(與 VPS 共用 FinMind token,勿同時跑) | ✗ |
 | 週五 17:40/21:00 | `daily-branches` 內 | DB 備份上傳 release `db-backup` | — |
 | push `main` | `deploy` | 用現有雲端 DB:分數+績效+export+build+deploy(不抓資料) | ✓ |
 

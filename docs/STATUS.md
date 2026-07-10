@@ -63,7 +63,7 @@
 - [x] **UI 全面遷移 Tailwind CSS v4 + shadcn/ui**(2026-07-10):全站 6 頁 + 所有元件從手刻 CSS class 改為 Tailwind utility(僅保留 `.container`/`.num`/裸 `.up`/`.down`/`.flat`/`fadeUp` keyframe 等仍被動態或跨頁共用的少量 class);icon 除品牌 logo 外全改 `lucide-react`;搜尋面板改 shadcn `Command`,登入選單改 `DropdownMenu`,個股頁權證明細表改 **TanStack Table**(可排序 + 展開列);K 線圖仍為 lightweight-charts(未改動);deep design token 對照見 `docs/07_frontend_pages.md`。過程中修掉兩個遷移期間才會暴露的既有 bug:①舊 `.grid` class 與 Tailwind 內建 `grid`/`grid-cols-*` utility 同名碰撞(unlayered 規則蓋過 layered utility),導致多處 4 欄版面被壓成 3 欄;②`@theme inline` 的 `--color-border`/`--color-accent` 一度被誤指到 legacy token,深色模式因數值巧合未現形但會壞掉淺色模式。深色為預設主題,淺色 token 已備妥但站上尚無切換 UI(留待之後加)。
 
 ### 基礎設施
-- [x] **凌晨長任務常態化**:data-backfill 每天 01:10 深歷史增量(已拉深跳過,日常近零請求);週六 01:10 加跑全市場還原因子 + 指標全重算 + DB 備份;排程總表 = docs/08 §0
+- [x] **凌晨長任務常態化**:data-backfill 每天 01:10 深歷史增量(已拉深跳過,日常近零請求);週六 01:10 DB 備份(**週六全市場還原因子+指標全重算已於 2026-07-10 停用,改 VPS 跑後回灌,雲端 fallback=手動 task=adjust**);排程總表 = docs/08 §0
 - [x] **分批即時更新**:14:10 收盤閃電更新(日K+權證+指標+分數→部署,資料日當天變今天)→ 16:10 法人+權證主檔 → 17:40 融資券+分點全量 → 21:00 補抓;各資料集「有效日」寫進 radar.json `freshness`,晚公布的前端標「今日尚未公布,暫用前一日」並以前一日數值填充
 - [x] 管線效能優化(docs/15):指標增量計算(`--days 5`,全市場 26 秒,原全歷史重算數十分)、release 備份週五化(原三支 workflow 每日各 gzip 1GB)、修正 daily-warrants/branches 繞過 cache 的分岔 bug、pip/npm 快取
 - [x] GitHub Actions 全自動管線 + Cloudflare Pages 部署 + 自訂網域
@@ -95,7 +95,7 @@
 - Actions 有 Node 20 → 24 的 deprecation 警告(actions 版本升級,無急迫)
 - **排程觸發改 Cloudflare Worker,無備援(2026-07-09)**:見 `cloudflare-trigger/README.md`。Worker 或 `GH_TOKEN`(存於 Cloudflare secret 的 fine-grained PAT)一旦壞掉會靜默停止觸發,網站不會報錯只會停止更新——前幾週要偶爾看一下 `gh run list` 或首頁 freshness。`GH_TOKEN` 是每天實際在用的憑證,**不可直接 revoke**,輪替流程見該 README。假日跳過邏輯評估後**決定不做**:管線在非交易日已靠 `NoDataError` 安全空跑(`importer.py` 的 `_run()` 接住例外記 log,不會壞資料),手刻假日曆的「錯殺交易日」風險大於省下的 Actions 分鐘數
 - 本機 dev 與雲端 DB 已分岔:雲端為正式真相,本機僅開發;push 部署會從 Actions cache/release DB 產出線上 JSON
-- **策略/技術評分邏輯改動不會立即反映在正式資料**:S1-S10 的代碼存於 `indicators_daily.reasons`(S11-S13 在 `daily_scores.reasons`),而增量重算(`compute-indicators --days 5`)會直接跳過「指標日期已跟上價格日期」的股票,不會因程式改版重算。改了策略程式後:當日榜要等**下一交易日 14:10** 的 `daily-market` 增量才會用新邏輯產生當日 reasons;全歷史則要等**週六 01:10** `data-backfill task=adjust` 跑的 `compute-indicators --all`(或手動觸發)才會回補。2026-07-10 策略上線首日 S1-S10 全部 0 檔即此因(當日指標已算過、增量跳過),非邏輯錯誤。freshness 跳過機制本身不改(週六全重算已覆蓋)
+- **策略/技術評分邏輯改動不會立即反映在正式資料**:S1-S10 的代碼存於 `indicators_daily.reasons`(S11-S13 在 `daily_scores.reasons`),而增量重算(`compute-indicators --days 5`)會直接跳過「指標日期已跟上價格日期」的股票,不會因程式改版重算。改了策略程式後:當日榜要等**下一交易日 14:10** 的 `daily-market` 增量才會用新邏輯產生當日 reasons;全歷史回補則靠 **VPS 全重算後回灌**(週六雲端全重算已於 2026-07-10 停用,見 docs/08 §0)或手動 `gh workflow run data-backfill -f task=adjust`。**注意:VPS 重算前務必 pull 最新 main**(策略邏輯在程式碼裡,舊碼重算出來還是舊 reasons)。2026-07-10 策略上線首日 S1-S10 全部 0 檔即此因(當日指標已算過、增量跳過),非邏輯錯誤。freshness 跳過機制本身不改
 
 ## 最近完成
 
