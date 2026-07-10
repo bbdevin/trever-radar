@@ -43,7 +43,7 @@
 再依任務追加:
 - 動資料庫/排程 → `docs/08_scheduler_jobs.md` §0 + `.github/workflows/*.yml`
 - 動評分規則 → `docs/04_signal_rules.md` + `pipeline/radar/compute/scores.py` + 對應 test
-- 動前端頁面 → `docs/07_frontend_pages.md` 對應章節 + 該頁面檔案
+- 動前端頁面 → `docs/07_frontend_pages.md` 對應章節 + `docs/19_ui_guidelines.md` + 該頁面檔案
 - 動資安/登入 → `docs/10_security_legal.md` + `docs/14_feature_wave2.md` §4
 
 ## Golden Rules

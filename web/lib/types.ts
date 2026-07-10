@@ -92,6 +92,17 @@ export interface StockJson {
   active_warrants: ActiveWarrant[];
 }
 
+/** 產業下鑽子題材(僅 sectors 帶;口徑同題材聚合但限定產業內成分) */
+export interface SectorSubFlow {
+  name: string;
+  turnover: number;
+  vs20: number | null; // 今日金額 / 該(產業,題材)組合近20日均
+  avg_chg: number | null;
+  up: number;
+  down: number;
+  top: { id: string; name: string; chg_pct: number | null }[]; // 產業內金額前 5
+}
+
 export interface SectorFlow {
   name: string;
   turnover: number;
@@ -101,6 +112,7 @@ export interface SectorFlow {
   up: number;
   down: number;
   top: { id: string; name: string; chg_pct: number | null; turnover?: number }[];
+  subs?: SectorSubFlow[]; // 產業內成分 ≥2 檔的題材,依金額取前 10;題材模式(themes)無此欄
 }
 
 export type ListKey = "score" | "hot" | "surge" | "strong" | "weak" | "warrant" | "mark";

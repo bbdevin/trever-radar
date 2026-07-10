@@ -293,6 +293,54 @@ def export_json(out_dir: Path | None = None) -> dict:
                   if len(g["stocks"]) >= 3 and g["turnover"] >= 5e8]
         themes.sort(key=lambda x: x["turnover"], reverse=True)
 
+        # ── 產業下鑽子題材:每個產業內成分股的題材分解(sectors[].subs) ──
+        # 口徑同題材聚合,但 group by (industry, theme);篩選:產業內成分 ≥2 檔、
+        # 排除與產業同名題材;依 turnover 取前 10,每題材帶產業內金額前 5 成分股。
+        sub_prior = {(r[0], r[1]): r[2] for r in conn.execute(text("""
+            SELECT s.industry, t.name, SUM(p.turnover) * 1.0 / COUNT(DISTINCT p.date)
+            FROM daily_prices p
+            JOIN stocks s ON s.id = p.stock_id AND s.type = 'stock'
+            JOIN stock_themes st ON st.stock_id = p.stock_id
+            JOIN themes t ON t.id = st.theme_id
+            WHERE p.date >= :d20 AND p.date < :d AND s.industry IS NOT NULL
+            GROUP BY s.industry, t.name
+        """), {"d": d, "d20": base20[-1] if base20 else d})}
+        for sec in sectors:
+            ind = sec["name"]
+            sub_groups: dict[str, dict] = {}
+            for s in sector_today[ind]["stocks"]:
+                for tname in s.get("themes", []):
+                    if tname == ind:
+                        continue
+                    g = sub_groups.setdefault(tname, {"turnover": 0, "up": 0, "down": 0,
+                                                      "chgs": [], "stocks": []})
+                    g["turnover"] += s["turnover"] or 0
+                    if s["chg_pct"] is not None:
+                        g["chgs"].append(s["chg_pct"])
+                        if s["chg_pct"] > 0:
+                            g["up"] += 1
+                        elif s["chg_pct"] < 0:
+                            g["down"] += 1
+                    g["stocks"].append(s)
+            subs = []
+            for tname, g in sub_groups.items():
+                if len(g["stocks"]) < 2:
+                    continue
+                prior_avg = sub_prior.get((ind, tname))
+                top = sorted(g["stocks"], key=lambda s: s["turnover"] or 0, reverse=True)[:5]
+                subs.append({
+                    "name": tname,
+                    "turnover": g["turnover"],
+                    "vs20": round(g["turnover"] / prior_avg, 2) if prior_avg else None,
+                    "avg_chg": round(sum(g["chgs"]) / len(g["chgs"]), 2) if g["chgs"] else None,
+                    "up": g["up"], "down": g["down"],
+                    "top": [{"id": s["id"], "name": s["name"], "chg_pct": s["chg_pct"]}
+                            for s in top],
+                })
+            if subs:
+                subs.sort(key=lambda x: x["turnover"], reverse=True)
+                sec["subs"] = subs[:10]
+
         # ── 集中度躍升榜(探索頁) ──
         conc_rows = conn.execute(text("""
             SELECT ds.stock_id, s.name, s.market, ds.buy_concentration, ds.concentration_avg20
