@@ -386,6 +386,33 @@ def score_themes(theme_stocks: dict[str, list[str]],
     return theme_scores
 
 
+def s11_insti_breakout(f_streak3, t_streak3, t_score, chg) -> bool:
+    """S11 法人連買加技術突破。條件與閾值逐字搬自 compute_scores(行為零變化)。
+    None 語意:t_score / chg 為 None 或 0 時,`x and x>=…` 短路為 falsy。"""
+    return bool((f_streak3 or t_streak3) and t_score and t_score >= 60
+                and chg and chg > 4)
+
+
+def s12_branch_accumulation(buy_conc, conc_avg20, chg5, chg) -> bool:
+    """S12 主力分點集中但股價尚未大漲。逐字搬自 compute_scores。
+    None 語意:buy_conc 用 `is not None` 明確判定;conc_avg20 為 None 視為通過
+    倍數門檻;chg5 / chg 用 `is not None` 明確判定(0 為有效值)。"""
+    if not (buy_conc is not None and buy_conc >= 0.15
+            and (conc_avg20 is None or buy_conc >= conc_avg20 * 1.5)):
+        return False
+    return chg5 is not None and chg5 < 5 and chg is not None and chg < 3
+
+
+def s13_short_squeeze(short_bal, short_prev, chg, t_vr) -> bool:
+    """S13 融券回補軋空。逐字搬自 compute_scores。
+    None 語意:short_bal / short_prev 用 `is not None` 明確判定;chg / t_vr 沿用
+    原式 truthy 檢查(None 或 0 皆 falsy)。"""
+    if not (short_bal is not None and short_prev is not None
+            and short_bal < short_prev and short_prev > 1000):
+        return False
+    return bool(chg and chg > 4 and t_vr and t_vr > 1.5)
+
+
 def combine(branch, warrant, tech, inst, theme) -> int | None:
     parts = [(s, WEIGHTS[k]) for k, s in
              (("branch", branch), ("warrant", warrant), ("tech", tech), ("inst", inst), ("theme", theme))
@@ -589,20 +616,18 @@ def compute_scores(date: str | None = None) -> dict:
             f_sell5, margin_use)
 
         # S11: 法人連買加技術突破
-        if (f_streak3 or t_streak3) and t_score and t_score >= 60 and chg and chg > 4:
+        if s11_insti_breakout(f_streak3, t_streak3, t_score, chg):
             i_reasons.append({"code": "S11_INSTI_BREAKOUT", "points": 20, "text": "法人連買加技術突破(法人連3買+技術面轉強)"})
 
         # S12: 主力分點集中但股價尚未大漲
-        if buy_conc is not None and buy_conc >= 0.15 and (conc_avg20 is None or buy_conc >= conc_avg20 * 1.5):
-            if chg5 is not None and chg5 < 5 and chg is not None and chg < 3:
-                b_reasons.append({"code": "S12_BRANCH_ACCUMULATION", "points": 20, "text": "主力分點集中但股價尚未大漲(大買超未反映)"})
+        if s12_branch_accumulation(buy_conc, conc_avg20, chg5, chg):
+            b_reasons.append({"code": "S12_BRANCH_ACCUMULATION", "points": 20, "text": "主力分點集中但股價尚未大漲(大買超未反映)"})
 
         # S13: 融券回補軋空
         short_bal = m[3] if m and len(m) > 3 else None
         short_prev = m[4] if m and len(m) > 4 else None
-        if short_bal is not None and short_prev is not None and short_bal < short_prev and short_prev > 1000:
-            if chg and chg > 4 and t_vr and t_vr > 1.5:
-                i_reasons.append({"code": "S13_SHORT_SQUEEZE", "points": 20, "text": "融券回補軋空(融券減少+帶量大漲)"})
+        if s13_short_squeeze(short_bal, short_prev, chg, t_vr):
+            i_reasons.append({"code": "S13_SHORT_SQUEEZE", "points": 20, "text": "融券回補軋空(融券減少+帶量大漲)"})
 
         base = combine(b_score, w_score, t_score, i_score, theme_score)
         if base is None:
