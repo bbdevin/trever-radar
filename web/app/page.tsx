@@ -13,7 +13,7 @@ import { DATASET_LABEL, SOURCE_LABEL, fmtE8 } from "@/lib/format";
 
 const TABS: { key: ListKey; label: string; hint: string; icon: typeof IconFlame }[] = [
   { key: "score", label: "綜合", hint: "盤後綜合分數:分點/權證/技術/法人加權−風險扣分,≥65 為觀察門檻", icon: IconRadar },
-  { key: "mark", label: "策略", hint: "策略: 20日內曾漲停/大漲, MACD金叉, 5日內爆量", icon: IconStar },
+  { key: "mark", label: "策略", hint: "進階量化選股，涵蓋技術面與籌碼面等多種策略", icon: IconStar },
   { key: "hot", label: "熱門", hint: "成交金額最大", icon: IconFlame },
   { key: "surge", label: "爆量", hint: "量比 = 今日量/20日均量,≥1.5 且金額 ≥1億", icon: IconZap },
   { key: "strong", label: "強勢", hint: "漲幅排序,金額 ≥1億", icon: IconTrend },
@@ -202,9 +202,9 @@ export default function RadarPage() {
               </button>
             ))}
           </div>
-          <div className="mt-2.5 rounded-md border border-border bg-muted/30 px-3 py-2 text-[12.5px] text-muted-foreground">
-            <strong className="text-foreground">{STRATEGIES.find((s) => s.key === strategy)?.label}：</strong>
-            {STRATEGIES.find((s) => s.key === strategy)?.desc}
+          <div className="mt-2.5 flex items-start gap-2 rounded-md border border-border bg-muted/30 px-3 py-2 text-[12.5px] text-muted-foreground">
+            <IconStar size={14} className="mt-[2px] shrink-0 opacity-70" />
+            <span>{STRATEGIES.find((s) => s.key === strategy)?.desc}</span>
           </div>
         </div>
       )}
