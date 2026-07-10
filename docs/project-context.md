@@ -54,11 +54,11 @@
 
 ## 文件地圖(依任務讀)
 
-00 藍圖總表|01 產品定位|02 版本範圍與驗收|03 資料源評估|04 全部評分規則|05 資料表|06 架構(部署章節已被 12 取代)|07 前端頁面|08 排程流程|09 籌碼K線|10 資安法規|11 AI 開發流程|**12 零成本修訂(現行架構)**|13 分點排行與追蹤|17/18 多 agent 流程與交接|**20 功能刪減與策略治理(B 方案)**|**STATUS(目前進度,單一真相)**|../DEPLOY(部署)
+00 藍圖總表|01 產品定位|02 版本範圍與驗收|03 資料源評估|04 全部評分規則|05 資料表|06 架構(部署章節已被 12 取代)|07 前端頁面|08 排程流程|09 籌碼K線|10 資安法規|11 AI 開發流程|**12 零成本修訂(現行架構)**|13 分點排行與追蹤|17/18 多 agent 流程與交接|**20 功能刪減與策略治理(B 方案)**|**21 私人測試 Access/R2 計畫**|**22 Armed 狀態追蹤(待開發)**|**STATUS(目前進度,單一真相)**|../DEPLOY(部署)
 
 ## 目前狀態(2026-07-10,細節看 STATUS.md)
 
-已上線 https://radar.techtrever.com,GitHub Actions 每交易日自動更新(觸發已改 Cloudflare Worker,見 08§0),`main` push 也會正式部署。管線(日K/權證主檔/權證彙總/法人/融資券/分點裁剪資料/產業別/雙軌歷史回補/還原因子 CLI/技術指標/盤後綜合分/績效回填/觀察價失效價/買方集中度)與前端(族群資金流+熱門/爆量/強勢/權證/綜合榜+個股 K 線+週月K+MA/布林/副圖+技術摘要+個股權證 Tab+自選股+探索頁)完成。**下一步已改為執行 `docs/20_simplification_strategy.md` 的 B 方案:不再補探索頁剩餘 tab,先做 UI 合併、策略與技術分解耦、績效閉環;正式資料重算與 workflow 簡化須另案確認。**
+已上線 https://radar.techtrever.com,GitHub Actions 每交易日自動更新(觸發已改 Cloudflare Worker,見 08§0),`main` push 也會正式部署。**目前網站仍公開;使用者已決定改為 A 私人測試版,但 Access 尚未實際設定,不得誤稱已鎖站。先依 `docs/21_private_beta_access_r2_plan.md` 完成 custom domain、production pages.dev、preview 三類入口保護。** 功能開發仍依 `docs/20` B 方案;R2 只規劃作私有 DB 快照/未來歷史拆檔,尚未建立或接入 workflow。**下一產品方向(待開發)**:Armed/Triggered 狀態追蹤見 `docs/22`,須等 Access 與 B 方案有進度後另確認才實作。
 
 ## 已做的關鍵取捨(不要翻案,除非使用者同意)
 
@@ -72,3 +72,5 @@
 8. 首頁「綜合」榜使用 `daily_scores.final`;分點分/權證分/技術分/法人融資分已接入,題材分暫為 NULL 並自動重分配權重。
 9. 技術指標與績效回填必須用還原價:`adj_price = price * adj_factor`;`adj_factor` 由 `python -m radar compute-adjustments --ids/--top/--all` 補,尚未全市場自動排程。
 10. 2026-07-10 使用者確認 B 方案(`docs/20`):S1-S13 最終應為不影響分數的策略 tag,以績效決定 Active/Retired;`/explore` 內容併回首頁與 `/branch`,不再擴張原剩餘 tab。實作與正式重算分階段另行確認。
+11. 2026-07-10 使用者確認 A 私人測試版(`docs/21`):Cloudflare Access 整站白名單;Supabase 只做個人化;R2 不當線上 DB,先 shadow backup、還原演練後才可加入 cache fallback。
+12. 2026-07-10 使用者確認 Armed 追蹤規劃(`docs/22`):用狀態池(未發動/已發動)重用 S12/W3/B3,不新增策略、不抬綜合分、不新開一級路由;實作排在 Access + B Phase 1–3 之後。

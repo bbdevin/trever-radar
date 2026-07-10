@@ -30,8 +30,10 @@
 | `docs/17_no_fable_workflow.md` | ✅ **current** | No-Fable 工作流程完整版,見下方 Required Reading。 |
 | `docs/18_handoff_template.md` | ✅ **current** | Agent 交接模板。 |
 | `docs/20_simplification_strategy.md` | ✅ **current,功能刪減與策略治理 source of truth** | 2026-07-10 使用者確認的 B 方案:停止擴張探索頁與新策略,策略/技術分解耦、績效閉環、UI 合併及排程簡化階段。 |
+| `docs/21_private_beta_access_r2_plan.md` | ✅ **current,私人測試與 R2 source of truth** | Cloudflare Access 整站白名單、Pages 旁路封鎖、R2 僅作私有快照/未來歷史拆檔,不得當即時 SQLite。 |
+| `docs/22_armed_tracking.md` | 📝 **規劃定案,程式未實作** | Armed/Triggered 狀態追蹤(未發動籌碼·權證池);須等 `20` Phase 1–3 與 `21` Access 有進度後另確認才實作,不新增策略/不抬綜合分。 |
 
-有疑問時,信任順序:`project-context.md` / `STATUS.md` / `20`(功能刪減與策略治理) / `12` / `08§0` / `vps_backfill_plan.md` > 其餘 `docs/*` > 對話記憶。
+有疑問時,信任順序:`project-context.md` / `STATUS.md` / `20`(功能刪減與策略治理) / `21`(私人測試/Access/R2) / `22`(Armed 追蹤,待開發) / `12` / `08§0` / `vps_backfill_plan.md` > 其餘 `docs/*` > 對話記憶。
 
 ## Required Reading(改檔前必讀)
 
@@ -41,12 +43,14 @@
 4. `docs/17_no_fable_workflow.md`
 5. `docs/18_handoff_template.md`
 6. `docs/20_simplification_strategy.md`(進行功能規劃、評分、前端資訊架構或排程簡化時必讀)
+7. `docs/21_private_beta_access_r2_plan.md`(動登入、Access、R2、DB 備份/還原時必讀)
+8. `docs/22_armed_tracking.md`(規劃或實作未發動/已發動狀態追蹤、Armed 池時必讀)
 
 再依任務追加:
-- 動資料庫/排程 → `docs/08_scheduler_jobs.md` §0 + `.github/workflows/*.yml`
+- 動資料庫/排程/R2 → `docs/08_scheduler_jobs.md` §0 + `docs/21_private_beta_access_r2_plan.md` + `.github/workflows/*.yml`
 - 動評分規則 → `docs/04_signal_rules.md` + `pipeline/radar/compute/scores.py` + 對應 test
 - 動前端頁面 → `docs/07_frontend_pages.md` 對應章節 + `docs/19_ui_guidelines.md` + 該頁面檔案
-- 動資安/登入 → `docs/10_security_legal.md` + `docs/14_feature_wave2.md` §4
+- 動資安/登入 → `docs/10_security_legal.md` + `docs/14_feature_wave2.md` §4 + `docs/21_private_beta_access_r2_plan.md`
 
 ## Golden Rules
 
@@ -68,6 +72,7 @@
 - ⚠️ **不動 cache / release `db-backup` 的 DB 續存鏈**。5 支 workflow 共用 `radar-db` concurrency group,cache 優先、miss 才用 release 種子還原——這條鏈曾經分岔過(見 `docs/15`),改動前必須完整理解全部 5 支 workflow 的還原/存檔順序。
 - ⚠️ **不動 `adj_factor` 還原價邏輯**。`daily_prices.adj_factor` 由 FinMind `TaiwanStockDividendResult` 累乘計算,技術指標與績效回填都依賴 `price * adj_factor`。
 - ⚠️ **DB 已 ~1GB,逼近 GitHub Release 單檔 2GB / Actions cache 10GB 上限**。分點資料擴到 5 年前(P2,見 `vps_backfill_plan.md`)**必須先**把分點歷史拆成獨立檔(如 `branch_hist.db`)或搬去 Cloudflare R2,否則會炸掉這兩個上限。勿貿然灌大量分點歷史資料。
+- ⚠️ **R2 不是即時資料庫**。只能放 SQLite/JSON 物件快照;不得讓多支 workflow 對同一 R2 物件做「線上 SQLite」讀寫,不得在 restore drill 前移除 Actions cache/Release fallback,不得公開 `r2.dev` backup URL。
 - 不做 TWSE bsr CAPTCHA 破解(已定案取捨)。
 - 不做自動下單(已定案取捨,見 `docs/10` §3)。
 

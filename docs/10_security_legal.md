@@ -1,5 +1,10 @@
 # 10 資安、權限與法規
 
+> **2026-07-10 superseding notice**:目前只做 A 私人測試版,登入/存取邊界以
+> `docs/21_private_beta_access_r2_plan.md` 為準:Cloudflare Access 對整站與所有 JSON
+> 作 email 白名單;Supabase Google OAuth/RLS 只做 watchlist 個人化。下方 Laravel
+> Breeze/自建帳密/角色描述為舊藍圖,未實作,不得據此新增登入後端。
+
 ## 1. 帳號與權限
 
 - 登入:email + 密碼(Laravel Breeze)+ 強制 2FA(TOTP,10 人系統也值得,因為含金融決策資訊)。

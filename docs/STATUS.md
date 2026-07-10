@@ -7,7 +7,7 @@
 | 項目 | 值 |
 |---|---|
 | 正式網址 | https://radar.techtrever.com(= https://trever-radar.pages.dev) |
-| 公開狀態 | 公開網址、noindex + robots.txt;Access 未開(使用者決定,要鎖照 DEPLOY.md §4) |
+| 公開狀態 | **目前仍公開**,noindex + robots.txt;2026-07-10 使用者已決定改 A 私人測試版,Access 尚未設定。實作與驗收照 `docs/21`/`DEPLOY.md` §4,未驗收前不得宣稱私有。 |
 | 自動排程 | GitHub Actions 6 支 workflow(現行時間表以 `docs/08_scheduler_jobs.md` §0 為單一真相):14:10 `daily-market`、16:10 `daily-insti`、17:40+21:00 `daily-branches`、22:10 `daily-margin`(融資券保底輪)、每日 01:10 `data-backfill`、push main 觸發 `deploy`;各帶 timeout 防呆與共用 `radar-db` cache 續存鏈;觸發來源遷移中,見下方已知債務 |
 | Repo | github.com/bbdevin/trever-radar(私有) |
 | DB | SQLite,Actions cache 續存 + release `db-backup` 週備份(週五/手動觸發時) |
@@ -19,7 +19,7 @@
 - 流程為**模型中立、角色導向**:Planner / Executor / Reviewer 由本次任務指定,不由模型品牌永久決定;規則見 `AGENTS.md` 與 `docs/17_no_fable_workflow.md`。
 - 工具清單:Claude Code、AGY/Gemini、Codex、GPT/Grok 等高階模型均可任三角色;Cursor 為 IDE / 確認介面;人類使用者為唯一決策者。
 
-下一步:依使用者 2026-07-10 確認的 `docs/20_simplification_strategy.md` B 方案,先刪減重複 UI、再將 S1-S13 與技術分解耦並建立策略績效閉環。每次只執行一個 Phase;正式資料重算與 workflow 簡化另案確認。
+下一步:先完成 `docs/21` Access A0-A2,把目前公開站真正鎖成私人測試版;再依 `docs/20` B 方案刪減 UI、策略解耦與績效閉環。R2 先做 shadow backup/restore drill,不得直接取代 cache/Release。**再下一刀(待開發)**:`docs/22` Armed/Triggered 狀態追蹤——須另確認後才實作。
 
 ## 已完成 ✅
 
@@ -70,16 +70,19 @@
 
 ## 未完成(依優先序)
 
-1. **B 方案 Phase 1—UI 刪減與合併**(`docs/20`):集中度併入 `/branch` 今日動向、題材只留首頁、移除 `/explore` 與空殼盤中導航、權證大戶降級為「權證分點異動(實驗)」、清理確認未使用的前端依賴/元件。
-2. **B 方案 Phase 2—策略/分數解耦**(`docs/20`,高風險資料語意變更):S1-S13 只產生 tag/reason,不得再增加 `tech_score` 或其他分項;補 S2-S13 測試與舊/新分數差異報告。正式全市場重算、回灌及部署必須另獲使用者批准。
-3. **B 方案 Phase 3—策略績效閉環**(`docs/20`):輸出各 S code 的成熟樣本、5/10/20 日勝率與平均/中位報酬;預設 Shadow,使用者看報告後決定 Active/Retired。
-4. **B 方案 Phase 4—排程簡化提案**(`docs/20`,獨立高風險任務):保留資料取得時點,評估完整 build/deploy 由每日最多 5 次降為 14:10/22:10 兩次;不得在未完整審查 WAL/cache/release 鏈前修改 workflow。
-5. ~~deep-backfill --all~~ **執行狀態需另行查證**:完成與否不得只信本檔舊紀錄;若需 `task=adjust` 或 VPS 回灌,先依 `vps_backfill_plan.md` 與高風險流程確認。
-6. **分點排行資料累積**:可信度排行榜已完成,統計效力需 2–3 個月。地緣/關鍵分點人工名單、五年分點擴容、LINE Bot、V2 盤中均依 B 方案延後,不得搶在 Phase 1-3 前擴張。
+1. **私人測試版 Access**(`docs/21` A0-A2):保護 `radar.techtrever.com`、正式 `trever-radar.pages.dev` 與所有 preview;只允許明確 email;直接抓 `/data/radar.json` 也必須被擋。
+2. **B 方案 Phase 1—UI 刪減與合併**(`docs/20`):集中度併入 `/branch` 今日動向、題材只留首頁、移除 `/explore` 與空殼盤中導航、權證大戶降級為「權證分點異動(實驗)」、清理確認未使用的前端依賴/元件。
+3. **B 方案 Phase 2—策略/分數解耦**(`docs/20`,高風險資料語意變更):S1-S13 只產生 tag/reason,不得再增加 `tech_score` 或其他分項;補 S2-S13 測試與舊/新分數差異報告。正式全市場重算、回灌及部署必須另獲使用者批准。
+4. **B 方案 Phase 3—策略績效閉環**(`docs/20`):輸出各 S code 的成熟樣本、5/10/20 日勝率與平均/中位報酬;預設 Shadow,使用者看報告後決定 Active/Retired。
+5. **Armed 狀態追蹤**(`docs/22`,📝 規劃定案、程式未實作):首頁「未發動/已發動」狀態池,重用 S12/W3/B3 與權證倍數;不新增策略、不抬綜合分、不新開一級路由。建議在 Access + B Phase 1–3 有進度後另確認 A1→A3 實作。
+6. **R2 R0-R2**(`docs/21`):private Standard bucket → 每週 shadow snapshot → checksum/gzip/SQLite restore drill。R3 workflow fallback 未授權,R4/P2 延後。
+7. **B 方案 Phase 4—排程簡化提案**(`docs/20`,獨立高風險任務):保留資料取得時點,評估完整 build/deploy 由每日最多 5 次降為 14:10/22:10 兩次;不得在未完整審查 WAL/cache/release 鏈前修改 workflow。
+8. ~~deep-backfill --all~~ **執行狀態需另行查證**:完成與否不得只信本檔舊紀錄;若需 `task=adjust` 或 VPS 回灌,先依 `vps_backfill_plan.md` 與高風險流程確認。
+9. **分點排行資料累積**:可信度排行榜已完成,統計效力需 2–3 個月。地緣/關鍵分點人工名單、五年分點擴容、LINE Bot、V2 盤中均依 B 方案延後。
 
 ## 已知債務 / 注意
 
-- **分點 5 年全量的架構前置**(vps_backfill_plan §3 P2 之前必做):DB 將 +7–9GB → 炸 release 單檔 2GB 與 Actions cache 10GB → 分點歷史拆 branch_hist.db 或搬 Cloudflare R2(免費 10GB);P1(2年,+1.5GB)還安全
+- **分點 5 年全量的架構前置**(vps_backfill_plan §3 P2 之前必做):DB 將 +7–9GB → 炸 release 單檔 2GB 與 Actions cache 10GB。依 `docs/21`,R2 只能保存拆出的 `branch_hist.db` 快照,不是線上 DB;Standard 免費 10GB-month 還要容納版本與安全餘裕,因此不保證 P2 仍零成本。P2 繼續延後;P1(2年,+1.5GB)尚可。
 
 - 個股 JSON 一檔約 0.5MB(全歷史);擴到數百檔時改「預設 5 年 + 按需載入」
 - 權證榜目前是「認購成交金額 / 20 日均值」的異動排序,尚不是 04 定義的完整 0–100 權證分;完整分數與 reasons/risks 等評分模組一起做
@@ -118,6 +121,7 @@
 - 2026-07-10 資金流向面板改善與 UI 規範文件化(commit `a221995`,verifier CONFIRMED):①修條圖蓋字 bug——每列改「名稱|條軌|數值區」三欄 grid,條以 scaleX 在自己的 overflow-hidden 條軌內縮放,結構上不可能再壓到金額文字;②流入欄移到左邊(DOM 順序=視覺順序,移除 order hack);③產業下鑽子題材——export 為每產業輸出 `sectors[].subs`(成分 ≥2 檔題材、排除同產業名、金額前 10、每 sub 帶前 5 成分股),前端點產業先列子題材(如 BBU、被動元件)再展成分股,保留全部成分股入口;新增種子 DB 測試 `test_json_export.py`;④新增 `docs/19_ui_guidelines.md`(專案 UI/UX 規範,ui-ux-pro-max 對照),`AGENTS.md` 動前端必讀行同步更新——**日後改前端頁面先讀 docs/19 + docs/07**。
 - 2026-07-10 13 項選股策略與獨立榜單重構:`indicators.py` 及 `scores.py` 實作涵蓋技術與籌碼（如「漲停二次發動」、「法人連買突破」、「均線糾結突破」等）共 13 種量化策略；前端首頁「策略」頁籤內，新增了可動態切換 13 種不同策略條件的選單，並移除個別策略按鈕上的雜訊數字，介面大幅升級。
 - 2026-07-10 S1 雙軌還原 + mark 死碼移除:S1「漲停二次發動」還原舊版嚴謹/放寬雙軌(嚴謹 `S1_REBOUND` 20 分,elif 放寬 `S1_REBOUND_RELAXED` 15 分;放寬=20日內漲7%+5日量1.5倍+任意金叉),兩代碼同入 `strategies.S1_REBOUND` 榜、嚴謹排前,解決嚴謹單軌常態 0 檔;同時移除已無消費者的舊 T6 mark 榜死碼(`json_export.py` 的 mark 掃描/`lists.mark` 輸出、`web/lib/types.ts` ListKey 的 mark)並補 S1 單元測試;另把「策略邏輯改動需等增量/週六全重算才生效」文件化於上方已知債務。
+- 2026-07-10 Armed 追蹤規劃落檔(`docs/22`):確認下一產品方向為狀態池(Quiet→Armed→Triggered→Extended→Faded),首頁「未發動/已發動」、重用 S12/W3/B3,不新增策略/不抬綜合分;程式未實作,排在 Access + B Phase 1–3 之後。
 
 ## 系統模組與功能對應表 (Pipeline Models Mapping)
 

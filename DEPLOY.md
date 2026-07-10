@@ -34,19 +34,32 @@ gh run watch --repo bbdevin/trever-radar     # 看進度,約 5-10 分鐘
 
 完成後網站在:**https://trever-radar.pages.dev**
 
-### 4. 鎖上登入(2026-07-07 使用者決定:先公開、之後再鎖)
+### 4. 鎖上 A 私人測試版(2026-07-10 已決定,尚未實際設定)
 
-目前狀態:**網站公開**(僅靠網址不外流 + noindex/robots.txt 擋搜尋引擎)。
-要分享給朋友、或想恢復私有時,照以下步驟開 Access(隨時可做,約 10 分鐘):
+目前狀態仍是**網站公開**。`noindex`/robots.txt 不是安全控制;未完成下列驗收前
+不得宣稱網站已私有。完整計畫與旁路檢查見 `docs/21_private_beta_access_r2_plan.md`。
 
-Cloudflare Access 免費 50 人,訪客要輸入 email 收一次性 PIN 才能進:
+必須分別保護三類入口:
 
-1. https://one.dash.cloudflare.com → 選 Zero Trust(首次會要你選免費方案)
-2. Access → Applications → **Add an application** → Self-hosted
-3. Application domain:`trever-radar.pages.dev`;再加一條 `*.trever-radar.pages.dev`(擋預覽網址)
-4. Identity providers:勾 **One-time PIN**
-5. Add policy:Action = Allow;Include = Emails → 填你和朋友的 email(≤10 個)
-6. 儲存。完成——不在名單上的人連首頁都看不到
+1. Pages project → Settings → General → Enable access policy,保護 preview deployments。
+2. 依 Cloudflare Pages known issues 步驟,再建立/調整正式 `trever-radar.pages.dev` policy。
+3. Zero Trust → Access → Applications → Self-hosted and private,建立
+   `radar.techtrever.com/*` policy。
+4. Allow 只填明確 email 名單;One-time PIN 可作登入方式,但不要 Allow Everyone 或所有有效 email。
+5. 不為 `/data/*` 或 JSON 建 Bypass。
+
+官方 Pages 三類網域設定說明:
+https://developers.cloudflare.com/pages/platform/known-issues/#enable-access-on-your-pagesdev-domain
+
+完成後用未授權無痕視窗逐一驗收:
+
+- `https://radar.techtrever.com/`
+- `https://radar.techtrever.com/data/radar.json`
+- `https://trever-radar.pages.dev/`
+- 任一 `<deployment>.trever-radar.pages.dev` preview URL
+
+四者都必須先停在 Access;再用白名單 email 驗證頁面、Supabase watchlist、
+GitHub Actions deploy 與 Cloudflare scheduler 仍正常。
 
 ## 之後的日常
 

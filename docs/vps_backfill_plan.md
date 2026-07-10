@@ -229,6 +229,9 @@ docker run -d --name radar-warrant-backfill --restart unless-stopped \
 ## P2:擴到 5 年 × 1,200 檔(P1 之後,先等開發端一件事)
 
 - ⚠️ 前置:5 年全量會讓資料庫 +7–9GB,超過現行免費架構上限(GitHub Release 單檔 2GB、Actions cache 10GB)→ **開發端要先把分點歷史拆成獨立檔**。做完會通知你。
+- R2 邊界見 `docs/21_private_beta_access_r2_plan.md`:R2 可保存壓縮後的 `branch_hist.db` 快照,
+  但不能直接在 R2 上執行 SQLite;且 10GB-month 免費額度無法保證容納 P2 current+previous
+  多版本。P2 仍需另案做容量實測與高風險批准,本計畫不因有 R2 就自動解鎖。
 - 屆時指令 = Step 2 同一段,參數改:`--top 1200 --days 1215`,約連跑 **17 天**(march-back 由新到舊,跑到第 3 天時「1,200 檔 × 近一年」就已可用,不用等跑完)
 - P3(全部 ~2,000 檔)不建議:日均額 3 千萬以下的冷門股分點稀疏,無統計意義
 

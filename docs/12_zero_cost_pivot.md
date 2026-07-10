@@ -16,6 +16,10 @@
 > 已使用 Supabase 免費層作個人化服務。Supabase 不存市場資料,不改變靜態 JSON 架構。
 > 後續範圍依 `docs/20_simplification_strategy.md`:保留跨裝置自選,不擴張成一般後端或假性資料安全閘門。
 
+> **2026-07-10 私人測試/R2 決策**:見 `docs/21_private_beta_access_r2_plan.md`。
+> Access 將保護 custom domain + production pages.dev + previews;R2 是 private object storage,
+> 先存 SQLite verified snapshot,不是可直接查詢的資料庫,也不立即取代 Actions cache/Release。
+
 註:GitHub Pages 不行(私有 repo 需付費方案);Vercel Hobby 條款限非商業用途(私人工具符合);GitHub Actions cron 可能延遲數分鐘~一小時,對晚間 T+1 資料無害,排 17:30 台北時間 + 失敗重試。
 
 ## 2. 架構(V1-Free)
