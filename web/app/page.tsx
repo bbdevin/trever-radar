@@ -22,7 +22,8 @@ const TABS: { key: ListKey; label: string; hint: string; icon: typeof IconFlame 
 ];
 
 const STRATEGIES = [
-  { key: "T6_MARK_STRATEGY", label: "綜合策略(舊)" },
+  { key: "T6_MARK_STRATEGY", label: "綜合策略(嚴謹)" },
+  { key: "T6_MARK_STRATEGY_RELAXED", label: "綜合策略(寬鬆)" },
   { key: "S1_REBOUND", label: "漲停二次發動" },
   { key: "S2_BREAKOUT20", label: "20日爆量突破" },
   { key: "S3_MA_CONVERGE_BREAKOUT", label: "均線糾結突破" },
@@ -168,7 +169,9 @@ export default function RadarPage() {
             >
               <t.icon size={15} className="opacity-85" />
               {t.label}
-              <small className="num text-[11px] text-muted-foreground">{radar.lists?.[t.key]?.length ?? 0}</small>
+              {t.key !== "mark" && (
+                <small className="num text-[11px] text-muted-foreground">{radar.lists?.[t.key]?.length ?? 0}</small>
+              )}
             </button>
           ))}
         </div>
@@ -189,12 +192,6 @@ export default function RadarPage() {
               )}
             >
               {st.label}
-              <span className={cn(
-                "ml-1.5 rounded px-1 py-0.5 text-[10px]",
-                strategy === st.key ? "bg-[color:var(--bg-1)]/20" : "bg-background"
-              )}>
-                {radar.strategies?.[st.key]?.length ?? 0}
-              </span>
             </button>
           ))}
         </div>
