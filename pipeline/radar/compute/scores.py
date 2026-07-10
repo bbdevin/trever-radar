@@ -458,7 +458,7 @@ def compute_scores(date: str | None = None) -> dict:
             insti.setdefault(r[0], {})[r[1]] = r
 
         margins = {r[0]: r for r in conn.execute(text(
-            "SELECT stock_id, margin_balance, margin_limit FROM daily_margins "
+            "SELECT stock_id, margin_balance, margin_limit, short_balance, short_prev FROM daily_margins "
             "WHERE date = :d"), {"d": d})}
 
         branches: dict[str, dict[str, list[dict]]] = {}
@@ -588,12 +588,32 @@ def compute_scores(date: str | None = None) -> dict:
             chg5, chg10, open_, high, close, prev_close, t_vr, t_risks,
             f_sell5, margin_use)
 
+        # S11: 法人連買加技術突破
+        if (f_streak3 or t_streak3) and t_score and t_score >= 60 and chg and chg > 4:
+            i_reasons.append({"code": "S11_INSTI_BREAKOUT", "points": 20, "text": "法人連買加技術突破(法人連3買+技術面轉強)"})
+
+        # S12: 主力分點集中但股價尚未大漲
+        if buy_conc is not None and buy_conc >= 0.15 and (conc_avg20 is None or buy_conc >= conc_avg20 * 1.5):
+            if chg5 is not None and chg5 < 5 and chg is not None and chg < 3:
+                b_reasons.append({"code": "S12_BRANCH_ACCUMULATION", "points": 20, "text": "主力分點集中但股價尚未大漲(大買超未反映)"})
+
+        # S13: 融券回補軋空
+        short_bal = m[3] if m and len(m) > 3 else None
+        short_prev = m[4] if m and len(m) > 4 else None
+        if short_bal is not None and short_prev is not None and short_bal < short_prev and short_prev > 1000:
+            if chg and chg > 4 and t_vr and t_vr > 1.5:
+                i_reasons.append({"code": "S13_SHORT_SQUEEZE", "points": 20, "text": "融券回補軋空(融券減少+帶量大漲)"})
+
         base = combine(b_score, w_score, t_score, i_score, theme_score)
         if base is None:
             continue
         final = max(0, min(100, base + penalty))
 
-        top_tech = sorted(t_reasons, key=lambda r: -r.get("points", 0))[:3]
+        # 確保所有策略都不被過濾掉
+        strategies = [r for r in t_reasons if r.get("code", "").startswith("S") or "MARK_STRATEGY" in r.get("code", "")]
+        others = [r for r in t_reasons if not (r.get("code", "").startswith("S") or "MARK_STRATEGY" in r.get("code", ""))]
+        top_tech = strategies + sorted(others, key=lambda r: -r.get("points", 0))[:3]
+        
         reasons = b_reasons + w_reasons + top_tech + i_reasons + theme_reasons
         risks = b_risks + w_risks + t_risks + i_risks + r_risks
         out_rows.append({

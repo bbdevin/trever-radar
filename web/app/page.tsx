@@ -21,6 +21,23 @@ const TABS: { key: ListKey; label: string; hint: string; icon: typeof IconFlame 
   { key: "warrant", label: "權證", hint: "認購權證成交金額相對20日均值放大", icon: IconPulse },
 ];
 
+const STRATEGIES = [
+  { key: "T6_MARK_STRATEGY", label: "綜合策略(舊)" },
+  { key: "S1_REBOUND", label: "漲停二次發動" },
+  { key: "S2_BREAKOUT20", label: "20日爆量突破" },
+  { key: "S3_MA_CONVERGE_BREAKOUT", label: "均線糾結突破" },
+  { key: "S4_VOLATILITY_CONTRACTION", label: "波動收斂突破" },
+  { key: "S5_PULLBACK_SUPPORT", label: "強勢量縮回踩" },
+  { key: "S6_HIGH_BASE_BREAKOUT", label: "高檔平台突破" },
+  { key: "S7_MACD_ZERO_CROSS", label: "MACD零軸金叉" },
+  { key: "S8_GAP_BREAKOUT", label: "跳空不回補" },
+  { key: "S9_MA5_TREND", label: "五日線強攻" },
+  { key: "S10_BOTTOM_MACD", label: "底部MACD轉強" },
+  { key: "S11_INSTI_BREAKOUT", label: "法人連買突破" },
+  { key: "S12_BRANCH_ACCUMULATION", label: "分點集中未發動" },
+  { key: "S13_SHORT_SQUEEZE", label: "融券回補軋空" },
+];
+
 function LoadingSkeleton() {
   return (
     <>
@@ -44,6 +61,7 @@ export default function RadarPage() {
   const [meta, setMeta] = useState<MetaJson | null>(null);
   const [error, setError] = useState(false);
   const [tab, setTab] = useState<ListKey>("score");
+  const [strategy, setStrategy] = useState<string>("T6_MARK_STRATEGY");
   const { session, loading } = useSession();
 
   useEffect(() => {
@@ -60,8 +78,11 @@ export default function RadarPage() {
   const shown = useMemo(() => {
     if (!radar) return [];
     const byId = new Map(radar.stocks.map((s) => [s.id, s]));
+    if (tab === "mark") {
+      return (radar.strategies?.[strategy] ?? []).map((id) => byId.get(id)!).filter(Boolean);
+    }
     return (radar.lists?.[tab] ?? []).map((id) => byId.get(id)!).filter(Boolean);
-  }, [radar, tab]);
+  }, [radar, tab, strategy]);
 
   if (error) {
     return (
@@ -153,6 +174,31 @@ export default function RadarPage() {
         </div>
         <span className="hidden text-xs text-muted-foreground lg:inline">{TABS.find((t) => t.key === tab)?.hint}</span>
       </div>
+
+      {tab === "mark" && (
+        <div className="mb-4 flex flex-wrap gap-1.5">
+          {STRATEGIES.map((st) => (
+            <button
+              key={st.key}
+              onClick={() => setStrategy(st.key)}
+              className={cn(
+                "rounded-md px-2.5 py-1 text-[12.5px] font-medium transition-colors",
+                strategy === st.key
+                  ? "bg-[color:var(--ink-2)] text-[color:var(--bg-1)] shadow-[0_1px_2px_rgba(0,0,0,0.1)]"
+                  : "bg-muted text-muted-foreground hover:bg-muted/80"
+              )}
+            >
+              {st.label}
+              <span className={cn(
+                "ml-1.5 rounded px-1 py-0.5 text-[10px]",
+                strategy === st.key ? "bg-[color:var(--bg-1)]/20" : "bg-background"
+              )}>
+                {radar.strategies?.[st.key]?.length ?? 0}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
 
       {tab === "mark" && !loading && !session ? (
         <div className="flex flex-col items-center gap-4 py-[46px] text-center text-sm text-muted-foreground">

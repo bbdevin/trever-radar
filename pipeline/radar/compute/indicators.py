@@ -19,6 +19,17 @@ def _sma(values: list[float | None], window: int, i: int) -> float | None:
     return sum(xs) / window  # type: ignore[arg-type]
 
 
+def _stddev(values: list[float | None], window: int, i: int) -> float | None:
+    if i + 1 < window:
+        return None
+    xs = values[i - window + 1:i + 1]
+    if any(v is None for v in xs):
+        return None
+    avg = sum(xs) / window
+    variance = sum((x - avg) ** 2 for x in xs) / window
+    return variance ** 0.5
+
+
 def _ema(prev: float | None, value: float | None, span: int) -> float | None:
     if value is None:
         return prev
@@ -64,6 +75,7 @@ def compute_series(price_rows: Iterable[dict]) -> list[dict]:
     adj_factor. Indicator prices are backward-adjusted values.
     """
     rows = list(price_rows)
+    opens = [_adj(r.get("open"), r.get("adj_factor")) for r in rows]
     closes = [_adj(r.get("close"), r.get("adj_factor")) for r in rows]
     highs = [_adj(r.get("high"), r.get("adj_factor")) for r in rows]
     lows = [_adj(r.get("low"), r.get("adj_factor")) for r in rows]
@@ -139,21 +151,32 @@ def compute_series(price_rows: Iterable[dict]) -> list[dict]:
         is_mark_strategy = is_limit_up_20d and has_volume_surge_5d and is_macd_golden_cross
         is_mark_strategy_relaxed = is_surge_7pct_20d and has_volume_surge_1_5x_5d and is_macd_golden_cross_any
 
+        std20 = _stddev(closes, 20, i)
+        
         score, reasons, risks = score_technical(
             idx=i,
+            open_=opens[i],
+            high=highs[i],
+            low=lows[i],
             close=close,
+            opens=opens,
             closes=closes,
+            highs=highs,
+            lows=lows,
             volumes=volumes,
             ma5=ma5,
             ma10=ma10,
             ma20=ma20,
             ma60=ma60,
+            std20=std20,
             high20=high20,
             box_high60=box_high60,
             box_low60=box_low60,
             adv20=adv20,
             volume_ratio=volume_ratio,
             rsi14=rsi[i],
+            macd=macd,
+            macd_signal=signal,
             macd_hist=macd_hist,
             prev_macd_hist=prev_macd_hist,
             k9=k9,
@@ -257,6 +280,135 @@ def score_technical(**x) -> tuple[int, list[dict], list[dict]]:
         add(20, "T6_MARK_STRATEGY", "策略(20日內曾漲停, MACD零上金叉, 5日內爆量)")
     elif x.get("is_mark_strategy_relaxed"):
         add(15, "T6_MARK_STRATEGY_RELAXED", "相近策略(20日內曾大漲, MACD金叉, 5日微量增)")
+
+    # 新增 10 項技術選股策略
+    opens, highs, lows = x["opens"], x["highs"], x["lows"]
+    open_, high, low = x["open_"], x["high"], x["low"]
+    ma10 = x["ma10"]
+    std20 = x.get("std20")
+    macd = x.get("macd")
+    macd_signal = x.get("macd_signal")
+
+    def _val(arr, offset):
+        if i - offset >= 0:
+            return arr[i - offset]
+        return None
+
+    prev_close = _val(closes, 1)
+    prev_ma5 = _val([_sma(closes, 5, j) for j in range(i+1)], 1)
+    prev_ma20 = _val([_sma(closes, 20, j) for j in range(i+1)], 1)
+
+    chg_pct = (close / prev_close - 1) * 100 if prev_close else 0
+
+    # Helpers
+    def get_max_vol(days):
+        vols = [v for v in volumes[max(0, i - days + 1):i + 1] if v is not None]
+        return max(vols) if vols else 0
+
+    def get_max_high(days):
+        h = [v for v in highs[max(0, i - days + 1):i + 1] if v is not None]
+        return max(h) if h else float('inf')
+
+    def get_min_low(days):
+        l = [v for v in lows[max(0, i - days + 1):i + 1] if v is not None]
+        return min(l) if l else 0
+
+    adv20 = x["adv20"] or 0
+    vol_ratio = x["volume_ratio"] or 0
+
+    # S1: 漲停基因二次發動
+    # 20日內曾漲停(is_limit_up_20d); 漲停後未破底(簡化:近20日低點不遠); 站上10/20日線; 20日線向上或走平; MACD>0金叉; 5日內量>1.8倍; 突破5日高
+    if (x.get("is_limit_up_20d") or x.get("is_mark_strategy")) and ma10 and ma20 and close > ma10 and close > ma20:
+        if prev_ma20 and ma20 >= prev_ma20 * 0.999: # 向上或走平
+            if macd and macd > 0 and x["macd_hist"] and x["macd_hist"] > 0 and x["prev_macd_hist"] and x["prev_macd_hist"] <= 0:
+                if get_max_vol(5) > adv20 * 1.8 and close >= get_max_high(5):
+                    add(20, "S1_REBOUND", "漲停基因二次發動(20日內漲停+整理後突破)")
+
+    # S2: 20 日新高爆量突破
+    # 突破20日高; 量>2倍; 5>10>20; ma20向上; MACD>0且紅柱; 收盤近最高; 突破K無長上影
+    if is_high20 and vol_ratio > 2.0 and x["ma5"] and ma10 and ma20 and x["ma5"] > ma10 > ma20:
+        if prev_ma20 and ma20 > prev_ma20 and macd and macd > 0 and x["macd_hist"] and x["macd_hist"] > 0:
+            if high and open_ and close >= high * 0.985:
+                body = abs(close - open_)
+                upper = high - max(open_, close)
+                if upper <= body * 0.5:
+                    add(20, "S2_BREAKOUT20", "20日新高爆量突破(多頭排列+爆量+實體長紅)")
+
+    # S3: 均線糾結突破
+    # 5,10,20接近(最高最低<3%); 收盤站上三均線; ma20向上或走平; 量>1.5; 突破10日高; MACD紅柱增強; RSI>50
+    if x["ma5"] and ma10 and ma20:
+        mas = [x["ma5"], ma10, ma20]
+        if max(mas) / min(mas) < 1.03:
+            if close > max(mas) and prev_ma20 and ma20 >= prev_ma20 * 0.999:
+                if vol_ratio > 1.5 and close >= get_max_high(10):
+                    if x["macd_hist"] and x["prev_macd_hist"] and x["macd_hist"] > x["prev_macd_hist"]:
+                        if rsi14 and rsi14 > 50:
+                            add(20, "S3_MA_CONVERGE_BREAKOUT", "均線糾結突破(均線收斂後帶量發動)")
+
+    # S4: 波動收斂後突破
+    # 10日振幅縮小; 5日均量低於20日均量70%; 布林寬度近60日低檔; 突破20日高; 量>2倍; 收盤近最高
+    if is_high20 and vol_ratio > 2.0 and high and open_ and close >= high * 0.985:
+        # Check volume contraction before breakout (avg of previous 5 days)
+        prev_5_vols = [v for v in volumes[max(0, i-6):i-1] if v is not None]
+        if len(prev_5_vols) == 5 and (sum(prev_5_vols)/5) < adv20 * 0.8:
+            # check bollinger width (approximation)
+            if std20 and ma20 and (std20 * 4 / ma20) < 0.15:
+                add(20, "S4_VOLATILITY_CONTRACTION", "波動收斂後突破(量縮整理後爆量創高)")
+
+    # S5: 強勢股量縮回踩
+    # 20日內漲幅>15% (close / close[i-20]); 5>10>20; ma20向上; 回踩10或20日線(最低價接近); 量縮; 當日收紅; 站回5日線或破昨高
+    c20 = _val(closes, 20)
+    if c20 and close > c20 * 1.15 and x["ma5"] and ma10 and ma20 and x["ma5"] > ma10 > ma20:
+        if prev_ma20 and ma20 > prev_ma20 and vol_ratio < 1.0 and close > open_:
+            if (low and low <= ma10 * 1.02) or (low and low <= ma20 * 1.02):
+                if close > x["ma5"] or (prev_close and close > prev_close):
+                    add(20, "S5_PULLBACK_SUPPORT", "強勢股量縮回踩(多頭回踩均線不破且轉強)")
+
+    # S6: 高檔平台再突破
+    # 整理一段時間(近15日高點-低點 < 10%); close突破15日高; 突破量大於均量
+    h15 = get_max_high(15)
+    l15 = get_min_low(15)
+    if h15 > 0 and (h15 - l15) / l15 < 0.12 and ma20 and prev_ma20 and ma20 > prev_ma20:
+        if close >= h15 and vol_ratio > 1.2:
+            c30 = _val(closes, 30)
+            if c30 and l15 > c30 * 1.1: # Before platform there was a rise
+                add(20, "S6_HIGH_BASE_BREAKOUT", "高檔平台再突破(高檔盤堅後再度創高)")
+
+    # S7: MACD 零軸上金叉
+    # DIF>0, Signal>0; DIF穿越Signal; 紅柱轉正; 站上20日線; 突破10日高; 量>1.5; RSI 50-75
+    if macd and macd_signal and macd > 0 and macd_signal > 0:
+        if x["macd_hist"] and x["macd_hist"] > 0 and x["prev_macd_hist"] and x["prev_macd_hist"] <= 0:
+            if ma20 and close > ma20 and close >= get_max_high(10):
+                if vol_ratio > 1.5 and rsi14 and 50 <= rsi14 <= 75:
+                    add(20, "S7_MACD_ZERO_CROSS", "MACD零軸上金叉(多頭趨勢重新加速)")
+
+    # S8: 跳空突破不回補
+    # 開盤 > 昨高; 跳空 2%~6%; 當日低點未補缺口; 突破20日高; 量>2倍; 收盤近高
+    prev_high = _val(highs, 1)
+    if prev_high and open_ > prev_high * 1.02 and open_ < prev_high * 1.06:
+        if low and low > prev_high and is_high20 and vol_ratio > 2.0:
+            if high and close >= high * 0.98:
+                add(20, "S8_GAP_BREAKOUT", "跳空突破不回補(缺口強勢表態)")
+
+    # S9: 五日線強勢續攻
+    # 近10日漲幅>10%; 近5日收盤在5日線上; 5日線向上; 量增; 突破3日高
+    c10 = _val(closes, 10)
+    if c10 and close > c10 * 1.1:
+        prev_5_closes = closes[max(0, i-4):i+1]
+        prev_5_ma5s = [_sma(closes, 5, j) for j in range(max(0, i-4), i+1)]
+        if all(c is not None and m is not None and c > m for c, m in zip(prev_5_closes, prev_5_ma5s)):
+            if x["ma5"] and prev_ma5 and x["ma5"] > prev_ma5 and vol_ratio > 1.0:
+                if close >= get_max_high(3):
+                    add(20, "S9_MA5_TREND", "五日線強勢續攻(沿五日線強勢攀升)")
+
+    # S10: 底部 MACD 轉強
+    # 近60日跌幅>20%; 負柱狀體縮短; 低檔金叉; 站上20日線; 量增; RSI底背離或>50
+    h60 = x["box_high60"]
+    if h60 and close < h60 * 0.8:
+        if x["macd_hist"] and x["prev_macd_hist"] and x["prev_macd_hist"] < 0 and x["macd_hist"] > x["prev_macd_hist"]:
+            if macd and macd < 0 and x["macd_hist"] > 0: # just crossed
+                if ma20 and close > ma20 and vol_ratio > 1.0 and rsi14 and rsi14 > 50:
+                    add(20, "S10_BOTTOM_MACD", "底部MACD轉強(跌深止跌轉強)")
 
     return min(score, 100), reasons, risks
 

@@ -154,6 +154,7 @@ def export_json(out_dir: Path | None = None) -> dict:
                     "stop_price": stop_price,
                 },
                 "reasons": [x["text"] for x in json.loads(score_reasons or "[]")[:4]],
+                "raw_reasons": json.loads(score_reasons or "[]"),
                 "risks": [x["text"] for x in json.loads(score_risks or "[]")[:3]],
             })
 
@@ -204,9 +205,29 @@ def export_json(out_dir: Path | None = None) -> dict:
             weak = list(reversed(strong_all))[:15]
         weak = weak[:40]
 
+        # 策略榜單
+        STRATEGY_CODES = [
+            "T6_MARK_STRATEGY", "S1_REBOUND", "S2_BREAKOUT20", "S3_MA_CONVERGE_BREAKOUT",
+            "S4_VOLATILITY_CONTRACTION", "S5_PULLBACK_SUPPORT", "S6_HIGH_BASE_BREAKOUT",
+            "S7_MACD_ZERO_CROSS", "S8_GAP_BREAKOUT", "S9_MA5_TREND", "S10_BOTTOM_MACD",
+            "S11_INSTI_BREAKOUT", "S12_BRANCH_ACCUMULATION", "S13_SHORT_SQUEEZE"
+        ]
+        strategies_lists = {code: [] for code in STRATEGY_CODES}
+        for s in all_stocks:
+            for r in s.get("raw_reasons", []):
+                code = r.get("code")
+                if code in strategies_lists:
+                    strategies_lists[code].append(s)
+        
+        for code in strategies_lists:
+            strategies_lists[code] = sorted(strategies_lists[code], key=lambda x: x["turnover"] or 0, reverse=True)[:40]
+
         union: dict[str, dict] = {}
         for s in score + hot + surge + strong + weak + warrant + mark:
             union[s["id"]] = s
+        for st_list in strategies_lists.values():
+            for s in st_list:
+                union[s["id"]] = s
         for s in union.values():
             s["spark"] = [row[0] for row in conn.execute(text(
                 "SELECT close FROM (SELECT close, date FROM daily_prices "
@@ -399,6 +420,7 @@ def export_json(out_dir: Path | None = None) -> dict:
             "warrant": [s["id"] for s in warrant],
             "mark": [s["id"] for s in mark],
         },
+        "strategies": {code: [s["id"] for s in st_list] for code, st_list in strategies_lists.items()},
         "stocks": list(union.values()),
     }
     meta = {
@@ -503,6 +525,7 @@ def export_json(out_dir: Path | None = None) -> dict:
                 "technical": s["technical"],
                 "scores": s["scores"],
                 "reasons": s.get("reasons", []),
+                "raw_reasons": s.get("raw_reasons", []),
                 "risks": s.get("risks", []),
                 "branches": [
                     {"name": r[0], "buy": r[1] or 0, "sell": r[2] or 0,

@@ -159,6 +159,7 @@ export interface RadarStock {
   technical: TechnicalSummary | null;
   scores: ScoreBreakdown | null; // null = 該股當日未評分(流動性門檻未過等)
   reasons: string[];
+  raw_reasons?: ReasonItem[];
   risks: string[];
 }
 
@@ -172,6 +173,7 @@ export interface RadarJson {
   themes?: SectorFlow[]; // 概念股資金流(成分重疊)
   concentration?: ConcentrationRow[]; // 集中度躍升榜(探索頁)
   lists: Record<ListKey, string[]>;
+  strategies?: Record<string, string[]>;
   stocks: RadarStock[];
 }
 
