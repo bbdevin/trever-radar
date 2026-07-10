@@ -11,7 +11,10 @@ import { cn } from "@/lib/utils";
 import type { ListKey, MetaJson, RadarJson } from "@/lib/types";
 import { DATASET_LABEL, SOURCE_LABEL, fmtE8 } from "@/lib/format";
 
-const TABS: { key: ListKey; label: string; hint: string; icon: typeof IconFlame }[] = [
+// "mark" 是前端策略頁籤的 UI 識別鍵,讀 radar.strategies,不對應 radar.lists 的任何榜
+type TabKey = ListKey | "mark";
+
+const TABS: { key: TabKey; label: string; hint: string; icon: typeof IconFlame }[] = [
   { key: "score", label: "綜合", hint: "盤後綜合分數:分點/權證/技術/法人加權−風險扣分,≥65 為觀察門檻", icon: IconRadar },
   { key: "mark", label: "策略", hint: "進階量化選股，涵蓋技術面與籌碼面等多種策略", icon: IconStar },
   { key: "hot", label: "熱門", hint: "成交金額最大", icon: IconFlame },
@@ -23,7 +26,7 @@ const TABS: { key: ListKey; label: string; hint: string; icon: typeof IconFlame 
 
 const STRATEGIES = [
 
-  { key: "S1_REBOUND", label: "漲停二次發動", desc: "近 20 日曾漲停，MACD 於零軸之上發生黃金交叉，且近日爆量突破" },
+  { key: "S1_REBOUND", label: "漲停二次發動", desc: "雙軌條件：嚴謹版為近 20 日曾漲停、MACD 零軸上黃金交叉、5 日內爆量（2 倍）；相近（放寬）版為近 20 日曾大漲 7%、MACD 任意金叉、5 日內量增 1.5 倍。榜內嚴謹版優先排前" },
   { key: "S2_BREAKOUT20", label: "20日爆量突破", desc: "創 20 日新高，當日爆量且收紅 K，中長期均線多頭排列" },
   { key: "S3_MA_CONVERGE_BREAKOUT", label: "均線糾結突破", desc: "5/10/20 日均線距離極近，當日帶量長紅突破糾結區" },
   { key: "S4_VOLATILITY_CONTRACTION", label: "波動收斂突破", desc: "近 10 日布林通道極度壓縮（帶寬 < 8%），當日帶量突破上軌" },
@@ -60,7 +63,7 @@ export default function RadarPage() {
   const [radar, setRadar] = useState<RadarJson | null>(null);
   const [meta, setMeta] = useState<MetaJson | null>(null);
   const [error, setError] = useState(false);
-  const [tab, setTab] = useState<ListKey>("score");
+  const [tab, setTab] = useState<TabKey>("score");
   const [strategy, setStrategy] = useState<string>("S1_REBOUND");
   const { session, loading } = useSession();
 

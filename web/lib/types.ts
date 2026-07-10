@@ -115,7 +115,7 @@ export interface SectorFlow {
   subs?: SectorSubFlow[]; // 產業內成分 ≥2 檔的題材,依金額取前 10;題材模式(themes)無此欄
 }
 
-export type ListKey = "score" | "hot" | "surge" | "strong" | "weak" | "warrant" | "mark";
+export type ListKey = "score" | "hot" | "surge" | "strong" | "weak" | "warrant";
 
 export interface ConcentrationRow {
   id: string;

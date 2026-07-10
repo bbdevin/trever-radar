@@ -95,6 +95,7 @@
 - Actions 有 Node 20 → 24 的 deprecation 警告(actions 版本升級,無急迫)
 - **排程觸發改 Cloudflare Worker,無備援(2026-07-09)**:見 `cloudflare-trigger/README.md`。Worker 或 `GH_TOKEN`(存於 Cloudflare secret 的 fine-grained PAT)一旦壞掉會靜默停止觸發,網站不會報錯只會停止更新——前幾週要偶爾看一下 `gh run list` 或首頁 freshness。`GH_TOKEN` 是每天實際在用的憑證,**不可直接 revoke**,輪替流程見該 README。假日跳過邏輯評估後**決定不做**:管線在非交易日已靠 `NoDataError` 安全空跑(`importer.py` 的 `_run()` 接住例外記 log,不會壞資料),手刻假日曆的「錯殺交易日」風險大於省下的 Actions 分鐘數
 - 本機 dev 與雲端 DB 已分岔:雲端為正式真相,本機僅開發;push 部署會從 Actions cache/release DB 產出線上 JSON
+- **策略/技術評分邏輯改動不會立即反映在正式資料**:S1-S10 的代碼存於 `indicators_daily.reasons`(S11-S13 在 `daily_scores.reasons`),而增量重算(`compute-indicators --days 5`)會直接跳過「指標日期已跟上價格日期」的股票,不會因程式改版重算。改了策略程式後:當日榜要等**下一交易日 14:10** 的 `daily-market` 增量才會用新邏輯產生當日 reasons;全歷史則要等**週六 01:10** `data-backfill task=adjust` 跑的 `compute-indicators --all`(或手動觸發)才會回補。2026-07-10 策略上線首日 S1-S10 全部 0 檔即此因(當日指標已算過、增量跳過),非邏輯錯誤。freshness 跳過機制本身不改(週六全重算已覆蓋)
 
 ## 最近完成
 
@@ -118,6 +119,7 @@
 - 2026-07-10 權證大戶追蹤 (Warrant Branch Tracker):於 export_json 實作跨權證彙總演算法，以標的股票為中心加總特定分點的多檔權證淨買賣額，支援 1D/2D/5D/30D 區間，並篩選出大於 500 萬台幣的大單。前端 `/branch` 頁面新增「權證大戶」Tab，透過 Bento Grid 卡片與 Pill Selector 呈現 UI/UX PRO MAX 質感。並且支援點擊卡片直接展開明細 (Accordion)，列出構成該大單的每一檔權證代號、名稱、屬性及金額佔比。（新增半年 120D 追蹤：排程範圍擴大至 Top 200 權證，並支援 120D 時間切換，用於追蹤大戶低檔佈局尚未出清之籌碼。）（新增視角切換功能：支援「依標的檢視」與「依分點檢視」雙模式，將相同標的或分點的卡片進行聚合，減少畫面散亂，大幅提升追蹤主力的效率。）**（導入 UI/UX PRO MAX 視覺升級：卡片漸層與立體陰影、懸浮式手風琴子卡片 (Nested Cards)、紅綠邊框指示條、以及 Apple 風格立體切換器，徹底跳脫傳統表格框架。）**
 - 2026-07-10 資金流向面板改善與 UI 規範文件化(commit `a221995`,verifier CONFIRMED):①修條圖蓋字 bug——每列改「名稱|條軌|數值區」三欄 grid,條以 scaleX 在自己的 overflow-hidden 條軌內縮放,結構上不可能再壓到金額文字;②流入欄移到左邊(DOM 順序=視覺順序,移除 order hack);③產業下鑽子題材——export 為每產業輸出 `sectors[].subs`(成分 ≥2 檔題材、排除同產業名、金額前 10、每 sub 帶前 5 成分股),前端點產業先列子題材(如 BBU、被動元件)再展成分股,保留全部成分股入口;新增種子 DB 測試 `test_json_export.py`;④新增 `docs/19_ui_guidelines.md`(專案 UI/UX 規範,ui-ux-pro-max 對照),`AGENTS.md` 動前端必讀行同步更新——**日後改前端頁面先讀 docs/19 + docs/07**。
 - 2026-07-10 13 項選股策略與獨立榜單重構:`indicators.py` 及 `scores.py` 實作涵蓋技術與籌碼（如「漲停二次發動」、「法人連買突破」、「均線糾結突破」等）共 13 種量化策略；前端首頁「策略」頁籤內，新增了可動態切換 13 種不同策略條件的選單，並移除個別策略按鈕上的雜訊數字，介面大幅升級。
+- 2026-07-10 S1 雙軌還原 + mark 死碼移除:S1「漲停二次發動」還原舊版嚴謹/放寬雙軌(嚴謹 `S1_REBOUND` 20 分,elif 放寬 `S1_REBOUND_RELAXED` 15 分;放寬=20日內漲7%+5日量1.5倍+任意金叉),兩代碼同入 `strategies.S1_REBOUND` 榜、嚴謹排前,解決嚴謹單軌常態 0 檔;同時移除已無消費者的舊 T6 mark 榜死碼(`json_export.py` 的 mark 掃描/`lists.mark` 輸出、`web/lib/types.ts` ListKey 的 mark)並補 S1 單元測試;另把「策略邏輯改動需等增量/週六全重算才生效」文件化於上方已知債務。
 
 ## 系統模組與功能對應表 (Pipeline Models Mapping)
 

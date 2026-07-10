@@ -184,6 +184,9 @@ def compute_series(price_rows: Iterable[dict]) -> list[dict]:
             is_limit_up_20d=is_limit_up_20d,
             has_volume_surge_5d=has_volume_surge_5d,
             is_macd_golden_cross=is_macd_golden_cross,
+            is_surge_7pct_20d=is_surge_7pct_20d,
+            has_volume_surge_1_5x_5d=has_volume_surge_1_5x_5d,
+            is_macd_golden_cross_any=is_macd_golden_cross_any,
         )
 
         out.append({
@@ -311,10 +314,11 @@ def score_technical(**x) -> tuple[int, list[dict], list[dict]]:
     adv20 = x["adv20"] or 0
     vol_ratio = x["volume_ratio"] or 0
 
-    # S1: 漲停基因二次發動
-    # 放寬回原本的舊版綜合嚴謹策略邏輯，避免條件過度嚴苛導致 0 檔
+    # S1: 漲停基因二次發動(雙軌:嚴謹 20 分,不中再看放寬 15 分;elif 不重複計分)
     if x.get("is_limit_up_20d") and x.get("has_volume_surge_5d") and x.get("is_macd_golden_cross"):
         add(20, "S1_REBOUND", "漲停基因二次發動(20日內曾漲停, MACD零上金叉, 5日內爆量)")
+    elif x.get("is_surge_7pct_20d") and x.get("has_volume_surge_1_5x_5d") and x.get("is_macd_golden_cross_any"):
+        add(15, "S1_REBOUND_RELAXED", "漲停基因二次發動-相近(20日內曾大漲7%, MACD金叉, 5日量增1.5倍)")
 
     # S2: 20 日新高爆量突破
     # 突破20日高; 量>2倍; 5>10>20; ma20向上; MACD>0且紅柱; 收盤近最高; 突破K無長上影

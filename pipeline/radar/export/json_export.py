@@ -194,11 +194,6 @@ def export_json(out_dir: Path | None = None) -> dict:
         if len(warrant) < 15: warrant = warrant_all[:15]
         warrant = warrant[:40]
 
-        mark_all = sorted(
-            [s for s in all_stocks if s["technical"] and any(r.get("code") in ("T6_MARK_STRATEGY", "T6_MARK_STRATEGY_RELAXED") for r in s["technical"]["reasons"])],
-            key=lambda s: s["turnover"] or 0, reverse=True)
-        mark = mark_all[:40]
-
         # 弱勢榜:跌幅排序(門檻同強勢,鏡像邏輯)
         weak = [s for s in reversed(strong_all) if (s["chg_pct"] or 0) <= -5.0]
         if len(weak) < 15:
@@ -213,18 +208,29 @@ def export_json(out_dir: Path | None = None) -> dict:
             "S10_BOTTOM_MACD", "S11_INSTI_BREAKOUT", "S12_BRANCH_ACCUMULATION",
             "S13_SHORT_SQUEEZE"
         ]
+        # S1 為雙軌:放寬版 S1_REBOUND_RELAXED 併入 S1_REBOUND 榜(對外仍只有一個鍵)
+        STRATEGY_CODE_ALIASES = {"S1_REBOUND_RELAXED": "S1_REBOUND"}
         strategies_lists = {code: [] for code in STRATEGY_CODES}
         for s in all_stocks:
             for r in s.get("raw_reasons", []):
-                code = r.get("code")
+                code = STRATEGY_CODE_ALIASES.get(r.get("code"), r.get("code"))
                 if code in strategies_lists:
                     strategies_lists[code].append(s)
-        
+
+        def _s1_points(s):
+            # 嚴謹版 20 分 > 放寬版 15 分 → 嚴謹排前;同級內依 turnover
+            return max((r.get("points") or 0) for r in s.get("raw_reasons", [])
+                       if r.get("code") in ("S1_REBOUND", "S1_REBOUND_RELAXED"))
+
         for code in strategies_lists:
-            strategies_lists[code] = sorted(strategies_lists[code], key=lambda x: x["turnover"] or 0, reverse=True)[:40]
+            if code == "S1_REBOUND":
+                key = lambda x: (_s1_points(x), x["turnover"] or 0)
+            else:
+                key = lambda x: x["turnover"] or 0
+            strategies_lists[code] = sorted(strategies_lists[code], key=key, reverse=True)[:40]
 
         union: dict[str, dict] = {}
-        for s in score + hot + surge + strong + weak + warrant + mark:
+        for s in score + hot + surge + strong + weak + warrant:
             union[s["id"]] = s
         for st_list in strategies_lists.values():
             for s in st_list:
@@ -419,7 +425,6 @@ def export_json(out_dir: Path | None = None) -> dict:
             "strong": [s["id"] for s in strong],
             "weak": [s["id"] for s in weak],
             "warrant": [s["id"] for s in warrant],
-            "mark": [s["id"] for s in mark],
         },
         "strategies": {code: [s["id"] for s in st_list] for code, st_list in strategies_lists.items()},
         "stocks": list(union.values()),
