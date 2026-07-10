@@ -22,21 +22,21 @@ const TABS: { key: ListKey; label: string; hint: string; icon: typeof IconFlame 
 ];
 
 const STRATEGIES = [
-  { key: "T6_MARK_STRATEGY", label: "綜合策略(嚴謹)" },
-  { key: "T6_MARK_STRATEGY_RELAXED", label: "綜合策略(寬鬆)" },
-  { key: "S1_REBOUND", label: "漲停二次發動" },
-  { key: "S2_BREAKOUT20", label: "20日爆量突破" },
-  { key: "S3_MA_CONVERGE_BREAKOUT", label: "均線糾結突破" },
-  { key: "S4_VOLATILITY_CONTRACTION", label: "波動收斂突破" },
-  { key: "S5_PULLBACK_SUPPORT", label: "強勢量縮回踩" },
-  { key: "S6_HIGH_BASE_BREAKOUT", label: "高檔平台突破" },
-  { key: "S7_MACD_ZERO_CROSS", label: "MACD零軸金叉" },
-  { key: "S8_GAP_BREAKOUT", label: "跳空不回補" },
-  { key: "S9_MA5_TREND", label: "五日線強攻" },
-  { key: "S10_BOTTOM_MACD", label: "底部MACD轉強" },
-  { key: "S11_INSTI_BREAKOUT", label: "法人連買突破" },
-  { key: "S12_BRANCH_ACCUMULATION", label: "分點集中未發動" },
-  { key: "S13_SHORT_SQUEEZE", label: "融券回補軋空" },
+  { key: "T6_MARK_STRATEGY", label: "綜合策略(嚴謹)", desc: "結合分點、技術、權證的綜合嚴謹策略，需滿足多項嚴格條件" },
+  { key: "T6_MARK_STRATEGY_RELAXED", label: "綜合策略(寬鬆)", desc: "放寬部分指標門檻的綜合寬鬆策略，適合提早捕捉可能發動的標的" },
+  { key: "S1_REBOUND", label: "漲停二次發動", desc: "近 20 日曾漲停，現價站上均線且 MACD 零上金叉，近日爆量突破" },
+  { key: "S2_BREAKOUT20", label: "20日爆量突破", desc: "創 20 日新高，當日爆量且收紅 K，中長期均線多頭排列" },
+  { key: "S3_MA_CONVERGE_BREAKOUT", label: "均線糾結突破", desc: "5/10/20 日均線距離極近，當日帶量長紅突破糾結區" },
+  { key: "S4_VOLATILITY_CONTRACTION", label: "波動收斂突破", desc: "近 10 日布林通道極度壓縮（帶寬 < 8%），當日帶量突破上軌" },
+  { key: "S5_PULLBACK_SUPPORT", label: "強勢量縮回踩", desc: "近期創高後回檔，量縮至極致並於 10 日或 20 日均線獲得支撐收紅" },
+  { key: "S6_HIGH_BASE_BREAKOUT", label: "高檔平台突破", desc: "在 60 日高點附近高姿態橫盤整理，當日帶量突破箱型上緣" },
+  { key: "S7_MACD_ZERO_CROSS", label: "MACD零軸金叉", desc: "MACD 於零軸之上發生黃金交叉，且當日帶量收紅" },
+  { key: "S8_GAP_BREAKOUT", label: "跳空不回補", desc: "發生向上跳空缺口，後續 3 日未封閉缺口且量縮整理後轉強" },
+  { key: "S9_MA5_TREND", label: "五日線強攻", desc: "股價沿 5 日線強勢上攻，未曾跌破 5 日線，當日量價配合延續強勢" },
+  { key: "S10_BOTTOM_MACD", label: "底部MACD轉強", desc: "股價處於長期低檔區，MACD 於零軸下方黃金交叉且柱狀圖明顯翻紅" },
+  { key: "S11_INSTI_BREAKOUT", label: "法人連買突破", desc: "外資或投信連續 3 日買超，配合技術面突破轉強" },
+  { key: "S12_BRANCH_ACCUMULATION", label: "分點集中未發動", desc: "主力分點買超極度集中（佔比 > 15% 且倍增），但股價尚未明顯大漲" },
+  { key: "S13_SHORT_SQUEEZE", label: "融券回補軋空", desc: "融券餘額處於高檔（> 1000 張）且近期連續減少，當日帶量長紅突破" },
 ];
 
 function LoadingSkeleton() {
@@ -179,21 +179,33 @@ export default function RadarPage() {
       </div>
 
       {tab === "mark" && (
-        <div className="mb-4 flex flex-wrap gap-1.5">
-          {STRATEGIES.map((st) => (
-            <button
-              key={st.key}
-              onClick={() => setStrategy(st.key)}
-              className={cn(
-                "rounded-md px-2.5 py-1 text-[12.5px] font-medium transition-colors",
-                strategy === st.key
-                  ? "bg-[color:var(--ink-2)] text-[color:var(--bg-1)] shadow-[0_1px_2px_rgba(0,0,0,0.1)]"
-                  : "bg-muted text-muted-foreground hover:bg-muted/80"
-              )}
-            >
-              {st.label}
-            </button>
-          ))}
+        <div className="mb-4">
+          <div className="flex flex-wrap gap-1.5">
+            {STRATEGIES.map((st) => (
+              <button
+                key={st.key}
+                onClick={() => setStrategy(st.key)}
+                className={cn(
+                  "rounded-md px-2.5 py-1 text-[12.5px] font-medium transition-colors",
+                  strategy === st.key
+                    ? "bg-[color:var(--ink-2)] text-[color:var(--bg-1)] shadow-[0_1px_2px_rgba(0,0,0,0.1)]"
+                    : "bg-muted text-muted-foreground hover:bg-muted/80"
+                )}
+              >
+                {st.label}
+                <span className={cn(
+                  "ml-1.5 rounded px-1 py-0.5 text-[10px]",
+                  strategy === st.key ? "bg-[color:var(--bg-1)]/20" : "bg-background"
+                )}>
+                  {radar.strategies?.[st.key]?.length ?? 0}
+                </span>
+              </button>
+            ))}
+          </div>
+          <div className="mt-2.5 rounded-md border border-border bg-muted/30 px-3 py-2 text-[12.5px] text-muted-foreground">
+            <strong className="text-foreground">{STRATEGIES.find((s) => s.key === strategy)?.label}：</strong>
+            {STRATEGIES.find((s) => s.key === strategy)?.desc}
+          </div>
         </div>
       )}
 
