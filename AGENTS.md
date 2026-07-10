@@ -29,8 +29,9 @@
 | `docs/03/04/09/13` | ⚠️ **規則邏輯 current,資料來源段落過時** | 評分公式、資料表規格、頁面規格仍是設計藍圖依據;資料來源描述以 `vps_backfill_plan.md` 為準。 |
 | `docs/17_no_fable_workflow.md` | ✅ **current** | No-Fable 工作流程完整版,見下方 Required Reading。 |
 | `docs/18_handoff_template.md` | ✅ **current** | Agent 交接模板。 |
+| `docs/20_simplification_strategy.md` | ✅ **current,功能刪減與策略治理 source of truth** | 2026-07-10 使用者確認的 B 方案:停止擴張探索頁與新策略,策略/技術分解耦、績效閉環、UI 合併及排程簡化階段。 |
 
-有疑問時,信任順序:`project-context.md` / `STATUS.md` / `12` / `08§0` / `vps_backfill_plan.md` > 其餘 `docs/*` > 對話記憶。
+有疑問時,信任順序:`project-context.md` / `STATUS.md` / `20`(功能刪減與策略治理) / `12` / `08§0` / `vps_backfill_plan.md` > 其餘 `docs/*` > 對話記憶。
 
 ## Required Reading(改檔前必讀)
 
@@ -39,6 +40,7 @@
 3. `docs/STATUS.md`
 4. `docs/17_no_fable_workflow.md`
 5. `docs/18_handoff_template.md`
+6. `docs/20_simplification_strategy.md`(進行功能規劃、評分、前端資訊架構或排程簡化時必讀)
 
 再依任務追加:
 - 動資料庫/排程 → `docs/08_scheduler_jobs.md` §0 + `.github/workflows/*.yml`

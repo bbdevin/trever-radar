@@ -24,7 +24,12 @@
 - **前端 UI**: `/branch` 頁面新增「權證大戶」Tab，搭載時間維度切換器 (1D/2D/5D/30D)，以 Bento Grid 卡片與 UI/UX PRO MAX 質感呈現。並支援點擊卡片直接展開明細 (Accordion)，檢視構成該大單的所有權證。
 - **判讀提醒(UI 標註)**:權證分點大宗是發行商造市部位,異常訊號要看「非發行商分點」的大額買超。
 
-## 4. 登入管理(Google OAuth)✅ 2026-07-08 金鑰已提供,實作中
+## 4. 登入管理(Google OAuth)✅ 基礎版已實作
+
+> **2026-07-10 現況補充**:Supabase Google OAuth、前端 session 與 Supabase-backed watchlist 已接入;
+> `allowed_users` / admin 名單管理尚未實作,並依 `docs/20_simplification_strategy.md` 延後。
+> 靜態 JSON 仍可公開讀取,因此登入只負責個人化與體驗閘門,不等於資料安全邊界;
+> 要真正私有仍須由使用者另案決定啟用 Cloudflare Access。
 
 ### 登入閘門矩陣(定案)
 

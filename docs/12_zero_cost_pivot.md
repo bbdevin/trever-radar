@@ -12,6 +12,10 @@
 | 前端靜態站 | **Cloudflare Pages**(首選)或 Vercel Hobby(次選) | 皆免費;選 CF 因為可加 **Cloudflare Access**:免費 email 白名單登入(≤50 人),零登入程式碼,等於免費拿到「使用者管理」 |
 | 資料庫 | **SQLite 單檔**(管線內)+ 靜態 JSON(前端讀) | 不用任何雲端 DB 服務 → 不受 Supabase 免費層休眠/500MB 限制;T+1 批次產品本質上不需要線上 DB |
 
+> **2026-07-10 現況補充**:市場資料與評分的唯一真相仍是 SQLite;但自選股與 Google OAuth
+> 已使用 Supabase 免費層作個人化服務。Supabase 不存市場資料,不改變靜態 JSON 架構。
+> 後續範圍依 `docs/20_simplification_strategy.md`:保留跨裝置自選,不擴張成一般後端或假性資料安全閘門。
+
 註:GitHub Pages 不行(私有 repo 需付費方案);Vercel Hobby 條款限非商業用途(私人工具符合);GitHub Actions cron 可能延遲數分鐘~一小時,對晚間 T+1 資料無害,排 17:30 台北時間 + 失敗重試。
 
 ## 2. 架構(V1-Free)

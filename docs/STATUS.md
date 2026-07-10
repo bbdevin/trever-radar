@@ -19,7 +19,7 @@
 - 流程為**模型中立、角色導向**:Planner / Executor / Reviewer 由本次任務指定,不由模型品牌永久決定;規則見 `AGENTS.md` 與 `docs/17_no_fable_workflow.md`。
 - 工具清單:Claude Code、AGY/Gemini、Codex、GPT/Grok 等高階模型均可任三角色;Cursor 為 IDE / 確認介面;人類使用者為唯一決策者。
 
-下一步:先完成 AI workflow 文件整理本身(本次任務),之後功能開發任務排序仍照本檔「未完成(依優先序)」清單走,**不因引入多 agent 流程而直接大改既有功能**。
+下一步:依使用者 2026-07-10 確認的 `docs/20_simplification_strategy.md` B 方案,先刪減重複 UI、再將 S1-S13 與技術分解耦並建立策略績效閉環。每次只執行一個 Phase;正式資料重算與 workflow 簡化另案確認。
 
 ## 已完成 ✅
 
@@ -70,11 +70,12 @@
 
 ## 未完成(依優先序)
 
-1. ~~探索頁、自選股、觀察價/失效價~~ **2026-07-10 完成基本版**(見上方已完成);探索頁地緣/關鍵分點/分點績效榜/權證異動 4 個 tab 仍缺,待人工名單或與 /branch 整合的決定
-2. ~~deep-backfill --all~~ **執行中**:FinMind 註冊 token(600/hr)已設本機+雲端 secret;`data-backfill` workflow(手動觸發)正在雲端跑全市場上市以來歷史(約 4.5 小時,可中斷續跑);完成後手動觸發 `task=adjust` 補全市場還原因子:`gh workflow run data-backfill -f task=adjust`
-3a. **分點資料擴容**(2026-07-08,docs/vps_backfill_plan.md 修訂版):MoneyDJ 鏡像輪替(富邦+元富,可擴)、每日池 80→**500 檔**(--sleep 1.2)、`backfill-branches` 歷史 march-back(斷點續傳+限時)已接凌晨 01:10,約一週自動補齊 Top300×60 交易日;VPS 為加速選項非必需。首頁新增**弱勢榜**;/branch 新增**權證分點 tab**(近40日對單一權證淨買 ≥300 張);修 /stock/ 與 /branch/ 死連結
-3. **分點排行與追蹤**(規格 docs/13):~~今日動向頁 → branch_stock_stats → 可信度排行榜~~ **2026-07-10 完成**(見已完成/最近完成);`branch_trades` 持續累積中,排行榜統計效力需 2–3 個月資料。待做:地緣/關鍵分點人工名單;自動移出改用規格的「連續 60 日可信度 <50」(需快照歷史累積,現為當次分數簡化版)
-4. V2 盤中(Fugle + 本機 worker)
+1. **B 方案 Phase 1—UI 刪減與合併**(`docs/20`):集中度併入 `/branch` 今日動向、題材只留首頁、移除 `/explore` 與空殼盤中導航、權證大戶降級為「權證分點異動(實驗)」、清理確認未使用的前端依賴/元件。
+2. **B 方案 Phase 2—策略/分數解耦**(`docs/20`,高風險資料語意變更):S1-S13 只產生 tag/reason,不得再增加 `tech_score` 或其他分項;補 S2-S13 測試與舊/新分數差異報告。正式全市場重算、回灌及部署必須另獲使用者批准。
+3. **B 方案 Phase 3—策略績效閉環**(`docs/20`):輸出各 S code 的成熟樣本、5/10/20 日勝率與平均/中位報酬;預設 Shadow,使用者看報告後決定 Active/Retired。
+4. **B 方案 Phase 4—排程簡化提案**(`docs/20`,獨立高風險任務):保留資料取得時點,評估完整 build/deploy 由每日最多 5 次降為 14:10/22:10 兩次;不得在未完整審查 WAL/cache/release 鏈前修改 workflow。
+5. ~~deep-backfill --all~~ **執行狀態需另行查證**:完成與否不得只信本檔舊紀錄;若需 `task=adjust` 或 VPS 回灌,先依 `vps_backfill_plan.md` 與高風險流程確認。
+6. **分點排行資料累積**:可信度排行榜已完成,統計效力需 2–3 個月。地緣/關鍵分點人工名單、五年分點擴容、LINE Bot、V2 盤中均依 B 方案延後,不得搶在 Phase 1-3 前擴張。
 
 ## 已知債務 / 注意
 
