@@ -44,8 +44,8 @@
 
 ## 固定提示詞(直接複製貼上,不要改寫)
 
-> **交辦 AGY / 依 Phase·WP 執行的完整提示詞**見 `docs/24_agy_executor_prompts.md`(通用起手 + Phase 1 / V1 / Armed / Review 任務塊)。
-> 本節保留跨模型通用短提示;任務級長提示以 24 為準,避免兩處漂移時改 24。
+> **交辦 AGY / Executor 的提示詞模板**見 `docs/24_agy_executor_prompts.md`(填 Confirmed Scope;任務以 STATUS/Planner 為準,不在 24 寫死功能清單)。
+> 本節保留跨模型通用短提示;長模板以 24 為準。
 
 ### 貼給新接手的 Executor(任何模型)
 
