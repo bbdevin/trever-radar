@@ -76,7 +76,7 @@
 1. ~~探索頁、自選股、觀察價/失效價~~ **2026-07-10 完成基本版**(見上方已完成);探索頁地緣/關鍵分點/分點績效榜/權證異動 4 個 tab 仍缺,待人工名單或與 /branch 整合的決定
 2. ~~deep-backfill --all~~ **執行中**:FinMind 註冊 token(600/hr)已設本機+雲端 secret;`data-backfill` workflow(手動觸發)正在雲端跑全市場上市以來歷史(約 4.5 小時,可中斷續跑);完成後手動觸發 `task=adjust` 補全市場還原因子:`gh workflow run data-backfill -f task=adjust`
 3a. **分點資料擴容**(2026-07-08,docs/vps_backfill_plan.md 修訂版):MoneyDJ 鏡像輪替(富邦+元富,可擴)、每日池 80→**500 檔**(--sleep 1.2)、`backfill-branches` 歷史 march-back(斷點續傳+限時)已接凌晨 01:10,約一週自動補齊 Top300×60 交易日;VPS 為加速選項非必需。首頁新增**弱勢榜**;/branch 新增**權證分點 tab**(近40日對單一權證淨買 ≥300 張);修 /stock/ 與 /branch/ 死連結
-3. **分點排行與追蹤**(規格 docs/13):資料已解鎖且分點分已接入——`import-branch-trades` 每晚爬富邦公開頁(評分池前 80 檔前 15 大買賣超),`branch_trades` 累積中。待做:今日動向頁 → branch_stock_stats → 可信度排行榜(需累積 2–3 個月才有統計效力)→ 地緣/關鍵分點人工名單
+3. **分點排行與追蹤**(規格 docs/13):~~今日動向頁 → branch_stock_stats → 可信度排行榜~~ **2026-07-10 完成**(見已完成/最近完成);`branch_trades` 持續累積中,排行榜統計效力需 2–3 個月資料。待做:地緣/關鍵分點人工名單;自動移出改用規格的「連續 60 日可信度 <50」(需快照歷史累積,現為當次分數簡化版)
 4. V2 盤中(Fugle + 本機 worker)
 
 ## 已知債務 / 注意
@@ -114,6 +114,7 @@
 - 2026-07-10 觀察價/失效價 + 自選股 + 探索頁(集中度/題材):`daily_scores` 新增 `watch_price`/`stop_price`/`buy_concentration`/`concentration_avg20`(additive migration);純函式 `watch_stop_prices`/`buy_concentration` 各有單元測試,`buy_concentration` 從既有 B3 評分邏輯抽出重用;`export-json` 帶出至股票卡/個股頁/新的 `radar.json.concentration` 榜;前端新增 Supabase-backed 自選股(`web/lib/watchlist.tsx` Context + `WatchlistButton` + `/watchlist` 頁,需人工執行 `docs/sql/watchlist.sql` 建表)與 `/explore` 頁(集中度+題材 2 個 tab,地緣/關鍵分點/分點績效榜/權證異動因人工名單或與 `/branch` 重疊而暫緩);全專案 `npm run build`(含 static export)與 16 項 pytest 皆過。
 - 2026-07-10 前端 UI 遷移 Tailwind CSS v4 + shadcn/ui(尚未 commit):分階段(header/nav/搜尋/auth → 首頁 → 個股頁 → branch/explore/watchlist → 清理舊 CSS)把全站手刻 CSS 換成 Tailwind utility + shadcn 元件,視覺目標是與遷移前逐頁比對不走樣(每階段皆截圖比對深色模式,並用本機 DB 產出的真實資料而非空狀態驗證);過程中發現並修掉兩個遷移期間才浮現的既有 bug——① 舊 `.grid` class 名稱與 Tailwind 內建 `grid`/`grid-cols-*` utility 直接碰撞,unlayered 規則蓋過 Tailwind 的 layered utility,導致多處 4 欄版面被壓成 3 欄且會換行,已刪除該舊規則;② shadcn `@theme inline` 的 `--color-border`/`--color-accent` 一度被誤指到 legacy brand token,深色模式因數值巧合沒發作,但淺色模式的邊框/hover 底色會全部跑掉,已修正並補上 body 背景色改用 shadcn token,讓淺色模式（目前僅供之後接 UI 切換用，站上還沒有 toggle）真正可用。`npm run build` 全過,globals.css 從 912 行清到約 210 行。
 
+- 2026-07-10 分點可信度排行榜(docs/13 §2b/§3a/§3b,commit `cae4fd1`):`compute_branch_stats.py` 由佔位邏輯改為真實統計——事件擷取(淨買超≥成交值1%、連續交易日合併、事件日=段首日)、重用 `forward_returns` 以還原價計前瞻報酬與 5 日勝率、隔日沖判定(次日回吐≥70% 比率≥60%)、可信度分數 0-100(勝率30/報酬25/買點分位15/規模10/近效20,級距為 V1 起始值待校準);`branch_rankings` 保留歷史快照(只刪同 as_of);`tracked_branches` 自動入選/移出(僅動 source='auto');export 只取最新快照且隔日沖獨立輸出;/branch 排行榜 tab 補樣本不足/來源徽章/隔日沖獨立區;新增 27 項單元測試(全套 44 過),verifier 種子 DB 實測 CONFIRMED。
 - 2026-07-10 權證大戶追蹤 (Warrant Branch Tracker):於 export_json 實作跨權證彙總演算法，以標的股票為中心加總特定分點的多檔權證淨買賣額，支援 1D/2D/5D/30D 區間，並篩選出大於 500 萬台幣的大單。前端 `/branch` 頁面新增「權證大戶」Tab，透過 Bento Grid 卡片與 Pill Selector 呈現 UI/UX PRO MAX 質感。並且支援點擊卡片直接展開明細 (Accordion)，列出構成該大單的每一檔權證代號、名稱、屬性及金額佔比。（新增半年 120D 追蹤：排程範圍擴大至 Top 200 權證，並支援 120D 時間切換，用於追蹤大戶低檔佈局尚未出清之籌碼。）（新增視角切換功能：支援「依標的檢視」與「依分點檢視」雙模式，將相同標的或分點的卡片進行聚合，減少畫面散亂，大幅提升追蹤主力的效率。）**（導入 UI/UX PRO MAX 視覺升級：卡片漸層與立體陰影、懸浮式手風琴子卡片 (Nested Cards)、紅綠邊框指示條、以及 Apple 風格立體切換器，徹底跳脫傳統表格框架。）**
 
 ## 系統模組與功能對應表 (Pipeline Models Mapping)
