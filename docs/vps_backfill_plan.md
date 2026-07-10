@@ -138,40 +138,11 @@ docker run --rm -v $(pwd)/data:/d python:3.11 \
 
 ---
 
-## Step 4:手機收到「P1 完成」後 → 上傳回雲端(10 分鐘)
+## Step 4:手機收到「P1 完成」後 → 上傳回雲端與重算(10 分鐘)
 
-SSH 回 VPS,逐段貼:
+當 VPS 抓完歷史分點後，資料庫裡面只有舊的歷史資料，接下來我們要把資料庫上傳，並交由「雲端」負責補齊這幾天的缺口與重算分數。SSH 回 VPS，逐段貼：
 
-### 4a-0. 先更新 VPS 上的程式碼(必跑)
-
-```bash
-cd ~/trever-radar
-git pull
-```
-
-策略/評分邏輯在程式碼裡(例:2026-07-10 的 S1 雙軌還原)——用舊碼重算,算出來的還是舊 reasons。
-
-### 4a. 補齊 VPS 跑的 3 天裡缺的每日行情(不做會有 3 天缺口)
-
-```bash
-cd ~/trever-radar
-docker run --rm -v $(pwd)/pipeline:/app/pipeline -v $(pwd)/data:/app/data -w /app/pipeline python:3.11 \
-  bash -c "pip install -r requirements.txt && python -m radar backfill --days 7 && \
-    for i in 0 1 2 3 4 5 6; do python -m radar import-daily --date \$(date -d \"-\$i day\" +%Y%m%d) --datasets insti,margin || true; done"
-```
-
-### 4a-1. 補題材 + 指標全重算(2026-07-10 新增;週六雲端全重算已停用,由此步接手)
-
-```bash
-docker run --rm -v $(pwd)/pipeline:/app/pipeline -v $(pwd)/data:/app/data -w /app/pipeline python:3.11 \
-  bash -c "pip install -r requirements.txt && python -m radar import-themes && python -m radar compute-indicators --all"
-```
-
-- `import-themes`:概念股分類全量(免 token,約幾分鐘);上傳後雲端每週一 14:10 仍會自動更新。
-- `compute-indicators --all`:全市場全歷史指標 + 策略 reasons(純 CPU 免 API,約 10–30 分)——不跑的話,雲端只有下一交易日起的當日增量,歷史策略訊號會缺。
-- 還原因子 `compute-adjustments --all` **不強制**(需 FinMind token 且 3–4 小時);之後改在雲端手動 `gh workflow run data-backfill -f task=adjust` 補即可,除權息旺季建議每 1–2 週跑一次。
-
-### 4b. 安裝 GitHub CLI 並登入(依你系統二選一)
+### 4a. 安裝 GitHub CLI 並登入(依你系統二選一，若已裝可跳過)
 
 ```bash
 # Debian/Ubuntu:
@@ -191,18 +162,45 @@ gh auth login
 # 選 GitHub.com → HTTPS → Paste an authentication token → 貼 Step 1 的同一個 token
 ```
 
-### 4c. 上傳 + 讓雲端改用新資料庫(關鍵兩行都要跑)
+### 4b. 壓縮並上傳資料庫至 GitHub Release
 
 ```bash
+cd ~/trever-radar
 gzip -kf data/radar.db
 gh release upload db-backup data/radar.db.gz --clobber --repo bbdevin/trever-radar
-gh cache delete --all --repo bbdevin/trever-radar     # 不跑這行,雲端會繼續用舊資料庫!
-docker rm -f radar-backfill
 ```
 
-### 4d. 回報
+### 4c. 刪除雲端舊快取(非常重要！)
 
-跟 AI 說「P1 上傳完成」→ AI 會驗證雲端接手、觸發重算分點統計。之後**網站個股頁的分點 tab 就有 2 年進出明細與「2年」聚合**,關鍵分點勝率/買低賣高統計開始有樣本。
+```bash
+gh cache delete --all --repo bbdevin/trever-radar
+```
+> ⚠️ **不做這步，雲端會繼續用舊快取，不會去下載你剛上傳的新資料庫！**
+
+### 4d. 觸發雲端補齊資料與重算分數
+
+剛剛上傳的資料庫是在 VPS 跑了幾天的狀態，最後這幾天大盤的日 K 會缺漏。我們直接呼叫 GitHub Actions 雲端管線來補齊，並讓雲端運算技術分：
+
+1. **補齊最近幾天的日 K 與籌碼**(會自動下載你剛上傳的新種子)：
+```bash
+gh workflow run data-backfill.yml -f task=deep --repo bbdevin/trever-radar
+```
+*(可至 GitHub 網頁查看 Actions，等這支 deep 跑完約 1-2 分鐘)*
+
+2. **重新計算還原因子與技術分數**(B 方案 Phase 2 的解耦新規則會在此自動生效)：
+```bash
+gh workflow run data-backfill.yml -f task=adjust --repo bbdevin/trever-radar
+```
+
+> 💡 **提示**：如果是未來只改了算分邏輯（不想呼叫 FinMind API 扣額度），可以把上述第二個指令改為 `task=indicators-only` 來純算指標。
+
+### 4e. 回報與清理
+
+跟 AI 說「P1 上傳完成」→ AI 會協助驗證雲端是否接手，以及分點勝率/買低賣高統計是否順利生效。
+最後可將 VPS 上的回補容器刪除：
+```bash
+docker rm -f radar-backfill
+```
 
 ---
 
