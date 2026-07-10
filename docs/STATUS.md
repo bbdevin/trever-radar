@@ -16,11 +16,8 @@
 
 2026-07-09 起,本專案開發流程改為**不依賴 Fable 或任一單一模型**的多 agent 協作,完整規則見根目錄 `AGENTS.md`、`docs/17_no_fable_workflow.md`、`docs/18_handoff_template.md`。
 
-- **Claude Code**:主力執行者(有額度時)。
-- **AGY(Google model)**:fallback planner / secondary executor,Claude Code 沒額度時接手,不擴張 MVP、不重寫架構。
-- **Codex**:independent reviewer,只 review git diff/安全性/測試覆蓋,不代表可自動 merge。
-- **Cursor**:IDE 控制中心,看檔案、看 diff、管 branch、人工確認。
-- **人類使用者**:唯一能決定 merge / deploy / 架構變更 / 資料刪除重建的人。
+- 流程為**模型中立、角色導向**:Planner / Executor / Reviewer 由本次任務指定,不由模型品牌永久決定;規則見 `AGENTS.md` 與 `docs/17_no_fable_workflow.md`。
+- 工具清單:Claude Code、AGY/Gemini、Codex、GPT/Grok 等高階模型均可任三角色;Cursor 為 IDE / 確認介面;人類使用者為唯一決策者。
 
 下一步:先完成 AI workflow 文件整理本身(本次任務),之後功能開發任務排序仍照本檔「未完成(依優先序)」清單走,**不因引入多 agent 流程而直接大改既有功能**。
 

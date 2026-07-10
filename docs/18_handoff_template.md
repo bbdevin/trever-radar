@@ -23,7 +23,11 @@
 
 - **Current Goal**:
 - **Current Branch**:
-- **Current Agent**:(Claude Code / AGY / Codex / 其他)
+- **已確認範圍(Confirmed Scope)**:(使用者已確認、本次可動的範圍;超出此範圍要先問)
+- **Current Role**:(Planner / Executor / Reviewer)
+- **Next Role**:(Planner / Executor / Reviewer)
+- **Current Agent / Model**:(執行本次工作的模型,如 Claude Code / AGY / Gemini / Codex / GPT / 其他)
+- **Suggested Next Agent / Model**:(建議接手的模型;能力足夠者皆可,不限品牌)
 - **Work Completed**:
 - **Files Changed**:
 - **Current Git Status**:(貼 `git status` / `git diff --stat` 輸出)
@@ -40,19 +44,22 @@
 
 ## 固定提示詞(直接複製貼上,不要改寫)
 
-### 貼給 AGY 或任何新接手的執行者
+### 貼給新接手的 Executor(任何模型)
 
 > 你現在是接手本專案的 agent。請先閱讀 AGENTS.md、docs/17_no_fable_workflow.md、docs/18_handoff_template.md、docs/STATUS.md。請先不要修改程式碼。請先輸出你理解的狀態、下一步計畫、你預計修改哪些檔案。等待使用者確認後才開始修改。
 
-### 貼給 Codex(review 用)
+### 貼給 Reviewer(任何模型,review 用)
 
 > 請 review 目前的 git diff(或指定範圍)。檢查:是否符合 AGENTS.md 危險清單(尤其 WAL checkpoint、cache/release DB 續存鏈、adj_factor 邏輯是否被動到)、是否有安全疑慮、測試是否涵蓋改動、是否偏離 docs/STATUS.md 目前的 MVP 優先序。只回報 review 結果,不要直接修改檔案;若你認為需要改,先列出會動哪些檔案再等使用者確認。
 
-### 貼給 Claude Code(新對話接手時)
+### 貼給新對話接手的 agent(任何模型)
 
 > 請先讀 AGENTS.md、docs/project-context.md、docs/STATUS.md、docs/17_no_fable_workflow.md,再讀 git status 與 git diff 確認現況。先輸出理解摘要與 plan,不要直接開始改程式碼,等我確認範圍後再動手。
 
 ### 貼給 Claude Code(Pilotfish)
+
+> Claude Code 工具專用:此段為 Claude Code 工具專屬的 subagent(Pilotfish)工作流模板,屬工具說明而非角色綁定,保留原樣。
+
 請先閱讀 `AGENTS.md`、`docs/project-context.md`、`docs/STATUS.md`、`docs/17_no_fable_workflow.md` 與 `docs/18_handoff_template.md`，再檢查目前 branch、`git status`、`git diff` 與最近相關 commit。
 
 請依照 Pilotfish 工作流完成本次任務：

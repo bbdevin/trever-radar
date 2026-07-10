@@ -56,8 +56,8 @@
 6. **不改 `.env`、金鑰、部署設定、GitHub Actions workflow yaml**,除非任務明確就是要改這些。
 7. 大改前先產生 handoff / plan(見 `docs/18`)。
 8. 改完必列:修改檔案 / 內容摘要 / 測試方式 / 風險 / 下一步。
-9. Claude Code 沒額度不代表停擺,可交接給 AGY(見 `docs/17` Workflow B)。
-10. Codex review 只是建議,不代表可自動 merge——人類看過才算數。
+9. 任一 agent 中斷或沒額度不代表停擺,可交接給另一個 agent(見 `docs/17` Workflow B),交接照 `docs/18`。
+10. Reviewer 意見只是建議,不代表可自動 merge——人類看過才算數。
 
 ## 本專案專屬危險清單
 
@@ -71,14 +71,17 @@
 
 ## Agent Roles
 
-| Agent | 角色 | 限制 |
+角色由**本次任務指定,不由模型品牌永久決定**。GPT、Claude、Gemini、Grok、Codex 或其他高階模型,能力足夠時都可擔任 Planner、Executor 或 Reviewer。
+
+| Role | 工作內容 | 限制 |
 |---|---|---|
-| **Cursor** | IDE 控制中心 | 看檔案、看 diff、管 branch、人工確認的介面;本身不代表決策。 |
-| **Claude Code** | 主力執行者(有額度時) | 讀文件 → 提 plan → 執行 → 列修改摘要與測試 → 交給 Codex review → 等使用者確認才 commit/merge/push main。 |
-| **AGY(Google model)** | Fallback planner / secondary executor | Claude Code 沒額度時接手。**接手前必讀 handoff 與 `git diff`**;不重寫架構、不擴張 MVP 範圍;只做使用者已確認範圍內的事。高風險決策(見 `docs/17`)不可獨自拍板,需提 A/B/C 案交人類選。 |
-| **Codex** | Independent reviewer | 預設只 review(git diff、安全性、測試覆蓋、是否偏離 MVP)。**要改程式碼需先列清楚會動哪些檔案**,不可 review 完直接動手改。review 意見是建議,不代表可自動 merge。 |
-| **Human User** | 最終決策者 | 唯一能決定:merge / deploy / 架構變更 / 刪除或重建資料 / 改動正式環境與金鑰。 |
+| **Planner** | 分析需求、功能整合、UI 統一、新功能、技術方案、風險與實作順序 | 預設只讀,不修改程式碼 |
+| **Executor** | 依照已確認的 plan 修改程式碼、補測試與更新必要文件 | 不自行擴張需求或更改已確認 plan |
+| **Reviewer** | 審查 plan 或 git diff,檢查錯誤、安全性、測試與 MVP 偏離 | 預設只讀,不可審查後直接修改 |
+| **Human User** | 決定架構、優先順序、merge、deploy、資料刪除及正式環境變更 | 唯一最終決策者 |
 
-## 一般模型(無特定角色時)的額外限制
+工具對照(名稱可保留,但不永久綁定角色):**Cursor** = IDE / 檔案 / diff / branch / 人工確認介面(唯一例外,是介面而非角色,本身不代表決策);**Claude Code、AGY/Gemini、Codex、GPT/Grok 等高階模型**均可任 Planner / Executor / Reviewer,遵守相同流程。高階模型擔任 Planner 時,主要用於系統與產品規劃、找出重複功能、合併相似頁面/介面、統一 UI/元件/篩選器/狀態與操作流程、提出值得增加的新功能、找出可刪除/簡化/自動化的功能、評估風險成本與實作順序。
 
-沒有明確歸類為上述角色的一般模型,比照 `docs/17` Workflow C:不做架構大改、不做 destructive migration、不改部署設定;只做文件整理、小 bug、isolated changes;每次小範圍改動 + 附 `git diff`;重要決策留給使用者。
+## 未被指定角色的 agent(低信任情境)的額外限制
+
+未被明確指定為 Planner / Executor / Reviewer 的 agent,比照 `docs/17` Workflow C:不做架構大改、不做 destructive migration、不改部署設定;只做文件整理、小 bug、isolated changes;每次小範圍改動 + 附 `git diff`;重要決策留給使用者。
