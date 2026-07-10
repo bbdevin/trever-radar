@@ -32,8 +32,9 @@
 | `docs/20_simplification_strategy.md` | ✅ **current,功能刪減與策略治理 source of truth** | 2026-07-10 使用者確認的 B 方案:停止擴張探索頁與新策略,策略/技術分解耦、績效閉環、UI 合併及排程簡化階段。 |
 | `docs/21_private_beta_access_r2_plan.md` | ✅ **current,私人測試與 R2 source of truth** | Cloudflare Access 整站白名單、Pages 旁路封鎖、R2 僅作私有快照/未來歷史拆檔,不得當即時 SQLite。 |
 | `docs/22_armed_tracking.md` | 📝 **規劃定案,程式未實作** | Armed/Triggered 狀態追蹤(未發動籌碼·權證池);須等 `20` Phase 1–3 與 `21` Access 有進度後另確認才實作,不新增策略/不抬綜合分。 |
+| `docs/23_product_ui_backlog.md` | 📝 **規劃定案,程式未實作** | Access/B/Armed 之後的功能與視覺優化 backlog(V1–V3 / F1–F4)+ Executor 工作包;不得插隊或引入新配色/第14策略。 |
 
-有疑問時,信任順序:`project-context.md` / `STATUS.md` / `20`(功能刪減與策略治理) / `21`(私人測試/Access/R2) / `22`(Armed 追蹤,待開發) / `12` / `08§0` / `vps_backfill_plan.md` > 其餘 `docs/*` > 對話記憶。
+有疑問時,信任順序:`project-context.md` / `STATUS.md` / `20`(功能刪減與策略治理) / `21`(私人測試/Access/R2) / `22`(Armed 追蹤) / `23`(功能·視覺 backlog) / `12` / `08§0` / `vps_backfill_plan.md` > 其餘 `docs/*` > 對話記憶。
 
 ## Required Reading(改檔前必讀)
 
@@ -45,6 +46,7 @@
 6. `docs/20_simplification_strategy.md`(進行功能規劃、評分、前端資訊架構或排程簡化時必讀)
 7. `docs/21_private_beta_access_r2_plan.md`(動登入、Access、R2、DB 備份/還原時必讀)
 8. `docs/22_armed_tracking.md`(規劃或實作未發動/已發動狀態追蹤、Armed 池時必讀)
+9. `docs/23_product_ui_backlog.md`(規劃或實作額外功能 / 視覺優化 V·F 工作包時必讀;並讀 `docs/19`)
 
 再依任務追加:
 - 動資料庫/排程/R2 → `docs/08_scheduler_jobs.md` §0 + `docs/21_private_beta_access_r2_plan.md` + `.github/workflows/*.yml`

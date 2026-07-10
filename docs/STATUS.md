@@ -75,10 +75,11 @@
 3. **B 方案 Phase 2—策略/分數解耦**(`docs/20`,高風險資料語意變更):S1-S13 只產生 tag/reason,不得再增加 `tech_score` 或其他分項;補 S2-S13 測試與舊/新分數差異報告。正式全市場重算、回灌及部署必須另獲使用者批准。
 4. **B 方案 Phase 3—策略績效閉環**(`docs/20`):輸出各 S code 的成熟樣本、5/10/20 日勝率與平均/中位報酬;預設 Shadow,使用者看報告後決定 Active/Retired。
 5. **Armed 狀態追蹤**(`docs/22`,📝 規劃定案、程式未實作):首頁「未發動/已發動」狀態池,重用 S12/W3/B3 與權證倍數;不新增策略、不抬綜合分、不新開一級路由。建議在 Access + B Phase 1–3 有進度後另確認 A1→A3 實作。
-6. **R2 R0-R2**(`docs/21`):private Standard bucket → 每週 shadow snapshot → checksum/gzip/SQLite restore drill。R3 workflow fallback 未授權,R4/P2 延後。
-7. **B 方案 Phase 4—排程簡化提案**(`docs/20`,獨立高風險任務):保留資料取得時點,評估完整 build/deploy 由每日最多 5 次降為 14:10/22:10 兩次;不得在未完整審查 WAL/cache/release 鏈前修改 workflow。
-8. ~~deep-backfill --all~~ **執行狀態需另行查證**:完成與否不得只信本檔舊紀錄;若需 `task=adjust` 或 VPS 回灌,先依 `vps_backfill_plan.md` 與高風險流程確認。
-9. **分點排行資料累積**:可信度排行榜已完成,統計效力需 2–3 個月。地緣/關鍵分點人工名單、五年分點擴容、LINE Bot、V2 盤中均依 B 方案延後。
+6. **功能·視覺 backlog**(`docs/23`,📝 規劃定案、程式未實作):V1 掃讀優化 → V2 表格一致 → F2 日報摘要 / F1 自選戰情 / F3 訊號摘要 / F4 掃描收斂;不得插隊,Executor 依 WP-* 工作包執行。
+7. **R2 R0-R2**(`docs/21`):private Standard bucket → 每週 shadow snapshot → checksum/gzip/SQLite restore drill。R3 workflow fallback 未授權,R4/P2 延後。
+8. **B 方案 Phase 4—排程簡化提案**(`docs/20`,獨立高風險任務):保留資料取得時點,評估完整 build/deploy 由每日最多 5 次降為 14:10/22:10 兩次;不得在未完整審查 WAL/cache/release 鏈前修改 workflow。
+9. ~~deep-backfill --all~~ **執行狀態需另行查證**:完成與否不得只信本檔舊紀錄;若需 `task=adjust` 或 VPS 回灌,先依 `vps_backfill_plan.md` 與高風險流程確認。
+10. **分點排行資料累積**:可信度排行榜已完成,統計效力需 2–3 個月。地緣/關鍵分點人工名單、五年分點擴容、LINE Bot、V2 盤中均依 B 方案延後。
 
 ## 已知債務 / 注意
 
@@ -122,6 +123,7 @@
 - 2026-07-10 13 項選股策略與獨立榜單重構:`indicators.py` 及 `scores.py` 實作涵蓋技術與籌碼（如「漲停二次發動」、「法人連買突破」、「均線糾結突破」等）共 13 種量化策略；前端首頁「策略」頁籤內，新增了可動態切換 13 種不同策略條件的選單，並移除個別策略按鈕上的雜訊數字，介面大幅升級。
 - 2026-07-10 S1 雙軌還原 + mark 死碼移除:S1「漲停二次發動」還原舊版嚴謹/放寬雙軌(嚴謹 `S1_REBOUND` 20 分,elif 放寬 `S1_REBOUND_RELAXED` 15 分;放寬=20日內漲7%+5日量1.5倍+任意金叉),兩代碼同入 `strategies.S1_REBOUND` 榜、嚴謹排前,解決嚴謹單軌常態 0 檔;同時移除已無消費者的舊 T6 mark 榜死碼(`json_export.py` 的 mark 掃描/`lists.mark` 輸出、`web/lib/types.ts` ListKey 的 mark)並補 S1 單元測試;另把「策略邏輯改動需等增量/週六全重算才生效」文件化於上方已知債務。
 - 2026-07-10 Armed 追蹤規劃落檔(`docs/22`):確認下一產品方向為狀態池(Quiet→Armed→Triggered→Extended→Faded),首頁「未發動/已發動」、重用 S12/W3/B3,不新增策略/不抬綜合分;程式未實作,排在 Access + B Phase 1–3 之後。
+- 2026-07-10 功能·視覺 backlog 落檔(`docs/23`):ui-ux-pro-max 對齊後寫入 V1–V3 / F1–F4 與 WP-* Executor 工作包;拒絕新配色與 Inter 全站字體;程式未實作。
 
 ## 系統模組與功能對應表 (Pipeline Models Mapping)
 
