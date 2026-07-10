@@ -23,7 +23,7 @@ const TABS: { key: ListKey; label: string; hint: string; icon: typeof IconFlame 
 
 const STRATEGIES = [
 
-  { key: "S1_REBOUND", label: "漲停二次發動", desc: "近 20 日曾漲停，現價站上均線且 MACD 零上金叉，近日爆量突破" },
+  { key: "S1_REBOUND", label: "漲停二次發動", desc: "近 20 日曾漲停，MACD 於零軸之上發生黃金交叉，且近日爆量突破" },
   { key: "S2_BREAKOUT20", label: "20日爆量突破", desc: "創 20 日新高，當日爆量且收紅 K，中長期均線多頭排列" },
   { key: "S3_MA_CONVERGE_BREAKOUT", label: "均線糾結突破", desc: "5/10/20 日均線距離極近，當日帶量長紅突破糾結區" },
   { key: "S4_VOLATILITY_CONTRACTION", label: "波動收斂突破", desc: "近 10 日布林通道極度壓縮（帶寬 < 8%），當日帶量突破上軌" },
