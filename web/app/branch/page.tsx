@@ -145,7 +145,7 @@ function ConcentrationTab({ radar }: { radar: RadarJson | null }) {
         <a
           key={r.id}
           href={`/stock?id=${r.id}`}
-          className="num grid grid-cols-[1.6fr_1fr_1fr_1fr] items-center gap-2 rounded-[var(--r-md)] border border-border bg-card px-3.5 py-2.5 text-[13px] text-[color:var(--ink-2)] transition-colors hover:border-[color:var(--border-strong)]"
+          className="num grid min-h-11 cursor-pointer grid-cols-[1.6fr_1fr_1fr_1fr] items-center gap-2 rounded-[var(--r-md)] border border-border bg-card px-3.5 py-2.5 text-[13px] text-[color:var(--ink-2)] transition-colors duration-200 hover:border-[color:var(--border-strong)]"
         >
           <span className="flex flex-col gap-0.5 font-sans">
             <b className="text-sm font-bold text-foreground">{r.name}</b>
@@ -225,9 +225,11 @@ function StockGroupCard({ stockId, stockName, totalAmt, branches }: { stockId: s
           const hasBreakdown = b.breakdown && b.breakdown.length > 0;
           return (
             <div key={b.branch_name} className="flex flex-col rounded-md border border-border/40 bg-card/50 shadow-sm hover:bg-card transition-colors duration-200 overflow-hidden group">
-              <button 
-                className="px-3 py-2.5 flex items-center justify-between text-left focus:outline-none"
+              <button
+                className="min-h-11 px-3 py-2.5 flex items-center justify-between text-left focus:outline-none"
                 onClick={() => setExpandedBranch(isExpanded ? null : b.branch_name)}
+                aria-expanded={hasBreakdown ? isExpanded : undefined}
+                aria-label={`${b.branch_name} 權證明細`}
               >
                 <div className="flex items-center gap-2">
                   <span className="font-medium text-[14px] text-foreground tracking-tight group-hover:text-primary transition-colors">{b.branch_name}</span>
@@ -302,9 +304,11 @@ function BranchGroupCard({ branchName, totalAmt, stocks }: { branchName: string,
           const hasBreakdown = s.breakdown && s.breakdown.length > 0;
           return (
             <div key={s.underlying_id} className="flex flex-col rounded-md border border-border/40 bg-card/50 shadow-sm hover:bg-card transition-colors duration-200 overflow-hidden group">
-              <button 
-                className="px-3 py-2.5 flex items-center justify-between text-left focus:outline-none"
+              <button
+                className="min-h-11 px-3 py-2.5 flex items-center justify-between text-left focus:outline-none"
                 onClick={() => setExpandedStock(isExpanded ? null : s.underlying_id)}
+                aria-expanded={hasBreakdown ? isExpanded : undefined}
+                aria-label={`${s.underlying_name} 權證明細`}
               >
                 <div className="flex items-center gap-2">
                   <a href={`/stock?id=${s.underlying_id}`} className="font-medium text-[14px] text-foreground tracking-tight hover:text-primary transition-colors z-10" onClick={(e) => e.stopPropagation()}>
@@ -605,7 +609,7 @@ export default function BranchPage() {
                   <a
                     href={`/stock?id=${t.stock_id}`}
                     key={t.stock_id}
-                    className="grid grid-cols-[2fr_1fr_1fr_1fr] items-center gap-2 rounded-md bg-secondary px-2 py-1.5 no-underline"
+                    className="grid min-h-11 cursor-pointer grid-cols-[2fr_1fr_1fr_1fr] items-center gap-2 rounded-md bg-secondary px-2 py-1.5 no-underline transition-colors duration-200 hover:bg-muted"
                   >
                     <div>
                       <span className="text-foreground">{t.stock_name}</span> <span className="text-xs text-muted-foreground">{t.stock_id}</span>

@@ -75,7 +75,18 @@ export default function WatchlistPage() {
   }
 
   if (listLoading || rows === null) {
-    return <Skeleton className="my-4 h-[68px] rounded-[var(--r-md)]" />;
+    return (
+      <div>
+        <div className="my-3.5 flex gap-2.5">
+          <Skeleton className="h-[64px] w-[120px] rounded-[var(--r-md)]" />
+        </div>
+        <div className="flex flex-col gap-2 pb-7">
+          {[0, 1, 2, 3].map((i) => (
+            <Skeleton key={i} className="h-[66px] rounded-[var(--r-md)]" />
+          ))}
+        </div>
+      </div>
+    );
   }
 
   if (rows.length === 0) {
@@ -122,7 +133,7 @@ function WatchlistRow({ row }: { row: Row }) {
   return (
     <a
       href={`/stock?id=${stock_id}`}
-      className="flex flex-wrap items-center gap-3.5 rounded-[var(--r-md)] border border-border bg-card p-3.5 shadow-[var(--shadow-card)]"
+      className="flex min-h-11 flex-wrap items-center gap-3.5 rounded-[var(--r-md)] border border-border bg-card p-3.5 shadow-[var(--shadow-card)] cursor-pointer transition-colors duration-200 hover:border-[color:var(--border-strong)]"
     >
       <div className="flex min-w-[90px] flex-col gap-0.5">
         <span className="text-sm font-bold text-foreground">{data.name}</span>

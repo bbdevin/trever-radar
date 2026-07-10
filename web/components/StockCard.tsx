@@ -11,14 +11,33 @@ const CHG_BADGE: Record<string, string> = {
   flat: "text-foreground bg-secondary",
 };
 
+// V1.2 狀態色條:僅用 globals.css 既有 token,色條非唯一訊號(旁有綜合分/風險文字對應)
+// risk_penalty 範圍 0~-40,單一顯著風險扣 8~15 分,故 <=-8 視為「風險扣分明顯」
+type CardStatus = "risk" | "watch" | "neutral";
+const STATUS_BAR: Record<CardStatus, string> = {
+  risk: "bg-destructive",
+  watch: "bg-warn",
+  neutral: "bg-[color:var(--line)]",
+};
+
+function cardStatus(s: RadarStock): CardStatus {
+  if (s.scores) {
+    if (s.risks.length > 0 && (s.scores.risk_penalty ?? 0) <= -8) return "risk";
+    if (s.scores.final >= 65) return "watch";
+  }
+  return "neutral";
+}
+
 export default function StockCard({ s, index = 99 }: { s: RadarStock; index?: number }) {
   const cls = chgClass(s.chg_pct);
+  const status = cardStatus(s);
   return (
     <a
       href={`/stock?id=${s.id}`}
       style={index < 6 ? { animationDelay: `${0.02 + index * 0.03}s` } : undefined}
-      className="group flex cursor-pointer flex-col gap-2.5 rounded-[var(--r-lg)] border border-border bg-card p-3.5 shadow-[var(--shadow-card)] transition-[transform,border-color,box-shadow] duration-150 animate-[fadeUp_0.35s_ease_backwards] hover:-translate-y-0.5 hover:border-[color:var(--border-strong)] hover:shadow-[var(--shadow-lift)] active:scale-[0.985]"
+      className="group relative flex cursor-pointer flex-col gap-2.5 overflow-hidden rounded-[var(--r-lg)] border border-border bg-card p-3.5 shadow-[var(--shadow-card)] transition-[transform,border-color,box-shadow] duration-150 animate-[fadeUp_0.35s_ease_backwards] hover:-translate-y-0.5 hover:border-[color:var(--border-strong)] hover:shadow-[var(--shadow-lift)] active:scale-[0.985]"
     >
+      <span aria-hidden className={cn("pointer-events-none absolute inset-y-1.5 left-0 w-[3px] rounded-full", STATUS_BAR[status])} />
       <div className="flex items-center gap-2">
         <div className="flex min-w-0 flex-col">
           <span className="truncate text-[15.5px] font-bold text-foreground">{s.name}</span>
@@ -62,25 +81,12 @@ export default function StockCard({ s, index = 99 }: { s: RadarStock; index?: nu
         </span>
       </div>
 
-      <div className="grid grid-cols-4 gap-2">
-        <div className="flex flex-col gap-px">
-          <span className="text-[10.5px] text-muted-foreground">成交金額</span>
-          <span className="num text-[13px] font-semibold text-[color:var(--ink-2)]">{fmtE8(s.turnover)}</span>
-        </div>
-        <div className="flex flex-col gap-px">
-          <span className="text-[10.5px] text-muted-foreground">量比(20日)</span>
-          <span className="num text-[13px] font-semibold text-[color:var(--ink-2)]">
-            {s.volume_ratio != null ? `${s.volume_ratio.toFixed(1)}×` : "—"}
-          </span>
-        </div>
-        <div className="flex flex-col gap-px">
-          <span className="text-[10.5px] text-muted-foreground">外資(張)</span>
-          <span className="num text-[13px] font-semibold text-[color:var(--ink-2)]">{fmtLots(s.foreign_net_lots)}</span>
-        </div>
-        <div className="flex flex-col gap-px">
-          <span className="text-[10.5px] text-muted-foreground">投信(張)</span>
-          <span className="num text-[13px] font-semibold text-[color:var(--ink-2)]">{fmtLots(s.trust_net_lots)}</span>
-        </div>
+      {/* V1.1 次要細項:4 欄堆疊 → 收斂成一行小字,降層級不刪資料 */}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11.5px] text-muted-foreground">
+        <span>金額 <span className="num font-semibold text-[color:var(--ink-2)]">{fmtE8(s.turnover)}</span></span>
+        <span>量比 <span className="num font-semibold text-[color:var(--ink-2)]">{s.volume_ratio != null ? `${s.volume_ratio.toFixed(1)}×` : "—"}</span></span>
+        <span>外資 <span className="num font-semibold text-[color:var(--ink-2)]">{fmtLots(s.foreign_net_lots)}</span></span>
+        <span>投信 <span className="num font-semibold text-[color:var(--ink-2)]">{fmtLots(s.trust_net_lots)}</span></span>
       </div>
 
       <div className="border-t border-dashed border-[color:var(--line)] pt-2 text-[11.5px] text-muted-foreground">

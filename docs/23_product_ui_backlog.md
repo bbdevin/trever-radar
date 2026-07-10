@@ -195,7 +195,7 @@
 
 | ID | 狀態 | 備註 |
 |---|---|---|
-| V1 | ⏳ 待確認 | 建議 B Phase 1 後 |
+| V1 | ✅ 完成(2026-07-11) | WP-V1:卡片層級收斂+狀態色條(risk/watch/neutral,僅用既有 token)+觸控/aria-label+骨架屏/教育性空狀態;`npm run build` 過 |
 | V2 | ⏳ 待確認 | |
 | V3 | ⏳ 低優先 | |
 | F1 | ⏳ 待 Armed | |

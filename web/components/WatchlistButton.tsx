@@ -14,6 +14,7 @@ export default function WatchlistButton({ stockId, size = 18 }: { stockId: strin
   const { session } = useSession();
   const { ids, toggle } = useWatchlist();
   const active = ids.has(stockId);
+  const label = session ? (active ? "移除自選" : "加入自選") : "登入後可加入自選股";
 
   const activate = () => {
     if (!session) {
@@ -31,7 +32,9 @@ export default function WatchlistButton({ stockId, size = 18 }: { stockId: strin
         "inline-grid size-[30px] shrink-0 place-items-center rounded-full border border-border bg-card p-0 text-muted-foreground transition-colors hover:text-[color:var(--ink-2)] hover:border-[color:var(--border-strong)]",
         active && "text-warn border-warn [&_svg]:fill-current",
       )}
-      title={session ? (active ? "移除自選" : "加入自選") : "登入後可加入自選股"}
+      aria-label={label}
+      aria-pressed={active}
+      title={label}
       onClick={(e) => {
         e.preventDefault();
         e.stopPropagation();

@@ -222,7 +222,11 @@ export default function RadarPage() {
           </button>
         </div>
       ) : shown.length === 0 ? (
-        <div className="py-[46px] text-center text-sm text-muted-foreground">此榜今日無符合條件的股票</div>
+        <div className="mx-auto max-w-md py-[46px] text-center text-sm leading-relaxed text-muted-foreground">
+          {tab === "score" || tab === "mark"
+            ? "今日無達門檻的標的。寧缺勿濫是設計原則——沒有符合條件時不硬湊,也可能是盤後分數尚未更新。"
+            : "今日此榜無符合條件的標的,或該類資料尚未更新。稍後回來再看,系統會依交易所公布時間分批更新。"}
+        </div>
       ) : (
         <div className="grid grid-cols-1 gap-2.5 pb-7 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           {shown.map((s, i) => (
