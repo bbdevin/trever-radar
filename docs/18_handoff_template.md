@@ -44,6 +44,9 @@
 
 ## 固定提示詞(直接複製貼上,不要改寫)
 
+> **交辦 AGY / 依 Phase·WP 執行的完整提示詞**見 `docs/24_agy_executor_prompts.md`(通用起手 + Phase 1 / V1 / Armed / Review 任務塊)。
+> 本節保留跨模型通用短提示;任務級長提示以 24 為準,避免兩處漂移時改 24。
+
 ### 貼給新接手的 Executor(任何模型)
 
 > 你現在是接手本專案的 agent。請先閱讀 AGENTS.md、docs/17_no_fable_workflow.md、docs/18_handoff_template.md、docs/STATUS.md。請先不要修改程式碼。請先輸出你理解的狀態、下一步計畫、你預計修改哪些檔案。等待使用者確認後才開始修改。

@@ -29,6 +29,7 @@
 | `docs/03/04/09/13` | ⚠️ **規則邏輯 current,資料來源段落過時** | 評分公式、資料表規格、頁面規格仍是設計藍圖依據;資料來源描述以 `vps_backfill_plan.md` 為準。 |
 | `docs/17_no_fable_workflow.md` | ✅ **current** | No-Fable 工作流程完整版,見下方 Required Reading。 |
 | `docs/18_handoff_template.md` | ✅ **current** | Agent 交接模板。 |
+| `docs/24_agy_executor_prompts.md` | ✅ **current** | 交辦 AGY/Executor 的複製用提示詞(起手 + Phase/WP 任務塊);任務級長提示以此為準。 |
 | `docs/20_simplification_strategy.md` | ✅ **current,功能刪減與策略治理 source of truth** | 2026-07-10 使用者確認的 B 方案:停止擴張探索頁與新策略,策略/技術分解耦、績效閉環、UI 合併及排程簡化階段。 |
 | `docs/21_private_beta_access_r2_plan.md` | ✅ **current,私人測試與 R2 source of truth** | Cloudflare Access 整站白名單、Pages 旁路封鎖、R2 僅作私有快照/未來歷史拆檔,不得當即時 SQLite。 |
 | `docs/22_armed_tracking.md` | 📝 **規劃定案,程式未實作** | Armed/Triggered 狀態追蹤(未發動籌碼·權證池);須等 `20` Phase 1–3 與 `21` Access 有進度後另確認才實作,不新增策略/不抬綜合分。 |
@@ -43,6 +44,7 @@
 3. `docs/STATUS.md`
 4. `docs/17_no_fable_workflow.md`
 5. `docs/18_handoff_template.md`
+6. `docs/24_agy_executor_prompts.md`(交辦 AGY 或其他 Executor 複製提示詞時用;與 18 搭配)
 6. `docs/20_simplification_strategy.md`(進行功能規劃、評分、前端資訊架構或排程簡化時必讀)
 7. `docs/21_private_beta_access_r2_plan.md`(動登入、Access、R2、DB 備份/還原時必讀)
 8. `docs/22_armed_tracking.md`(規劃或實作未發動/已發動狀態追蹤、Armed 池時必讀)
