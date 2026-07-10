@@ -162,6 +162,17 @@ gh auth login
 # 選 GitHub.com → HTTPS → Paste an authentication token → 貼 Step 1 的同一個 token
 ```
 
+### 4a-1. 上傳前先在 VPS 補齊近日行情(必跑;雲端沒有這個入口)
+
+VPS 的種子是較舊的備份,回補期間缺的近幾天日 K/法人/融資券要在**上傳前**補進同一份 DB(`task=deep` 補不了——deep-backfill 對已拉深的股票整檔跳過,不會補近日缺口,見 `importer.py` 的 freshness check):
+
+```bash
+cd ~/trever-radar && git pull
+docker run --rm -v $(pwd)/pipeline:/app/pipeline -v $(pwd)/data:/app/data -w /app/pipeline python:3.11 \
+  bash -c "pip install -r requirements.txt && python -m radar backfill --days 7 && \
+    for i in 0 1 2 3 4 5 6; do python -m radar import-daily --date \$(date -d \"-\$i day\" +%Y%m%d) --datasets insti,margin || true; done"
+```
+
 ### 4b. 壓縮並上傳資料庫至 GitHub Release
 
 ```bash
@@ -181,18 +192,18 @@ gh cache delete --all --repo bbdevin/trever-radar
 
 剛剛上傳的資料庫是在 VPS 跑了幾天的狀態，最後這幾天大盤的日 K 會缺漏。我們直接呼叫 GitHub Actions 雲端管線來補齊，並讓雲端運算技術分：
 
-1. **補齊最近幾天的日 K 與籌碼**(會自動下載你剛上傳的新種子)：
+1. **補題材**(整檔取代會蓋掉雲端既有題材;不跑則等週一 14:10 自動更新):
 ```bash
-gh workflow run data-backfill.yml -f task=deep --repo bbdevin/trever-radar
+gh workflow run data-backfill.yml -f task=themes --repo bbdevin/trever-radar
 ```
-*(可至 GitHub 網頁查看 Actions，等這支 deep 跑完約 1-2 分鐘)*
 
-2. **重新計算還原因子與技術分數**(B 方案 Phase 2 的解耦新規則會在此自動生效)：
+2. **重新計算還原因子與技術分數**(B 方案 Phase 2 的解耦新規則會在此自動生效;**等上一支跑完再觸發**,radar-db 併發群一次一支)：
 ```bash
 gh workflow run data-backfill.yml -f task=adjust --repo bbdevin/trever-radar
 ```
 
-> 💡 **提示**：如果是未來只改了算分邏輯（不想呼叫 FinMind API 扣額度），可以把上述第二個指令改為 `task=indicators-only` 來純算指標。
+> 💡 **提示**:如果只改了算分邏輯(不想呼叫 FinMind API 扣額度),可以把上述第二個指令改為 `task=indicators-only` 純算指標。
+> ⚠️ 近日日 K/籌碼缺口**不能**靠 `task=deep` 補(deep 對已拉深股票整檔跳過)——必須在上傳前於 VPS 跑 4a-1;`task=deep` 只在有新上市/整檔缺漏股票時才需要。
 
 ### 4e. 回報與清理
 
