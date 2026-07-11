@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useMemo } from "react";
-import { Clock, Search, TrendingUp, TrendingDown, Star, Sparkles } from "lucide-react";
+import { Clock, Search, TrendingUp, TrendingDown, Star, Sparkles, ShieldCheck, Zap } from "lucide-react";
 import { IconFlame, IconTrend, IconZap, IconRadar, IconPulse, IconStar, IconTrendDown } from "@/components/Icons";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -13,15 +13,17 @@ import type { ListKey, MetaJson, RadarJson } from "@/lib/types";
 import { SOURCE_LABEL, fmtE8 } from "@/lib/format";
 
 // TabKey for the 4 main task-oriented tabs
-type TabKey = "score" | "mark" | "scan" | "warrant";
+type TabKey = "score" | "armed" | "triggered" | "scan" | "mark" | "warrant";
 
 // Scan modes within the "scan" tab
 type ScanModeKey = "hot" | "surge" | "strong" | "weak";
 
-const TABS: { key: TabKey; label: string; hint: string; icon: typeof IconFlame }[] = [
+const TABS: { key: TabKey; label: string; hint: string; icon: any }[] = [
   { key: "score", label: "綜合", hint: "盤後綜合分數:分點/權證/技術/法人加權−風險扣分,≥65 為觀察門檻", icon: IconRadar },
-  { key: "mark", label: "策略", hint: "進階量化選股，涵蓋技術面與籌碼面等多種策略", icon: IconStar },
+  { key: "armed", label: "未發動", hint: "分點/權證籌碼異常進駐，且股價尚未表態", icon: ShieldCheck },
+  { key: "triggered", label: "已發動", hint: "分點/權證籌碼進駐，且今日放量突破或創高", icon: Zap },
   { key: "scan", label: "市場掃描", hint: "多維度市場量價特徵掃描 (熱門/爆量/強勢/弱勢)", icon: IconZap },
+  { key: "mark", label: "策略", hint: "進階量化選股，涵蓋技術面與籌碼面等多種策略", icon: IconStar },
   { key: "warrant", label: "權證", hint: "認購權證成交金額相對20日均值放大", icon: IconPulse },
 ];
 
@@ -190,7 +192,7 @@ export default function RadarPage() {
                 role="tab"
                 aria-selected={tab === t.key}
                 className={cn(
-                  "inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[13.5px] font-semibold text-muted-foreground transition-colors",
+                  "inline-flex min-h-11 items-center gap-1.5 rounded-full px-4 py-2 text-[13.5px] font-semibold text-muted-foreground transition-colors",
                   tab === t.key && "bg-muted text-foreground shadow-[inset_0_0_0_1px_var(--border-strong)]",
                 )}
                 onClick={() => setTab(t.key)}

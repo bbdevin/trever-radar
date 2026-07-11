@@ -115,7 +115,7 @@ export interface SectorFlow {
   subs?: SectorSubFlow[]; // 產業內成分 ≥2 檔的題材,依金額取前 10;題材模式(themes)無此欄
 }
 
-export type ListKey = "score" | "hot" | "surge" | "strong" | "weak" | "warrant";
+export type ListKey = "score" | "hot" | "surge" | "strong" | "weak" | "warrant" | "armed" | "triggered";
 
 export interface ConcentrationRow {
   id: string;
@@ -148,6 +148,7 @@ export interface RadarStock {
   themes?: string[];
   close: number;
   chg_pct: number | null;
+  chg5_pct?: number | null;
   volume_ratio: number | null; // 今日量 / 20 日均量
   turnover: number;
   volume_lots: number;
@@ -158,6 +159,8 @@ export interface RadarStock {
   warrant: WarrantSummary | null;
   technical: TechnicalSummary | null;
   scores: ScoreBreakdown | null; // null = 該股當日未評分(流動性門檻未過等)
+  state?: "armed" | "triggered" | null;
+  sources?: ("branch" | "warrant")[];
   reasons: string[];
   raw_reasons?: ReasonItem[];
   risks: string[];

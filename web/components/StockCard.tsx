@@ -1,3 +1,4 @@
+import { ShieldCheck, Zap } from "lucide-react";
 import Sparkline from "@/components/Sparkline";
 import WatchlistButton from "@/components/WatchlistButton";
 import type { RadarStock } from "@/lib/types";
@@ -40,7 +41,21 @@ export default function StockCard({ s, index = 99 }: { s: RadarStock; index?: nu
       <span aria-hidden className={cn("pointer-events-none absolute inset-y-1.5 left-0 w-[3px] rounded-full", STATUS_BAR[status])} />
       <div className="flex items-center gap-2">
         <div className="flex min-w-0 flex-col">
-          <span className="truncate text-[15.5px] font-bold text-foreground">{s.name}</span>
+          <div className="flex items-center gap-1.5">
+            <span className="truncate text-[15.5px] font-bold text-foreground">{s.name}</span>
+            {s.state === "armed" && (
+              <span className="inline-flex items-center gap-0.5 rounded bg-up/10 px-1.5 py-0.5 text-[10px] font-bold text-up">
+                <ShieldCheck className="h-3 w-3" /> Armed
+                {s.sources && s.sources.length > 0 && <span>: {s.sources.length > 1 ? "Both" : s.sources[0] === "branch" ? "分點" : "權證"}</span>}
+              </span>
+            )}
+            {s.state === "triggered" && (
+              <span className="inline-flex items-center gap-0.5 rounded bg-down/10 px-1.5 py-0.5 text-[10px] font-bold text-down">
+                <Zap className="h-3 w-3 fill-current" /> Triggered
+                {s.sources && s.sources.length > 0 && <span>: {s.sources.length > 1 ? "Both" : s.sources[0] === "branch" ? "分點" : "權證"}</span>}
+              </span>
+            )}
+          </div>
           <span className="text-xs text-muted-foreground">
             {s.id} · {MARKET_LABEL[s.market] ?? s.market}
             {s.industry ? ` · ${s.industry}` : ""}

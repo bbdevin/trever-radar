@@ -34,6 +34,7 @@ def export_json(out_dir: Path | None = None) -> dict:
             raise RuntimeError("no data in daily_prices; run import-daily first")
         d = dates[0]
         prev = dates[1] if len(dates) > 1 else None
+        d5 = dates[5] if len(dates) > 5 else None
         base20 = dates[1:21]                       # 前 20 個交易日(不含今日)
 
         # 各資料集「有效資料日」:公布時間不同,晚到的先用最近一日並在前端標示
@@ -65,10 +66,11 @@ def export_json(out_dir: Path | None = None) -> dict:
                    ti.reasons AS tech_reasons, ti.risks AS tech_risks,
                    ds.final AS score_final, ds.branch_score, ds.warrant_score, ds.inst_score, ds.theme_score,
                    ds.risk_penalty, ds.reasons AS score_reasons, ds.risks AS score_risks,
-                   ds.watch_price, ds.stop_price
+                   ds.watch_price, ds.stop_price, p5.close AS close5
             FROM daily_prices p
             JOIN stocks s ON s.id = p.stock_id AND s.type = 'stock'
             LEFT JOIN daily_prices pp ON pp.stock_id = p.stock_id AND pp.date = :prev
+            LEFT JOIN daily_prices p5 ON p5.stock_id = p.stock_id AND p5.date = :d5
             LEFT JOIN daily_institutional i ON i.stock_id = p.stock_id AND i.date = :i_date
             LEFT JOIN daily_margins m ON m.stock_id = p.stock_id AND m.date = :m_date
             LEFT JOIN warrant_stock_daily w ON w.stock_id = p.stock_id AND w.date = :w_date
@@ -85,7 +87,7 @@ def export_json(out_dir: Path | None = None) -> dict:
                 GROUP BY stock_id
             ) wa ON wa.stock_id = p.stock_id
             WHERE p.date = :d AND p.close IS NOT NULL
-        """), {"d": d, "prev": prev, "d20": base20[-1] if base20 else d,
+        """), {"d": d, "prev": prev, "d5": d5, "d20": base20[-1] if base20 else d,
                "i_date": i_date, "m_date": m_date, "w_date": w_date}).fetchall()
 
         all_stocks = []
@@ -98,8 +100,9 @@ def export_json(out_dir: Path | None = None) -> dict:
              tech_reasons, tech_risks,
               score_final, branch_score, warrant_score, inst_score, theme_score,
               risk_penalty, score_reasons, score_risks,
-              watch_price, stop_price) = r
+              watch_price, stop_price, close5) = r
             chg_pct = round((close - prev_close) / prev_close * 100, 2) if prev_close else None
+            chg5_pct = round((close - close5) / close5 * 100, 2) if close5 else None
             vol_ratio = None
             if avg_vol20 and avg_vol20 > 0 and volume:
                 vol_ratio = round(volume / avg_vol20, 2)
@@ -132,10 +135,36 @@ def export_json(out_dir: Path | None = None) -> dict:
                     "reasons": json.loads(tech_reasons or "[]"),
                     "risks": json.loads(tech_risks or "[]"),
                 }
+            # Armed / Triggered State Machine
+            c_pct = chg_pct or 0
+            c5_pct = chg5_pct or 0
+            raw_rs = json.loads(score_reasons or "[]")
+            has_branch = any(r.get("code") == "S12_BRANCH_ACCUMULATION" for r in raw_rs) and (turnover or 0) >= MIN_TURNOVER
+            has_warrant = False
+            if warrant and warrant.get("call_turnover_ratio") is not None:
+                if warrant["call_turnover_ratio"] >= 1.5 and warrant["call_turnover"] >= MIN_WARRANT_TURNOVER:
+                    has_warrant = True
+                    
+            sources = []
+            if has_branch:
+                sources.append("branch")
+            if has_warrant:
+                sources.append("warrant")
+                
+            state = None
+            if sources:
+                has_t2 = technical and any(r.get("code") == "T2_20D_HIGH" for r in technical.get("reasons", []))
+                is_breakout = c_pct >= 4.0 or has_t2
+                is_quiet = c_pct < 3.0 and c5_pct < 8.0
+                if is_breakout:
+                    state = "triggered"
+                elif is_quiet:
+                    state = "armed"
+
             all_stocks.append({
                 "id": sid, "name": name, "market": market, "industry": industry,
                 "description": description,
-                "close": close, "chg_pct": chg_pct,
+                "close": close, "chg_pct": chg_pct, "chg5_pct": chg5_pct,
                 "turnover": turnover, "volume_lots": (volume or 0) // 1000,
                 "volume_ratio": vol_ratio, "transactions": tx,
                 "foreign_net_lots": None if f_net is None else f_net // 1000,
@@ -154,8 +183,10 @@ def export_json(out_dir: Path | None = None) -> dict:
                     "watch_price": watch_price,
                     "stop_price": stop_price,
                 },
-                "reasons": [x["text"] for x in json.loads(score_reasons or "[]")[:4]],
-                "raw_reasons": json.loads(score_reasons or "[]"),
+                "state": state,
+                "sources": sources,
+                "reasons": [x["text"] for x in raw_rs[:4]],
+                "raw_reasons": raw_rs,
                 "risks": [x["text"] for x in json.loads(score_risks or "[]")[:3]],
             })
 
@@ -465,6 +496,8 @@ def export_json(out_dir: Path | None = None) -> dict:
             "strong": [s["id"] for s in strong],
             "weak": [s["id"] for s in weak],
             "warrant": [s["id"] for s in warrant],
+            "armed": [s["id"] for s in all_stocks if s.get("state") == "armed"],
+            "triggered": [s["id"] for s in all_stocks if s.get("state") == "triggered"],
         },
         "strategies": {code: [s["id"] for s in st_list] for code, st_list in strategies_lists.items()},
         "stocks": list(union.values()),
