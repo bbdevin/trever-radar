@@ -358,7 +358,7 @@ def score_technical(**x) -> tuple[int, list[dict], list[dict]]:
     # 20日內漲幅>15% (close / close[i-20]); 5>10>20; ma20向上; 回踩10或20日線(最低價接近); 量縮; 當日收紅; 站回5日線或破昨高
     c20 = _val(closes, 20)
     if c20 and close > c20 * 1.15 and x["ma5"] and ma10 and ma20 and x["ma5"] > ma10 > ma20:
-        if prev_ma20 and ma20 > prev_ma20 and vol_ratio < 1.0 and close > open_:
+        if prev_ma20 and ma20 > prev_ma20 and vol_ratio < 1.0 and open_ and close > open_:
             if (low and low <= ma10 * 1.02) or (low and low <= ma20 * 1.02):
                 if close > x["ma5"] or (prev_close and close > prev_close):
                     add_strategy(20, "S5_PULLBACK_SUPPORT", "強勢股量縮回踩(多頭回踩均線不破且轉強)")
@@ -367,7 +367,8 @@ def score_technical(**x) -> tuple[int, list[dict], list[dict]]:
     # 整理一段時間(近15日高點-低點 < 10%); close突破15日高; 突破量大於均量
     h15 = get_max_high(15)
     l15 = get_min_low(15)
-    if h15 > 0 and (h15 - l15) / l15 < 0.12 and ma20 and prev_ma20 and ma20 > prev_ma20:
+    # l15 > 0:近15日 low 全為 NULL 時 get_min_low 回哨兵 0,除零會炸整支命令(同 NULL open 失效類別)
+    if h15 > 0 and l15 > 0 and (h15 - l15) / l15 < 0.12 and ma20 and prev_ma20 and ma20 > prev_ma20:
         if close >= h15 and vol_ratio > 1.2:
             c30 = _val(closes, 30)
             if c30 and l15 > c30 * 1.1: # Before platform there was a rise
@@ -384,7 +385,7 @@ def score_technical(**x) -> tuple[int, list[dict], list[dict]]:
     # S8: 跳空突破不回補
     # 開盤 > 昨高; 跳空 2%~6%; 當日低點未補缺口; 突破20日高; 量>2倍; 收盤近高
     prev_high = _val(highs, 1)
-    if prev_high and open_ > prev_high * 1.02 and open_ < prev_high * 1.06:
+    if prev_high and open_ and open_ > prev_high * 1.02 and open_ < prev_high * 1.06:
         if low and low > prev_high and is_high20 and vol_ratio > 2.0:
             if high and close >= high * 0.98:
                 add_strategy(20, "S8_GAP_BREAKOUT", "跳空突破不回補(缺口強勢表態)")

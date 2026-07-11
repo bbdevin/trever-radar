@@ -391,5 +391,90 @@ class StrategyDecouplingTests(unittest.TestCase):
             tech_kwargs(box_high60=55, **base))
 
 
+class NullFieldGuardTests(unittest.TestCase):
+    """NULL open/high/low(FinMind 深歷史)導致 score_technical 整支崩潰的回歸。
+    語意:欄位為 None 時該策略條件不成立且不得拋例外。"""
+
+    # 逐一輪流設為 None 掃描的純量數值欄位(list/bool/idx 除外)
+    SCALAR_FIELDS = [
+        "open_", "high", "low", "close", "ma5", "ma10", "ma20", "ma60",
+        "std20", "high20", "box_high60", "box_low60", "adv20",
+        "volume_ratio", "rsi14", "macd", "macd_signal", "macd_hist",
+        "prev_macd_hist", "k9", "d9", "prev_k", "prev_d",
+    ]
+
+    # 能觸達 S5(close>open_)與 S8(open_>prev_high*..)比較的基準:此即生產炸點路徑
+    S5_BASE = dict(close=120, open_=110, low=100, volume_ratio=0.8,
+                   ma5=105, ma10=104, ma20=103)
+    # 能觸達 S2/S4 等實體/跳空比較的爆量突破基準
+    S2_BASE = dict(close=120, open_=100, high=121, low=99, volume_ratio=2.5,
+                   ma5=110, ma10=105, ma20=101, macd=1, macd_hist=1)
+
+    def _sweep(self, base):
+        for field in self.SCALAR_FIELDS:
+            with self.subTest(field=field):
+                try:
+                    score_technical(**tech_kwargs(**{**base, field: None}))
+                except Exception as exc:  # noqa: BLE001 — 回歸即在證明不拋例外
+                    self.fail(f"{field}=None 觸發例外: {exc!r}")
+
+    def test_sweep_none_on_s5_base(self):
+        self._sweep(self.S5_BASE)
+
+    def test_sweep_none_on_s2_base(self):
+        self._sweep(self.S2_BASE)
+
+    def test_s8_open_none_no_crash_no_trigger(self):
+        # S8 專項:open_=None(其餘為會觸發跳空的值)→ 不炸且不觸發
+        kw = tech_kwargs(open_=None, low=102, close=110, high=111,
+                         volume_ratio=2.5)
+        _, reasons, _ = score_technical(**kw)
+        self.assertNotIn("S8_GAP_BREAKOUT", {r["code"] for r in reasons})
+
+    def test_s8_prev_high_none_no_crash(self):
+        # S8 專項:prev_high 缺(highs 前值為 None)→ 不炸且不觸發
+        n = 30
+        highs = [None] * n            # _val(highs, 1) → None
+        kw = tech_kwargs(open_=105, low=102, close=110, high=None,
+                         highs=highs, volume_ratio=2.5)
+        _, reasons, _ = score_technical(**kw)
+        self.assertNotIn("S8_GAP_BREAKOUT", {r["code"] for r in reasons})
+
+    def test_s5_open_none_no_crash(self):
+        # S5 專項:open_=None 於能觸達 close>open_ 的多頭回踩情境 → 不炸
+        _, reasons, _ = score_technical(**tech_kwargs(open_=None, **{
+            k: v for k, v in self.S5_BASE.items() if k != "open_"}))
+        self.assertNotIn("S5_PULLBACK_SUPPORT", {r["code"] for r in reasons})
+
+    def test_compute_series_null_ohlc_bar_no_crash(self):
+        """生產炸掉的路徑:含 open=None(且 high/low 亦 None)的合成序列跑完不炸。
+        該 bar 為創高、放量情境,pre-fix 會在 S8 該行 TypeError。"""
+        rows = [row(i + 1, 100 + i, 1000 + i * 10) for i in range(65)]
+        gap = rows[-1]
+        gap["close"] = 200          # 創 20 日新高
+        gap["open"] = None          # ← 生產 NULL open
+        gap["high"] = None
+        gap["low"] = None
+        gap["volume"] = 9000        # 放量
+
+        out = compute_series(rows)  # 不得拋例外
+        self.assertEqual(len(out), 65)
+        # NULL open bar 不應觸發跳空策略
+        last_codes = {r["code"] for r in json.loads(out[-1]["reasons"])}
+        self.assertNotIn("S8_GAP_BREAKOUT", last_codes)
+
+    def test_compute_series_null_low_window_no_zero_division(self):
+        """同失效類別:近 15 日 low 全 NULL → get_min_low 回哨兵 0,
+        S6 的 (h15-l15)/l15 除零(l15>0 防護的回歸)。"""
+        rows = [row(i + 1, 100 + i, 1000 + i * 10) for i in range(65)]
+        for r_ in rows[-16:]:
+            r_["low"] = None
+            r_["high"] = None
+        out = compute_series(rows)  # 不得拋例外
+        self.assertEqual(len(out), 65)
+        last_codes = {r["code"] for r in json.loads(out[-1]["reasons"])}
+        self.assertNotIn("S6_HIGH_BASE_BREAKOUT", last_codes)
+
+
 if __name__ == "__main__":
     unittest.main()
