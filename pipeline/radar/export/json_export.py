@@ -407,11 +407,50 @@ def export_json(out_dir: Path | None = None) -> dict:
         """)).fetchall()
 
     now = datetime.now(ZoneInfo(config.TZ)).isoformat(timespec="seconds")
+
+    # F2: auto-generate summary_text (rule-based, ≤3 sentences, no LLM)
+    def _build_summary_text() -> list[str]:
+        out_sentences: list[str] = []
+        score_count = len(score)
+        if score_count > 0:
+            branch_triggered = sum(
+                1 for s in score if (s.get("branch") or 0) >= 5
+            )
+            warrant_triggered = sum(
+                1 for s in score if (s.get("warrant") or 0) >= 5
+            )
+            out_sentences.append(
+                f"綜合分池今日 {score_count} 檔"
+                + (f"，其中 {branch_triggered} 檔有分點加分訊號" if branch_triggered else "")
+                + (f"、{warrant_triggered} 檔有權證加分訊號" if warrant_triggered else "")
+                + "。"
+            )
+        else:
+            out_sentences.append("今日綜合分池暫無達門檻標的。")
+        # Market summary: biggest market turnover
+        if summary:
+            top = max(summary, key=lambda x: x[1])
+            mkt_label = {"tse": "上市", "otc": "上櫃"}.get(str(top[0]), str(top[0]))
+            up_n, down_n = int(top[2]), int(top[3])
+            out_sentences.append(
+                f"{mkt_label}成交額 {top[1] / 1e8:.0f} 億，漲 {up_n} 跌 {down_n}。"
+            )
+        # Stale warning
+        stale_labels = [
+            {"insti": "法人", "margin": "融資券", "warrant": "權證", "branch": "分點"}.get(k, k)
+            for k, v in (freshness or {}).items()
+            if k != "quotes" and (v.get("stale") if isinstance(v, dict) else False)
+        ]
+        if stale_labels:
+            out_sentences.append(f"{'、'.join(stale_labels)}資料尚未更新，稍後自動補齊。")
+        return out_sentences[:3]
+
     radar = {
         "data_date": d,
         "generated_at": now,
         "freshness": freshness,
         "note": "綜合分=分點/權證/技術/法人/題材加權−風險扣分;≥65 為觀察門檻",
+        "summary_text": _build_summary_text(),
         "summary": [
             {"market": m, "turnover": t, "up": up, "down": down}
             for m, t, up, down in summary

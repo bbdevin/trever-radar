@@ -394,6 +394,11 @@ export default function BranchPage() {
   const [trackOpen, setTrackOpen] = useState(false);
   const [trackBranch, setTrackBranch] = useState<string | null>(null);
   const [error, setError] = useState(false);
+  // IA-3: filter state
+  const [filterSearch, setFilterSearch] = useState("");
+  const [filterTrackable, setFilterTrackable] = useState(false);
+  const [filterEnough, setFilterEnough] = useState(false);
+  const [filterDaytrade, setFilterDaytrade] = useState<"all" | "exclude" | "only">("all");
 
   useEffect(() => {
     fetch("/data/radar.json")
@@ -439,24 +444,116 @@ export default function BranchPage() {
   const mainRankings = rankingsData.rankings;
   const daytradeRankings = rankingsData.daytrade;
   const totalBranches = mainRankings.length + daytradeRankings.length;
+  const enoughSampleCount = [...mainRankings, ...daytradeRankings].filter(r => r.samples >= MIN_SAMPLES).length;
+  const trackNames = new Set(trackIndex.map((e) => e.branch_name));
   const hasDataWarning = [...mainRankings, ...daytradeRankings].some((r) => r.samples < MIN_SAMPLES);
+
+  // IA-3: filter logic
+  const allRankings = [...mainRankings, ...daytradeRankings];
+  const filteredRankings = allRankings.filter(r => {
+    if (filterSearch && !r.branch_name.includes(filterSearch)) return false;
+    if (filterTrackable && !trackNames.has(r.branch_name)) return false;
+    if (filterEnough && r.samples < MIN_SAMPLES) return false;
+    if (filterDaytrade === "exclude" && r.is_daytrade === 1) return false;
+    if (filterDaytrade === "only" && r.is_daytrade !== 1) return false;
+    return true;
+  });
+  const filteredMain = filteredRankings.filter(r => r.is_daytrade !== 1);
+  const filteredDaytrade = filteredRankings.filter(r => r.is_daytrade === 1);
 
   return (
     <>
-      <div className="my-3.5 flex gap-2.5">
-        <div className="flex flex-col gap-0.5 rounded-[var(--r-md)] border border-border bg-card p-3 shadow-[var(--shadow-card)]">
-          <span className="text-[11.5px] text-muted-foreground">資料狀態</span>
-          <span className="num text-[17px] font-bold">入榜 {totalBranches} 個分點</span>
+      {/* IA-3: Page Brief */}
+      <div className="my-3.5 grid auto-cols-[minmax(100px,1fr)] grid-flow-col gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        <div className="flex flex-col gap-0.5 rounded-[var(--r-md)] border border-border bg-card px-3 py-2 shadow-[var(--shadow-card)]">
+          <span className="text-[10.5px] text-muted-foreground">{"\u5165\u699c\u5206\u9ede"}</span>
+          <span className="num text-[15px] font-bold">{totalBranches}</span>
+        </div>
+        <div className="flex flex-col gap-0.5 rounded-[var(--r-md)] border border-border bg-card px-3 py-2 shadow-[var(--shadow-card)]">
+          <span className="text-[10.5px] text-muted-foreground">{"\u6a23\u672c\u8db3\u5920"}</span>
+          <span className="num text-[15px] font-bold">{enoughSampleCount}</span>
+        </div>
+        <div className="flex flex-col gap-0.5 rounded-[var(--r-md)] border border-border bg-card px-3 py-2 shadow-[var(--shadow-card)]">
+          <span className="text-[10.5px] text-muted-foreground">{"\u53ef\u8ffd\u8e64"}</span>
+          <span className="num text-[15px] font-bold">{trackIndex.length}</span>
+        </div>
+        <div className="flex flex-col gap-0.5 rounded-[var(--r-md)] border border-border bg-card px-3 py-2 shadow-[var(--shadow-card)]">
+          <span className="text-[10.5px] text-muted-foreground">{"\u8cc7\u6599\u8d77\u59cb"}</span>
+          <span className="num text-[13px] font-bold">{"2026-07-07"}</span>
         </div>
       </div>
 
       {hasDataWarning && (
         <Alert className="mb-4 bg-card">
           <AlertDescription className="flex flex-wrap items-baseline gap-2.5 text-[13px] text-foreground">
-            <span className="shrink-0 rounded-md bg-warn/15 px-2 py-0.5 text-[11.5px] font-bold tracking-[0.3px] text-warn">樣本不足</span>
-            <span>由於系統自 2026-07-07 才開始收集免費分點資料，部分分點的歷史交易筆數過少，導致無法計算勝率。需待資料持續累積數週。</span>
+            <span className="shrink-0 rounded-md bg-warn/15 px-2 py-0.5 text-[11.5px] font-bold tracking-[0.3px] text-warn">{"\u6a23\u672c\u4e0d\u8db3"}</span>
+            <span>{"\u7531\u65bc\u7cfb\u7d71\u81ea 2026-07-07 \u624d\u958b\u59cb\u6536\u96c6\u514d\u8cbb\u5206\u9ede\u8cc7\u6599\uff0c\u90e8\u5206\u5206\u9ede\u7684\u6b77\u53f2\u4ea4\u6613\u7b46\u6578\u904e\u5c11\uff0c\u5c0e\u81f4\u7121\u6cd5\u8a08\u7b97\u52dd\u7387\u3002\u9700\u5f85\u8cc7\u6599\u6301\u7e8c\u7d2f\u7a4d\u6578\u9031\u3002"}</span>
           </AlertDescription>
         </Alert>
+      )}
+
+      {/* IA-3: Filter UI */}
+      {tab === "rankings" && (
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          <div className="relative flex items-center">
+            <Search size={13} className="absolute left-2.5 text-muted-foreground" />
+            <input
+              type="text"
+              value={filterSearch}
+              onChange={e => setFilterSearch(e.target.value)}
+              placeholder={"\u641c\u5c0b\u5206\u9ede"}
+              aria-label={"\u5206\u9ede\u540d\u7a31\u641c\u5c0b"}
+              className="h-8 rounded-md border border-border bg-card pl-7 pr-2.5 text-[12.5px] text-foreground placeholder:text-muted-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            />
+          </div>
+          <button
+            onClick={() => setFilterTrackable(v => !v)}
+            className={cn(
+              "rounded-full px-3 py-1 text-[12px] font-semibold transition-colors",
+              filterTrackable
+                ? "bg-[color:var(--ink-2)] text-[color:var(--bg-1)]"
+                : "bg-muted text-muted-foreground hover:bg-secondary",
+            )}
+            aria-pressed={filterTrackable}
+          >
+            {"\u53ef\u8ffd\u8e64"}
+          </button>
+          <button
+            onClick={() => setFilterEnough(v => !v)}
+            className={cn(
+              "rounded-full px-3 py-1 text-[12px] font-semibold transition-colors",
+              filterEnough
+                ? "bg-[color:var(--ink-2)] text-[color:var(--bg-1)]"
+                : "bg-muted text-muted-foreground hover:bg-secondary",
+            )}
+            aria-pressed={filterEnough}
+          >
+            {"\u6a23\u672c\u8db3\u5920"}
+          </button>
+          <button
+            onClick={() => setFilterDaytrade(v => v === "exclude" ? "all" : "exclude")}
+            className={cn(
+              "rounded-full px-3 py-1 text-[12px] font-semibold transition-colors",
+              filterDaytrade === "exclude"
+                ? "bg-down/15 text-down"
+                : "bg-muted text-muted-foreground hover:bg-secondary",
+            )}
+            aria-pressed={filterDaytrade === "exclude"}
+          >
+            {"\u6392\u9664\u96d4\u65e5\u6c96"}
+          </button>
+          {(filterSearch || filterTrackable || filterEnough || filterDaytrade !== "all") && (
+            <button
+              onClick={() => { setFilterSearch(""); setFilterTrackable(false); setFilterEnough(false); setFilterDaytrade("all"); }}
+              className="rounded-full px-3 py-1 text-[12px] text-muted-foreground hover:bg-secondary"
+            >
+              {"\u6e05\u9664"}
+            </button>
+          )}
+          <span className="ml-auto text-[11.5px] text-muted-foreground">
+            {"\u986f\u793a"} {filteredRankings.length} {"\u500b"}
+          </span>
+        </div>
       )}
 
       <div className="my-1.5 mb-3 flex items-center gap-2.5">
@@ -478,14 +575,13 @@ export default function BranchPage() {
       )}
 
       {tab === "rankings" && !trackOpen && (() => {
-        const trackNames = new Set(trackIndex.map((e) => e.branch_name));
         const openTrack = (name: string) => { setTrackBranch(name); setTrackOpen(true); };
         const renderCard = (r: Ranking) =>
           trackNames.has(r.branch_name) ? (
             <button
               key={r.branch_name}
               onClick={() => openTrack(r.branch_name)}
-              aria-label={`查看 ${r.branch_name} 的近 N 日買賣超明細`}
+              aria-label={`${"\u67e5\u770b"} ${r.branch_name} ${"\u7684\u8fd1 N \u65e5\u8cb7\u8ce3\u8d85\u660e\u7d30"}`}
               className="block w-full min-h-11 rounded-[var(--r-lg)] p-0 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
               <RankCard r={r} trackable />
@@ -501,31 +597,31 @@ export default function BranchPage() {
                   onClick={() => { setTrackBranch(null); setTrackOpen(true); }}
                   className="inline-flex min-h-11 items-center gap-1.5 rounded-full border border-border bg-card px-3.5 text-[13.5px] font-semibold text-foreground transition-colors hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
-                  <IconTrend size={15} className="opacity-85" /> 分點追蹤視角
+                  <IconTrend size={15} className="opacity-85" /> {"\u5206\u9ede\u8ffd\u8e64\u8996\u89d2"}
                 </button>
-                <span className="hidden text-xs text-muted-foreground sm:inline">點分點卡片或此處,看該分點近 1/5/10/20/自訂日買賣超</span>
+                <span className="hidden text-xs text-muted-foreground sm:inline">{"\u9ede\u5206\u9ede\u5361\u7247\u6216\u6b64\u8655,\u770b\u8a72\u5206\u9ede\u8fd1 1/5/10/20/\u81ea\u8a02\u65e5\u8cb7\u8ce3\u8d85"}</span>
               </div>
             )}
 
-            {mainRankings.length === 0 && (
+            {filteredRankings.length === 0 && (
               <div className="py-[46px] text-center text-sm text-muted-foreground">
-                尚無分點達入榜門檻(累積事件 ≥ 5)。資料持續累積中。
+                {"\u6c92\u6709\u7b26\u5408\u7b5b\u9078\u689d\u4ef6\u7684\u5206\u9ede\u3002\u8abf\u6574\u7b5b\u9078\u689d\u4ef6\u6216\u6e05\u9664\u641c\u5c0b\u3002"}
               </div>
             )}
-            {mainRankings.length > 0 && (
+            {filteredMain.length > 0 && (
               <div className="grid grid-cols-1 gap-2.5 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                {mainRankings.map(renderCard)}
+                {filteredMain.map(renderCard)}
               </div>
             )}
 
-            {daytradeRankings.length > 0 && (
+            {filteredDaytrade.length > 0 && (
               <div className="flex flex-col gap-2.5">
                 <div className="flex items-baseline gap-2">
-                  <h2 className="text-[15px] font-semibold text-down">隔日沖分點</h2>
-                  <span className="text-xs text-muted-foreground">買超次日高比率回吐,列為反指標/風險訊號,不排進主榜</span>
+                  <h2 className="text-[15px] font-semibold text-down">{"\u96d4\u65e5\u6c96\u5206\u9ede"}</h2>
+                  <span className="text-xs text-muted-foreground">{"\u8cb7\u8d85\u6b21\u65e5\u9ad8\u6bd4\u7387\u56de\u5410,\u5217\u70ba\u53cd\u6307\u6a19/\u98a8\u96aa\u8a0a\u865f,\u4e0d\u6392\u9032\u4e3b\u699c"}</span>
                 </div>
                 <div className="grid grid-cols-1 gap-2.5 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                  {daytradeRankings.map(renderCard)}
+                  {filteredDaytrade.map(renderCard)}
                 </div>
               </div>
             )}

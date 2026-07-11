@@ -1,7 +1,9 @@
 import type { Metadata, Viewport } from "next";
 import { Manrope } from "next/font/google";
+import { Toaster } from "sonner";
 import AuthButton from "@/components/AuthButton";
 import BottomNav from "@/components/BottomNav";
+import DesktopNav from "@/components/DesktopNav";
 import SearchBox from "@/components/SearchBox";
 import ThemeToggle from "@/components/ThemeToggle";
 import { IconRadar } from "@/components/Icons";
@@ -24,12 +26,7 @@ export const viewport: Viewport = {
   viewportFit: "cover",
 };
 
-type NavItem = { label: string; href?: string; active?: boolean; planned?: string };
-const NAV: NavItem[] = [
-  { label: "今日雷達", href: "/", active: true },
-  { label: "分點排行", href: "/branch" },
-  { label: "自選", href: "/watchlist" },
-];
+// NAV config moved to DesktopNav component
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -62,30 +59,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 <ThemeToggle />
                 <AuthButton />
               </div>
-              <nav className="hidden gap-0.5 md:flex">
-                {NAV.map((n) =>
-                  n.href ? (
-                    <a
-                      key={n.label}
-                      href={n.href}
-                      className="rounded-full bg-muted px-3.5 py-1.5 text-[13.5px] font-semibold text-foreground"
-                    >
-                      {n.label}
-                    </a>
-                  ) : (
-                    <span
-                      key={n.label}
-                      className="cursor-default rounded-full px-3.5 py-1.5 text-[13.5px] text-muted-foreground"
-                      title="開發中"
-                    >
-                      {n.label}
-                      <small className="ml-1 rounded-[5px] border border-border px-1 text-[10px] text-muted-foreground">
-                        {n.planned}
-                      </small>
-                    </span>
-                  ),
-                )}
-              </nav>
+              <DesktopNav />
             </div>
           </header>
           <main className="container">{children}</main>
@@ -95,6 +69,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             </div>
           </footer>
           <BottomNav />
+          <Toaster position="bottom-center" richColors />
         </WatchlistProvider>
       </body>
     </html>

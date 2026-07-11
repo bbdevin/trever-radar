@@ -167,6 +167,7 @@ export interface RadarJson {
   data_date: string;
   generated_at: string;
   note: string;
+  summary_text?: string[]; // F2: auto-generated daily brief (≤3 sentences)
   summary: { market: string; turnover: number; up: number; down: number }[];
   freshness?: Record<string, { date: string | null; stale: boolean }>; // 各資料集有效日
   sectors: SectorFlow[];
