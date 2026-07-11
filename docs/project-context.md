@@ -19,7 +19,7 @@
 ## 技術棧(2026-07-06 定案,取代舊 Laravel 方案)
 
 - 管線:Python 3.11 + requests + pandas + SQLAlchemy Core + SQLite(`pipeline/`)
-- 前端:Next.js 15(App Router)+ TypeScript + React,**`output: 'export'` 靜態輸出**(零伺服器原則不變)+ lightweight-charts(`web/`)(2026-07-06 依使用者指定由 Vue 改為 Next.js)。UI 實作為 Tailwind CSS v4 + shadcn/ui(2026-07-10 由純手刻 CSS 遷移,底層元件用 `@base-ui/react` + `lucide-react` icon;K 線圖仍用 lightweight-charts,未改用 shadcn/Recharts;分點/權證明細表格改 TanStack Table;深色為預設主題,淺色 token 已備妥但站上尚無切換 UI)
+- 前端:Next.js 15(App Router)+ TypeScript + React,**`output: 'export'` 靜態輸出**(零伺服器原則不變)+ lightweight-charts(`web/`)(2026-07-06 依使用者指定由 Vue 改為 Next.js)。UI 實作為 Tailwind CSS v4 + shadcn/ui(2026-07-10 由純手刻 CSS 遷移,底層元件用 `@base-ui/react` + `lucide-react` icon;K 線圖仍用 lightweight-charts,未改用 shadcn/Recharts;分點/權證明細表格改 TanStack Table;深色為預設主題,淺色 token 已備妥;站上有 ThemeToggle 切換;**sonner** toast 已安裝 v3.3,掛於 `layout.tsx`)
 - 前端資料 = 管線每晚產出的靜態 JSON(`web/public/data/`),無後端 API
 - 排程:GitHub Actions cron(台北 17:30/21:00);`main` push 會用現有 DB 匯出 JSON、build、deploy,但跳過資料匯入
 - 部署:Cloudflare Pages + Access(email 白名單登入);Vercel 為備選
@@ -56,9 +56,9 @@
 
 00 藍圖總表|01 產品定位|02 版本範圍與驗收|03 資料源評估|04 全部評分規則|05 資料表|06 架構(部署章節已被 12 取代)|07 前端頁面|08 排程流程|09 籌碼K線|10 資安法規|11 AI 開發流程|**12 零成本修訂(現行架構)**|13 分點排行與追蹤|17/18 多 agent 流程與交接|**19 UI 規範**|**20 功能刪減與策略治理(B 方案)**|**21 私人測試 Access/R2 計畫**|**22 Armed 狀態追蹤(待開發)**|**23 功能·視覺 backlog**|**24 AGY/Executor 交辦提示詞**|**25 任務導向 UI IA(待逐 Phase 實作)**|**STATUS(目前進度,單一真相)**|../DEPLOY(部署)
 
-## 目前狀態(2026-07-10,細節看 STATUS.md)
+## 目前狀態(2026-07-12,細節看 STATUS.md)
 
-已上線 https://radar.techtrever.com,GitHub Actions 每交易日自動更新(觸發已改 Cloudflare Worker,見 08§0),`main` push 也會正式部署。**目前網站仍公開;使用者已決定改為 A 私人測試版,但 Access 尚未實際設定,不得誤稱已鎖站。先依 `docs/21_private_beta_access_r2_plan.md` 完成 custom domain、production pages.dev、preview 三類入口保護。** 功能開發仍依 `docs/20` B 方案;R2 只規劃作私有 DB 快照/未來歷史拆檔,尚未建立或接入 workflow。**下一產品方向(待開發)**:Armed 見 `docs/22`;其後功能·視覺見 `docs/23`。
+已上線 https://radar.techtrever.com，GitHub Actions 每交易日自動更新（觸發已改 Cloudflare Worker，見 08§0），`main` push 也會正式部署。**目前網站仍公開;使用者已決定改為 A 私人測試版，但 Access 尚未實際設定，不得誤稱已鎖站。先依 `docs/21_private_beta_access_r2_plan.md` 完成 custom domain、production pages.dev、preview 三類入口保護。** 功能開發仍依 `docs/20` B 方案；R2 只規劃作私有 DB 快照/未來歷史拆檔，尚未建立或接入 workflow。**下一產品方向（待開發）**：Armed 見 `docs/22`。**UI 任務流重整**：docs/23 F 系列 + docs/25 IA-1A/2/3/4A **已於 2026-07-12 全部完成**（commit `8d4aee5`）。剩餘項目：IA-1B/IA-4B（待 Armed）、F1.3/F4（待 Armed）、Access A0-A2、B 方案 Phase 2-3。
 
 ## 已做的關鍵取捨(不要翻案,除非使用者同意)
 
@@ -76,3 +76,5 @@
 12. 2026-07-10 使用者確認 Armed 追蹤規劃(`docs/22`):用狀態池(未發動/已發動)重用 S12/W3/B3,不新增策略、不抬綜合分、不新開一級路由;實作排在 Access + B Phase 1–3 之後。
 13. 2026-07-10 使用者確認功能·視覺 backlog(`docs/23`):V1–V3 視覺優化與 F1–F4 低成本功能;不得插隊 Access/B/Armed,不得引入 ui-ux-pro-max 搜尋結果中的新配色/Inter 全站字體。
 14. 2026-07-11 使用者確認將任務導向 UI 規劃寫入 `docs/25`:前端以「掃描→判讀→追蹤」重整首頁/個股/分點/自選;規劃落檔不等於程式已授權,每次只確認一個 IA Phase,不藉 UI 重排改評分/JSON 語意或提前實作 Armed。
+14. 2026-07-12 實作確認——docs/23 F 系列 + docs/25 IA Phase A-F 全部完成（commit `8d4aee5`）：首頁重排（IA-1A）、自選任務佇列（IA-4A+F1.1/F1.2）、個股判讀工作台（IA-2+F3）、分點研究工作台（IA-3）、日報摘要 pipeline（F2）、Sonner toast（V3.3）。尚未實作：IA-1B、IA-4B（待 Armed）、F1.3/F4（待 Armed）。
+15. 2026-07-12 新增 `DesktopNav.tsx` client component：桌機導覽安裝 `usePathname` active state，標題改為任務導向命名（今日雷達/分點研究/自選追蹤）；`layout.tsx` 原第 server-side NAV array 已移除。
