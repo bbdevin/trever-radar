@@ -23,18 +23,26 @@ const BRANCH_RANGES = [
  * 自帶期間 state(預設 5 日,籌碼K線慣例的短週期起手),不與 K 線圖區間連動。
  * 傳入 score/reasons 時視為分點 Tab 情境(顯示分點分卡與理由膠囊);未傳 heading 時省略頂部標題與副標。
  */
+/** 圖表疊加勾選上限:超過視覺與效能都失焦 */
+export const MAX_SELECTED_BRANCHES = 10;
+
 export default function BranchFlowSection({
   branches,
   branchHistory,
   score,
   reasons,
   heading,
+  selected,
+  onToggleSelect,
 }: {
   branches: StockJson["branches"];
   branchHistory: StockJson["branch_history"];
   score?: number | null;
   reasons?: string[];
   heading?: string;
+  /** 已勾選分點名集合(K 線視圖用,狀態上提到個股頁);與 onToggleSelect 同時傳入才顯示 checkbox */
+  selected?: Set<string>;
+  onToggleSelect?: (name: string) => void;
 }) {
   const [days, setDays] = useState<number | "custom">(5);
   const [customDays, setCustomDays] = useState<string>("5");
@@ -102,6 +110,8 @@ export default function BranchFlowSection({
   }
 
   const netTotal = agg.buyers.reduce((sum, b) => sum + b.net, 0) + agg.sellers.reduce((sum, b) => sum + b.net, 0);
+  const selectable = onToggleSelect != null && !!branchHistory?.length;
+  const atLimit = (selected?.size ?? 0) >= MAX_SELECTED_BRANCHES;
 
   return (
     <section className="mt-3.5 grid gap-3 overflow-x-auto rounded-[var(--r-lg)] border border-border bg-card p-3.5 shadow-[var(--shadow-card)]">
@@ -178,12 +188,27 @@ export default function BranchFlowSection({
         </div>
       </div>
 
+      {selectable && (
+        <div className="text-[11px] text-muted-foreground" aria-live="polite">
+          勾選分點後,於上方 K 線圖疊加「分點進出」柱狀圖(最多 {MAX_SELECTED_BRANCHES} 個
+          {atLimit ? ",已達上限,取消其他勾選後才能再加" : `,已勾選 ${selected?.size ?? 0} 個`})。
+        </div>
+      )}
+
       <div className="grid grid-cols-1 gap-3.5 md:grid-cols-2">
         <div className="flex flex-col gap-2.5 rounded-[var(--r-md)] border border-border bg-secondary p-3">
           <h3 className="mb-1 border-b border-[color:var(--line)] pb-2 text-center text-[14.5px] font-bold text-up">前 13 大買超分點</h3>
           <div className="flex flex-col gap-1.5">
             {agg.top13Buy.map((b) => (
-              <BranchRow key={b.name} b={b} expanded={expandedBranch === b.name} onToggle={() => setExpandedBranch(expandedBranch === b.name ? null : b.name)} />
+              <BranchRow
+                key={b.name}
+                b={b}
+                expanded={expandedBranch === b.name}
+                onToggle={() => setExpandedBranch(expandedBranch === b.name ? null : b.name)}
+                selected={selected?.has(b.name) ?? false}
+                onSelect={selectable ? onToggleSelect : undefined}
+                selectDisabled={atLimit}
+              />
             ))}
             {agg.top13Buy.length === 0 && <div className="py-[46px] text-center text-sm text-muted-foreground">無買超紀錄</div>}
           </div>
@@ -192,7 +217,15 @@ export default function BranchFlowSection({
           <h3 className="mb-1 border-b border-[color:var(--line)] pb-2 text-center text-[14.5px] font-bold text-down">前 13 大賣超分點</h3>
           <div className="flex flex-col gap-1.5">
             {agg.top13Sell.map((b) => (
-              <BranchRow key={b.name} b={b} expanded={expandedBranch === b.name} onToggle={() => setExpandedBranch(expandedBranch === b.name ? null : b.name)} />
+              <BranchRow
+                key={b.name}
+                b={b}
+                expanded={expandedBranch === b.name}
+                onToggle={() => setExpandedBranch(expandedBranch === b.name ? null : b.name)}
+                selected={selected?.has(b.name) ?? false}
+                onSelect={selectable ? onToggleSelect : undefined}
+                selectDisabled={atLimit}
+              />
             ))}
             {agg.top13Sell.length === 0 && <div className="py-[46px] text-center text-sm text-muted-foreground">無賣超紀錄</div>}
           </div>
@@ -208,19 +241,53 @@ export default function BranchFlowSection({
   );
 }
 
-function BranchRow({ b, expanded, onToggle }: { b: { name: string; net: number; history?: { t: string; net: number }[] }; expanded: boolean; onToggle: () => void }) {
+function BranchRow({
+  b,
+  expanded,
+  onToggle,
+  selected,
+  onSelect,
+  selectDisabled,
+}: {
+  b: { name: string; net: number; history?: { t: string; net: number }[] };
+  expanded: boolean;
+  onToggle: () => void;
+  selected?: boolean;
+  onSelect?: (name: string) => void;
+  selectDisabled?: boolean;
+}) {
   const maxNet = b.history?.length ? Math.max(...b.history.map((h) => Math.abs(h.net))) || 1 : 1;
+  const checkboxOff = !!selectDisabled && !selected; // 已勾到上限時,未勾選的暫時不可再加
   return (
     <div className="overflow-hidden rounded-[var(--r-sm)] border border-border bg-card transition-[box-shadow,border-color] hover:border-[color:var(--border-strong)] hover:shadow-[0_2px_6px_rgba(0,0,0,0.2)]">
-      <button
-        type="button"
-        aria-expanded={expanded}
-        className="flex min-h-11 w-full cursor-pointer items-baseline justify-between px-2.5 py-2 text-left text-[12.5px] select-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-primary"
-        onClick={onToggle}
-      >
-        <span className="font-semibold text-[color:var(--ink-2)]">{b.name}</span>
-        <span className={cn("num font-bold", b.net > 0 ? "text-up" : b.net < 0 ? "text-down" : "text-foreground")}>{fmtLots(b.net)}張</span>
-      </button>
+      <div className="flex items-stretch">
+        {onSelect && (
+          <label
+            className={cn(
+              "flex min-h-11 w-10 shrink-0 cursor-pointer items-center justify-center border-r border-[color:var(--line)]",
+              checkboxOff && "cursor-not-allowed opacity-40",
+            )}
+          >
+            <input
+              type="checkbox"
+              className="h-4 w-4 accent-[var(--primary)]"
+              checked={!!selected}
+              disabled={checkboxOff}
+              onChange={() => onSelect(b.name)}
+              aria-label={`勾選 ${b.name},於上方圖表疊加分點進出`}
+            />
+          </label>
+        )}
+        <button
+          type="button"
+          aria-expanded={expanded}
+          className="flex min-h-11 w-full min-w-0 cursor-pointer items-baseline justify-between px-2.5 py-2 text-left text-[12.5px] select-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-primary"
+          onClick={onToggle}
+        >
+          <span className="truncate font-semibold text-[color:var(--ink-2)]" title={b.name}>{b.name}</span>
+          <span className={cn("num font-bold", b.net > 0 ? "text-up" : b.net < 0 ? "text-down" : "text-foreground")}>{fmtLots(b.net)}張</span>
+        </button>
+      </div>
       {expanded && b.history && (
         <div className="mt-1 flex items-center gap-0.5 border-t border-[color:var(--line)] px-2.5 pt-2 pb-2 [height:48px]">
           {b.history.map((h) => (

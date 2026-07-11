@@ -10,6 +10,12 @@ function weekKey(dateStr: string): string {
   return d.toISOString().slice(0, 10);
 }
 
+/** 該日所屬的重取樣桶鍵(D=當日、W=週一、M=YYYY-MM);供非K棒日序列與 K 棒桶對齊 */
+export function periodKey(dateStr: string, tf: Timeframe): string {
+  if (tf === "D") return dateStr;
+  return tf === "M" ? dateStr.slice(0, 7) : weekKey(dateStr);
+}
+
 /** 日K → 週K/月K:開=首日開、高=max、低=min、收=末日收、量/額=加總,t=末日 */
 export function resample(candles: Candle[], tf: Timeframe): Candle[] {
   if (tf === "D") return candles;

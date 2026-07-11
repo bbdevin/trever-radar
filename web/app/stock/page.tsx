@@ -14,7 +14,7 @@ import {
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { IconArrowLeft } from "@/components/Icons";
 import KChart from "@/components/KChart";
-import BranchFlowSection from "@/components/BranchFlowSection";
+import BranchFlowSection, { MAX_SELECTED_BRANCHES } from "@/components/BranchFlowSection";
 import { Skeleton } from "@/components/ui/skeleton";
 import WatchlistButton from "@/components/WatchlistButton";
 import type { StockJson } from "@/lib/types";
@@ -43,9 +43,11 @@ function StockView() {
   const [error, setError] = useState(false);
   const [range, setRange] = useState<(typeof RANGES)[number]["key"]>("1y");
   const [view, setView] = useState<"chart" | "branch" | "warrant">("chart");
+  const [selectedBranches, setSelectedBranches] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     if (!id) return;
+    setSelectedBranches(new Set()); // 換股重置勾選
     fetch(`/data/stocks/${id}.json`)
       .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
       .then(setData)
@@ -56,6 +58,35 @@ function StockView() {
     const days = RANGES.find((r) => r.key === range)?.days ?? Infinity;
     return days === Infinity ? Number.MAX_SAFE_INTEGER : days;
   }, [range]);
+
+  // 主力買賣超:每日全部分點(前15大裁剪版)net 加總;branch_history 為新到舊,圖表要舊到新
+  const mainForce = useMemo(() => {
+    const bh = data?.branch_history;
+    if (!bh?.length) return undefined;
+    return bh
+      .map((d) => ({ t: d.t, net: d.branches.reduce((s, b) => s + b.net, 0) }))
+      .sort((a, b) => (a.t < b.t ? -1 : 1));
+  }, [data]);
+
+  // 分點進出:勾選分點集合的每日 net 加總;該日勾選分點都未上榜 → 缺日留白(不補 0)
+  const branchFlow = useMemo(() => {
+    const bh = data?.branch_history;
+    if (!bh?.length || selectedBranches.size === 0) return undefined;
+    const pts: { t: string; net: number }[] = [];
+    for (const d of bh) {
+      const rows = d.branches.filter((b) => selectedBranches.has(b.n));
+      if (rows.length) pts.push({ t: d.t, net: rows.reduce((s, b) => s + b.net, 0) });
+    }
+    return pts.length ? pts.sort((a, b) => (a.t < b.t ? -1 : 1)) : undefined;
+  }, [data, selectedBranches]);
+
+  const toggleBranch = (name: string) =>
+    setSelectedBranches((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else if (next.size < MAX_SELECTED_BRANCHES) next.add(name);
+      return next;
+    });
 
   if (!id) return <div className="py-[46px] text-center text-sm text-muted-foreground">網址缺少股票代號(?id=2330)</div>;
   if (error)
@@ -133,11 +164,19 @@ function StockView() {
           </div>
         )}
       </div>
-      {view === "chart" && <KChart candles={cs} visibleDays={visibleDays} />}
+      {view === "chart" && <KChart candles={cs} visibleDays={visibleDays} mainForce={mainForce} branchFlow={branchFlow} />}
       {view === "branch" && <BranchPanel data={data} />}
       {view === "warrant" && <WarrantPanel data={data} />}
       {view === "chart" && <TechnicalPanel data={data} />}
-      {view === "chart" && <BranchFlowSection branches={data.branches} branchHistory={data.branch_history} heading="分點進出" />}
+      {view === "chart" && (
+        <BranchFlowSection
+          branches={data.branches}
+          branchHistory={data.branch_history}
+          heading="分點進出"
+          selected={selectedBranches}
+          onToggleSelect={toggleBranch}
+        />
+      )}
     </>
   );
 }

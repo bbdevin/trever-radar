@@ -129,6 +129,7 @@
 - 2026-07-10 功能·視覺 backlog 落檔(`docs/23`):ui-ux-pro-max 對齊後寫入 V1–V3 / F1–F4 與 WP-* Executor 工作包;拒絕新配色與 Inter 全站字體;程式未實作。
 - 2026-07-10 B 方案 Phase 1 (UI 刪減與合併):集中度併入 `/branch` 今日動向、題材只留首頁、移除 `/explore` 與空殼盤中導航、權證大戶降級為「權證分點異動(實驗)」、移除未使用依賴 `recharts`。
 - 2026-07-11 WP-V2 榜單/表格一致性(docs/23 §2 V2,只動 UI 不動資料語意):①權證明細標竿表補排序回饋——表頭可排序欄改鍵盤可聚焦 `<button>` + `aria-sort=ascending/descending`,選中欄加 inset ring + 亮字選中態;②`/branch` 集中度榜與「今日買超」兩個 div-grid 真表格遷成語意化 `<table>/<thead>/<tbody>`(對齊權證表字級/分隔線,`overflow-x-auto` 手機可橫滑,不裁代號/漲跌,淨額補 +/- 號),分點前13大買賣超與權證大戶群組維持卡片列不硬遷;③首頁 stale freshness 標示改琥珀徽章 + lucide `Clock`(用既有 `--warn` token,不新增色票)。無新增依賴,`npm run build` 過。
+- 2026-07-11 個股頁多層圖:復刻籌碼K線版面——KChart 新增「主力買賣超(前15大)」pane(branch_history 每日全分點 net 加總柱 + 累計線,工具列可開關並記憶於既有 settings localStorage)與勾選驅動的「分點進出」pane(BranchFlowSection 前13大買/賣列表加 checkbox,上限 10,勾選集合每日 net 加總 + 累計線,無勾選不渲染);單 chart 實例 X 軸全 pane 同步,D/W/M 用新 `periodKey` 對齊 K 棒桶重取樣,pane 標題與游標當日/累計數值(帶正負號)以 v5 `createTextWatermark` 畫在對應 pane;無 branch_history 時兩 pane 不渲染、高度回原本。`npm run build` 過,以正式站 2330 真實資料 headless 驗證柱/累計數字與來源吻合。
 
 ## 系統模組與功能對應表 (Pipeline Models Mapping)
 
