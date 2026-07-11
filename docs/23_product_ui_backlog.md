@@ -5,6 +5,11 @@
 > 設計建議來源:ui-ux-pro-max(`web/.agents/skills/ui-ux-pro-max`)對
 > fintech / stock radar / dark OLED / shadcn 的檢索結果,**已依本專案既定 token 過濾**,
 > 不得照抄搜尋結果裡的 Inter 字體、紫金配色或改預設淺色主題。
+>
+> **2026-07-11 任務導向 IA notice**:`docs/25_ui_information_architecture_plan.md` 已補上
+> 首頁/個股/分點/自選的「掃描→判讀→追蹤」重整與 Executor Phase。本文繼續管理局部
+> V/F backlog；若同一工作同時命中本檔 F4/Armed 與 `docs/25`,依 `docs/25` 的依賴關卡
+> 執行,不得把 IA 重排當成可提前定義 Armed 或改資料語意。
 
 ## 0. 硬約束(違反即退回)
 

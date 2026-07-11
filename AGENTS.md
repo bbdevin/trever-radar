@@ -34,8 +34,9 @@
 | `docs/21_private_beta_access_r2_plan.md` | ✅ **current,私人測試與 R2 source of truth** | Cloudflare Access 整站白名單、Pages 旁路封鎖、R2 僅作私有快照/未來歷史拆檔,不得當即時 SQLite。 |
 | `docs/22_armed_tracking.md` | 📝 **規劃定案,程式未實作** | Armed/Triggered 狀態追蹤(未發動籌碼·權證池);須等 `20` Phase 1–3 與 `21` Access 有進度後另確認才實作,不新增策略/不抬綜合分。 |
 | `docs/23_product_ui_backlog.md` | 📝 **規劃定案,程式未實作** | Access/B/Armed 之後的功能與視覺優化 backlog(V1–V3 / F1–F4)+ Executor 工作包;不得插隊或引入新配色/第14策略。 |
+| `docs/25_ui_information_architecture_plan.md` | 📝 **任務導向 UI 規劃已落檔,程式未實作** | 將前端重整為掃描→判讀→追蹤任務流,含首頁/個股/分點/自選 IA Phase 與 Executor 驗收;不取代 `20`/`22`/`23`,每次只可另確認一個 Phase。 |
 
-有疑問時,信任順序:`project-context.md` / `STATUS.md` / `20`(功能刪減與策略治理) / `21`(私人測試/Access/R2) / `22`(Armed 追蹤) / `23`(功能·視覺 backlog) / `12` / `08§0` / `vps_backfill_plan.md` > 其餘 `docs/*` > 對話記憶。
+有疑問時,信任順序:`project-context.md` / `STATUS.md` / `20`(功能刪減與策略治理) / `21`(私人測試/Access/R2) / `22`(Armed 追蹤) / `23`(功能·視覺 backlog) / `25`(任務導向 UI IA) / `12` / `08§0` / `vps_backfill_plan.md` > 其餘 `docs/*` > 對話記憶。
 
 ## Required Reading(改檔前必讀)
 
@@ -49,11 +50,12 @@
 7. `docs/21_private_beta_access_r2_plan.md`(動登入、Access、R2、DB 備份/還原時必讀)
 8. `docs/22_armed_tracking.md`(規劃或實作未發動/已發動狀態追蹤、Armed 池時必讀)
 9. `docs/23_product_ui_backlog.md`(規劃或實作額外功能 / 視覺優化 V·F 工作包時必讀;並讀 `docs/19`)
+10. `docs/25_ui_information_architecture_plan.md`(規劃或實作首頁/個股/分點/自選的任務流重整、功能合併或版面層級時必讀;一次只做一個 IA Phase)
 
 再依任務追加:
 - 動資料庫/排程/R2 → `docs/08_scheduler_jobs.md` §0 + `docs/21_private_beta_access_r2_plan.md` + `.github/workflows/*.yml`
 - 動評分規則 → `docs/04_signal_rules.md` + `pipeline/radar/compute/scores.py` + 對應 test
-- 動前端頁面 → `docs/07_frontend_pages.md` 對應章節 + `docs/19_ui_guidelines.md` + 該頁面檔案
+- 動前端頁面 → `docs/07_frontend_pages.md` 對應章節 + `docs/19_ui_guidelines.md` + `docs/25_ui_information_architecture_plan.md`(若涉及資訊架構/功能合併) + 該頁面檔案
 - 動資安/登入 → `docs/10_security_legal.md` + `docs/14_feature_wave2.md` §4 + `docs/21_private_beta_access_r2_plan.md`
 
 ## Golden Rules

@@ -19,7 +19,7 @@
 - 流程為**模型中立、角色導向**:Planner / Executor / Reviewer 由本次任務指定,不由模型品牌永久決定;規則見 `AGENTS.md` 與 `docs/17_no_fable_workflow.md`。
 - 工具清單:Claude Code、AGY/Gemini、Codex、GPT/Grok 等高階模型均可任三角色;Cursor 為 IDE / 確認介面;人類使用者為唯一決策者。
 
-下一步:先完成 `docs/21` Access A0-A2,把目前公開站真正鎖成私人測試版;再依 `docs/20` B 方案刪減 UI、策略解耦與績效閉環。R2 先做 shadow backup/restore drill,不得直接取代 cache/Release。**再下一刀(待開發)**:`docs/22` Armed/Triggered 狀態追蹤——須另確認後才實作。
+下一步:先完成 `docs/21` Access A0-A2,把目前公開站真正鎖成私人測試版;再依 `docs/20` B 方案完成策略解耦與績效閉環。R2 先做 shadow backup/restore drill,不得直接取代 cache/Release。**產品下一刀(待開發)**:`docs/22` Armed/Triggered 狀態追蹤。**UI 任務流規劃**已落在 `docs/25`,可由使用者另確認單一 IA Phase 執行,不得因文件存在就插隊或一次重構全站。
 
 ## 已完成 ✅
 
@@ -78,6 +78,7 @@
 4. **Armed 狀態追蹤**(`docs/22`,📝 規劃定案、程式未實作):首頁「未發動/已發動」狀態池,重用 S12/W3/B3 與權證倍數;不新增策略、不抬綜合分、不新開一級路由。建議在 Access + B Phase 1–3 有進度後另確認 A1→A3 實作。
 4a. **盤中訊號雷達 + 分點追蹤視角**(`docs/24`,2026-07-11 使用者指定排入):~~Part B 分點追蹤視角~~ **2026-07-11 完成**(B1 export + B2 前端,見已完成;資料深度隨 VPS 回灌自動提升);**Part A 盤中雷達**——Fugle + 本機 worker + Supabase 中繼,規則 I-1 大單/I-2 爆量/I-3 急拉/I-4 Armed 發動,I0 PoC 待使用者申請 Fugle key 即可先行,I1-I3 接 Armed A1 之後(I-4 依賴 Armed 名單)。
 5. **功能·視覺 backlog**(`docs/23`,📝 規劃定案、程式未實作):~~V1 掃讀優化 → V2 表格一致~~ **V1/V2/V3.1-V3.2 已於 2026-07-11 完成**(見已完成);剩 F2 日報摘要 / F1 自選戰情 / F3 訊號摘要 / F4 掃描收斂(待 Armed)與 V3.3 Sonner(需新依賴,待使用者決定);不得插隊,Executor 依 WP-* 工作包執行。
+5a. **任務導向 UI 資訊架構**(`docs/25`,2026-07-11 規劃落檔、程式未實作):以「掃描→判讀→追蹤」重整首頁/個股/分點/自選。IA-1A 首頁純前端 Pilot、IA-2 個股判讀、IA-3 分點研究、IA-4A 自選手動版皆須逐 Phase 另確認;IA-1B 榜單收斂與 IA-4B 狀態增強分別受 `docs/23` F4 / `docs/22` Armed 關卡約束。不得把規劃落檔視為已授權改碼。
 6. **R2 R0-R2**(`docs/21`):private Standard bucket → 每週 shadow snapshot → checksum/gzip/SQLite restore drill。R3 workflow fallback 未授權,R4/P2 延後。
 7. **B 方案 Phase 4—排程簡化提案**(`docs/20`,獨立高風險任務):保留資料取得時點,評估完整 build/deploy 由每日最多 5 次降為 14:10/22:10 兩次;不得在未完整審查 WAL/cache/release 鏈前修改 workflow。
 8. ~~deep-backfill --all~~ **執行狀態需另行查證**:完成與否不得只信本檔舊紀錄;若需 `task=adjust` 或 VPS 回灌,先依 `vps_backfill_plan.md` 與高風險流程確認。
