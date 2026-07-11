@@ -1,8 +1,21 @@
-# VPS 分點歷史回補 — 手把手操作手冊(2026-07-09)
+# VPS 操作手冊 — 分點歷史回補 + 盤中 worker(2026-07-12 整併)
 
-> 目的:把「每檔股票的分點進出明細」抓到 **2 年深**(P1),之後再擴到 5 年(P2)。
-> 你只需要:一台能 SSH 的 VPS(已裝 Docker)+ 一支手機。全程免費。
+> 本檔是 **VPS 上所有操作的唯一手冊**(原 `docs/handoff_intraday_vps.md` 已併入本檔 Step 5)。
 > 每一步都是「複製 → 貼上 → 按 Enter」。看到不一樣的輸出就停下來,把畫面貼給 AI。
+
+---
+
+## 🎯 現在待辦總覽(2026-07-12,依序)
+
+| # | 事項 | 指令在哪 | 狀態 |
+|---|---|---|---|
+| 1 | 等 backfill-branches 跑完(`docker logs --tail 5 radar-backfill`;已回補到 2024-10) | Step 3 | ⏳ 跑著 |
+| 2 | 上傳回雲端與重算(**先 `git pull`**,再 4a-1 → 4b → 4c → 4d) | Step 4 | 等 1 |
+| 3 | 部署盤中 worker(venv + `.env` 一次設定 + cron 08:50) | **Step 5** | 可與 2 並行 |
+| 4 | 非盤中冒煙測試 worker | Step 5-e | 等 3 |
+| 5 | 跟 AI 說「完成」→ AI 驗證全站 + Phase 2 差異報告 | — | 等 2+4 |
+
+已完成 ✅:Supabase SQL(intraday_signals/worker_heartbeat)已執行;Fugle 金鑰已輪替(舊 key 實測 401 失效,git 歷史中為死 key);金鑰一律只放 VPS `.env`(gitignore 保護,`git pull` 永不影響它——使用者 2026-07-12 定案不入 repo)。
 
 ---
 
@@ -212,6 +225,73 @@ gh workflow run data-backfill.yml -f task=adjust --repo bbdevin/trever-radar
 ```bash
 docker rm -f radar-backfill
 ```
+
+---
+
+## Step 5:盤中 worker 部署(2026-07-12 新增;一次設定,之後只要 `git pull`)
+
+盤中訊號雷達(docs/24 Part A)的 worker 跑在這台 VPS:平日 08:50 啟動、13:35 自動收工,抓 Fugle 行情判定 I-1~I-4 訊號寫入 Supabase,網站首頁盤中面板即時顯示。前置(已完成 ✅):Supabase SQL 已執行、Fugle 新金鑰已備。
+
+### 5-a. 更新程式 + 建 worker 專用 venv(一次)
+
+```bash
+cd ~/trever-radar && git pull
+cd pipeline
+python3 -m venv .venv-worker
+.venv-worker/bin/pip install "fugle-marketdata>=2.4.1" "supabase>=2.31.0" "python-dotenv>=1.2.2" "requests>=2.31"
+```
+
+### 5-b. 設 `.env`(一次;之後 `git pull` 永遠不會動到它)
+
+```bash
+nano ~/trever-radar/pipeline/intraday/.env
+```
+
+貼入以下四行(**尖括號換成你的實際值**,Supabase service key 在 Dashboard → Settings → API → `service_role`):
+
+```
+FUGLE_API_KEY=<你 2026-07-12 輪替後的新 Fugle key>
+SUPABASE_URL=https://eroycvbgfitvyulfbbnw.supabase.co
+SUPABASE_KEY=<Supabase service_role key>
+RADAR_JSON_URL=https://trever-radar.pages.dev/data/radar.json
+```
+
+> 可選:之後 Cloudflare Access 上線,再加兩行 `CF_ACCESS_CLIENT_ID=` / `CF_ACCESS_CLIENT_SECRET=`(service token),worker 會自動夾帶 header 穿透。
+
+### 5-c. 時區確認(cron 的 08:50/13:35 是台北時間)
+
+```bash
+timedatectl | grep "Time zone"
+# 不是 Asia/Taipei 就執行:
+sudo timedatectl set-timezone Asia/Taipei
+```
+
+### 5-d. cron 排程(平日 08:50 啟動,一次)
+
+```bash
+crontab -e
+```
+
+加入一行:
+
+```cron
+50 8 * * 1-5 cd /home/huang/trever-radar/pipeline/intraday && /home/huang/trever-radar/pipeline/.venv-worker/bin/python worker.py >> worker.log 2>&1
+```
+
+### 5-e. 冒煙測試(非盤中時段跑一次,一分鐘)
+
+```bash
+cd ~/trever-radar/pipeline/intraday
+../.venv-worker/bin/python worker.py
+```
+
+- 成功標準:log 顯示抓到 radar.json(或非交易時段的等待訊息)、無 Supabase 連線錯誤;開網站登入後,首頁盤中面板 worker 狀態轉 **online** → `Ctrl+C` 結束。
+- 缺 `.env` 鍵會 fatal exit 並印出缺哪個;403 會指引檢查 `RADAR_JSON_URL` / Access token。
+
+### 5-f. 韌性行為(不用做事,知道就好)
+
+- radar.json 抓取失敗會退避重試 3 次;已有上次成功名單就沿用續跑;首次啟動即失敗才會結束。
+- 之後程式更新只要 `cd ~/trever-radar && git pull`——`.env`、venv、cron 都不受影響。
 
 ---
 
