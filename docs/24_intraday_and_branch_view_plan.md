@@ -67,10 +67,12 @@ export: Armed 池 + watch/stop 價     worker(Python,08:55–13:35)
 
 ### 3.2 階段
 
-| 階段 | 內容 | 估時 |
-|---|---|---|
-| B1 export | `branches/track/*.json` 聚合輸出 + 單元測試(種子 DB) | 0.5 天 |
-| B2 前端 | /branch 排行榜整合分點視角 + 期間 pills + 表格 | 1 天 |
+| 階段 | 內容 | 估時 | 狀態 |
+|---|---|---|---|
+| B1 export | `branches/track/*.json` 聚合輸出 + 單元測試(種子 DB) | 0.5 天 | ✅ 2026-07-11 |
+| B2 前端 | /branch 排行榜整合分點視角 + 期間 pills + 表格 | 1 天 | ✅ 2026-07-11 |
+
+> B1 實作:`_export_tracked_branch_history()`(`pipeline/radar/export/json_export.py`)為每個 tracked branch(manual+auto)產 `branches/track/{sha1(branch_name)[:16]}.json`——近 120 日曆日的緊湊 `[date, stock_id, net_lots, pct]` 列(以 branch_name 聚合、僅 stocks 表內證券)+ `stocks` 名稱/期末收盤(未還原價)對照 + `index.json` 對照表;體積防線 20,000 列裁最近 120 交易日並標 `truncated`。B2 實作:`/branch` 排行榜點分點卡片或「分點追蹤視角」鈕 → 同 tab 切入 `BranchTrackView`(`web/components/BranchTrackView.tsx`,含返回鈕 + 分點下拉);近 1/5/10/20/自訂 N 日 pills(自訂 clamp 至可用交易日數並提示);客戶端純函式 `aggregateBranchRows`(`web/lib/branchTrack.ts`)加總出「期間淨買超」與「期間反向賣超」語意化表(估算金額 net×1000×期末收盤、平均佔比、375 不裁);誠實限制常標。
 
 ---
 

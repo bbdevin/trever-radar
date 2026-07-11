@@ -115,5 +115,133 @@ class SectorSubsExportTests(unittest.TestCase):
         self.assertTrue(all("subs" not in t for t in radar.get("themes", [])))
 
 
+class TrackedBranchHistoryExportTests(unittest.TestCase):
+    """docs/24 §3 B1:追蹤分點近 120 日明細 export(branches/track/*.json + index)。"""
+
+    AS_OF = "2026-07-10"
+
+    def setUp(self):
+        self._tmp = TemporaryDirectory()
+        tmp = Path(self._tmp.name)
+        self._old_url, self._old_dir = config.DB_URL, config.DATA_DIR
+        config.DATA_DIR = tmp
+        config.DB_URL = "sqlite:///" + (tmp / "t.db").as_posix()
+        db._engine = None
+        db.init_db()
+        self._seed()
+
+    def tearDown(self):
+        if db._engine is not None:
+            db._engine.dispose()
+        db._engine = None
+        config.DB_URL, config.DATA_DIR = self._old_url, self._old_dir
+        self._tmp.cleanup()
+
+    def _seed(self):
+        eng = db.get_engine()
+        with eng.begin() as conn:
+            conn.execute(schema.stocks.insert(), [
+                {"id": "2330", "name": "台積電", "market": "twse", "type": "stock", "is_active": 1},
+                {"id": "2317", "name": "鴻海", "market": "twse", "type": "stock", "is_active": 1},
+                {"id": "2454", "name": "聯發科", "market": "twse", "type": "stock", "is_active": 1},
+            ])
+            # 07-09 有值;07-10 中 2454 close 為 NULL,用來驗證「期末收盤取最近有值日」的回退。
+            conn.execute(schema.daily_prices.insert(), [
+                {"stock_id": "2330", "date": "2026-07-09", "close": 1080.0, "volume": 1000, "turnover": 100},
+                {"stock_id": "2317", "date": "2026-07-09", "close": 205.0, "volume": 1000, "turnover": 100},
+                {"stock_id": "2454", "date": "2026-07-09", "close": 1200.0, "volume": 1000, "turnover": 100},
+                {"stock_id": "2330", "date": "2026-07-10", "close": 1085.0, "volume": 1000, "turnover": 100},
+                {"stock_id": "2317", "date": "2026-07-10", "close": 210.0, "volume": 1000, "turnover": 100},
+                {"stock_id": "2454", "date": "2026-07-10", "close": None, "volume": 1000, "turnover": 100},
+            ])
+            conn.execute(schema.tracked_branches.insert(), [
+                {"branch_name": "凱基-台北", "source": "manual"},
+                {"branch_name": "富邦-新竹", "source": "auto"},
+            ])
+            # 分點交易:凱基/富邦 追蹤,元大 未追蹤(不應產檔)。
+            conn.execute(schema.branch_trades.insert(), [
+                # 凱基-台北:含賣超(net 負)、pct null、與 120 日視窗外的一列。
+                {"stock_id": "2330", "date": "2026-07-09", "branch_key": "k1", "branch_name": "凱基-台北",
+                 "buy_lots": 200, "sell_lots": 0, "net_lots": 200, "pct": 0.8},
+                {"stock_id": "2330", "date": "2026-07-10", "branch_key": "k1", "branch_name": "凱基-台北",
+                 "buy_lots": 500, "sell_lots": 150, "net_lots": 350, "pct": 1.2},
+                {"stock_id": "2317", "date": "2026-07-10", "branch_key": "k1", "branch_name": "凱基-台北",
+                 "buy_lots": 100, "sell_lots": 300, "net_lots": -200, "pct": None},
+                {"stock_id": "2330", "date": "2026-02-01", "branch_key": "k1", "branch_name": "凱基-台北",
+                 "buy_lots": 999, "sell_lots": 0, "net_lots": 999, "pct": 5.0},
+                # 富邦-新竹
+                {"stock_id": "2317", "date": "2026-07-06", "branch_key": "f1", "branch_name": "富邦-新竹",
+                 "buy_lots": 50, "sell_lots": 50, "net_lots": 0, "pct": 0.0},
+                {"stock_id": "2454", "date": "2026-07-08", "branch_key": "f1", "branch_name": "富邦-新竹",
+                 "buy_lots": 300, "sell_lots": 100, "net_lots": 200, "pct": 2.1},
+                # 元大-土城(未追蹤)
+                {"stock_id": "2330", "date": "2026-07-10", "branch_key": "y1", "branch_name": "元大-土城",
+                 "buy_lots": 400, "sell_lots": 0, "net_lots": 400, "pct": 3.3},
+            ])
+
+    def _run(self):
+        out = Path(self._tmp.name) / "out"
+        export_json(out)
+        return out / "branches" / "track"
+
+    def test_index_and_untracked_excluded(self):
+        import hashlib
+        track = self._run()
+        index = json.loads((track / "index.json").read_text(encoding="utf-8"))
+
+        # 兩個追蹤分點,依 branch_name 升冪(凱 U+51F1 < 富 U+5BCC)
+        self.assertEqual([e["branch_name"] for e in index], ["凱基-台北", "富邦-新竹"])
+        self.assertEqual([e["source"] for e in index], ["manual", "auto"])
+        self.assertEqual([e["rows_count"] for e in index], [3, 2])          # 凱基 120 日外的列被排除
+        self.assertEqual([e["first_date"] for e in index], ["2026-07-09", "2026-07-06"])
+
+        # 未追蹤分點不產檔,也不在 index
+        self.assertNotIn("元大-土城", [e["branch_name"] for e in index])
+        untracked_file = hashlib.sha1("元大-土城".encode("utf-8")).hexdigest()[:16] + ".json"
+        self.assertFalse((track / untracked_file).exists())
+
+        # index 的 file 欄與實際檔名一致且存在於檔案系統
+        for e in index:
+            expected = hashlib.sha1(e["branch_name"].encode("utf-8")).hexdigest()[:16] + ".json"
+            self.assertEqual(e["file"], expected)
+            self.assertTrue((track / e["file"]).exists())
+
+    def test_rows_format_sorting_and_window(self):
+        track = self._run()
+        index = json.loads((track / "index.json").read_text(encoding="utf-8"))
+        kfile = next(e["file"] for e in index if e["branch_name"] == "凱基-台北")
+        p = json.loads((track / kfile).read_text(encoding="utf-8"))
+
+        self.assertEqual(p["branch_name"], "凱基-台北")
+        self.assertEqual(p["source"], "manual")
+        self.assertEqual(p["as_of"], self.AS_OF)
+        self.assertEqual(p["days"], 120)
+        self.assertNotIn("truncated", p)                                   # 未超量
+
+        # 依 date 升冪、[date, stock_id, net_lots(帶正負), pct(可 null)]
+        self.assertEqual(p["rows"], [
+            ["2026-07-09", "2330", 200, 0.8],
+            ["2026-07-10", "2317", -200, None],
+            ["2026-07-10", "2330", 350, 1.2],
+        ])
+        # 120 日視窗外(2026-02-01, net 999)被排除
+        self.assertNotIn("2026-02-01", [r[0] for r in p["rows"]])
+
+    def test_stocks_lookup_name_and_close(self):
+        track = self._run()
+        index = json.loads((track / "index.json").read_text(encoding="utf-8"))
+
+        kfile = next(e["file"] for e in index if e["branch_name"] == "凱基-台北")
+        kp = json.loads((track / kfile).read_text(encoding="utf-8"))
+        self.assertEqual(set(kp["stocks"]), {"2330", "2317"})
+        self.assertEqual(kp["stocks"]["2330"], {"name": "台積電", "close": 1085.0})
+        self.assertEqual(kp["stocks"]["2317"], {"name": "鴻海", "close": 210.0})
+
+        ffile = next(e["file"] for e in index if e["branch_name"] == "富邦-新竹")
+        fp = json.loads((track / ffile).read_text(encoding="utf-8"))
+        # 2454 於 as_of(07-10)close 為 NULL → 回退取最近有值日 07-09 的 1200.0
+        self.assertEqual(fp["stocks"]["2454"], {"name": "聯發科", "close": 1200.0})
+
+
 if __name__ == "__main__":
     unittest.main()

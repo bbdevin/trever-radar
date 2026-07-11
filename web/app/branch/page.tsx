@@ -5,7 +5,9 @@ import { Search, Info, TrendingUp, TrendingDown, Building2, User } from "lucide-
 import { IconFlame, IconTrend, IconZap } from "@/components/Icons";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
+import BranchTrackView from "@/components/BranchTrackView";
 import type { RadarJson } from "@/lib/types";
+import type { TrackIndexEntry } from "@/lib/branchTrack";
 import { MARKET_LABEL, fmtX } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -35,16 +37,20 @@ const SOURCE_BADGE: Record<string, { label: string; cls: string }> = {
   candidate: { label: "候選", cls: "bg-muted text-muted-foreground" },
 };
 
-function RankCard({ r }: { r: Ranking }) {
+function RankCard({ r, trackable }: { r: Ranking; trackable?: boolean }) {
   const enoughSamples = r.samples >= MIN_SAMPLES;
   const badge = SOURCE_BADGE[r.source] ?? SOURCE_BADGE.candidate;
   return (
     <div className={cn(
-      "flex flex-col gap-3 rounded-[var(--r-lg)] border bg-card p-3.5 shadow-[var(--shadow-card)]",
+      "flex h-full flex-col gap-3 rounded-[var(--r-lg)] border bg-card p-3.5 shadow-[var(--shadow-card)]",
       r.is_daytrade === 1 ? "border-down/40" : "border-border",
+      trackable && "transition-colors hover:border-border-strong hover:bg-secondary",
     )}>
       <div className="flex items-center justify-between gap-2">
-        <h3 className="text-lg text-foreground">{r.branch_name}</h3>
+        <h3 className="flex items-center gap-1 text-lg text-foreground">
+          {r.branch_name}
+          {trackable && <span aria-hidden className="text-muted-foreground">›</span>}
+        </h3>
         <div className="flex items-center gap-1.5">
           <span className={cn("rounded-md px-1.5 py-0.5 text-[10.5px] font-bold", badge.cls)}>{badge.label}</span>
           {r.is_daytrade === 1 && <span className="rounded-md bg-down/10 px-2 py-0.5 text-[11.5px] font-bold text-down">隔日沖</span>}
@@ -384,6 +390,9 @@ export default function BranchPage() {
   });
   const [warrantTimeframe, setWarrantTimeframe] = useState<"1d" | "2d" | "5d" | "30d" | "120d">("1d");
   const [viewMode, setViewMode] = useState<"by_stock" | "by_branch">("by_stock");
+  const [trackIndex, setTrackIndex] = useState<TrackIndexEntry[]>([]);
+  const [trackOpen, setTrackOpen] = useState(false);
+  const [trackBranch, setTrackBranch] = useState<string | null>(null);
   const [error, setError] = useState(false);
 
   useEffect(() => {
@@ -406,6 +415,11 @@ export default function BranchPage() {
       .then((r) => (r.ok ? r.json() : { "1d": [], "2d": [], "5d": [], "30d": [], "120d": [] }))
       .then(setWarrantBranches)
       .catch(() => {});
+
+    fetch("/data/branches/track/index.json")
+      .then((r) => (r.ok ? r.json() : []))
+      .then((j: TrackIndexEntry[]) => setTrackIndex(Array.isArray(j) ? j : []))
+      .catch(() => setTrackIndex([]));
   }, []);
 
   if (error) {
@@ -448,42 +462,76 @@ export default function BranchPage() {
       <div className="my-1.5 mb-3 flex items-center gap-2.5">
         <div role="tablist" className="flex max-w-full gap-0.5 overflow-x-auto rounded-full border border-border bg-card p-[3px] whitespace-nowrap">
           {TABS.map((t) => (
-            <TabPill key={t.key} active={tab === t.key} onClick={() => setTab(t.key)} title={t.hint} icon={t.icon} label={t.label} />
+            <TabPill key={t.key} active={tab === t.key} onClick={() => { setTab(t.key); setTrackOpen(false); }} title={t.hint} icon={t.icon} label={t.label} />
           ))}
         </div>
         <span className="hidden text-xs text-muted-foreground lg:inline">{TABS.find((t) => t.key === tab)?.hint}</span>
       </div>
 
-      {tab === "rankings" && (
-        <div className="flex flex-col gap-5 pb-7">
-          {mainRankings.length === 0 && (
-            <div className="py-[46px] text-center text-sm text-muted-foreground">
-              尚無分點達入榜門檻(累積事件 ≥ 5)。資料持續累積中。
-            </div>
-          )}
-          {mainRankings.length > 0 && (
-            <div className="grid grid-cols-1 gap-2.5 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-              {mainRankings.map((r) => (
-                <RankCard key={r.branch_name} r={r} />
-              ))}
-            </div>
-          )}
-
-          {daytradeRankings.length > 0 && (
-            <div className="flex flex-col gap-2.5">
-              <div className="flex items-baseline gap-2">
-                <h2 className="text-[15px] font-semibold text-down">隔日沖分點</h2>
-                <span className="text-xs text-muted-foreground">買超次日高比率回吐,列為反指標/風險訊號,不排進主榜</span>
-              </div>
-              <div className="grid grid-cols-1 gap-2.5 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                {daytradeRankings.map((r) => (
-                  <RankCard key={r.branch_name} r={r} />
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
+      {tab === "rankings" && trackOpen && (
+        <BranchTrackView
+          index={trackIndex}
+          branchName={trackBranch ?? trackIndex[0]?.branch_name ?? null}
+          onBack={() => setTrackOpen(false)}
+          onSelectBranch={setTrackBranch}
+        />
       )}
+
+      {tab === "rankings" && !trackOpen && (() => {
+        const trackNames = new Set(trackIndex.map((e) => e.branch_name));
+        const openTrack = (name: string) => { setTrackBranch(name); setTrackOpen(true); };
+        const renderCard = (r: Ranking) =>
+          trackNames.has(r.branch_name) ? (
+            <button
+              key={r.branch_name}
+              onClick={() => openTrack(r.branch_name)}
+              aria-label={`查看 ${r.branch_name} 的近 N 日買賣超明細`}
+              className="block w-full min-h-11 rounded-[var(--r-lg)] p-0 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <RankCard r={r} trackable />
+            </button>
+          ) : (
+            <RankCard key={r.branch_name} r={r} />
+          );
+        return (
+          <div className="flex flex-col gap-5 pb-7">
+            {trackIndex.length > 0 && (
+              <div className="flex flex-wrap items-center gap-2.5">
+                <button
+                  onClick={() => { setTrackBranch(null); setTrackOpen(true); }}
+                  className="inline-flex min-h-11 items-center gap-1.5 rounded-full border border-border bg-card px-3.5 text-[13.5px] font-semibold text-foreground transition-colors hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  <IconTrend size={15} className="opacity-85" /> 分點追蹤視角
+                </button>
+                <span className="hidden text-xs text-muted-foreground sm:inline">點分點卡片或此處,看該分點近 1/5/10/20/自訂日買賣超</span>
+              </div>
+            )}
+
+            {mainRankings.length === 0 && (
+              <div className="py-[46px] text-center text-sm text-muted-foreground">
+                尚無分點達入榜門檻(累積事件 ≥ 5)。資料持續累積中。
+              </div>
+            )}
+            {mainRankings.length > 0 && (
+              <div className="grid grid-cols-1 gap-2.5 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                {mainRankings.map(renderCard)}
+              </div>
+            )}
+
+            {daytradeRankings.length > 0 && (
+              <div className="flex flex-col gap-2.5">
+                <div className="flex items-baseline gap-2">
+                  <h2 className="text-[15px] font-semibold text-down">隔日沖分點</h2>
+                  <span className="text-xs text-muted-foreground">買超次日高比率回吐,列為反指標/風險訊號,不排進主榜</span>
+                </div>
+                <div className="grid grid-cols-1 gap-2.5 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                  {daytradeRankings.map(renderCard)}
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       {tab === "warrant" && (() => {
         const data = warrantBranches[warrantTimeframe] || [];

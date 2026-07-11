@@ -4,12 +4,13 @@ Until the scoring module exists, the radar page shows dynamic day-driven lists
 (hot by turnover / surge by volume ratio / strong by change) plus a sector
 money-flow panel built from industry sums vs their 20-day averages.
 """
+import hashlib
 import json
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 
 from .. import config
 from ..db import get_engine, init_db
@@ -559,6 +560,7 @@ def export_json(out_dir: Path | None = None) -> dict:
     # ── Export Branches ──
     _export_branches(out, engine, d)
     _export_warrant_branches(out, engine, d, base20)
+    _export_tracked_branch_history(out, engine, d)
 
     return {"out": str(out), "date": d, "stocks": len(export_ids)}
 
@@ -713,3 +715,109 @@ def _export_warrant_branches(out: Path, engine, date: str, base20: list[str]):
 
         (branches_dir / "warrant_branches.json").write_text(
             json.dumps(results, ensure_ascii=False), encoding="utf-8")
+
+
+# 追蹤分點近 N 日明細:每個 tracked branch 一檔精簡 [date, stock_id, net_lots, pct] 列表,
+# 前端做任意區間加總(docs/24 §3)。以 branch_name 為聚合單位(與 rankings/today 一致);
+# 檔名用 branch_name 的 sha1 前 16 碼(URL/檔名安全、確定性),前端由 index.json 取得對照。
+TRACK_WINDOW_DAYS = 120          # 近 N 個日曆日
+TRACK_MAX_ROWS = 20_000          # 體積防線:超過則裁到最近 120 個交易日並標 truncated
+
+
+def _track_safe_key(branch_name: str) -> str:
+    return hashlib.sha1(branch_name.encode("utf-8")).hexdigest()[:16]
+
+
+def _export_tracked_branch_history(out: Path, engine, date: str):
+    track_dir = out / "branches" / "track"
+    track_dir.mkdir(parents=True, exist_ok=True)
+    # 清理:每次重寫該目錄,舊分點檔案不殘留
+    for stale in track_dir.glob("*.json"):
+        stale.unlink()
+
+    with engine.connect() as conn:
+        tracked = [dict(r._mapping) for r in conn.execute(text(
+            "SELECT branch_name, source FROM tracked_branches ORDER BY branch_name"))]
+        if not tracked:
+            (track_dir / "index.json").write_text("[]", encoding="utf-8")
+            return
+
+        # 近 120 日曆日內、tracked 分點的每日×每股淨買超(買賣都要,net 帶正負)。
+        # 以 (branch_name, date, stock_id) 聚合:同 branch_name 的多個 branch_key(不同來源頁)
+        # net_lots 相加、pct 取平均(單一來源時即原值)。僅取 stocks 表內的證券(排除 6 碼權證)。
+        rows = conn.execute(text("""
+            SELECT b.branch_name, b.date, b.stock_id,
+                   SUM(b.net_lots) AS net_lots, AVG(b.pct) AS pct
+            FROM branch_trades b
+            JOIN stocks s ON s.id = b.stock_id AND s.type IN ('stock', 'etf')
+            WHERE b.branch_name IN (SELECT branch_name FROM tracked_branches)
+              AND b.date >= date(:d, '-' || :win || ' days')
+            GROUP BY b.branch_name, b.date, b.stock_id
+            ORDER BY b.branch_name, b.date, b.stock_id
+        """), {"d": date, "win": TRACK_WINDOW_DAYS}).fetchall()
+
+        # 交易日視窗下緣(僅在單分點超量時用於裁切)
+        td_cutoff = conn.execute(text(
+            "SELECT MIN(date) FROM (SELECT DISTINCT date FROM daily_prices "
+            "WHERE date <= :d ORDER BY date DESC LIMIT :win)"),
+            {"d": date, "win": TRACK_WINDOW_DAYS}).scalar()
+
+        by_branch: dict[str, list] = {}
+        stock_ids: set[str] = set()
+        for r in rows:
+            m = r._mapping
+            by_branch.setdefault(m["branch_name"], []).append(
+                [m["date"], m["stock_id"],
+                 int(m["net_lots"] or 0),
+                 None if m["pct"] is None else round(m["pct"], 2)])
+            stock_ids.add(m["stock_id"])
+
+        # 股名 + 期末收盤(as_of 當日或最近有值日,未還原價):rows 出現過的每檔一次查齊
+        stock_meta: dict[str, dict] = {}
+        if stock_ids:
+            meta_rows = conn.execute(text("""
+                SELECT s.id, s.name,
+                       (SELECT p.close FROM daily_prices p
+                        WHERE p.stock_id = s.id AND p.date <= :d AND p.close IS NOT NULL
+                        ORDER BY p.date DESC LIMIT 1) AS close
+                FROM stocks s WHERE s.id IN :ids
+            """).bindparams(bindparam("ids", expanding=True)),
+                {"d": date, "ids": sorted(stock_ids)}).fetchall()
+            for mid, name, close in meta_rows:
+                stock_meta[mid] = {"name": name, "close": close}
+
+    index = []
+    for t in tracked:
+        bname = t["branch_name"]
+        b_rows = by_branch.get(bname, [])
+        truncated = False
+        if len(b_rows) > TRACK_MAX_ROWS and td_cutoff is not None:
+            b_rows = [row for row in b_rows if row[0] >= td_cutoff]
+            truncated = True
+
+        used_ids = {row[1] for row in b_rows}
+        payload = {
+            "branch_name": bname,
+            "source": t["source"],
+            "as_of": date,
+            "days": TRACK_WINDOW_DAYS,
+            "rows": b_rows,
+            "stocks": {sid: stock_meta[sid] for sid in used_ids if sid in stock_meta},
+        }
+        if truncated:
+            payload["truncated"] = True
+
+        fname = _track_safe_key(bname) + ".json"
+        (track_dir / fname).write_text(
+            json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+            encoding="utf-8")
+        index.append({
+            "branch_name": bname,
+            "source": t["source"],
+            "file": fname,
+            "rows_count": len(b_rows),
+            "first_date": b_rows[0][0] if b_rows else None,
+        })
+
+    (track_dir / "index.json").write_text(
+        json.dumps(index, ensure_ascii=False), encoding="utf-8")
