@@ -236,7 +236,7 @@ function StockGroupCard({ stockId, stockName, totalAmt, branches }: { stockId: s
           return (
             <div key={b.branch_name} className="flex flex-col rounded-md border border-border/40 bg-card/50 shadow-sm hover:bg-card transition-colors duration-200 overflow-hidden group">
               <button
-                className="min-h-11 px-3 py-2.5 flex items-center justify-between text-left focus:outline-none"
+                className="min-h-11 px-3 py-2.5 flex items-center justify-between text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
                 onClick={() => setExpandedBranch(isExpanded ? null : b.branch_name)}
                 aria-expanded={hasBreakdown ? isExpanded : undefined}
                 aria-label={`${b.branch_name} 權證明細`}
@@ -315,7 +315,7 @@ function BranchGroupCard({ branchName, totalAmt, stocks }: { branchName: string,
           return (
             <div key={s.underlying_id} className="flex flex-col rounded-md border border-border/40 bg-card/50 shadow-sm hover:bg-card transition-colors duration-200 overflow-hidden group">
               <button
-                className="min-h-11 px-3 py-2.5 flex items-center justify-between text-left focus:outline-none"
+                className="min-h-11 px-3 py-2.5 flex items-center justify-between text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
                 onClick={() => setExpandedStock(isExpanded ? null : s.underlying_id)}
                 aria-expanded={hasBreakdown ? isExpanded : undefined}
                 aria-label={`${s.underlying_name} 權證明細`}

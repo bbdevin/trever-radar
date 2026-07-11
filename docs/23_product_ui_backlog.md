@@ -197,7 +197,7 @@
 |---|---|---|
 | V1 | ✅ 完成(2026-07-11) | WP-V1:卡片層級收斂+狀態色條(risk/watch/neutral,僅用既有 token)+觸控/aria-label+骨架屏/教育性空狀態;`npm run build` 過 |
 | V2 | ✅ 完成(2026-07-11) | WP-V2:權證標竿表補 `aria-sort`+鍵盤可聚焦排序鈕+選中態(inset ring/亮字);`/branch` 集中度榜與今日買超遷語意化 `<table>`(對齊權證表、`overflow-x-auto` 手機可橫滑、不裁代號/漲跌);首頁 stale 標示改琥珀 `Clock` 徽章。卡片列(分點前13/權證大戶群組)不硬遷;無新依賴、未改配色 token 語意;`npm run build` 過 |
-| V3 | ⏳ 低優先 | |
+| V3 | ◑ 部分完成(2026-07-11) | **V3.1 淺色切換 ✅**:頂欄加 `ThemeToggle`(lucide `Sun`/`Moon` icon-only+aria-label,深色顯示 Sun/淺色顯示 Moon),接既有 `.dark` class 機制(未新增 token);`localStorage('theme')` 記偏好;FOUC 由 `layout.tsx` `<body>` 開頭極小 inline script 防護(僅在曾選 `light` 時提前移除 `.dark`,預設仍深色);`globals.css` 補 `html`/`html.dark` 的 `color-scheme` 對應。**V3.2 Focus ring ✅**:全站互動元素既有全域 `:focus-visible` outline(globals.css)覆蓋大多數;`/branch` 兩處展開鈕原 `focus:outline-none` 無替代,改 `focus-visible:ring-2 ring-inset ring-ring`(父層 `overflow-hidden` 會裁 outline offset,故用 inset ring)。**V3.3 Sonner ⬜ 未做**:需新增 npm 依賴(`sonner`),依硬約束「新依賴另批」留使用者決定。淺色抽查:body/卡片/表格/muted 文字/destructive 狀態條/邊框皆 ≥4.5:1 可讀;**已知淺色 token 問題(只回報未改,依 docs/23「不為淺色重畫品牌色」)**:①brand-extension token `--ink-2`(綜合分數字)、`--warn`(琥珀徽章/文字)僅有 `:root` 深色調值、`.dark` 未覆寫→兩主題同值,在淺底上 `--ink-2`≈1.8:1、`text-warn`≈1.7:1 偏低;②紅漲綠跌 `--up/--down` 兩主題共用,淺底約 3:1(大/粗數字達標、小字偏低);③KChart 畫布為 `transparent`(淺色下呈白底)但 grid/軸色 `#222220`/`#898781` 寫死深色調,淺底呈較刺眼深格線但可見,依規範不重畫。`npm run build` 過。 |
 | F1 | ⏳ 待 Armed | |
 | F2 | ⏳ 待確認 | 可與 Armed A1 同波評估 |
 | F3 | ⏳ 待確認 | |

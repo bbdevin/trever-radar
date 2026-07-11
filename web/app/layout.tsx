@@ -3,6 +3,7 @@ import { Manrope } from "next/font/google";
 import AuthButton from "@/components/AuthButton";
 import BottomNav from "@/components/BottomNav";
 import SearchBox from "@/components/SearchBox";
+import ThemeToggle from "@/components/ThemeToggle";
 import { IconRadar } from "@/components/Icons";
 import { WatchlistProvider } from "@/lib/watchlist";
 import "./globals.css";
@@ -34,6 +35,13 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="zh-Hant" className={`dark ${manrope.variable}`}>
       <body>
+        {/* FOUC 防護:預設深色(html 已帶 .dark),僅在使用者曾選淺色時提前移除 dark。極小、無依賴、try/catch 包。 */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html:
+              "(function(){try{if(localStorage.getItem('theme')==='light'){document.documentElement.classList.remove('dark')}}catch(e){}})()",
+          }}
+        />
         <WatchlistProvider>
           <header className="sticky top-0 z-40 border-b border-border bg-background/78 backdrop-blur-md backdrop-saturate-150">
             <div className="container flex h-[58px] items-center gap-5">
@@ -51,6 +59,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               </a>
               <div className="ml-auto flex items-center">
                 <SearchBox />
+                <ThemeToggle />
                 <AuthButton />
               </div>
               <nav className="hidden gap-0.5 md:flex">

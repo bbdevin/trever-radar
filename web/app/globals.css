@@ -71,7 +71,8 @@
    放進 @layer base 才不會蓋掉之後套用在這些元素上的 Tailwind class(例如 <a className="text-foreground">)。 */
 @layer base {
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  html { color-scheme: dark; scroll-behavior: smooth; }
+  html { color-scheme: light; scroll-behavior: smooth; }
+  html.dark { color-scheme: dark; }
   body {
     background:
       radial-gradient(1200px 500px at 70% -10%, rgba(57, 135, 229, 0.07), transparent 60%),
