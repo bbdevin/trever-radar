@@ -37,6 +37,18 @@
 
 ---
 
+## VPS 完整操作清單(2026-07-12 整併,依序執行)
+
+> 給使用者的一站式清單;細節分別見 `vps_backfill_plan.md` Step 4 與下方部署節。
+> 現況:backfill-branches 已回補至 2024-10(累計 ~20 萬筆),仍在跑。
+
+1. **等 backfill-branches 跑完**(docker logs 顯示完成 / 收到 ntfy 通知)。
+2. **回灌雲端**:照 `docs/vps_backfill_plan.md` Step 4 依序——`git pull`(**必須**,要帶到 2026-07-11 的 NULL 防護修復與新策略碼,舊碼重算會炸/算出舊 reasons)→ 4a-1 補近 7 日行情/法人/融資券 → 4b 壓縮上傳 release → 4c `gh cache delete --all` → 4d 雲端依序 `task=themes`、`task=indicators-only`(一次一支,等跑完再下一支)。
+3. **部署盤中 worker**(下方部署節 1–4):Supabase SQL 已執行 ✅;pip 裝依賴 → 設 `.env` → cron 平日 08:50。
+   - **`.env` 只需設定一次**:它被 `.gitignore` 排除、不在版控內,之後每次 `git pull` 都不會動到它——「pull 即更新」的工作流照常成立。金鑰不放 repo(使用者 2026-07-12 決定,理由:git 歷史永久、Actions checkout 攻擊面、service key 可 bypass RLS)。
+4. **非盤中冒煙測試**:`python worker.py` 短跑一次 → log 顯示抓到 radar.json 且連上 Supabase → 網站登入後首頁盤中面板 worker 狀態轉 online → Ctrl+C。
+5. **回報「回灌+部署完成」**→ 由 AI 驗證全站(S1–S10 策略榜、題材、分點 2 年聚合、追蹤視角深度、Armed 池)並接續 Phase 2 舊/新分數差異報告。
+
 ## 部署步驟(VPS)
 
 雲端解耦改造完成後,`pipeline/intraday/worker.py` 只需自身 + `.env` 即可獨立運行(radar.json 改為向正式站 HTTP 抓取,不再依賴 repo 實體檔)。以下為在使用者 VPS 上部署的步驟。
@@ -61,7 +73,7 @@ pip install "fugle-marketdata>=2.4.1" "supabase>=2.31.0" "python-dotenv>=1.2.2" 
 
 | 鍵 | 必填 | 說明 |
 |---|---|---|
-| `FUGLE_API_KEY` | ✅ | Fugle MarketData 金鑰。**務必使用輪替後的新 key** — 舊 key 已進 git 歷史,視為已洩漏,請至 Fugle 後台撤銷舊 key、改用新 key。 |
+| `FUGLE_API_KEY` | ✅ | Fugle MarketData 金鑰。用 2026-07-12 輪替後的新 key(舊 key 已實測 401 失效,git 歷史中那組為死 key,風險解除)。 |
 | `SUPABASE_URL` | ✅ | Supabase 專案 URL。 |
 | `SUPABASE_KEY` | ✅ | Supabase **service role key**(僅存本機 .env,絕不進版控)。 |
 | `RADAR_JSON_URL` | 可選 | radar.json 來源;預設 `https://trever-radar.pages.dev/data/radar.json`。 |
