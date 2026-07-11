@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState, useMemo } from "react";
-import { Clock, Search, TrendingUp, TrendingDown, Star, Sparkles, ShieldCheck, Zap } from "lucide-react";
+import { useEffect, useState, useMemo, useRef } from "react";
+import { Clock, Search, TrendingUp, TrendingDown, Star, Sparkles, ShieldCheck, Zap, ChevronDown } from "lucide-react";
 import { IconFlame, IconTrend, IconZap, IconRadar, IconPulse, IconStar, IconTrendDown } from "@/components/Icons";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -51,6 +51,18 @@ const STRATEGIES = [
   { key: "S13_SHORT_SQUEEZE", label: "融券回補軋空", desc: "融券餘額處於高檔（> 1000 張）且近期連續減少，當日帶量長紅突破" },
 ];
 
+// F4.2: 四類 UI 分群(見 docs/20 §4.1)。只分群、不改 S code 語意;籌碼事件預設展開。
+const STRATEGY_GROUPS: { key: string; label: string; codes: string[] }[] = [
+  { key: "chips", label: "籌碼事件", codes: ["S11_INSTI_BREAKOUT", "S12_BRANCH_ACCUMULATION", "S13_SHORT_SQUEEZE"] },
+  { key: "breakout", label: "突破發動", codes: ["S2_BREAKOUT20", "S3_MA_CONVERGE_BREAKOUT", "S4_VOLATILITY_CONTRACTION", "S6_HIGH_BASE_BREAKOUT", "S7_MACD_ZERO_CROSS", "S8_GAP_BREAKOUT"] },
+  { key: "trend", label: "趨勢續強/回踩", codes: ["S1_REBOUND", "S5_PULLBACK_SUPPORT", "S9_MA5_TREND"] },
+  { key: "reversal", label: "低檔反轉", codes: ["S10_BOTTOM_MACD"] },
+];
+
+const STRATEGY_BY_KEY: Record<string, (typeof STRATEGIES)[number]> = Object.fromEntries(
+  STRATEGIES.map((s) => [s.key, s]),
+);
+
 function LoadingSkeleton() {
   return (
     <>
@@ -74,9 +86,29 @@ export default function RadarPage() {
   const [error, setError] = useState(false);
   const [tab, setTab] = useState<TabKey>("score");
   const [scanMode, setScanMode] = useState<ScanModeKey>("hot");
-  const [strategy, setStrategy] = useState<string>("S1_REBOUND");
+  const [strategy, setStrategy] = useState<string>("S11_INSTI_BREAKOUT");
+  // F4.2: 已展開的策略組(session 內即可,不持久化);預設只展開籌碼事件。
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(() => new Set(["chips"]));
+  const strategyDefaulted = useRef(false);
   const [moneyFlowOpen, setMoneyFlowOpen] = useState(false);
   const { session, loading } = useSession();
+
+  // F4.2: 預設選中「籌碼事件」組第一個有檔數的策略(都無檔數則 S11);radar 載入後套一次,不覆寫使用者選擇。
+  useEffect(() => {
+    if (!radar || strategyDefaulted.current) return;
+    strategyDefaulted.current = true;
+    const chips = STRATEGY_GROUPS[0].codes;
+    const firstWithCount = chips.find((c) => (radar.strategies?.[c]?.length ?? 0) > 0);
+    if (firstWithCount) setStrategy(firstWithCount);
+  }, [radar]);
+
+  const toggleGroup = (key: string) =>
+    setExpandedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
 
   useEffect(() => {
     fetch("/data/radar.json")
@@ -248,29 +280,64 @@ export default function RadarPage() {
 
       {tab === "mark" && (
         <div className="mb-4">
-          <div className="flex flex-wrap gap-1.5">
-            {STRATEGIES.map((st) => (
-              <button
-                key={st.key}
-                onClick={() => setStrategy(st.key)}
-                className={cn(
-                  "rounded-md px-2.5 py-1 text-[12.5px] font-medium transition-colors",
-                  strategy === st.key
-                    ? "bg-[color:var(--ink-2)] text-[color:var(--bg-1)] shadow-[0_1px_2px_rgba(0,0,0,0.1)]"
-                    : "bg-muted text-muted-foreground hover:bg-muted/80",
-                )}
-              >
-                {st.label}
-                <span
-                  className={cn(
-                    "ml-1.5 rounded px-1 py-0.5 text-[10px]",
-                    strategy === st.key ? "bg-[color:var(--bg-1)]/20" : "bg-background",
+          <div className="flex flex-col gap-1.5">
+            {STRATEGY_GROUPS.map((g) => {
+              // 選中策略若落在本組,強制展開——選中態不能被藏住。
+              const isOpen = expandedGroups.has(g.key) || g.codes.includes(strategy);
+              const groupCount = g.codes.reduce((sum, c) => sum + (radar.strategies?.[c]?.length ?? 0), 0);
+              return (
+                <div key={g.key}>
+                  <button
+                    onClick={() => toggleGroup(g.key)}
+                    aria-expanded={isOpen}
+                    className="flex w-full items-center gap-2 rounded-md px-1 py-1.5 text-left text-[13px] font-semibold text-foreground transition-colors hover:text-[color:var(--ink-2)]"
+                  >
+                    <ChevronDown
+                      size={15}
+                      aria-hidden
+                      className={cn(
+                        "shrink-0 text-muted-foreground transition-transform duration-200",
+                        !isOpen && "-rotate-90",
+                      )}
+                    />
+                    <span>{g.label}</span>
+                    <span className="num rounded bg-muted px-1.5 py-0.5 text-[10.5px] text-muted-foreground">
+                      {groupCount}
+                    </span>
+                  </button>
+                  {isOpen && (
+                    <div className="mt-1.5 mb-1 flex flex-wrap gap-1.5 pl-6">
+                      {g.codes.map((code) => {
+                        const st = STRATEGY_BY_KEY[code];
+                        if (!st) return null;
+                        return (
+                          <button
+                            key={code}
+                            onClick={() => setStrategy(code)}
+                            className={cn(
+                              "rounded-md px-2.5 py-1 text-[12.5px] font-medium transition-colors",
+                              strategy === code
+                                ? "bg-[color:var(--ink-2)] text-[color:var(--bg-1)] shadow-[0_1px_2px_rgba(0,0,0,0.1)]"
+                                : "bg-muted text-muted-foreground hover:bg-muted/80",
+                            )}
+                          >
+                            {st.label}
+                            <span
+                              className={cn(
+                                "ml-1.5 rounded px-1 py-0.5 text-[10px]",
+                                strategy === code ? "bg-[color:var(--bg-1)]/20" : "bg-background",
+                              )}
+                            >
+                              {radar.strategies?.[code]?.length ?? 0}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
                   )}
-                >
-                  {radar.strategies?.[st.key]?.length ?? 0}
-                </span>
-              </button>
-            ))}
+                </div>
+              );
+            })}
           </div>
           <div className="mt-2.5 flex items-start gap-2 rounded-md border border-border bg-muted/30 px-3 py-2 text-[12.5px] text-muted-foreground">
             <IconStar size={14} className="mt-[2px] shrink-0 opacity-70" />

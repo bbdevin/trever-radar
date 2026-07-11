@@ -78,7 +78,7 @@
 2. **B 方案 Phase 2—策略/分數解耦**(`docs/20`,高風險資料語意變更):S1-S13 只產生 tag/reason,不得再增加 `tech_score` 或其他分項;~~補 S2-S13 測試~~ **2026-07-10 完成**(S2-S13 正例/邊界反例 36 項 + 解耦回歸斷言,S11-S13 抽純函式零行為變化,pytest 91 全過,verifier 窮舉探針 CONFIRMED)。仍缺:舊/新分數差異報告;正式全市場重算、回灌及部署必須另獲使用者批准。
 3. **B 方案 Phase 3—策略績效閉環**(`docs/20`):輸出各 S code 的成熟樣本、5/10/20 日勝率與平均/中位報酬;預設 Shadow,使用者看報告後決定 Active/Retired。
 4a. **盤中訊號雷達 + 分點追蹤視角**(`docs/24`,2026-07-11 使用者指定排入):~~Part B 分點追蹤視角~~ **2026-07-11 完成**(B1 export + B2 前端);~~Part A 盤中雷達~~ **2026-07-12 程式碼完成** (I1-I3 完成, 包含 `worker.py` 與前端 `IntradayPanel.tsx` 即時推播)，待使用者於 Supabase 執行 SQL 及本機設定 `.env` 即可正式啟用。
-5. **功能·視覺 backlog**(`docs/23`)：✅ **2026-07-12 Phase F2/F3/F1.1-F1.2/V3.3 完成**。已完成清單：V1/V2/V3.1/V3.2(2026-07-11)；F2 日報摘要、F3 訊號摘要（合入個股頁）、F1.1/F1.2 自選距關鍵價%+排序（合入 IA-4A）、V3.3 Sonner toast（2026-07-12）。剩餘未做：F1.3 一鍵加入 Armed、F4 掃描收斂 → 待 Armed；不得插隊，Executor 依 WP-* 工作包執行。
+5. **功能·視覺 backlog**(`docs/23`)：✅ **2026-07-12 F 系列全數完成**。已完成清單：V1/V2/V3.1/V3.2(2026-07-11)；F2 日報摘要、F3 訊號摘要（合入個股頁）、F1.1/F1.2 自選距關鍵價%+排序（合入 IA-4A）、V3.3 Sonner toast、**F1.3 一鍵加入今日 Armed**、**F4.1 掃描收斂（合入 IA-1B）+ F4.2 策略四類分群**（2026-07-12）。剩餘僅 V3 淺色 token 對比為「只回報未改」。不得插隊，Executor 依 WP-* 工作包執行。
 5a. **任務導向 UI 資訊架構**(`docs/25`)：✅ **2026-07-12 IA-1A/IA-1B/IA-2/IA-3/IA-4A/IA-4B 全部完成並 push main**。已完成：IA-1A 首頁重排；IA-1B 首頁榜單模式收斂；IA-4A 自選追蹤；IA-2 個股判讀；IA-3 分點研究；IA-4B Armed 狀態增強（結合 docs/22 A1-A2，完成首頁狀態池 Tab 與 StockCard Badge 視覺整合）。
 6. **R2 R0-R2**(`docs/21`):private Standard bucket → 每週 shadow snapshot → checksum/gzip/SQLite restore drill。R3 workflow fallback 未授權,R4/P2 延後。
 7. **B 方案 Phase 4—排程簡化提案**(`docs/20`,獨立高風險任務):保留資料取得時點,評估完整 build/deploy 由每日最多 5 次降為 14:10/22:10 兩次;不得在未完整審查 WAL/cache/release 鏈前修改 workflow。
@@ -144,8 +144,10 @@
   - **F2 日報摘要**：`json_export.py` 新增 `_build_summary_text()`（規則模板≤3句，無 LLM）；`types.ts` 加 `summary_text?: string[]`；首頁 stale alert 後顯示摘要區塊。
   - **V3.3 Sonner**：`npm install sonner`；`layout.tsx` 掛 `<Toaster position="bottom-center" richColors />`；`WatchlistButton.tsx` 加入/移除觸發 `toast.success/info`。
   - build 兩次均通過（`npm run build`），0 errors；push main → Cloudflare Pages 自動部署。
-
-
+- 2026-07-12 **docs/23 F4.2 策略四類分群 + F1.3 一鍵加入今日 Armed（純前端，未 commit）**：
+  - **F4.2 策略四類分群**（`web/app/page.tsx`）：13 策略 pills 依 `docs/20` §4.1 改為「籌碼事件(S11-13)/突破發動(S2-4,6-8)/趨勢續強·回踩(S1,5,9)/低檔反轉(S10)」四組；每組標題含總檔數 badge + lucide `ChevronDown`（`aria-expanded`、`-rotate-90` 收合，transition-transform 200ms）；預設只展開籌碼事件（`expandedGroups` Set，session 內不持久化）；選中策略落在收合組時「有效展開」自動含入（`expandedGroups.has || codes.includes(strategy)`）；預設選中改籌碼事件組第一個有檔數者（皆無則 S11，radar 載入後 `useRef` 套一次不覆寫使用者選擇）；pill 樣式與 count 沿用既有；未改任何 S code 語意。
+  - **F1.3 一鍵加入今日 Armed**（`web/app/watchlist/page.tsx`）：新增 `AddTodayArmedButton` 自足元件（fetch `/data/radar.json` 取 `lists.armed`）；置於三種頁面狀態頂部動作區（未登入 / 空自選 / 主檢視）；N = armed 中尚未在自選者，只加不減（pending 先排除已在自選者，逐檔 `toggle` 新增、失敗不中斷）；完成 Sonner `toast.success`「已加入 X 檔」/`toast.warning`「已加入 X 檔；失敗 Y 檔」；未登入(登入後可用)/今日無 Armed/pending=0 三態 disabled，執行中 `aria-busy`+loading disabled；`lists.armed` 空防禦；不自動同步。
+  - `cd web; npm run build` 全過（0 errors）；13 策略與 STRATEGIES 常數逐一比對無缺漏/重複。
 
 | Pipeline Module (CLI) | 實作的系統功能 |
 |---|---|

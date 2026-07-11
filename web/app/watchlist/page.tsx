@@ -1,12 +1,13 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { ArrowUpDown, ChevronDown } from "lucide-react";
+import { toast } from "sonner";
+import { ArrowUpDown, ChevronDown, ShieldCheck } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import WatchlistButton from "@/components/WatchlistButton";
-import type { StockJson } from "@/lib/types";
+import type { RadarJson, StockJson } from "@/lib/types";
 import { chgClass, fmtPct, MARKET_LABEL } from "@/lib/format";
 import { signInWithGoogle, useSession } from "@/lib/useSession";
 import { useWatchlist } from "@/lib/watchlist";
@@ -44,6 +45,71 @@ function EmptyNotice({ children }: { children: React.ReactNode }) {
         <span>{children}</span>
       </AlertDescription>
     </Alert>
+  );
+}
+
+/**
+ * F1.3 一鍵加入今日 Armed。只加不減:對每檔「尚未在自選」的 armed 股呼叫 toggle(新增),
+ * 已在自選者跳過;逐檔失敗不中斷,完成後 Sonner 回饋。radar.json 讀取沿用全站 /data 取法。
+ * 未登入 / 今日無 Armed / 全部已在自選 → disabled。不自動同步,純手動一鍵。
+ */
+function AddTodayArmedButton({ className }: { className?: string }) {
+  const { session } = useSession();
+  const { ids, toggle } = useWatchlist();
+  const [armed, setArmed] = useState<string[] | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/data/radar.json")
+      .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
+      .then((d: RadarJson) => { if (!cancelled) setArmed(d.lists?.armed ?? []); })
+      .catch(() => { if (!cancelled) setArmed([]); });
+    return () => { cancelled = true; };
+  }, []);
+
+  // 尚未在自選的 armed 檔(只加不減的目標集合)
+  const pending = useMemo(() => (armed ?? []).filter((id) => !ids.has(id)), [armed, ids]);
+  const noArmed = armed != null && armed.length === 0;
+  const disabled = !session || busy || pending.length === 0;
+
+  const label = busy
+    ? "加入中…"
+    : !session
+      ? "登入後可用"
+      : noArmed
+        ? "今日無 Armed"
+        : `加入今日 Armed(${pending.length} 檔)`;
+
+  const handleClick = async () => {
+    if (disabled) return;
+    const targets = [...pending]; // 快照,避免 ids 於過程變動
+    setBusy(true);
+    let ok = 0;
+    let fail = 0;
+    for (const id of targets) {
+      const { error } = await toggle(id); // pending 已排除在自選者 → 一律為新增
+      if (error) fail++;
+      else ok++;
+    }
+    setBusy(false);
+    if (fail === 0) toast.success(`已加入 ${ok} 檔`, { duration: 2500 });
+    else toast.warning(`已加入 ${ok} 檔;失敗 ${fail} 檔`, { duration: 3500 });
+  };
+
+  return (
+    <Button
+      variant="outline"
+      size="sm"
+      className={cn("gap-1.5", className)}
+      onClick={handleClick}
+      disabled={disabled}
+      aria-busy={busy}
+      title={label}
+    >
+      <ShieldCheck size={14} />
+      {label}
+    </Button>
   );
 }
 
@@ -135,12 +201,17 @@ export default function WatchlistPage() {
 
   if (!session) {
     return (
-      <EmptyNotice>
-        {"\u767b\u5165\u5f8c\u53ef\u5c07\u4efb\u610f\u500b\u80a1\u52a0\u5165\u81ea\u9078\uff0c\u5feb\u901f\u8ffd\u8e64\u89c0\u5bdf\u50f9/\u5931\u6548\u50f9\u8207\u6700\u65b0\u7db1\u5408\u5206\u3002"}
-        <Button variant="outline" size="sm" className="mt-2.5 block" onClick={signInWithGoogle}>
-          {"\u4ee5 Google \u767b\u5165"}
-        </Button>
-      </EmptyNotice>
+      <div>
+        <div className="my-3.5 flex">
+          <AddTodayArmedButton />
+        </div>
+        <EmptyNotice>
+          {"\u767b\u5165\u5f8c\u53ef\u5c07\u4efb\u610f\u500b\u80a1\u52a0\u5165\u81ea\u9078\uff0c\u5feb\u901f\u8ffd\u8e64\u89c0\u5bdf\u50f9/\u5931\u6548\u50f9\u8207\u6700\u65b0\u7db1\u5408\u5206\u3002"}
+          <Button variant="outline" size="sm" className="mt-2.5 block" onClick={signInWithGoogle}>
+            {"\u4ee5 Google \u767b\u5165"}
+          </Button>
+        </EmptyNotice>
+      </div>
     );
   }
 
@@ -160,7 +231,14 @@ export default function WatchlistPage() {
   }
 
   if (sorted.length === 0) {
-    return <EmptyNotice>{"\u9084\u6c92\u6709\u81ea\u9078\u80a1\u3002\u5230\u4efb\u4e00\u80a1\u7968\u5361\u7247\u6216\u500b\u80a1\u9801\u9ede\u53f3\u4e0a\u89d2\u7684\u661f\u865f\u52a0\u5165\u3002"}</EmptyNotice>;
+    return (
+      <div>
+        <div className="my-3.5 flex">
+          <AddTodayArmedButton />
+        </div>
+        <EmptyNotice>{"\u9084\u6c92\u6709\u81ea\u9078\u80a1\u3002\u5230\u4efb\u4e00\u80a1\u7968\u5361\u7247\u6216\u500b\u80a1\u9801\u9ede\u53f3\u4e0a\u89d2\u7684\u661f\u865f\u52a0\u5165\u3002"}</EmptyNotice>
+      </div>
+    );
   }
 
   // Split into "needs attention" and "normal tracking"
@@ -184,8 +262,10 @@ export default function WatchlistPage() {
             <span className="num text-[17px] font-bold text-destructive">{needsAttention.length}{" \u6a94"}</span>
           </div>
         )}
+        {/* F1.3 一鍵加入今日 Armed */}
+        <AddTodayArmedButton className="ml-auto" />
         {/* Sort control */}
-        <div className="ml-auto flex items-center gap-1.5">
+        <div className="flex items-center gap-1.5">
           <ArrowUpDown size={13} className="text-muted-foreground" />
           <select
             value={sortKey}
