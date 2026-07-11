@@ -91,7 +91,9 @@ export default function IntradayPanel() {
     return () => clearInterval(timer);
   }, []);
 
-  if (!inHours && signals.length === 0) return null;
+  // 非盤中且無訊號時隱藏;但 worker 在線(冒煙測試/提早開機)仍顯示,
+  // 讓非盤中時段的部署驗證能在面板上看到 online 狀態
+  if (!inHours && signals.length === 0 && !workerOnline) return null;
 
   return (
     <div className="mb-6 overflow-hidden rounded-[var(--r-lg)] border bg-card/50 shadow-sm backdrop-blur">
