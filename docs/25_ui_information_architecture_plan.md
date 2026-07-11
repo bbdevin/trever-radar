@@ -14,9 +14,9 @@
 |---|---|
 | IA-0 文件化 | ✅ 完成(2026-07-11) |
 | IA-1A 首頁任務流 Pilot | ✅ **完成(2026-07-12, commit `8d4aee5`)** — Compact Brief 壓縮、Primary Queue 前置、MoneyFlow 收合面板、DesktopNav active state、桌機導覽任務導向命名 |
-| IA-1B 榜單收斂 | ⛔ 待 docs/23 F4 + Armed（受制關卡，不得超前） |
+| IA-1B 榜單收斂 | ✅ **完成(2026-07-12, commit `df02e6e`)** — 首頁 7 個一級 Tab 收斂為 4 個（綜合、策略、市場掃描、權證），市場掃描內置「熱門/爆量/強勢/弱勢」次切 selector |
 | IA-2 個股判讀工作台 | ✅ **完成(2026-07-12, commit `8d4aee5`)** — StockDecisionHeader（reasons≤3/risks≤2/觀察失效+距離%/來源徽章）合入 stock/page.tsx |
-| IA-3 分點研究工作台 | ✅ **完成(2026-07-12, commit `8d4aee5`)** — Page Brief 4 格統計 + Filter UI（搜尋/可追蹤/樣本足夠/排除隔日沖）合入 branch/page.tsx |
+| IA-3 分點研究工作台 | ✅ **完成(2026-07-12, commit `df02e6e`)** — rankings 改雙欄 Master-Detail 響應式佈局，左滾動排行榜帶 active 高亮，右即時渲染詳情或無 track 提示，取消獨立追蹤按鈕 |
 | IA-4A 自選追蹤手動版 | ✅ **完成(2026-07-12, commit `8d4aee5`)** — 完整重寫 watchlist/page.tsx：距觀察/失效價%、5 種排序、分組（需要注意/一般追蹤） |
 | IA-4B Armed 狀態增強 | ⛔ 待 docs/22 A1-A3（受制關卡，不得超前） |
 

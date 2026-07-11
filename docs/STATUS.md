@@ -78,7 +78,7 @@
 4. **Armed 狀態追蹤**(`docs/22`,📝 規劃定案、程式未實作):首頁「未發動/已發動」狀態池,重用 S12/W3/B3 與權證倍數;不新增策略、不抬綜合分、不新開一級路由。建議在 Access + B Phase 1–3 有進度後另確認 A1→A3 實作。
 4a. **盤中訊號雷達 + 分點追蹤視角**(`docs/24`,2026-07-11 使用者指定排入):~~Part B 分點追蹤視角~~ **2026-07-11 完成**(B1 export + B2 前端,見已完成;資料深度隨 VPS 回灌自動提升);**Part A 盤中雷達**——Fugle + 本機 worker + Supabase 中繼,規則 I-1 大單/I-2 爆量/I-3 急拉/I-4 Armed 發動,I0 PoC 待使用者申請 Fugle key 即可先行,I1-I3 接 Armed A1 之後(I-4 依賴 Armed 名單)。
 5. **功能·視覺 backlog**(`docs/23`)：✅ **2026-07-12 Phase F2/F3/F1.1-F1.2/V3.3 完成**。已完成清單：V1/V2/V3.1/V3.2(2026-07-11)；F2 日報摘要、F3 訊號摘要（合入個股頁）、F1.1/F1.2 自選距關鍵價%+排序（合入 IA-4A）、V3.3 Sonner toast（2026-07-12）。剩餘未做：F1.3 一鍵加入 Armed、F4 掃描收斂 → 待 Armed；不得插隊，Executor 依 WP-* 工作包執行。
-5a. **任務導向 UI 資訊架構**(`docs/25`)：✅ **2026-07-12 IA-1A/IA-2/IA-3/IA-4A 全部完成並 push main**（commit `8d4aee5`）。已完成：IA-1A 首頁重排（Compact Brief 壓縮/Primary Queue 前置/MoneyFlow 收合面板/DesktopNav active state）；IA-4A 自選追蹤（距觀察/失效價%/分組排序）；IA-2 個股判讀（StockDecisionHeader：reasons/risks/觀察失效+距離%/來源徽章）；IA-3 分點研究（Page Brief 4 格統計/filter UI 搜尋+可追蹤+樣本足夠+排除隔日沖）。未做：IA-1B 榜單收斂（待 docs/23 F4/Armed）；IA-4B Armed 狀態增強（待 docs/22 A1-A3）。
+5a. **任務導向 UI 資訊架構**(`docs/25`)：✅ **2026-07-12 IA-1A/IA-1B/IA-2/IA-3/IA-4A 全部完成並 push main**（commit `df02e6e`）。已完成：IA-1A 首頁重排（Compact Brief 壓縮/Primary Queue 前置/MoneyFlow 收合面板/DesktopNav active state）；IA-1B 首頁榜單模式收斂（7 個一級 Tab 壓縮為 4 個，熱門/爆量/強勢/弱勢改為市場掃描的子切換）；IA-4A 自選追蹤（距觀察/失效價%/分組排序）；IA-2 個股判讀（StockDecisionHeader）；IA-3 分點研究（Page Brief 4 格統計/filter UI/桌機雙欄 Master-Detail + 手機蓋屏下鑽，取消獨立追蹤按鈕）。未做：IA-4B Armed 狀態增強（待 docs/22 A1-A3）。
 6. **R2 R0-R2**(`docs/21`):private Standard bucket → 每週 shadow snapshot → checksum/gzip/SQLite restore drill。R3 workflow fallback 未授權,R4/P2 延後。
 7. **B 方案 Phase 4—排程簡化提案**(`docs/20`,獨立高風險任務):保留資料取得時點,評估完整 build/deploy 由每日最多 5 次降為 14:10/22:10 兩次;不得在未完整審查 WAL/cache/release 鏈前修改 workflow。
 8. ~~deep-backfill --all~~ **執行狀態需另行查證**:完成與否不得只信本檔舊紀錄;若需 `task=adjust` 或 VPS 回灌,先依 `vps_backfill_plan.md` 與高風險流程確認。
@@ -131,6 +131,10 @@
 - 2026-07-10 B 方案 Phase 1 (UI 刪減與合併):集中度併入 `/branch` 今日動向、題材只留首頁、移除 `/explore` 與空殼盤中導航、權證大戶降級為「權證分點異動(實驗)」、移除未使用依賴 `recharts`。
 - 2026-07-11 WP-V2 榜單/表格一致性(docs/23 §2 V2,只動 UI 不動資料語意):①權證明細標竿表補排序回饋——表頭可排序欄改鍵盤可聚焦 `<button>` + `aria-sort=ascending/descending`,選中欄加 inset ring + 亮字選中態;②`/branch` 集中度榜與「今日買超」兩個 div-grid 真表格遷成語意化 `<table>/<thead>/<tbody>`(對齊權證表字級/分隔線,`overflow-x-auto` 手機可橫滑,不裁代號/漲跌,淨額補 +/- 號),分點前13大買賣超與權證大戶群組維持卡片列不硬遷;③首頁 stale freshness 標示改琥珀徽章 + lucide `Clock`(用既有 `--warn` token,不新增色票)。無新增依賴,`npm run build` 過。
 - 2026-07-11 個股頁多層圖:復刻籌碼K線版面——KChart 新增「主力買賣超(前15大)」pane(branch_history 每日全分點 net 加總柱 + 累計線,工具列可開關並記憶於既有 settings localStorage)與勾選驅動的「分點進出」pane(BranchFlowSection 前13大買/賣列表加 checkbox,上限 10,勾選集合每日 net 加總 + 累計線,無勾選不渲染);單 chart 實例 X 軸全 pane 同步,D/W/M 用新 `periodKey` 對齊 K 棒桶重取樣,pane 標題與游標當日/累計數值(帶正負號)以 v5 `createTextWatermark` 畫在對應 pane;無 branch_history 時兩 pane 不渲染、高度回原本。`npm run build` 過,以正式站 2330 真實資料 headless 驗證柱/累計數字與來源吻合。
+- 2026-07-12 **docs/25 IA-1B (首頁榜單收斂) 與 IA-3 (分點研究 Master-Detail 整合) 實作**（commit `df02e6e`）：
+  - **IA-1B 首頁榜單收斂**：首頁 7 個一級 Tab 壓縮為 4 個，將「熱門/爆量/強勢/弱勢」榜單合併收合為「市場掃描」一級 Tab，當切換到此 Tab 時下方顯示 Segmented sub-selector pill 切換，且正確顯示各子模式 counts，解決行動端排版擁擠。
+  - **IA-3 分點研究 Master-Detail 整合**：改寫 `branch/page.tsx`。桌機版在排行榜採用 `grid-cols-[380px_1fr]` 雙欄佈局（左欄過濾名單可獨立滾動並顯示 active focus-ring，右欄即時加載 `BranchTrackView` 或無 track 資料提示）；手機版保留單欄列表並覆蓋下鑽，帶有 ArrowLeft 安全返回，徹底移除了原本獨立的「追蹤視角」模式按鈕。
+  - **BranchTrackView.tsx 改造**：支援 `hideBack` prop，在桌機詳情面板上隱藏返回鍵。
 - 2026-07-12 **docs/23 F 系列 + docs/25 IA Phase A-F 完整實作**（commit `8d4aee5`，11 files, +597/-138）：
   - **IA-1A 首頁 Pilot**：Compact Brief 壓縮為水平 compact row；Primary Queue（榜單+股票卡）提前至 MoneyFlow 前；MoneyFlow 改可展開/收合（預設收合）；新增 `DesktopNav.tsx` client component（usePathname active state）；桌機導覽標題改為任務導向命名（今日雷達/分點研究/自選追蹤）。
   - **IA-4A + F1.1/F1.2 自選追蹤**：完整重寫 `watchlist/page.tsx`；純前端計算距觀察/失效價%（不動 pipeline）；5 種排序選項（接近失效/觀察/風險/漲跌/加入順序）；分組顯示「需要注意」vs「一般追蹤」；教育性空狀態 + 骨架屏。
