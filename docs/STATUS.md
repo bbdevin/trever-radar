@@ -19,7 +19,7 @@
 - 流程為**模型中立、角色導向**:Planner / Executor / Reviewer 由本次任務指定,不由模型品牌永久決定;規則見 `AGENTS.md` 與 `docs/17_no_fable_workflow.md`。
 - 工具清單:Claude Code、AGY/Gemini、Codex、GPT/Grok 等高階模型均可任三角色;Cursor 為 IDE / 確認介面;人類使用者為唯一決策者。
 
-下一步:先完成 `docs/21` Access A0-A2,把目前公開站真正鎖成私人測試版;再依 `docs/20` B 方案完成策略解耦與績效閉環。R2 先做 shadow backup/restore drill,不得直接取代 cache/Release。**產品下一刀(待開發)**:`docs/22` Armed/Triggered 狀態追蹤。**UI 任務流規劃**已落在 `docs/25`,可由使用者另確認單一 IA Phase 執行,不得因文件存在就插隊或一次重構全站。
+下一步:先完成 `docs/21` Access A0-A2,把目前公開站真正鎖成私人測試版;再依 `docs/20` B 方案完成策略解耦與績效閉環。R2 先做 shadow backup/restore drill,不得直接取代 cache/Release。**盤中雷達**(`docs/24` Part A) 待申請 Fugle API key 後接續實作。
 
 ## 已完成 ✅
 
@@ -61,6 +61,8 @@
 - [x] **WP-V1 首頁/自選 5 秒掃讀優化**(2026-07-11,docs/23 §2 V1):股票卡次要細項(金額/量比/外資/投信)由 4 欄堆疊收斂成一行小字降層級(不刪資料);卡片左側 3px inset 狀態色條(有明顯風險扣分→destructive/風險紅、綜合分≥65 觀察門檻→warn/琥珀、其餘→中性 line,僅用既有 token 且色條非唯一訊號);自選/branch 可點列補 `min-h-11`+`cursor-pointer`+`transition-colors`,★ 鈕與 branch 展開鈕補 `aria-label`/`aria-expanded`;首頁教育性空狀態文案、`/watchlist` 載入改多列 Skeleton;`npm run build` 過,未新增依賴/未改配色 token 語意。
 - [x] **UI 全面遷移 Tailwind CSS v4 + shadcn/ui**(2026-07-10):全站 6 頁 + 所有元件從手刻 CSS class 改為 Tailwind utility(僅保留 `.container`/`.num`/裸 `.up`/`.down`/`.flat`/`fadeUp` keyframe 等仍被動態或跨頁共用的少量 class);icon 除品牌 logo 外全改 `lucide-react`;搜尋面板改 shadcn `Command`,登入選單改 `DropdownMenu`,個股頁權證明細表改 **TanStack Table**(可排序 + 展開列);K 線圖仍為 lightweight-charts(未改動);deep design token 對照見 `docs/07_frontend_pages.md`。過程中修掉兩個遷移期間才會暴露的既有 bug:①舊 `.grid` class 與 Tailwind 內建 `grid`/`grid-cols-*` utility 同名碰撞(unlayered 規則蓋過 layered utility),導致多處 4 欄版面被壓成 3 欄;②`@theme inline` 的 `--color-border`/`--color-accent` 一度被誤指到 legacy token,深色模式因數值巧合未現形但會壞掉淺色模式。深色為預設主題,淺色 token 已備妥;**2026-07-11(docs/23 V3.1)已加頂欄 `ThemeToggle` 切換 UI**(接既有 `.dark` class 機制、`localStorage` 記偏好、`<body>` 開頭 inline script 防 FOUC,預設仍深色)。淺色下 brand-extension token `--ink-2`/`--warn`/`--up`/`--down` 未做主題覆寫(兩主題共用深色調值),部分數字/琥珀徽章對比偏低,依「不為淺色重畫品牌色」規範僅回報未改。
 
+- [x] **Armed 狀態追蹤**(2026-07-12,docs/22 A1-A2):實作於 `json_export.py`，基於 S12 分點與權證 W1 訊號推導 Armed (未發動) 與 Triggered (已發動) 兩大狀態池。首頁 Tab 收斂後將狀態池前置，並依據 `ui-ux-pro-max` 規範在股票卡片加入 `lucide-react` 狀態徽章 (ShieldCheck/Zap)，不新增資料表，即時運算輸出。
+
 ### 基礎設施
 - [x] **凌晨長任務常態化**:data-backfill 每天 01:10 深歷史增量(已拉深跳過,日常近零請求);週六 01:10 DB 備份(**週六全市場還原因子+指標全重算已於 2026-07-10 停用,改 VPS 跑後回灌,雲端 fallback=手動 task=adjust**);排程總表 = docs/08 §0
 - [x] **分批即時更新**:14:10 收盤閃電更新(日K+權證+指標+分數→部署,資料日當天變今天)→ 16:10 法人+權證主檔 → 17:40 融資券+分點全量 → 21:00 補抓;各資料集「有效日」寫進 radar.json `freshness`,晚公布的前端標「今日尚未公布,暫用前一日」並以前一日數值填充
@@ -75,10 +77,9 @@
 1. **私人測試版 Access**(`docs/21` A0-A2):保護 `radar.techtrever.com`、正式 `trever-radar.pages.dev` 與所有 preview;只允許明確 email;直接抓 `/data/radar.json` 也必須被擋。
 2. **B 方案 Phase 2—策略/分數解耦**(`docs/20`,高風險資料語意變更):S1-S13 只產生 tag/reason,不得再增加 `tech_score` 或其他分項;~~補 S2-S13 測試~~ **2026-07-10 完成**(S2-S13 正例/邊界反例 36 項 + 解耦回歸斷言,S11-S13 抽純函式零行為變化,pytest 91 全過,verifier 窮舉探針 CONFIRMED)。仍缺:舊/新分數差異報告;正式全市場重算、回灌及部署必須另獲使用者批准。
 3. **B 方案 Phase 3—策略績效閉環**(`docs/20`):輸出各 S code 的成熟樣本、5/10/20 日勝率與平均/中位報酬;預設 Shadow,使用者看報告後決定 Active/Retired。
-4. **Armed 狀態追蹤**(`docs/22`,📝 規劃定案、程式未實作):首頁「未發動/已發動」狀態池,重用 S12/W3/B3 與權證倍數;不新增策略、不抬綜合分、不新開一級路由。建議在 Access + B Phase 1–3 有進度後另確認 A1→A3 實作。
-4a. **盤中訊號雷達 + 分點追蹤視角**(`docs/24`,2026-07-11 使用者指定排入):~~Part B 分點追蹤視角~~ **2026-07-11 完成**(B1 export + B2 前端,見已完成;資料深度隨 VPS 回灌自動提升);**Part A 盤中雷達**——Fugle + 本機 worker + Supabase 中繼,規則 I-1 大單/I-2 爆量/I-3 急拉/I-4 Armed 發動,I0 PoC 待使用者申請 Fugle key 即可先行,I1-I3 接 Armed A1 之後(I-4 依賴 Armed 名單)。
+4a. **盤中訊號雷達 + 分點追蹤視角**(`docs/24`,2026-07-11 使用者指定排入):~~Part B 分點追蹤視角~~ **2026-07-11 完成**(B1 export + B2 前端);~~Part A 盤中雷達~~ **2026-07-12 程式碼完成** (I1-I3 完成, 包含 `worker.py` 與前端 `IntradayPanel.tsx` 即時推播)，待使用者於 Supabase 執行 SQL 及本機設定 `.env` 即可正式啟用。
 5. **功能·視覺 backlog**(`docs/23`)：✅ **2026-07-12 Phase F2/F3/F1.1-F1.2/V3.3 完成**。已完成清單：V1/V2/V3.1/V3.2(2026-07-11)；F2 日報摘要、F3 訊號摘要（合入個股頁）、F1.1/F1.2 自選距關鍵價%+排序（合入 IA-4A）、V3.3 Sonner toast（2026-07-12）。剩餘未做：F1.3 一鍵加入 Armed、F4 掃描收斂 → 待 Armed；不得插隊，Executor 依 WP-* 工作包執行。
-5a. **任務導向 UI 資訊架構**(`docs/25`)：✅ **2026-07-12 IA-1A/IA-1B/IA-2/IA-3/IA-4A 全部完成並 push main**（commit `df02e6e`）。已完成：IA-1A 首頁重排（Compact Brief 壓縮/Primary Queue 前置/MoneyFlow 收合面板/DesktopNav active state）；IA-1B 首頁榜單模式收斂（7 個一級 Tab 壓縮為 4 個，熱門/爆量/強勢/弱勢改為市場掃描的子切換）；IA-4A 自選追蹤（距觀察/失效價%/分組排序）；IA-2 個股判讀（StockDecisionHeader）；IA-3 分點研究（Page Brief 4 格統計/filter UI/桌機雙欄 Master-Detail + 手機蓋屏下鑽，取消獨立追蹤按鈕）。未做：IA-4B Armed 狀態增強（待 docs/22 A1-A3）。
+5a. **任務導向 UI 資訊架構**(`docs/25`)：✅ **2026-07-12 IA-1A/IA-1B/IA-2/IA-3/IA-4A/IA-4B 全部完成並 push main**。已完成：IA-1A 首頁重排；IA-1B 首頁榜單模式收斂；IA-4A 自選追蹤；IA-2 個股判讀；IA-3 分點研究；IA-4B Armed 狀態增強（結合 docs/22 A1-A2，完成首頁狀態池 Tab 與 StockCard Badge 視覺整合）。
 6. **R2 R0-R2**(`docs/21`):private Standard bucket → 每週 shadow snapshot → checksum/gzip/SQLite restore drill。R3 workflow fallback 未授權,R4/P2 延後。
 7. **B 方案 Phase 4—排程簡化提案**(`docs/20`,獨立高風險任務):保留資料取得時點,評估完整 build/deploy 由每日最多 5 次降為 14:10/22:10 兩次;不得在未完整審查 WAL/cache/release 鏈前修改 workflow。
 8. ~~deep-backfill --all~~ **執行狀態需另行查證**:完成與否不得只信本檔舊紀錄;若需 `task=adjust` 或 VPS 回灌,先依 `vps_backfill_plan.md` 與高風險流程確認。
