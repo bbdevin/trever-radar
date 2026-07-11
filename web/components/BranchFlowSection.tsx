@@ -1,0 +1,240 @@
+"use client";
+
+import { useMemo, useState } from "react";
+import type { StockJson } from "@/lib/types";
+import { fmtLots } from "@/lib/format";
+import { cn, pillTabClass } from "@/lib/utils";
+
+const BRANCH_RANGES = [
+  { label: "1日", days: 1 },
+  { label: "3日", days: 3 },
+  { label: "5日", days: 5 },
+  { label: "10日", days: 10 },
+  { label: "20日", days: 20 },
+  { label: "60日", days: 60 },
+  { label: "120日", days: 120 },
+  { label: "240日", days: 240 },
+  { label: "2年", days: 480 },
+] as const;
+
+/**
+ * 分點進出共用區塊:時間範圍(1-240日+自訂)+ N 日淨流/家數摘要 + 前 13 大買/賣超兩欄列表。
+ * 個股頁 K 線視圖與分點 Tab 共用同一份聚合邏輯,聚合口徑與原 BranchPanel 完全一致。
+ * 自帶期間 state(預設 5 日,籌碼K線慣例的短週期起手),不與 K 線圖區間連動。
+ * 傳入 score/reasons 時視為分點 Tab 情境(顯示分點分卡與理由膠囊);未傳 heading 時省略頂部標題與副標。
+ */
+export default function BranchFlowSection({
+  branches,
+  branchHistory,
+  score,
+  reasons,
+  heading,
+}: {
+  branches: StockJson["branches"];
+  branchHistory: StockJson["branch_history"];
+  score?: number | null;
+  reasons?: string[];
+  heading?: string;
+}) {
+  const [days, setDays] = useState<number | "custom">(5);
+  const [customDays, setCustomDays] = useState<string>("5");
+  const [expandedBranch, setExpandedBranch] = useState<string | null>(null);
+
+  const activeDays = days === "custom" ? parseInt(customDays) || 1 : days;
+
+  const agg = useMemo(() => {
+    if (!branchHistory?.length) {
+      const buyers = branches.filter((b) => b.net > 0).sort((a, b) => b.net - a.net);
+      const sellers = branches.filter((b) => b.net < 0).sort((a, b) => a.net - b.net);
+      return {
+        buyers, sellers,
+        top13Buy: buyers.slice(0, 13).map((b) => ({ name: b.name, buy: b.buy, sell: b.sell, net: b.net, history: [] })),
+        top13Sell: sellers.slice(0, 13).map((b) => ({ name: b.name, buy: b.buy, sell: b.sell, net: b.net, history: [] })),
+      };
+    }
+
+    const sliced = branchHistory.slice(0, activeDays);
+    const map: Record<string, { buy: number; sell: number; net: number }> = {};
+    const allDates = sliced.map((s) => s.t).reverse();
+
+    for (const day of sliced) {
+      for (const b of day.branches) {
+        if (!map[b.n]) map[b.n] = { buy: 0, sell: 0, net: 0 };
+        map[b.n].buy += b.b;
+        map[b.n].sell += b.s;
+        map[b.n].net += b.net;
+      }
+    }
+
+    const arr = Object.keys(map).map((name) => ({ name, ...map[name] }));
+    const buyers = arr.filter((x) => x.net > 0).sort((a, b) => b.net - a.net);
+    const sellers = arr.filter((x) => x.net < 0).sort((a, b) => a.net - b.net);
+
+    const top13Buy = buyers.slice(0, 13).map((b) => {
+      const history = allDates.map((dt) => {
+        const dObj = sliced.find((s) => s.t === dt);
+        const bObj = dObj?.branches.find((x) => x.n === b.name);
+        return { t: dt, net: bObj ? bObj.net : 0 };
+      });
+      return { ...b, history };
+    });
+
+    const top13Sell = sellers.slice(0, 13).map((b) => {
+      const history = allDates.map((dt) => {
+        const dObj = sliced.find((s) => s.t === dt);
+        const bObj = dObj?.branches.find((x) => x.n === b.name);
+        return { t: dt, net: bObj ? bObj.net : 0 };
+      });
+      return { ...b, history };
+    });
+
+    return { buyers, sellers, top13Buy, top13Sell };
+  }, [branchHistory, branches, activeDays]);
+
+  // 無 branch_history 且無當日 branches:整節收合為教育性空狀態(一行,不佔版面)。
+  // 分點 Tab 情境(score 已帶)仍渲染分點分卡,交由外層守衛處理完全無資料的情況。
+  if (score == null && !branches.length && !branchHistory?.length) {
+    return (
+      <div className="mt-3.5 rounded-[var(--r-md)] border border-border bg-card px-4.5 py-3 text-xs text-muted-foreground">
+        尚無此股分點進出資料。免費資料僅抓評分池前 80 檔的前 15 大買賣超,會隨每日累積增加。
+      </div>
+    );
+  }
+
+  const netTotal = agg.buyers.reduce((sum, b) => sum + b.net, 0) + agg.sellers.reduce((sum, b) => sum + b.net, 0);
+
+  return (
+    <section className="mt-3.5 grid gap-3 overflow-x-auto rounded-[var(--r-lg)] border border-border bg-card p-3.5 shadow-[var(--shadow-card)]">
+      {heading && (
+        <div className="flex flex-col gap-0.5">
+          <h2 className="text-[15px] font-bold text-foreground">{heading}</h2>
+          <span className="text-[11px] text-muted-foreground">盤後 T+1、每日前 15 大買賣超裁剪版,資料自累積起,僅供籌碼觀察。</span>
+        </div>
+      )}
+
+      <div className={cn("grid grid-cols-2 gap-2.5", score != null ? "md:grid-cols-[1.1fr_repeat(3,1fr)]" : "md:grid-cols-3")}>
+        {score != null && (
+          <div className="flex flex-col gap-0.5 rounded-[var(--r-sm)] border border-border bg-secondary p-2.5">
+            <span className="text-[11px] text-muted-foreground">分點分</span>
+            <span className="num text-[30px] leading-none font-extrabold text-warn">{score ?? "—"}</span>
+          </div>
+        )}
+        <div className="flex flex-col gap-0.5 rounded-[var(--r-sm)] border border-border bg-secondary p-2.5">
+          <span className="text-[11px] text-muted-foreground">{activeDays}日買超分點</span>
+          <span className="num text-base font-bold text-foreground">{agg.buyers.length}</span>
+        </div>
+        <div className="flex flex-col gap-0.5 rounded-[var(--r-sm)] border border-border bg-secondary p-2.5">
+          <span className="text-[11px] text-muted-foreground">{activeDays}日賣超分點</span>
+          <span className="num text-base font-bold text-foreground">{agg.sellers.length}</span>
+        </div>
+        <div className="flex flex-col gap-0.5 rounded-[var(--r-sm)] border border-border bg-secondary p-2.5">
+          <span className="text-[11px] text-muted-foreground">{activeDays}日淨流</span>
+          <span className={cn("num text-base font-bold", netTotal > 0 ? "text-up" : netTotal < 0 ? "text-down" : "text-foreground")}>
+            {fmtLots(netTotal)}張
+          </span>
+        </div>
+      </div>
+
+      {reasons != null && (
+        <div className="flex flex-wrap gap-1.5">
+          {reasons.length > 0 ? (
+            reasons.map((t) => (
+              <span key={t} className="rounded-full border border-[color:var(--line)] px-2 py-[3px] text-[11.5px] text-[color:var(--ink-2)]">
+                {t}
+              </span>
+            ))
+          ) : (
+            <span className="rounded-full border border-[color:var(--line)] px-2 py-[3px] text-[11.5px] text-[color:var(--ink-2)]">
+              今日未觸發分點加分條件
+            </span>
+          )}
+        </div>
+      )}
+
+      <div className="mb-3.5">
+        <div role="tablist" className="flex w-fit flex-wrap gap-0.5 rounded-full border border-border bg-card p-[3px]">
+          {BRANCH_RANGES.map((r) => (
+            <button key={r.days} role="tab" aria-selected={days === r.days} className={pillTabClass(days === r.days)} onClick={() => setDays(r.days)}>
+              {r.label}
+            </button>
+          ))}
+          <div className={cn("inline-flex items-center gap-1.5 rounded-full pr-1", days === "custom" && "bg-muted shadow-[inset_0_0_0_1px_var(--border-strong)]")}>
+            <button role="tab" aria-selected={days === "custom"} className={pillTabClass(false)} onClick={() => setDays("custom")}>
+              自訂
+            </button>
+            {days === "custom" && (
+              <input
+                type="number"
+                min={1}
+                max={240}
+                value={customDays}
+                onChange={(e) => setCustomDays(e.target.value)}
+                className="num w-[50px] rounded-md border border-[color:var(--line)] bg-card px-1.5 py-0.5 text-xs text-foreground outline-none focus:border-primary"
+                placeholder="天數"
+                aria-label="自訂聚合天數"
+              />
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 gap-3.5 md:grid-cols-2">
+        <div className="flex flex-col gap-2.5 rounded-[var(--r-md)] border border-border bg-secondary p-3">
+          <h3 className="mb-1 border-b border-[color:var(--line)] pb-2 text-center text-[14.5px] font-bold text-up">前 13 大買超分點</h3>
+          <div className="flex flex-col gap-1.5">
+            {agg.top13Buy.map((b) => (
+              <BranchRow key={b.name} b={b} expanded={expandedBranch === b.name} onToggle={() => setExpandedBranch(expandedBranch === b.name ? null : b.name)} />
+            ))}
+            {agg.top13Buy.length === 0 && <div className="py-[46px] text-center text-sm text-muted-foreground">無買超紀錄</div>}
+          </div>
+        </div>
+        <div className="flex flex-col gap-2.5 rounded-[var(--r-md)] border border-border bg-secondary p-3">
+          <h3 className="mb-1 border-b border-[color:var(--line)] pb-2 text-center text-[14.5px] font-bold text-down">前 13 大賣超分點</h3>
+          <div className="flex flex-col gap-1.5">
+            {agg.top13Sell.map((b) => (
+              <BranchRow key={b.name} b={b} expanded={expandedBranch === b.name} onToggle={() => setExpandedBranch(expandedBranch === b.name ? null : b.name)} />
+            ))}
+            {agg.top13Sell.length === 0 && <div className="py-[46px] text-center text-sm text-muted-foreground">無賣超紀錄</div>}
+          </div>
+        </div>
+      </div>
+
+      {!heading && (
+        <div className="text-xs leading-relaxed text-muted-foreground">
+          分點資料來自免費公開頁的前15大買賣超裁剪版,不是全市場全量分點;T+1 盤後資料,僅供籌碼觀察。
+        </div>
+      )}
+    </section>
+  );
+}
+
+function BranchRow({ b, expanded, onToggle }: { b: { name: string; net: number; history?: { t: string; net: number }[] }; expanded: boolean; onToggle: () => void }) {
+  const maxNet = b.history?.length ? Math.max(...b.history.map((h) => Math.abs(h.net))) || 1 : 1;
+  return (
+    <div className="overflow-hidden rounded-[var(--r-sm)] border border-border bg-card transition-[box-shadow,border-color] hover:border-[color:var(--border-strong)] hover:shadow-[0_2px_6px_rgba(0,0,0,0.2)]">
+      <button
+        type="button"
+        aria-expanded={expanded}
+        className="flex min-h-11 w-full cursor-pointer items-baseline justify-between px-2.5 py-2 text-left text-[12.5px] select-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-primary"
+        onClick={onToggle}
+      >
+        <span className="font-semibold text-[color:var(--ink-2)]">{b.name}</span>
+        <span className={cn("num font-bold", b.net > 0 ? "text-up" : b.net < 0 ? "text-down" : "text-foreground")}>{fmtLots(b.net)}張</span>
+      </button>
+      {expanded && b.history && (
+        <div className="mt-1 flex items-center gap-0.5 border-t border-[color:var(--line)] px-2.5 pt-2 pb-2 [height:48px]">
+          {b.history.map((h) => (
+            <div className="flex h-full min-w-[2px] flex-1 flex-col" key={h.t} title={`${h.t} 淨${h.net > 0 ? "買" : "賣"}: ${Math.abs(h.net)}張`}>
+              <div className="flex w-full flex-1 items-end pb-px">
+                {h.net > 0 && <div className="w-full rounded-sm bg-up opacity-85" style={{ height: `${(h.net / maxNet) * 100}%` }} />}
+              </div>
+              <div className="flex w-full flex-1 items-start pt-px">
+                {h.net < 0 && <div className="w-full rounded-sm bg-down opacity-85" style={{ height: `${(Math.abs(h.net) / maxNet) * 100}%` }} />}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
