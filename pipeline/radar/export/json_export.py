@@ -414,10 +414,10 @@ def export_json(out_dir: Path | None = None) -> dict:
         score_count = len(score)
         if score_count > 0:
             branch_triggered = sum(
-                1 for s in score if (s.get("branch") or 0) >= 5
+                1 for s in score if s.get("scores") and (s["scores"].get("branch") or 0) >= 5
             )
             warrant_triggered = sum(
-                1 for s in score if (s.get("warrant") or 0) >= 5
+                1 for s in score if s.get("scores") and (s["scores"].get("warrant") or 0) >= 5
             )
             out_sentences.append(
                 f"綜合分池今日 {score_count} 檔"
