@@ -29,6 +29,32 @@ type RankingsData = {
   daytrade: Ranking[];
 };
 
+function NoTrackDetailPanel({ branchName }: { branchName: string }) {
+  return (
+    <div className="flex h-full min-h-[300px] flex-col items-center justify-center rounded-[var(--r-lg)] border border-border bg-card p-6 text-center shadow-[var(--shadow-card)] animate-in fade-in duration-300">
+      <div className="mb-3 rounded-full bg-[color:var(--ink-2)]/10 p-3 text-[color:var(--ink-2)]">
+        <svg
+          width="28"
+          height="28"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          className="opacity-80"
+        >
+          <path d="M2 12h20M12 2v20M4.93 4.93l14.14 14.14M4.93 19.07L19.07 4.93" />
+        </svg>
+      </div>
+      <h3 className="text-base font-bold text-foreground mb-1">{branchName}</h3>
+      <p className="max-w-xs text-xs leading-relaxed text-muted-foreground">
+        {"\u76ee\u524d\u6b64\u5206\u9ede\u66ab\u7121 120 \u65e5\u6b77\u52f2\u8cb7\u8ce3\u660e\u7d30\uff08\u7cfb\u7d71\u81ea 2026-07-07 \u8d77\u50c5\u8ffd\u8e64\u71b1\u9580\u80a1\uff0c\u82e5\u8981\u8ffd\u8e64\u6b64\u5206\u9ede\u8acb\u7b49\u5f85\u6578\u64da\u6301\u7e8c\u7d2f\u7a4d\uff0d\u7279\u5b9a\u5730\u7de3\u5206\u9ede\u53ef\u8ffd\u8e64\uff09\u3002"}
+      </p>
+    </div>
+  );
+}
+
 const MIN_SAMPLES = 10; // 樣本 < 10 顯示「樣本不足」(docs/13 §4)
 
 const SOURCE_BADGE: Record<string, { label: string; cls: string }> = {
@@ -37,14 +63,15 @@ const SOURCE_BADGE: Record<string, { label: string; cls: string }> = {
   candidate: { label: "候選", cls: "bg-muted text-muted-foreground" },
 };
 
-function RankCard({ r, trackable }: { r: Ranking; trackable?: boolean }) {
+function RankCard({ r, trackable, active }: { r: Ranking; trackable?: boolean; active?: boolean }) {
   const enoughSamples = r.samples >= MIN_SAMPLES;
   const badge = SOURCE_BADGE[r.source] ?? SOURCE_BADGE.candidate;
   return (
     <div className={cn(
-      "flex h-full flex-col gap-3 rounded-[var(--r-lg)] border bg-card p-3.5 shadow-[var(--shadow-card)]",
+      "flex h-full flex-col gap-3 rounded-[var(--r-lg)] border p-3.5 shadow-[var(--shadow-card)] transition-all duration-200",
       r.is_daytrade === 1 ? "border-down/40" : "border-border",
-      trackable && "transition-colors hover:border-border-strong hover:bg-secondary",
+      active ? "border-[color:var(--border-strong)] bg-secondary/60 ring-1 ring-[color:var(--border-strong)]" : "bg-card",
+      trackable && "cursor-pointer hover:border-border-strong hover:bg-secondary",
     )}>
       <div className="flex items-center justify-between gap-2">
         <h3 className="flex items-center gap-1 text-lg text-foreground">
@@ -423,7 +450,13 @@ export default function BranchPage() {
 
     fetch("/data/branches/track/index.json")
       .then((r) => (r.ok ? r.json() : []))
-      .then((j: TrackIndexEntry[]) => setTrackIndex(Array.isArray(j) ? j : []))
+      .then((j: TrackIndexEntry[]) => {
+        const arr = Array.isArray(j) ? j : [];
+        setTrackIndex(arr);
+        if (arr.length > 0) {
+          setTrackBranch((prev) => prev || arr[0].branch_name);
+        }
+      })
       .catch(() => setTrackIndex([]));
   }, []);
 
@@ -565,63 +598,107 @@ export default function BranchPage() {
         <span className="hidden text-xs text-muted-foreground lg:inline">{TABS.find((t) => t.key === tab)?.hint}</span>
       </div>
 
-      {tab === "rankings" && trackOpen && (
-        <BranchTrackView
-          index={trackIndex}
-          branchName={trackBranch ?? trackIndex[0]?.branch_name ?? null}
-          onBack={() => setTrackOpen(false)}
-          onSelectBranch={setTrackBranch}
-        />
-      )}
+      {tab === "rankings" && (() => {
+        const openTrack = (name: string) => {
+          setTrackBranch(name);
+          setTrackOpen(true);
+        };
 
-      {tab === "rankings" && !trackOpen && (() => {
-        const openTrack = (name: string) => { setTrackBranch(name); setTrackOpen(true); };
-        const renderCard = (r: Ranking) =>
-          trackNames.has(r.branch_name) ? (
+        const renderCard = (r: Ranking) => {
+          const isTrackable = trackNames.has(r.branch_name);
+          const isActive = trackBranch === r.branch_name;
+          return (
             <button
               key={r.branch_name}
-              onClick={() => openTrack(r.branch_name)}
+              onClick={() => {
+                setTrackBranch(r.branch_name);
+                if (!isActive) {
+                  // 手機點擊且未打開時，打開下鑽詳情
+                  setTrackOpen(true);
+                }
+              }}
               aria-label={`${"\u67e5\u770b"} ${r.branch_name} ${"\u7684\u8fd1 N \u65e5\u8cb7\u8ce3\u8d85\u660e\u7d30"}`}
               className="block w-full min-h-11 rounded-[var(--r-lg)] p-0 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
-              <RankCard r={r} trackable />
+              <RankCard r={r} trackable={isTrackable} active={isActive} />
             </button>
-          ) : (
-            <RankCard key={r.branch_name} r={r} />
           );
+        };
+
         return (
-          <div className="flex flex-col gap-5 pb-7">
-            {trackIndex.length > 0 && (
-              <div className="flex flex-wrap items-center gap-2.5">
-                <button
-                  onClick={() => { setTrackBranch(null); setTrackOpen(true); }}
-                  className="inline-flex min-h-11 items-center gap-1.5 rounded-full border border-border bg-card px-3.5 text-[13.5px] font-semibold text-foreground transition-colors hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                >
-                  <IconTrend size={15} className="opacity-85" /> {"\u5206\u9ede\u8ffd\u8e64\u8996\u89d2"}
-                </button>
-                <span className="hidden text-xs text-muted-foreground sm:inline">{"\u9ede\u5206\u9ede\u5361\u7247\u6216\u6b64\u8655,\u770b\u8a72\u5206\u9ede\u8fd1 1/5/10/20/\u81ea\u8a02\u65e5\u8cb7\u8ce3\u8d85"}</span>
-              </div>
-            )}
-
-            {filteredRankings.length === 0 && (
-              <div className="py-[46px] text-center text-sm text-muted-foreground">
-                {"\u6c92\u6709\u7b26\u5408\u7b5b\u9078\u689d\u4ef6\u7684\u5206\u9ede\u3002\u8abf\u6574\u7b5b\u9078\u689d\u4ef6\u6216\u6e05\u9664\u641c\u5c0b\u3002"}
-              </div>
-            )}
-            {filteredMain.length > 0 && (
-              <div className="grid grid-cols-1 gap-2.5 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                {filteredMain.map(renderCard)}
-              </div>
-            )}
-
-            {filteredDaytrade.length > 0 && (
-              <div className="flex flex-col gap-2.5">
-                <div className="flex items-baseline gap-2">
-                  <h2 className="text-[15px] font-semibold text-down">{"\u96d4\u65e5\u6c96\u5206\u9ede"}</h2>
-                  <span className="text-xs text-muted-foreground">{"\u8cb7\u8d85\u6b21\u65e5\u9ad8\u6bd4\u7387\u56de\u5410,\u5217\u70ba\u53cd\u6307\u6a19/\u98a8\u96aa\u8a0a\u865f,\u4e0d\u6392\u9032\u4e3b\u699c"}</span>
+          <div className="grid grid-cols-1 md:grid-cols-[380px_1fr] gap-5 items-start pb-7">
+            {/* 左側：分點列表（手機上當詳情被打開時隱藏） */}
+            <div className={cn("flex flex-col gap-4 w-full md:max-h-[85vh] md:overflow-y-auto pr-1 md:scrollbar-thin", trackOpen && "hidden md:flex")}>
+              {filteredRankings.length === 0 && (
+                <div className="py-[46px] text-center text-sm text-muted-foreground">
+                  {"\u6c92\u6709\u7b26\u5408\u7b5b\u9078\u689d\u4ef6\u7684\u5206\u9ede\u3002\u8abf\u6574\u7b5b\u9078\u689d\u4ef6\u6216\u6e05\u9664\u641c\u5c0b\u3002"}
                 </div>
-                <div className="grid grid-cols-1 gap-2.5 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                  {filteredDaytrade.map(renderCard)}
+              )}
+              {filteredMain.length > 0 && (
+                <div className="flex flex-col gap-2.5">
+                  {filteredMain.map(renderCard)}
+                </div>
+              )}
+
+              {filteredDaytrade.length > 0 && (
+                <div className="flex flex-col gap-2.5 mt-2">
+                  <div className="flex items-baseline gap-2 px-1">
+                    <h2 className="text-[14px] font-semibold text-down">{"\u96d4\u65e5\u6c96\u5206\u9ede"}</h2>
+                    <span className="text-[11px] text-muted-foreground">{"\u53cd\u6307\u6a19/\u98a8\u96aa\u8a0a\u865f"}</span>
+                  </div>
+                  <div className="flex flex-col gap-2.5">
+                    {filteredDaytrade.map(renderCard)}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* 右側：詳情面板（手機上當詳情未被打開時隱藏） */}
+            <div className={cn("flex-1 w-full", !trackOpen && "hidden md:block")}>
+              {trackBranch ? (
+                trackNames.has(trackBranch) ? (
+                  <BranchTrackView
+                    index={trackIndex}
+                    branchName={trackBranch}
+                    onBack={() => setTrackOpen(false)}
+                    onSelectBranch={setTrackBranch}
+                    hideBack={true} // 桌機版隱藏返回按鈕，手機版則在下面以 portal/單獨 state 來展示
+                  />
+                ) : (
+                  <NoTrackDetailPanel branchName={trackBranch} />
+                )
+              ) : (
+                <div className="flex h-full min-h-[300px] flex-col items-center justify-center rounded-[var(--r-lg)] border border-border bg-card p-6 text-center text-muted-foreground shadow-[var(--shadow-card)]">
+                  {"\u8acb\u9078\u53d6\u5de6\u5257\u5206\u9ede\u4ee5\u67e5\u770b\u8cb7\u8ce3\u660e\u7d30"}
+                </div>
+              )}
+            </div>
+
+            {/* 手機版專屬下鑽蓋屏（只在手機且 trackOpen 被打開時，多渲染一個帶有返回鍵的浮動詳情以保證返回路徑清晰） */}
+            {trackOpen && trackBranch && trackNames.has(trackBranch) && (
+              <div className="md:hidden fixed inset-0 z-50 overflow-y-auto bg-background p-4 animate-in slide-in-from-right duration-200">
+                <BranchTrackView
+                  index={trackIndex}
+                  branchName={trackBranch}
+                  onBack={() => setTrackOpen(false)}
+                  onSelectBranch={setTrackBranch}
+                  hideBack={false} // 手機版顯示返回按鈕
+                />
+              </div>
+            )}
+            {trackOpen && trackBranch && !trackNames.has(trackBranch) && (
+              <div className="md:hidden fixed inset-0 z-50 flex flex-col gap-4 bg-background p-4 animate-in slide-in-from-right duration-200">
+                <button
+                  onClick={() => setTrackOpen(false)}
+                  className="inline-flex min-h-11 w-fit items-center gap-1.5 rounded-full border border-border bg-card px-3 text-[13.5px] font-semibold text-muted-foreground transition-colors hover:text-foreground"
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="mr-1">
+                    <path d="M19 12H5M12 19l-7-7 7-7" />
+                  </svg>
+                  {"\u8fd4\u56de"}
+                </button>
+                <div className="flex-1">
+                  <NoTrackDetailPanel branchName={trackBranch} />
                 </div>
               </div>
             )}

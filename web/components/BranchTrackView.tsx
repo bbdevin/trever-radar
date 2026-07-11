@@ -109,11 +109,13 @@ export default function BranchTrackView({
   branchName,
   onBack,
   onSelectBranch,
+  hideBack = false,
 }: {
   index: TrackIndexEntry[];
   branchName: string | null;
   onBack: () => void;
   onSelectBranch: (name: string) => void;
+  hideBack?: boolean;
 }) {
   const entry = fileFor(index, branchName);
   const [data, setData] = useState<BranchTrackFile | null>(null);
@@ -157,13 +159,15 @@ export default function BranchTrackView({
   if (index.length === 0) {
     return (
       <div className="flex flex-col gap-4 pb-7">
-        <button
-          onClick={onBack}
-          className="inline-flex min-h-11 w-fit items-center gap-1.5 rounded-full px-3 text-[13.5px] font-semibold text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          aria-label="返回排行榜"
-        >
-          <ArrowLeft size={16} /> 返回排行榜
-        </button>
+        {!hideBack && (
+          <button
+            onClick={onBack}
+            className="inline-flex min-h-11 w-fit items-center gap-1.5 rounded-full px-3 text-[13.5px] font-semibold text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            aria-label="返回排行榜"
+          >
+            <ArrowLeft size={16} /> 返回排行榜
+          </button>
+        )}
         <div className="py-[46px] text-center text-sm text-muted-foreground">尚無追蹤分點。</div>
       </div>
     );
@@ -175,13 +179,15 @@ export default function BranchTrackView({
     <div className="flex flex-col gap-4 pb-7">
       {/* 頂部:返回 + 分點下拉切換 */}
       <div className="flex flex-wrap items-center gap-2.5">
-        <button
-          onClick={onBack}
-          className="inline-flex min-h-11 items-center gap-1.5 rounded-full border border-border bg-card px-3 text-[13.5px] font-semibold text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          aria-label="返回排行榜"
-        >
-          <ArrowLeft size={16} /> 返回
-        </button>
+        {!hideBack && (
+          <button
+            onClick={onBack}
+            className="inline-flex min-h-11 items-center gap-1.5 rounded-full border border-border bg-card px-3 text-[13.5px] font-semibold text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            aria-label="返回排行榜"
+          >
+            <ArrowLeft size={16} /> 返回
+          </button>
+        )}
         <div className="flex items-center gap-2">
           <label htmlFor="track-branch" className="sr-only">選擇追蹤分點</label>
           <select

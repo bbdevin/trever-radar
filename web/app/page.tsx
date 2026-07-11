@@ -1,44 +1,51 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { Clock } from "lucide-react";
-import { IconFlame, IconPulse, IconRadar, IconTrend, IconTrendDown, IconZap, IconStar } from "@/components/Icons";
-import MoneyFlow from "@/components/MoneyFlow";
-import StockCard from "@/components/StockCard";
+import { useEffect, useState, useMemo } from "react";
+import { Clock, Search, TrendingUp, TrendingDown, Star, Sparkles } from "lucide-react";
+import { IconFlame, IconTrend, IconZap, IconRadar, IconPulse, IconStar, IconTrendDown } from "@/components/Icons";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
+import MoneyFlow from "@/components/MoneyFlow";
+import StockCard from "@/components/StockCard";
 import { useSession, signInWithGoogle } from "@/lib/useSession";
 import { cn } from "@/lib/utils";
 import type { ListKey, MetaJson, RadarJson } from "@/lib/types";
 import { SOURCE_LABEL, fmtE8 } from "@/lib/format";
 
-// "mark" is the UI tab key for strategies; not a radar.lists key
-type TabKey = ListKey | "mark";
+// TabKey for the 4 main task-oriented tabs
+type TabKey = "score" | "mark" | "scan" | "warrant";
+
+// Scan modes within the "scan" tab
+type ScanModeKey = "hot" | "surge" | "strong" | "weak";
 
 const TABS: { key: TabKey; label: string; hint: string; icon: typeof IconFlame }[] = [
-  { key: "score", label: "\u7db1\u5408", hint: "\u76e4\u5f8c\u7db1\u5408\u5206\u6578:\u5206\u9ede/\u6b0a\u8b49/\u6280\u8853/\u6cd5\u4eba\u52a0\u6b0a\u2212\u98a8\u96aa\u6263\u5206,\u226565 \u70ba\u89c0\u5bdf\u9580\u6ebb", icon: IconRadar },
-  { key: "mark", label: "\u7b56\u7565", hint: "\u9032\u968e\u91cf\u5316\u9078\u80a1\uff0c\u6db5\u84cb\u6280\u8853\u9762\u8207\u7c4c\u78bc\u9762\u7b49\u591a\u7a2e\u7b56\u7565", icon: IconStar },
-  { key: "hot", label: "\u71b1\u9580", hint: "\u6210\u4ea4\u91d1\u984d\u6700\u5927", icon: IconFlame },
-  { key: "surge", label: "\u7206\u91cf", hint: "\u91cf\u6bd4 = \u4eca\u65e5\u91cf/20\u65e5\u5747\u91cf,\u22651.5 \u4e14\u91d1\u984d \u22651\u5104", icon: IconZap },
-  { key: "strong", label: "\u5f37\u52e2", hint: "\u6f32\u5e45\u6392\u5e8f,\u91d1\u984d \u22651\u5104", icon: IconTrend },
-  { key: "weak", label: "\u5f31\u52e2", hint: "\u8dcc\u5e45\u6392\u5e8f,\u91d1\u984d \u22651\u5104\u2014\u2014\u770b\u8cc7\u91d1\u9003\u96e2\u8ab0", icon: IconTrendDown },
-  { key: "warrant", label: "\u6b0a\u8b49", hint: "\u8a8d\u8cfc\u6b0a\u8b49\u6210\u4ea4\u91d1\u984d\u76f8\u5c0d20\u65e5\u5747\u503c\u653e\u5927", icon: IconPulse },
+  { key: "score", label: "綜合", hint: "盤後綜合分數:分點/權證/技術/法人加權−風險扣分,≥65 為觀察門檻", icon: IconRadar },
+  { key: "mark", label: "策略", hint: "進階量化選股，涵蓋技術面與籌碼面等多種策略", icon: IconStar },
+  { key: "scan", label: "市場掃描", hint: "多維度市場量價特徵掃描 (熱門/爆量/強勢/弱勢)", icon: IconZap },
+  { key: "warrant", label: "權證", hint: "認購權證成交金額相對20日均值放大", icon: IconPulse },
+];
+
+const SCAN_MODES: { key: ScanModeKey; label: string; hint: string; icon: typeof IconFlame }[] = [
+  { key: "hot", label: "熱門排行", hint: "成交金額最大", icon: IconFlame },
+  { key: "surge", label: "爆量突破", hint: "量比 = 今日量/20日均量,≥1.5 且金額 ≥1億", icon: IconZap },
+  { key: "strong", label: "強勢大漲", hint: "漲幅排序,金額 ≥1億", icon: IconTrend },
+  { key: "weak", label: "弱勢回跌", hint: "跌幅排序,金額 ≥1億——看資金逃離誰", icon: IconTrendDown },
 ];
 
 const STRATEGIES = [
-  { key: "S1_REBOUND", label: "\u6f32\u505c\u4e8c\u6b21\u767c\u52d5", desc: "\u96d9\u8ecc\u689d\u4ef6\uff1a\u56b4\u8b39\u7248\u70ba\u8fd1 20 \u65e5\u66fe\u6f32\u505c\u3001MACD \u96f6\u8ef8\u4e0a\u9ec3\u91d1\u4ea4\u53c9\u30015 \u65e5\u5167\u7206\u91cf\uff082 \u500d\uff09\uff1b\u76f8\u8fd1\uff08\u653e\u5bec\uff09\u7248\u70ba\u8fd1 20 \u65e5\u66fe\u5927\u6f32 7%\u3001MACD \u4efb\u610f\u91d1\u53c9\u30015 \u65e5\u5167\u91cf\u589e 1.5 \u500d\u3002\u699c\u5167\u56b4\u8b39\u7248\u512a\u5148\u6392\u524d" },
-  { key: "S2_BREAKOUT20", label: "20\u65e5\u7206\u91cf\u7a81\u7834", desc: "\u5275 20 \u65e5\u65b0\u9ad8\uff0c\u7576\u65e5\u7206\u91cf\u4e14\u6536\u7d05 K\uff0c\u4e2d\u9577\u671f\u5747\u7dda\u591a\u982d\u6392\u5217" },
-  { key: "S3_MA_CONVERGE_BREAKOUT", label: "\u5747\u7dda\u7cfe\u7d50\u7a81\u7834", desc: "5/10/20 \u65e5\u5747\u7dda\u8ddd\u96e2\u6975\u8fd1\uff0c\u7576\u65e5\u5e36\u91cf\u9577\u7d05\u7a81\u7834\u7cfe\u7d50\u5340" },
-  { key: "S4_VOLATILITY_CONTRACTION", label: "\u6ce2\u52d5\u6536\u6582\u7a51\u7834", desc: "\u8fd1 10 \u65e5\u5e03\u6797\u901a\u9053\u6975\u5ea6\u58d3\u7e2e\uff08\u5e36\u5bec < 8%\uff09\uff0c\u7576\u65e5\u5e36\u91cf\u7a81\u7834\u4e0a\u8ecc" },
-  { key: "S5_PULLBACK_SUPPORT", label: "\u5f37\u52e2\u91cf\u7e2e\u56de\u8e29", desc: "\u8fd1\u671f\u5275\u9ad8\u5f8c\u56de\u6a94\uff0c\u91cf\u7e2e\u81f3\u6975\u81f4\u4e26\u65bc 10 \u65e5\u6216 20 \u65e5\u5747\u7dda\u7372\u5f97\u652f\u6491\u6536\u7d05" },
-  { key: "S6_HIGH_BASE_BREAKOUT", label: "\u9ad8\u6a94\u5e73\u53f0\u7a51\u7834", desc: "\u5728 60 \u65e5\u9ad8\u9ede\u9644\u8fd1\u9ad8\u59ff\u614b\u6a6b\u76e4\u6574\u7406\uff0c\u7576\u65e5\u5e36\u91cf\u7a51\u7834\u7b2c\u578b\u4e0a\u7de3" },
-  { key: "S7_MACD_ZERO_CROSS", label: "MACD\u96f6\u8ef8\u91d1\u53c9", desc: "MACD \u65bc\u96f6\u8ef8\u4e4b\u4e0a\u767c\u751f\u9ec3\u91d1\u4ea4\u53c9\uff0c\u4e14\u7576\u65e5\u5e36\u91cf\u6536\u7d05" },
-  { key: "S8_GAP_BREAKOUT", label: "\u8df3\u7a7a\u4e0d\u56de\u88dc", desc: "\u767c\u751f\u5411\u4e0a\u8df3\u7a7a\u7f3a\u53e3\uff0c\u5f8c\u7e8c 3 \u65e5\u672a\u5c01\u9589\u7f3a\u53e3\u4e14\u91cf\u7e2e\u6574\u7406\u5f8c\u8f49\u5f37" },
-  { key: "S9_MA5_TREND", label: "\u4e94\u65e5\u7dda\u5f37\u653b", desc: "\u80a1\u50f9\u6c3f 5 \u65e5\u7dda\u5f37\u52e2\u4e0a\u653b\uff0c\u672a\u66fe\u8dcc\u7834 5 \u65e5\u7dda\uff0c\u7576\u65e5\u91cf\u50f9\u914d\u5408\u5ef6\u7e8c\u5f37\u52e2" },
-  { key: "S10_BOTTOM_MACD", label: "\u5e95\u90e8MACD\u8f49\u5f37", desc: "\u80a1\u50f9\u8655\u65bc\u9577\u671f\u4f4e\u6a94\u5340\uff0cMACD \u65bc\u96f6\u8ef8\u4e0b\u65b9\u9ec3\u91d1\u4ea4\u53c9\u4e14\u67f1\u72c0\u5716\u660e\u986f\u7ffb\u7d05" },
-  { key: "S11_INSTI_BREAKOUT", label: "\u6cd5\u4eba\u9023\u8cb7\u7a51\u7834", desc: "\u5916\u8cc7\u6216\u6295\u4fe1\u9023\u7e8c 3 \u65e5\u8cb7\u8d85\uff0c\u914d\u5408\u6280\u8853\u9762\u7a51\u7834\u8f49\u5f37" },
-  { key: "S12_BRANCH_ACCUMULATION", label: "\u5206\u9ede\u96c6\u4e2d\u672a\u767c\u52d5", desc: "\u4e3b\u529b\u5206\u9ede\u8cb7\u8d85\u6975\u5ea6\u96c6\u4e2d\uff08\u4f54\u6bd4 > 15% \u4e14\u500d\u589e\uff09\uff0c\u4f46\u80a1\u50f9\u5c1a\u672a\u660e\u986f\u5927\u6f32" },
-  { key: "S13_SHORT_SQUEEZE", label: "\u878d\u5238\u56de\u88dc\u8ecd\u7a7a", desc: "\u878d\u5238\u9918\u984d\u8655\u65bc\u9ad8\u6a94\uff08> 1000 \u5f35\uff09\u4e14\u8fd1\u671f\u9023\u7e8c\u6e1b\u5c11\uff0c\u7576\u65e5\u5e36\u91cf\u9577\u7d05\u7a51\u7834" },
+  { key: "S1_REBOUND", label: "漲停二次發動", desc: "雙軌條件：嚴謹版為近 20 日曾漲停、MACD 零軸上黃金交叉、5 日內爆量（2 倍）；相似（放寬）版為近 20 日曾大漲 7%、MACD 任意金叉、5 日內量增 1.5 倍。榜內嚴謹版優先排前" },
+  { key: "S2_BREAKOUT20", label: "20日爆量突破", desc: "創 20 日新高，當日爆量且收紅 K，中長期均線多頭排列" },
+  { key: "S3_MA_CONVERGE_BREAKOUT", label: "均線糾結突破", desc: "5/10/20 日均線距離極近，當日帶量長紅突破糾結區" },
+  { key: "S4_VOLATILITY_CONTRACTION", label: "波動收斂突破", desc: "近 10 日布林通道極度壓縮（帶寬 < 8%），當日帶量突破上軌" },
+  { key: "S5_PULLBACK_SUPPORT", label: "強勢量縮回踩", desc: "近期創高後回檔，量縮至極致並於 10 日或 20 日均線獲得支撐收紅" },
+  { key: "S6_HIGH_BASE_BREAKOUT", label: "高檔平台突破", desc: "在 60 日高點附近高姿勢橫盤整理，當日帶量突破平台上緣" },
+  { key: "S7_MACD_ZERO_CROSS", label: "MACD零軸金叉", desc: "MACD 於零軸之上發生黃金交叉，且當日帶量收紅" },
+  { key: "S8_GAP_BREAKOUT", label: "跳空不回補", desc: "發生向上跳空缺口，後續 3 日未封閉缺口且量縮整理後轉強" },
+  { key: "S9_MA5_TREND", label: "五日線強攻", desc: "股價沿 5 日線強勢上攻，未曾跌破 5 日線，當日量價配合延續強勢" },
+  { key: "S10_BOTTOM_MACD", label: "底部MACD轉強", desc: "股價處於長期低檔區，MACD 於零軸下方黃金交叉且柱狀圖明顯翻紅" },
+  { key: "S11_INSTI_BREAKOUT", label: "法人連買突破", desc: "外資或投信連續 3 日買超，配合技術面突破轉強" },
+  { key: "S12_BRANCH_ACCUMULATION", label: "分點集中未發動", desc: "主力分點買超極度集中（佔比 > 15% 且倍增），但股價尚未明顯大漲" },
+  { key: "S13_SHORT_SQUEEZE", label: "融券回補軋空", desc: "融券餘額處於高檔（> 1000 張）且近期連續減少，當日帶量長紅突破" },
 ];
 
 function LoadingSkeleton() {
@@ -49,13 +56,11 @@ function LoadingSkeleton() {
           <Skeleton key={i} className="h-[52px] w-full min-w-[120px] shrink-0 rounded-[var(--r-md)]" />
         ))}
       </div>
-      <Skeleton className="mb-3 h-[44px] rounded-[var(--r-md)]" />
-      <div className="grid grid-cols-1 gap-2.5 pb-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-        {[0, 1, 2, 3, 4, 5].map((i) => (
-          <Skeleton key={i} className="h-[148px] rounded-[var(--r-lg)]" />
+      <div className="grid grid-cols-1 gap-2.5 pb-[46px] md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+        {[0, 1, 2, 3].map((i) => (
+          <Skeleton key={i} className="h-[105px] rounded-[var(--r-lg)]" />
         ))}
       </div>
-      <Skeleton className="mb-3.5 h-[180px] rounded-[var(--r-lg)]" />
     </>
   );
 }
@@ -65,6 +70,7 @@ export default function RadarPage() {
   const [meta, setMeta] = useState<MetaJson | null>(null);
   const [error, setError] = useState(false);
   const [tab, setTab] = useState<TabKey>("score");
+  const [scanMode, setScanMode] = useState<ScanModeKey>("hot");
   const [strategy, setStrategy] = useState<string>("S1_REBOUND");
   const [moneyFlowOpen, setMoneyFlowOpen] = useState(false);
   const { session, loading } = useSession();
@@ -86,13 +92,16 @@ export default function RadarPage() {
     if (tab === "mark") {
       return (radar.strategies?.[strategy] ?? []).map((id) => byId.get(id)!).filter(Boolean);
     }
-    return (radar.lists?.[tab] ?? []).map((id) => byId.get(id)!).filter(Boolean);
-  }, [radar, tab, strategy]);
+    if (tab === "scan") {
+      return (radar.lists?.[scanMode] ?? []).map((id) => byId.get(id)!).filter(Boolean);
+    }
+    return (radar.lists?.[tab as ListKey] ?? []).map((id) => byId.get(id)!).filter(Boolean);
+  }, [radar, tab, scanMode, strategy]);
 
   if (error) {
     return (
       <div className="py-[46px] text-center text-sm text-muted-foreground">
-        {"\u627e\u4e0d\u5230\u8cc7\u6599\u6a94\u3002\u8acb\u5148\u57f7\u884c\u7ba1\u7dda:"}
+        {"\u627e\u4e0d\u5230\u8cc7\u8a0a\u6a9a\u3002\u8acb\u5148\u57f7\u884c\u7ba1\u7dda:"}
         <code className="rounded-md border border-border bg-card px-1.5 py-0.5 text-[12.5px] text-[color:var(--ink-2)]">
           python -m radar import-daily
         </code>{" "}
@@ -106,7 +115,7 @@ export default function RadarPage() {
   if (!radar) return <LoadingSkeleton />;
 
   const FRESH_LABEL: Record<string, string> = {
-    insti: "\u6cd5\u4eba", margin: "\u878d\u8cc7\u5238", warrant: "\u6b0a\u8b49", branch: "\u5206\u9ede",
+    insti: "法人", margin: "融資券", warrant: "權證", branch: "分點",
   };
   const stale = Object.entries(radar.freshness ?? {})
     .filter(([k, v]) => k !== "quotes" && v.stale && v.date)
@@ -169,28 +178,67 @@ export default function RadarPage() {
           role="tablist"
           className="flex max-w-full gap-0.5 overflow-x-auto rounded-full border border-border bg-card p-[3px] whitespace-nowrap [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         >
-          {TABS.map((t) => (
-            <button
-              key={t.key}
-              role="tab"
-              aria-selected={tab === t.key}
-              className={cn(
-                "inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[13.5px] font-semibold text-muted-foreground transition-colors",
-                tab === t.key && "bg-muted text-foreground shadow-[inset_0_0_0_1px_var(--border-strong)]",
-              )}
-              onClick={() => setTab(t.key)}
-              title={t.hint}
-            >
-              <t.icon size={15} className="opacity-85" />
-              {t.label}
-              {t.key !== "mark" && (
-                <small className="num text-[11px] text-muted-foreground">{radar.lists?.[t.key]?.length ?? 0}</small>
-              )}
-            </button>
-          ))}
+          {TABS.map((t) => {
+            const count = t.key === "scan" 
+              ? radar.lists?.[scanMode]?.length ?? 0 
+              : t.key === "mark" 
+                ? 0 
+                : radar.lists?.[t.key as ListKey]?.length ?? 0;
+            return (
+              <button
+                key={t.key}
+                role="tab"
+                aria-selected={tab === t.key}
+                className={cn(
+                  "inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[13.5px] font-semibold text-muted-foreground transition-colors",
+                  tab === t.key && "bg-muted text-foreground shadow-[inset_0_0_0_1px_var(--border-strong)]",
+                )}
+                onClick={() => setTab(t.key)}
+                title={t.hint}
+              >
+                <t.icon size={15} className="opacity-85" />
+                {t.label}
+                {t.key !== "mark" && (
+                  <small className="num text-[11px] text-muted-foreground">{count}</small>
+                )}
+              </button>
+            );
+          })}
         </div>
         <span className="hidden text-xs text-muted-foreground lg:inline">{TABS.find((t) => t.key === tab)?.hint}</span>
       </div>
+
+      {/* Sub-selector for Market Scan */}
+      {tab === "scan" && (
+        <div className="mb-3.5 animate-in fade-in duration-200">
+          <div className="flex flex-wrap gap-1.5">
+            {SCAN_MODES.map((mode) => (
+              <button
+                key={mode.key}
+                onClick={() => setScanMode(mode.key)}
+                className={cn(
+                  "rounded-md px-2.5 py-1.5 text-[12.5px] font-medium transition-colors inline-flex items-center gap-1.5",
+                  scanMode === mode.key
+                    ? "bg-[color:var(--ink-2)] text-[color:var(--bg-1)] shadow-[0_1px_2px_rgba(0,0,0,0.1)]"
+                    : "bg-card border border-border text-muted-foreground hover:bg-secondary",
+                )}
+                title={mode.hint}
+              >
+                <mode.icon size={13} />
+                <span>{mode.label}</span>
+                <span
+                  className={cn(
+                    "num text-[10.5px] rounded px-1 py-0.5",
+                    scanMode === mode.key ? "bg-[color:var(--bg-1)]/20" : "bg-muted",
+                  )}
+                >
+                  {radar.lists?.[mode.key]?.length ?? 0}
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {tab === "mark" && (
         <div className="mb-4">
@@ -227,7 +275,7 @@ export default function RadarPage() {
 
       {tab === "mark" && !loading && !session ? (
         <div className="flex flex-col items-center gap-4 py-[46px] text-center text-sm text-muted-foreground">
-          <span>{"\u9032\u968e\u7b56\u7565\u699c\u55ae\u70ba\u6703\u54e1\u5c08\u5c6c\u529f\u80fd\uff0c\u8acb\u5148\u767b\u5165 Google \u5e33\u865f\u89e3\u9396\u3002"}</span>
+          <span>{"\u9032\u968e\u7b56\u7565\u699c\u55ae\u70ba\u6703\u54e1\u5c6c\u529f\u80fd\uff0c\u8acb\u5148\u76b1\u5165 Google \u5e33\u865f\u89e3\u9396\u3002"}</span>
           <button
             onClick={signInWithGoogle}
             className="rounded-md border border-border bg-card px-4 py-2 text-sm text-foreground"
@@ -238,7 +286,7 @@ export default function RadarPage() {
       ) : shown.length === 0 ? (
         <div className="mx-auto max-w-md py-[46px] text-center text-sm leading-relaxed text-muted-foreground">
           {tab === "score" || tab === "mark"
-            ? "\u4eca\u65e5\u7121\u9054\u9580\u6ebb\u7684\u6a19\u7684\u3002\u5be7\u7f3a\u52ff\u6feb\u662f\u8a2d\u8a08\u539f\u5247\u2014\u2014\u6c92\u6709\u7b26\u5408\u689d\u4ef6\u6642\u4e0d\u786c\u6e4a,\u4e5f\u53ef\u80fd\u662f\u76e4\u5f8c\u5206\u6578\u5c1a\u672a\u66f4\u65b0\u3002"
+            ? "\u4eca\u65e5\u7121\u9054\u9580\u6ebb\u7684\u6a19\u7684\u3002\u5be7\u7f3a\u52ff\u6feb\u66f4\u662f\u4e00\u8a2d\u8a0f\u539f\u5247\u2014\u2014\u6c92\u6709\u7b26\u5408\u689d\u4ef6\u6642\u4e0f\u786c\u6e4a,\u4e5f\u53ef\u80fd\u662f\u76e4\u5f8c\u5206\u653e\u5c1a\u672a\u66f4\u65b0\u3002"
             : "\u4eca\u65e5\u6b64\u699c\u7121\u7b26\u5408\u689d\u4ef6\u7684\u6a19\u7684,\u6216\u8a72\u985e\u8cc7\u6599\u5c1a\u672a\u66f4\u65b0\u3002\u7a0d\u5f8c\u56de\u4f86\u518d\u770b,\u7cfb\u7d71\u6703\u4f9d\u4ea4\u6613\u6240\u516c\u5e03\u6642\u9593\u5206\u6279\u66f4\u65b0\u3002"}
         </div>
       ) : (
@@ -257,7 +305,7 @@ export default function RadarPage() {
           aria-expanded={moneyFlowOpen}
           aria-controls="moneyflow-panel"
         >
-          <span>{"\u5e02\u5834\u8cc7\u91d1\u6d41\u5411"}</span>
+          <span>{"\u5e02\u583a\u8cc7\u91d1\u6d41\u5411"}</span>
           <span
             className={cn(
               "text-muted-foreground transition-transform duration-200",
