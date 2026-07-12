@@ -13,15 +13,17 @@
 :root {
   /* 品牌延伸色 token:元件內文用 Tailwind arbitrary value(如 text-[color:var(--ink-2)])
      直接參照,KChart 十字游標 legend 用 innerHTML 動態插入 class="up/down"。 */
-  --ink-2: #c3c2b7;
+  /* brand-extension token 的「淺色可讀值」放這裡,深色調校值一律移進 .dark(見檔尾),
+     兩主題不再共用同一個深色調值 → 淺色底對比達 WCAG AA 4.5:1。--up/--down 刻意兩主題一致。 */
+  --ink-2: #5f5e52;         /* 淺色次級強調文字,對白 6.5:1(深色 #c3c2b7 於 .dark) */
   --line: #2c2c2a;
   --border-strong: rgba(255, 255, 255, 0.16);
   --up: #e66767;            /* 台股:紅漲 */
   --down: #0ca30c;          /* 綠跌 */
-  --legacy-accent: #3987e5;
-  --accent-2: #35b5c9;
+  --legacy-accent: #2f6fc4; /* 淺色連結/focus,對白 5.0:1(深色 #3987e5 於 .dark) */
+  --accent-2: #0e7c8c;      /* 淺色青綠強調文字,對白 4.9:1(深色 #35b5c9 於 .dark) */
   --grad-accent: linear-gradient(135deg, #3987e5, #35b5c9);
-  --warn: #fab219;
+  --warn: #8a5a00;          /* 淺色琥珀警示文字,對白 5.9:1(深色 #fab219 於 .dark) */
   --r-lg: 16px;
   --r-md: 12px;
   --r-sm: 8px;
@@ -161,6 +163,11 @@ main { min-height: 62vh; }
 
 /* shadcn 語意 token — dark 主題(預設,= 現行品牌深色盤) */
 .dark {
+  /* brand-extension token 的深色調校值(= 遷移前 :root 的原值,逐字不變 → 深色零視覺變化) */
+  --ink-2: #c3c2b7;
+  --legacy-accent: #3987e5;
+  --accent-2: #35b5c9;
+  --warn: #fab219;
   --background: #0d0d0d;
   --foreground: #ffffff;
   --card: #1a1a19;

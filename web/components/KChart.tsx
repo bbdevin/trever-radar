@@ -55,9 +55,16 @@ function loadSettings(): Settings {
 const UP = "#e66767";
 const DOWN = "#0ca30c";
 const CUM_COLOR = "#c98500"; // 累計買賣超線:非紅綠(避免與漲跌柱混淆)
-const PANE_TEXT = "#898781";
 const MF_TITLE = "主力買賣超(前15大)";
 const SEL_TITLE = "分點進出(勾選分點)";
+
+/** chart 的格線/軸/水印色隨主題切換。dark = 遷移前寫死值逐字不變;light = 柔和淺色組(對白 grid≥1.25、文字≥5:1)。
+ *  K 棒紅綠、均線、成交量、布林、副圖線色不隨主題變(白底上皆可讀)。 */
+function chartColors(isDark: boolean) {
+  return isDark
+    ? { text: "#898781", separator: "#2c2c2a", grid: "#222220", border: "#383835", paneText: "#898781" }
+    : { text: "#6b6a64", separator: "#e6e5e0", grid: "#e6e5e0", border: "#d8d7d2", paneText: "#6b6a64" };
+}
 
 /** 每日分點淨買賣序列(t 同 candles 的 YYYY-MM-DD) */
 export interface NetPoint {
@@ -104,6 +111,26 @@ export default function KChart({
   const legendRef = useRef<HTMLDivElement>(null);
   const [settings, setSettings] = useState<Settings>(loadSettings);
 
+  // 主題偵測:讀 <html class="dark"> + MutationObserver 監聽切換 → 不重建 chart,改 applyOptions 更新色
+  const [isDark, setIsDark] = useState(
+    () => typeof document !== "undefined" && document.documentElement.classList.contains("dark"),
+  );
+  const isDarkRef = useRef(isDark);
+  isDarkRef.current = isDark;
+  const paneTextRef = useRef(chartColors(isDark).paneText);
+  paneTextRef.current = chartColors(isDark).paneText;
+  // 現存 chart 與 pane 水印標題(供主題切換時就地 applyOptions,不重建避免閃爍)
+  const chartRef = useRef<import("lightweight-charts").IChartApi | undefined>(undefined);
+  const titlesRef = useRef<{ wm: { applyOptions: (o: unknown) => void }; base: string }[]>([]);
+
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const el = document.documentElement;
+    const obs = new MutationObserver(() => setIsDark(el.classList.contains("dark")));
+    obs.observe(el, { attributes: true, attributeFilter: ["class"] });
+    return () => obs.disconnect();
+  }, []);
+
   useEffect(() => {
     if (typeof window !== "undefined") localStorage.setItem(LS_KEY, JSON.stringify(settings));
   }, [settings]);
@@ -147,19 +174,21 @@ export default function KChart({
     import("lightweight-charts").then((lw) => {
       if (disposed || !ref.current) return;
       const { createChart, createTextWatermark, CandlestickSeries, HistogramSeries, LineSeries, ColorType, LineStyle } = lw;
+      const colors = chartColors(isDarkRef.current);
       chart = createChart(ref.current, {
         autoSize: true,
         layout: {
           background: { type: ColorType.Solid, color: "transparent" },
-          textColor: "#898781",
+          textColor: colors.text,
           fontSize: 11,
-          panes: { separatorColor: "#2c2c2a", enableResize: false },
+          panes: { separatorColor: colors.separator, enableResize: false },
         },
-        grid: { vertLines: { color: "#222220" }, horzLines: { color: "#222220" } },
-        rightPriceScale: { borderColor: "#383835" },
-        timeScale: { borderColor: "#383835" },
+        grid: { vertLines: { color: colors.grid }, horzLines: { color: colors.grid } },
+        rightPriceScale: { borderColor: colors.border },
+        timeScale: { borderColor: colors.border },
         crosshair: { mode: 0 },
       });
+      chartRef.current = chart;
       const view = bars.slice(start);
 
       const candleSeries = chart.addSeries(CandlestickSeries, {
@@ -219,12 +248,16 @@ export default function KChart({
       if (showMain) addFlowPane(flow.main!, mainPane);
       if (showSel) addFlowPane(flow.sel!, selPane);
 
-      // pane 標題:v5 pane watermark(游標移動時同一位置追加當日/累計數字)
-      const wmLine = (text: string) => ({ text, color: PANE_TEXT, fontSize: 11 });
+      // pane 標題:v5 pane watermark(游標移動時同一位置追加當日/累計數字)。色讀 paneTextRef → 主題切換即時反映
+      const wmLine = (text: string) => ({ text, color: paneTextRef.current, fontSize: 11 });
       const mkTitle = (pane: number, text: string) =>
         createTextWatermark(chart!.panes()[pane], { horzAlign: "left", vertAlign: "top", lines: [wmLine(text)] });
       const mfTitle = showMain ? mkTitle(mainPane, MF_TITLE) : null;
       const selTitle = showSel ? mkTitle(selPane, SEL_TITLE) : null;
+      titlesRef.current = [
+        ...(mfTitle ? [{ wm: mfTitle as { applyOptions: (o: unknown) => void }, base: MF_TITLE }] : []),
+        ...(selTitle ? [{ wm: selTitle as { applyOptions: (o: unknown) => void }, base: SEL_TITLE }] : []),
+      ];
 
       const panes = chart.panes() as unknown as { setStretchFactor?: (f: number) => void }[];
       panes[0]?.setStretchFactor?.(30);
@@ -278,8 +311,25 @@ export default function KChart({
     return () => {
       disposed = true;
       chart?.remove();
+      chartRef.current = undefined;
+      titlesRef.current = [];
     };
   }, [bars, calc, flow, settings, visibleDays]);
+
+  // 主題切換:就地更新既有 chart 的 grid/軸/水印色(不重建 → 不閃爍)。chart 建立時已用當下主題色,故此處僅處理「建立後」的切換。
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart) return;
+    const c = chartColors(isDark);
+    chart.applyOptions({
+      layout: { textColor: c.text, panes: { separatorColor: c.separator } },
+      grid: { vertLines: { color: c.grid }, horzLines: { color: c.grid } },
+      rightPriceScale: { borderColor: c.border },
+      timeScale: { borderColor: c.border },
+    });
+    // 水印色不能由 applyOptions 單獨改,重貼各 pane 基礎標題(帶新色);游標懸停時的動態數值由 wmLine 讀 paneTextRef 已即時跟色
+    for (const t of titlesRef.current) t.wm.applyOptions({ lines: [{ text: t.base, color: c.paneText, fontSize: 11 }] });
+  }, [isDark]);
 
   // 額外 pane 數決定圖表總高:主圖不被壓縮,pane 多時整體加高(375px 下仍以 vh 上限保護)
   const extraPanes = (settings.mainForce && flow.main?.length ? 1 : 0) + (flow.sel?.length ? 1 : 0);

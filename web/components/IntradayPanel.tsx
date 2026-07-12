@@ -91,10 +91,7 @@ export default function IntradayPanel() {
     return () => clearInterval(timer);
   }, []);
 
-  // 非盤中且無訊號時隱藏;但 worker 在線(冒煙測試/提早開機)仍顯示,
-  // 讓非盤中時段的部署驗證能在面板上看到 online 狀態
-  if (!inHours && signals.length === 0 && !workerOnline) return null;
-
+  // 面板永遠渲染:登入即可見(不限盤中時段),未登入亦顯示外殼與登入提示。
   return (
     <div className="mb-6 overflow-hidden rounded-[var(--r-lg)] border bg-card/50 shadow-sm backdrop-blur">
       <div className="flex items-center justify-between border-b bg-muted/40 px-4 py-2.5">
@@ -103,22 +100,35 @@ export default function IntradayPanel() {
           <h2 className="text-sm font-bold text-foreground">盤中訊號雷達 (Armed 監控)</h2>
         </div>
         <div className="flex items-center gap-2 text-xs">
-          <span className="flex items-center gap-1.5 text-muted-foreground">
-            <Radio className={cn("h-3.5 w-3.5", workerOnline ? "text-up animate-pulse" : "text-muted-foreground")} />
-            {workerOnline ? "引擎連線中" : "引擎離線"}
-          </span>
+          {!inHours ? (
+            // 非交易時段顯示中性狀態,不用紅色 offline 嚇人
+            <span className="flex items-center gap-1.5 text-muted-foreground">
+              <Clock className="h-3.5 w-3.5" />
+              非交易時段
+            </span>
+          ) : (
+            <span className="flex items-center gap-1.5 text-muted-foreground">
+              <Radio className={cn("h-3.5 w-3.5", workerOnline ? "text-up animate-pulse" : "text-muted-foreground")} />
+              {workerOnline ? "引擎連線中" : "引擎離線"}
+            </span>
+          )}
         </div>
       </div>
-      
+
       <div className="max-h-[300px] overflow-y-auto p-2">
         {!session ? (
-          <div className="p-4 text-center text-sm text-muted-foreground">
-            登入以啟用盤中即時訊號推播
+          <div className="px-4 py-3 text-center text-sm text-muted-foreground">
+            登入後才能看到盤中即時訊號推播
           </div>
         ) : signals.length === 0 ? (
-          <div className="p-8 text-center text-sm text-muted-foreground">
-            <Clock className="mx-auto mb-2 h-6 w-6 opacity-20" />
-            等待訊號觸發中...
+          // 無訊號空狀態:精簡單行,依時段/連線區分文案(不留 300px 空白)
+          <div className="flex items-center justify-center gap-2 px-4 py-3 text-center text-sm text-muted-foreground">
+            <Clock className="h-4 w-4 shrink-0 opacity-40" />
+            {!inHours
+              ? "非交易時段,worker 於平日 08:50 啟動"
+              : workerOnline
+                ? "尚無訊號,持續監控中…"
+                : "worker 離線,盤中訊號暫停"}
           </div>
         ) : (
           <div className="flex flex-col gap-1.5">
@@ -126,13 +136,13 @@ export default function IntradayPanel() {
               const isTriggered = s.signal_type === "I-4";
               return (
                 <div key={s.id} className={cn("flex items-center justify-between rounded-md px-3 py-2 text-sm transition-colors duration-300", 
-                  isTriggered ? "bg-down/10 shadow-sm" : "bg-background hover:bg-muted/50")}>
+                  isTriggered ? "bg-up/10 shadow-sm" : "bg-background hover:bg-muted/50")}>
                   <div className="flex items-center gap-3">
                     <span className="font-mono text-[11px] text-muted-foreground">
                       {new Date(s.created_at).toLocaleTimeString("zh-TW", { timeZone: "Asia/Taipei", hour12: false })}
                     </span>
                     <span className={cn("inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-bold",
-                      isTriggered ? "bg-down text-down-foreground" : "bg-primary/10 text-primary")}>
+                      isTriggered ? "bg-up/15 text-up" : "bg-primary/10 text-primary")}>
                       {isTriggered ? <Zap className="h-3 w-3 fill-current" /> : <AlertTriangle className="h-3 w-3" />}
                       {s.signal_type}
                     </span>

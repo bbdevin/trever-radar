@@ -6,6 +6,7 @@
 ## 1. 設計系統現況(不可翻案的既定事實)
 
 - **OLED 深色為預設主題**。所有語意色 token 定義在 `web/app/globals.css`:shadcn 語意 token(`--background`/`--card`/`--muted` 等,dark 區塊為預設值)+ 品牌延伸 token(`--ink-2`、`--line`、`--border-strong`、`--up`、`--down`、`--warn`、`--r-lg` 等)。**不引入新配色**,新元件一律引用既有 token。
+- **淺色主題對比(2026-07-12 補強)**:被當文字色用的 brand-extension token `--ink-2`/`--warn`/`--accent-2`/`--legacy-accent` 已改為「`:root` 放淺色可讀值(對白 ≥4.5:1)、`.dark` 放深色調值」的雙主題定義,不再兩主題共用深色值(深色逐位元不變)。`--up`/`--down` 刻意兩主題一致(紅漲綠跌),不做淺色覆寫。新增被當文字色的 brand token 時,若淺色底對比 <4.5:1,一律照此模式在 `.dark` 補回深色值、`:root` 給淺色可讀值。KChart 的格線/軸/水印色亦隨 `.dark` class 即時切換(`chartColors(isDark)`)。
 - **紅漲綠跌**(台股慣例,不可反轉成美股配色):`text-up` / `text-down`(對應 `--up: #e66767`、`--down: #0ca30c`);KChart 動態 innerHTML 用 bare class `.up`/`.down`。
 - **技術棧**:Tailwind CSS v4 + shadcn/ui(底層 `@base-ui/react`),既有元件慣用 arbitrary value 引 token(如 `text-[color:var(--ink-2)]`)。
 - **數字一律 `.num`**(Manrope,`font-variant-numeric: tabular-nums`):價格、金額、百分比、張數都要,否則跳動時寬度抖動。
