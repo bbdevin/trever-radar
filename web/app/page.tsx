@@ -348,7 +348,7 @@ export default function RadarPage() {
 
       {tab === "mark" && !loading && !session ? (
         <div className="flex flex-col items-center gap-4 py-[46px] text-center text-sm text-muted-foreground">
-          <span>{"\u9032\u968e\u7b56\u7565\u699c\u55ae\u70ba\u6703\u54e1\u5c6c\u529f\u80fd\uff0c\u8acb\u5148\u76b1\u5165 Google \u5e33\u865f\u89e3\u9396\u3002"}</span>
+          <span>進階策略榜單為會員專屬功能，請先登入 Google 帳號解鎖。</span>
           <button
             onClick={signInWithGoogle}
             className="rounded-md border border-border bg-card px-4 py-2 text-sm text-foreground"
