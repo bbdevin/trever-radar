@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { forwardRef, useMemo, useState, useEffect, useRef } from "react";
 import type { ReasonItem, StockJson } from "@/lib/types";
 import { fmtLots } from "@/lib/format";
 import { cn, pillTabClass } from "@/lib/utils";
@@ -19,37 +19,72 @@ const BRANCH_RANGES = [
 ] as const;
 
 /**
- * 分點進出共用區塊:時間範圍(1-240日+自訂)+ N 日淨流/家數摘要 + 前 13 大買/賣超兩欄列表。
- * 個股頁 K 線視圖與分點 Tab 共用同一份聚合邏輯,聚合口徑與原 BranchPanel 完全一致。
- * 自帶期間 state(預設 5 日,籌碼K線慣例的短週期起手),不與 K 線圖區間連動。
- * 傳入 score/reasons 時視為分點 Tab 情境(顯示分點分卡與理由膠囊);未傳 heading 時省略頂部標題與副標。
+ * 分點進出共用區塊:時間範圍(1-240日+自訂)+ N 日淨流/家數摘要 + 前 13 大買/賣超列表。
+ * 個股頁 K 線視圖下方的唯一分點區（WP-H4 升級版）：
+ * - 傳入 score/reasons 時顯示分點分徽章與理由膠囊
+ * - heading 控制頂部標題顯示
+ * - id 供 #branch 錨點捲動
+ * - 手機版(<768px)：買/賣超改 segmented tabs(預設買超)，單欄顯示；勾選後顯示浮動回饋 chip
+ * 桌機版維持雙欄(逐位元不變)。
  */
 /** 圖表疊加勾選上限:超過視覺與效能都失焦 */
 export const MAX_SELECTED_BRANCHES = 10;
 
-export default function BranchFlowSection({
-  branches,
-  branchHistory,
-  score,
-  reasons,
-  heading,
-  selected,
-  onToggleSelect,
-}: {
-  branches: StockJson["branches"];
-  branchHistory: StockJson["branch_history"];
-  score?: number | null;
-  reasons?: ReasonItem[];
-  heading?: string;
-  /** 已勾選分點名集合(K 線視圖用,狀態上提到個股頁);與 onToggleSelect 同時傳入才顯示 checkbox */
-  selected?: Set<string>;
-  onToggleSelect?: (name: string) => void;
-}) {
+const BranchFlowSection = forwardRef<
+  HTMLElement,
+  {
+    branches: StockJson["branches"];
+    branchHistory: StockJson["branch_history"];
+    score?: number | null;
+    reasons?: ReasonItem[];
+    heading?: string;
+    id?: string;
+    /** 已勾選分點名集合(K 線視圖用,狀態上提到個股頁);與 onToggleSelect 同時傳入才顯示 checkbox */
+    selected?: Set<string>;
+    onToggleSelect?: (name: string) => void;
+  }
+>(function BranchFlowSection(
+  {
+    branches,
+    branchHistory,
+    score,
+    reasons,
+    heading,
+    id,
+    selected,
+    onToggleSelect,
+  },
+  ref
+) {
   const [days, setDays] = useState<number | "custom">(5);
   const [customDays, setCustomDays] = useState<string>("5");
   const [expandedBranch, setExpandedBranch] = useState<string | null>(null);
+  // 手機版：買/賣超 segmented tab（預設買超）
+  const [mobileTab, setMobileTab] = useState<"buy" | "sell">("buy");
+  // 勾選回饋 chip 顯示狀態（手機版：勾選後 3 秒顯示）
+  const [showSelectFeedback, setShowSelectFeedback] = useState(false);
+  const feedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const activeDays = days === "custom" ? parseInt(customDays) || 1 : days;
+
+  // 勾選分點時觸發手機回饋 chip
+  const prevSelectedSize = useRef(selected?.size ?? 0);
+  useEffect(() => {
+    const cur = selected?.size ?? 0;
+    if (cur !== prevSelectedSize.current) {
+      prevSelectedSize.current = cur;
+      if (cur > 0) {
+        setShowSelectFeedback(true);
+        if (feedbackTimerRef.current) clearTimeout(feedbackTimerRef.current);
+        feedbackTimerRef.current = setTimeout(() => setShowSelectFeedback(false), 3000);
+      } else {
+        setShowSelectFeedback(false);
+      }
+    }
+    return () => {
+      if (feedbackTimerRef.current) clearTimeout(feedbackTimerRef.current);
+    };
+  }, [selected?.size]);
 
   const agg = useMemo(() => {
     if (!branchHistory?.length) {
@@ -104,18 +139,27 @@ export default function BranchFlowSection({
   // 分點 Tab 情境(score 已帶)仍渲染分點分卡,交由外層守衛處理完全無資料的情況。
   if (score == null && !branches.length && !branchHistory?.length) {
     return (
-      <div className="mt-3.5 rounded-[var(--r-md)] border border-border bg-card px-4.5 py-3 text-xs text-muted-foreground">
+      <section
+        ref={ref}
+        id={id}
+        className="mt-3.5 rounded-[var(--r-md)] border border-border bg-card px-4.5 py-3 text-xs text-muted-foreground"
+      >
         尚無此股分點進出資料。免費資料僅抓評分池前 80 檔的前 15 大買賣超,會隨每日累積增加。
-      </div>
+      </section>
     );
   }
 
   const netTotal = agg.buyers.reduce((sum, b) => sum + b.net, 0) + agg.sellers.reduce((sum, b) => sum + b.net, 0);
   const selectable = onToggleSelect != null && !!branchHistory?.length;
   const atLimit = (selected?.size ?? 0) >= MAX_SELECTED_BRANCHES;
+  const selectedCount = selected?.size ?? 0;
 
   return (
-    <section className="mt-3.5 grid gap-3 overflow-x-auto rounded-[var(--r-lg)] border border-border bg-card p-3.5 shadow-[var(--shadow-card)]">
+    <section
+      ref={ref}
+      id={id}
+      className="mt-3.5 grid gap-3 overflow-x-auto rounded-[var(--r-lg)] border border-border bg-card p-3.5 shadow-[var(--shadow-card)]"
+    >
       {heading && (
         <div className="flex flex-col gap-0.5">
           <h2 className="text-[15px] font-bold text-foreground">{heading}</h2>
@@ -123,6 +167,7 @@ export default function BranchFlowSection({
         </div>
       )}
 
+      {/* 分點分卡 + 摘要統計 */}
       <div className={cn("grid grid-cols-2 gap-2.5", score != null ? "md:grid-cols-[1.1fr_repeat(3,1fr)]" : "md:grid-cols-3")}>
         {score != null && (
           <div className="flex flex-col gap-0.5 rounded-[var(--r-sm)] border border-border bg-secondary p-2.5">
@@ -146,6 +191,7 @@ export default function BranchFlowSection({
         </div>
       </div>
 
+      {/* 分點理由 pills（WP-H2 語意家族色，升級版分點區）*/}
       {reasons != null && (
         <div className="flex flex-wrap gap-1.5">
           {reasons.length > 0 ? (
@@ -158,22 +204,27 @@ export default function BranchFlowSection({
         </div>
       )}
 
+      {/* 時間範圍選擇:手機版單行橫滑，自訂 inputmode=numeric */}
       <div className="mb-3.5">
-        <div role="tablist" className="flex w-fit flex-wrap gap-0.5 rounded-full border border-border bg-card p-[3px]">
+        <div
+          role="tablist"
+          className="flex w-fit max-w-full flex-nowrap overflow-x-auto gap-0.5 rounded-full border border-border bg-card p-[3px] scrollbar-hide"
+        >
           {BRANCH_RANGES.map((r) => (
-            <button key={r.days} role="tab" aria-selected={days === r.days} className={pillTabClass(days === r.days)} onClick={() => setDays(r.days)}>
+            <button key={r.days} role="tab" aria-selected={days === r.days} className={cn(pillTabClass(days === r.days), "shrink-0")} onClick={() => setDays(r.days)}>
               {r.label}
             </button>
           ))}
-          <div className={cn("inline-flex items-center gap-1.5 rounded-full pr-1", days === "custom" && "bg-muted shadow-[inset_0_0_0_1px_var(--border-strong)]")}>
+          <div className={cn("inline-flex shrink-0 items-center gap-1.5 rounded-full pr-1", days === "custom" && "bg-muted shadow-[inset_0_0_0_1px_var(--border-strong)]")}>
             <button role="tab" aria-selected={days === "custom"} className={pillTabClass(false)} onClick={() => setDays("custom")}>
               自訂
             </button>
             {days === "custom" && (
               <input
                 type="number"
+                inputMode="numeric"
                 min={1}
-                max={240}
+                max={480}
                 value={customDays}
                 onChange={(e) => setCustomDays(e.target.value)}
                 className="num w-[50px] rounded-md border border-[color:var(--line)] bg-card px-1.5 py-0.5 text-xs text-foreground outline-none focus:border-primary"
@@ -185,15 +236,46 @@ export default function BranchFlowSection({
         </div>
       </div>
 
+      {/* 勾選提示（桌機版文字說明）*/}
       {selectable && (
-        <div className="text-[11px] text-muted-foreground" aria-live="polite">
+        <div className="hidden md:block text-[11px] text-muted-foreground" aria-live="polite">
           勾選分點後,於上方 K 線圖疊加「分點進出」柱狀圖(最多 {MAX_SELECTED_BRANCHES} 個
-          {atLimit ? ",已達上限,取消其他勾選後才能再加" : `,已勾選 ${selected?.size ?? 0} 個`})。
+          {atLimit ? ",已達上限,取消其他勾選後才能再加" : `,已勾選 ${selectedCount} 個`})。
         </div>
       )}
 
+      {/* 手機版：買超/賣超 segmented tab selector */}
+      <div className="md:hidden flex gap-1 rounded-lg border border-border bg-card p-0.5 w-fit">
+        <button
+          className={cn(
+            "rounded-md px-4 py-1.5 text-xs font-semibold transition-colors",
+            mobileTab === "buy"
+              ? "bg-up/15 text-up shadow-[inset_0_0_0_1px_rgba(230,103,103,0.4)]"
+              : "text-muted-foreground hover:text-foreground",
+          )}
+          onClick={() => setMobileTab("buy")}
+          aria-pressed={mobileTab === "buy"}
+        >
+          買超 ({agg.top13Buy.length})
+        </button>
+        <button
+          className={cn(
+            "rounded-md px-4 py-1.5 text-xs font-semibold transition-colors",
+            mobileTab === "sell"
+              ? "bg-down/15 text-down shadow-[inset_0_0_0_1px_rgba(12,163,12,0.4)]"
+              : "text-muted-foreground hover:text-foreground",
+          )}
+          onClick={() => setMobileTab("sell")}
+          aria-pressed={mobileTab === "sell"}
+        >
+          賣超 ({agg.top13Sell.length})
+        </button>
+      </div>
+
+      {/* 手機版：單欄顯示（< 768px），桌機版：雙欄 */}
       <div className="grid grid-cols-1 gap-3.5 md:grid-cols-2">
-        <div className="flex flex-col gap-2.5 rounded-[var(--r-md)] border border-border bg-secondary p-3">
+        {/* 買超欄：手機版只在 buy tab 時顯示 */}
+        <div className={cn("flex flex-col gap-2.5 rounded-[var(--r-md)] border border-border bg-secondary p-3", mobileTab !== "buy" && "hidden md:flex")}>
           <h3 className="mb-1 border-b border-[color:var(--line)] pb-2 text-center text-[14.5px] font-bold text-up">前 13 大買超分點</h3>
           <div className="flex flex-col gap-1.5">
             {agg.top13Buy.map((b) => (
@@ -210,7 +292,8 @@ export default function BranchFlowSection({
             {agg.top13Buy.length === 0 && <div className="py-[46px] text-center text-sm text-muted-foreground">無買超紀錄</div>}
           </div>
         </div>
-        <div className="flex flex-col gap-2.5 rounded-[var(--r-md)] border border-border bg-secondary p-3">
+        {/* 賣超欄：手機版只在 sell tab 時顯示 */}
+        <div className={cn("flex flex-col gap-2.5 rounded-[var(--r-md)] border border-border bg-secondary p-3", mobileTab !== "sell" && "hidden md:flex")}>
           <h3 className="mb-1 border-b border-[color:var(--line)] pb-2 text-center text-[14.5px] font-bold text-down">前 13 大賣超分點</h3>
           <div className="flex flex-col gap-1.5">
             {agg.top13Sell.map((b) => (
@@ -234,9 +317,25 @@ export default function BranchFlowSection({
           分點資料來自免費公開頁的前15大買賣超裁剪版,不是全市場全量分點;T+1 盤後資料,僅供籌碼觀察。
         </div>
       )}
+
+      {/* 手機版：勾選分點後的浮動回饋 chip（固定在畫面右下角，3秒後自動消失）*/}
+      {selectable && showSelectFeedback && selectedCount > 0 && (
+        <div
+          className="fixed bottom-20 right-4 z-50 flex items-center gap-2 rounded-full border border-[color:var(--border-strong)] bg-card px-3.5 py-2 text-[12.5px] font-semibold text-foreground shadow-[0_4px_16px_rgba(0,0,0,0.4)] md:hidden"
+          role="status"
+          aria-live="polite"
+        >
+          <span className="h-2 w-2 rounded-full bg-primary" />
+          已疊圖 {selectedCount} 檔 ↑
+        </div>
+      )}
     </section>
   );
-}
+});
+
+BranchFlowSection.displayName = "BranchFlowSection";
+
+export default BranchFlowSection;
 
 function BranchRow({
   b,

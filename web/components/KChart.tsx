@@ -23,6 +23,9 @@ const MA_DEFS = [
 ] as const;
 type MaKey = (typeof MA_DEFS)[number]["key"];
 type SubKey = "macd" | "kd" | "rsi";
+/** 手機版子 pane 切換 key(< 768px)：sub=副圖、main=主力買賣超、sel=分點進出 */
+type MobilePaneKey = "sub" | "main" | "sel";
+const LS_MOBILE_PANE = "trever.chart.mobilepane.v1";
 
 interface Settings {
   ma: Record<MaKey, boolean>;
@@ -110,6 +113,19 @@ export default function KChart({
   const ref = useRef<HTMLDivElement>(null);
   const legendRef = useRef<HTMLDivElement>(null);
   const [settings, setSettings] = useState<Settings>(loadSettings);
+  // 手機版子 pane 切換(< 768px)；桌機版全部 pane 同時顯示
+  const [mobilePaneKey, setMobilePaneKey] = useState<MobilePaneKey>(() => {
+    if (typeof window === "undefined") return "sub";
+    return (localStorage.getItem(LS_MOBILE_PANE) as MobilePaneKey | null) ?? "sub";
+  });
+  // 手機版偵測 ref(SSR-safe)
+  const [isMobile, setIsMobile] = useState(false);
+  useEffect(() => {
+    const check = () => setIsMobile(window.innerWidth < 768);
+    check();
+    window.addEventListener("resize", check);
+    return () => window.removeEventListener("resize", check);
+  }, []);
 
   // 主題偵測:讀 <html class="dark"> + MutationObserver 監聽切換 → 不重建 chart,改 applyOptions 更新色
   const [isDark, setIsDark] = useState(
@@ -175,6 +191,7 @@ export default function KChart({
       if (disposed || !ref.current) return;
       const { createChart, createTextWatermark, CandlestickSeries, HistogramSeries, LineSeries, ColorType, LineStyle } = lw;
       const colors = chartColors(isDarkRef.current);
+      const mobile = window.innerWidth < 768;
       chart = createChart(ref.current, {
         autoSize: true,
         layout: {
@@ -187,6 +204,8 @@ export default function KChart({
         rightPriceScale: { borderColor: colors.border },
         timeScale: { borderColor: colors.border },
         crosshair: { mode: 0 },
+        // 手機版：垂直拖曳還給頁面捲動；水平 pan/縮放維持
+        handleScroll: { vertTouchDrag: !mobile },
       });
       chartRef.current = chart;
       const view = bars.slice(start);
@@ -229,8 +248,9 @@ export default function KChart({
       }
 
       // 主力買賣超 / 分點進出 pane(勾選驅動;缺資料時不建 pane,索引動態排)
-      const showMain = settings.mainForce && !!flow.main?.length;
-      const showSel = !!flow.sel?.length;
+      // 手機版：只顯示一個子 pane(由 mobilePaneKey 決定)，桌機版全部顯示（mobile 已於上方宣告）
+      const showMain = settings.mainForce && !!flow.main?.length && (!mobile || mobilePaneKey === "main");
+      const showSel = !!flow.sel?.length && (!mobile || mobilePaneKey === "sel");
       let nextPane = 3;
       const mainPane = showMain ? nextPane++ : -1;
       const selPane = showSel ? nextPane++ : -1;
@@ -314,7 +334,7 @@ export default function KChart({
       chartRef.current = undefined;
       titlesRef.current = [];
     };
-  }, [bars, calc, flow, settings, visibleDays]);
+  }, [bars, calc, flow, settings, visibleDays, mobilePaneKey, isMobile]);
 
   // 主題切換:就地更新既有 chart 的 grid/軸/水印色(不重建 → 不閃爍)。chart 建立時已用當下主題色,故此處僅處理「建立後」的切換。
   useEffect(() => {
@@ -331,16 +351,27 @@ export default function KChart({
     for (const t of titlesRef.current) t.wm.applyOptions({ lines: [{ text: t.base, color: c.paneText, fontSize: 11 }] });
   }, [isDark]);
 
-  // 額外 pane 數決定圖表總高:主圖不被壓縮,pane 多時整體加高(375px 下仍以 vh 上限保護)
-  const extraPanes = (settings.mainForce && flow.main?.length ? 1 : 0) + (flow.sel?.length ? 1 : 0);
+  // 額外 pane 數決定圖表總高:主圖不被壓縮,pane 多時整體加高
+  // 手機版(<768px)：子 pane 最多1個，高度比桌機保守
+  const extraPanes = isMobile
+    ? (mobilePaneKey === "main" && settings.mainForce && flow.main?.length ? 1 : 0) +
+      (mobilePaneKey === "sel" && flow.sel?.length ? 1 : 0)
+    : (settings.mainForce && flow.main?.length ? 1 : 0) + (flow.sel?.length ? 1 : 0);
 
   const chipBase =
     "inline-flex items-center gap-1 rounded-full border border-[color:var(--line)] bg-card px-2.5 py-[3px] text-xs font-semibold text-muted-foreground cursor-pointer select-none [&_input]:hidden before:content-none has-checked:before:content-['✓_'] has-checked:before:text-[10px] aria-pressed:before:content-['✓_'] aria-pressed:before:text-[10px]";
 
+  // 手機版 mobilePaneKey 持久化
+  const handleMobilePaneChange = (key: MobilePaneKey) => {
+    setMobilePaneKey(key);
+    if (typeof window !== "undefined") localStorage.setItem(LS_MOBILE_PANE, key);
+  };
+
   return (
     <div>
-      <div className="flex flex-wrap items-center gap-1.5 px-0.5 py-2">
-        <span className="inline-flex gap-0.5 rounded-lg border border-border bg-card p-0.5">
+      {/* 工具列：單行橫滑(overflow-x-auto)，各 chip ≥44px touch area，手機版不換行 */}
+      <div className="flex items-center gap-1.5 px-0.5 py-2 overflow-x-auto scrollbar-hide flex-nowrap min-h-[44px]">
+        <span className="inline-flex shrink-0 gap-0.5 rounded-lg border border-border bg-card p-0.5">
           {TF_DEFS.map((t) => (
             <button
               key={t.key}
@@ -354,11 +385,11 @@ export default function KChart({
             </button>
           ))}
         </span>
-        <span className="mx-1 h-[18px] w-px bg-[color:var(--line)]" />
+        <span className="mx-1 h-[18px] w-px shrink-0 bg-[color:var(--line)]" />
         {MA_DEFS.map((m) => (
           <label
             key={m.key}
-            className={chipBase}
+            className={cn(chipBase, "shrink-0")}
             style={settings.ma[m.key] ? { color: m.color, borderColor: m.color } : undefined}
           >
             <input
@@ -371,7 +402,7 @@ export default function KChart({
             {m.label}
           </label>
         ))}
-        <label className={chipBase} style={settings.boll ? { color: "#898781", borderColor: "#898781" } : undefined}>
+        <label className={cn(chipBase, "shrink-0")} style={settings.boll ? { color: "#898781", borderColor: "#898781" } : undefined}>
           <input
             type="checkbox"
             checked={settings.boll}
@@ -379,22 +410,12 @@ export default function KChart({
           />
           布林
         </label>
-        {!!mainForce?.length && (
-          <label className={chipBase} style={settings.mainForce ? { color: CUM_COLOR, borderColor: CUM_COLOR } : undefined}>
-            <input
-              type="checkbox"
-              checked={settings.mainForce}
-              onChange={(e) => setSettings((s) => ({ ...s, mainForce: e.target.checked }))}
-            />
-            主力買賣超
-          </label>
-        )}
-        <span className="mx-1 h-[18px] w-px bg-[color:var(--line)]" />
+        <span className="mx-1 h-[18px] w-px shrink-0 bg-[color:var(--line)]" />
         {(["macd", "kd", "rsi"] as SubKey[]).map((k) => (
           <button
             key={k}
             className={cn(
-              "rounded-lg",
+              "rounded-lg shrink-0",
               chipBase,
               settings.sub === k && "border-[color:var(--border-strong)] bg-muted text-foreground",
             )}
@@ -403,6 +424,45 @@ export default function KChart({
             {k.toUpperCase()}
           </button>
         ))}
+        {/* 手機版專屬 pane 切換 chips（> 主力 / 分點 選項）*/}
+        {isMobile && !!mainForce?.length && (
+          <>
+            <span className="mx-1 h-[18px] w-px shrink-0 bg-[color:var(--line)]" />
+            <button
+              className={cn(
+                "shrink-0 rounded-lg",
+                chipBase,
+                mobilePaneKey === "main" && settings.mainForce && "border-[color:var(--border-strong)] bg-muted text-foreground",
+              )}
+              onClick={() => handleMobilePaneChange("main")}
+            >
+              主力
+            </button>
+          </>
+        )}
+        {isMobile && !!branchFlow?.length && (
+          <button
+            className={cn(
+              "shrink-0 rounded-lg",
+              chipBase,
+              mobilePaneKey === "sel" ? "border-[color:var(--border-strong)] bg-muted text-foreground" : "",
+            )}
+            onClick={() => handleMobilePaneChange("sel")}
+          >
+            分點
+          </button>
+        )}
+        {/* 桌機版：主力 checkbox（手機版由上方 mobilePaneKey 控制）*/}
+        {!isMobile && !!mainForce?.length && (
+          <label className={cn(chipBase, "shrink-0")} style={settings.mainForce ? { color: CUM_COLOR, borderColor: CUM_COLOR } : undefined}>
+            <input
+              type="checkbox"
+              checked={settings.mainForce}
+              onChange={(e) => setSettings((s) => ({ ...s, mainForce: e.target.checked }))}
+            />
+            主力買賣超
+          </label>
+        )}
       </div>
       <div className="relative">
         <div
@@ -413,9 +473,12 @@ export default function KChart({
           ref={ref}
           className={cn(
             "w-full rounded-t-none rounded-b-[var(--r-lg)] border border-border bg-card p-2 shadow-[var(--shadow-card)]",
-            extraPanes === 0 && "[height:clamp(420px,66vh,680px)]",
-            extraPanes === 1 && "[height:clamp(470px,72vh,770px)]",
-            extraPanes === 2 && "[height:clamp(520px,78vh,860px)]",
+            // 手機版(<768px)高度保守（主圖佔比大），桌機版同原邏輯
+            isMobile && extraPanes === 0 && "[height:clamp(360px,52vh,480px)]",
+            isMobile && extraPanes >= 1 && "[height:clamp(420px,62vh,560px)]",
+            !isMobile && extraPanes === 0 && "[height:clamp(420px,66vh,680px)]",
+            !isMobile && extraPanes === 1 && "[height:clamp(470px,72vh,770px)]",
+            !isMobile && extraPanes === 2 && "[height:clamp(520px,78vh,860px)]",
           )}
         />
       </div>

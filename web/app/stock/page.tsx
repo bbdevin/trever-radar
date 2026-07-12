@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, Suspense, useEffect, useMemo, useState } from "react";
+import { Fragment, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import {
   type ColumnDef,
@@ -43,8 +43,9 @@ function StockView() {
   const [data, setData] = useState<StockJson | null>(null);
   const [error, setError] = useState(false);
   const [range, setRange] = useState<(typeof RANGES)[number]["key"]>("1y");
-  const [view, setView] = useState<"chart" | "branch" | "warrant">("chart");
+  const [view, setView] = useState<"chart" | "warrant">("chart");
   const [selectedBranches, setSelectedBranches] = useState<Set<string>>(new Set());
+  const branchSectionRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     if (!id) return;
@@ -54,6 +55,20 @@ function StockView() {
       .then(setData)
       .catch(() => setError(true));
   }, [id]);
+
+  // #branch hash 導航：資料載入後自動捲動到分點區並切換到 chart view
+  useEffect(() => {
+    if (!data) return;
+    if (typeof window === "undefined") return;
+    if (window.location.hash === "#branch") {
+      setView("chart");
+      // 稍等 DOM 渲染完再捲動
+      const timer = setTimeout(() => {
+        branchSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }, 300);
+      return () => clearTimeout(timer);
+    }
+  }, [data]);
 
   const visibleDays = useMemo(() => {
     const days = RANGES.find((r) => r.key === range)?.days ?? Infinity;
@@ -110,6 +125,17 @@ function StockView() {
   const chg = prev ? Math.round(((last.c - prev.c) / prev.c) * 10000) / 100 : null;
   const cls = chgClass(chg);
 
+  // 分點相關資料 (供 BranchFlowSection 升級版使用)
+  const branchScore = data.scores?.branch ?? null;
+  const branchReasons = useMemo(
+    () => (data.raw_reasons ?? []).filter((r) => {
+      const c = r.code ?? "";
+      // B* 系列(分點理由) + S11-S13(籌碼事件)
+      return c.startsWith("B") || ["S11", "S12", "S13"].includes(c);
+    }),
+    [data]
+  );
+
   return (
     <>
       <div className="flex flex-wrap items-center gap-2.5 py-4 pb-2.5">
@@ -151,9 +177,6 @@ function StockView() {
           <button role="tab" aria-selected={view === "chart"} className={pillTabClass(view === "chart")} onClick={() => setView("chart")}>
             K線
           </button>
-          <button role="tab" aria-selected={view === "branch"} className={pillTabClass(view === "branch")} onClick={() => setView("branch")}>
-            分點
-          </button>
           <button role="tab" aria-selected={view === "warrant"} className={pillTabClass(view === "warrant")} onClick={() => setView("warrant")}>
             權證
           </button>
@@ -169,16 +192,20 @@ function StockView() {
         )}
       </div>
       {view === "chart" && <KChart candles={cs} visibleDays={visibleDays} mainForce={mainForce} branchFlow={branchFlow} />}
-      {view === "branch" && <BranchPanel data={data} />}
       {view === "warrant" && <WarrantPanel data={data} />}
       {view === "chart" && <TechnicalPanel data={data} />}
+      {/* WP-H4: 分點進出區升級為唯一真相 — 帶分點分徽章 + 理由/風險 pills；id="branch" 供 #branch 錨點捲動 */}
       {view === "chart" && (
         <BranchFlowSection
+          ref={branchSectionRef}
           branches={data.branches}
           branchHistory={data.branch_history}
+          score={branchScore}
+          reasons={branchReasons}
           heading="分點進出"
           selected={selectedBranches}
           onToggleSelect={toggleBranch}
+          id="branch"
         />
       )}
     </>
@@ -258,22 +285,6 @@ function StockDecisionHeader({ data, close }: { data: StockJson; close: number }
       )}
     </div>
   );
-}
-
-function BranchPanel({ data }: { data: StockJson }) {
-  const score = data.scores?.branch ?? null;
-  const branchReasons = (data.raw_reasons ?? []).filter((r) => r.text.includes("分點"));
-
-  if (!data.branches.length && !data.branch_history?.length && score == null) {
-    return (
-      <div className="py-[46px] text-center text-sm text-muted-foreground">
-        尚無此股分點資料。免費資料目前只抓評分池前80檔的前15大買賣超,會隨每日累積增加。
-      </div>
-    );
-  }
-
-  // 分點分卡 + 理由風險由 score/reasons 觸發;範圍選擇/摘要/買賣超列表與 K 線視圖共用同一元件,不留兩份代碼。
-  return <BranchFlowSection branches={data.branches} branchHistory={data.branch_history} score={score} reasons={branchReasons} />;
 }
 
 function TechnicalPanel({ data }: { data: StockJson }) {
