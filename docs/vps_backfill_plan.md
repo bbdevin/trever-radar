@@ -10,8 +10,8 @@
 | # | 事項 | 指令在哪 | 狀態 |
 |---|---|---|---|
 | 1 | 等 backfill-branches 跑完(`docker logs --tail 5 radar-backfill`;已回補到 2024-10) | Step 3 | ⏳ 跑著 |
-| 2 | 上傳回雲端與重算(**先 `git pull`**,再 4a-1 → 4b → 4c → 4d) | Step 4 | 等 1 |
-| 3 | 部署盤中 worker(venv + `.env` 一次設定 + cron 08:50) | **Step 5** | 可與 2 並行 |
+| 2 | **VPS 一次做完**補洞+全部重算(4c,先 `git pull`;可選 4b 權證分點/4d 還原因子)→ 上傳+清 cache(4e) | Step 4 | 等 1 |
+| 3 | 部署盤中 worker(docker build 一次 + `.env` 一次 + cron 08:50) | **Step 5** | 可與 2 並行 |
 | 4 | 非盤中冒煙測試 worker | Step 5-e | 等 3 |
 | 5 | 跟 AI 說「完成」→ AI 驗證全站 + Phase 2 差異報告 | — | 等 2+4 |
 
@@ -151,9 +151,11 @@ docker run --rm -v $(pwd)/data:/d python:3.11 \
 
 ---
 
-## Step 4:手機收到「P1 完成」後 → 上傳回雲端與重算(10 分鐘)
+## Step 4:抓完後 → 在 VPS 一次做完所有補洞與重算,再上傳(2026-07-12 改版)
 
-當 VPS 抓完歷史分點後，資料庫裡面只有舊的歷史資料，接下來我們要把資料庫上傳，並交由「雲端」負責補齊這幾天的缺口與重算分數。SSH 回 VPS，逐段貼：
+> **改版說明(使用者決定)**:重算不再交給雲端 gh workflow——近日補洞、題材、指標、分數、績效、分點統計**全部先在 VPS 做完**,一次上傳,雲端之後只負責每日增量。好處:省 ~120 分鐘 Actions 額度、不用排隊等 radar-db 併發群、一條指令一次到位。原「上傳後跑 task=themes / indicators-only」流程降級為備援(見 4f 附註)。
+
+SSH 回 VPS,逐段貼:
 
 ### 4a. 安裝 GitHub CLI 並登入(依你系統二選一，若已裝可跳過)
 
@@ -175,56 +177,80 @@ gh auth login
 # 選 GitHub.com → HTTPS → Paste an authentication token → 貼 Step 1 的同一個 token
 ```
 
-### 4a-1. 上傳前先在 VPS 補齊近日行情(必跑;雲端沒有這個入口)
+### 4b.(可選,建議)權證分點半年回補——趁上傳前一起補
 
-VPS 的種子是較舊的備份,回補期間缺的近幾天日 K/法人/融資券要在**上傳前**補進同一份 DB(`task=deep` 補不了——deep-backfill 對已拉深的股票整檔跳過,不會補近日缺口,見 `importer.py` 的 freshness check):
+約 6.5 小時,中斷可續;想讓網站 120D 權證大戶資料一次到位就跑,不想等也可跳過(之後隨時可補跑再上傳一次):
 
 ```bash
 cd ~/trever-radar && git pull
-docker run --rm -v $(pwd)/pipeline:/app/pipeline -v $(pwd)/data:/app/data -w /app/pipeline python:3.11 \
-  bash -c "pip install -r requirements.txt && python -m radar backfill --days 7 && \
-    for i in 0 1 2 3 4 5 6; do python -m radar import-daily --date \$(date -d \"-\$i day\" +%Y%m%d) --datasets insti,margin || true; done"
+docker run --rm --name radar-warrant-backfill \
+  -v $(pwd)/pipeline:/app/pipeline -v $(pwd)/data:/app/data \
+  -w /app/pipeline python:3.11 \
+  bash -c "pip install -r requirements.txt && \
+    python -m radar backfill-warrant-branches --top 200 --days 120 --sleep 1.2"
 ```
 
-### 4b. 壓縮並上傳資料庫至 GitHub Release
+### 4c. 一次重算鏈(必跑;約 2–2.5 小時,背景執行+手機通知)
+
+補近 7 日行情/法人/融資券 → 題材 → 權證彙總 → 指標全歷史 → 分數 → 績效 → 分點統計,一條指令做完(**第一行主題名改成你 Step 0 的**):
+
+```bash
+cd ~/trever-radar && git pull
+NTFY=trever-radar-x8k2m9q7
+
+docker run -d --name radar-finalize \
+  -v $(pwd)/pipeline:/app/pipeline -v $(pwd)/data:/app/data \
+  -w /app/pipeline python:3.11 \
+  bash -c "pip install -r requirements.txt && \
+    python -m radar backfill --days 7 && \
+    for i in 0 1 2 3 4 5 6; do python -m radar import-daily --date \$(date -d \"-\$i day\" +%Y%m%d) --datasets insti,margin || true; done && \
+    python -m radar import-themes && \
+    python -m radar aggregate-warrants && \
+    python -m radar compute-indicators --all && \
+    python -m radar compute-scores && \
+    python -m radar compute-performance && \
+    python -m radar compute-branch-stats && \
+    curl -s -H 'Title: Radar 重算完成' -d '重算鏈全部完成,執行 4e 上傳' ntfy.sh/$NTFY || \
+    curl -s -H 'Title: Radar 重算中斷' -H 'Priority: high' -d '執行 docker logs radar-finalize 查原因' ntfy.sh/$NTFY"
+```
+
+- 進度:`docker logs --tail 10 radar-finalize`
+- ⚠️ `git pull` **必須**:2026-07-11 修了 NULL 資料整支崩潰(舊碼跑 compute-indicators --all 會炸)且策略邏輯在程式碼裡。
+
+### 4d.(可選)還原因子(除權息 adj_factor,3–4 小時,需 FinMind token)
+
+不急可跳過(之後在雲端 `gh workflow run data-backfill.yml -f task=adjust` 補);要一起做就在 4c 完成後:
+
+```bash
+docker run -d --name radar-adjust \
+  -v $(pwd)/pipeline:/app/pipeline -v $(pwd)/data:/app/data \
+  -e RADAR_FINMIND_TOKEN=<你的FinMind token> \
+  -w /app/pipeline python:3.11 \
+  bash -c "pip install -r requirements.txt && \
+    python -m radar compute-adjustments --all --sleep 6.5 && \
+    python -m radar compute-indicators --all"
+```
+
+### 4e. 壓縮上傳 + 讓雲端切換到新資料庫(兩段都要跑)
 
 ```bash
 cd ~/trever-radar
 gzip -kf data/radar.db
 gh release upload db-backup data/radar.db.gz --clobber --repo bbdevin/trever-radar
-```
-
-### 4c. 刪除雲端舊快取(非常重要！)
-
-```bash
 gh cache delete --all --repo bbdevin/trever-radar
 ```
-> ⚠️ **不做這步，雲端會繼續用舊快取，不會去下載你剛上傳的新資料庫！**
+> ⚠️ **`gh cache delete` 不跑,雲端會繼續用舊快取,不會下載你剛上傳的新資料庫!**
 
-### 4d. 觸發雲端補齊資料與重算分數
+### 4f. 回報與清理
 
-剛剛上傳的資料庫是在 VPS 跑了幾天的狀態，最後這幾天大盤的日 K 會缺漏。我們直接呼叫 GitHub Actions 雲端管線來補齊，並讓雲端運算技術分：
+跟 AI 說「**上傳完成**」→ AI 會推一個 commit 觸發 deploy(雲端 cache miss → 撈你的新 release → 匯出 JSON 上線),然後驗證全站(S1–S10 策略榜、題材、分點 2 年聚合、追蹤視角、Armed 池)。清容器:
 
-1. **補題材**(整檔取代會蓋掉雲端既有題材;不跑則等週一 14:10 自動更新):
 ```bash
-gh workflow run data-backfill.yml -f task=themes --repo bbdevin/trever-radar
+docker rm -f radar-backfill radar-finalize 2>/dev/null; docker rm -f radar-warrant-backfill radar-adjust 2>/dev/null
 ```
 
-2. **重新計算還原因子與技術分數**(B 方案 Phase 2 的解耦新規則會在此自動生效;**等上一支跑完再觸發**,radar-db 併發群一次一支)：
-```bash
-gh workflow run data-backfill.yml -f task=adjust --repo bbdevin/trever-radar
-```
-
-> 💡 **提示**:如果只改了算分邏輯(不想呼叫 FinMind API 扣額度),可以把上述第二個指令改為 `task=indicators-only` 純算指標。
-> ⚠️ 近日日 K/籌碼缺口**不能**靠 `task=deep` 補(deep 對已拉深股票整檔跳過)——必須在上傳前於 VPS 跑 4a-1;`task=deep` 只在有新上市/整檔缺漏股票時才需要。
-
-### 4e. 回報與清理
-
-跟 AI 說「P1 上傳完成」→ AI 會協助驗證雲端是否接手，以及分點勝率/買低賣高統計是否順利生效。
-最後可將 VPS 上的回補容器刪除：
-```bash
-docker rm -f radar-backfill
-```
+> 備援註記:雲端 `task=themes` / `task=indicators-only` / `task=adjust` 仍存在——日後只改了算分程式、不想開 VPS 時可用;正常流程用不到。
+> ⚠️ 近日缺口**不能**靠 `task=deep` 補(deep 對已拉深股票整檔跳過),一律走 4c 的 `backfill --days 7`。
 
 ---
 
@@ -232,14 +258,16 @@ docker rm -f radar-backfill
 
 盤中訊號雷達(docs/24 Part A)的 worker 跑在這台 VPS:平日 08:50 啟動、13:35 自動收工,抓 Fugle 行情判定 I-1~I-4 訊號寫入 Supabase,網站首頁盤中面板即時顯示。前置(已完成 ✅):Supabase SQL 已執行、Fugle 新金鑰已備。
 
-### 5-a. 更新程式 + 建 worker 專用 venv(一次)
+### 5-a. 更新程式 + build worker 映像(一次;2026-07-12 改為 docker 統一)
+
+依賴預先烤進映像:08:50 啟動不碰 PyPI(網路慢/掛不會害 worker 缺席);映像內建 `TZ=Asia/Taipei`(worker 以本機時間判斷 13:35 收工,容器預設 UTC 會多跑 8 小時——Dockerfile 已處理)。
 
 ```bash
 cd ~/trever-radar && git pull
-cd pipeline
-python3 -m venv .venv-worker
-.venv-worker/bin/pip install "fugle-marketdata>=2.4.1" "supabase>=2.31.0" "python-dotenv>=1.2.2" "requests>=2.31"
+docker build -t radar-worker pipeline/intraday
 ```
+
+> 之後只要 `git pull` 拉到 `worker.py` 或 `Dockerfile` 的變更,重跑上面這兩行 rebuild 即可;沒改就不用。
 
 ### 5-b. 設 `.env`(一次;之後 `git pull` 永遠不會動到它)
 
@@ -272,17 +300,18 @@ sudo timedatectl set-timezone Asia/Taipei
 crontab -e
 ```
 
-加入一行:
+加入一行(`--env-file` 讀 5-b 設定的 `.env`;`--rm` 收工自動清容器):
 
 ```cron
-50 8 * * 1-5 cd /home/huang/trever-radar/pipeline/intraday && /home/huang/trever-radar/pipeline/.venv-worker/bin/python worker.py >> worker.log 2>&1
+50 8 * * 1-5 docker run --rm --name radar-worker --env-file /home/huang/trever-radar/pipeline/intraday/.env radar-worker >> /home/huang/radar-worker.log 2>&1
 ```
+
+> cron 的 08:50 依 **VPS 主機**時鐘,主機時區也要是台北(見 5-c);容器內時區映像已內建。
 
 ### 5-e. 冒煙測試(非盤中時段跑一次,一分鐘)
 
 ```bash
-cd ~/trever-radar/pipeline/intraday
-../.venv-worker/bin/python worker.py
+docker run --rm --name radar-worker-test --env-file ~/trever-radar/pipeline/intraday/.env radar-worker
 ```
 
 - 成功標準:log 顯示抓到 radar.json(或非交易時段的等待訊息)、無 Supabase 連線錯誤;開網站登入後,首頁盤中面板 worker 狀態轉 **online** → `Ctrl+C` 結束。
@@ -291,7 +320,7 @@ cd ~/trever-radar/pipeline/intraday
 ### 5-f. 韌性行為(不用做事,知道就好)
 
 - radar.json 抓取失敗會退避重試 3 次;已有上次成功名單就沿用續跑;首次啟動即失敗才會結束。
-- 之後程式更新只要 `cd ~/trever-radar && git pull`——`.env`、venv、cron 都不受影響。
+- 之後程式更新只要 `cd ~/trever-radar && git pull`——`.env` 與 cron 都不受影響;僅當 `worker.py`/`Dockerfile` 有變更時補一句 `docker build -t radar-worker pipeline/intraday`。
 
 ---
 
