@@ -19,8 +19,8 @@ docker run -d --name radar-mega-finalize \
   -v $(pwd)/pipeline:/app/pipeline -v $(pwd)/data:/app/data \
   -w /app/pipeline python:3.11 \
   bash -c "pip install -r requirements.txt && \
-    echo '>>> 步驟 1: 回補 490 天三大法人與融資券...' && \
-    python -m radar backfill --days 490 --datasets insti,margin && \
+    echo '>>> 步驟 1: 回補 490 天開高低收價量、三大法人與融資券...' && \
+    python -m radar backfill --days 490 --datasets quotes,insti,margin && \
     echo '>>> 步驟 2: 回補 120 天活躍權證 (Top 200) 分點...' && \
     python -m radar backfill-warrant-branches --top 200 --days 120 --sleep 1.2 && \
     echo '>>> 步驟 3: 抓取最新題材分類...' && \
