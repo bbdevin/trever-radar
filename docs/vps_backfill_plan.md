@@ -344,7 +344,7 @@ docker run -d --name radar-warrant-backfill --restart unless-stopped \
 
 ---
 
-## P2:擴到 5 年 × 1,200 檔(P1 之後,先等開發端一件事)
+## P2:擴到 5 年 × 1,200 檔(⚠️ 2026-07-12 已被 `docs/26` 全市場擴容計畫取代——目標改為全市場×490d,前置與工作包一律看 docs/26;本節僅留歷史參考)
 
 - ⚠️ 前置:5 年全量會讓資料庫 +7–9GB,超過現行免費架構上限(GitHub Release 單檔 2GB、Actions cache 10GB)→ **開發端要先把分點歷史拆成獨立檔**。做完會通知你。
 - R2 邊界見 `docs/21_private_beta_access_r2_plan.md`:R2 可保存壓縮後的 `branch_hist.db` 快照,
