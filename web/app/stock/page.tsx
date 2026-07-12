@@ -104,6 +104,16 @@ function StockView() {
       return next;
     });
 
+  // 分點理由過濾：B* 系列(分點) + S11-S13(籌碼事件)
+  // 必須在所有條件 return 之前宣告，符合 Rules of Hooks
+  const branchReasons = useMemo(
+    () => (data?.raw_reasons ?? []).filter((r) => {
+      const c = r.code ?? "";
+      return c.startsWith("B") || ["S11", "S12", "S13"].includes(c);
+    }),
+    [data]
+  );
+
   if (!id) return <div className="py-[46px] text-center text-sm text-muted-foreground">網址缺少股票代號(?id=2330)</div>;
   if (error)
     return (
@@ -124,17 +134,7 @@ function StockView() {
   const prev = cs.length > 1 ? cs[cs.length - 2] : null;
   const chg = prev ? Math.round(((last.c - prev.c) / prev.c) * 10000) / 100 : null;
   const cls = chgClass(chg);
-
-  // 分點相關資料 (供 BranchFlowSection 升級版使用)
   const branchScore = data.scores?.branch ?? null;
-  const branchReasons = useMemo(
-    () => (data.raw_reasons ?? []).filter((r) => {
-      const c = r.code ?? "";
-      // B* 系列(分點理由) + S11-S13(籌碼事件)
-      return c.startsWith("B") || ["S11", "S12", "S13"].includes(c);
-    }),
-    [data]
-  );
 
   return (
     <>
