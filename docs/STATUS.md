@@ -82,6 +82,7 @@
 5a. **任務導向 UI 資訊架構**(`docs/25`)：✅ **2026-07-12 IA-1A/IA-1B/IA-2/IA-3/IA-4A/IA-4B 全部完成並 push main**。已完成：IA-1A 首頁重排；IA-1B 首頁榜單模式收斂；IA-4A 自選追蹤；IA-2 個股判讀；IA-3 分點研究；IA-4B Armed 狀態增強（結合 docs/22 A1-A2，完成首頁狀態池 Tab 與 StockCard Badge 視覺整合）。
 6. **R2 R0-R2**(`docs/21`):private Standard bucket → 每週 shadow snapshot → checksum/gzip/SQLite restore drill。R3 workflow fallback 未授權,R4/P2 延後。
 7. **B 方案 Phase 4—排程簡化提案**(`docs/20`,獨立高風險任務):保留資料取得時點,評估完整 build/deploy 由每日最多 5 次降為 14:10/22:10 兩次;不得在未完整審查 WAL/cache/release 鏈前修改 workflow。
+6a. **地緣券商+庫藏股分點+關鍵分點同買 → 口袋名單**(`docs/27`,2026-07-12 規劃定案、未實作):地緣改演算法判定(公司地址×分點地址官方開放資料;雙北用行政區級+排除集)、KB1 買回窗事實 tag/KB2 疑似執行分點推測、K1 關鍵分點=手動種子∪可信度≥70、H1 題材熱門;reason stacking ≥2 family 入口袋名單(pocket_score 僅排序,**不進綜合分**);G0 資料 PoC 隨時可跑,G1-G4 建議 VPS 回灌穩定後;地緣涵蓋度在 7a 全市場每日池後才完整。**這項同時解掉 docs/13 卡了很久的地緣/關鍵分點人工名單問題**。
 7a. **全市場擴容**(`docs/26`,2026-07-12 使用者定案「有幾檔抓幾檔」但**同日決定降序**:先讓 500 檔歷史跑完、回灌穩定,過幾天再啟動):WP-M1 個股 JSON 池全市場 → WP-M2 每日分點全市場一輪制 → **WP-M3 branch_hist.db 拆分+常駐 VPS+R2 週快照(高風險,啟動時需使用者批准)** → WP-M4 VPS 全市場歷史 march-back(~11-12 天)。DB 紅線與 Actions 額度約束見 docs/26 §2。
 8. ~~deep-backfill --all~~ **執行狀態需另行查證**:完成與否不得只信本檔舊紀錄;若需 `task=adjust` 或 VPS 回灌,先依 `vps_backfill_plan.md` 與高風險流程確認。
 9. **分點排行資料累積**:可信度排行榜已完成,統計效力需 2–3 個月。地緣/關鍵分點人工名單、五年分點擴容、LINE Bot 依 B 方案延後;~~V2 盤中延後~~ 盤中已依 `docs/24` 重新規劃排入(見 4a)。
