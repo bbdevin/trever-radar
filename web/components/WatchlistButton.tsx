@@ -24,9 +24,9 @@ export default function WatchlistButton({ stockId, size = 18 }: { stockId: strin
     }
     void toggle(stockId).then(() => {
       if (active) {
-        toast.info(`\u5df2\u79fb\u9664\u81ea\u9078 ${stockId}`, { duration: 2000 });
+        toast.info(`已移除自選 ${stockId}`, { duration: 2000 });
       } else {
-        toast.success(`\u5df2\u52a0\u5165\u81ea\u9078 ${stockId}`, { duration: 2000 });
+        toast.success(`已加入自選 ${stockId}`, { duration: 2000 });
       }
     });
   };

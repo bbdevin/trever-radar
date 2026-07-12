@@ -49,7 +49,7 @@ function NoTrackDetailPanel({ branchName }: { branchName: string }) {
       </div>
       <h3 className="text-base font-bold text-foreground mb-1">{branchName}</h3>
       <p className="max-w-xs text-xs leading-relaxed text-muted-foreground">
-        {"\u76ee\u524d\u6b64\u5206\u9ede\u66ab\u7121 120 \u65e5\u6b77\u52f2\u8cb7\u8ce3\u660e\u7d30\uff08\u7cfb\u7d71\u81ea 2026-07-07 \u8d77\u50c5\u8ffd\u8e64\u71b1\u9580\u80a1\uff0c\u82e5\u8981\u8ffd\u8e64\u6b64\u5206\u9ede\u8acb\u7b49\u5f85\u6578\u64da\u6301\u7e8c\u7d2f\u7a4d\uff0d\u7279\u5b9a\u5730\u7de3\u5206\u9ede\u53ef\u8ffd\u8e64\uff09\u3002"}
+        {"目前此分點暫無 120 日歷勲買賣明細（系統自 2026-07-07 起僅追蹤熱門股，若要追蹤此分點請等待數據持續累積－特定地緣分點可追蹤）。"}
       </p>
     </div>
   );
@@ -499,19 +499,19 @@ export default function BranchPage() {
       {/* IA-3: Page Brief */}
       <div className="my-3.5 grid auto-cols-[minmax(100px,1fr)] grid-flow-col gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         <div className="flex flex-col gap-0.5 rounded-[var(--r-md)] border border-border bg-card px-3 py-2 shadow-[var(--shadow-card)]">
-          <span className="text-[10.5px] text-muted-foreground">{"\u5165\u699c\u5206\u9ede"}</span>
+          <span className="text-[10.5px] text-muted-foreground">{"入榜分點"}</span>
           <span className="num text-[15px] font-bold">{totalBranches}</span>
         </div>
         <div className="flex flex-col gap-0.5 rounded-[var(--r-md)] border border-border bg-card px-3 py-2 shadow-[var(--shadow-card)]">
-          <span className="text-[10.5px] text-muted-foreground">{"\u6a23\u672c\u8db3\u5920"}</span>
+          <span className="text-[10.5px] text-muted-foreground">{"樣本足夠"}</span>
           <span className="num text-[15px] font-bold">{enoughSampleCount}</span>
         </div>
         <div className="flex flex-col gap-0.5 rounded-[var(--r-md)] border border-border bg-card px-3 py-2 shadow-[var(--shadow-card)]">
-          <span className="text-[10.5px] text-muted-foreground">{"\u53ef\u8ffd\u8e64"}</span>
+          <span className="text-[10.5px] text-muted-foreground">{"可追蹤"}</span>
           <span className="num text-[15px] font-bold">{trackIndex.length}</span>
         </div>
         <div className="flex flex-col gap-0.5 rounded-[var(--r-md)] border border-border bg-card px-3 py-2 shadow-[var(--shadow-card)]">
-          <span className="text-[10.5px] text-muted-foreground">{"\u8cc7\u6599\u8d77\u59cb"}</span>
+          <span className="text-[10.5px] text-muted-foreground">{"資料起始"}</span>
           <span className="num text-[13px] font-bold">{"2026-07-07"}</span>
         </div>
       </div>
@@ -519,8 +519,8 @@ export default function BranchPage() {
       {hasDataWarning && (
         <Alert className="mb-4 bg-card">
           <AlertDescription className="flex flex-wrap items-baseline gap-2.5 text-[13px] text-foreground">
-            <span className="shrink-0 rounded-md bg-warn/15 px-2 py-0.5 text-[11.5px] font-bold tracking-[0.3px] text-warn">{"\u6a23\u672c\u4e0d\u8db3"}</span>
-            <span>{"\u7531\u65bc\u7cfb\u7d71\u81ea 2026-07-07 \u624d\u958b\u59cb\u6536\u96c6\u514d\u8cbb\u5206\u9ede\u8cc7\u6599\uff0c\u90e8\u5206\u5206\u9ede\u7684\u6b77\u53f2\u4ea4\u6613\u7b46\u6578\u904e\u5c11\uff0c\u5c0e\u81f4\u7121\u6cd5\u8a08\u7b97\u52dd\u7387\u3002\u9700\u5f85\u8cc7\u6599\u6301\u7e8c\u7d2f\u7a4d\u6578\u9031\u3002"}</span>
+            <span className="shrink-0 rounded-md bg-warn/15 px-2 py-0.5 text-[11.5px] font-bold tracking-[0.3px] text-warn">{"樣本不足"}</span>
+            <span>{"由於系統自 2026-07-07 才開始收集免費分點資料，部分分點的歷史交易筆數過少，導致無法計算勝率。需待資料持續累積數週。"}</span>
           </AlertDescription>
         </Alert>
       )}
@@ -534,8 +534,8 @@ export default function BranchPage() {
               type="text"
               value={filterSearch}
               onChange={e => setFilterSearch(e.target.value)}
-              placeholder={"\u641c\u5c0b\u5206\u9ede"}
-              aria-label={"\u5206\u9ede\u540d\u7a31\u641c\u5c0b"}
+              placeholder={"搜尋分點"}
+              aria-label={"分點名稱搜尋"}
               className="h-8 rounded-md border border-border bg-card pl-7 pr-2.5 text-[12.5px] text-foreground placeholder:text-muted-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             />
           </div>
@@ -549,7 +549,7 @@ export default function BranchPage() {
             )}
             aria-pressed={filterTrackable}
           >
-            {"\u53ef\u8ffd\u8e64"}
+            {"可追蹤"}
           </button>
           <button
             onClick={() => setFilterEnough(v => !v)}
@@ -561,7 +561,7 @@ export default function BranchPage() {
             )}
             aria-pressed={filterEnough}
           >
-            {"\u6a23\u672c\u8db3\u5920"}
+            {"樣本足夠"}
           </button>
           <button
             onClick={() => setFilterDaytrade(v => v === "exclude" ? "all" : "exclude")}
@@ -573,18 +573,18 @@ export default function BranchPage() {
             )}
             aria-pressed={filterDaytrade === "exclude"}
           >
-            {"\u6392\u9664\u96d4\u65e5\u6c96"}
+            {"排除雔日沖"}
           </button>
           {(filterSearch || filterTrackable || filterEnough || filterDaytrade !== "all") && (
             <button
               onClick={() => { setFilterSearch(""); setFilterTrackable(false); setFilterEnough(false); setFilterDaytrade("all"); }}
               className="rounded-full px-3 py-1 text-[12px] text-muted-foreground hover:bg-secondary"
             >
-              {"\u6e05\u9664"}
+              {"清除"}
             </button>
           )}
           <span className="ml-auto text-[11.5px] text-muted-foreground">
-            {"\u986f\u793a"} {filteredRankings.length} {"\u500b"}
+            {"顯示"} {filteredRankings.length} {"個"}
           </span>
         </div>
       )}
@@ -617,7 +617,7 @@ export default function BranchPage() {
                   setTrackOpen(true);
                 }
               }}
-              aria-label={`${"\u67e5\u770b"} ${r.branch_name} ${"\u7684\u8fd1 N \u65e5\u8cb7\u8ce3\u8d85\u660e\u7d30"}`}
+              aria-label={`${"查看"} ${r.branch_name} ${"的近 N 日買賣超明細"}`}
               className="block w-full min-h-11 rounded-[var(--r-lg)] p-0 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
               <RankCard r={r} trackable={isTrackable} active={isActive} />
@@ -631,7 +631,7 @@ export default function BranchPage() {
             <div className={cn("flex flex-col gap-4 w-full md:max-h-[85vh] md:overflow-y-auto pr-1 md:scrollbar-thin", trackOpen && "hidden md:flex")}>
               {filteredRankings.length === 0 && (
                 <div className="py-[46px] text-center text-sm text-muted-foreground">
-                  {"\u6c92\u6709\u7b26\u5408\u7b5b\u9078\u689d\u4ef6\u7684\u5206\u9ede\u3002\u8abf\u6574\u7b5b\u9078\u689d\u4ef6\u6216\u6e05\u9664\u641c\u5c0b\u3002"}
+                  {"沒有符合筛選條件的分點。調整筛選條件或清除搜尋。"}
                 </div>
               )}
               {filteredMain.length > 0 && (
@@ -643,8 +643,8 @@ export default function BranchPage() {
               {filteredDaytrade.length > 0 && (
                 <div className="flex flex-col gap-2.5 mt-2">
                   <div className="flex items-baseline gap-2 px-1">
-                    <h2 className="text-[14px] font-semibold text-down">{"\u96d4\u65e5\u6c96\u5206\u9ede"}</h2>
-                    <span className="text-[11px] text-muted-foreground">{"\u53cd\u6307\u6a19/\u98a8\u96aa\u8a0a\u865f"}</span>
+                    <h2 className="text-[14px] font-semibold text-down">{"雔日沖分點"}</h2>
+                    <span className="text-[11px] text-muted-foreground">{"反指標/風險訊號"}</span>
                   </div>
                   <div className="flex flex-col gap-2.5">
                     {filteredDaytrade.map(renderCard)}
@@ -669,7 +669,7 @@ export default function BranchPage() {
                 )
               ) : (
                 <div className="flex h-full min-h-[300px] flex-col items-center justify-center rounded-[var(--r-lg)] border border-border bg-card p-6 text-center text-muted-foreground shadow-[var(--shadow-card)]">
-                  {"\u8acb\u9078\u53d6\u5de6\u5257\u5206\u9ede\u4ee5\u67e5\u770b\u8cb7\u8ce3\u660e\u7d30"}
+                  {"請選取左剗分點以查看買賣明細"}
                 </div>
               )}
             </div>
@@ -695,7 +695,7 @@ export default function BranchPage() {
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="mr-1">
                     <path d="M19 12H5M12 19l-7-7 7-7" />
                   </svg>
-                  {"\u8fd4\u56de"}
+                  {"返回"}
                 </button>
                 <div className="flex-1">
                   <NoTrackDetailPanel branchName={trackBranch} />

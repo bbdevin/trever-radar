@@ -135,11 +135,11 @@ function StockView() {
       </div>
       <div className="mb-2.5 flex flex-wrap gap-3.5 text-xs text-muted-foreground">
         <span>
-          {last.t} {" · "} {"\u91cf"} <span className="num text-[color:var(--ink-2)]">{last.v.toLocaleString("zh-TW")}</span> {"\u5f35"} {" · "} {"\u984d"}{" "}
+          {last.t} {" · "} {"量"} <span className="num text-[color:var(--ink-2)]">{last.v.toLocaleString("zh-TW")}</span> {"張"} {" · "} {"額"}{" "}
           <span className="num text-[color:var(--ink-2)]">{fmtE8(last.amt)}</span>
         </span>
         <span>
-          {"\u8cc7\u6599"} <span className="num text-[color:var(--ink-2)]">{cs.length.toLocaleString("zh-TW")}</span> {"\u500b\u4ea4\u6613\u65e5(\u81ea"} {cs[0].t})
+          {"資料"} <span className="num text-[color:var(--ink-2)]">{cs.length.toLocaleString("zh-TW")}</span> {"個交易日(自"} {cs[0].t})
         </span>
       </div>
 
@@ -198,7 +198,7 @@ function StockDecisionHeader({ data, close }: { data: StockJson; close: number }
   // Source badge: branch / warrant / both
   const hasBranch = (scores?.branch ?? 0) > 0;
   const hasWarrant = (scores?.warrant ?? 0) > 0;
-  const sourceLabel = hasBranch && hasWarrant ? "\u5206\u9ede+\u6b0a\u8b49" : hasBranch ? "\u5206\u9ede" : hasWarrant ? "\u6b0a\u8b49" : null;
+  const sourceLabel = hasBranch && hasWarrant ? "分點+權證" : hasBranch ? "分點" : hasWarrant ? "權證" : null;
 
   if (!scores && !reasons.length && !risks.length) return null;
 
@@ -211,7 +211,7 @@ function StockDecisionHeader({ data, close }: { data: StockJson; close: number }
             {scores.final}
           </span>
         )}
-        <span className="text-[11.5px] text-muted-foreground">{"\u7db1\u5408\u8a55\u5206"}</span>
+        <span className="text-[11.5px] text-muted-foreground">{"綱合評分"}</span>
         {sourceLabel && (
           <span className="rounded-md bg-[color:var(--ink-2)]/10 px-2 py-0.5 text-[10.5px] font-bold text-[color:var(--ink-2)]">
             {sourceLabel}
@@ -221,7 +221,7 @@ function StockDecisionHeader({ data, close }: { data: StockJson; close: number }
         <div className="ml-auto flex flex-wrap gap-2 text-[11.5px]">
           {watchPrice != null && (
             <span className="flex items-center gap-1 rounded-md border border-[color:var(--line)] px-2 py-0.5 text-[color:var(--accent-2)]">
-              <span>{"\u89c0\u5bdf"}</span>
+              <span>{"觀察"}</span>
               <span className="num font-bold">{watchPrice.toFixed(2)}</span>
               <span className="text-muted-foreground">
                 ({distPct(close, watchPrice) > 0 ? "+" : ""}{distPct(close, watchPrice).toFixed(1)}%)
@@ -233,7 +233,7 @@ function StockDecisionHeader({ data, close }: { data: StockJson; close: number }
               "flex items-center gap-1 rounded-md border px-2 py-0.5",
               distPct(close, stopPrice) < 5 ? "border-destructive/40 text-destructive" : "border-[color:var(--line)] text-up",
             )}>
-              <span>{"\u5931\u6548"}</span>
+              <span>{"失效"}</span>
               <span className="num font-bold">{stopPrice.toFixed(2)}</span>
               <span className={cn("text-muted-foreground", distPct(close, stopPrice) < 5 && "text-destructive")}>
                 ({distPct(close, stopPrice) > 0 ? "+" : ""}{distPct(close, stopPrice).toFixed(1)}%)
@@ -248,7 +248,7 @@ function StockDecisionHeader({ data, close }: { data: StockJson; close: number }
         <div className="mb-2 flex flex-col gap-1">
           {reasons.map((r, i) => (
             <div key={i} className="flex items-start gap-2 text-[12.5px] text-[color:var(--ink-2)]">
-              <span className="mt-[3px] shrink-0 text-[9px] text-muted-foreground">{"\u25b6"}</span>
+              <span className="mt-[3px] shrink-0 text-[9px] text-muted-foreground">{"▶"}</span>
               <span>{r}</span>
             </div>
           ))}
@@ -260,7 +260,7 @@ function StockDecisionHeader({ data, close }: { data: StockJson; close: number }
         <div className="flex flex-col gap-1">
           {risks.map((r, i) => (
             <div key={i} className="flex items-start gap-2 text-[12.5px] text-destructive">
-              <span className="mt-[3px] shrink-0 text-[9px]">{"\u26a0"}</span>
+              <span className="mt-[3px] shrink-0 text-[9px]">{"⚠"}</span>
               <span>{r}</span>
             </div>
           ))}

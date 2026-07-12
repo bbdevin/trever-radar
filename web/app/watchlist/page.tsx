@@ -23,11 +23,11 @@ type Row = {
 type SortKey = "risk" | "watch_dist" | "stop_dist" | "chg" | "added";
 
 const SORT_OPTIONS: { key: SortKey; label: string }[] = [
-  { key: "stop_dist", label: "\u63a5\u8fd1\u5931\u6548" },
-  { key: "watch_dist", label: "\u63a5\u8fd1\u89c0\u5bdf" },
-  { key: "risk", label: "\u98a8\u96aa\u512a\u5148" },
-  { key: "chg", label: "\u6f32\u8dcc\u5e45" },
-  { key: "added", label: "\u52a0\u5165\u9806\u5e8f" },
+  { key: "stop_dist", label: "接近失效" },
+  { key: "watch_dist", label: "接近觀察" },
+  { key: "risk", label: "風險優先" },
+  { key: "chg", label: "漲跌幅" },
+  { key: "added", label: "加入順序" },
 ];
 
 const CHG_TEXT: Record<string, string> = { up: "text-up", down: "text-down", flat: "text-foreground" };
@@ -41,7 +41,7 @@ function EmptyNotice({ children }: { children: React.ReactNode }) {
   return (
     <Alert className="mt-6 bg-card">
       <AlertDescription className="flex flex-wrap items-baseline gap-2.5 text-[13px] text-foreground">
-        <span className="shrink-0 rounded-md bg-[color:var(--ink-2)]/10 px-2 py-0.5 text-[11.5px] font-bold tracking-[0.3px] text-[color:var(--ink-2)]">{"\u81ea\u9078\u8ffd\u8e64"}</span>
+        <span className="shrink-0 rounded-md bg-[color:var(--ink-2)]/10 px-2 py-0.5 text-[11.5px] font-bold tracking-[0.3px] text-[color:var(--ink-2)]">{"自選追蹤"}</span>
         <span>{children}</span>
       </AlertDescription>
     </Alert>
@@ -206,9 +206,9 @@ export default function WatchlistPage() {
           <AddTodayArmedButton />
         </div>
         <EmptyNotice>
-          {"\u767b\u5165\u5f8c\u53ef\u5c07\u4efb\u610f\u500b\u80a1\u52a0\u5165\u81ea\u9078\uff0c\u5feb\u901f\u8ffd\u8e64\u89c0\u5bdf\u50f9/\u5931\u6548\u50f9\u8207\u6700\u65b0\u7db1\u5408\u5206\u3002"}
+          {"登入後可將任意個股加入自選，快速追蹤觀察價/失效價與最新綱合分。"}
           <Button variant="outline" size="sm" className="mt-2.5 block" onClick={signInWithGoogle}>
-            {"\u4ee5 Google \u767b\u5165"}
+            {"以 Google 登入"}
           </Button>
         </EmptyNotice>
       </div>
@@ -236,7 +236,7 @@ export default function WatchlistPage() {
         <div className="my-3.5 flex">
           <AddTodayArmedButton />
         </div>
-        <EmptyNotice>{"\u9084\u6c92\u6709\u81ea\u9078\u80a1\u3002\u5230\u4efb\u4e00\u80a1\u7968\u5361\u7247\u6216\u500b\u80a1\u9801\u9ede\u53f3\u4e0a\u89d2\u7684\u661f\u865f\u52a0\u5165\u3002"}</EmptyNotice>
+        <EmptyNotice>{"還沒有自選股。到任一股票卡片或個股頁點右上角的星號加入。"}</EmptyNotice>
       </div>
     );
   }
@@ -253,13 +253,13 @@ export default function WatchlistPage() {
       {/* Brief */}
       <div className="my-3.5 flex flex-wrap items-center gap-2.5">
         <div className="flex flex-col gap-0.5 rounded-[var(--r-md)] border border-border bg-card p-3 shadow-[var(--shadow-card)]">
-          <span className="text-[11.5px] text-muted-foreground">{"\u81ea\u9078\u8ffd\u8e64"}</span>
-          <span className="num text-[17px] font-bold">{"\u5171 "}{sorted.length}{" \u6a94"}</span>
+          <span className="text-[11.5px] text-muted-foreground">{"自選追蹤"}</span>
+          <span className="num text-[17px] font-bold">{"共 "}{sorted.length}{" 檔"}</span>
         </div>
         {needsAttention.length > 0 && (
           <div className="flex flex-col gap-0.5 rounded-[var(--r-md)] border border-destructive/40 bg-destructive/5 p-3 shadow-[var(--shadow-card)]">
-            <span className="text-[11.5px] text-muted-foreground">{"\u9700\u8981\u6ce8\u610f"}</span>
-            <span className="num text-[17px] font-bold text-destructive">{needsAttention.length}{" \u6a94"}</span>
+            <span className="text-[11.5px] text-muted-foreground">{"需要注意"}</span>
+            <span className="num text-[17px] font-bold text-destructive">{needsAttention.length}{" 檔"}</span>
           </div>
         )}
         {/* F1.3 一鍵加入今日 Armed */}
@@ -271,7 +271,7 @@ export default function WatchlistPage() {
             value={sortKey}
             onChange={(e) => setSortKey(e.target.value as SortKey)}
             className="rounded-md border border-border bg-card px-2.5 py-1.5 text-[12.5px] text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            aria-label="\u6392\u5e8f\u65b9\u5f0f"
+            aria-label="排序方式"
           >
             {SORT_OPTIONS.map((o) => (
               <option key={o.key} value={o.key}>{o.label}</option>
@@ -285,7 +285,7 @@ export default function WatchlistPage() {
         <div className="mb-4">
           <div className="mb-2 flex items-center gap-2 text-[11.5px] font-semibold text-destructive">
             <span className="h-px flex-1 bg-destructive/30" />
-            {"\u9700\u8981\u6ce8\u610f"}
+            {"需要注意"}
             <span className="h-px flex-1 bg-destructive/30" />
           </div>
           <div className="flex flex-col gap-2">
@@ -300,7 +300,7 @@ export default function WatchlistPage() {
           {needsAttention.length > 0 && (
             <div className="mb-2 flex items-center gap-2 text-[11.5px] font-semibold text-muted-foreground">
               <span className="h-px flex-1 bg-border" />
-              {"\u4e00\u822c\u8ffd\u8e64"}
+              {"一般追蹤"}
               <span className="h-px flex-1 bg-border" />
             </div>
           )}
@@ -322,7 +322,7 @@ function WatchlistRow({ row }: { row: Row }) {
       <div className="flex flex-wrap items-center gap-3.5 rounded-[var(--r-md)] border border-border bg-card p-3.5 text-muted-foreground shadow-[var(--shadow-card)]">
         <div className="flex min-w-[90px] flex-col gap-0.5">
           <span className="text-xs text-muted-foreground">{stock_id}</span>
-          <span className="text-[11.5px] text-muted-foreground">{"\u672a\u5165\u8a55\u5206\u6c60(20\u65e5\u5747\u984d <3,000\u842c),\u7121\u5feb\u53d6\u8cc7\u6599"}</span>
+          <span className="text-[11.5px] text-muted-foreground">{"未入評分池(20日均額 <3,000萬),無快取資料"}</span>
         </div>
         <WatchlistButton stockId={stock_id} />
       </div>
@@ -355,7 +355,7 @@ function WatchlistRow({ row }: { row: Row }) {
       <div className="flex min-w-[90px] flex-col gap-0.5">
         <span className="text-sm font-bold text-foreground">{data.name}</span>
         <span className="text-[11.5px] text-muted-foreground">
-          {stock_id} {"\u00b7"} {MARKET_LABEL[data.market] ?? data.market}
+          {stock_id} {"·"} {MARKET_LABEL[data.market] ?? data.market}
         </span>
       </div>
 
@@ -372,7 +372,7 @@ function WatchlistRow({ row }: { row: Row }) {
             {m.final}
           </span>
         ) : (
-          <span className="text-[11.5px] text-muted-foreground">{"\u672a\u8a55\u5206"}</span>
+          <span className="text-[11.5px] text-muted-foreground">{"未評分"}</span>
         )}
       </div>
 
@@ -380,7 +380,7 @@ function WatchlistRow({ row }: { row: Row }) {
       <div className="ml-auto flex flex-col gap-0.5 text-[11px]">
         {data.scores?.watch_price != null && (
           <span className="text-[color:var(--accent-2)]">
-            {"\u89c0\u5bdf"} {data.scores.watch_price.toFixed(2)}
+            {"觀察"} {data.scores.watch_price.toFixed(2)}
             {m.watchDist != null && (
               <span className="ml-1 text-muted-foreground">
                 ({m.watchDist > 0 ? "+" : ""}{m.watchDist.toFixed(1)}%)
@@ -390,7 +390,7 @@ function WatchlistRow({ row }: { row: Row }) {
         )}
         {data.scores?.stop_price != null && (
           <span className={cn("text-up", nearStop && "font-bold text-destructive")}>
-            {"\u5931\u6548"} {data.scores.stop_price.toFixed(2)}
+            {"失效"} {data.scores.stop_price.toFixed(2)}
             {m.stopDist != null && (
               <span className={cn("ml-1", nearStop ? "text-destructive" : "text-muted-foreground")}>
                 ({m.stopDist > 0 ? "+" : ""}{m.stopDist.toFixed(1)}%)
@@ -399,7 +399,7 @@ function WatchlistRow({ row }: { row: Row }) {
           </span>
         )}
         {isRisk && (
-          <span className="font-semibold text-destructive">{"\u98a8\u96aa\u5c0f\u5fc3"}</span>
+          <span className="font-semibold text-destructive">{"風險小心"}</span>
         )}
       </div>
 

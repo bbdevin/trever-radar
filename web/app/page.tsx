@@ -136,11 +136,11 @@ export default function RadarPage() {
   if (error) {
     return (
       <div className="py-[46px] text-center text-sm text-muted-foreground">
-        {"\u627e\u4e0d\u5230\u8cc7\u8a0a\u6a9a\u3002\u8acb\u5148\u57f7\u884c\u7ba1\u7dda:"}
+        {"找不到資訊檚。請先執行管線:"}
         <code className="rounded-md border border-border bg-card px-1.5 py-0.5 text-[12.5px] text-[color:var(--ink-2)]">
           python -m radar import-daily
         </code>{" "}
-        {"\u518d"}{" "}
+        {"再"}{" "}
         <code className="rounded-md border border-border bg-card px-1.5 py-0.5 text-[12.5px] text-[color:var(--ink-2)]">
           python -m radar export-json
         </code>
@@ -161,10 +161,10 @@ export default function RadarPage() {
       {/* Compact Daily Brief */}
       <div className="my-3.5 grid auto-cols-[minmax(110px,1fr)] grid-flow-col gap-2 overflow-x-auto [scroll-snap-type:x_proximity] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         <div className="flex snap-start flex-col gap-0.5 rounded-[var(--r-md)] border border-border bg-card px-3 py-2 shadow-[var(--shadow-card)]">
-          <span className="text-[10.5px] text-muted-foreground">{"\u8cc7\u6599\u65e5"}</span>
+          <span className="text-[10.5px] text-muted-foreground">{"資料日"}</span>
           <span className="num text-[15px] font-bold">
             {radar.data_date}
-            {stale.length > 0 && <span className="ml-1.5 text-[11px] font-medium text-warn">{"\u90e8\u5206\u5f85\u66f4\u65b0"}</span>}
+            {stale.length > 0 && <span className="ml-1.5 text-[11px] font-medium text-warn">{"部分待更新"}</span>}
           </span>
         </div>
         {radar.summary.map((m) => (
@@ -172,11 +172,11 @@ export default function RadarPage() {
             key={m.market}
             className="flex snap-start flex-col gap-0.5 rounded-[var(--r-md)] border border-border bg-card px-3 py-2 shadow-[var(--shadow-card)]"
           >
-            <span className="text-[10.5px] text-muted-foreground">{(SOURCE_LABEL[m.market] ?? m.market) + "\u6210\u4ea4"}</span>
+            <span className="text-[10.5px] text-muted-foreground">{(SOURCE_LABEL[m.market] ?? m.market) + "成交"}</span>
             <span className="num text-[15px] font-bold">
               {fmtE8(m.turnover)}
               <span className="ml-1 text-[11px] font-medium text-[color:var(--ink-2)]">
-                <span className="text-up">{"\u2191"}{m.up}</span>{" / "}<span className="text-down">{"\u2193"}{m.down}</span>
+                <span className="text-up">{"↑"}{m.up}</span>{" / "}<span className="text-down">{"↓"}{m.down}</span>
               </span>
             </span>
           </div>
@@ -188,11 +188,11 @@ export default function RadarPage() {
           <AlertDescription className="flex flex-wrap items-baseline gap-2.5 text-[13px] text-foreground">
             <span className="inline-flex shrink-0 items-center gap-1 rounded-md bg-warn/15 px-2 py-0.5 text-[11.5px] font-bold tracking-[0.3px] text-warn">
               <Clock size={12} strokeWidth={1.8} />
-              {"\u5c1a\u672a\u66f4\u65b0"}
+              {"尚未更新"}
             </span>
             <span>
-              {stale.map((s) => `${s.label}\u4eca\u65e5\u5c1a\u672a\u516c\u5e03,\u66ab\u7528 ${s.date}`).join("\uff1b")}
-              {"(\u4f9d\u4ea4\u6613\u6240\u516c\u5e03\u6642\u9593\u5206\u6279\u81ea\u52d5\u66f4\u65b0)"}
+              {stale.map((s) => `${s.label}今日尚未公布,暫用 ${s.date}`).join("；")}
+              {"(依交易所公布時間分批自動更新)"}
             </span>
           </AlertDescription>
         </Alert>
@@ -353,7 +353,7 @@ export default function RadarPage() {
             onClick={signInWithGoogle}
             className="rounded-md border border-border bg-card px-4 py-2 text-sm text-foreground"
           >
-            {"\u4f7f\u7528 Google \u767b\u5165"}
+            {"使用 Google 登入"}
           </button>
         </div>
       ) : shown.length === 0 ? (
@@ -386,7 +386,7 @@ export default function RadarPage() {
             )}
             aria-hidden
           >
-            {"\u25be"}
+            {"▾"}
           </span>
         </button>
         {moneyFlowOpen && (
@@ -399,9 +399,9 @@ export default function RadarPage() {
       <Alert className="mt-1 bg-card">
         <AlertDescription className="flex flex-wrap items-baseline gap-2.5 text-[13px] text-foreground">
           <span className="shrink-0 rounded-md bg-warn/15 px-2 py-0.5 text-[11.5px] font-bold tracking-[0.3px] text-warn">
-            {"\u514d\u8cac\u8072\u660e"}
+            {"免責聲明"}
           </span>
-          <span>{radar.note}{"\u3002\u672c\u7cfb\u7d71\u8cc7\u8a0a\u50c5\u4f9b\u53c3\u8003\uff0c\u4e0d\u69cb\u6210\u6295\u8cc7\u5efa\u8b70\u3002\u5206\u9ede\u8cc7\u6599\u76ee\u524d\u6db5\u84cb\u71b1\u9580\u80a1\uff0c\u6548\u529b\u96a8\u6bcf\u65e5\u6578\u64da\u7d2f\u7a4d\u63d0\u5347\u3002"}</span>
+          <span>{radar.note}{"。本系統資訊僅供參考，不構成投資建議。分點資料目前涵蓋熱門股，效力隨每日數據累積提升。"}</span>
         </AlertDescription>
       </Alert>
     </>

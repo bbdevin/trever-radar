@@ -4,16 +4,16 @@ import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 
 const NAV = [
-  { label: "\u4eca\u65e5\u96f7\u9054", href: "/" },
-  { label: "\u5206\u9ede\u7814\u7a76", href: "/branch" },
-  { label: "\u81ea\u9078\u8ffd\u8e64", href: "/watchlist" },
+  { label: "今日雷達", href: "/" },
+  { label: "分點研究", href: "/branch" },
+  { label: "自選追蹤", href: "/watchlist" },
 ];
 
-/** \u684c\u6a5f\u9802\u90e8\u5c0e\u89bd\uff08\u624b\u6a5f\u96b1\u85cf\uff09\u2014\u2014\u4f7f\u7528 usePathname \u5448\u73fe active state */
+/** 桌機頂部導覽（手機隱藏）——使用 usePathname 呈現 active state */
 export default function DesktopNav() {
   const path = usePathname();
   return (
-    <nav className="hidden gap-0.5 md:flex" aria-label="\u4e3b\u5c0e\u89bd">
+    <nav className="hidden gap-0.5 md:flex" aria-label="主導覽">
       {NAV.map((n) => {
         const isActive = path === n.href || (n.href !== "/" && path.startsWith(n.href));
         return (
