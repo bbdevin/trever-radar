@@ -61,10 +61,11 @@ GitHub Actions(單一 radar-db concurrency)
   → 每週 verified snapshot → private R2(Standard)
 ```
 
-**當前狀態不是上圖完成態**:網站仍公開、R2 尚未建立、restore chain 仍是
-cache → GitHub Release。不得因本文件存在就宣稱已完成私人化或 R2 遷移。
+**當前狀態**:
+- ✅ **網站私人化 (Access) 已完成**:2026-07-13 由使用者於 Cloudflare 後台手動完成。
+- ⏳ **R2 備份機制**:尚未建立,restore chain 仍是 cache → GitHub Release。不得宣稱 R2 遷移已完成。
 
-## 4. Access 實作計畫
+## 4. Access 實作計畫 (已完成)
 
 ### A0. 範圍
 
@@ -98,6 +99,21 @@ Access policy 官方說明與常見誤設:
 - `https://radar.techtrever.com/` → 必須停在 Access。
 - `https://radar.techtrever.com/data/radar.json` → 必須停在 Access。
 - `https://trever-radar.pages.dev/` → 必須停在 Access。
+
+### A3. 執行紀錄 (2026-07-13)
+
+使用者已手動於 Cloudflare Zero Trust 完成以下設定:
+1. **Google IdP 整合**:已在 GCP 申請 OAuth Web Client,並於 Zero Trust > Settings > Authentication 新增 Google 作為 Login method。
+2. **單一 Application 覆蓋全入口**:
+   建立了一個 Access Application,並在 Destinations 加入:
+   - `*.trever-radar.pages.dev` (預覽版)
+   - `trever-radar.pages.dev` (正式 Pages 版)
+   - `radar.techtrever.com` (自訂網域版)
+3. **專屬白名單 Policy**:
+   - Policy: `Allow Members - Cloudflare Pages`
+   - Action: `Allow`
+   - Include: `Emails` -> 使用者的專屬 Gmail
+   此設定確保即使開啟了 Google SSO 按鈕,非授權信箱登入依然會觸發 Access Denied,達成真正的鎖站目的。
 - 任一 preview URL → 必須停在 Access。
 
 使用白名單 email 測試:
