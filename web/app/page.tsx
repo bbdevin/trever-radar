@@ -359,8 +359,8 @@ export default function RadarPage() {
       ) : shown.length === 0 ? (
         <div className="mx-auto max-w-md py-[46px] text-center text-sm leading-relaxed text-muted-foreground">
           {tab === "score" || tab === "mark"
-            ? "\u4eca\u65e5\u7121\u9054\u9580\u6ebb\u7684\u6a19\u7684\u3002\u5be7\u7f3a\u52ff\u6feb\u66f4\u662f\u4e00\u8a2d\u8a0f\u539f\u5247\u2014\u2014\u6c92\u6709\u7b26\u5408\u689d\u4ef6\u6642\u4e0f\u786c\u6e4a,\u4e5f\u53ef\u80fd\u662f\u76e4\u5f8c\u5206\u653e\u5c1a\u672a\u66f4\u65b0\u3002"
-            : "\u4eca\u65e5\u6b64\u699c\u7121\u7b26\u5408\u689d\u4ef6\u7684\u6a19\u7684,\u6216\u8a72\u985e\u8cc7\u6599\u5c1a\u672a\u66f4\u65b0\u3002\u7a0d\u5f8c\u56de\u4f86\u518d\u770b,\u7cfb\u7d71\u6703\u4f9d\u4ea4\u6613\u6240\u516c\u5e03\u6642\u9593\u5206\u6279\u66f4\u65b0\u3002"}
+            ? "今日無達門檻的標的。寧缺勿濫是一大設計原則——沒有符合條件時不硬湊，也可能是盤後分點尚未更新。"
+            : "今日此榜無符合條件的標的，或該類資料尚未更新。稍後回來再看，系統會依交易所公佈時間分批更新。"}
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-2.5 pb-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
@@ -378,7 +378,7 @@ export default function RadarPage() {
           aria-expanded={moneyFlowOpen}
           aria-controls="moneyflow-panel"
         >
-          <span>{"\u5e02\u583a\u8cc7\u91d1\u6d41\u5411"}</span>
+          <span>市場資金流向</span>
           <span
             className={cn(
               "text-muted-foreground transition-transform duration-200",
