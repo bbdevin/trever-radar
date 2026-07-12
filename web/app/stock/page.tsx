@@ -15,6 +15,7 @@ import { ChevronDown, ChevronUp } from "lucide-react";
 import { IconArrowLeft } from "@/components/Icons";
 import KChart from "@/components/KChart";
 import BranchFlowSection, { MAX_SELECTED_BRANCHES } from "@/components/BranchFlowSection";
+import ReasonPill from "@/components/ReasonPill";
 import { Skeleton } from "@/components/ui/skeleton";
 import WatchlistButton from "@/components/WatchlistButton";
 import type { StockJson } from "@/lib/types";
@@ -187,7 +188,8 @@ function StockView() {
 /** IA-2 + F3: Decision Header — shown before chart to answer "why is this here + when to exit" */
 function StockDecisionHeader({ data, close }: { data: StockJson; close: number }) {
   const scores = data.scores;
-  const reasons = (data.reasons ?? []).slice(0, 3);
+  // 個股頁詳情區不設家族數上限;帶 code 的 raw_reasons 用來判語意家族色,缺時退回純文字(中性)。
+  const reasons = (data.raw_reasons?.length ? data.raw_reasons : (data.reasons ?? []).map((text) => ({ text, code: undefined }))).slice(0, 3);
   const risks = (data.risks ?? []).slice(0, 2);
   const watchPrice = scores?.watch_price;
   const stopPrice = scores?.stop_price;
@@ -243,26 +245,14 @@ function StockDecisionHeader({ data, close }: { data: StockJson; close: number }
         </div>
       </div>
 
-      {/* Reasons */}
-      {reasons.length > 0 && (
-        <div className="mb-2 flex flex-col gap-1">
+      {/* Reasons + Risks(WP-H2 語意家族色 pills;詳情區不設家族數上限) */}
+      {(reasons.length > 0 || risks.length > 0) && (
+        <div className="flex flex-wrap gap-1.5">
           {reasons.map((r, i) => (
-            <div key={i} className="flex items-start gap-2 text-[12.5px] text-[color:var(--ink-2)]">
-              <span className="mt-[3px] shrink-0 text-[9px] text-muted-foreground">{"▶"}</span>
-              <span>{r}</span>
-            </div>
+            <ReasonPill key={`reason-${i}`} code={r.code} text={r.text} />
           ))}
-        </div>
-      )}
-
-      {/* Risks */}
-      {risks.length > 0 && (
-        <div className="flex flex-col gap-1">
           {risks.map((r, i) => (
-            <div key={i} className="flex items-start gap-2 text-[12.5px] text-destructive">
-              <span className="mt-[3px] shrink-0 text-[9px]">{"⚠"}</span>
-              <span>{r}</span>
-            </div>
+            <ReasonPill key={`risk-${i}`} text={r} risk />
           ))}
         </div>
       )}
@@ -272,7 +262,7 @@ function StockDecisionHeader({ data, close }: { data: StockJson; close: number }
 
 function BranchPanel({ data }: { data: StockJson }) {
   const score = data.scores?.branch ?? null;
-  const branchReasons = (data.reasons ?? []).filter((t) => t.includes("分點"));
+  const branchReasons = (data.raw_reasons ?? []).filter((r) => r.text.includes("分點"));
 
   if (!data.branches.length && !data.branch_history?.length && score == null) {
     return (
@@ -333,11 +323,7 @@ function TechnicalPanel({ data }: { data: StockJson }) {
       )}
       <div className="flex flex-wrap gap-1.5 md:col-span-2">
         {t.reasons.length > 0 ? (
-          t.reasons.map((r) => (
-            <span key={r.code} className="rounded-full border border-[color:var(--line)] px-2 py-[3px] text-[11.5px] text-[color:var(--ink-2)]">
-              {r.text}
-            </span>
-          ))
+          t.reasons.map((r) => <ReasonPill key={r.code} code={r.code} text={r.text} />)
         ) : (
           <span className="rounded-full border border-[color:var(--line)] px-2 py-[3px] text-[11.5px] text-[color:var(--ink-2)]">未觸發技術加分條件</span>
         )}

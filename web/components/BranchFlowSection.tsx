@@ -1,9 +1,10 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import type { StockJson } from "@/lib/types";
+import type { ReasonItem, StockJson } from "@/lib/types";
 import { fmtLots } from "@/lib/format";
 import { cn, pillTabClass } from "@/lib/utils";
+import ReasonPill from "@/components/ReasonPill";
 
 const BRANCH_RANGES = [
   { label: "1日", days: 1 },
@@ -38,7 +39,7 @@ export default function BranchFlowSection({
   branches: StockJson["branches"];
   branchHistory: StockJson["branch_history"];
   score?: number | null;
-  reasons?: string[];
+  reasons?: ReasonItem[];
   heading?: string;
   /** 已勾選分點名集合(K 線視圖用,狀態上提到個股頁);與 onToggleSelect 同時傳入才顯示 checkbox */
   selected?: Set<string>;
@@ -148,11 +149,7 @@ export default function BranchFlowSection({
       {reasons != null && (
         <div className="flex flex-wrap gap-1.5">
           {reasons.length > 0 ? (
-            reasons.map((t) => (
-              <span key={t} className="rounded-full border border-[color:var(--line)] px-2 py-[3px] text-[11.5px] text-[color:var(--ink-2)]">
-                {t}
-              </span>
-            ))
+            reasons.map((r) => <ReasonPill key={r.code} code={r.code} text={r.text} />)
           ) : (
             <span className="rounded-full border border-[color:var(--line)] px-2 py-[3px] text-[11.5px] text-[color:var(--ink-2)]">
               今日未觸發分點加分條件

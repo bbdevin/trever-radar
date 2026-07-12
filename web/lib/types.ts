@@ -75,6 +75,7 @@ export interface StockJson {
   candles: Candle[];
   scores: ScoreBreakdown | null;
   reasons: string[];
+  raw_reasons?: ReasonItem[]; // 帶 code 的原始理由(JSON 既有);前端用 code 前綴判語意家族色
   risks: string[];
   technical: TechnicalSummary | null;
   branches: BranchRow[];

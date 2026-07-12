@@ -32,3 +32,20 @@
 - 新頁面/新元件:直接照本檔實作。
 - 改既有頁面:順手把**被改到的區塊**對齊本檔(觸控高度、truncate、動畫屬性…),不擴大改動範圍。
 - 與 `docs/07_frontend_pages.md` 衝突時:資訊架構以 07 為準,視覺/互動細節以本檔為準。
+
+## 4. 理由/風險語意色彩層次(WP-H2,全站唯一實作:`web/components/ReasonPill.tsx`)
+
+任何渲染 reason/risk(`{code, text}`)的地方**一律用 `ReasonPill`**,不得自刻灰字 span。家族由 `code` 前綴判定(`reasonFamily()`),純底 `/12` 透明度 + 家族色文字 + 圓點前綴(色非唯一訊號);風險家族改用 `AlertTriangle` icon。所有色皆為既有 token,**零新色票**。
+
+| 家族 | code 前綴 | Token | 呈現 |
+|---|---|---|---|
+| 籌碼/分點 | `B*`、`I*`(法人)、`S11`–`S13` | `--accent-2` 青 | `bg-[color:var(--accent-2)]/12` + 青字 + 青圓點 |
+| 技術 | `T\d`(T1–T5)、`S1`–`S10` | `--primary` 藍 | `bg-primary/12` + 藍字 + 藍圓點 |
+| 權證 | `W*` | `--warn` 琥珀 | `bg-warn/12` + 琥珀字 + 琥珀圓點 |
+| 風險 | `R*`,或呼叫端 `risk` 參數強制 | `--destructive` 紅 | `bg-destructive/12` + 紅字 + `AlertTriangle` icon |
+| 題材/其他 | 無 code、`T_THEME_*` 等 | `--ink-2` 中性 | 描邊 pill + 米/深灰米字 + 中性圓點 |
+
+- **純文字理由(無 code)** 一律歸中性;呼叫端已知為風險時傳 `risk` 強制紅家族(風險列的純文字沒有 code)。
+- **每卡語意色家族 ≤3**:僅 **卡片層(StockCard)** 套用——蒐集全部 pill,保留出現順序前 3 個家族的 pill,第 4 個家族起收「+N」(N=被摺家族數,`title` 列出被摺理由)。**個股頁詳情區(決策標頭/技術摘要/分點區)不設限**。
+- **層次規則**:主要資訊用 `foreground`、語意資訊用家族色、只有輔助說明(標籤、單位、日期)才 `muted-foreground`。改到的區塊若有「重要卻被 muted」的文字,小幅提回 `foreground`/家族色,不重排版面。
+- **雙主題可讀**:家族色文字用的 token(`--accent-2`/`--primary`/`--warn`/`--destructive`/`--ink-2`)於 `:root` 為淺色可讀值(對白 ≥4.5:1)、`.dark` 為深色調值;`/12` 淡底僅微幅染色,pill 文字對背景對比維持 AA。

@@ -1,6 +1,7 @@
 import { ShieldCheck, Zap } from "lucide-react";
 import Sparkline from "@/components/Sparkline";
 import WatchlistButton from "@/components/WatchlistButton";
+import ReasonPill, { reasonFamily, type ReasonFamily } from "@/components/ReasonPill";
 import type { RadarStock } from "@/lib/types";
 import { MARKET_LABEL, chgClass, fmtE8, fmtLots, fmtPct, fmtX } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -121,16 +122,7 @@ export default function StockCard({ s, index = 99 }: { s: RadarStock; index?: nu
                 {s.scores.stop_price != null && <span className="text-up">失效 {s.scores.stop_price.toFixed(2)}</span>}
               </div>
             )}
-            {s.reasons.slice(0, 2).map((t) => (
-              <div className="text-xs leading-[1.45] text-[color:var(--ink-2)]" key={t}>
-                {t}
-              </div>
-            ))}
-            {s.risks.slice(0, 1).map((t) => (
-              <div className="text-xs text-up" key={t}>
-                {t}
-              </div>
-            ))}
+            <CardReasonPills s={s} />
           </div>
         ) : s.warrant ? (
           <div className="grid grid-cols-[1.35fr_0.55fr_0.8fr_0.55fr] items-center gap-1.5 text-muted-foreground">
@@ -145,5 +137,38 @@ export default function StockCard({ s, index = 99 }: { s: RadarStock; index?: nu
         )}
       </div>
     </a>
+  );
+}
+
+// WP-H2 卡片層理由/風險 pills:最多 2 理由 + 1 風險;每卡語意色家族 ≤3,第 4 個家族起收「+N」(title 展示)。
+function CardReasonPills({ s }: { s: RadarStock }) {
+  const rawReasons = s.raw_reasons?.length ? s.raw_reasons : s.reasons.map((text) => ({ text, code: undefined }));
+  const items: { code?: string; text: string; risk: boolean; fam: ReasonFamily }[] = [
+    ...rawReasons.slice(0, 2).map((r) => ({ code: r.code, text: r.text, risk: false, fam: reasonFamily(r.code) })),
+    ...s.risks.slice(0, 1).map((text) => ({ text, risk: true, fam: "risk" as ReasonFamily })),
+  ];
+  if (items.length === 0) return null;
+
+  const famOrder: ReasonFamily[] = [];
+  for (const it of items) if (!famOrder.includes(it.fam)) famOrder.push(it.fam);
+  const allowed = new Set(famOrder.slice(0, 3));
+  const shown = items.filter((it) => allowed.has(it.fam));
+  const hidden = items.filter((it) => !allowed.has(it.fam));
+  const hiddenFamCount = famOrder.length - allowed.size;
+
+  return (
+    <div className="flex flex-wrap items-center gap-1">
+      {shown.map((it, i) => (
+        <ReasonPill key={`${it.text}-${i}`} code={it.risk ? undefined : it.code} text={it.text} risk={it.risk} />
+      ))}
+      {hiddenFamCount > 0 && (
+        <span
+          title={hidden.map((h) => h.text).join(" / ")}
+          className="inline-flex items-center rounded-full border border-[color:var(--line)] px-2 py-[3px] text-[11.5px] font-medium text-muted-foreground"
+        >
+          +{hiddenFamCount}
+        </span>
+      )}
+    </div>
   );
 }
