@@ -94,7 +94,7 @@ jobs:
         working-directory: pipeline
         run: python -m radar compute-indicators --all
 
-      - name: Recent gap-fill (last 10 trading days: quotes → insti → margin → indicators → scores)
+      - name: "Recent gap-fill (last 10 trading days: quotes → insti → margin → indicators → scores)"
         if: inputs.task == 'backfill-recent'
         working-directory: pipeline
         run: |
@@ -104,7 +104,7 @@ jobs:
           python -m radar compute-indicators --all --days 12
           python -m radar compute-scores
 
-      - name: Branch stats (compute-branch-stats; no API; safe on 7 GB Actions RAM)
+      - name: "Branch stats (compute-branch-stats; no API; safe on 7 GB Actions RAM)"
         if: inputs.task == 'branch-stats'
         working-directory: pipeline
         run: python -m radar compute-branch-stats
