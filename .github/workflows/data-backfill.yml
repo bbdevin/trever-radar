@@ -98,9 +98,10 @@ jobs:
         if: inputs.task == 'backfill-recent'
         working-directory: pipeline
         run: |
-          python -m radar backfill --days 10 --datasets quotes
-          python -m radar backfill --days 10 --datasets insti
-          python -m radar backfill --days 10 --datasets margin
+          python -m radar backfill --days 10 --datasets quotes,insti,margin
+          python -m radar import-daily --date 20260709 --datasets insti,margin || true
+          python -m radar import-daily --date 20260713 --datasets insti,margin || true
+          python -m radar aggregate-warrants
           python -m radar compute-indicators --all --days 12
           python -m radar compute-scores
 
