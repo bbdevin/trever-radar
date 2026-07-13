@@ -1,6 +1,6 @@
 "use client";
 
-import { forwardRef, useMemo, useState, useEffect, useRef } from "react";
+import { forwardRef, useMemo, useState, useEffect } from "react";
 import type { ReasonItem, StockJson } from "@/lib/types";
 import { fmtLots } from "@/lib/format";
 import { cn, pillTabClass } from "@/lib/utils";
@@ -42,6 +42,8 @@ const BranchFlowSection = forwardRef<
     /** 已勾選分點名集合(K 線視圖用,狀態上提到個股頁);與 onToggleSelect 同時傳入才顯示 checkbox */
     selected?: Set<string>;
     onToggleSelect?: (name: string) => void;
+    /** 手機版浮動回饋 chip 點擊後捲動回的目標元素 id(通常為 KChart 容器)*/
+    chartAnchorId?: string;
   }
 >(function BranchFlowSection(
   {
@@ -53,38 +55,29 @@ const BranchFlowSection = forwardRef<
     id,
     selected,
     onToggleSelect,
+    chartAnchorId,
   },
   ref
 ) {
   const [days, setDays] = useState<number | "custom">(5);
   const [customDays, setCustomDays] = useState<string>("5");
   const [expandedBranch, setExpandedBranch] = useState<string | null>(null);
-  // 手機版：買/賣超 segmented tab（預設買超）
+  // 手機版:買/賣超 segmented tab(預設買超)+ 預設前 8 列、可展開全部
   const [mobileTab, setMobileTab] = useState<"buy" | "sell">("buy");
-  // 勾選回饋 chip 顯示狀態（手機版：勾選後 3 秒顯示）
-  const [showSelectFeedback, setShowSelectFeedback] = useState(false);
-  const feedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [showAllMobile, setShowAllMobile] = useState(false);
+  // 手機版偵測(<768px)。本元件僅在資料載入後於 client 渲染(SSR 顯示骨架屏),初始化讀 matchMedia 無 hydration mismatch。
+  const [isMobile, setIsMobile] = useState(
+    () => typeof window !== "undefined" && !window.matchMedia("(min-width:768px)").matches,
+  );
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const mq = window.matchMedia("(min-width:768px)");
+    const on = () => setIsMobile(!mq.matches);
+    mq.addEventListener("change", on);
+    return () => mq.removeEventListener("change", on);
+  }, []);
 
   const activeDays = days === "custom" ? parseInt(customDays) || 1 : days;
-
-  // 勾選分點時觸發手機回饋 chip
-  const prevSelectedSize = useRef(selected?.size ?? 0);
-  useEffect(() => {
-    const cur = selected?.size ?? 0;
-    if (cur !== prevSelectedSize.current) {
-      prevSelectedSize.current = cur;
-      if (cur > 0) {
-        setShowSelectFeedback(true);
-        if (feedbackTimerRef.current) clearTimeout(feedbackTimerRef.current);
-        feedbackTimerRef.current = setTimeout(() => setShowSelectFeedback(false), 3000);
-      } else {
-        setShowSelectFeedback(false);
-      }
-    }
-    return () => {
-      if (feedbackTimerRef.current) clearTimeout(feedbackTimerRef.current);
-    };
-  }, [selected?.size]);
 
   const agg = useMemo(() => {
     if (!branchHistory?.length) {
@@ -153,6 +146,11 @@ const BranchFlowSection = forwardRef<
   const selectable = onToggleSelect != null && !!branchHistory?.length;
   const atLimit = (selected?.size ?? 0) >= MAX_SELECTED_BRANCHES;
   const selectedCount = selected?.size ?? 0;
+  // 手機版預設前 8 列,可展開全部;桌機版恆顯示全部(逐位元不變)
+  const MOBILE_ROW_LIMIT = 8;
+  const collapse = isMobile && !showAllMobile;
+  const buyRows = collapse ? agg.top13Buy.slice(0, MOBILE_ROW_LIMIT) : agg.top13Buy;
+  const sellRows = collapse ? agg.top13Sell.slice(0, MOBILE_ROW_LIMIT) : agg.top13Sell;
 
   return (
     <section
@@ -208,14 +206,14 @@ const BranchFlowSection = forwardRef<
       <div className="mb-3.5">
         <div
           role="tablist"
-          className="flex w-fit max-w-full flex-nowrap overflow-x-auto gap-0.5 rounded-full border border-border bg-card p-[3px] scrollbar-hide"
+          className="flex w-fit flex-wrap gap-0.5 rounded-full border border-border bg-card p-[3px] max-md:w-full max-md:flex-nowrap max-md:overflow-x-auto max-md:scrollbar-hide max-md:[&>*]:shrink-0"
         >
           {BRANCH_RANGES.map((r) => (
-            <button key={r.days} role="tab" aria-selected={days === r.days} className={cn(pillTabClass(days === r.days), "shrink-0")} onClick={() => setDays(r.days)}>
+            <button key={r.days} role="tab" aria-selected={days === r.days} className={pillTabClass(days === r.days)} onClick={() => setDays(r.days)}>
               {r.label}
             </button>
           ))}
-          <div className={cn("inline-flex shrink-0 items-center gap-1.5 rounded-full pr-1", days === "custom" && "bg-muted shadow-[inset_0_0_0_1px_var(--border-strong)]")}>
+          <div className={cn("inline-flex items-center gap-1.5 rounded-full pr-1", days === "custom" && "bg-muted shadow-[inset_0_0_0_1px_var(--border-strong)]")}>
             <button role="tab" aria-selected={days === "custom"} className={pillTabClass(false)} onClick={() => setDays("custom")}>
               自訂
             </button>
@@ -224,7 +222,7 @@ const BranchFlowSection = forwardRef<
                 type="number"
                 inputMode="numeric"
                 min={1}
-                max={480}
+                max={240}
                 value={customDays}
                 onChange={(e) => setCustomDays(e.target.value)}
                 className="num w-[50px] rounded-md border border-[color:var(--line)] bg-card px-1.5 py-0.5 text-xs text-foreground outline-none focus:border-primary"
@@ -278,7 +276,7 @@ const BranchFlowSection = forwardRef<
         <div className={cn("flex flex-col gap-2.5 rounded-[var(--r-md)] border border-border bg-secondary p-3", mobileTab !== "buy" && "hidden md:flex")}>
           <h3 className="mb-1 border-b border-[color:var(--line)] pb-2 text-center text-[14.5px] font-bold text-up">前 13 大買超分點</h3>
           <div className="flex flex-col gap-1.5">
-            {agg.top13Buy.map((b) => (
+            {buyRows.map((b) => (
               <BranchRow
                 key={b.name}
                 b={b}
@@ -291,12 +289,21 @@ const BranchFlowSection = forwardRef<
             ))}
             {agg.top13Buy.length === 0 && <div className="py-[46px] text-center text-sm text-muted-foreground">無買超紀錄</div>}
           </div>
+          {agg.top13Buy.length > MOBILE_ROW_LIMIT && (
+            <button
+              className="md:hidden mt-0.5 min-h-11 rounded-[var(--r-sm)] border border-[color:var(--line)] text-[12.5px] font-semibold text-[color:var(--ink-2)] hover:bg-card"
+              onClick={() => setShowAllMobile((v) => !v)}
+              aria-expanded={showAllMobile}
+            >
+              {showAllMobile ? "收合" : `展開全部 ${agg.top13Buy.length}`}
+            </button>
+          )}
         </div>
         {/* 賣超欄：手機版只在 sell tab 時顯示 */}
         <div className={cn("flex flex-col gap-2.5 rounded-[var(--r-md)] border border-border bg-secondary p-3", mobileTab !== "sell" && "hidden md:flex")}>
           <h3 className="mb-1 border-b border-[color:var(--line)] pb-2 text-center text-[14.5px] font-bold text-down">前 13 大賣超分點</h3>
           <div className="flex flex-col gap-1.5">
-            {agg.top13Sell.map((b) => (
+            {sellRows.map((b) => (
               <BranchRow
                 key={b.name}
                 b={b}
@@ -309,6 +316,15 @@ const BranchFlowSection = forwardRef<
             ))}
             {agg.top13Sell.length === 0 && <div className="py-[46px] text-center text-sm text-muted-foreground">無賣超紀錄</div>}
           </div>
+          {agg.top13Sell.length > MOBILE_ROW_LIMIT && (
+            <button
+              className="md:hidden mt-0.5 min-h-11 rounded-[var(--r-sm)] border border-[color:var(--line)] text-[12.5px] font-semibold text-[color:var(--ink-2)] hover:bg-card"
+              onClick={() => setShowAllMobile((v) => !v)}
+              aria-expanded={showAllMobile}
+            >
+              {showAllMobile ? "收合" : `展開全部 ${agg.top13Sell.length}`}
+            </button>
+          )}
         </div>
       </div>
 
@@ -318,16 +334,19 @@ const BranchFlowSection = forwardRef<
         </div>
       )}
 
-      {/* 手機版：勾選分點後的浮動回饋 chip（固定在畫面右下角，3秒後自動消失）*/}
-      {selectable && showSelectFeedback && selectedCount > 0 && (
-        <div
-          className="fixed bottom-20 right-4 z-50 flex items-center gap-2 rounded-full border border-[color:var(--border-strong)] bg-card px-3.5 py-2 text-[12.5px] font-semibold text-foreground shadow-[0_4px_16px_rgba(0,0,0,0.4)] md:hidden"
-          role="status"
-          aria-live="polite"
+      {/* 手機版:勾選分點後右下浮動回饋 chip;N>0 常駐(點擊捲回上方 KChart),N=0 隱藏;桌機不顯示(圖就在上方) */}
+      {selectable && selectedCount > 0 && (
+        <button
+          type="button"
+          onClick={() => {
+            if (chartAnchorId) document.getElementById(chartAnchorId)?.scrollIntoView({ behavior: "smooth", block: "start" });
+          }}
+          className="fixed bottom-20 right-4 z-30 flex items-center gap-2 rounded-full border border-[color:var(--border-strong)] bg-card px-3.5 py-2 text-[12.5px] font-semibold text-foreground shadow-[0_4px_16px_rgba(0,0,0,0.4)] md:hidden"
+          aria-label={`已疊圖 ${selectedCount} 檔,點擊回到上方圖表`}
         >
           <span className="h-2 w-2 rounded-full bg-primary" />
           已疊圖 {selectedCount} 檔 ↑
-        </div>
+        </button>
       )}
     </section>
   );

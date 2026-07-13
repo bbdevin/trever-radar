@@ -42,7 +42,9 @@
 - 前端:sparkline 元件支援兩型(分時線/30日線),tooltip 免(卡片層級);維持 CLS=0(容器定高)。
 - 驗收:14:10 後當日分時上線;缺資料 fallback 正常;JSON 體積增量回報(60 點 × 200 檔 ≈ 可忽略)。
 
-## WP-H4 個股頁分點資訊統一(去重疊)
+## WP-H4 個股頁分點資訊統一(去重疊) ✅ 2026-07-14
+
+> ✅ 完成(A 案):移除「分點」tab(tabs 收為 K線/權證),K 線視圖下方 BranchFlowSection 升級為唯一分點區——標頭併入分點分徽章(`scores.branch`)與分點理由 pills(B*/S11-13,ReasonPill 家族色);期間聚合/勾選疊圖/展開歷史柱/誠實限制全數保留。`#branch` 錨點導向 K 線視圖並 `scrollIntoView` 分點區(原 tab 為純 state 無深連結,此為額外相容加碼)。BranchPanel 已刪除。
 
 **現況重疊**:「分點」tab = BranchFlowSection(與 K 線視圖同一份)+ 分點分卡 + 理由風險 → 使用者感到兩處重複。
 
@@ -53,7 +55,9 @@
 - **B 案(保留 tab)**:tab 只放「當日前15大明細表」不再放聚合區——仍有兩個入口,不推薦;僅當 A 案實作中發現 K 線視圖過長(手機)才退回。
 - 驗收:功能零遺失(分點分/理由風險/期間聚合/勾選疊圖/誠實限制都在)、舊連結不 404、375 捲動順暢。
 
-## WP-H5 籌碼K線圖 + 分點進出明細的手機版(2026-07-12 使用者追加)
+## WP-H5 籌碼K線圖 + 分點進出明細的手機版(2026-07-12 使用者追加) ✅ 2026-07-14
+
+> ✅ 完成(桌機全部 media/斷點 gated,逐位元不變)。KChart:手機(<768px)子 pane 擇一——主圖+成交量常駐,pane 2 放 副圖/主力/分點三選一(MACD/KD/RSI chip 兼作「副圖」返回鍵、獨立 localStorage `trever.chart.mobilepane.v1`、分點無勾選 disabled);總高 clamp(360,52vh,480),stretch 13/4/11 使子 pane ≥120px;`handleScroll.vertTouchDrag=false` 垂直手勢還頁面;游標數值改圖表上方 compact legend;工具 chips 手機單行 `overflow-x-auto`+各 chip min-h-11(桌機維持換行);跨斷點以 `matchMedia` 重建 chart。BranchFlowSection:手機買/賣超 segmented tabs(預設買超)單欄、前 8 列+展開全部、期間 pills 單行橫滑、自訂 N `inputmode=numeric`、勾選後右下 fixed chip「已疊圖 N 檔 ↑」(z-30,點擊 scrollIntoView 回 KChart,N=0 隱藏,桌機不顯示)。
 
 **診斷**:①五個 pane(主圖/成交量/副圖/主力買賣超/分點進出)在 375px 全部堆疊,每 pane 僅 ~50–70px 高,不可讀;②lightweight-charts 觸控:垂直拖曳被圖表吃掉,與頁面捲動打架;③pane 內 11px 水印文字在小 pane 壓到資料;④工具 chips(均線/布林/副圖/主力/D-W-M/區間)手機換行成三四行;⑤BranchFlowSection 買賣兩列表堆疊,捲動過長,勾選後看不到上方圖表的變化。
 
@@ -86,9 +90,9 @@
 |---|---|---|---|
 | H2 色彩層次 | 無 | 1 天 | ✅ **完成 2026-07-12**(commit 5104065,ReasonPill 全站家族色,verifier CONFIRMED) |
 | H1 題材分組 | 無 | 1 天 | ✅ |
-| H4 分點統一 | 無 | 0.5–1 天 | ✅ |
+| H4 分點統一 | 無 | 0.5–1 天 | ✅ **完成 2026-07-14** |
 | H3 當日走勢 | ~~等決策~~ **A 案已批准(2026-07-12)**;實作首步 = 使用者親自新增 `RADAR_FUGLE_TOKEN` secret | 1.5 天 | ✅(secret 設好即可動工) |
-| H5 圖表/分點手機版 | 無;建議與 H4 同一 executor(同批檔案) | 1.5 天 | ✅ |
+| H5 圖表/分點手機版 | 無;建議與 H4 同一 executor(同批檔案) | 1.5 天 | ✅ **完成 2026-07-14** |
 
 四包彼此獨立可並行;與 docs/26(降序)/27(等回灌)不衝突,屬純前端+輕 export,**隨時可開工**。
 

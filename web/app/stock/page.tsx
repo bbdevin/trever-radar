@@ -206,6 +206,7 @@ function StockView() {
           selected={selectedBranches}
           onToggleSelect={toggleBranch}
           id="branch"
+          chartAnchorId="stock-kchart"
         />
       )}
     </>

@@ -99,6 +99,10 @@
 @media (min-width: 768px) { .container { padding: 0 20px; } }
 @media (min-width: 1440px) { .container { max-width: 1320px; } }
 
+/* 手機橫滑 chips/pills 列隱藏捲軸(WP-H5;桌機不受影響,僅 max-md 情境使用) */
+.scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+.scrollbar-hide::-webkit-scrollbar { display: none; }
+
 /* 台股慣例紅漲綠跌:KChart 十字游標 legend 用 innerHTML 動態插入,非 JSX className,
    所以保留這三個 bare class(其餘元件的漲跌色一律用 Tailwind text-up/text-down)。 */
 .up { color: var(--up); }

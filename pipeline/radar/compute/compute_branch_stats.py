@@ -142,6 +142,12 @@ def compute_all():
     engine = get_engine()
     now = datetime.now(ZoneInfo(config.TZ)).isoformat(timespec="seconds")
 
+    # 分點層級 pool(以事件為單位)。串流式逐檔累加,峰值記憶體 = 單檔資料 + 累加器。
+    branch_events: dict[str, list[dict]] = defaultdict(list)
+    branch_obs: dict[str, list[tuple[float, float]]] = defaultdict(list)
+    branch_amount: dict[str, float] = defaultdict(float)
+    stock_stats: dict[tuple[str, str], dict] = {}
+
     with engine.connect() as conn:
         as_of = conn.execute(text("SELECT MAX(date) FROM branch_trades")).scalar()
         if not as_of:
@@ -151,118 +157,106 @@ def compute_all():
         tracked = {r[0]: r[1] for r in conn.execute(text(
             "SELECT branch_name, source FROM tracked_branches"))}
 
-        # 只取個股(排除權證與指數),比照 json_export 的個股判定。
-        trade_rows = conn.execute(text("""
-            SELECT b.branch_name, b.stock_id, b.date, b.net_lots, b.sell_lots, b.pct
+        # 只取個股(排除權證與指數)的 distinct stock_id,比照 json_export 的個股判定。
+        stock_ids = [r[0] for r in conn.execute(text("""
+            SELECT DISTINCT b.stock_id
             FROM branch_trades b
             JOIN stocks s ON s.id = b.stock_id
             WHERE s.type = 'stock' AND s.name NOT LIKE '%指%'
-        """)).fetchall()
-        if not trade_rows:
+            ORDER BY b.stock_id
+        """)).fetchall()]
+        if not stock_ids:
             print(f"branch stats @ {as_of}: no individual-stock branch trades.")
             return
 
-        # 每股價格序列:交易日曆(判連續)、還原 candle(前瞻報酬/買點分位)、未還原收盤(金額)。
-        stock_ids = sorted({r[1] for r in trade_rows})
-        stock_ctx: dict[str, dict] = {}
+        as_of_d = date_cls.fromisoformat(as_of)
+        cutoff90 = (as_of_d - timedelta(days=90)).isoformat()
+        cutoff2y = (as_of_d - timedelta(days=730)).isoformat()
+
+        # 逐檔處理:載入單股價格序列與其 branch_trades 列 → 算完累加 → 迭代結束即釋放。
+        # branch_trades PK 前導為 stock_id,WHERE b.stock_id=:sid 走 PK,不需額外索引。
         for sid in stock_ids:
             prows = conn.execute(text(
                 "SELECT date, open, close, adj_factor FROM daily_prices "
                 "WHERE stock_id = :sid AND close IS NOT NULL ORDER BY date"
             ), {"sid": sid}).fetchall()
-            dates = [r[0] for r in prows]
-            stock_ctx[sid] = {
-                "dates": dates,
-                "date_index": {d: i for i, d in enumerate(dates)},
-                "adj_candles": [
-                    {"date": r[0], "open": (r[1] or 0) * (r[3] or 1.0),
-                     "close": (r[2] or 0) * (r[3] or 1.0)}
-                    for r in prows
-                ],
-                "adj_close": [(r[2] or 0) * (r[3] or 1.0) for r in prows],
-                "close_by_date": {r[0]: r[2] for r in prows},
-            }
+            # 每股價格序列:交易日曆(判連續)、還原 candle(前瞻報酬/買點分位)、未還原收盤(金額)。
+            trading_dates = [r[0] for r in prows]
+            date_index = {d: i for i, d in enumerate(trading_dates)}
+            adj_candles = [
+                {"date": r[0], "open": (r[1] or 0) * (r[3] or 1.0),
+                 "close": (r[2] or 0) * (r[3] or 1.0)}
+                for r in prows
+            ]
+            adj_close = [(r[2] or 0) * (r[3] or 1.0) for r in prows]
+            close_by_date = {r[0]: r[2] for r in prows}
 
-    by_bs: dict[tuple[str, str], dict[str, dict]] = defaultdict(dict)
-    for br, sid, d, net, sell, pct in trade_rows:
-        by_bs[(br, sid)][d] = {"net": net, "sell": sell, "pct": pct}
+            strade_rows = conn.execute(text(
+                "SELECT branch_name, date, net_lots, sell_lots, pct "
+                "FROM branch_trades WHERE stock_id = :sid"
+            ), {"sid": sid}).fetchall()
 
-    as_of_d = date_cls.fromisoformat(as_of)
-    cutoff90 = (as_of_d - timedelta(days=90)).isoformat()
-    cutoff2y = (as_of_d - timedelta(days=730)).isoformat()
+            by_branch: dict[str, dict[str, dict]] = defaultdict(dict)
+            for br, d, net, sell, pct in strade_rows:
+                by_branch[br][d] = {"net": net, "sell": sell, "pct": pct}
 
-    # 分點層級 pool(以事件為單位)。
-    branch_events: dict[str, list[dict]] = defaultdict(list)
-    branch_obs: dict[str, list[tuple[float, float]]] = defaultdict(list)
-    branch_amount: dict[str, float] = defaultdict(float)
-    stock_stats: dict[tuple[str, str], dict] = {}
+            for br, datemap in by_branch.items():
+                qual_dates = sorted(
+                    d for d, row in datemap.items()
+                    if (row["net"] or 0) > 0 and row["pct"] is not None and row["pct"] >= QUAL_PCT
+                )
+                if not qual_dates:
+                    continue
 
-    for (br, sid), datemap in by_bs.items():
-        ctx = stock_ctx.get(sid)
-        if not ctx:
-            continue
-        date_index = ctx["date_index"]
-        trading_dates = ctx["dates"]
-        adj_close = ctx["adj_close"]
-        adj_candles = ctx["adj_candles"]
-        close_by_date = ctx["close_by_date"]
+                # 隔日沖觀察:每個資格買超日 → 次一交易日同分點賣出張(無紀錄=0)。
+                obs: list[tuple[float, float]] = []
+                for qd in qual_dates:
+                    net = datemap[qd]["net"]
+                    idx = date_index.get(qd)
+                    next_sell = 0
+                    if idx is not None and idx + 1 < len(trading_dates):
+                        nrow = datemap.get(trading_dates[idx + 1])
+                        next_sell = (nrow["sell"] if nrow else 0) or 0
+                    obs.append((net, next_sell))
+                st_daytrade, _ = daytrade_flag(obs)
 
-        qual_dates = sorted(
-            d for d, row in datemap.items()
-            if (row["net"] or 0) > 0 and row["pct"] is not None and row["pct"] >= QUAL_PCT
-        )
-        if not qual_dates:
-            continue
+                # 合併事件 + 前瞻報酬 + 買點分位。
+                events = merge_consecutive_events(qual_dates, date_index)
+                ev_records: list[dict] = []
+                for ed in events:
+                    perf = forward_returns(adj_candles, ed)
+                    fwd5 = perf["fwd_5d"] if perf else None
+                    idx = date_index.get(ed)
+                    pctile = 0.5
+                    if idx is not None:
+                        window = [c for c in adj_close[max(0, idx - 19):idx + 1] if c is not None]
+                        if window:
+                            pctile = price_percentile(adj_close[idx], min(window), max(window))
+                    ev_records.append({"date": ed, "fwd5": fwd5, "pctile": pctile})
 
-        # 隔日沖觀察:每個資格買超日 → 次一交易日同分點賣出張(無紀錄=0)。
-        obs: list[tuple[float, float]] = []
-        for qd in qual_dates:
-            net = datemap[qd]["net"]
-            idx = date_index.get(qd)
-            next_sell = 0
-            if idx is not None and idx + 1 < len(trading_dates):
-                nrow = datemap.get(trading_dates[idx + 1])
-                next_sell = (nrow["sell"] if nrow else 0) or 0
-            obs.append((net, next_sell))
-        st_daytrade, _ = daytrade_flag(obs)
+                matured = [e["fwd5"] for e in ev_records if e["fwd5"] is not None]
+                win_rate = (100.0 * sum(1 for f in matured if f > 0) / len(matured)) if matured else None
+                avg_ret5 = (sum(matured) / len(matured)) if matured else None
 
-        # 合併事件 + 前瞻報酬 + 買點分位。
-        events = merge_consecutive_events(qual_dates, date_index)
-        ev_records: list[dict] = []
-        for ed in events:
-            perf = forward_returns(adj_candles, ed)
-            fwd5 = perf["fwd_5d"] if perf else None
-            idx = date_index.get(ed)
-            pctile = 0.5
-            if idx is not None:
-                window = [c for c in adj_close[max(0, idx - 19):idx + 1] if c is not None]
-                if window:
-                    pctile = price_percentile(adj_close[idx], min(window), max(window))
-            ev_records.append({"date": ed, "fwd5": fwd5, "pctile": pctile})
+                # 近 90 日資格買超日金額(未還原價):net_lots * 1000 股 * 當日收盤。
+                amt = 0.0
+                for qd in qual_dates:
+                    if qd >= cutoff90:
+                        cl = close_by_date.get(qd)
+                        if cl:
+                            amt += (datemap[qd]["net"] or 0) * 1000 * cl
 
-        matured = [e["fwd5"] for e in ev_records if e["fwd5"] is not None]
-        win_rate = (100.0 * sum(1 for f in matured if f > 0) / len(matured)) if matured else None
-        avg_ret5 = (sum(matured) / len(matured)) if matured else None
+                stock_stats[(br, sid)] = {
+                    "events_count": len(events),
+                    "win_rate": _r1(win_rate),
+                    "avg_ret5": _r2(avg_ret5),
+                    "is_daytrade_suspect": st_daytrade,
+                    "last_active_date": qual_dates[-1],
+                }
 
-        # 近 90 日資格買超日金額(未還原價):net_lots * 1000 股 * 當日收盤。
-        amt = 0.0
-        for qd in qual_dates:
-            if qd >= cutoff90:
-                cl = close_by_date.get(qd)
-                if cl:
-                    amt += (datemap[qd]["net"] or 0) * 1000 * cl
-
-        stock_stats[(br, sid)] = {
-            "events_count": len(events),
-            "win_rate": _r1(win_rate),
-            "avg_ret5": _r2(avg_ret5),
-            "is_daytrade_suspect": st_daytrade,
-            "last_active_date": qual_dates[-1],
-        }
-
-        branch_events[br].extend(ev_records)
-        branch_obs[br].extend(obs)
-        branch_amount[br] += amt
+                branch_events[br].extend(ev_records)
+                branch_obs[br].extend(obs)
+                branch_amount[br] += amt
 
     # 分點彙總(跨個股 pooled)。
     branch_meta: dict[str, dict] = {}

@@ -112,19 +112,24 @@ export default function KChart({
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const legendRef = useRef<HTMLDivElement>(null);
+  const mobileLegendRef = useRef<HTMLDivElement>(null);
   const [settings, setSettings] = useState<Settings>(loadSettings);
   // 手機版子 pane 切換(< 768px)；桌機版全部 pane 同時顯示
   const [mobilePaneKey, setMobilePaneKey] = useState<MobilePaneKey>(() => {
     if (typeof window === "undefined") return "sub";
     return (localStorage.getItem(LS_MOBILE_PANE) as MobilePaneKey | null) ?? "sub";
   });
-  // 手機版偵測 ref(SSR-safe)
-  const [isMobile, setIsMobile] = useState(false);
+  // 手機版偵測(<768px)。KChart 僅在資料載入後於 client 渲染(SSR 期間顯示骨架屏),
+  // 故初始化直接讀 matchMedia,無 hydration mismatch;跨斷點時觸發 chart 重建(effect 依賴 isMobile)。
+  const [isMobile, setIsMobile] = useState(
+    () => typeof window !== "undefined" && !window.matchMedia("(min-width:768px)").matches,
+  );
   useEffect(() => {
-    const check = () => setIsMobile(window.innerWidth < 768);
-    check();
-    window.addEventListener("resize", check);
-    return () => window.removeEventListener("resize", check);
+    if (typeof window === "undefined") return;
+    const mq = window.matchMedia("(min-width:768px)");
+    const on = () => setIsMobile(!mq.matches);
+    mq.addEventListener("change", on);
+    return () => mq.removeEventListener("change", on);
   }, []);
 
   // 主題偵測:讀 <html class="dark"> + MutationObserver 監聽切換 → 不重建 chart,改 applyOptions 更新色
@@ -191,7 +196,12 @@ export default function KChart({
       if (disposed || !ref.current) return;
       const { createChart, createTextWatermark, CandlestickSeries, HistogramSeries, LineSeries, ColorType, LineStyle } = lw;
       const colors = chartColors(isDarkRef.current);
-      const mobile = window.innerWidth < 768;
+      const mobile = isMobile;
+      // 手機版子 pane 擇一:main/sel 需有資料,否則退回副圖(sub)。桌機版此值不使用。
+      const effPane: MobilePaneKey =
+        mobilePaneKey === "main" && flow.main?.length ? "main"
+        : mobilePaneKey === "sel" && flow.sel?.length ? "sel"
+        : "sub";
       chart = createChart(ref.current, {
         autoSize: true,
         layout: {
@@ -235,25 +245,21 @@ export default function KChart({
         color: i > 0 && c.c >= view[i - 1].c ? "rgba(230,103,103,0.45)" : "rgba(12,163,12,0.45)",
       })));
 
-      if (settings.sub === "macd") {
-        chart.addSeries(HistogramSeries, { priceLineVisible: false, lastValueVisible: false }, 2)
-          .setData(idx(calc.macd.hist).map((p) => ({ ...p, color: p.value >= 0 ? "rgba(230,103,103,0.7)" : "rgba(12,163,12,0.7)" })));
-        chart.addSeries(LineSeries, { color: "#3987e5", ...thin }, 2).setData(idx(calc.macd.dif));
-        chart.addSeries(LineSeries, { color: "#c98500", ...thin }, 2).setData(idx(calc.macd.dea));
-      } else if (settings.sub === "kd") {
-        chart.addSeries(LineSeries, { color: "#3987e5", ...thin }, 2).setData(idx(calc.kd.k));
-        chart.addSeries(LineSeries, { color: "#d55181", ...thin }, 2).setData(idx(calc.kd.d));
-      } else {
-        chart.addSeries(LineSeries, { color: "#3987e5", ...thin }, 2).setData(idx(calc.rsi));
-      }
+      // 副圖(MACD/KD/RSI)加到指定 pane
+      const addSub = (pane: number) => {
+        if (settings.sub === "macd") {
+          chart!.addSeries(HistogramSeries, { priceLineVisible: false, lastValueVisible: false }, pane)
+            .setData(idx(calc.macd.hist).map((p) => ({ ...p, color: p.value >= 0 ? "rgba(230,103,103,0.7)" : "rgba(12,163,12,0.7)" })));
+          chart!.addSeries(LineSeries, { color: "#3987e5", ...thin }, pane).setData(idx(calc.macd.dif));
+          chart!.addSeries(LineSeries, { color: "#c98500", ...thin }, pane).setData(idx(calc.macd.dea));
+        } else if (settings.sub === "kd") {
+          chart!.addSeries(LineSeries, { color: "#3987e5", ...thin }, pane).setData(idx(calc.kd.k));
+          chart!.addSeries(LineSeries, { color: "#d55181", ...thin }, pane).setData(idx(calc.kd.d));
+        } else {
+          chart!.addSeries(LineSeries, { color: "#3987e5", ...thin }, pane).setData(idx(calc.rsi));
+        }
+      };
 
-      // 主力買賣超 / 分點進出 pane(勾選驅動;缺資料時不建 pane,索引動態排)
-      // 手機版：只顯示一個子 pane(由 mobilePaneKey 決定)，桌機版全部顯示（mobile 已於上方宣告）
-      const showMain = settings.mainForce && !!flow.main?.length && (!mobile || mobilePaneKey === "main");
-      const showSel = !!flow.sel?.length && (!mobile || mobilePaneKey === "sel");
-      let nextPane = 3;
-      const mainPane = showMain ? nextPane++ : -1;
-      const selPane = showSel ? nextPane++ : -1;
       const firstT = view[0].t;
       const addFlowPane = (pts: { t: string; net: number; cum: number }[], pane: number) => {
         const vis = pts.filter((p) => p.t >= firstT);
@@ -265,26 +271,55 @@ export default function KChart({
           .addSeries(LineSeries, { color: CUM_COLOR, priceScaleId: `cum-${pane}`, priceFormat: { type: "volume" }, ...thin }, pane)
           .setData(vis.map((p) => ({ time: p.t, value: p.cum })));
       };
-      if (showMain) addFlowPane(flow.main!, mainPane);
-      if (showSel) addFlowPane(flow.sel!, selPane);
 
       // pane 標題:v5 pane watermark(游標移動時同一位置追加當日/累計數字)。色讀 paneTextRef → 主題切換即時反映
       const wmLine = (text: string) => ({ text, color: paneTextRef.current, fontSize: 11 });
       const mkTitle = (pane: number, text: string) =>
         createTextWatermark(chart!.panes()[pane], { horzAlign: "left", vertAlign: "top", lines: [wmLine(text)] });
-      const mfTitle = showMain ? mkTitle(mainPane, MF_TITLE) : null;
-      const selTitle = showSel ? mkTitle(selPane, SEL_TITLE) : null;
-      titlesRef.current = [
-        ...(mfTitle ? [{ wm: mfTitle as { applyOptions: (o: unknown) => void }, base: MF_TITLE }] : []),
-        ...(selTitle ? [{ wm: selTitle as { applyOptions: (o: unknown) => void }, base: SEL_TITLE }] : []),
-      ];
 
+      // mfTitle/selTitle 供桌機游標更新 watermark 數值;手機不用 watermark 值,改上方 compact legend。
+      let mfTitle: ReturnType<typeof mkTitle> | null = null;
+      let selTitle: ReturnType<typeof mkTitle> | null = null;
       const panes = chart.panes() as unknown as { setStretchFactor?: (f: number) => void }[];
-      panes[0]?.setStretchFactor?.(30);
-      panes[1]?.setStretchFactor?.(8);
-      panes[2]?.setStretchFactor?.(12);
-      if (mainPane >= 0) panes[mainPane]?.setStretchFactor?.(10);
-      if (selPane >= 0) panes[selPane]?.setStretchFactor?.(10);
+
+      if (mobile) {
+        // 子 pane 擇一放在 pane 2:副圖 / 主力買賣超 / 分點進出
+        if (effPane === "main") addFlowPane(flow.main!, 2);
+        else if (effPane === "sel") addFlowPane(flow.sel!, 2);
+        else addSub(2);
+        titlesRef.current = []; // 手機不建 pane 內 watermark(避免小 pane 壓資料),數值走上方 compact legend
+        // 主圖佔比加大;子 pane 於總高 clamp(360,52vh,480) 下仍 ≥120px
+        panes[0]?.setStretchFactor?.(13);
+        panes[1]?.setStretchFactor?.(4);
+        panes[2]?.setStretchFactor?.(11);
+      } else {
+        // 桌機:副圖常駐 pane 2,主力/分點依序接 pane 3/4(逐位元不變)
+        addSub(2);
+        const showMain = settings.mainForce && !!flow.main?.length;
+        const showSel = !!flow.sel?.length;
+        let nextPane = 3;
+        const mainPane = showMain ? nextPane++ : -1;
+        const selPane = showSel ? nextPane++ : -1;
+        if (showMain) addFlowPane(flow.main!, mainPane);
+        if (showSel) addFlowPane(flow.sel!, selPane);
+        mfTitle = showMain ? mkTitle(mainPane, MF_TITLE) : null;
+        selTitle = showSel ? mkTitle(selPane, SEL_TITLE) : null;
+        titlesRef.current = [
+          ...(mfTitle ? [{ wm: mfTitle as { applyOptions: (o: unknown) => void }, base: MF_TITLE }] : []),
+          ...(selTitle ? [{ wm: selTitle as { applyOptions: (o: unknown) => void }, base: SEL_TITLE }] : []),
+        ];
+        panes[0]?.setStretchFactor?.(30);
+        panes[1]?.setStretchFactor?.(8);
+        panes[2]?.setStretchFactor?.(12);
+        if (mainPane >= 0) panes[mainPane]?.setStretchFactor?.(10);
+        if (selPane >= 0) panes[selPane]?.setStretchFactor?.(10);
+      }
+
+      // 手機 compact legend 初始文字(pane 名);游標移動時附加買賣超/累計數值
+      if (mobile && mobileLegendRef.current) {
+        mobileLegendRef.current.textContent =
+          effPane === "main" ? MF_TITLE : effPane === "sel" ? SEL_TITLE : `副圖 · ${settings.sub.toUpperCase()}`;
+      }
 
       // legend:十字游標顯示 OHLC 與均線值;主力/分點數值直接更新在對應 pane 標題(帶正負號)
       const byTime = new Map(bars.map((c, i) => [c.t, i]));
@@ -300,12 +335,23 @@ export default function KChart({
         wm?.applyOptions({ lines: [wmLine(p ? `${title} 買賣超 ${fmtLots(p.net)}張/累計 ${fmtLots(p.cum)}張` : title)] });
       };
       chart.subscribeCrosshairMove((param) => {
-        const el = legendRef.current;
-        if (!el) return;
         const t = param.time as string | undefined;
         const i = t ? byTime.get(t) : undefined;
-        updTitle(mfTitle, mainByTime, MF_TITLE, t);
-        updTitle(selTitle, selByTime, SEL_TITLE, t);
+        if (mobile) {
+          // 手機:主力/分點 pane 的當日/累計數值更新在上方 compact legend(pane 名 + 買賣超 ±N/累計 ±M)
+          const ml = mobileLegendRef.current;
+          if (ml && (effPane === "main" || effPane === "sel")) {
+            const byT = effPane === "main" ? mainByTime : selByTime;
+            const title = effPane === "main" ? MF_TITLE : SEL_TITLE;
+            const p = t ? byT.get(t) : undefined;
+            ml.textContent = p ? `${title} 買賣超 ${fmtLots(p.net)}張 · 累計 ${fmtLots(p.cum)}張` : title;
+          }
+        } else {
+          updTitle(mfTitle, mainByTime, MF_TITLE, t);
+          updTitle(selTitle, selByTime, SEL_TITLE, t);
+        }
+        const el = legendRef.current;
+        if (!el) return;
         if (i == null) {
           el.textContent = "";
           return;
@@ -351,12 +397,8 @@ export default function KChart({
     for (const t of titlesRef.current) t.wm.applyOptions({ lines: [{ text: t.base, color: c.paneText, fontSize: 11 }] });
   }, [isDark]);
 
-  // 額外 pane 數決定圖表總高:主圖不被壓縮,pane 多時整體加高
-  // 手機版(<768px)：子 pane 最多1個，高度比桌機保守
-  const extraPanes = isMobile
-    ? (mobilePaneKey === "main" && settings.mainForce && flow.main?.length ? 1 : 0) +
-      (mobilePaneKey === "sel" && flow.sel?.length ? 1 : 0)
-    : (settings.mainForce && flow.main?.length ? 1 : 0) + (flow.sel?.length ? 1 : 0);
+  // 額外 pane 數決定桌機圖表總高:主圖不被壓縮,pane 多時整體加高(手機恆為單一子 pane,用固定 clamp)
+  const extraPanes = (settings.mainForce && flow.main?.length ? 1 : 0) + (flow.sel?.length ? 1 : 0);
 
   const chipBase =
     "inline-flex items-center gap-1 rounded-full border border-[color:var(--line)] bg-card px-2.5 py-[3px] text-xs font-semibold text-muted-foreground cursor-pointer select-none [&_input]:hidden before:content-none has-checked:before:content-['✓_'] has-checked:before:text-[10px] aria-pressed:before:content-['✓_'] aria-pressed:before:text-[10px]";
@@ -368,10 +410,10 @@ export default function KChart({
   };
 
   return (
-    <div>
-      {/* 工具列：單行橫滑(overflow-x-auto)，各 chip ≥44px touch area，手機版不換行 */}
-      <div className="flex items-center gap-1.5 px-0.5 py-2 overflow-x-auto scrollbar-hide flex-nowrap min-h-[44px]">
-        <span className="inline-flex shrink-0 gap-0.5 rounded-lg border border-border bg-card p-0.5">
+    <div id="stock-kchart">
+      {/* 工具列:桌機維持換行(逐位元不變);手機(max-md)單行橫滑不換行、各 chip min-h-11 觸控 */}
+      <div className="flex flex-wrap items-center gap-1.5 px-0.5 py-2 max-md:flex-nowrap max-md:overflow-x-auto max-md:scrollbar-hide max-md:[&>*]:shrink-0 max-md:[&_label]:min-h-11 max-md:[&_button]:min-h-11">
+        <span className="inline-flex gap-0.5 rounded-lg border border-border bg-card p-0.5">
           {TF_DEFS.map((t) => (
             <button
               key={t.key}
@@ -385,11 +427,11 @@ export default function KChart({
             </button>
           ))}
         </span>
-        <span className="mx-1 h-[18px] w-px shrink-0 bg-[color:var(--line)]" />
+        <span className="mx-1 h-[18px] w-px bg-[color:var(--line)]" />
         {MA_DEFS.map((m) => (
           <label
             key={m.key}
-            className={cn(chipBase, "shrink-0")}
+            className={chipBase}
             style={settings.ma[m.key] ? { color: m.color, borderColor: m.color } : undefined}
           >
             <input
@@ -402,7 +444,7 @@ export default function KChart({
             {m.label}
           </label>
         ))}
-        <label className={cn(chipBase, "shrink-0")} style={settings.boll ? { color: "#898781", borderColor: "#898781" } : undefined}>
+        <label className={chipBase} style={settings.boll ? { color: "#898781", borderColor: "#898781" } : undefined}>
           <input
             type="checkbox"
             checked={settings.boll}
@@ -410,29 +452,33 @@ export default function KChart({
           />
           布林
         </label>
-        <span className="mx-1 h-[18px] w-px shrink-0 bg-[color:var(--line)]" />
+        <span className="mx-1 h-[18px] w-px bg-[color:var(--line)]" />
+        {/* 副圖(MACD/KD/RSI):選 indicator;手機同時把子 pane 切回「副圖」→ 三選一的返回路徑 */}
         {(["macd", "kd", "rsi"] as SubKey[]).map((k) => (
           <button
             key={k}
             className={cn(
-              "rounded-lg shrink-0",
+              "rounded-lg",
               chipBase,
-              settings.sub === k && "border-[color:var(--border-strong)] bg-muted text-foreground",
+              settings.sub === k && (!isMobile || mobilePaneKey === "sub") && "border-[color:var(--border-strong)] bg-muted text-foreground",
             )}
-            onClick={() => setSettings((s) => ({ ...s, sub: k }))}
+            onClick={() => {
+              setSettings((s) => ({ ...s, sub: k }));
+              if (isMobile) handleMobilePaneChange("sub");
+            }}
           >
             {k.toUpperCase()}
           </button>
         ))}
-        {/* 手機版專屬 pane 切換 chips（> 主力 / 分點 選項）*/}
+        {/* 手機版子 pane 三選一的另兩個選項:主力 / 分點(分點無勾選時 disabled)*/}
         {isMobile && !!mainForce?.length && (
           <>
-            <span className="mx-1 h-[18px] w-px shrink-0 bg-[color:var(--line)]" />
+            <span className="mx-1 h-[18px] w-px bg-[color:var(--line)]" />
             <button
               className={cn(
-                "shrink-0 rounded-lg",
+                "rounded-lg",
                 chipBase,
-                mobilePaneKey === "main" && settings.mainForce && "border-[color:var(--border-strong)] bg-muted text-foreground",
+                mobilePaneKey === "main" && "border-[color:var(--border-strong)] bg-muted text-foreground",
               )}
               onClick={() => handleMobilePaneChange("main")}
             >
@@ -440,21 +486,24 @@ export default function KChart({
             </button>
           </>
         )}
-        {isMobile && !!branchFlow?.length && (
+        {isMobile && (
           <button
+            disabled={!branchFlow?.length}
+            aria-disabled={!branchFlow?.length}
             className={cn(
-              "shrink-0 rounded-lg",
+              "rounded-lg",
               chipBase,
-              mobilePaneKey === "sel" ? "border-[color:var(--border-strong)] bg-muted text-foreground" : "",
+              !branchFlow?.length && "cursor-not-allowed opacity-40",
+              mobilePaneKey === "sel" && !!branchFlow?.length && "border-[color:var(--border-strong)] bg-muted text-foreground",
             )}
-            onClick={() => handleMobilePaneChange("sel")}
+            onClick={() => branchFlow?.length && handleMobilePaneChange("sel")}
           >
             分點
           </button>
         )}
-        {/* 桌機版：主力 checkbox（手機版由上方 mobilePaneKey 控制）*/}
+        {/* 桌機版:主力買賣超 checkbox(手機版由上方子 pane 切換控制)*/}
         {!isMobile && !!mainForce?.length && (
-          <label className={cn(chipBase, "shrink-0")} style={settings.mainForce ? { color: CUM_COLOR, borderColor: CUM_COLOR } : undefined}>
+          <label className={chipBase} style={settings.mainForce ? { color: CUM_COLOR, borderColor: CUM_COLOR } : undefined}>
             <input
               type="checkbox"
               checked={settings.mainForce}
@@ -464,6 +513,13 @@ export default function KChart({
           </label>
         )}
       </div>
+      {/* 手機版:游標數值改此處一行 compact legend(pane 名 + 買賣超 ±N/累計 ±M);桌機用 pane 內 watermark */}
+      {isMobile && (
+        <div
+          ref={mobileLegendRef}
+          className="num truncate px-0.5 pb-1 text-[11px] leading-tight text-[color:var(--ink-2)]"
+        />
+      )}
       <div className="relative">
         <div
           ref={legendRef}
@@ -473,9 +529,8 @@ export default function KChart({
           ref={ref}
           className={cn(
             "w-full rounded-t-none rounded-b-[var(--r-lg)] border border-border bg-card p-2 shadow-[var(--shadow-card)]",
-            // 手機版(<768px)高度保守（主圖佔比大），桌機版同原邏輯
-            isMobile && extraPanes === 0 && "[height:clamp(360px,52vh,480px)]",
-            isMobile && extraPanes >= 1 && "[height:clamp(420px,62vh,560px)]",
+            // 手機版(<768px):單一子 pane,固定總高 clamp(360,52vh,480);桌機版同原邏輯(逐位元不變)
+            isMobile && "[height:clamp(360px,52vh,480px)]",
             !isMobile && extraPanes === 0 && "[height:clamp(420px,66vh,680px)]",
             !isMobile && extraPanes === 1 && "[height:clamp(470px,72vh,770px)]",
             !isMobile && extraPanes === 2 && "[height:clamp(520px,78vh,860px)]",

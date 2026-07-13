@@ -217,6 +217,21 @@ docker run -d --name radar-finalize \
 - 進度:`docker logs --tail 10 radar-finalize`
 - ⚠️ `git pull` **必須**:2026-07-11 修了 NULL 資料整支崩潰(舊碼跑 compute-indicators --all 會炸)且策略邏輯在程式碼裡。
 
+#### ⚠️ 若 compute-branch-stats 被 Killed(OOM)
+
+**症狀**:`docker logs radar-finalize` 尾端出現 `Killed`(bash 顯示 `51 Killed`),前面各步都成功,只有 `compute-branch-stats` 沒跑完。
+
+**原因(已修復,commit `<待填>`)**:舊版 `compute_all()` 一次把整張 `branch_trades`(回補後約 600 萬列)連同全部 500 檔的完整價格序列載進記憶體,1–2GB RAM 的 VPS 直接被 OOM killer 殺掉。現已改為**串流式逐檔處理**:一次只常駐單一個股的價格序列與其 branch_trades 列(單檔約 1.5 萬列),峰值記憶體改由「單檔資料(數 MB)+ 跨檔事件池」界定,不再隨全表線性成長。合成 1.2M 列(比生產密集)實測:舊版光是全表 fetchall 的 Python 峰值就達 488MB(且舊版還要在其上再疊 stock_ctx 與 by_bs 兩份巨型結構),新版全程峰值 161.7MB。行為零變化,既有測試全過。
+
+**重跑**(`git pull` 拿到修復後,單獨補這一步,跑完接 4e 上傳):
+
+```bash
+cd ~/trever-radar && git pull
+docker run --rm --name radar-branchstats \
+  -v $(pwd)/pipeline:/app/pipeline -v $(pwd)/data:/app/data -w /app/pipeline python:3.11 \
+  bash -c "pip install -r requirements.txt && python -m radar compute-branch-stats"
+```
+
 ### 4d.(可選)還原因子(除權息 adj_factor,3–4 小時,需 FinMind token)
 
 不急可跳過(之後在雲端 `gh workflow run data-backfill.yml -f task=adjust` 補);要一起做就在 4c 完成後:
