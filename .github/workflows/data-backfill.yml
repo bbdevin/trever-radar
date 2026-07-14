@@ -125,8 +125,11 @@ jobs:
         working-directory: pipeline
         run: |
           python -c "
-          import sqlite3
+          import sqlite3, os
           c = sqlite3.connect('../data/radar.db')
+          print('db file size bytes:', os.path.getsize('../data/radar.db'))
+          print('branch_trades: MIN(date)=%s MAX(date)=%s COUNT(DISTINCT date)=%s total_rows=%s' % c.execute(
+              'SELECT MIN(date), MAX(date), COUNT(DISTINCT date), COUNT(*) FROM branch_trades').fetchone())
           for sid in ('2476', '2359'):
               row = c.execute('SELECT MAX(date) FROM branch_trades WHERE stock_id=?', (sid,)).fetchone()
               print(f'{sid} branch_trades max date: {row[0]}')
