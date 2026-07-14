@@ -289,6 +289,45 @@ def aggregate_warrants(date: str | None = None) -> int:
         return r.rowcount
 
 
+def upsert_branch_trades(conn, rows: list[dict]) -> int:
+    if not rows:
+        return 0
+    from sqlalchemy import text
+    from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+
+    branches = {}
+    for r in rows:
+        branches[r["branch_key"]] = {
+            "branch_key": r["branch_key"],
+            "broker_id": r.get("broker_id"),
+            "branch_name": r["branch_name"]
+        }
+    
+    stmt = sqlite_insert(schema.branch_dim).values(list(branches.values()))
+    stmt = stmt.on_conflict_do_nothing(index_elements=["branch_key"])
+    conn.execute(stmt)
+    
+    keys = list(branches.keys())
+    binds = {f"k{i}": k for i, k in enumerate(keys)}
+    in_clause = ",".join(f":k{i}" for i in range(len(keys)))
+    mapping_rows = conn.execute(
+        text(f"SELECT branch_key, id FROM branch_dim WHERE branch_key IN ({in_clause})"), 
+        binds
+    ).fetchall()
+    key_to_id = {r[0]: r[1] for r in mapping_rows}
+    
+    raw_rows = []
+    for r in rows:
+        d = dict(r)
+        d["branch_id"] = key_to_id[d["branch_key"]]
+        d.pop("branch_key", None)
+        d.pop("broker_id", None)
+        d.pop("branch_name", None)
+        raw_rows.append(d)
+        
+    return upsert(conn, schema.branch_trades_raw, raw_rows)
+
+
 def backfill_branches(top: int = 300, days: int = 60, sleep_s: float = 1.2,
                       max_minutes: int | None = None) -> dict:
     """分點歷史 march-back:由最近交易日往回補 `days` 個交易日的前 15 大買賣超。
@@ -344,7 +383,7 @@ def backfill_branches(top: int = 300, days: int = 60, sleep_s: float = 1.2,
                     break
                 continue
             with engine.begin() as conn:
-                upsert(conn, schema.branch_trades, rows)
+                upsert_branch_trades(conn, rows)
             fetched += 1
         print(f"backfill-branches {d_iso}: missing={len(missing)} done, "
               f"total fetched={fetched}", flush=True)
@@ -408,7 +447,7 @@ def backfill_warrant_branches(top: int = 200, days: int = 120, sleep_s: float = 
                     break
                 continue
             with engine.begin() as conn:
-                upsert(conn, schema.branch_trades, rows)
+                upsert_branch_trades(conn, rows)
             fetched += 1
         print(f"backfill-warrant-branches {d_iso}: missing={len(missing)} done, "
               f"total fetched={fetched}", flush=True)
@@ -475,7 +514,7 @@ def import_branch_trades(date: str | None = None, top: int = 80,
             print(f"branch {sid} FAILED: {str(e)[:100]}", flush=True)
             continue
         with engine.begin() as conn:
-            written += upsert(conn, schema.branch_trades, rows)
+            written += upsert_branch_trades(conn, rows)
         done += 1
     with engine.begin() as conn:
         _log(conn, "fubon", "branch", date, written,

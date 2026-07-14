@@ -57,6 +57,21 @@ def _migrate_sqlite(conn):
     if "description" not in stock_cols:
         conn.exec_driver_sql("ALTER TABLE stocks ADD COLUMN description TEXT")
 
+    view_check = conn.exec_driver_sql("SELECT type FROM sqlite_master WHERE name='branch_trades'").scalar()
+    if view_check == 'table':
+        conn.exec_driver_sql("ALTER TABLE branch_trades RENAME TO branch_trades_old")
+        conn.exec_driver_sql("INSERT OR IGNORE INTO branch_dim (branch_key, broker_id, branch_name) SELECT DISTINCT branch_key, broker_id, branch_name FROM branch_trades_old")
+        conn.exec_driver_sql("INSERT INTO branch_trades_raw (stock_id, date, branch_id, buy_lots, sell_lots, net_lots, pct, source) SELECT o.stock_id, o.date, d.id, o.buy_lots, o.sell_lots, o.net_lots, o.pct, o.source FROM branch_trades_old o JOIN branch_dim d ON o.branch_key = d.branch_key")
+        conn.exec_driver_sql("DROP TABLE branch_trades_old")
+    
+    if view_check != 'view':
+        conn.exec_driver_sql("""
+            CREATE VIEW branch_trades AS 
+            SELECT r.stock_id, r.date, d.branch_key, d.broker_id, d.branch_name, r.buy_lots, r.sell_lots, r.net_lots, r.pct, r.source 
+            FROM branch_trades_raw r 
+            JOIN branch_dim d ON r.branch_id = d.id
+        """)
+
 
 def upsert(conn, table, rows: list[dict], chunk: int = 800) -> int:
     """SQLite upsert on primary key. Returns number of rows written.

@@ -151,21 +151,28 @@ stock_themes = Table(
     Index("ix_stock_themes_stock", "stock_id"),
 )
 
-branch_trades = Table(
-    "branch_trades",
+branch_dim = Table(
+    "branch_dim",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("branch_key", Text, nullable=False, unique=True),
+    Column("broker_id", Text),
+    Column("branch_name", Text, nullable=False)
+)
+
+branch_trades_raw = Table(
+    "branch_trades_raw",
     metadata,
     Column("stock_id", Text, primary_key=True),
     Column("date", Text, primary_key=True),
-    Column("branch_key", Text, primary_key=True),  # 來源頁的分點唯一鍵(b 參數)
-    Column("broker_id", Text),                     # BHID(券商代號)
-    Column("branch_name", Text, nullable=False),   # 例:凱基-台北;外資總部層級如 美商高盛
-    Column("buy_lots", Integer),                   # 買進(張)
+    Column("branch_id", Integer, primary_key=True),
+    Column("buy_lots", Integer),
     Column("sell_lots", Integer),
-    Column("net_lots", Integer),                   # 買進-賣出(帶正負)
-    Column("pct", Float),                          # 佔成交比重 %
+    Column("net_lots", Integer),
+    Column("pct", Float),
     Column("source", Text, nullable=False, server_default="fubon"),
-    Index("ix_branch_trades_date", "date"),
-    Index("ix_branch_trades_branch", "branch_name", "date"),
+    Index("ix_branch_trades_raw_date", "date"),
+    Index("ix_branch_trades_raw_branch", "branch_id", "date"),
 )
 
 daily_scores = Table(

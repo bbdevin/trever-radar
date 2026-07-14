@@ -109,12 +109,14 @@ docker run -d --name radar-backfill --restart unless-stopped \
   -v $(pwd)/pipeline:/app/pipeline -v $(pwd)/data:/app/data \
   -w /app/pipeline python:3.11 \
   bash -c "pip install -r requirements.txt && \
-    if python -m radar backfill-branches --top 500 --days 490 --sleep 1.0; then \
+    if python -m radar backfill-branches --top 2500 --days 490 --sleep 1.2; then \
       curl -s -H 'Title: Radar P1 完成' -d '分點2年回補完成,回VPS執行 Step 4 上傳' ntfy.sh/$NTFY; \
     else \
       curl -s -H 'Title: Radar P1 中斷' -H 'Priority: high' -d '執行 docker logs radar-backfill 查原因' ntfy.sh/$NTFY; \
     fi"
 ```
+
+> **進階說明 (4年回補)**：如果您要跑 4 年，請把 `--days 490` 改成 `--days 980`。請注意，這支程式有斷點續傳功能，中斷後重新執行不會重複抓取！
 
 - 成功標準:輸出一長串容器 ID(64 個字母數字)
 - 之後**可以直接關掉 SSH 視窗**,它在背景跑;VPS 重開機也會自動續跑
