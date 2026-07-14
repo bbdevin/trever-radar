@@ -32,6 +32,9 @@ gh release download db-backup --pattern radar.db.gz --dir data --clobber
 gunzip -f data/radar.db.gz
 
 # 2. 啟動短期修補任務 (補齊最近 6 天的全市場個股與權證，並重算成績)
+# 請將 NTFY 的值換成您自己的主題名稱
+NTFY=trever-radar-x8k2m9q7
+
 docker run -d --name radar-quick-catchup --restart unless-stopped \
   -v $(pwd)/pipeline:/app/pipeline -v $(pwd)/data:/app/data \
   -w /app/pipeline python:3.11 \
@@ -40,11 +43,12 @@ docker run -d --name radar-quick-catchup --restart unless-stopped \
     python -m radar backfill-warrant-branches --top 20000 --days 6 --sleep 1.2 && \
     python -m radar compute-indicators --days 10 && \
     python -m radar compute-scores && \
-    python -m radar compute-branch-stats"
+    python -m radar compute-branch-stats && \
+    curl -s -H 'Title: Radar 6天修補完成' -d '請回 VPS 執行 Step 2 上傳' ntfy.sh/\$NTFY"
 ```
 
 ### 第二步：上傳完整的最新資料庫
-等 `docker logs radar-quick-catchup` 顯示全部跑完後，執行上傳，讓前端網站更新：
+等手機收到推播通知，或 `docker logs radar-quick-catchup` 顯示跑完後，執行上傳，讓前端網站更新：
 ```bash
 cd ~/trever-radar
 gzip -kf data/radar.db
@@ -55,12 +59,15 @@ gh cache delete --all --repo bbdevin/trever-radar
 ### 第三步：放養長線歷史回補 (2年/半年)
 網站更新完後，丟出背景指令讓 VPS 自己慢慢挖歷史（預估需跑 3 週以上）：
 ```bash
+NTFY=trever-radar-x8k2m9q7
+
 docker run -d --name radar-long-backfill --restart unless-stopped \
   -v $(pwd)/pipeline:/app/pipeline -v $(pwd)/data:/app/data \
   -w /app/pipeline python:3.11 \
   bash -c "pip install -r requirements.txt && \
     python -m radar backfill-branches --top 2500 --days 490 --sleep 1.2 && \
-    python -m radar backfill-warrant-branches --top 20000 --days 120 --sleep 1.2"
+    python -m radar backfill-warrant-branches --top 20000 --days 120 --sleep 1.2 && \
+    curl -s -H 'Title: Radar 長線回補完成' -d '全市場歷史回補大功告成！' ntfy.sh/\$NTFY"
 ```
 
 ## 5. 容量監控
