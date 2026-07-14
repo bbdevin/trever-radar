@@ -100,6 +100,7 @@ jobs:
         run: |
           python -m radar backfill --days 10 --datasets quotes,insti,margin
           python -m radar import-daily --date 20260709 --datasets insti,margin || true
+          python -m radar import-daily --date 20260710 --datasets insti,margin || true
           python -m radar import-daily --date 20260713 --datasets insti,margin || true
           python -m radar aggregate-warrants
           python -m radar compute-indicators --all --days 12
@@ -110,11 +111,12 @@ jobs:
         working-directory: pipeline
         run: python -m radar compute-branch-stats
 
-      - name: "Backfill Branches Recent (Top 500 for 7/9 and 7/13 + compute-branch-stats)"
+      - name: "Backfill Branches Recent (Top 500 for 7/9, 7/10, 7/13 + compute-branch-stats)"
         if: inputs.task == 'backfill-branches-recent'
         working-directory: pipeline
         run: |
           python -m radar import-branch-trades --date 20260709 --top 500 --sleep 1.0 || true
+          python -m radar import-branch-trades --date 20260710 --top 500 --sleep 1.0 || true
           python -m radar import-branch-trades --date 20260713 --top 500 --sleep 1.0 || true
           python -m radar compute-branch-stats
 
