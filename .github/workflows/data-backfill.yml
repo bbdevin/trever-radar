@@ -140,6 +140,9 @@ jobs:
           import statistics
           counts = [r[0] for r in c.execute('SELECT COUNT(*) FROM branch_trades GROUP BY stock_id').fetchall()]
           print(f'rows-per-stock: n={len(counts)} median={statistics.median(counts)} mean={statistics.mean(counts):.0f} max={max(counts)}')
+          dn, dbid, avglen, avgblen = c.execute('SELECT COUNT(DISTINCT branch_name), COUNT(DISTINCT broker_id), AVG(LENGTH(branch_name)), AVG(LENGTH(broker_id)) FROM branch_trades').fetchone()
+          print(f'branch_name distinct={dn} avg_len={avglen:.1f} broker_id distinct={dbid} avg_len={avgblen}')
+          print('branch_trades table+index bytes (dbstat):', list(c.execute(\"SELECT name, SUM(pgsize) FROM dbstat WHERE name LIKE 'branch_trades%' GROUP BY name\")))
           for sid in ('2476', '2359'):
               row = c.execute('SELECT MAX(date) FROM branch_trades WHERE stock_id=?', (sid,)).fetchone()
               print(f'{sid} branch_trades max date: {row[0]}')
