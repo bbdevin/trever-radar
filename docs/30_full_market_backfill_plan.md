@@ -26,10 +26,9 @@
 
 ### 第一步：補齊近期缺口並計算分數 (約需 1.5~2 小時)
 ```bash
-# 1. 下載最新程式碼與本機上傳的資料庫
+# 1. 下載最新程式碼 (注意：絕對不要下載 db-backup，直接使用 VPS 裡既有的 490 天資料庫！)
 cd ~/trever-radar && git pull
-gh release download db-backup --pattern radar.db.gz --dir data --clobber
-gunzip -f data/radar.db.gz
+
 
 # 2. 啟動短期修補任務 (補齊最近 6 天的全市場個股與權證，並重算成績)
 # 請將 NTFY 的值換成您自己的主題名稱
