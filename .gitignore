@@ -25,8 +25,11 @@ cloudflare-trigger/.wrangler/
 .env
 .env.*
 
-# stray logs
+# stray logs (含 gh run view 下載的 Actions 日誌)
 *.log
+log.txt
+log-recent.txt
+deploy_log.txt
 
 radar.db
 tsmc.html

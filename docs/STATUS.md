@@ -1,4 +1,4 @@
-# 專案狀態(2026-07-12)
+# 專案狀態(2026-07-14)
 
 > 單一進度真相。每完成一個里程碑就更新本檔。規格細節看各編號文件,別寫在這裡。
 
@@ -7,7 +7,7 @@
 | 項目 | 值 |
 |---|---|
 | 正式網址 | https://radar.techtrever.com(= https://trever-radar.pages.dev) |
-| 公開狀態 | **目前仍公開**,noindex + robots.txt;2026-07-10 使用者已決定改 A 私人測試版,Access 尚未設定。實作與驗收照 `docs/21`/`DEPLOY.md` §4,未驗收前不得宣稱私有。 |
+| 公開狀態 | **已鎖站(私人測試版)**:2026-07-13 使用者於 Cloudflare Zero Trust 手動完成 Access A0-A2(Google IdP + email 白名單,單一 Application 覆蓋 custom domain / pages.dev / preview 三類入口),執行紀錄見 `docs/21` §4 A3。noindex + robots.txt 保留。R2 備份仍未建立。 |
 | 自動排程 | GitHub Actions 6 支 workflow(現行時間表以 `docs/08_scheduler_jobs.md` §0 為單一真相):14:10 `daily-market`、16:10 `daily-insti`、17:40+21:00 `daily-branches`、22:10 `daily-margin`(融資券保底輪)、每日 01:10 `data-backfill`、push main 觸發 `deploy`;各帶 timeout 防呆與共用 `radar-db` cache 續存鏈;觸發來源遷移中,見下方已知債務 |
 | Repo | github.com/bbdevin/trever-radar(私有) |
 | DB | SQLite,Actions cache 續存 + release `db-backup` 週備份(週五/手動觸發時) |
@@ -19,7 +19,7 @@
 - 流程為**模型中立、角色導向**:Planner / Executor / Reviewer 由本次任務指定,不由模型品牌永久決定;規則見 `AGENTS.md` 與 `docs/17_no_fable_workflow.md`。
 - 工具清單:Claude Code、AGY/Gemini、Codex、GPT/Grok 等高階模型均可任三角色;Cursor 為 IDE / 確認介面;人類使用者為唯一決策者。
 
-下一步:先完成 `docs/21` Access A0-A2,把目前公開站真正鎖成私人測試版;再依 `docs/20` B 方案完成策略解耦與績效閉環。R2 先做 shadow backup/restore drill,不得直接取代 cache/Release。**盤中雷達**(`docs/24` Part A) 待申請 Fugle API key 後接續實作。
+下一步:~~Access A0-A2~~(**2026-07-13 完成**,見上線資訊表);依 `docs/20` B 方案完成策略解耦與績效閉環。R2 先做 shadow backup/restore drill,不得直接取代 cache/Release。**盤中雷達**(`docs/24` Part A) 待申請 Fugle API key 後接續實作。
 
 ## 已完成 ✅
 
@@ -74,7 +74,7 @@
 
 ## 未完成(依優先序)
 
-1. **私人測試版 Access**(`docs/21` A0-A2):保護 `radar.techtrever.com`、正式 `trever-radar.pages.dev` 與所有 preview;只允許明確 email;直接抓 `/data/radar.json` 也必須被擋。
+1. ~~**私人測試版 Access**(`docs/21` A0-A2)~~ ✅ **2026-07-13 完成**:使用者手動於 Cloudflare Zero Trust 設定(Google IdP + email 白名單,單一 Application 覆蓋三類入口),執行紀錄見 `docs/21` §4 A3;R2 部分見第 6 項,仍未動。
 2. **B 方案 Phase 2—策略/分數解耦**(`docs/20`,高風險資料語意變更):S1-S13 只產生 tag/reason,不得再增加 `tech_score` 或其他分項;~~補 S2-S13 測試~~ **2026-07-10 完成**(S2-S13 正例/邊界反例 36 項 + 解耦回歸斷言,S11-S13 抽純函式零行為變化,pytest 91 全過,verifier 窮舉探針 CONFIRMED)。仍缺:舊/新分數差異報告;正式全市場重算、回灌及部署必須另獲使用者批准。
 3. **B 方案 Phase 3—策略績效閉環**(`docs/20`):輸出各 S code 的成熟樣本、5/10/20 日勝率與平均/中位報酬;預設 Shadow,使用者看報告後決定 Active/Retired。
 4a. **盤中訊號雷達 + 分點追蹤視角**(`docs/24`,2026-07-11 使用者指定排入):~~Part B 分點追蹤視角~~ **2026-07-11 完成**(B1 export + B2 前端);~~Part A 盤中雷達~~ **2026-07-12 程式碼完成** (I1-I3 完成, 包含 `worker.py` 與前端 `IntradayPanel.tsx` 即時推播)，待使用者於 Supabase 執行 SQL 及本機設定 `.env` 即可正式啟用。
@@ -108,8 +108,11 @@
 
 ## 最近完成
 
-- 2026-07-14 **compute-branch-stats OOM 修復**(pipeline,未 commit):`compute_all()` 舊版一次把整張 `branch_trades`(回補後約 600 萬列)連同全部 500 檔完整價格序列載進記憶體,1–2GB RAM 的 VPS 被 OOM killer 殺掉(`51 Killed`)。改為**串流式逐檔處理**——先查 distinct stock_id,再逐檔載入單股價格 ctx + 該股 branch_trades 列(走 PK `(stock_id,…)` 前導,無需新索引),算完累加分點層事件池後即釋放。彙總/排行/auto in-out/落地全部不動,純函式不動,行為零變化;既有 28 項測試 + 全 106 項 pytest 全過。合成 1.2M 列(比生產密集)實測:舊版全表 fetchall Python 峰值 488MB(且舊版還在其上疊 stock_ctx+by_bs 兩份)→ 新版全程峰值 161.7MB(主要是跨檔事件池,單檔資料僅數 MB)。重跑指令見 `docs/vps_backfill_plan.md` 4c 後的 OOM 小節。
-- 2026-07-14 **docs/28 WP-H4(個股頁分點統一)+ WP-H5(K 線圖/分點明細手機版)**(未 commit):H4 移除「分點」tab(收為 K線/權證),K 線下方 BranchFlowSection 升級為唯一分點區(標頭併分點分徽章+分點理由 pills,`#branch` 錨點捲動,BranchPanel 刪除);H5 手機(<768px,全 media/斷點 gated,桌機逐位元不變)子 pane 副圖/主力/分點三選一(獨立 localStorage、分點無勾選 disabled、總高 clamp(360,52vh,480)、stretch 使子 pane ≥120px)、`vertTouchDrag=false` 垂直手勢還頁面、游標值改上方 compact legend、工具 chips 單行橫滑+min-h-11、買賣超 segmented tabs+前8展開、勾選右下 fixed chip(z-30,點擊捲回 KChart)。修正前次 commit(83649ae/8b04b77)遺留的手機仍渲染 4 pane、桌機 chips 被改成單行不換行、主力 pane 綁 settings.mainForce 等缺陷。`web` `npm run build` 全過;未動 token/依賴/pipeline(僅 globals.css 加一個 `.scrollbar-hide` 工具 class)。
+- 2026-07-14 `49c4a39` **分點進出標示籌碼日**(web):分點資料落後價格日時,明確標示所用籌碼日並警示暫用舊資料。
+- 2026-07-13~14 **雲端 DB 瘦身 Phase 0-2 + VPS 分點歷史回灌**:`docs/29`(WP-M3R)落檔(`3df1976`)後實作 Phase 0/1(`980524d`)與 Phase 2 branch_dim 正規化(`3a72c8d`,同 commit 追加 WP-M4 全市場回補計畫);VPS 490 天分點歷史回補完成並回灌雲端,期間修掉 VPS 指令中 db download 會覆蓋 490 天歷史的風險(`7db809a`)、以還原後完整歷史 DB 觸發部署並 force deploy 清 cache(`5029ab5`→`fa464d3`);另新增 Actions `task=backfill-recent`/`backfill-branches-recent`/唯讀 `debug-query`(`fd1f002`/`9e4ffe0`/`0f0fd45`),補 07-10(五)缺漏交易日資料(`92a1e10`)。
+- 2026-07-13 **Cloudflare Access 鎖站完成(docs/21 A0-A2)**:使用者手動於 Cloudflare Zero Trust 完成 Google IdP + email 白名單,單一 Access Application 覆蓋 `radar.techtrever.com` / `trever-radar.pages.dev` / `*.trever-radar.pages.dev`;執行紀錄寫入 `docs/21` §4 A3(commit `ff2b05f`)。
+- 2026-07-14 **compute-branch-stats OOM 修復**(pipeline,已入 commit `4587c6f`;另新增 Actions `task=branch-stats` 讓 7GB RAM 雲端 runner 跑統計,commit `45787c4`):`compute_all()` 舊版一次把整張 `branch_trades`(回補後約 600 萬列)連同全部 500 檔完整價格序列載進記憶體,1–2GB RAM 的 VPS 被 OOM killer 殺掉(`51 Killed`)。改為**串流式逐檔處理**——先查 distinct stock_id,再逐檔載入單股價格 ctx + 該股 branch_trades 列(走 PK `(stock_id,…)` 前導,無需新索引),算完累加分點層事件池後即釋放。彙總/排行/auto in-out/落地全部不動,純函式不動,行為零變化;既有 28 項測試 + 全 106 項 pytest 全過。合成 1.2M 列(比生產密集)實測:舊版全表 fetchall Python 峰值 488MB(且舊版還在其上疊 stock_ctx+by_bs 兩份)→ 新版全程峰值 161.7MB(主要是跨檔事件池,單檔資料僅數 MB)。重跑指令見 `docs/vps_backfill_plan.md` 4c 後的 OOM 小節。
+- 2026-07-14 **docs/28 WP-H4(個股頁分點統一)+ WP-H5(K 線圖/分點明細手機版)**(commits `83649ae`/`8b04b77`/`4587c6f`):H4 移除「分點」tab(收為 K線/權證),K 線下方 BranchFlowSection 升級為唯一分點區(標頭併分點分徽章+分點理由 pills,`#branch` 錨點捲動,BranchPanel 刪除);H5 手機(<768px,全 media/斷點 gated,桌機逐位元不變)子 pane 副圖/主力/分點三選一(獨立 localStorage、分點無勾選 disabled、總高 clamp(360,52vh,480)、stretch 使子 pane ≥120px)、`vertTouchDrag=false` 垂直手勢還頁面、游標值改上方 compact legend、工具 chips 單行橫滑+min-h-11、買賣超 segmented tabs+前8展開、勾選右下 fixed chip(z-30,點擊捲回 KChart)。修正前次 commit(83649ae/8b04b77)遺留的手機仍渲染 4 pane、桌機 chips 被改成單行不換行、主力 pane 綁 settings.mainForce 等缺陷。`web` `npm run build` 全過;未動 token/依賴/pipeline(僅 globals.css 加一個 `.scrollbar-hide` 工具 class)。
 - 2026-07-07 `842b4e0 feat: add warrant radar UI`:首頁新增權證榜,股票卡/個股頁接上權證摘要、趨勢與熱門權證明細。
 - 2026-07-07 `ed363b1 ci: deploy site on main push`:正式分支 push 會觸發 Cloudflare Pages 部署;已確認 GitHub Actions `nightly-radar` push run 成功。
 - 2026-07-07 還原價資料層:新增 `daily_prices.adj_factor`、SQLite additive migration、`compute-adjustments` CLI、單元測試;2330 實測 6 筆除息事件/8031 日價列更新成功。
@@ -149,11 +152,11 @@
   - **F2 日報摘要**：`json_export.py` 新增 `_build_summary_text()`（規則模板≤3句，無 LLM）；`types.ts` 加 `summary_text?: string[]`；首頁 stale alert 後顯示摘要區塊。
   - **V3.3 Sonner**：`npm install sonner`；`layout.tsx` 掛 `<Toaster position="bottom-center" richColors />`；`WatchlistButton.tsx` 加入/移除觸發 `toast.success/info`。
   - build 兩次均通過（`npm run build`），0 errors；push main → Cloudflare Pages 自動部署。
-- 2026-07-12 **docs/23 F4.2 策略四類分群 + F1.3 一鍵加入今日 Armed（純前端，未 commit）**：
+- 2026-07-12 **docs/23 F4.2 策略四類分群 + F1.3 一鍵加入今日 Armed（純前端，commit `0d70e8a`）**：
   - **F4.2 策略四類分群**（`web/app/page.tsx`）：13 策略 pills 依 `docs/20` §4.1 改為「籌碼事件(S11-13)/突破發動(S2-4,6-8)/趨勢續強·回踩(S1,5,9)/低檔反轉(S10)」四組；每組標題含總檔數 badge + lucide `ChevronDown`（`aria-expanded`、`-rotate-90` 收合，transition-transform 200ms）；預設只展開籌碼事件（`expandedGroups` Set，session 內不持久化）；選中策略落在收合組時「有效展開」自動含入（`expandedGroups.has || codes.includes(strategy)`）；預設選中改籌碼事件組第一個有檔數者（皆無則 S11，radar 載入後 `useRef` 套一次不覆寫使用者選擇）；pill 樣式與 count 沿用既有；未改任何 S code 語意。
   - **F1.3 一鍵加入今日 Armed**（`web/app/watchlist/page.tsx`）：新增 `AddTodayArmedButton` 自足元件（fetch `/data/radar.json` 取 `lists.armed`）；置於三種頁面狀態頂部動作區（未登入 / 空自選 / 主檢視）；N = armed 中尚未在自選者，只加不減（pending 先排除已在自選者，逐檔 `toggle` 新增、失敗不中斷）；完成 Sonner `toast.success`「已加入 X 檔」/`toast.warning`「已加入 X 檔；失敗 Y 檔」；未登入(登入後可用)/今日無 Armed/pending=0 三態 disabled，執行中 `aria-busy`+loading disabled；`lists.armed` 空防禦；不自動同步。
   - `cd web; npm run build` 全過（0 errors）；13 策略與 STRATEGIES 常數逐一比對無缺漏/重複。
-- 2026-07-12 **淺色對比補強 + 盤中面板顯示放寬（純前端，未 commit）**：
+- 2026-07-12 **淺色對比補強 + 盤中面板顯示放寬（純前端，commit `331af88`）**：
   - **A 淺色 token 對比**（`web/app/globals.css`）：被當文字色用、原僅 `:root` 定義深色調值的 brand-extension token 改雙主題定義——`.dark` 補回原深色值(逐位元不變)、`:root` 給淺色可讀值：`--ink-2` #c3c2b7→#5f5e52(對白 1.79→6.54)、`--warn` #fab219→#8a5a00(1.83→5.93)、`--accent-2` #35b5c9→#0e7c8c(2.44→4.91)、`--legacy-accent` #3987e5→#2f6fc4(連結/focus,3.64→5.01)；`--up`/`--down` 刻意不動。（另記:非文字的 `--border-strong` rgba(255,255,255,.16) 與 `--line` #2c2c2a 於淺色偏弱,屬邊框類非本次文字對比範圍,留待後續。）
   - **A KChart 淺色主題**（`web/components/KChart.tsx`）：抽 `chartColors(isDark)`(dark=遷移前寫死值逐字不變、light=grid #e6e5e0／文字 #6b6a64／軸 #d8d7d2)；`MutationObserver` 監聽 `<html>` class,主題切換以 `applyOptions` 就地更新 grid/軸/水印色(不重建,不閃爍),水印動態值由 `paneTextRef` 即時跟色；K 棒紅綠/均線/量色不變。
   - **B 盤中面板顯示邏輯**（`web/components/IntradayPanel.tsx`）：移除非盤中隱藏,面板永遠渲染；未登入顯示登入提示外殼；登入後空狀態分「非交易時段(worker 平日 08:50 啟動)」與「交易時段 worker 離線/尚無訊號」；頂欄徽章非交易時段顯示中性「非交易時段」(不用紅色 offline);無訊號時單行精簡不留空白。
