@@ -35,9 +35,11 @@
 | `docs/22_armed_tracking.md` | 📝 **規劃定案,程式未實作** | Armed/Triggered 狀態追蹤(未發動籌碼·權證池);須等 `20` Phase 1–3 與 `21` Access 有進度後另確認才實作,不新增策略/不抬綜合分。 |
 | `docs/23_product_ui_backlog.md` | 📝 **規劃定案,程式未實作** | Access/B/Armed 之後的功能與視覺優化 backlog(V1–V3 / F1–F4)+ Executor 工作包;不得插隊或引入新配色/第14策略。 |
 | `docs/25_ui_information_architecture_plan.md` | 📝 **任務導向 UI 規劃已落檔,程式未實作** | 將前端重整為掃描→判讀→追蹤任務流,含首頁/個股/分點/自選 IA Phase 與 Executor 驗收;不取代 `20`/`22`/`23`,每次只可另確認一個 Phase。 |
-| `docs/29_db_slimming_plan.md` | 📝 **Planner 提案,尚未執行,2026-07-14 定案分析** | 雲端 `radar.db` 瘦身計畫(WP-M3R),取代 `docs/26` WP-M3 過時的容量估算;實測 `indicators_daily`(52%)才是主要肥胖來源,非分點資料(21%);`daily_prices` 明確排除、永遠保留全歷史不動。動 DB 體積/分點拆分/技術指標保留政策時必讀,以此檔數字為準。 |
+| `docs/29_db_slimming_plan.md` | ⚠️ **Phase 0/1/2 正規化已實作(2026-07-14);Phase 2 剩餘項已被 31 作廢** | 容量實測數字仍為真相(`indicators_daily` 52% 為主因);prune(指標400/權證150/logs180)與 branch_dim 正規化已上線。分點 130 日窗口、hist 拆分、§7 待決 2/5/6 因 B 案(`31`)作廢。 |
+| `docs/30_full_market_backfill_plan.md` | ⚠️ **§3 權證 bug 修正仍必做;§4 上傳流程將因 31 作廢** | WP-M4 全市場歷史回補計畫;B 案 cutover 後回補直接寫 VPS 主本,不再打包上傳。 |
+| `docs/31_plan_b_vps_data_home.md` | ✅ **current,資料架構遷移 source of truth(2026-07-15 定案,同日 v2 改 R2 資料層)** | radar.db 常駐 VPS 單一寫者;資料 VPS→R2→Worker(`/data/*`)即傳即生效;GitHub 只管 code build/deploy(push 體感不變);repo 轉 private;WP-B7 登入統一(Supabase 白名單取代 Access,需資安審查)。動排程/部署/備份/DB 存放/門禁時必讀;取代 `26` WP-M3。 |
 
-有疑問時,信任順序:`project-context.md` / `STATUS.md` / `20`(功能刪減與策略治理) / `21`(私人測試/Access/R2) / `22`(Armed 追蹤) / `23`(功能·視覺 backlog) / `25`(任務導向 UI IA) / `12` / `08§0` / `vps_backfill_plan.md` > 其餘 `docs/*` > 對話記憶。
+有疑問時,信任順序:`project-context.md` / `STATUS.md` / `20`(功能刪減與策略治理) / `21`(私人測試/Access/R2) / `22`(Armed 追蹤) / `23`(功能·視覺 backlog) / `25`(任務導向 UI IA) / `31`(資料架構遷移,B 案) / `12` / `08§0` / `vps_backfill_plan.md` > 其餘 `docs/*` > 對話記憶。
 
 ## Required Reading(改檔前必讀)
 

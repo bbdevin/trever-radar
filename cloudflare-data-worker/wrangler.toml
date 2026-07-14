@@ -1,0 +1,20 @@
+# trever-radar-data worker(docs/31 §3.2)
+# 部署:cd cloudflare-data-worker && npx wrangler deploy(需 Cloudflare 登入,人工執行)
+name = "trever-radar-data"
+main = "src/index.js"
+compatibility_date = "2026-07-01"
+
+# 只綁資料 bucket;備份 bucket trever-radar-backup 刻意不綁(docs/31 安全邊界)
+[[r2_buckets]]
+binding = "DATA_BUCKET"
+bucket_name = "trever-radar-data"
+
+# WP-B2 影子驗證:先只掛 preview 路由
+[[routes]]
+pattern = "radar.techtrever.com/data-preview/*"
+zone_name = "techtrever.com"
+
+# WP-B3 cutover 時解除下面註解重新 deploy,正式接管 /data/*(docs/31 §6 WP-B3)
+# [[routes]]
+# pattern = "radar.techtrever.com/data/*"
+# zone_name = "techtrever.com"
