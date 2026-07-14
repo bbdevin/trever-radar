@@ -35,6 +35,7 @@
 | `docs/22_armed_tracking.md` | 📝 **規劃定案,程式未實作** | Armed/Triggered 狀態追蹤(未發動籌碼·權證池);須等 `20` Phase 1–3 與 `21` Access 有進度後另確認才實作,不新增策略/不抬綜合分。 |
 | `docs/23_product_ui_backlog.md` | 📝 **規劃定案,程式未實作** | Access/B/Armed 之後的功能與視覺優化 backlog(V1–V3 / F1–F4)+ Executor 工作包;不得插隊或引入新配色/第14策略。 |
 | `docs/25_ui_information_architecture_plan.md` | 📝 **任務導向 UI 規劃已落檔,程式未實作** | 將前端重整為掃描→判讀→追蹤任務流,含首頁/個股/分點/自選 IA Phase 與 Executor 驗收;不取代 `20`/`22`/`23`,每次只可另確認一個 Phase。 |
+| `docs/29_db_slimming_plan.md` | 📝 **Planner 提案,尚未執行,2026-07-14 定案分析** | 雲端 `radar.db` 瘦身計畫(WP-M3R),取代 `docs/26` WP-M3 過時的容量估算;實測 `indicators_daily`(52%)才是主要肥胖來源,非分點資料(21%);`daily_prices` 明確排除、永遠保留全歷史不動。動 DB 體積/分點拆分/技術指標保留政策時必讀,以此檔數字為準。 |
 
 有疑問時,信任順序:`project-context.md` / `STATUS.md` / `20`(功能刪減與策略治理) / `21`(私人測試/Access/R2) / `22`(Armed 追蹤) / `23`(功能·視覺 backlog) / `25`(任務導向 UI IA) / `12` / `08§0` / `vps_backfill_plan.md` > 其餘 `docs/*` > 對話記憶。
 
