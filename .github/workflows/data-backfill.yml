@@ -143,6 +143,16 @@ jobs:
           dn, dbid, avglen, avgblen = c.execute('SELECT COUNT(DISTINCT branch_name), COUNT(DISTINCT broker_id), AVG(LENGTH(branch_name)), AVG(LENGTH(broker_id)) FROM branch_trades').fetchone()
           print(f'branch_name distinct={dn} avg_len={avglen:.1f} broker_id distinct={dbid} avg_len={avgblen}')
           print('branch_trades table+index bytes (dbstat):', list(c.execute(\"SELECT name, SUM(pgsize) FROM dbstat WHERE name LIKE 'branch_trades%' GROUP BY name\")))
+          print('=== FULL TABLE/INDEX SIZE BREAKDOWN (dbstat, all objects, sorted desc) ===')
+          for row in c.execute(\"SELECT name, SUM(pgsize) AS bytes, COUNT(*) AS pages FROM dbstat GROUP BY name ORDER BY bytes DESC LIMIT 25\"):
+              print(f'  {row[0]:<40} {row[1]/1e6:>10.1f} MB  ({row[2]} pages)')
+          print('=== row counts for top tables ===')
+          for t in ('branch_trades','warrant_daily','indicators_daily','daily_prices','daily_scores','import_logs','themes','stock_themes'):
+              try:
+                  n = c.execute(f'SELECT COUNT(*) FROM {t}').fetchone()[0]
+                  print(f'  {t}: {n} rows')
+              except Exception as e:
+                  print(f'  {t}: ERROR {e}')
           for sid in ('2476', '2359'):
               row = c.execute('SELECT MAX(date) FROM branch_trades WHERE stock_id=?', (sid,)).fetchone()
               print(f'{sid} branch_trades max date: {row[0]}')
