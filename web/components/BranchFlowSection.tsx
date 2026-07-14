@@ -1,6 +1,7 @@
 "use client";
 
 import { forwardRef, useMemo, useState, useEffect } from "react";
+import { Clock } from "lucide-react";
 import type { ReasonItem, StockJson } from "@/lib/types";
 import { fmtLots } from "@/lib/format";
 import { cn, pillTabClass } from "@/lib/utils";
@@ -18,11 +19,18 @@ const BRANCH_RANGES = [
   { label: "2年", days: 480 },
 ] as const;
 
+/** YYYY-MM-DD → M/D（掃讀用；完整日期放 title） */
+function fmtMD(isoDate: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(isoDate);
+  if (!m) return isoDate;
+  return `${Number(m[2])}/${Number(m[3])}`;
+}
+
 /**
  * 分點進出共用區塊:時間範圍(1-240日+自訂)+ N 日淨流/家數摘要 + 前 13 大買/賣超列表。
  * 個股頁 K 線視圖下方的唯一分點區（WP-H4 升級版）：
  * - 傳入 score/reasons 時顯示分點分徽章與理由膠囊
- * - heading 控制頂部標題顯示
+ * - heading 控制頂部標題顯示；右側 meta 標籌碼交易日，落後報價日時 warn 防誤以為今日
  * - id 供 #branch 錨點捲動
  * - 手機版(<768px)：買/賣超改 segmented tabs(預設買超)，單欄顯示；勾選後顯示浮動回饋 chip
  * 桌機版維持雙欄(逐位元不變)。
@@ -44,6 +52,10 @@ const BranchFlowSection = forwardRef<
     onToggleSelect?: (name: string) => void;
     /** 手機版浮動回饋 chip 點擊後捲動回的目標元素 id(通常為 KChart 容器)*/
     chartAnchorId?: string;
+    /** 當頁最新報價交易日(通常 candles 末日);與籌碼日比對判斷是否暫用舊資料 */
+    quoteDate?: string | null;
+    /** 可選:與 radar.freshness.branch.stale 對齊;未傳則僅用 quoteDate 比對 */
+    branchStale?: boolean;
   }
 >(function BranchFlowSection(
   {
@@ -56,6 +68,8 @@ const BranchFlowSection = forwardRef<
     selected,
     onToggleSelect,
     chartAnchorId,
+    quoteDate,
+    branchStale,
   },
   ref
 ) {
@@ -78,6 +92,24 @@ const BranchFlowSection = forwardRef<
   }, []);
 
   const activeDays = days === "custom" ? parseInt(customDays) || 1 : days;
+
+  // 籌碼最新交易日(history 新→舊);無 history 不腦補「今日」
+  const branchAsOf = branchHistory?.length ? branchHistory[0].t : null;
+  const rangeMeta = useMemo(() => {
+    if (!branchHistory?.length) return null;
+    const sliced = branchHistory.slice(0, activeDays);
+    if (!sliced.length) return null;
+    return {
+      end: sliced[0].t,
+      start: sliced[sliced.length - 1].t,
+      available: sliced.length,
+    };
+  }, [branchHistory, activeDays]);
+
+  // 過期:籌碼日 ≠ 報價日,或父層明確 stale(定死並用 OR,避免只靠一邊漏判)
+  const isStale =
+    !!branchAsOf &&
+    ((branchStale === true) || (!!quoteDate && branchAsOf !== quoteDate));
 
   const agg = useMemo(() => {
     if (!branchHistory?.length) {
@@ -152,6 +184,49 @@ const BranchFlowSection = forwardRef<
   const buyRows = collapse ? agg.top13Buy.slice(0, MOBILE_ROW_LIMIT) : agg.top13Buy;
   const sellRows = collapse ? agg.top13Sell.slice(0, MOBILE_ROW_LIMIT) : agg.top13Sell;
 
+  const asOfChip =
+    branchAsOf != null ? (
+      <span
+        className={cn(
+          "inline-flex shrink-0 items-center gap-1 rounded-md border px-2 py-1 text-[11.5px] font-semibold",
+          isStale
+            ? "border-warn/30 bg-warn/10 text-warn"
+            : "border-border bg-secondary text-foreground",
+        )}
+        title={
+          isStale
+            ? `分點籌碼交易日 ${branchAsOf}，與報價日 ${quoteDate ?? "—"} 不同，勿當成最新日籌碼`
+            : `分點籌碼交易日 ${branchAsOf}`
+        }
+        aria-label={
+          isStale
+            ? `籌碼暫用 ${fmtMD(branchAsOf)}，非最新報價日`
+            : `籌碼日 ${fmtMD(branchAsOf)}`
+        }
+      >
+        <Clock size={12} strokeWidth={1.8} aria-hidden />
+        {isStale ? (
+          <>
+            <span className="font-medium">暫用</span>
+            <span className="num font-bold">{fmtMD(branchAsOf)}</span>
+            <span className="font-medium opacity-90">· 非今日</span>
+          </>
+        ) : (
+          <>
+            <span className="text-muted-foreground font-medium">籌碼日</span>
+            <span className="num font-bold">{fmtMD(branchAsOf)}</span>
+          </>
+        )}
+      </span>
+    ) : null;
+
+  const rangeHint =
+    rangeMeta && activeDays > 1
+      ? `區間 ${fmtMD(rangeMeta.start)}–${fmtMD(rangeMeta.end)}（${rangeMeta.available} 交易日${
+          rangeMeta.available < activeDays ? "，僅有此深度" : ""
+        }）· `
+      : "";
+
   return (
     <section
       ref={ref}
@@ -160,9 +235,18 @@ const BranchFlowSection = forwardRef<
     >
       {heading && (
         <div className="flex flex-col gap-0.5">
-          <h2 className="text-[15px] font-bold text-foreground">{heading}</h2>
-          <span className="text-[11px] text-muted-foreground">盤後 T+1、每日前 15 大買賣超裁剪版,資料自累積起,僅供籌碼觀察。</span>
+          <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-1.5">
+            <h2 className="text-[15px] font-bold text-foreground">{heading}</h2>
+            {asOfChip}
+          </div>
+          <span className="text-[11px] text-muted-foreground">
+            {rangeHint}
+            盤後 T+1、每日前 15 大買賣超裁剪版,資料自累積起,僅供籌碼觀察。
+          </span>
         </div>
+      )}
+      {!heading && asOfChip && (
+        <div className="flex justify-end">{asOfChip}</div>
       )}
 
       {/* 分點分卡 + 摘要統計 */}

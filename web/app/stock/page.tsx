@@ -207,6 +207,7 @@ function StockView() {
           onToggleSelect={toggleBranch}
           id="branch"
           chartAnchorId="stock-kchart"
+          quoteDate={last.t}
         />
       )}
     </>
