@@ -130,6 +130,16 @@ jobs:
           print('db file size bytes:', os.path.getsize('../data/radar.db'))
           print('branch_trades: MIN(date)=%s MAX(date)=%s COUNT(DISTINCT date)=%s total_rows=%s' % c.execute(
               'SELECT MIN(date), MAX(date), COUNT(DISTINCT date), COUNT(*) FROM branch_trades').fetchone())
+          print('branch_trades: COUNT(DISTINCT stock_id)=%s' % c.execute(
+              'SELECT COUNT(DISTINCT stock_id) FROM branch_trades').fetchone())
+          print('total listed stocks/etf in stocks table:', c.execute(
+              \"SELECT COUNT(*) FROM stocks WHERE type IN ('stock','etf')\").fetchone()[0])
+          rows_per_stock = c.execute(
+              'SELECT stock_id, COUNT(*) FROM branch_trades GROUP BY stock_id ORDER BY COUNT(*) DESC LIMIT 3').fetchall()
+          print('top row-count stocks (sample):', rows_per_stock)
+          import statistics
+          counts = [r[0] for r in c.execute('SELECT COUNT(*) FROM branch_trades GROUP BY stock_id').fetchall()]
+          print(f'rows-per-stock: n={len(counts)} median={statistics.median(counts)} mean={statistics.mean(counts):.0f} max={max(counts)}')
           for sid in ('2476', '2359'):
               row = c.execute('SELECT MAX(date) FROM branch_trades WHERE stock_id=?', (sid,)).fetchone()
               print(f'{sid} branch_trades max date: {row[0]}')
