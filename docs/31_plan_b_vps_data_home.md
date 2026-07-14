@@ -108,10 +108,13 @@ export-json 寫 web/public/data/(程式不改,輸出路徑照舊)
 | 主本 | VPS `~/trever-radar/data/radar.db` | 即時(唯一真相) |
 | 快照 #1 | R2 `trever-radar-backup/radar-YYYYMMDD.db.gz`(獨立 bucket,`/data/*` Worker 未綁定、無法讀取) | 每週六 05:00 |
 | 快照 #2 | GitHub release `db-backup`(repo 轉 private 後即為私有) | 與 #1 同步上傳(建議留著,多一朵雲) |
+| 快照 #3 | Google Drive(rclone gdrive remote,15GB 免費;2026-07-15 使用者要求加入) | 與 #1 同一腳本多一行 `rclone copy`;保留最近 2–3 份輪替 |
 
 - 備份腳本:`wal_checkpoint(TRUNCATE)` → `integrity_check` 必須 `ok` → gzip → 上傳;任一步失敗 ntfy High 告警。**integrity_check 不過的快照絕不上傳覆蓋舊版**。
 - R2 retention:快照保留最近 4 份 + 每月 1 份;資料 bucket 現行 JSON 約數百 MB。兩 bucket 合計警戒 8GB-month(`docs/21` §5.4 沿用),超標優先刪最舊週份快照。
 - **還原演練(WP-B4 必做)**:從 R2 下載最新快照 → gunzip → integrity_check → 暫存目錄跑 `export-json` 比對線上 JSON。演練通過前,舊 release 快照不得刪。
+- **災難恢復認知**(為何週備份的 RPO 可接受):快照之後那幾天的資料幾乎全部可重建——日K/法人/融資券/權證走官方 `backfill --days N`,分點走 MoneyDJ 鏡像按日期補抓,指標/分數/績效重算即可。VPS 全滅的實際代價=「還原快照+重跑數小時回補」,不是資料永久損失。
+- Google Drive 的 rclone OAuth token 存於 VPS `rclone.conf`,屬 VPS 側金鑰,同 §5.1 紀律。
 
 ## 5. 憑證、監控與維運
 
