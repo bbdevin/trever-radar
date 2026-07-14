@@ -160,6 +160,14 @@ def cmd_import_descriptions(args):
     print(f"descriptions updated: {info['done']}, failed: {info['failed']}")
 
 
+def cmd_prune(args):
+    from .prune import prune_db
+    info = prune_db(args.indicators, args.warrants, args.logs, args.vacuum)
+    print(f"pruned: {info['indicators']} indicators, {info['warrants']} warrants, {info['logs']} logs")
+    if info['vacuum']:
+        print("vacuum completed")
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(prog="radar", description="Trever Radar data pipeline")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -268,6 +276,13 @@ def main(argv=None):
     exp = sub.add_parser("export-json", help="write web/public/data/*.json for the frontend")
     exp.add_argument("--out", default=None, help="output dir (default web/public/data)")
     exp.set_defaults(fn=cmd_export_json)
+
+    pr = sub.add_parser("prune", help="delete old history to keep DB slim")
+    pr.add_argument("--indicators", type=int, default=400, help="days to keep in indicators_daily")
+    pr.add_argument("--warrants", type=int, default=150, help="days to keep in warrant_daily")
+    pr.add_argument("--logs", type=int, default=180, help="days to keep in import_logs")
+    pr.add_argument("--vacuum", action="store_true", help="run VACUUM after pruning")
+    pr.set_defaults(fn=cmd_prune)
 
     args = p.parse_args(argv)
     args.fn(args)

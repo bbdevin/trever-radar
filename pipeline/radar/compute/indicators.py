@@ -457,9 +457,12 @@ def compute_indicators(ids: list[str] | None = None, top: int | None = None,
                     WHERE stock_id = :sid AND close IS NOT NULL
                     ORDER BY date
                 """), {"sid": sid})]
+        MAX_HISTORY_BARS = 400
         rows = compute_series(price_rows)
         if days:
             rows = rows[-days:]
+        else:
+            rows = rows[-MAX_HISTORY_BARS:]
         with engine.begin() as conn:
             written += upsert(conn, schema.indicators_daily, rows)
         done += 1

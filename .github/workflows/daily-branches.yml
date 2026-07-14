@@ -74,6 +74,10 @@ jobs:
         working-directory: pipeline
         run: python -m radar export-json
 
+      - name: Prune old data
+        working-directory: pipeline
+        run: python -m radar prune
+
       - uses: actions/setup-node@v4
         with:
           node-version: 20

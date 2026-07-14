@@ -269,7 +269,7 @@ def aggregate_warrants(date: str | None = None) -> int:
         if date:
             conn.execute(text("DELETE FROM warrant_stock_daily WHERE date = :d"), params)
         else:
-            conn.execute(text("DELETE FROM warrant_stock_daily"))
+            conn.execute(text("DELETE FROM warrant_stock_daily WHERE date IN (SELECT DISTINCT date FROM warrant_daily)"))
         r = conn.execute(text(f"""
             INSERT INTO warrant_stock_daily
                 (stock_id, date, call_turnover, call_volume, call_count,
