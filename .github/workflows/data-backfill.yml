@@ -21,7 +21,7 @@ on:
         required: true
         default: "deep"
         type: choice
-        options: [deep, adjust, themes, branches-history, indicators-only, backfill-recent, branch-stats, backfill-branches-recent]
+        options: [deep, adjust, themes, branches-history, indicators-only, backfill-recent, branch-stats, backfill-branches-recent, debug-query]
       sleep:
         description: "FinMind 請求間隔秒數(600/hr 上限 → ≥6)"
         required: false
@@ -119,6 +119,28 @@ jobs:
           python -m radar import-branch-trades --date 20260710 --top 500 --sleep 1.0 || true
           python -m radar import-branch-trades --date 20260713 --top 500 --sleep 1.0 || true
           python -m radar compute-branch-stats
+
+      - name: "Debug query (read-only; check per-stock branch_trades freshness + score rank)"
+        if: inputs.task == 'debug-query'
+        working-directory: pipeline
+        run: |
+          python -c "
+          import sqlite3
+          c = sqlite3.connect('../data/radar.db')
+          for sid in ('2476', '2359'):
+              row = c.execute('SELECT MAX(date) FROM branch_trades WHERE stock_id=?', (sid,)).fetchone()
+              print(f'{sid} branch_trades max date: {row[0]}')
+              for d in ('2026-07-09', '2026-07-10', '2026-07-13'):
+                  r = c.execute('''SELECT rowid FROM (
+                      SELECT stock_id, RANK() OVER (ORDER BY final DESC) rk
+                      FROM daily_scores WHERE date=?) WHERE stock_id=?''', (d, sid)).fetchone()
+                  rk = c.execute('''SELECT rk FROM (
+                      SELECT stock_id, RANK() OVER (ORDER BY final DESC) rk
+                      FROM daily_scores WHERE date=?) WHERE stock_id=?''', (d, sid)).fetchone()
+                  print(f'  {sid} score rank on {d}: {rk}')
+              rows = c.execute('SELECT branch_name, net_lots FROM branch_trades WHERE stock_id=? AND date=(SELECT MAX(date) FROM branch_trades WHERE stock_id=?) ORDER BY net_lots DESC LIMIT 5', (sid, sid)).fetchall()
+              print(f'  {sid} latest branch rows: {rows}')
+          "
 
       - name: Concept themes
         if: inputs.task == 'themes'
