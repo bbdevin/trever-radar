@@ -33,7 +33,7 @@ radar.techtrever.com/data/* → Cloudflare Worker(zone route)→ R2 讀取回應
   Phase 2(WP-B7):Worker 驗 Supabase JWT + email 白名單,Access 退役
 
 【備份】
-每週:wal_checkpoint → integrity_check → gzip → R2 backup bucket(與資料 bucket 分離;+私有 release 第二 fallback)
+每週:wal_checkpoint → integrity_check → gzip → R2 backup bucket + Google Drive(兩個獨立供應商;GitHub 零資料)
 ```
 
 **三個根因的解法**:①VPS 磁碟裝 4 年全歷史無壓力,2GB/10GB 上限與 WP-M3 拆分工程全部消失;②只剩一個寫者,不再有任何 DB 上下傳;③repo 轉 private + 資料只經 VPS→R2→Worker(有門禁)。
@@ -63,7 +63,7 @@ radar.techtrever.com/data/* → Cloudflare Worker(zone route)→ R2 讀取回應
 | `10 22 * * 1-5` | daily-margin | 融資券保底輪 → compute-scores → export-json → sync R2 |
 | `10 1 * * *` | data-backfill | 深歷史增量(已拉深自動跳過) |
 | `0 3 * * 6` | 週六全重算(可選) | --all 級重算常態化(首版可先不排,人工觸發) |
-| `0 5 * * 6` | **備份** | wal_checkpoint → integrity_check → gzip → 上傳 R2 snapshot(§4) |
+| `0 5 * * 6` | **備份** | wal_checkpoint → integrity_check → gzip → 上傳 R2 + Google Drive(§4) |
 
 實作規範:
 - 每個 cron 項對應 `vps/scripts/` 下一支 shell script,內容 = `docker run --rm` 跑管線映像 + 失敗時 `curl ntfy.sh/$NTFY`(High priority)告警;成功靜默(或每日一則摘要,PoC 時定)。
@@ -107,12 +107,13 @@ export-json 寫 web/public/data/(程式不改,輸出路徑照舊)
 |---|---|---|
 | 主本 | VPS `~/trever-radar/data/radar.db` | 即時(唯一真相) |
 | 快照 #1 | R2 `trever-radar-backup/radar-YYYYMMDD.db.gz`(獨立 bucket,`/data/*` Worker 未綁定、無法讀取) | 每週六 05:00 |
-| 快照 #2 | GitHub release `db-backup`(repo 轉 private 後即為私有) | 與 #1 同步上傳(建議留著,多一朵雲) |
-| 快照 #3 | Google Drive(rclone gdrive remote,15GB 免費;2026-07-15 使用者要求加入) | 與 #1 同一腳本多一行 `rclone copy`;保留最近 2–3 份輪替 |
+| 快照 #2 | Google Drive(rclone gdrive remote,15GB 免費) | 與 #1 同一腳本多一行 `rclone copy`;保留最近 2–3 份輪替 |
+
+**GitHub 零資料原則(2026-07-15 使用者定案)**:git repo 與 release 平時**都不存放任何資料庫檔案**;`db-backup` release 只在回滾/災難(§8)時臨時上傳、事後即刪。就算日後 repo 再轉 public,也不存在可外洩的資料 asset。
 
 - 備份腳本:`wal_checkpoint(TRUNCATE)` → `integrity_check` 必須 `ok` → gzip → 上傳;任一步失敗 ntfy High 告警。**integrity_check 不過的快照絕不上傳覆蓋舊版**。
 - R2 retention:快照保留最近 4 份 + 每月 1 份;資料 bucket 現行 JSON 約數百 MB。兩 bucket 合計警戒 8GB-month(`docs/21` §5.4 沿用),超標優先刪最舊週份快照。
-- **還原演練(WP-B4 必做)**:從 R2 下載最新快照 → gunzip → integrity_check → 暫存目錄跑 `export-json` 比對線上 JSON。演練通過前,舊 release 快照不得刪。
+- **還原演練(WP-B4 必做)**:從 R2 與 Google Drive 各下載最新快照 → gunzip → integrity_check → 暫存目錄跑 `export-json` 比對線上 JSON。演練通過前,操作備份 bucket/資料夾時不得刪除任何既有快照。
 - **災難恢復認知**(為何週備份的 RPO 可接受):快照之後那幾天的資料幾乎全部可重建——日K/法人/融資券/權證走官方 `backfill --days N`,分點走 MoneyDJ 鏡像按日期補抓,指標/分數/績效重算即可。VPS 全滅的實際代價=「還原快照+重跑數小時回補」,不是資料永久損失。
 - Google Drive 的 rclone OAuth token 存於 VPS `rclone.conf`,屬 VPS 側金鑰,同 §5.1 紀律。
 
@@ -124,6 +125,7 @@ export-json 寫 web/public/data/(程式不改,輸出路徑照舊)
 |---|---|---|
 | GitHub fine-grained PAT | private repo `git pull` | VPS(既有) |
 | R2 Access Key(bucket 級 Object R/W) | rclone sync + 週備份 | VPS `vps/.env` |
+| Google Drive OAuth token(rclone `gdrive` remote) | 週備份第二朵雲 | VPS `rclone.conf` |
 | `CLOUDFLARE_API_TOKEN` + `ACCOUNT_ID` | Actions build 後部署 Pages | GitHub secrets(**既有,不動**) |
 | `RADAR_FINMIND_TOKEN` | deep-backfill / adjust | 由 GitHub secret 改遷 VPS `.env` |
 | Fugle / Supabase service key / Access service token | 盤中 worker(既有) | `pipeline/intraday/.env` |
@@ -146,7 +148,7 @@ Worker trigger 的 `GH_TOKEN` PAT 在回滾窗結束後由使用者親自 revoke
 
 ### WP-B0 前置盤點與資源建立(人工為主,0.5 天)
 - 【人工】Cloudflare:建 **2 個** R2 私有 bucket——`trever-radar-data`(站台 JSON,Worker 只綁這顆)與 `trever-radar-backup`(DB 快照,Worker 不綁、實體隔離);發涵蓋兩 bucket 的 R2 token;部署 `/data/*` Worker(程式在 `cloudflare-data-worker/`,Executor 已寫好)。
-- 【人工】VPS:確認磁碟餘量(≥20GB)、`docker --version`、時區 Asia/Taipei(已設)、裝 rclone 並設 R2 remote。
+- 【人工】VPS:確認磁碟餘量(≥20GB)、`docker --version`、時區 Asia/Taipei(已設)、裝 rclone 並設 R2 remote 與 Google Drive remote(`gdrive`,一次性 OAuth)。
 - 【Executor】新增 `pipeline/Dockerfile`、`cloudflare-data-worker/`(Worker 程式+wrangler.toml)、`vps/.env.example`。
 - 驗收:`docker run radar-pipeline python -m radar --help` 正常;`rclone lsd r2:` 看得到 bucket;Worker 掛測試路徑(如 `/data-preview/*`)可讀 R2 測試物件。
 
@@ -211,7 +213,7 @@ Worker trigger 的 `GH_TOKEN` PAT 在回滾窗結束後由使用者親自 revoke
 ## 8. 回滾計畫(cutover 後兩週內有效)
 
 觸發條件:VPS 連續 2 個交易日無法完成任一主輪,且無法當日修復。
-步驟:①VPS `radar.db` checkpoint+gzip 上傳 release `db-backup`(repo 已 private,不涉合規);②重新啟用 5 支資料 workflow 與 Worker trigger cron 表;③`deploy.yml` 還原 DB/export 步驟(git revert 即可);④`gh cache delete --all` 讓雲端自 release 還原;⑤VPS cron 全停。
+步驟:①VPS `radar.db` checkpoint+gzip 上傳 release `db-backup`(repo 已 private,不涉合規;屬 §4「GitHub 零資料」原則的例外臨時用途,回滾結束後該 asset 必須刪除);②重新啟用 5 支資料 workflow 與 Worker trigger cron 表;③`deploy.yml` 還原 DB/export 步驟(git revert 即可);④`gh cache delete --all` 讓雲端自 release 還原;⑤VPS cron 全停。
 注意:repo 已 private,Actions 分鐘數受 2,000/月限制——回滾後需人工評估額度(必要時暫時再轉 public,**但 release 資料 asset 保持刪除狀態**,cache 單腿跑)。
 
 ## 9. 退役/凍結清單(WP-B5 落實)
@@ -244,6 +246,7 @@ Worker trigger 的 `GH_TOKEN` PAT 在回滾窗結束後由使用者親自 revoke
 - 2026-07-15:使用者定案 **B 案**;確認**不做 FastAPI/自架 DB 服務**。重新考慮 API 的觸發條件:①靜態檔數/體積撞 Pages 上限且裁剪無解;②出現無法預先匯出的自由參數全歷史查詢需求;③個人化資料量超出 Supabase 免費層。屆時第一優先為 Cloudflare Workers+D1/R2 方案,FastAPI 為最後選項。
 - 2026-07-15(v2):使用者反饋 v1「VPS 輪詢 build+deploy」多此一舉、延遲不可接受、管控面過大 → 改為 **R2 資料層**:資料與部署解耦,GitHub push→deploy 維持現狀,VPS 不裝前端工具鏈。self-hosted runner 變體已評估並否決(多養常駐 daemon,無必要)。
 - 2026-07-15:使用者提出以「認可的 Gmail 登入」取代 Access 做功能級授權 → 立項 **WP-B7 登入統一**(Supabase JWT + Worker 白名單,Access 於驗證通過後退役);與遷移分階段,不併行。
+- 2026-07-15:備份定案「**GitHub 零資料**」——週快照 = R2 + Google Drive 兩個獨立供應商;GitHub release 僅回滾/災難時臨時上傳、事後即刪(§4/§8)。
 
 ## 12. 執行紀錄(隨工作包更新)
 
