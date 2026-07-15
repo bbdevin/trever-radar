@@ -26,6 +26,7 @@ cloudflare-trigger/.wrangler/
 .env
 .env.*
 !vps/.env.example
+!pipeline/intraday/.env.example
 
 # stray logs (含 gh run view 下載的 Actions 日誌)
 *.log

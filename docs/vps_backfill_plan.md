@@ -273,7 +273,13 @@ docker rm -f radar-backfill radar-finalize 2>/dev/null; docker rm -f radar-warra
 
 ## Step 5:盤中 worker 部署(2026-07-12 新增;一次設定,之後只要 `git pull`)
 
-盤中訊號雷達(docs/24 Part A)的 worker 跑在這台 VPS:平日 08:50 啟動、13:35 自動收工,抓 Fugle 行情判定 I-1~I-4 訊號寫入 Supabase,網站首頁盤中面板即時顯示。前置(已完成 ✅):Supabase SQL 已執行、Fugle 新金鑰已備。
+> ⚠️ **2026-07-15 補充**:本節寫於 2026-07-13 Cloudflare Access 上線**之前**,5-b 的 `.env`
+> 範本只有四行、沒有 Access token。Access 上線後 `pages.dev` 也被擋,worker 抓 `radar.json`
+> 沒有 Access 憑證會直接 403 fatal exit(worker.py 已有對應錯誤訊息)。**必看 `pipeline/intraday/.env.example`**
+> ——多兩行 `CF_ACCESS_CLIENT_ID`/`CF_ACCESS_CLIENT_SECRET`,建立方式見該檔案內註解。
+> cron 行已併入 `vps/scripts/crontab.example`,與 B 案(docs/31)資料 cron 一起裝,不必另開一份 crontab。
+
+盤中訊號雷達(docs/24 Part A)的 worker 跑在這台 VPS:平日 08:50 啟動、13:35 自動收工,抓 Fugle 行情判定 I-1~I-4 訊號寫入 Supabase,網站首頁盤中面板即時顯示。前置(已完成 ✅):Supabase SQL 已執行、Fugle 新金鑰已備;❌ **Access service token 尚未建立(新增前置,見上方補充)**。
 
 ### 5-a. 更新程式 + build worker 映像(一次;2026-07-12 改為 docker 統一)
 
@@ -289,19 +295,22 @@ docker build -t radar-worker pipeline/intraday
 ### 5-b. 設 `.env`(一次;之後 `git pull` 永遠不會動到它)
 
 ```bash
+cp ~/trever-radar/pipeline/intraday/.env.example ~/trever-radar/pipeline/intraday/.env
 nano ~/trever-radar/pipeline/intraday/.env
 ```
 
-貼入以下四行(**尖括號換成你的實際值**,Supabase service key 在 Dashboard → Settings → API → `service_role`):
+貼入 **六行**(**尖括號換成你的實際值**,Supabase service key 在 Dashboard → Settings → API → `service_role`;
+後兩行 Access token 建立方式見 `.env.example` 內註解 —— Zero Trust → Access → Service Auth →
+Service Tokens 建立後,還要把它加進既有 Access Application 的 policy,否則 token 建了也穿不透):
 
 ```
 FUGLE_API_KEY=<你 2026-07-12 輪替後的新 Fugle key>
 SUPABASE_URL=https://eroycvbgfitvyulfbbnw.supabase.co
 SUPABASE_KEY=<Supabase service_role key>
 RADAR_JSON_URL=https://trever-radar.pages.dev/data/radar.json
+CF_ACCESS_CLIENT_ID=<Service Token 的 Client ID>
+CF_ACCESS_CLIENT_SECRET=<Service Token 的 Client Secret>
 ```
-
-> 可選:之後 Cloudflare Access 上線,再加兩行 `CF_ACCESS_CLIENT_ID=` / `CF_ACCESS_CLIENT_SECRET=`(service token),worker 會自動夾帶 header 穿透。
 
 ### 5-c. 時區確認(cron 的 08:50/13:35 是台北時間)
 
@@ -312,6 +321,9 @@ sudo timedatectl set-timezone Asia/Taipei
 ```
 
 ### 5-d. cron 排程(平日 08:50 啟動,一次)
+
+這行已併入 `vps/scripts/crontab.example`(與 B 案資料 cron 一起裝,見 `vps/README.md` §9)——
+單獨補這一行也可以:
 
 ```bash
 crontab -e

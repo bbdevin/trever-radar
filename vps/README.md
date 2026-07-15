@@ -218,3 +218,16 @@ crontab -l   # 確認
 - `rclone authorize` 那串 `eyJ...` 是要帶去本機的**參數**,不是 token 本身。
 - wrangler 讀不到 token → 忘了 `set -a; source vps/.env; set +a`。
 - 首次 `wrangler deploy` 失敗說目錄不存在 → `web/public/data/` 還沒有 export 產物,先跑 export-json。
+
+## 11. 盤中訊號雷達 worker(docs/24 Part A,獨立於 B 案但同一台 VPS)
+
+平日 08:50 啟動、13:35 自動收工,抓 Fugle 行情判定訊號寫入 Supabase,首頁盤中面板即時顯示。
+一次性設定(docker build + `.env` 六行,含 2026-07-13 Access 上線後必填的 Access service token)
+完整步驟見 `docs/vps_backfill_plan.md` Step 5;範本檔 `pipeline/intraday/.env.example`。
+cron 行已在本檔 §9 的 `crontab.example` 裡,跟資料 cron 一起裝,不用另外處理。
+
+**目前卡住的原因(2026-07-15 排查)**:Step 5 寫於 Access 上線前,`.env` 少了 Access service token
+兩行,worker 抓 `radar.json` 會被 Access 擋成 403 直接 fatal exit——這才是「VPS 還是沒跑盤中訊號」
+的真正原因,不是 cron 或 Docker 設定的問題。要先在 Cloudflare Zero Trust 建一個 Service Token
+並加進既有 Access Application 的 policy(步驟見 `.env.example` 內註解),把 Client ID/Secret
+填進 `.env` 後,冒煙測試(Step 5-e)才會成功。

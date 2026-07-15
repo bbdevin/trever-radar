@@ -17,3 +17,9 @@ CRON_TZ=Asia/Taipei
 
 # 週備份(週六;checkpoint + integrity_check + gzip + Google Drive)
 0 5 * * 6      /home/huang/trever-radar/vps/scripts/weekly-backup.sh  >> /home/huang/radar-cron.log 2>&1
+
+# 盤中訊號雷達 worker(docs/24 Part A;08:50 啟動、13:35 自動收工)
+# 一次性前置:docker build -t radar-worker pipeline/intraday;
+# pipeline/intraday/.env 填好六個變數(見 pipeline/intraday/.env.example,
+# 含 2026-07-13 Access 上線後必填的 CF_ACCESS_CLIENT_ID/SECRET)。
+50 8 * * 1-5   docker run --rm --name radar-worker --env-file /home/huang/trever-radar/pipeline/intraday/.env radar-worker >> /home/huang/radar-worker.log 2>&1
