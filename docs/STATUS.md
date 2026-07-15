@@ -1,4 +1,4 @@
-# 專案狀態(2026-07-14)
+# 專案狀態(2026-07-15)
 
 > 單一進度真相。每完成一個里程碑就更新本檔。規格細節看各編號文件,別寫在這裡。
 
@@ -7,10 +7,10 @@
 | 項目 | 值 |
 |---|---|
 | 正式網址 | https://radar.techtrever.com(= https://trever-radar.pages.dev) |
-| 公開狀態 | **已鎖站(私人測試版)**:2026-07-13 使用者於 Cloudflare Zero Trust 手動完成 Access A0-A2(Google IdP + email 白名單,單一 Application 覆蓋 custom domain / pages.dev / preview 三類入口),執行紀錄見 `docs/21` §4 A3。noindex + robots.txt 保留。備份快照(Google Drive,`docs/31` v3)仍未建立。 |
+| 公開狀態 | **已鎖站(私人測試版)**:2026-07-13 使用者於 Cloudflare Zero Trust 手動完成 Access A0-A2(Google IdP + email 白名單,單一 Application 覆蓋 custom domain / pages.dev / preview 三類入口),執行紀錄見 `docs/21` §4 A3。noindex + robots.txt 保留。首份 Google Drive 快照 `radar-20260715.db.gz` 已於 2026-07-15 建立(integrity_check ok)。 |
 | 自動排程 | GitHub Actions 6 支 workflow(現行時間表以 `docs/08_scheduler_jobs.md` §0 為單一真相):14:10 `daily-market`、16:10 `daily-insti`、17:40+21:00 `daily-branches`、22:10 `daily-margin`(融資券保底輪)、每日 01:10 `data-backfill`、push main 觸發 `deploy`;各帶 timeout 防呆與共用 `radar-db` cache 續存鏈;觸發來源遷移中,見下方已知債務 |
 | Repo | github.com/bbdevin/trever-radar(私有) |
-| DB | SQLite,Actions cache 續存 + release `db-backup` 週備份(週五/手動觸發時) |
+| DB | SQLite。**2026-07-15 起雙軌**:雲端鏈 = Actions cache 續存(**cache 單腿**——release `db-backup` 資料 asset 已依 WP-B1 刪除,GitHub 零資料);VPS 主本 = 唯一長期真相,備份 = VPS 本機 + Google Drive 週快照(`docs/31` §4)。cutover(WP-B3)後雲端鏈退役 |
 
 ## AI Workflow Status
 
@@ -74,7 +74,7 @@
 
 ## 未完成(依優先序)
 
-0. **資料架構 B 案遷移**(`docs/31` v3「Workers 靜態資產資料層」,2026-07-15 定案,最高優先):WP-B0 前置(**Executor 部分已完成 2026-07-15,同日改版 v3**:cloudflare-data-worker/(assets 模式)、pipeline/Dockerfile、vps/.env.example;人工部分待做:Cloudflare API token(Workers scope)、VPS node/rclone gdrive、VPS 首次 wrangler deploy)→ WP-B1 合規止血(公開 release 的 radar.db.gz 下架+首份 Google Drive 快照,**repo 目前 public,整包 DB 任何人可下載,踩 docs/10 §3 紅線**)→ WP-B2 VPS cron 影子跑 → WP-B3 cutover(deploy.yml 改純 build、Worker trigger 停用、repo 轉 private)→ WP-B4/B5 加固與文件同步 → WP-B6 開跑 WP-M4(前置:修 `backfill_warrant_branches` bug,docs/30 §3)→ WP-B7 登入統一(Supabase 白名單取代 Access,資安審查後)。每包動工前需使用者確認。
+0. **資料架構 B 案遷移**(`docs/31` v3「Workers 靜態資產資料層」,2026-07-15 定案,最高優先):WP-B0 前置(**Executor 部分已完成 2026-07-15,同日改版 v3**:cloudflare-data-worker/(assets 模式)、pipeline/Dockerfile、vps/.env.example;人工部分待做:Cloudflare API token(Workers scope)、VPS node/rclone gdrive、VPS 首次 wrangler deploy)→ ~~WP-B1 合規止血~~(✅ **2026-07-15 完成**:首份 Drive 快照 `radar-20260715.db.gz` 就位後,public release 的 `radar.db.gz` asset 已刪,docs/10 §3 紅線解除;雲端鏈進入 cache 單腿期,cutover 目標 ≤1 週)→ WP-B2 VPS cron 影子跑(**已起跑 2026-07-15**,crontab 已掛,驗收=連續 2–3 交易日與正式站一致)→ WP-B3 cutover(deploy.yml 改純 build、Worker trigger 停用、repo 轉 private)→ WP-B4/B5 加固與文件同步 → WP-B6 開跑 WP-M4(前置:修 `backfill_warrant_branches` bug,docs/30 §3)→ WP-B7 登入統一(Supabase 白名單取代 Access,資安審查後)。每包動工前需使用者確認。
 1. ~~**私人測試版 Access**(`docs/21` A0-A2)~~ ✅ **2026-07-13 完成**:使用者手動於 Cloudflare Zero Trust 設定(Google IdP + email 白名單,單一 Application 覆蓋三類入口),執行紀錄見 `docs/21` §4 A3;R2 部分見第 6 項,仍未動。
 2. **B 方案 Phase 2—策略/分數解耦**(`docs/20`,高風險資料語意變更):S1-S13 只產生 tag/reason,不得再增加 `tech_score` 或其他分項;~~補 S2-S13 測試~~ **2026-07-10 完成**(S2-S13 正例/邊界反例 36 項 + 解耦回歸斷言,S11-S13 抽純函式零行為變化,pytest 91 全過,verifier 窮舉探針 CONFIRMED)。仍缺:舊/新分數差異報告;正式全市場重算、回灌及部署必須另獲使用者批准。
 3. **B 方案 Phase 3—策略績效閉環**(`docs/20`):輸出各 S code 的成熟樣本、5/10/20 日勝率與平均/中位報酬;預設 Shadow,使用者看報告後決定 Active/Retired。
@@ -109,6 +109,7 @@
 
 ## 最近完成
 
+- 2026-07-15 **WP-B0/B1 完成 + WP-B2 影子驗證起跑**(`docs/31` §12):WP-B0 全套人工+Executor 件完成(token/node/rclone gdrive/.env/docker 映像/首次 wrangler deploy,影子路由 `/data-preview/*` 兩測過);`vps/scripts/` 七支 + `manual-catchup.sh` 落地,crontab 七條已掛、ntfy 實測通;manual-catchup 一條龍完成(當日+近 6 日追補、全重算、990 檔資產 deploy)→ 首份 Drive 快照 `radar-20260715.db.gz`(integrity ok)→ **刪除 public release `radar.db.gz` asset,docs/10 §3 合規紅線解除**。雲端鏈 cache 單腿(已知風險),WP-B3 cutover 目標 ≤1 週;影子驗證第一發實彈 = 07-15 22:10 daily-margin。
 - 2026-07-15 **docs/31 v3 改版:不採 R2(啟用需綁卡),資料層改 Workers 靜態資產、備份改 Google Drive 單雲**:使用者定案全方案不得使用需綁信用卡的服務;資料層 A 案(VPS `wrangler deploy` JSON 為 Worker assets,`/data/*` 路由,即傳即生效體感不變)取代 R2 bucket;備份 = VPS 本機 + Drive 兩份(單雲風險知情接受,§4 留 B2/MEGA 後路);`cloudflare-data-worker/` 改寫 assets 模式、`vps/.env.example` 憑證改 `CLOUDFLARE_API_TOKEN`(scope 限 Workers Scripts/Routes Edit);AGENTS/STATUS/project-context/handoff 同步;`docs/21` R0-R4 作廢。
 - 2026-07-15 **資料架構 B 案定案並落檔 `docs/31`(v2 R2 資料層)+ WP-B0 Executor 件產出**:Planner(Fable 5)分析三根因(容量天花板/雙寫者同步/repo public 資料散布合規)後,使用者定案 radar.db 常駐 VPS 單一寫者;v1「VPS 輪詢 build+deploy」因部署延遲與管控面過大被使用者否決,v2 改「資料與部署解耦」——VPS 匯出 JSON 直傳 R2、`/data/*` 由 Cloudflare Worker 讀 R2 回應(快照放獨立 backup bucket 實體隔離)、GitHub push→deploy 維持現狀;明確不做 FastAPI/常駐 API;立項 WP-B7 登入統一(Supabase JWT+白名單,Access 驗證後退役,需資安審查);WP-M3 取消、docs/29 Phase 2 剩餘項作廢。同日完成 WP-B0 Executor 件:`cloudflare-data-worker/`(R2 代理 Worker+wrangler.toml+README)、`pipeline/Dockerfile`(依賴烤入映像)、`vps/.env.example`。
 - 2026-07-14 `49c4a39` **分點進出標示籌碼日**(web):分點資料落後價格日時,明確標示所用籌碼日並警示暫用舊資料。
