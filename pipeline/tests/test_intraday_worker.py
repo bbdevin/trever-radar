@@ -3,6 +3,7 @@
 不真發網路請求(monkeypatch requests.get)、不真連 Fugle/Supabase。
 匯入 intraday.worker 不應觸發 fatal exit(env 檢查與 supabase client 建立已移入 main())。
 """
+import json
 import logging
 
 import pytest
@@ -117,3 +118,24 @@ def test_no_cf_access_headers_when_env_missing(monkeypatch):
     headers = worker._build_radar_headers()
     assert "CF-Access-Client-Id" not in headers
     assert "CF-Access-Client-Secret" not in headers
+
+
+def test_process_trade_parses_raw_json_string_message():
+    """2026-07-16 回歸:SDK 的 on("message") 回呼給的是原始 JSON 字串,不是已解析
+    的 dict——舊碼直接 message.get(...) 會對字串炸 AttributeError,需先 json.loads。
+    價格/成交量刻意不觸發任何 I-1/I-3/I-4 訊號分支,避免測試需要跑 asyncio 事件迴圈。
+    """
+    worker.armed_stocks["2330"] = {
+        "name": "台積電", "watch_price": 99999, "adv20": 0,
+        "last_price": 0, "volume": 0, "trades_5m": [],
+    }
+    message = json.dumps({
+        "event": "data",
+        "data": {"symbol": "2330", "price": 500.0, "volume": 1},
+    })
+
+    worker.process_trade(message)
+
+    state = worker.armed_stocks["2330"]
+    assert state["last_price"] == 500.0
+    assert state["volume"] == 1

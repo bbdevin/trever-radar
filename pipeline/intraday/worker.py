@@ -1,4 +1,5 @@
 import os
+import json
 import time
 import asyncio
 import logging
@@ -157,6 +158,9 @@ def process_trade(message):
     try:
         # Fugle WebSocket Trade format (v1.0):
         # https://developer.fugle.tw/docs/marketdata/websocket/streaming/trades
+        # SDK 的 on("message") 給的是原始字串,不是已解析的 dict,需自行 json.loads
+        if isinstance(message, str):
+            message = json.loads(message)
         event = message.get("event")
         if event != "data": return
 
@@ -222,12 +226,14 @@ async def main():
 
     stock.on('message', lambda msg: process_trade(msg))
 
-    await stock.connect()
+    # SDK 的 connect()/subscribe() 是同步方法(內部自行處理連線執行緒),不是 coroutine——
+    # 官方範例也是直接呼叫、不加 await;await 一個非 coroutine 的回傳值(None)會直接 TypeError。
+    stock.connect()
 
     # 訂閱所有 Armed 股票
     for sid in armed_stocks.keys():
         logger.info(f"Subscribing {sid}...")
-        await stock.subscribe({
+        stock.subscribe({
             'channel': 'trades',
             'symbol': sid
         })
@@ -244,7 +250,7 @@ async def main():
             break
         await asyncio.sleep(10)
 
-    await stock.disconnect()
+    stock.disconnect()  # 同上,SDK 為同步方法
     # 離線時更新 heartbeat
     supabase.table("worker_heartbeat").upsert({"id": 1, "status": "offline", "last_active_at": datetime.now(timezone.utc).isoformat()}).execute()
 
