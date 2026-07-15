@@ -226,8 +226,11 @@ crontab -l   # 確認
 完整步驟見 `docs/vps_backfill_plan.md` Step 5;範本檔 `pipeline/intraday/.env.example`。
 cron 行已在本檔 §9 的 `crontab.example` 裡,跟資料 cron 一起裝,不用另外處理。
 
-**目前卡住的原因(2026-07-15 排查)**:Step 5 寫於 Access 上線前,`.env` 少了 Access service token
+**卡住的原因(2026-07-15 排查)**:Step 5 寫於 Access 上線前,`.env` 少了 Access service token
 兩行,worker 抓 `radar.json` 會被 Access 擋成 403 直接 fatal exit——這才是「VPS 還是沒跑盤中訊號」
-的真正原因,不是 cron 或 Docker 設定的問題。要先在 Cloudflare Zero Trust 建一個 Service Token
-並加進既有 Access Application 的 policy(步驟見 `.env.example` 內註解),把 Client ID/Secret
-填進 `.env` 後,冒煙測試(Step 5-e)才會成功。
+的真正原因,不是 cron 或 Docker 設定的問題。
+
+✅ **2026-07-16 已解**:Cloudflare Access Service Token 已建立並加進既有 Access Application 的
+原則(獨立一條「包含(或)= Service Token」規則,與既有 Google 信箱白名單原則互不影響,步驟已
+記在 `.env.example` 內註解供之後輪替參考)。剩下是 VPS 端把 Client ID/Secret 填進
+`pipeline/intraday/.env` 並跑冒煙測試(Step 5-e),詳細指令見 `docs/vps_backfill_plan.md` Step 5。

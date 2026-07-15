@@ -279,7 +279,7 @@ docker rm -f radar-backfill radar-finalize 2>/dev/null; docker rm -f radar-warra
 > ——多兩行 `CF_ACCESS_CLIENT_ID`/`CF_ACCESS_CLIENT_SECRET`,建立方式見該檔案內註解。
 > cron 行已併入 `vps/scripts/crontab.example`,與 B 案(docs/31)資料 cron 一起裝,不必另開一份 crontab。
 
-盤中訊號雷達(docs/24 Part A)的 worker 跑在這台 VPS:平日 08:50 啟動、13:35 自動收工,抓 Fugle 行情判定 I-1~I-4 訊號寫入 Supabase,網站首頁盤中面板即時顯示。前置(已完成 ✅):Supabase SQL 已執行、Fugle 新金鑰已備;❌ **Access service token 尚未建立(新增前置,見上方補充)**。
+盤中訊號雷達(docs/24 Part A)的 worker 跑在這台 VPS:平日 08:50 啟動、13:35 自動收工,抓 Fugle 行情判定 I-1~I-4 訊號寫入 Supabase,網站首頁盤中面板即時顯示。前置(已完成 ✅):Supabase SQL 已執行、Fugle 新金鑰已備、**Access service token 已建立並掛上既有 Access Application 原則(2026-07-16)**。剩下是 VPS 端 5-b 起的 `.env` 填值 + build + cron。
 
 ### 5-a. 更新程式 + build worker 映像(一次;2026-07-12 改為 docker 統一)
 
