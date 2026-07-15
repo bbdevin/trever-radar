@@ -38,6 +38,7 @@
 | `docs/29_db_slimming_plan.md` | ⚠️ **Phase 0/1/2 正規化已實作(2026-07-14);Phase 2 剩餘項已被 31 作廢** | 容量實測數字仍為真相(`indicators_daily` 52% 為主因);prune(指標400/權證150/logs180)與 branch_dim 正規化已上線。分點 130 日窗口、hist 拆分、§7 待決 2/5/6 因 B 案(`31`)作廢。 |
 | `docs/30_full_market_backfill_plan.md` | ⚠️ **§3 權證 bug 修正仍必做;§4 上傳流程將因 31 作廢** | WP-M4 全市場歷史回補計畫;B 案 cutover 後回補直接寫 VPS 主本,不再打包上傳。 |
 | `docs/31_plan_b_vps_data_home.md` | ✅ **current,資料架構遷移 source of truth(2026-07-15 定案;同日 v3 定稿:不採 R2)** | radar.db 常駐 VPS 單一寫者;資料 = VPS `wrangler deploy` Workers 靜態資產(`/data/*`)即傳即生效;備份 Google Drive 單雲;GitHub 只管 code build/deploy(push 體感不變);repo 轉 private;全方案免綁卡;WP-B7 登入統一(Supabase 白名單取代 Access,需資安審查)。動排程/部署/備份/DB 存放/門禁時必讀;取代 `26` WP-M3、作廢 `21` R0-R2。 |
+| `docs/32_wp_b3_cutover_runbook.md` | 📝 **草稿備用,未執行**(2026-07-15 落檔) | `31` §6 WP-B3 六步驟的逐指令/diff 展開版;WP-B2 影子驗證通過、使用者喊開工後照抄執行。任何一步都不得提前動手。 |
 
 有疑問時,信任順序:`project-context.md` / `STATUS.md` / `20`(功能刪減與策略治理) / `21`(私人測試/Access/R2) / `22`(Armed 追蹤) / `23`(功能·視覺 backlog) / `25`(任務導向 UI IA) / `31`(資料架構遷移,B 案) / `12` / `08§0` / `vps_backfill_plan.md` > 其餘 `docs/*` > 對話記憶。
 

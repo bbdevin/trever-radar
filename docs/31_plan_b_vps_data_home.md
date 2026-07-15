@@ -170,7 +170,7 @@ Worker trigger 的 `GH_TOKEN` PAT 在回滾窗結束後由使用者親自 revoke
 - 驗收:連續 2–3 個交易日,shadow 的 `radar.json` freshness/榜單檔數與正式站一致(允許分鐘級時間差);所有 cron 無 ntfy 錯誤。
 - 注意:影子期間雲端與 VPS 各自對來源站抓一份(雙倍請求但分屬不同 IP、各自守 1.2s 禮貌率),可接受的短期狀態。
 
-### WP-B3 切換(cutover,半天,選交易日盤前)
+### WP-B3 切換(cutover,半天,選交易日盤前;逐指令/diff 展開版見 `docs/32`)
 1. Worker route 加掛正式 `/data/*`(解除 `wrangler.toml` 註解,VPS 重 deploy 一次)。
 2. 【人工】Cloudflare Worker trigger:清空/停用 cron 觸發表(程式保留)。
 3. `deploy.yml` 改純 build+deploy(§3.3);5 支資料 workflow 停用;push 一個 commit 驗證 code 部署鏈(此後 Pages 上無 /data,流量全走 Worker 資產)。
@@ -188,7 +188,7 @@ Worker trigger 的 `GH_TOKEN` PAT 在回滾窗結束後由使用者親自 revoke
 §9 退役清單逐項落文件:AGENTS.md 危險清單改寫(cache/release/WAL-workflow 條退役,換上「單一寫者不得破壞」「備份前 checkpoint+integrity_check」「資料與部署權限分離」)、`docs/08` §0 重寫為 cron 表、`DEPLOY.md`、`vps_backfill_plan.md`(Step 4e 上傳流程作廢)、STATUS.md。
 
 ### WP-B6 開跑 WP-M4 全市場歷史回補(依賴 B3 完成)
-- **絕對前置**:修 `backfill_warrant_branches` 目標清單 bug(`docs/30` §3,importer.py:415–421——改為迴圈內按歷史日期撈當日活躍權證)。
+- **絕對前置**:修 `backfill_warrant_branches` 目標清單 bug(`docs/30` §3,importer.py:415–421——改為迴圈內按歷史日期撈當日活躍權證)。✅ **修正已完成並上分支 `wp-b6-warrant-branches-bugfix`(2026-07-15,未合 main)**:targets 查詢移入 `for d_iso in trade_dates` 迴圈內、以 `d.date = :d` 取代 `MAX(warrant_daily.date)`;新增種子 DB 回歸測試(對照組:還原成舊查詢會紅,證明測試抓得住這個 bug),既有 104 項 pytest + 46 subtests 不受影響。B3 cutover 完成、使用者確認後合入 main 即可直接開跑 B6,無需臨場再修。
 - B 案下 M4 大幅簡化:**不再需要 docs/30 §4 的「補洞→上傳→放養」三步驟**——回補容器直接寫唯一主本,每晚 17:40 輪的統計與匯出自然把新累積的歷史帶上線。
 - 池範圍(全市場一輪制,原 WP-M2)在此時一併切換:改 cron script 參數即可。
 
@@ -259,4 +259,5 @@ Worker trigger 的 `GH_TOKEN` PAT 在回滾窗結束後由使用者親自 revoke
 
 - 2026-07-15 **WP-B0 完成**:Cloudflare API token(Workers Scripts/Routes Edit,zone 限 techtrever.com)、VPS `vps/.env`、node 22(dnf)、rclone gdrive remote(無頭 OAuth)、`radar-pipeline` docker 映像 build、首次 export-json(130 檔,與回補並行)+ `wrangler deploy` 成功;驗收兩測過(登入 Access 後 `/data-preview/radar.json` 回 JSON、無痕被 302 擋)。設定手冊落檔 `vps/README.md`。
 - 2026-07-15 **WP-B1 完成**:manual-catchup 一條龍跑完(收舊容器、當日+近 6 日追補、全重算、影子 deploy 990 檔資產)→ weekly-backup 首份快照 `radar-20260715.db.gz` 上 gdrive(integrity_check ok + 上傳後回讀驗證)→ 刪除 public release `db-backup` 的 `radar.db.gz` asset(tag 保留;該 asset 為 07-14 21:21 由 VPS 回灌的舊快照,VPS 主本內容嚴格超集,刪前已查證)。雲端鏈自此進入 cache 單腿期(§7 已知風險,使用者接受),cutover 目標 ≤1 週。
-- 2026-07-15 **WP-B2 Executor 件完成(影子驗證待跑)**:`vps/scripts/` 七件(lib.sh 共用 flock/ntfy/git-pull/docker/deploy + 五條每日輪鏡像 5 支 workflow 指令序 + weekly-backup.sh 含 integrity 紅線與 Drive retention)+ `crontab.example` + `cloudflare-data-worker/package.json`(釘 wrangler 版本,cron 不打 registry);`bash -n` 全過、retention awk 邏輯單測過。crontab 七條已掛、ntfy 已訂閱實測通(07-15);flock 保護已實戰驗證(catchup 持鎖期間 daily-branches 輪正確跳過並通知)。**影子驗證自 07-15 起跑**,第一發實彈 = 07-15 22:10 daily-margin;驗收 = 連續 2–3 交易日 `/data-preview/radar.json` 與正式站一致(清單 `vps/README.md` §9)。
+- 2026-07-15 **WP-B2 Executor 件完成(影子驗證待跑)**:`vps/scripts/` 七件(lib.sh 共用 flock/ntfy/git-pull/docker/deploy + 五條每日輪鏡像 5 支 workflow 指令序 + weekly-backup.sh 含 integrity 紅線與 Drive retention)+ `crontab.example` + `cloudflare-data-worker/package.json`(釘 wrangler 版本,cron 不打 registry);`bash -n` 全過、retention awk 邏輯單測過。crontab 七條已掛、ntfy 已訂閱實測通(07-15);flock 保護已實戰驗證(catchup 持鎖期間 daily-branches 輪正確跳過並通知)。**影子驗證自 07-15 起跑**,第一發實彈 = 07-15 22:10 daily-margin(成功,`margin` freshness 當日、stale:false);驗收 = 連續 2–3 交易日 `/data-preview/radar.json` 與正式站一致(清單 `vps/README.md` §9)。
+- 2026-07-15 **WP-B3 cutover 彈藥備妥(草稿,未執行)**:落檔 `docs/32_wp_b3_cutover_runbook.md`,把 §6 WP-B3 六步驟展開成逐指令/diff(Worker route 解註解、trigger crons 清空、deploy.yml diff、intraday `.env` 三行、repo private 人工步驟、當晚驗收清單含未登入必須被擋的紅線測試)。同時完成 WP-B6 絕對前置的權證 bug 修正(見上,分支 `wp-b6-warrant-branches-bugfix`)。兩者皆未合 main/未執行,等 WP-B2 驗收通過 + 使用者喊開工。
