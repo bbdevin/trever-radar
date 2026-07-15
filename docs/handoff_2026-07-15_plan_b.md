@@ -22,12 +22,12 @@
 - **Errors/Logs**:無。
 - **Tests Run**:未跑(本次全為文件+新增未接線檔案;Worker 尚未部署,無可測物)。
 - **Not Yet Done**(依序;v3 版,無任何綁卡步驟):
-  1. 【使用者人工】Cloudflare Dashboard → My Profile → API Tokens:建 token,scope 只給 **Account / Workers Scripts: Edit** + **Zone / Workers Routes: Edit(techtrever.com)**。無需建 bucket。
-  2. 【使用者人工】VPS:裝 node LTS + rclone、設 `gdrive` remote(一次性 OAuth)、`vps/.env` 填 `CLOUDFLARE_API_TOKEN`/`CLOUDFLARE_ACCOUNT_ID`。
-  3. 【使用者人工】VPS 首次資料 deploy:確保 `web/public/data/` 有完整 export 產物後 `cd cloudflare-data-worker && npx wrangler deploy`(只掛 `/data-preview/*` 影子路由,不影響正式站)。
-  4. 【使用者人工】VPS 首份快照(**等回補結束、無寫入者時才做**):`sqlite3 data/radar.db "PRAGMA wal_checkpoint(TRUNCATE);"` → integrity_check → `gzip -kf data/radar.db` → `rclone copy data/radar.db.gz gdrive:trever-radar-backup/` → `rclone ls gdrive:trever-radar-backup/` 列得出檔案才算完成。
+  1. ~~【使用者人工】Cloudflare API token~~ ✅ 2026-07-15 完成。
+  2. ~~【使用者人工】VPS node/rclone gdrive/.env~~ ✅ 2026-07-15 完成(步驟紀錄=`vps/README.md`)。
+  3. ~~【使用者人工】VPS 首次資料 deploy + 驗收兩測~~ ✅ 2026-07-15 完成(130 檔,影子路由過兩測)。
+  4. 【使用者人工】VPS 首份快照(**等回補結束、無寫入者時才做**,指令=`vps/README.md` §6):checkpoint → integrity_check → gzip → `rclone copy` 上 `gdrive:trever-radar-backup/` → `rclone ls` 列得出才算完成。
   5. 【Agent,WP-B1 收尾】**確認步驟 4 完成後**執行:`gh release delete-asset db-backup radar.db.gz -y --repo bbdevin/trever-radar`(先 `gh release view db-backup` 再刪;絕不可在快照未就位前刪)。
-  6. 【Agent,需使用者說開工】WP-B2:寫 `vps/scripts/`(docs/31 §2 各輪 + 備份腳本)與 `vps/README.md`,影子驗證 2–3 交易日。
+  6. 【Agent,需使用者說開工】WP-B2:寫 `vps/scripts/`(docs/31 §2 各輪 + 備份腳本)+ `vps/README.md` cron 章節,影子驗證 2–3 交易日。
 - **Next Suggested Actions**:同上 5→6。
 - **Files That Should Not Be Modified**:`.github/workflows/*.yml`(cutover 前一律不動)、`pipeline/radar/*` 管線邏輯(WP-B6 的權證 bug 修正除外)、Cloudflare Access 設定(WP-B7 前不動)、`cloudflare-trigger/`(仍在服役)。AGENTS.md 危險清單(WAL/cache/release 鏈)在 cutover 前全部仍然有效。
 - **Risk Notes**:
