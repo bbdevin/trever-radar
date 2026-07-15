@@ -31,13 +31,13 @@
 | `docs/18_handoff_template.md` | ✅ **current** | Agent 交接模板。 |
 | `docs/24_agy_executor_prompts.md` | ✅ **current** | 交辦 AGY/Executor 的**可填空模板**(起手/Reviewer/激進版);任務範圍以 STATUS + Planner 當次 Confirmed Scope 為準,本檔不鎖定具體 Phase 清單。 |
 | `docs/20_simplification_strategy.md` | ✅ **current,功能刪減與策略治理 source of truth** | 2026-07-10 使用者確認的 B 方案:停止擴張探索頁與新策略,策略/技術分解耦、績效閉環、UI 合併及排程簡化階段。 |
-| `docs/21_private_beta_access_r2_plan.md` | ✅ **current,私人測試與 R2 source of truth** | Cloudflare Access 整站白名單、Pages 旁路封鎖、R2 僅作私有快照/未來歷史拆檔,不得當即時 SQLite。 |
+| `docs/21_private_beta_access_r2_plan.md` | ⚠️ **Access 章節 current;R2 章節(R0-R4)已於 2026-07-15 作廢** | Cloudflare Access 整站白名單仍為門禁真相(至 `31` WP-B7);R2 因啟用需綁卡不採用,快照職責改 Google Drive(見 `31` v3 §4)。 |
 | `docs/22_armed_tracking.md` | 📝 **規劃定案,程式未實作** | Armed/Triggered 狀態追蹤(未發動籌碼·權證池);須等 `20` Phase 1–3 與 `21` Access 有進度後另確認才實作,不新增策略/不抬綜合分。 |
 | `docs/23_product_ui_backlog.md` | 📝 **規劃定案,程式未實作** | Access/B/Armed 之後的功能與視覺優化 backlog(V1–V3 / F1–F4)+ Executor 工作包;不得插隊或引入新配色/第14策略。 |
 | `docs/25_ui_information_architecture_plan.md` | 📝 **任務導向 UI 規劃已落檔,程式未實作** | 將前端重整為掃描→判讀→追蹤任務流,含首頁/個股/分點/自選 IA Phase 與 Executor 驗收;不取代 `20`/`22`/`23`,每次只可另確認一個 Phase。 |
 | `docs/29_db_slimming_plan.md` | ⚠️ **Phase 0/1/2 正規化已實作(2026-07-14);Phase 2 剩餘項已被 31 作廢** | 容量實測數字仍為真相(`indicators_daily` 52% 為主因);prune(指標400/權證150/logs180)與 branch_dim 正規化已上線。分點 130 日窗口、hist 拆分、§7 待決 2/5/6 因 B 案(`31`)作廢。 |
 | `docs/30_full_market_backfill_plan.md` | ⚠️ **§3 權證 bug 修正仍必做;§4 上傳流程將因 31 作廢** | WP-M4 全市場歷史回補計畫;B 案 cutover 後回補直接寫 VPS 主本,不再打包上傳。 |
-| `docs/31_plan_b_vps_data_home.md` | ✅ **current,資料架構遷移 source of truth(2026-07-15 定案,同日 v2 改 R2 資料層)** | radar.db 常駐 VPS 單一寫者;資料 VPS→R2→Worker(`/data/*`)即傳即生效;GitHub 只管 code build/deploy(push 體感不變);repo 轉 private;WP-B7 登入統一(Supabase 白名單取代 Access,需資安審查)。動排程/部署/備份/DB 存放/門禁時必讀;取代 `26` WP-M3。 |
+| `docs/31_plan_b_vps_data_home.md` | ✅ **current,資料架構遷移 source of truth(2026-07-15 定案;同日 v3 定稿:不採 R2)** | radar.db 常駐 VPS 單一寫者;資料 = VPS `wrangler deploy` Workers 靜態資產(`/data/*`)即傳即生效;備份 Google Drive 單雲;GitHub 只管 code build/deploy(push 體感不變);repo 轉 private;全方案免綁卡;WP-B7 登入統一(Supabase 白名單取代 Access,需資安審查)。動排程/部署/備份/DB 存放/門禁時必讀;取代 `26` WP-M3、作廢 `21` R0-R2。 |
 
 有疑問時,信任順序:`project-context.md` / `STATUS.md` / `20`(功能刪減與策略治理) / `21`(私人測試/Access/R2) / `22`(Armed 追蹤) / `23`(功能·視覺 backlog) / `25`(任務導向 UI IA) / `31`(資料架構遷移,B 案) / `12` / `08§0` / `vps_backfill_plan.md` > 其餘 `docs/*` > 對話記憶。
 
@@ -81,7 +81,7 @@
 - ⚠️ **不動 cache / release `db-backup` 的 DB 續存鏈**。5 支 workflow 共用 `radar-db` concurrency group,cache 優先、miss 才用 release 種子還原——這條鏈曾經分岔過(見 `docs/15`),改動前必須完整理解全部 5 支 workflow 的還原/存檔順序。
 - ⚠️ **不動 `adj_factor` 還原價邏輯**。`daily_prices.adj_factor` 由 FinMind `TaiwanStockDividendResult` 累乘計算,技術指標與績效回填都依賴 `price * adj_factor`。
 - ⚠️ **DB 已 ~1GB,逼近 GitHub Release 單檔 2GB / Actions cache 10GB 上限**。分點資料擴到 5 年前(P2,見 `vps_backfill_plan.md`)**必須先**把分點歷史拆成獨立檔(如 `branch_hist.db`)或搬去 Cloudflare R2,否則會炸掉這兩個上限。勿貿然灌大量分點歷史資料。
-- ⚠️ **R2 不是即時資料庫**。只能放 SQLite/JSON 物件快照;不得讓多支 workflow 對同一 R2 物件做「線上 SQLite」讀寫,不得在 restore drill 前移除 Actions cache/Release fallback,不得公開 `r2.dev` backup URL。
+- ⚠️ **不用 R2(2026-07-15 v3 定案,啟用需綁卡)**。資料層 = Workers 靜態資產、備份 = Google Drive(見 `docs/31` v3);不得為任何理由引入需綁信用卡的服務;不得在還原演練通過前移除 Actions cache/Release fallback。
 - 不做 TWSE bsr CAPTCHA 破解(已定案取捨)。
 - 不做自動下單(已定案取捨,見 `docs/10` §3)。
 

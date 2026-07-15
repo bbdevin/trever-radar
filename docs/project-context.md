@@ -58,7 +58,7 @@
 
 ## 目前狀態(2026-07-14,細節看 STATUS.md)
 
-已上線 https://radar.techtrever.com，GitHub Actions 每交易日自動更新（觸發已改 Cloudflare Worker，見 08§0），`main` push 也會正式部署。**網站已於 2026-07-13 完成 Cloudflare Access 鎖站(A0-A2)**:Google IdP + email 白名單,單一 Application 覆蓋 custom domain / pages.dev / preview 三類入口,執行紀錄見 `docs/21` §4 A3。功能開發仍依 `docs/20` B 方案；R2 只規劃作私有 DB 快照/未來歷史拆檔，尚未建立或接入 workflow。**UI 任務流重整**：docs/23 F 系列 + docs/25 IA 全部 Phase **已於 2026-07-12 完成**。DB 瘦身 Phase 0-2 與 VPS 490 天分點歷史回灌已於 2026-07-13~14 完成(見 `docs/29` 與 STATUS)。剩餘項目：B 方案 Phase 2-3、R2 R0-R2、docs/28 WP-H1/WP-H3、docs/26 全市場擴容後續、docs/27 G1-G4。
+已上線 https://radar.techtrever.com，GitHub Actions 每交易日自動更新（觸發已改 Cloudflare Worker，見 08§0），`main` push 也會正式部署。**網站已於 2026-07-13 完成 Cloudflare Access 鎖站(A0-A2)**:Google IdP + email 白名單,單一 Application 覆蓋 custom domain / pages.dev / preview 三類入口,執行紀錄見 `docs/21` §4 A3。功能開發仍依 `docs/20` B 方案；資料架構遷移依 `docs/31` v3(Workers 靜態資產資料層 + Google Drive 備份,**不用 R2**——啟用需綁卡,2026-07-15 定案),進行中。**UI 任務流重整**：docs/23 F 系列 + docs/25 IA 全部 Phase **已於 2026-07-12 完成**。DB 瘦身 Phase 0-2 與 VPS 490 天分點歷史回灌已於 2026-07-13~14 完成(見 `docs/29` 與 STATUS)。剩餘項目：B 方案 Phase 2-3、R2 R0-R2、docs/28 WP-H1/WP-H3、docs/26 全市場擴容後續、docs/27 G1-G4。
 
 ## 已做的關鍵取捨(不要翻案,除非使用者同意)
 
@@ -72,9 +72,10 @@
 8. 首頁「綜合」榜使用 `daily_scores.final`;分點分/權證分/技術分/法人融資分已接入,題材分暫為 NULL 並自動重分配權重。
 9. 技術指標與績效回填必須用還原價:`adj_price = price * adj_factor`;`adj_factor` 由 `python -m radar compute-adjustments --ids/--top/--all` 補,尚未全市場自動排程。
 10. 2026-07-10 使用者確認 B 方案(`docs/20`):S1-S13 最終應為不影響分數的策略 tag,以績效決定 Active/Retired;`/explore` 內容併回首頁與 `/branch`,不再擴張原剩餘 tab。實作與正式重算分階段另行確認。
-11. 2026-07-10 使用者確認 A 私人測試版(`docs/21`):Cloudflare Access 整站白名單;Supabase 只做個人化;R2 不當線上 DB,先 shadow backup、還原演練後才可加入 cache fallback。
+11. 2026-07-10 使用者確認 A 私人測試版(`docs/21`):Cloudflare Access 整站白名單;Supabase 只做個人化。(R2 部分已被取捨 16 取代)
 12. 2026-07-10 使用者確認 Armed 追蹤規劃(`docs/22`):用狀態池(未發動/已發動)重用 S12/W3/B3,不新增策略、不抬綜合分、不新開一級路由;實作排在 Access + B Phase 1–3 之後。
 13. 2026-07-10 使用者確認功能·視覺 backlog(`docs/23`):V1–V3 視覺優化與 F1–F4 低成本功能;不得插隊 Access/B/Armed,不得引入 ui-ux-pro-max 搜尋結果中的新配色/Inter 全站字體。
 14. 2026-07-11 使用者確認將任務導向 UI 規劃寫入 `docs/25`:前端以「掃描→判讀→追蹤」重整首頁/個股/分點/自選;規劃落檔不等於程式已授權,每次只確認一個 IA Phase,不藉 UI 重排改評分/JSON 語意或提前實作 Armed。
 14. 2026-07-12 實作確認——docs/23 F 系列 + docs/25 IA Phase A-F 全部完成（commit `8d4aee5`）：首頁重排（IA-1A）、自選任務佇列（IA-4A+F1.1/F1.2）、個股判讀工作台（IA-2+F3）、分點研究工作台（IA-3）、日報摘要 pipeline（F2）、Sonner toast（V3.3）。尚未實作：IA-1B、IA-4B（待 Armed）、F1.3/F4（待 Armed）。
 15. 2026-07-12 新增 `DesktopNav.tsx` client component：桌機導覽安裝 `usePathname` active state，標題改為任務導向命名（今日雷達/分點研究/自選追蹤）；`layout.tsx` 原第 server-side NAV array 已移除。
+16. 2026-07-15 使用者定案**不用任何需綁信用卡的服務(含 Cloudflare R2)**:資料架構 B 案 v3(`docs/31`)= radar.db 常駐 VPS 單一寫者、資料層 Workers 靜態資產(VPS `wrangler deploy`)、備份 Google Drive 單雲(單雲風險知情接受)。

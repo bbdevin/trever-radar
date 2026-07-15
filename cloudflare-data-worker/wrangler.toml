@@ -1,13 +1,15 @@
-# trever-radar-data worker(docs/31 §3.2)
-# 部署:cd cloudflare-data-worker && npx wrangler deploy(需 Cloudflare 登入,人工執行)
+# trever-radar-data worker(docs/31 §3.2,v3 Workers 靜態資產模式)
+# 部署:VPS 於 export-json 後執行 npx wrangler deploy(需 CLOUDFLARE_API_TOKEN/ACCOUNT_ID 環境變數)
+# 資料目錄 = 管線 export-json 的輸出(web/public/data,已 gitignore,不入 repo)
 name = "trever-radar-data"
 main = "src/index.js"
 compatibility_date = "2026-07-01"
 
-# 只綁資料 bucket;備份 bucket trever-radar-backup 刻意不綁(docs/31 安全邊界)
-[[r2_buckets]]
-binding = "DATA_BUCKET"
-bucket_name = "trever-radar-data"
+# 靜態資產 = 每次 deploy 隨附的 JSON;wrangler 以內容 hash 去重,只上傳變動檔
+[assets]
+directory = "../web/public/data"
+binding = "ASSETS"
+run_worker_first = true
 
 # WP-B2 影子驗證:先只掛 preview 路由
 [[routes]]

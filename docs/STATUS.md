@@ -7,7 +7,7 @@
 | 項目 | 值 |
 |---|---|
 | 正式網址 | https://radar.techtrever.com(= https://trever-radar.pages.dev) |
-| 公開狀態 | **已鎖站(私人測試版)**:2026-07-13 使用者於 Cloudflare Zero Trust 手動完成 Access A0-A2(Google IdP + email 白名單,單一 Application 覆蓋 custom domain / pages.dev / preview 三類入口),執行紀錄見 `docs/21` §4 A3。noindex + robots.txt 保留。R2 備份仍未建立。 |
+| 公開狀態 | **已鎖站(私人測試版)**:2026-07-13 使用者於 Cloudflare Zero Trust 手動完成 Access A0-A2(Google IdP + email 白名單,單一 Application 覆蓋 custom domain / pages.dev / preview 三類入口),執行紀錄見 `docs/21` §4 A3。noindex + robots.txt 保留。備份快照(Google Drive,`docs/31` v3)仍未建立。 |
 | 自動排程 | GitHub Actions 6 支 workflow(現行時間表以 `docs/08_scheduler_jobs.md` §0 為單一真相):14:10 `daily-market`、16:10 `daily-insti`、17:40+21:00 `daily-branches`、22:10 `daily-margin`(融資券保底輪)、每日 01:10 `data-backfill`、push main 觸發 `deploy`;各帶 timeout 防呆與共用 `radar-db` cache 續存鏈;觸發來源遷移中,見下方已知債務 |
 | Repo | github.com/bbdevin/trever-radar(私有) |
 | DB | SQLite,Actions cache 續存 + release `db-backup` 週備份(週五/手動觸發時) |
@@ -19,7 +19,7 @@
 - 流程為**模型中立、角色導向**:Planner / Executor / Reviewer 由本次任務指定,不由模型品牌永久決定;規則見 `AGENTS.md` 與 `docs/17_no_fable_workflow.md`。
 - 工具清單:Claude Code、AGY/Gemini、Codex、GPT/Grok 等高階模型均可任三角色;Cursor 為 IDE / 確認介面;人類使用者為唯一決策者。
 
-下一步:**資料架構 B 案遷移**(`docs/31`,2026-07-15 使用者定案):radar.db 常駐 VPS 單一寫者、雲端資料鏈退役、repo 轉回 private、R2 週快照——WP-B0/B1 待使用者喊開工。其後依 `docs/20` B 方案完成策略解耦與績效閉環。
+下一步:**資料架構 B 案遷移**(`docs/31` v3,2026-07-15 使用者定案;同日因 R2 需綁卡改「Workers 靜態資產資料層 + Google Drive 單雲備份」,全程免綁卡):radar.db 常駐 VPS 單一寫者、雲端資料鏈退役、repo 轉回 private——WP-B0 人工步驟與 WP-B1 進行中。其後依 `docs/20` B 方案完成策略解耦與績效閉環。
 
 ## 已完成 ✅
 
@@ -74,14 +74,14 @@
 
 ## 未完成(依優先序)
 
-0. **資料架構 B 案遷移**(`docs/31` v2「R2 資料層」,2026-07-15 定案,最高優先):WP-B0 前置(**Executor 部分已完成 2026-07-15**:cloudflare-data-worker/、pipeline/Dockerfile、vps/.env.example;人工部分待做:R2 兩 bucket+token、Worker 部署、VPS rclone)→ WP-B1 合規止血(公開 release 的 radar.db.gz 下架+首份 R2 快照,**repo 目前 public,整包 DB 任何人可下載,踩 docs/10 §3 紅線**)→ WP-B2 VPS cron 影子跑 → WP-B3 cutover(deploy.yml 改純 build、Worker trigger 停用、repo 轉 private)→ WP-B4/B5 加固與文件同步 → WP-B6 開跑 WP-M4(前置:修 `backfill_warrant_branches` bug,docs/30 §3)→ WP-B7 登入統一(Supabase 白名單取代 Access,資安審查後)。每包動工前需使用者確認。
+0. **資料架構 B 案遷移**(`docs/31` v3「Workers 靜態資產資料層」,2026-07-15 定案,最高優先):WP-B0 前置(**Executor 部分已完成 2026-07-15,同日改版 v3**:cloudflare-data-worker/(assets 模式)、pipeline/Dockerfile、vps/.env.example;人工部分待做:Cloudflare API token(Workers scope)、VPS node/rclone gdrive、VPS 首次 wrangler deploy)→ WP-B1 合規止血(公開 release 的 radar.db.gz 下架+首份 Google Drive 快照,**repo 目前 public,整包 DB 任何人可下載,踩 docs/10 §3 紅線**)→ WP-B2 VPS cron 影子跑 → WP-B3 cutover(deploy.yml 改純 build、Worker trigger 停用、repo 轉 private)→ WP-B4/B5 加固與文件同步 → WP-B6 開跑 WP-M4(前置:修 `backfill_warrant_branches` bug,docs/30 §3)→ WP-B7 登入統一(Supabase 白名單取代 Access,資安審查後)。每包動工前需使用者確認。
 1. ~~**私人測試版 Access**(`docs/21` A0-A2)~~ ✅ **2026-07-13 完成**:使用者手動於 Cloudflare Zero Trust 設定(Google IdP + email 白名單,單一 Application 覆蓋三類入口),執行紀錄見 `docs/21` §4 A3;R2 部分見第 6 項,仍未動。
 2. **B 方案 Phase 2—策略/分數解耦**(`docs/20`,高風險資料語意變更):S1-S13 只產生 tag/reason,不得再增加 `tech_score` 或其他分項;~~補 S2-S13 測試~~ **2026-07-10 完成**(S2-S13 正例/邊界反例 36 項 + 解耦回歸斷言,S11-S13 抽純函式零行為變化,pytest 91 全過,verifier 窮舉探針 CONFIRMED)。仍缺:舊/新分數差異報告;正式全市場重算、回灌及部署必須另獲使用者批准。
 3. **B 方案 Phase 3—策略績效閉環**(`docs/20`):輸出各 S code 的成熟樣本、5/10/20 日勝率與平均/中位報酬;預設 Shadow,使用者看報告後決定 Active/Retired。
 4a. **盤中訊號雷達 + 分點追蹤視角**(`docs/24`,2026-07-11 使用者指定排入):~~Part B 分點追蹤視角~~ **2026-07-11 完成**(B1 export + B2 前端);~~Part A 盤中雷達~~ **2026-07-12 程式碼完成** (I1-I3 完成, 包含 `worker.py` 與前端 `IntradayPanel.tsx` 即時推播)，待使用者於 Supabase 執行 SQL 及本機設定 `.env` 即可正式啟用。
 5. **功能·視覺 backlog**(`docs/23`)：✅ **2026-07-12 F 系列全數完成**。已完成清單：V1/V2/V3.1/V3.2(2026-07-11)；F2 日報摘要、F3 訊號摘要（合入個股頁）、F1.1/F1.2 自選距關鍵價%+排序（合入 IA-4A）、V3.3 Sonner toast、**F1.3 一鍵加入今日 Armed**、**F4.1 掃描收斂（合入 IA-1B）+ F4.2 策略四類分群**（2026-07-12）。~~剩餘僅 V3 淺色 token 對比為「只回報未改」~~ **V3 淺色 token 對比已於 2026-07-12 補強(含 KChart 淺色主題)**。不得插隊，Executor 依 WP-* 工作包執行。
 5a. **任務導向 UI 資訊架構**(`docs/25`)：✅ **2026-07-12 IA-1A/IA-1B/IA-2/IA-3/IA-4A/IA-4B 全部完成並 push main**。已完成：IA-1A 首頁重排；IA-1B 首頁榜單模式收斂；IA-4A 自選追蹤；IA-2 個股判讀；IA-3 分點研究；IA-4B Armed 狀態增強（結合 docs/22 A1-A2，完成首頁狀態池 Tab 與 StockCard Badge 視覺整合）。
-6. **R2 R0-R2**(`docs/21`):private Standard bucket → 每週 shadow snapshot → checksum/gzip/SQLite restore drill。R3 workflow fallback 未授權,R4/P2 延後。
+6. ~~R2 R0-R2(`docs/21`)~~ **2026-07-15 作廢**:R2 啟用需綁信用卡,不採用;快照職責改 Google Drive、還原演練併入 `docs/31` WP-B4。
 7. **B 方案 Phase 4—排程簡化提案**(`docs/20`,獨立高風險任務):保留資料取得時點,評估完整 build/deploy 由每日最多 5 次降為 14:10/22:10 兩次;不得在未完整審查 WAL/cache/release 鏈前修改 workflow。
   5b. **首頁掃讀體驗+個股頁資訊架構統一**(docs/28,2026-07-12 規劃定案):WP-H2 語意色彩層次(已完成 2026-07-12)→ **WP-H4 個股頁分點統一(2026-07-12 完成,commit 83649ae)**:移除分點 Tab，K 線下方 BranchFlowSection 升級為單一真相，傳入 branchScore+B*/S11-S13 理由 pills，forwardRef+id 供 #branch 錨點捲動→ WP-H1 榜單依題材分組(等使用者喊開工)→ WP-H3 卡片走勢改當日分時(**A 案已批准**:Fugle key 進 Actions secret RADAR_FUGLE_TOKEN，使用者親自設 secret，等喊開工)→ **WP-H5 手機版(2026-07-12 完成,commit 83649ae)**:工具列橫滑、vertTouchDrag=false、手機版 pane segmented chips、買賣超 tabs+勾選浮動 chip。**剩餘:WP-H1/WP-H3**。
 6a. **地緣券商+庫藏股分點+關鍵分點同買 → 口袋名單**(`docs/27`,2026-07-12 規劃定案、未實作):地緣改演算法判定(公司地址×分點地址官方開放資料;雙北用行政區級+排除集)、KB1 買回窗事實 tag/KB2 疑似執行分點推測、K1 關鍵分點=手動種子∪可信度≥70、H1 題材熱門;reason stacking ≥2 family 入口袋名單(pocket_score 僅排序,**不進綜合分**);~~G0 資料 PoC~~ **2026-07-12 完成**(端點全通、分公司級名稱匹配 100%、地緣假設以 2476 實測命中、庫藏股無 OpenAPI 需深挖——結果與 G1 設計修訂見 docs/27 G0 節);G1-G4 建議 VPS 回灌穩定後;地緣涵蓋度在 7a 全市場每日池後才完整。**這項同時解掉 docs/13 卡了很久的地緣/關鍵分點人工名單問題**。
@@ -91,7 +91,7 @@
 
 ## 已知債務 / 注意
 
-- **分點 5 年全量的架構前置**(vps_backfill_plan §3 P2 之前必做):DB 將 +7–9GB → 炸 release 單檔 2GB 與 Actions cache 10GB。依 `docs/21`,R2 只能保存拆出的 `branch_hist.db` 快照,不是線上 DB;Standard 免費 10GB-month 還要容納版本與安全餘裕,因此不保證 P2 仍零成本。P2 繼續延後;P1(2年,+1.5GB)尚可。
+- ~~分點 5 年全量的架構前置(release 2GB/cache 10GB 上限、R2 拆檔)~~ **2026-07-15 因 B 案(`docs/31`)大幅緩解**:cutover 後 DB 常駐 VPS 磁碟,雲端上限消失;P2 是否開跑改由 VPS 磁碟餘量與來源站禮貌率決定,仍待使用者另案確認。
 
 - 個股 JSON 一檔約 0.5MB(全歷史);擴到數百檔時改「預設 5 年 + 按需載入」
 - 權證榜目前是「認購成交金額 / 20 日均值」的異動排序,尚不是 04 定義的完整 0–100 權證分;完整分數與 reasons/risks 等評分模組一起做
@@ -109,6 +109,7 @@
 
 ## 最近完成
 
+- 2026-07-15 **docs/31 v3 改版:不採 R2(啟用需綁卡),資料層改 Workers 靜態資產、備份改 Google Drive 單雲**:使用者定案全方案不得使用需綁信用卡的服務;資料層 A 案(VPS `wrangler deploy` JSON 為 Worker assets,`/data/*` 路由,即傳即生效體感不變)取代 R2 bucket;備份 = VPS 本機 + Drive 兩份(單雲風險知情接受,§4 留 B2/MEGA 後路);`cloudflare-data-worker/` 改寫 assets 模式、`vps/.env.example` 憑證改 `CLOUDFLARE_API_TOKEN`(scope 限 Workers Scripts/Routes Edit);AGENTS/STATUS/project-context/handoff 同步;`docs/21` R0-R4 作廢。
 - 2026-07-15 **資料架構 B 案定案並落檔 `docs/31`(v2 R2 資料層)+ WP-B0 Executor 件產出**:Planner(Fable 5)分析三根因(容量天花板/雙寫者同步/repo public 資料散布合規)後,使用者定案 radar.db 常駐 VPS 單一寫者;v1「VPS 輪詢 build+deploy」因部署延遲與管控面過大被使用者否決,v2 改「資料與部署解耦」——VPS 匯出 JSON 直傳 R2、`/data/*` 由 Cloudflare Worker 讀 R2 回應(快照放獨立 backup bucket 實體隔離)、GitHub push→deploy 維持現狀;明確不做 FastAPI/常駐 API;立項 WP-B7 登入統一(Supabase JWT+白名單,Access 驗證後退役,需資安審查);WP-M3 取消、docs/29 Phase 2 剩餘項作廢。同日完成 WP-B0 Executor 件:`cloudflare-data-worker/`(R2 代理 Worker+wrangler.toml+README)、`pipeline/Dockerfile`(依賴烤入映像)、`vps/.env.example`。
 - 2026-07-14 `49c4a39` **分點進出標示籌碼日**(web):分點資料落後價格日時,明確標示所用籌碼日並警示暫用舊資料。
 - 2026-07-13~14 **雲端 DB 瘦身 Phase 0-2 + VPS 分點歷史回灌**:`docs/29`(WP-M3R)落檔(`3df1976`)後實作 Phase 0/1(`980524d`)與 Phase 2 branch_dim 正規化(`3a72c8d`,同 commit 追加 WP-M4 全市場回補計畫);VPS 490 天分點歷史回補完成並回灌雲端,期間修掉 VPS 指令中 db download 會覆蓋 490 天歷史的風險(`7db809a`)、以還原後完整歷史 DB 觸發部署並 force deploy 清 cache(`5029ab5`→`fa464d3`);另新增 Actions `task=backfill-recent`/`backfill-branches-recent`/唯讀 `debug-query`(`fd1f002`/`9e4ffe0`/`0f0fd45`),補 07-10(五)缺漏交易日資料(`92a1e10`)。
