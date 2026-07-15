@@ -21,14 +21,18 @@
   3. `docs/30` §3 的 `backfill_warrant_branches` bug(importer.py:415-421)未修,是 WP-B6 絕對前置。
 - **Errors/Logs**:無。
 - **Tests Run**:未跑(本次全為文件+新增未接線檔案;Worker 尚未部署,無可測物)。
-- **Not Yet Done**(依序;v3 版,無任何綁卡步驟):
-  1. ~~【使用者人工】Cloudflare API token~~ ✅ 2026-07-15 完成。
-  2. ~~【使用者人工】VPS node/rclone gdrive/.env~~ ✅ 2026-07-15 完成(步驟紀錄=`vps/README.md`)。
-  3. ~~【使用者人工】VPS 首次資料 deploy + 驗收兩測~~ ✅ 2026-07-15 完成(130 檔,影子路由過兩測)。
-  4. 【使用者人工】VPS 首份快照(**等回補結束、無寫入者時才做**,指令=`vps/README.md` §6):checkpoint → integrity_check → gzip → `rclone copy` 上 `gdrive:trever-radar-backup/` → `rclone ls` 列得出才算完成。
-  5. 【Agent,WP-B1 收尾】**確認步驟 4 完成後**執行:`gh release delete-asset db-backup radar.db.gz -y --repo bbdevin/trever-radar`(先 `gh release view db-backup` 再刪;絕不可在快照未就位前刪)。
-  6. WP-B2 Executor 件 ✅ 2026-07-15 完成(`vps/scripts/` + crontab.example + README §9);【使用者人工】VPS `git pull` → `chmod +x vps/scripts/*.sh` → worker 目錄 `npm install` → 掛 crontab → 影子跑 2–3 交易日(每日比對 `/data-preview/radar.json` vs 正式站)。
-  7. 【Agent+使用者,影子過後需使用者確認】WP-B3 cutover(docs/31 §6)。
+- **進度快照(2026-07-15 晚,本機關機前最後更新)**:
+  - ✅ WP-B0 全部完成:token/node/rclone gdrive/.env/首次 deploy+兩測(紀錄=`vps/README.md`,docs/31 §12)。
+  - ✅ WP-B2 Executor 件 + 使用者側安裝完成:`vps/scripts/` 七支 + `manual-catchup.sh`;**crontab 已掛**(七條,`crontab.example`);ntfy 已訂閱並實測通(主題在 `vps/.env`)。
+  - 🔄 **`manual-catchup.sh` 正在 VPS 背景跑**(nohup,1–2 小時):收掉誤參數 `--top 20000` 權證容器 → 抓今日資料 → 補近 6 日缺口(權證分點以正確 Top 200)→ 全重算 → deploy 影子 → **自動接 weekly-backup.sh 做首份 Drive 快照**。完成=ntfy 兩則(「資料追補完成」「weekly snapshot ok」)。
+- **Not Yet Done**(依序):
+  1. 【使用者】確認收到「weekly snapshot ok」ntfy(或 `rclone ls gdrive:trever-radar-backup/` 有檔)。
+  2. 【Agent,WP-B1 收尾】**確認步驟 1 後**執行:`gh release view db-backup --repo bbdevin/trever-radar` → `gh release delete-asset db-backup radar.db.gz -y --repo bbdevin/trever-radar`(絕不可在快照未就位前刪)→ 更新 STATUS/docs31 §12/本檔,WP-B1 完成。
+  3. 【使用者+Agent】影子驗證 2–3 交易日(WP-B2 驗收,清單=`vps/README.md` §9):每日收盤後比對 `/data-preview/radar.json` vs 正式站 `/data/radar.json` freshness/榜單檔數一致、ntfy 無錯誤。第一發實彈=今晚 22:10 daily-margin。
+  4. 【Agent+使用者確認】WP-B3 cutover(docs/31 §6,選交易日盤前;目標 WP-B1 後 ≤1 週)。
+- **其他懸掛事項**:
+  - 使用者問過「權證分點 Top 200 → 500」:結論=數據說話,查詢指令已給(rank 200/500 成交額涵蓋率);若使用者拍板改 500,實作=`importer.py` 開 `--warrants` 參數(遷移期管線凍結,排 cutover 後與 WP-B6 一起)。
+  - 今日(07-15)融資券公布晚:manual-catchup 跑時可能 NoDataError 空跑,由 22:10 cron 輪自動補,屬預期。
 - **Next Suggested Actions**:同上 5→6。
 - **Files That Should Not Be Modified**:`.github/workflows/*.yml`(cutover 前一律不動)、`pipeline/radar/*` 管線邏輯(WP-B6 的權證 bug 修正除外)、Cloudflare Access 設定(WP-B7 前不動)、`cloudflare-trigger/`(仍在服役)。AGENTS.md 危險清單(WAL/cache/release 鏈)在 cutover 前全部仍然有效。
 - **Risk Notes**:
