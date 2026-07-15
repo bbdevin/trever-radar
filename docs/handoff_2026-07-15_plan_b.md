@@ -27,7 +27,8 @@
   3. ~~【使用者人工】VPS 首次資料 deploy + 驗收兩測~~ ✅ 2026-07-15 完成(130 檔,影子路由過兩測)。
   4. 【使用者人工】VPS 首份快照(**等回補結束、無寫入者時才做**,指令=`vps/README.md` §6):checkpoint → integrity_check → gzip → `rclone copy` 上 `gdrive:trever-radar-backup/` → `rclone ls` 列得出才算完成。
   5. 【Agent,WP-B1 收尾】**確認步驟 4 完成後**執行:`gh release delete-asset db-backup radar.db.gz -y --repo bbdevin/trever-radar`(先 `gh release view db-backup` 再刪;絕不可在快照未就位前刪)。
-  6. 【Agent,需使用者說開工】WP-B2:寫 `vps/scripts/`(docs/31 §2 各輪 + 備份腳本)+ `vps/README.md` cron 章節,影子驗證 2–3 交易日。
+  6. WP-B2 Executor 件 ✅ 2026-07-15 完成(`vps/scripts/` + crontab.example + README §9);【使用者人工】VPS `git pull` → `chmod +x vps/scripts/*.sh` → worker 目錄 `npm install` → 掛 crontab → 影子跑 2–3 交易日(每日比對 `/data-preview/radar.json` vs 正式站)。
+  7. 【Agent+使用者,影子過後需使用者確認】WP-B3 cutover(docs/31 §6)。
 - **Next Suggested Actions**:同上 5→6。
 - **Files That Should Not Be Modified**:`.github/workflows/*.yml`(cutover 前一律不動)、`pipeline/radar/*` 管線邏輯(WP-B6 的權證 bug 修正除外)、Cloudflare Access 設定(WP-B7 前不動)、`cloudflare-trigger/`(仍在服役)。AGENTS.md 危險清單(WAL/cache/release 鏈)在 cutover 前全部仍然有效。
 - **Risk Notes**:

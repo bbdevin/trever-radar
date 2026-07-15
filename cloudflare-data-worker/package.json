@@ -1,0 +1,8 @@
+{
+  "name": "trever-radar-data-worker",
+  "private": true,
+  "description": "釘住 wrangler 版本,VPS cron 每輪 npx wrangler deploy 用本地 node_modules,不打 npm registry",
+  "devDependencies": {
+    "wrangler": "^4.111.0"
+  }
+}

@@ -13,6 +13,7 @@ web/public/data/
 
 # node
 web/node_modules/
+cloudflare-data-worker/node_modules/
 web/.next/
 web/out/
 web/next-env.d.ts

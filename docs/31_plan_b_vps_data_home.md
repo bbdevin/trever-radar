@@ -259,3 +259,4 @@ Worker trigger 的 `GH_TOKEN` PAT 在回滾窗結束後由使用者親自 revoke
 
 - 2026-07-15 **WP-B0 完成**:Cloudflare API token(Workers Scripts/Routes Edit,zone 限 techtrever.com)、VPS `vps/.env`、node 22(dnf)、rclone gdrive remote(無頭 OAuth)、`radar-pipeline` docker 映像 build、首次 export-json(130 檔,與回補並行)+ `wrangler deploy` 成功;驗收兩測過(登入 Access 後 `/data-preview/radar.json` 回 JSON、無痕被 302 擋)。設定手冊落檔 `vps/README.md`。
 - 2026-07-15 **WP-B1 進行中**:等 VPS 回補結束 → 首份快照上 gdrive(`vps/README.md` §6)→ 刪 public release `radar.db.gz` asset。
+- 2026-07-15 **WP-B2 Executor 件完成(影子驗證待跑)**:`vps/scripts/` 七件(lib.sh 共用 flock/ntfy/git-pull/docker/deploy + 五條每日輪鏡像 5 支 workflow 指令序 + weekly-backup.sh 含 integrity 紅線與 Drive retention)+ `crontab.example` + `cloudflare-data-worker/package.json`(釘 wrangler 版本,cron 不打 registry);`bash -n` 全過、retention awk 邏輯單測過。待使用者:VPS 掛 crontab → 影子跑 2–3 交易日(驗收=`vps/README.md` §9)。

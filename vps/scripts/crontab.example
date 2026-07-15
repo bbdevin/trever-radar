@@ -1,0 +1,19 @@
+# Trever Radar VPS 排程(docs/31 §2;時刻沿用現行 Worker 時間表,遷移時刻意不改排程)
+# 安裝:crontab -e 貼入以下內容(把 /home/huang 換成實際家目錄)。
+# VPS 系統時區須為 Asia/Taipei(WP-B0 已確認);cronie 亦可用 CRON_TZ=Asia/Taipei 雙保險。
+# 全部輸出集中 ~/radar-cron.log;看狀態:tail -f ~/radar-cron.log
+
+CRON_TZ=Asia/Taipei
+
+# 每日輪(週一–五)
+10 14 * * 1-5  /home/huang/trever-radar/vps/scripts/daily-market.sh   >> /home/huang/radar-cron.log 2>&1
+10 16 * * 1-5  /home/huang/trever-radar/vps/scripts/daily-insti.sh    >> /home/huang/radar-cron.log 2>&1
+40 17 * * 1-5  /home/huang/trever-radar/vps/scripts/daily-branches.sh >> /home/huang/radar-cron.log 2>&1
+0  21 * * 1-5  /home/huang/trever-radar/vps/scripts/daily-branches.sh >> /home/huang/radar-cron.log 2>&1
+10 22 * * 1-5  /home/huang/trever-radar/vps/scripts/daily-margin.sh   >> /home/huang/radar-cron.log 2>&1
+
+# 深歷史增量(每日;已拉深自動跳過,近零請求)
+10 1 * * *     /home/huang/trever-radar/vps/scripts/data-backfill.sh  >> /home/huang/radar-cron.log 2>&1
+
+# 週備份(週六;checkpoint + integrity_check + gzip + Google Drive)
+0 5 * * 6      /home/huang/trever-radar/vps/scripts/weekly-backup.sh  >> /home/huang/radar-cron.log 2>&1

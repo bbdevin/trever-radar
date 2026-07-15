@@ -134,12 +134,18 @@ export-json 可以並行,但**快照 gzip 不行**——寫入中壓檔會拿到
 
 ```bash
 cd ~/trever-radar
-sqlite3 data/radar.db "PRAGMA wal_checkpoint(TRUNCATE);"
-sqlite3 data/radar.db "PRAGMA integrity_check;"   # 必須輸出 ok,不 ok 絕不上傳
+# 用管線映像跑 SQL,主機不需裝 sqlite3:
+docker run --rm -v ~/trever-radar/data:/app/data radar-pipeline \
+  python -c "import sqlite3; print(sqlite3.connect('/app/data/radar.db').execute('PRAGMA wal_checkpoint(TRUNCATE);').fetchone())"
+docker run --rm -v ~/trever-radar/data:/app/data radar-pipeline \
+  python -c "import sqlite3; print(sqlite3.connect('/app/data/radar.db').execute('PRAGMA integrity_check;').fetchone()[0])"
+# ↑ 必須輸出 ok,不 ok 絕不上傳
 gzip -kf data/radar.db                            # 產生 data/radar.db.gz,原檔保留
 rclone copy data/radar.db.gz gdrive:trever-radar-backup/
 rclone ls gdrive:trever-radar-backup/             # 列得出檔案才算完成
 ```
+
+日後每週六 05:00 由 `vps/scripts/weekly-backup.sh` 自動執行同一流程(§9)。
 
 retention:保留最近 4 份 + 每月 1 份,超標刪最舊(docs/31 §4)。
 單雲取捨已定案:Google 帳號出事=只剩 VPS 本機一份,知情接受;要補第二朵雲時
@@ -166,7 +172,46 @@ sqlite3 radar.db "PRAGMA integrity_check;"        # ok 才能用
 # 快照之後缺的幾天:官方源 backfill --days N + 分點按日補抓 + 指標/分數重算(docs/31 §4)
 ```
 
-## 9. 常見坑(本次實際踩過)
+## 9. 每日排程(WP-B2,cron)
+
+腳本在 `vps/scripts/`,一支 cron 項對應一支 script,全部鏡像現行 5 支 workflow 的指令序:
+
+| Script | 時刻(台北) | 對應 workflow |
+|---|---|---|
+| `daily-market.sh` | 14:10 一–五 | daily-market(quotes→權證彙總→指標→分數→週一題材→export→deploy) |
+| `daily-insti.sh` | 16:10 一–五 | daily-insti(法人→權證主檔→分數→export→deploy) |
+| `daily-branches.sh` | 17:40 + 21:00 一–五 | daily-branches(margin/insti 補抓→分點爬蟲→分點統計→分數→績效→export→prune→deploy) |
+| `daily-margin.sh` | 22:10 一–五 | daily-margin(融資券保底→分數→績效→export→deploy) |
+| `data-backfill.sh` | 01:10 每日 | data-backfill task=deep(深歷史增量) |
+| `weekly-backup.sh` | 週六 05:00 | (新)checkpoint→integrity_check→gzip→Drive+retention |
+
+共用機制(`lib.sh`):
+- **flock 互斥**:`/tmp/radar-db.lock`,搶不到=跳過本輪+ntfy 通知(防上一輪超時堆疊)。
+- **開輪 `git pull --ff-only` + docker build**(layer cache,requirements 沒變近零成本)——舊碼算舊 reasons 的既有教訓。
+- **失敗 → ntfy High 告警,成功靜默**(週備份成功發一則 default 摘要)。
+- 非交易日:importer 靠 NoDataError 安全空跑,不手刻假日曆(既有定案)。
+- deploy 憑證只在主機(`vps/.env`),容器只拿到 `RADAR_FINMIND_TOKEN`——權限分離。
+
+安裝(一次):
+
+```bash
+cd ~/trever-radar
+git pull --ff-only
+chmod +x vps/scripts/*.sh
+cd cloudflare-data-worker && npm install --no-audit --no-fund && cd ..   # 釘 wrangler 版本
+crontab -e   # 貼入 vps/scripts/crontab.example 內容(路徑換成實際家目錄)
+crontab -l   # 確認
+```
+
+手動補跑任一輪:直接執行對應 script,例 `vps/scripts/daily-market.sh`。
+看狀態:`tail -f ~/radar-cron.log`、`docker ps -a`、ntfy 通知。
+
+**影子驗證(cutover 前必過,docs/31 WP-B2)**:cron 全開後連續 2–3 個交易日,
+每日收盤後比對 `https://radar.techtrever.com/data-preview/radar.json` 與正式站
+`/data/radar.json` 的 freshness/榜單檔數一致(允許分鐘級時差);ntfy 無錯誤告警。
+過了才可向使用者提請 WP-B3 cutover。
+
+## 10. 常見坑(本次實際踩過)
 
 - `rclone lsd gdrive`(沒冒號)→ 被當本地資料夾,報 `directory not found`。要 `gdrive:`。
 - `Use auto config?` 按成 `y` → 卡住等瀏覽器。`Ctrl+C` → `rclone config delete gdrive` 重來。
