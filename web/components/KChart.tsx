@@ -309,13 +309,14 @@ export default function KChart({
           ...(mfTitle ? [{ wm: mfTitle as { applyOptions: (o: unknown) => void }, base: MF_TITLE }] : []),
           ...(selTitle ? [{ wm: selTitle as { applyOptions: (o: unknown) => void }, base: SEL_TITLE }] : []),
         ];
-        // 副圖有感放大:K 線隨額外 pane 數讓出空間(仍為最大單一 pane),量能為次要 pane 縮小;
-        // 900px 視窗實際高:0 extra 副圖 ~170px / 1 extra 各 ~166px / 全開各 ~158px
+        // 使用者定案(2026-07-18):K 線縮、副圖全部放大——每個副圖都要比量能 pane 大;
+        // 900px 視窗實際高:0 extra K~301/量~81/副圖~185;1 extra K~213/量~83/副圖各~190;
+        // 全開 K~178/量~71/副圖各~166(K 隨額外 pane 數 26→18→15 讓位)
         const extraCount = (mainPane >= 0 ? 1 : 0) + (selPane >= 0 ? 1 : 0);
-        panes[0]?.setStretchFactor?.(extraCount === 0 ? 30 : extraCount === 1 ? 24 : 20);
-        panes[1]?.setStretchFactor?.(5);
-        panes[2]?.setStretchFactor?.(extraCount === 0 ? 15 : 14);
-        if (mainPane >= 0) panes[mainPane]?.setStretchFactor?.(14);
+        panes[0]?.setStretchFactor?.(extraCount === 0 ? 26 : extraCount === 1 ? 18 : 15);
+        panes[1]?.setStretchFactor?.(extraCount === 2 ? 6 : 7);
+        panes[2]?.setStretchFactor?.(extraCount === 0 ? 16 : extraCount === 1 ? 16 : 14);
+        if (mainPane >= 0) panes[mainPane]?.setStretchFactor?.(extraCount === 1 ? 16 : 14);
         if (selPane >= 0) panes[selPane]?.setStretchFactor?.(14);
       }
 
@@ -537,7 +538,7 @@ export default function KChart({
             isMobile && "[height:clamp(360px,52vh,480px)]",
             !isMobile && extraPanes === 0 && "[height:clamp(440px,68vh,740px)]",
             !isMobile && extraPanes === 1 && "[height:clamp(520px,80vh,900px)]",
-            !isMobile && extraPanes === 2 && "[height:clamp(560px,84vh,1000px)]",
+            !isMobile && extraPanes === 2 && "[height:clamp(600px,88vh,1050px)]",
           )}
         />
       </div>
