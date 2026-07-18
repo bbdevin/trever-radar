@@ -208,7 +208,8 @@ export default function KChart({
           background: { type: ColorType.Solid, color: "transparent" },
           textColor: colors.text,
           fontSize: 11,
-          panes: { separatorColor: colors.separator, enableResize: false },
+          // 桌機開啟 pane 分隔線可拖曳(v5 內建),讓使用者微調子 pane 高度;手機關閉,垂直拖曳留給頁面捲動
+          panes: { separatorColor: colors.separator, enableResize: !mobile },
         },
         grid: { vertLines: { color: colors.grid }, horzLines: { color: colors.grid } },
         rightPriceScale: { borderColor: colors.border },
@@ -273,7 +274,7 @@ export default function KChart({
       };
 
       // pane 標題:v5 pane watermark(游標移動時同一位置追加當日/累計數字)。色讀 paneTextRef → 主題切換即時反映
-      const wmLine = (text: string) => ({ text, color: paneTextRef.current, fontSize: 11 });
+      const wmLine = (text: string) => ({ text, color: paneTextRef.current, fontSize: 12 });
       const mkTitle = (pane: number, text: string) =>
         createTextWatermark(chart!.panes()[pane], { horzAlign: "left", vertAlign: "top", lines: [wmLine(text)] });
 
@@ -308,11 +309,12 @@ export default function KChart({
           ...(mfTitle ? [{ wm: mfTitle as { applyOptions: (o: unknown) => void }, base: MF_TITLE }] : []),
           ...(selTitle ? [{ wm: selTitle as { applyOptions: (o: unknown) => void }, base: SEL_TITLE }] : []),
         ];
+        // 主圖維持視覺主體(≥40% panes 區),量能為次要 pane 可略縮;副圖/主力/分點等權放大到易讀
         panes[0]?.setStretchFactor?.(30);
-        panes[1]?.setStretchFactor?.(8);
-        panes[2]?.setStretchFactor?.(12);
-        if (mainPane >= 0) panes[mainPane]?.setStretchFactor?.(10);
-        if (selPane >= 0) panes[selPane]?.setStretchFactor?.(10);
+        panes[1]?.setStretchFactor?.(6);
+        panes[2]?.setStretchFactor?.(13);
+        if (mainPane >= 0) panes[mainPane]?.setStretchFactor?.(13);
+        if (selPane >= 0) panes[selPane]?.setStretchFactor?.(13);
       }
 
       // 手機 compact legend 初始文字(pane 名);游標移動時附加買賣超/累計數值
@@ -394,7 +396,7 @@ export default function KChart({
       timeScale: { borderColor: c.border },
     });
     // 水印色不能由 applyOptions 單獨改,重貼各 pane 基礎標題(帶新色);游標懸停時的動態數值由 wmLine 讀 paneTextRef 已即時跟色
-    for (const t of titlesRef.current) t.wm.applyOptions({ lines: [{ text: t.base, color: c.paneText, fontSize: 11 }] });
+    for (const t of titlesRef.current) t.wm.applyOptions({ lines: [{ text: t.base, color: c.paneText, fontSize: 12 }] });
   }, [isDark]);
 
   // 額外 pane 數決定桌機圖表總高:主圖不被壓縮,pane 多時整體加高(手機恆為單一子 pane,用固定 clamp)
@@ -531,9 +533,9 @@ export default function KChart({
             "w-full rounded-t-none rounded-b-[var(--r-lg)] border border-border bg-card p-2 shadow-[var(--shadow-card)]",
             // 手機版(<768px):單一子 pane,固定總高 clamp(360,52vh,480);桌機版同原邏輯(逐位元不變)
             isMobile && "[height:clamp(360px,52vh,480px)]",
-            !isMobile && extraPanes === 0 && "[height:clamp(420px,66vh,680px)]",
-            !isMobile && extraPanes === 1 && "[height:clamp(470px,72vh,770px)]",
-            !isMobile && extraPanes === 2 && "[height:clamp(520px,78vh,860px)]",
+            !isMobile && extraPanes === 0 && "[height:clamp(440px,68vh,740px)]",
+            !isMobile && extraPanes === 1 && "[height:clamp(520px,80vh,900px)]",
+            !isMobile && extraPanes === 2 && "[height:clamp(560px,84vh,1000px)]",
           )}
         />
       </div>
