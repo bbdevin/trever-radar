@@ -5,6 +5,8 @@
 """
 import json
 import logging
+from datetime import datetime, timedelta
+from unittest.mock import MagicMock
 
 import pytest
 import requests
@@ -42,9 +44,11 @@ class _DummyResp:
 def _reset_state(monkeypatch):
     """每個測試前清空模組全域狀態,並讓 time.sleep 變 no-op(避免退避真的睡)。"""
     worker.armed_stocks.clear()
+    worker.sent_signals.clear()
     monkeypatch.setattr(worker.time, "sleep", lambda *a, **k: None)
     yield
     worker.armed_stocks.clear()
+    worker.sent_signals.clear()
 
 
 def test_fetch_200_populates_armed_list(monkeypatch):
@@ -120,11 +124,11 @@ def test_no_cf_access_headers_when_env_missing(monkeypatch):
     assert "CF-Access-Client-Secret" not in headers
 
 
-def test_process_trade_parses_raw_json_string_message():
+def test_process_trade_parses_raw_json_string_message(monkeypatch):
     """2026-07-16 回歸:SDK 的 on("message") 回呼給的是原始 JSON 字串,不是已解析
     的 dict——舊碼直接 message.get(...) 會對字串炸 AttributeError,需先 json.loads。
-    價格/成交量刻意不觸發任何 I-1/I-3/I-4 訊號分支,避免測試需要跑 asyncio 事件迴圈。
     """
+    monkeypatch.setattr(worker, "push_signal", lambda *a, **k: None)
     worker.armed_stocks["2330"] = {
         "name": "台積電", "watch_price": 99999, "adv20": 0,
         "last_price": 0, "volume": 0, "trades_5m": [],
@@ -139,3 +143,110 @@ def test_process_trade_parses_raw_json_string_message():
     state = worker.armed_stocks["2330"]
     assert state["last_price"] == 500.0
     assert state["volume"] == 1
+
+
+def test_process_trade_delivers_signal_without_a_running_event_loop(monkeypatch):
+    """2026-07-17 回歸(生產環境實測炸滿 log,連續數百筆「Error processing trade:
+    no running event loop」):Fugle SDK 的 on("message") callback 是從背景執行緒
+    呼叫 process_trade(),不是 asyncio 事件迴圈那條執行緒。舊碼 push_signal 是
+    async def、呼叫端用 asyncio.create_task() 排程,在沒有事件迴圈的執行緒下
+    asyncio.create_task() 本身就會 RuntimeError('no running event loop')、
+    coroutine 主體(真正寫入 Supabase 那段)完全沒機會執行,被最外層 except 吞掉。
+
+    這裡刻意不 monkeypatch push_signal 本身(那樣測不出差異——若 push_signal 仍是
+    async def,單純呼叫 push_signal(...) 只會建立 coroutine 物件、不會真的執行,
+    是 asyncio.create_task() 才會觸發那個 RuntimeError,監看 push_signal 有沒有
+    被「呼叫」測不出這個差異)。改監看 push_signal 真正執行到底時會動到的東西:
+    supabase client 是否真的被呼叫、sent_signals 是否真的被寫入——舊碼在這裡兩者
+    皆不會發生,新碼(同步呼叫)兩者都會發生。
+    """
+    mock_supabase = MagicMock()
+    monkeypatch.setattr(worker, "supabase", mock_supabase)
+    worker.armed_stocks["2330"] = {
+        "name": "台積電", "watch_price": 99999, "adv20": 0,
+        "last_price": 0, "volume": 0, "trades_5m": [],
+    }
+    # price*qty*1000 = 500*20*1000 = 1000萬 >= 500萬門檻 → 應觸發 I-1
+    message = json.dumps({
+        "event": "data",
+        "data": {"symbol": "2330", "price": 500.0, "volume": 20},
+    })
+
+    worker.process_trade(message)
+
+    assert "2330_I-1" in worker.sent_signals, "push_signal 應該真正執行完(寫入 sent_signals)"
+    mock_supabase.table.assert_called_with("intraday_signals")
+
+
+def _signal_state(**overrides):
+    base = {"name": "測試股", "watch_price": 0, "adv20": 0,
+            "last_price": 0, "volume": 0, "trades_5m": []}
+    base.update(overrides)
+    return base
+
+
+# evaluate_signals() 是純函式,不需要 asyncio/Supabase,直接測規則本身(docs/24 §2.2)。
+
+def test_i1_large_single_trade():
+    state = _signal_state()
+    now = datetime(2026, 7, 20, 9, 30)
+    signals = worker.evaluate_signals(state, price=500.0, qty=20, now=now)
+    assert ("I-1", "單筆大單 1000萬") in signals
+
+
+def test_i1_not_triggered_below_threshold():
+    state = _signal_state()
+    now = datetime(2026, 7, 20, 9, 30)
+    signals = worker.evaluate_signals(state, price=500.0, qty=1, now=now)
+    assert not any(s[0] == "I-1" for s in signals)
+
+
+def test_i2_volume_surge_vs_prorated_adv20():
+    # 開盤 60 分鐘(09:00-10:00),adv20=27000 → 預期量 27000*60/270=6000,2倍=12000
+    state = _signal_state(adv20=27000, volume=12000)
+    now = datetime(2026, 7, 20, 10, 0)
+    signals = worker.evaluate_signals(state, price=100.0, qty=0, now=now)
+    assert any(s[0] == "I-2" for s in signals)
+
+
+def test_i2_not_triggered_before_min_elapsed():
+    # 開盤才 2 分鐘,即使量能比例很高也不判 I-2(基期不穩)
+    state = _signal_state(adv20=27000, volume=5000)
+    now = datetime(2026, 7, 20, 9, 2)
+    signals = worker.evaluate_signals(state, price=100.0, qty=0, now=now)
+    assert not any(s[0] == "I-2" for s in signals)
+
+
+def test_i2_not_triggered_without_adv20():
+    state = _signal_state(adv20=0, volume=999999)
+    now = datetime(2026, 7, 20, 10, 0)
+    signals = worker.evaluate_signals(state, price=100.0, qty=0, now=now)
+    assert not any(s[0] == "I-2" for s in signals)
+
+
+def test_i3_five_minute_pullup():
+    now = datetime(2026, 7, 20, 10, 0)
+    state = _signal_state(trades_5m=[(now - timedelta(minutes=1), 100.0)])
+    signals = worker.evaluate_signals(state, price=102.0, qty=0, now=now)
+    assert any(s[0] == "I-3" for s in signals)
+
+
+def test_i3_not_triggered_below_two_percent():
+    now = datetime(2026, 7, 20, 10, 0)
+    state = _signal_state(trades_5m=[(now - timedelta(minutes=1), 100.0)])
+    signals = worker.evaluate_signals(state, price=101.0, qty=0, now=now)
+    assert not any(s[0] == "I-3" for s in signals)
+
+
+def test_i4_breakout_watch_price():
+    state = _signal_state(watch_price=100.0)
+    now = datetime(2026, 7, 20, 9, 30)
+    signals = worker.evaluate_signals(state, price=100.5, qty=0, now=now)
+    assert any(s[0] == "I-4" for s in signals)
+
+
+def test_i4_not_triggered_below_watch_price():
+    state = _signal_state(watch_price=100.0)
+    now = datetime(2026, 7, 20, 9, 30)
+    signals = worker.evaluate_signals(state, price=99.0, qty=0, now=now)
+    assert not any(s[0] == "I-4" for s in signals)

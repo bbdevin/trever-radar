@@ -37,6 +37,45 @@ supabase: Client = None
 armed_stocks = {}  # { '2330': { 'name': '台積電', 'watch_price': 1000, 'adv20': 50000, 'last_price': 0, 'volume': 0, 'trades_5m': [] } }
 sent_signals = set() # To avoid spamming the same signal for the same stock
 
+# 台股盤中時段 09:00–13:30(240 分鐘交易,含前收盤集合競價緩衝算 270)
+TRADING_START_MINUTES = 9 * 60
+TRADING_SESSION_MINUTES = 270
+I2_MIN_ELAPSED_MINUTES = 5  # 開盤前幾分鐘量能基期還不穩,不判 I-2 避免開盤就誤觸
+
+
+def evaluate_signals(state: dict, price: float, qty: int, now: datetime) -> list[tuple[str, str]]:
+    """純函式(docs/24 §2.2 規則):依這筆成交後的狀態,回傳應觸發的 (signal_type, desc)
+    列表。不做任何 I/O、不碰 asyncio/Supabase,方便單元測試——process_trade 只負責
+    更新 state 與呼叫這支函式,推播交給呼叫端。"""
+    signals = []
+    amount = price * qty * 1000  # 成交金額(TWD)
+
+    # I-1 大單:單筆 >= 500 萬
+    if amount >= 5_000_000:
+        signals.append(("I-1", f"單筆大單 {amount/10000:.0f}萬"))
+
+    # I-2 爆量:累積量 vs 依開盤至今經過時間等比例換算的 ADV20 基準,達 2 倍
+    # (docs/24 §2.2 原設計要「同時刻量能基準曲線」,pipeline 尚未輸出這份曲線——
+    #  這裡用單一 adv20 日均量依開盤經過分鐘數等比例折算近似,先求有訊號可用,
+    #  之後 pipeline 補時刻曲線再替換成精確版)
+    elapsed_min = now.hour * 60 + now.minute - TRADING_START_MINUTES
+    if state.get("adv20", 0) > 0 and elapsed_min >= I2_MIN_ELAPSED_MINUTES:
+        expected_by_now = state["adv20"] * min(elapsed_min, TRADING_SESSION_MINUTES) / TRADING_SESSION_MINUTES
+        if expected_by_now > 0 and state["volume"] / expected_by_now >= 2.0:
+            signals.append(("I-2", f"量能達今日預期 {state['volume']/expected_by_now:.1f} 倍"))
+
+    # I-3 急拉:5 分鐘漲幅 >= 2%
+    if state["trades_5m"]:
+        min_price = min(p for _, p in state["trades_5m"])
+        if min_price > 0 and (price - min_price) / min_price >= 0.02:
+            signals.append(("I-3", "5分鐘急拉 >=2%"))
+
+    # I-4 發動:突破觀察價
+    if state["watch_price"] > 0 and price >= state["watch_price"]:
+        signals.append(("I-4", f"突破觀察價 {state['watch_price']}"))
+
+    return signals
+
 
 def _build_radar_headers():
     """組出抓 radar.json 用的 headers;若 .env 提供 Cloudflare Access token 則一併夾帶。"""
@@ -121,8 +160,18 @@ def load_armed_list():
     armed_stocks.update(new_armed)
     logger.info(f"Loaded {len(armed_stocks)} Armed stocks to monitor.")
 
-async def push_signal(stock_id: str, stock_name: str, signal_type: str, signal_desc: str, price: float, volume: int):
-    """將訊號寫入 Supabase"""
+def push_signal(stock_id: str, stock_name: str, signal_type: str, signal_desc: str, price: float, volume: int):
+    """將訊號寫入 Supabase。
+
+    2026-07-17 回歸:這支原本是 async def,呼叫端用 asyncio.create_task() 排程。
+    但 process_trade() 是 Fugle SDK 內部背景執行緒呼叫的同步 callback(connect()/
+    subscribe() 是同步方法,見下方 main() 的說明),該執行緒沒有 asyncio 事件迴圈,
+    asyncio.create_task() 在那裡一律 RuntimeError('no running event loop')——線上
+    連續數百筆全部被 process_trade() 最外層 except 吞掉,訊號 100% 送不出去(worker
+    heartbeat 正常是因為心跳跑在主執行緒的事件迴圈,不受影響)。supabase-py 本身是
+    同步 client、函式體內從未 await 任何東西,改普通同步函式、由 process_trade()
+    直接呼叫即可,不需要事件迴圈。
+    """
     signal_key = f"{stock_id}_{signal_type}"
     if signal_key in sent_signals:
         # Avoid spamming the same signal within the session
@@ -175,27 +224,14 @@ def process_trade(message):
         state['last_price'] = price
         state['volume'] += qty
 
-        amount = price * qty * 1000 # 成交金額 (TWD)
-
         # 紀錄最近 5 分鐘的價格用於急拉計算
         now = datetime.now()
         state['trades_5m'].append((now, price))
         # 清理 5 分鐘前的紀錄
         state['trades_5m'] = [(t, p) for t, p in state['trades_5m'] if now - t <= timedelta(minutes=5)]
 
-        # 判定 I-1 (大單): 單筆大於 500 萬
-        if amount >= 5000000:
-            asyncio.create_task(push_signal(sid, state['name'], "I-1", f"單筆大單 {amount/10000:.0f}萬", price, state['volume']))
-
-        # 判定 I-3 (急拉): 5分鐘漲幅 >= 2%
-        if len(state['trades_5m']) > 0:
-            min_price = min(p for t, p in state['trades_5m'])
-            if min_price > 0 and (price - min_price) / min_price >= 0.02:
-                asyncio.create_task(push_signal(sid, state['name'], "I-3", "5分鐘急拉 >=2%", price, state['volume']))
-
-        # 判定 I-4 (發動): 突破觀察價且有動能 (這裡簡化為只要突破且不是剛開盤)
-        if state['watch_price'] > 0 and price >= state['watch_price']:
-            asyncio.create_task(push_signal(sid, state['name'], "I-4", f"突破觀察價 {state['watch_price']}", price, state['volume']))
+        for signal_type, desc in evaluate_signals(state, price, qty, now):
+            push_signal(sid, state['name'], signal_type, desc, price, state['volume'])
 
     except Exception as e:
         logger.error(f"Error processing trade: {e}", exc_info=True)
