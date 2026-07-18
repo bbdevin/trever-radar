@@ -281,7 +281,9 @@ export default function KChart({
       // mfTitle/selTitle 供桌機游標更新 watermark 數值;手機不用 watermark 值,改上方 compact legend。
       let mfTitle: ReturnType<typeof mkTitle> | null = null;
       let selTitle: ReturnType<typeof mkTitle> | null = null;
-      const panes = chart.panes() as unknown as { setStretchFactor?: (f: number) => void }[];
+      // pane 是 addSeries 指到新 index 時才建立——factor 必須在建立後當場重取 panes()
+      // (舊版在此處先快照陣列,副圖 pane 尚不存在,setStretchFactor 全被 ?. 吞掉從未生效)
+      const paneFactor = (i: number, f: number) => chart!.panes()[i]?.setStretchFactor(f);
 
       if (mobile) {
         // 子 pane 擇一放在 pane 2:副圖 / 主力買賣超 / 分點進出
@@ -290,9 +292,9 @@ export default function KChart({
         else addSub(2);
         titlesRef.current = []; // 手機不建 pane 內 watermark(避免小 pane 壓資料),數值走上方 compact legend
         // 主圖佔比加大;子 pane 於總高 clamp(360,52vh,480) 下仍 ≥120px
-        panes[0]?.setStretchFactor?.(13);
-        panes[1]?.setStretchFactor?.(4);
-        panes[2]?.setStretchFactor?.(11);
+        paneFactor(0, 13);
+        paneFactor(1, 4);
+        paneFactor(2, 11);
       } else {
         // 桌機:副圖常駐 pane 2,主力/分點依序接 pane 3/4(逐位元不變)
         addSub(2);
@@ -309,14 +311,14 @@ export default function KChart({
           ...(mfTitle ? [{ wm: mfTitle as { applyOptions: (o: unknown) => void }, base: MF_TITLE }] : []),
           ...(selTitle ? [{ wm: selTitle as { applyOptions: (o: unknown) => void }, base: SEL_TITLE }] : []),
         ];
-        // 固定像素預算(2026-07-19 使用者定案):factor 直接用目標 px,
-        // 容器總高 = 各 pane 目標 px 加總(見 desktopHeight),故每 pane 實得 ≈ 目標值,
-        // 不再隨視窗高低被壓縮——副圖保證 ~180px
-        panes[0]?.setStretchFactor?.(380);
-        panes[1]?.setStretchFactor?.(100);
-        panes[2]?.setStretchFactor?.(180);
-        if (mainPane >= 0) panes[mainPane]?.setStretchFactor?.(180);
-        if (selPane >= 0) panes[selPane]?.setStretchFactor?.(180);
+        // 副圖優先(2026-07-19 使用者定案:K 縮、副圖加大):K 隨額外 pane 數 24→20→18 讓位;
+        // 900px 視窗實際高:0e K~290/量~92/副圖~193;1e K~229/量~80/副圖各~183;全開 K~184/量~72/副圖各~164
+        const extraCount = (mainPane >= 0 ? 1 : 0) + (selPane >= 0 ? 1 : 0);
+        paneFactor(0, extraCount === 0 ? 24 : extraCount === 1 ? 20 : 18);
+        paneFactor(1, 7);
+        paneFactor(2, 16);
+        if (mainPane >= 0) paneFactor(mainPane, 16);
+        if (selPane >= 0) paneFactor(selPane, 16);
       }
 
       // 手機 compact legend 初始文字(pane 名);游標移動時附加買賣超/累計數值
@@ -403,9 +405,6 @@ export default function KChart({
 
   // 額外 pane 數決定桌機圖表總高:主圖不被壓縮,pane 多時整體加高(手機恆為單一子 pane,用固定 clamp)
   const extraPanes = (settings.mainForce && flow.main?.length ? 1 : 0) + (flow.sel?.length ? 1 : 0);
-  // 桌機改固定像素預算(2026-07-19 使用者定案:vh 綁視窗會把副圖壓扁):
-  // K 線 380 + 量能 100 + 每個副圖 180 + 時間軸/邊框 ~46,總高隨 pane 數增加,頁面捲動吸收
-  const desktopHeight = 380 + 100 + 180 * (1 + extraPanes) + 46;
 
   const chipBase =
     "inline-flex items-center gap-1 rounded-full border border-[color:var(--line)] bg-card px-2.5 py-[3px] text-xs font-semibold text-muted-foreground cursor-pointer select-none [&_input]:hidden before:content-none has-checked:before:content-['✓_'] has-checked:before:text-[10px] aria-pressed:before:content-['✓_'] aria-pressed:before:text-[10px]";
@@ -536,11 +535,12 @@ export default function KChart({
           ref={ref}
           className={cn(
             "w-full rounded-t-none rounded-b-[var(--r-lg)] border border-border bg-card p-2 shadow-[var(--shadow-card)]",
-            // 手機版(<768px):單一子 pane,固定總高 clamp(360,52vh,480)
+            // 手機版(<768px):單一子 pane,固定總高 clamp(360,52vh,480);桌機依 pane 數 vh clamp
             isMobile && "[height:clamp(360px,52vh,480px)]",
+            !isMobile && extraPanes === 0 && "[height:clamp(440px,68vh,740px)]",
+            !isMobile && extraPanes === 1 && "[height:clamp(520px,80vh,900px)]",
+            !isMobile && extraPanes === 2 && "[height:clamp(600px,88vh,1050px)]",
           )}
-          // 桌機:固定像素總高(K380+量100+副圖180×N+軸46),副圖不再隨視窗被壓縮
-          style={!isMobile ? { height: desktopHeight } : undefined}
         />
       </div>
     </div>
