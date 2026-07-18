@@ -309,15 +309,14 @@ export default function KChart({
           ...(mfTitle ? [{ wm: mfTitle as { applyOptions: (o: unknown) => void }, base: MF_TITLE }] : []),
           ...(selTitle ? [{ wm: selTitle as { applyOptions: (o: unknown) => void }, base: SEL_TITLE }] : []),
         ];
-        // 使用者定案(2026-07-18):K 線縮、副圖全部放大——每個副圖都要比量能 pane 大;
-        // 900px 視窗實際高:0 extra K~301/量~81/副圖~185;1 extra K~213/量~83/副圖各~190;
-        // 全開 K~178/量~71/副圖各~166(K 隨額外 pane 數 26→18→15 讓位)
-        const extraCount = (mainPane >= 0 ? 1 : 0) + (selPane >= 0 ? 1 : 0);
-        panes[0]?.setStretchFactor?.(extraCount === 0 ? 26 : extraCount === 1 ? 18 : 15);
-        panes[1]?.setStretchFactor?.(extraCount === 2 ? 6 : 7);
-        panes[2]?.setStretchFactor?.(extraCount === 0 ? 16 : extraCount === 1 ? 16 : 14);
-        if (mainPane >= 0) panes[mainPane]?.setStretchFactor?.(extraCount === 1 ? 16 : 14);
-        if (selPane >= 0) panes[selPane]?.setStretchFactor?.(14);
+        // 固定像素預算(2026-07-19 使用者定案):factor 直接用目標 px,
+        // 容器總高 = 各 pane 目標 px 加總(見 desktopHeight),故每 pane 實得 ≈ 目標值,
+        // 不再隨視窗高低被壓縮——副圖保證 ~180px
+        panes[0]?.setStretchFactor?.(380);
+        panes[1]?.setStretchFactor?.(100);
+        panes[2]?.setStretchFactor?.(180);
+        if (mainPane >= 0) panes[mainPane]?.setStretchFactor?.(180);
+        if (selPane >= 0) panes[selPane]?.setStretchFactor?.(180);
       }
 
       // 手機 compact legend 初始文字(pane 名);游標移動時附加買賣超/累計數值
@@ -404,6 +403,9 @@ export default function KChart({
 
   // 額外 pane 數決定桌機圖表總高:主圖不被壓縮,pane 多時整體加高(手機恆為單一子 pane,用固定 clamp)
   const extraPanes = (settings.mainForce && flow.main?.length ? 1 : 0) + (flow.sel?.length ? 1 : 0);
+  // 桌機改固定像素預算(2026-07-19 使用者定案:vh 綁視窗會把副圖壓扁):
+  // K 線 380 + 量能 100 + 每個副圖 180 + 時間軸/邊框 ~46,總高隨 pane 數增加,頁面捲動吸收
+  const desktopHeight = 380 + 100 + 180 * (1 + extraPanes) + 46;
 
   const chipBase =
     "inline-flex items-center gap-1 rounded-full border border-[color:var(--line)] bg-card px-2.5 py-[3px] text-xs font-semibold text-muted-foreground cursor-pointer select-none [&_input]:hidden before:content-none has-checked:before:content-['✓_'] has-checked:before:text-[10px] aria-pressed:before:content-['✓_'] aria-pressed:before:text-[10px]";
@@ -534,12 +536,11 @@ export default function KChart({
           ref={ref}
           className={cn(
             "w-full rounded-t-none rounded-b-[var(--r-lg)] border border-border bg-card p-2 shadow-[var(--shadow-card)]",
-            // 手機版(<768px):單一子 pane,固定總高 clamp(360,52vh,480);桌機版同原邏輯(逐位元不變)
+            // 手機版(<768px):單一子 pane,固定總高 clamp(360,52vh,480)
             isMobile && "[height:clamp(360px,52vh,480px)]",
-            !isMobile && extraPanes === 0 && "[height:clamp(440px,68vh,740px)]",
-            !isMobile && extraPanes === 1 && "[height:clamp(520px,80vh,900px)]",
-            !isMobile && extraPanes === 2 && "[height:clamp(600px,88vh,1050px)]",
           )}
+          // 桌機:固定像素總高(K380+量100+副圖180×N+軸46),副圖不再隨視窗被壓縮
+          style={!isMobile ? { height: desktopHeight } : undefined}
         />
       </div>
     </div>
