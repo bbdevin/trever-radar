@@ -1,6 +1,7 @@
 # 30 全市場分點與權證歷史回補計畫 (WP-M4)
 
-> **2026-07-15 更新**:B 案定案(`docs/31`)後,本檔 §4 的「補洞→上傳→放養」三步驟與 §5 容量監控於 cutover 後**作廢**——回補容器將直接寫 VPS 唯一主本,不再打包上傳。**§3 的 `backfill_warrant_branches` bug 修正仍有效且為權證回補的絕對前置**(docs/31 WP-B6)。
+> **2026-07-15 更新**:B 案定案(`docs/31`)後,本檔 §4 的「補洞→上傳→放養」三步驟與 §5 容量監控於 cutover 後**作廢**——回補容器將直接寫 VPS 唯一主本,不再打包上傳。~~§3 的 `backfill_warrant_branches` bug 修正仍有效且為權證回補的絕對前置~~(docs/31 WP-B6)。
+> **2026-07-18 更新**:§3 的 bug **已修正並合併 main**(分支 `wp-b6-warrant-branches-bugfix`,commit `a87df0d`,merge `4ea5f95`;回歸測試 `pipeline/tests/test_backfill_warrant_branches.py` 全過,詳見 `docs/31` 最近完成紀錄)。WP-B6 全市場回補本身尚未開跑,待 WP-B3 cutover 收尾後由使用者確認開工。
 > 狀態：規劃與準備階段 (2026-07-14)
 > 這是對應 `docs/vps_backfill_plan.md` 的長線執行擴充計畫。
 
@@ -16,7 +17,9 @@
 
 > **結論**：整體回補需在 VPS 上日夜不停執行約 3 到 4 週。我們依賴 `backfill-branches` 的**斷點續傳**能力，隨時中斷重啟都不會浪費進度。建議執行策略為「每跑 3~4 天就打包上傳一次 `radar.db`，讓前端逐步享有更長的歷史」。
 
-## 3. 待辦的程式碼修正 (Blocking Issue)
+## 3. 待辦的程式碼修正 (Blocking Issue) — ✅ 已修正(2026-07-18,commit `a87df0d`)
+> 以下描述保留作為歷史記錄(修正前的問題與方案)。實際修正已落地:查詢移入日期迴圈,回歸測試見 `pipeline/tests/test_backfill_warrant_branches.py`。
+
 在正式開始權證的大回補之前，必須先修正 `pipeline/radar/importer.py` 中的 `backfill_warrant_branches` 函數：
 * **現有缺陷**：目前程式是拿「最新一個交易日」的 Top N 權證清單，去查這份清單過去半年的歷史。
 * **致命問題**：權證壽命短，半年前的權證早就下市不在今天的清單中，而今天的權證半年前還沒發行！用今天的清單往回查會抓不到真正的歷史。
