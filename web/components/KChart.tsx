@@ -309,12 +309,14 @@ export default function KChart({
           ...(mfTitle ? [{ wm: mfTitle as { applyOptions: (o: unknown) => void }, base: MF_TITLE }] : []),
           ...(selTitle ? [{ wm: selTitle as { applyOptions: (o: unknown) => void }, base: SEL_TITLE }] : []),
         ];
-        // 主圖維持視覺主體(≥40% panes 區),量能為次要 pane 可略縮;副圖/主力/分點等權放大到易讀
-        panes[0]?.setStretchFactor?.(30);
-        panes[1]?.setStretchFactor?.(6);
-        panes[2]?.setStretchFactor?.(13);
-        if (mainPane >= 0) panes[mainPane]?.setStretchFactor?.(13);
-        if (selPane >= 0) panes[selPane]?.setStretchFactor?.(13);
+        // 副圖有感放大:K 線隨額外 pane 數讓出空間(仍為最大單一 pane),量能為次要 pane 縮小;
+        // 900px 視窗實際高:0 extra 副圖 ~170px / 1 extra 各 ~166px / 全開各 ~158px
+        const extraCount = (mainPane >= 0 ? 1 : 0) + (selPane >= 0 ? 1 : 0);
+        panes[0]?.setStretchFactor?.(extraCount === 0 ? 30 : extraCount === 1 ? 24 : 20);
+        panes[1]?.setStretchFactor?.(5);
+        panes[2]?.setStretchFactor?.(extraCount === 0 ? 15 : 14);
+        if (mainPane >= 0) panes[mainPane]?.setStretchFactor?.(14);
+        if (selPane >= 0) panes[selPane]?.setStretchFactor?.(14);
       }
 
       // 手機 compact legend 初始文字(pane 名);游標移動時附加買賣超/累計數值
