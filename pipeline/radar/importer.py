@@ -412,19 +412,21 @@ def backfill_warrant_branches(top: int = 200, days: int = 120, sleep_s: float = 
         trade_dates = [r[0] for r in conn.execute(text(
             "SELECT DISTINCT date FROM daily_prices ORDER BY date DESC LIMIT :n"),
             {"n": days})]
-        targets = [r[0] for r in conn.execute(text(
-            "SELECT d.warrant_id FROM warrant_daily d "
-            "JOIN warrants w ON w.id = d.warrant_id "
-            "WHERE d.date = (SELECT MAX(date) FROM warrant_daily) "
-            "AND w.market = 'twse' AND w.kind IN ('call','put') "
-            "ORDER BY d.turnover DESC LIMIT :n"),
-            {"n": top})]
 
     fetched = skipped_dates = failed = 0
     stopped = None
     for d_iso in trade_dates:
         date = d_iso.replace("-", "")
         with engine.connect() as conn:
+            # 每個歷史日期各自撈當天真正有交易的權證(而非用「最新」清單往回查——
+            # 權證壽命短,半年前的權證早已下市不在今天清單,今天的權證半年前也還沒發行)。
+            targets = [r[0] for r in conn.execute(text(
+                "SELECT d.warrant_id FROM warrant_daily d "
+                "JOIN warrants w ON w.id = d.warrant_id "
+                "WHERE d.date = :d "
+                "AND w.market = 'twse' AND w.kind IN ('call','put') "
+                "ORDER BY d.turnover DESC LIMIT :n"),
+                {"d": d_iso, "n": top})]
             have = {r[0] for r in conn.execute(text(
                 "SELECT DISTINCT stock_id FROM branch_trades WHERE date = :d"),
                 {"d": d_iso})}
