@@ -16,7 +16,7 @@ run_worker_first = true
 pattern = "radar.techtrever.com/data-preview/*"
 zone_name = "techtrever.com"
 
-# WP-B3 cutover 時解除下面註解重新 deploy,正式接管 /data/*(docs/31 §6 WP-B3)
-# [[routes]]
-# pattern = "radar.techtrever.com/data/*"
-# zone_name = "techtrever.com"
+# WP-B3 cutover(2026-07-18):正式接管 /data/*
+[[routes]]
+pattern = "radar.techtrever.com/data/*"
+zone_name = "techtrever.com"

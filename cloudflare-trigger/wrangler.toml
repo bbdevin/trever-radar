@@ -6,5 +6,9 @@ compatibility_date = "2026-07-09"
 # not enough for our 6 fire times. So this declares exactly one trigger that
 # ticks every 10 minutes; worker.js's SCHEDULE table matches the current UTC
 # time to decide which GitHub workflow (if any) to dispatch on each tick.
+#
+# WP-B3 cutover (2026-07-18): cron trigger disabled — VPS cron is now the sole
+# scheduler (docs/31 §6/§9). worker.js kept as-is (2-week rollback window);
+# redeploy with the line restored to re-enable if a rollback is needed.
 [triggers]
-crons = ["*/10 * * * *"]
+crons = []

@@ -21,42 +21,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: pip
-          cache-dependency-path: pipeline/requirements.txt
-
-      - name: Restore SQLite cache
-        uses: actions/cache/restore@v4
-        with:
-          path: data/radar.db
-          key: radar-db-${{ github.run_id }}
-          restore-keys: radar-db-
-
-      - name: Seed DB from release backup
-        if: hashFiles('data/radar.db') == ''
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release download db-backup --pattern radar.db.gz --dir data || true
-          if [ -f data/radar.db.gz ]; then gunzip data/radar.db.gz; fi
-
-      - name: Install dependencies
-        run: pip install -r pipeline/requirements.txt
-
-      - name: Compute daily scores
-        working-directory: pipeline
-        run: python -m radar compute-scores
-
-      - name: Backfill score performance
-        working-directory: pipeline
-        run: python -m radar compute-performance
-
-      - name: Export frontend JSON
-        working-directory: pipeline
-        run: python -m radar export-json
-
       - uses: actions/setup-node@v4
         with:
           node-version: 20
