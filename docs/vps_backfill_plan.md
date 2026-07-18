@@ -248,7 +248,9 @@ docker run -d --name radar-adjust \
     python -m radar compute-indicators --all"
 ```
 
-### 4e. 壓縮上傳 + 讓雲端切換到新資料庫(兩段都要跑)
+### 4e.(已作廢,2026-07-18 WP-B3)~~壓縮上傳 + 讓雲端切換到新資料庫~~
+
+> ⚠️ **本節作廢(2026-07-18 WP-B3 cutover 後)**:回補直接寫 VPS 主本,VPS 主本即為正式資料,無需 gzip 上傳 release、無需 `gh cache delete`。跑完 4c(視需要 4b/4d)後,下一輪日常 cron(或手動跑對應 `vps/scripts/*.sh`)的 export-json + `wrangler deploy` 就會把新累積的歷史帶上線,直接跳到 4f。以下為歷史紀錄,保留供回滾窗參考:
 
 ```bash
 cd ~/trever-radar
@@ -256,11 +258,11 @@ gzip -kf data/radar.db
 gh release upload db-backup data/radar.db.gz --clobber --repo bbdevin/trever-radar
 gh cache delete --all --repo bbdevin/trever-radar
 ```
-> ⚠️ **`gh cache delete` 不跑,雲端會繼續用舊快取,不會下載你剛上傳的新資料庫!**
+> ⚠️ **`gh cache delete` 不跑,雲端會繼續用舊快取,不會下載你剛上傳的新資料庫!**(舊注意事項,雲端鏈已退役後不再適用)
 
 ### 4f. 回報與清理
 
-跟 AI 說「**上傳完成**」→ AI 會推一個 commit 觸發 deploy(雲端 cache miss → 撈你的新 release → 匯出 JSON 上線),然後驗證全站(S1–S10 策略榜、題材、分點 2 年聚合、追蹤視角、Armed 池)。清容器:
+**2026-07-18 後**:4c(視需要 4b/4d)跑完即為正式資料,不需要「上傳完成」通知 AI 觸發雲端 deploy——下一輪 VPS cron(或手動跑對應 `vps/scripts/*.sh`)的 export-json + `wrangler deploy` 就會把新資料帶上線。清容器:
 
 ```bash
 docker rm -f radar-backfill radar-finalize 2>/dev/null; docker rm -f radar-warrant-backfill radar-adjust 2>/dev/null

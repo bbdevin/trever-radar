@@ -1,8 +1,13 @@
 # 上線部署指南(全免費)
 
-架構:GitHub Actions 5 支 workflow(14:10/16:10/17:40/21:00/01:10 台北,分批抓資料+建站;`main` push 觸發 `deploy` 只重建/部署、不抓資料)→ Cloudflare Pages(靜態網站)→ Cloudflare Access(email 白名單登入)。時間表單一真相見 `docs/08_scheduler_jobs.md` §0。
+架構(**2026-07-18 WP-B3 cutover 後,資料與部署分離**):
+- **資料**:VPS(`radar.db` 唯一寫者)cron 跑 5 個每日輪 + 週備份,`export-json` 後 `wrangler deploy` 把 JSON 當 Cloudflare Worker 靜態資產上傳,`radar.techtrever.com/data/*` 即傳即生效。
+- **程式碼/前端**:`main` push → GitHub Actions `deploy.yml`(checkout → npm build → wrangler pages deploy),只重建網站外殼、不碰資料。
+- 前面仍是 Cloudflare Access(email 白名單登入)擋門。
 
-DB 以 Actions cache 續存、GitHub Release 週備份;首跑會從 release 種子還原(本機資料已上傳)。
+時間表/cron 唯一真相見 `docs/08_scheduler_jobs.md` §0;完整遷移背景與憑證清單見 `docs/31_plan_b_vps_data_home.md`。
+
+DB 續存:VPS 本機 + Google Drive 週快照(`docs/31` §4)。**已無** GitHub Actions cache/Release 資料鏈。
 
 ## 你要做的事(一次性,約 15 分鐘)
 
@@ -63,13 +68,12 @@ GitHub Actions deploy 與 Cloudflare scheduler 仍正常。
 
 ## 之後的日常
 
-什麼都不用做。每交易日依交易所公布時間分批自動更新(14:10/16:10/17:40/21:00,見 `docs/08_scheduler_jobs.md` §0)+ 部署。程式或 UI 修正 push 到 `main` 會立刻用現有 DB 重建 JSON 並部署,不會重抓資料。手機開網址就能看。
+什麼都不用做。每交易日依交易所公布時間分批由 **VPS cron** 自動更新(14:10/16:10/17:40/21:00/22:10,見 `docs/08_scheduler_jobs.md` §0)並直接 deploy 資料資產。程式或 UI 修正 push 到 `main` 會走 GitHub Actions 重建前端並部署,**不會**碰資料。手機開網址就能看。
 
 ## 備援與注意
 
-- Actions cache 被清(7 天未跑或超額)→ 自動從 release 備份還原,無感
-- 想手動重跑某階段:`gh workflow run daily-branches`(或對應 workflow 名)
-- 換電腦開發:`gh release download db-backup` 拿最新 DB
+- 資料由 VPS 唯一寫者維護,**不再有** Actions cache/Release 資料續存鏈;VPS 掛掉時的緊急還原步驟見 `docs/31` §5.4/§8 與 `docs/vps_backfill_plan.md`。
+- 想手動補跑某輪:直接在 VPS 上執行對應 `vps/scripts/*.sh`(見 `vps/README.md`)。
 - **不要**把網址公開張貼(交易所資料授權 + 非投顧原則,見 docs/10)
 
 ## 沒選的選項(為什麼)

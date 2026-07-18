@@ -1,28 +1,27 @@
 # 08 排程與資料流程
 
-## 0. 現行 V1-Free 排程總表(2026-07-08 定案,單一真相)
+## 0. 現行 VPS cron 排程總表(2026-07-18 WP-B3 cutover 後,單一真相)
 
-依交易所公布時間分批,每階段跑完直接部署;晚到的資料集由前端 `freshness` 標「暫用前一日」。
-所有資料 workflow 共用 `radar-db` 併發群(依序執行);**手動觸發請一次一支,等跑完再下一支**,否則排隊互相取消。
+> **架構變更(2026-07-18 WP-B3 cutover)**:`radar.db` 常駐 VPS,VPS 為唯一寫者。VPS cron(`vps/scripts/`,見 `vps/crontab.example` 樣板實體在 `vps/scripts/crontab.example`)跑完每輪管線後直接 `export-json` + `cd cloudflare-data-worker && npx wrangler deploy`,把 JSON 當 Cloudflare Worker 靜態資產上傳,`radar.techtrever.com/data/*` 即傳即生效(不經 GitHub、不經 Pages build)。GitHub Actions 只剩 push `main` 觸發的 `deploy.yml`(純 code build+deploy,不碰資料)。詳細規劃見 `docs/31` §2/§3,實際指令序見 `vps/README.md` §9。
 
-> **觸發機制(2026-07-09 起)**:GitHub 原生 `schedule:` 實測延遲 2.5–3.5 小時(見 `cloudflare-trigger/README.md`),5 支資料 workflow 已改為只留 `workflow_dispatch:`,改由 Cloudflare Worker(`cloudflare-trigger/`)在下表時間點準時呼叫觸發。下表時間仍是唯一真相,只是「誰來準時觸發」換人。
+| 台北時間 | 執行者(VPS cron script / GitHub Actions) | 內容 |
+|---|---|---|
+| 平日 14:10 | VPS `vps/scripts/daily-market.sh` | 日K+權證成交(14:00 公布)→ 當日權證彙總 → 指標增量(--days 5)→ 綜合分 →(週一)概念股更新 → export-json → `wrangler deploy` |
+| 平日 16:10 | VPS `vps/scripts/daily-insti.sh` | 法人買賣超(16:00 公布)+ 權證主檔 → 重算分數 → export-json → deploy |
+| 平日 17:40 | VPS `vps/scripts/daily-branches.sh` | 融資券 + 法人補抓 + 分點爬蟲(80檔+15權證)+ 分點統計 + 分數 + 績效回填 → export-json → prune → deploy |
+| 平日 21:00 | VPS `vps/scripts/daily-branches.sh`(第二輪,同一支 script) | 同上,補晚公布/前段失敗(全部冪等) → export-json → deploy |
+| 平日 22:10 | VPS `vps/scripts/daily-margin.sh` | 融資券保底輪:只補 margin(不含分點爬蟲)+ 重算分數,因 TWSE MI_MARGN 公布時間可能晚於 21:00 → export-json → deploy |
+| 每天 01:10 | VPS `vps/scripts/data-backfill.sh` | 深歷史增量(已拉深自動跳過 → 日常近零請求,只補新上市/缺漏) |
+| 週六 05:00 | VPS `vps/scripts/weekly-backup.sh` | 備份:`wal_checkpoint(TRUNCATE)` → `integrity_check`(必須 `ok`)→ gzip → `rclone` 上傳 Google Drive(唯一雲端備份;retention 近 4 份+每月 1 份) |
+| 平日 08:50–13:35 | 盤中訊號雷達 worker(docker+cron,同一台 VPS,docs/24 Part A) | 讀 `https://radar.techtrever.com/data/radar.json`(Cloudflare Access service token)判定 I-1~I-4 訊號,寫 Supabase,首頁盤中面板即時顯示;13:35 自動收工 |
+| push `main` | GitHub Actions `deploy.yml` | checkout → npm build → wrangler pages deploy(**只管程式碼/前端,不碰資料**) |
 
-| 台北時間 | workflow | 內容 | 部署 |
-|---|---|---|---|
-| 平日 14:10 | `daily-market` | 日K+權證成交(14:00 公布)→ 當日權證彙總 → 指標增量(--days 5)→ 綜合分 →(週一)概念股更新 | ✓ 資料日變當天 |
-| 平日 16:10 | `daily-insti` | 法人買賣超(16:00 公布)+ 權證主檔 → 重算分數 | ✓ |
-| 平日 17:40 | `daily-branches` | 融資券 + 法人補抓 + 分點爬蟲(80檔+15權證)+ 分點統計 + 分數 + 績效回填 | ✓ |
-| 平日 21:00 | `daily-branches`(第二輪) | 同上,補晚公布/前段失敗(全部冪等) | ✓ |
-| 平日 22:10 | `daily-margin`(新) | 融資券保底輪:只補 margin(不含分點爬蟲)+ 重算分數,因 TWSE MI_MARGN 公布時間可能晚於 21:00 | ✓ |
-| 每天 01:10 | `data-backfill` | 深歷史增量(已拉深自動跳過 → 日常近零請求,只補新上市/缺漏) | ✗ |
-| 週六 01:10 | `data-backfill`(同支) | + DB 備份上傳 release。**全市場還原因子+指標全重算已停用(2026-07-10)**:改在使用者 VPS 執行,算完依 `vps_backfill_plan.md` Step 4 上傳 release + `gh cache delete --all` 回灌;雲端 fallback = 手動 `task=adjust`(與 VPS 共用 FinMind token,勿同時跑) | ✗ |
-| 週五 17:40/21:00 | `daily-branches` 內 | DB 備份上傳 release `db-backup` | — |
-| push `main` | `deploy` | 用現有雲端 DB:分數+績效+export+build+deploy(不抓資料) | ✓ |
+- **共用機制**(`vps/scripts/lib.sh`):`flock -n /tmp/radar-db.lock` 互斥(搶不到=跳過本輪+ntfy 通知)、開輪先 `git pull --ff-only`+docker build(layer cache)、失敗 ntfy High 告警成功靜默、非交易日靠 `NoDataError` 安全空跑。
+- **DB 續存**:VPS `data/radar.db` 為唯一常駐主本,無 Actions cache/release 續存鏈(已隨 WP-B3 退役)。
+- **舊 GitHub Actions 資料 workflow 已無觸發**:`daily-market/daily-insti/daily-branches/daily-margin/data-backfill.yml` 檔案仍在 repo(Cloudflare Worker trigger 的 cron 已清空,回滾窗保留),預定 ~2026-08-01 回滾窗結束後依 `docs/31` §9 刪除。
+- 本機開發:同一套 CLI,`python -m radar export-json` 後前端讀 `web/public/data/*.json`;本機 DB 僅開發用,**正式真相在 VPS**。
 
-- **DB 續存**:Actions cache 為主(每支跑完必存、下一支接續),cache miss 才從 release `db-backup` 種子還原;release 備份僅週五/週六/手動更新。
-- 本機開發:同一套 CLI,`python -m radar export-json` 後前端讀 `web/public/data/*.json`;本機 DB 僅開發用,**正式真相在雲端**。
-
-> §1(舊版盤後管線,Laravel job chain 格式)已刪除——與 §0 矛盾且從未實作,§0 是唯一真相。以下 §2/§3 是 V2 尚未實作的設計參考,保留。
+> §1(舊版盤後管線,Laravel job chain 格式)已刪除——與 §0 矛盾且從未實作,§0(現為 VPS cron 表)是唯一真相。以下 §2/§3 是 V2 尚未實作的設計參考,保留。
 
 ## 2. 盤中管線(V2,08:55–13:35)
 

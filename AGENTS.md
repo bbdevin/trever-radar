@@ -19,7 +19,7 @@
 | `docs/05_database_schema.md` | ⚠️ **標題過時,內容部分適用** | 標題寫「PostgreSQL 16」,實際是 SQLite(見 `pipeline/radar/schema.py`)。表設計概念(分點裁剪策略、欄位規劃)仍可參考,但語法/引擎描述以程式碼為準。 |
 | `docs/02_mvp_scope.md` | ⚠️ **登入段過時** | 寫「登入(Laravel Breeze)」,實際是 Cloudflare Access / Supabase Google OAuth(見 `12`、`14`§4)。其餘範圍界定仍適用。 |
 | `docs/11_ai_dev_workflow.md` | ❌ **superseded** | 全文 PHP 內容(`Modules/Scoring/*.php`、`php artisan`、pint/phpstan/phpunit、trunk-based+PR)為舊方案且**從未被實際執行**(實際是直接 push `main`)。已改寫為指向本檔與 `docs/17`/`docs/18`,技術棧對照改為 Python。 |
-| `docs/08_scheduler_jobs.md` §0 | ✅ **current** | 排程總表,與 `.github/workflows/*.yml` 實際內容一致,是排程的唯一真相。 |
+| `docs/08_scheduler_jobs.md` §0 | ✅ **current(2026-07-18 改寫)** | 排程總表已改寫為 **VPS cron 表**(WP-B3 cutover 後,資料排程唯一真相在 VPS `vps/scripts/`+`vps/scripts/crontab.example`,不再是 GitHub Actions);GitHub 側只剩 push→`deploy.yml`(code only)。 |
 | `docs/08_scheduler_jobs.md` §1 | 🗑️ **已刪除(2026-07-09)** | 原 Laravel job chain 格式舊排程稿,與 §0 矛盾且從未實作,已刪除。§2(盤中管線)/§3(每週每月)為 V2 尚未實作的設計參考,保留。 |
 | `docs/00_blueprint.md` | ⚠️ **表格欄位過時** | 頂部有 2026-07-06 修訂註記,但「架構」欄仍寫 Laravel/PG16/VM,讀表格本身會誤導。 |
 | `docs/12_zero_cost_pivot.md` | ✅ **current** | 現行零成本架構(Python+SQLite+Next.js+GitHub Actions+Cloudflare Pages)的定案文件。 |
@@ -36,9 +36,9 @@
 | `docs/23_product_ui_backlog.md` | 📝 **規劃定案,程式未實作** | Access/B/Armed 之後的功能與視覺優化 backlog(V1–V3 / F1–F4)+ Executor 工作包;不得插隊或引入新配色/第14策略。 |
 | `docs/25_ui_information_architecture_plan.md` | 📝 **任務導向 UI 規劃已落檔,程式未實作** | 將前端重整為掃描→判讀→追蹤任務流,含首頁/個股/分點/自選 IA Phase 與 Executor 驗收;不取代 `20`/`22`/`23`,每次只可另確認一個 Phase。 |
 | `docs/29_db_slimming_plan.md` | ⚠️ **Phase 0/1/2 正規化已實作(2026-07-14);Phase 2 剩餘項已被 31 作廢** | 容量實測數字仍為真相(`indicators_daily` 52% 為主因);prune(指標400/權證150/logs180)與 branch_dim 正規化已上線。分點 130 日窗口、hist 拆分、§7 待決 2/5/6 因 B 案(`31`)作廢。 |
-| `docs/30_full_market_backfill_plan.md` | ⚠️ **§3 權證 bug 修正仍必做;§4 上傳流程將因 31 作廢** | WP-M4 全市場歷史回補計畫;B 案 cutover 後回補直接寫 VPS 主本,不再打包上傳。 |
-| `docs/31_plan_b_vps_data_home.md` | ✅ **current,資料架構遷移 source of truth(2026-07-15 定案;同日 v3 定稿:不採 R2)** | radar.db 常駐 VPS 單一寫者;資料 = VPS `wrangler deploy` Workers 靜態資產(`/data/*`)即傳即生效;備份 Google Drive 單雲;GitHub 只管 code build/deploy(push 體感不變);repo 轉 private;全方案免綁卡;WP-B7 登入統一(Supabase 白名單取代 Access,需資安審查)。動排程/部署/備份/DB 存放/門禁時必讀;取代 `26` WP-M3、作廢 `21` R0-R2。 |
-| `docs/32_wp_b3_cutover_runbook.md` | 📝 **草稿備用,未執行**(2026-07-15 落檔) | `31` §6 WP-B3 六步驟的逐指令/diff 展開版;WP-B2 影子驗證通過、使用者喊開工後照抄執行。任何一步都不得提前動手。 |
+| `docs/30_full_market_backfill_plan.md` | ⚠️ **§3 權證 bug 已修(2026-07-18,commit `a87df0d`);§4 上傳流程已因 31 作廢** | WP-M4 全市場歷史回補計畫;B 案 cutover 後回補直接寫 VPS 主本,不再打包上傳。WP-M4 本身尚未開跑(WP-B6,待使用者確認)。 |
+| `docs/31_plan_b_vps_data_home.md` | ✅ **current,資料架構遷移 source of truth(2026-07-15 定案;同日 v3 定稿:不採 R2;cutover 完成 2026-07-18)** | radar.db 常駐 VPS 單一寫者;資料 = VPS `wrangler deploy` Workers 靜態資產(`/data/*`)即傳即生效;備份 Google Drive 單雲;GitHub 只管 code build/deploy(push 體感不變);repo 維持 public(Step 5 事後反轉,見 §12);全方案免綁卡;WP-B7 登入統一(Supabase 白名單取代 Access,需資安審查)。動排程/部署/備份/DB 存放/門禁時必讀;取代 `26` WP-M3、作廢 `21` R0-R2。 |
+| `docs/32_wp_b3_cutover_runbook.md` | ✅ **已於 2026-07-18 執行完成**,本檔保留作歷史紀錄與回滾參考 | `31` §6 WP-B3 六步驟的逐指令/diff 展開版;Step 5 repo-private 事後因 Actions Billing 反轉,repo 維持 public(見 `31` §12)。回滾步驟 `31` §8 於回滾窗內(~2026-08-01)仍有效。 |
 
 有疑問時,信任順序:`project-context.md` / `STATUS.md` / `20`(功能刪減與策略治理) / `21`(私人測試/Access/R2) / `22`(Armed 追蹤) / `23`(功能·視覺 backlog) / `25`(任務導向 UI IA) / `31`(資料架構遷移,B 案) / `12` / `08§0` / `vps_backfill_plan.md` > 其餘 `docs/*` > 對話記憶。
 
@@ -77,12 +77,15 @@
 
 ## 本專案專屬危險清單
 
-- ⚠️ **`main` push 會直接觸發 Cloudflare Pages 正式部署**(`deploy.yml` on push)。未經人類確認,不得 push `main`。
-- ⚠️ **不動 DB 備份的 WAL 合併邏輯**。`pipeline/radar/db.py` 開 `PRAGMA journal_mode=WAL`,四支 workflow 的 cache-save 前都有 `PRAGMA wal_checkpoint(TRUNCATE)`——這是**剛修好的根因**(曾導致 VPS 下載備份出現 `database disk image is malformed`)。拿掉這段會重現該問題。
-- ⚠️ **不動 cache / release `db-backup` 的 DB 續存鏈**。5 支 workflow 共用 `radar-db` concurrency group,cache 優先、miss 才用 release 種子還原——這條鏈曾經分岔過(見 `docs/15`),改動前必須完整理解全部 5 支 workflow 的還原/存檔順序。
+- ⚠️ **`main` push 會直接觸發 Cloudflare Pages 正式部署**(`deploy.yml` on push)——**2026-07-18 WP-B3 cutover 後這只部署程式碼/前端,不影響資料**(資料由 VPS→Workers 資產獨立更新)。未經人類確認,不得 push `main`。
+- ~~⚠️ 不動 DB 備份的 WAL 合併邏輯(四支 workflow 的 cache-save 前 `PRAGMA wal_checkpoint(TRUNCATE)`)~~ **已退役 2026-07-18(WP-B3)**:GitHub Actions 不再碰 DB,cache-save 鏈已隨雲端資料鏈退役;WAL checkpoint 教訓已搬進 VPS `vps/scripts/weekly-backup.sh`(見下方新條)。
+- ~~⚠️ 不動 cache / release `db-backup` 的 DB 續存鏈(5 支 workflow 共用 `radar-db` concurrency group)~~ **已退役 2026-07-18(WP-B3)**:VPS 為唯一寫者,不再有雲端 DB 續存鏈;5 支資料 workflow 已無觸發,回滾窗(~2026-08-01)後刪除(`docs/31` §9)。
 - ⚠️ **不動 `adj_factor` 還原價邏輯**。`daily_prices.adj_factor` 由 FinMind `TaiwanStockDividendResult` 累乘計算,技術指標與績效回填都依賴 `price * adj_factor`。
-- ⚠️ **DB 已 ~1GB,逼近 GitHub Release 單檔 2GB / Actions cache 10GB 上限**。分點資料擴到 5 年前(P2,見 `vps_backfill_plan.md`)**必須先**把分點歷史拆成獨立檔(如 `branch_hist.db`)或搬去 Cloudflare R2,否則會炸掉這兩個上限。勿貿然灌大量分點歷史資料。
-- ⚠️ **不用 R2(2026-07-15 v3 定案,啟用需綁卡)**。資料層 = Workers 靜態資產、備份 = Google Drive(見 `docs/31` v3);不得為任何理由引入需綁信用卡的服務;不得在還原演練通過前移除 Actions cache/Release fallback。
+- ~~⚠️ DB 已 ~1GB,逼近 GitHub Release 單檔 2GB / Actions cache 10GB 上限~~ **已退役 2026-07-18(WP-B3)**:radar.db 常駐 VPS 磁碟,GitHub Release/Actions cache 上限不再適用;VPS 磁碟餘量與來源站禮貌率改為容量前置條件(`docs/31` §4)。
+- ⚠️ **不用 R2(2026-07-15 v3 定案,啟用需綁卡)**。資料層 = Workers 靜態資產、備份 = Google Drive(見 `docs/31` v3);不得為任何理由引入需綁信用卡的服務。
+- ⚠️ **VPS 單一寫者不得破壞**(2026-07-18 WP-B5,`docs/31` §6)——不得讓 GitHub Actions、本機或任何第二個程序寫正式 `radar.db`;`radar.db` 只存在 VPS 一份。
+- ⚠️ **備份前必須 `PRAGMA wal_checkpoint(TRUNCATE)` + `integrity_check`**(2026-07-18 WP-B5)。`vps/scripts/weekly-backup.sh` 已內建,不得移除;`integrity_check` 不過的快照絕不可上傳覆蓋舊版。
+- ⚠️ **資料與部署權限分離**(2026-07-18 WP-B5)。VPS 的 Cloudflare token 只有 Workers Scripts/Routes Edit scope,不得擴權(動不了 Pages/DNS/帳戶);GitHub 端不得再持有資料。
 - 不做 TWSE bsr CAPTCHA 破解(已定案取捨)。
 - 不做自動下單(已定案取捨,見 `docs/10` §3)。
 
