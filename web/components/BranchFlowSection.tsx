@@ -239,9 +239,8 @@ const BranchFlowSection = forwardRef<
             <h2 className="text-[15px] font-bold text-foreground">{heading}</h2>
             {asOfChip}
           </div>
-          <span className="text-[11px] text-muted-foreground">
-            {rangeHint}
-            盤後 T+1、每日前 15 大買賣超裁剪版,資料自累積起,僅供籌碼觀察。
+          <span className="text-[11px] leading-relaxed text-muted-foreground">
+            {rangeHint}盤後 T+1、每日前 15 大買賣超裁剪版，僅供籌碼觀察。
           </span>
         </div>
       )}
@@ -249,8 +248,13 @@ const BranchFlowSection = forwardRef<
         <div className="flex justify-end">{asOfChip}</div>
       )}
 
-      {/* 分點分卡 + 摘要統計 */}
-      <div className={cn("grid grid-cols-2 gap-2.5", score != null ? "md:grid-cols-[1.1fr_repeat(3,1fr)]" : "md:grid-cols-3")}>
+      {/* 分點分卡 + 摘要統計：手機 2+2 對稱四格；有分點分時多一格 → 手機 3 格第一列 + 獨佔淨流 */}
+      <div className={cn(
+        "grid gap-2.5",
+        score != null
+          ? "grid-cols-2 md:grid-cols-[1.1fr_repeat(3,1fr)]"
+          : "grid-cols-3 md:grid-cols-3",
+      )}>
         {score != null && (
           <div className="flex flex-col gap-0.5 rounded-[var(--r-sm)] border border-border bg-secondary p-2.5">
             <span className="text-[11px] text-muted-foreground">分點分</span>
@@ -258,17 +262,20 @@ const BranchFlowSection = forwardRef<
           </div>
         )}
         <div className="flex flex-col gap-0.5 rounded-[var(--r-sm)] border border-border bg-secondary p-2.5">
-          <span className="text-[11px] text-muted-foreground">{activeDays}日買超分點</span>
-          <span className="num text-base font-bold text-foreground">{agg.buyers.length}</span>
+          <span className="text-[11px] text-muted-foreground">{activeDays}日買超</span>
+          <span className="num text-base font-bold text-foreground">{agg.buyers.length} 點</span>
         </div>
         <div className="flex flex-col gap-0.5 rounded-[var(--r-sm)] border border-border bg-secondary p-2.5">
-          <span className="text-[11px] text-muted-foreground">{activeDays}日賣超分點</span>
-          <span className="num text-base font-bold text-foreground">{agg.sellers.length}</span>
+          <span className="text-[11px] text-muted-foreground">{activeDays}日賣超</span>
+          <span className="num text-base font-bold text-foreground">{agg.sellers.length} 點</span>
         </div>
-        <div className="flex flex-col gap-0.5 rounded-[var(--r-sm)] border border-border bg-secondary p-2.5">
+        <div className={cn(
+          "flex flex-col gap-0.5 rounded-[var(--r-sm)] border border-border bg-secondary p-2.5",
+          score != null ? "col-span-2 md:col-span-1" : "",
+        )}>
           <span className="text-[11px] text-muted-foreground">{activeDays}日淨流</span>
           <span className={cn("num text-base font-bold", netTotal > 0 ? "text-up" : netTotal < 0 ? "text-down" : "text-foreground")}>
-            {fmtLots(netTotal)}張
+            {fmtLots(netTotal)} 張
           </span>
         </div>
       </div>
@@ -286,11 +293,11 @@ const BranchFlowSection = forwardRef<
         </div>
       )}
 
-      {/* 時間範圍選擇:手機版單行橫滑，自訂 inputmode=numeric */}
+      {/* 時間範圍選擇：wrap 換行，所有選項可見，不橫滑 */}
       <div className="mb-3.5">
         <div
           role="tablist"
-          className="flex w-fit flex-wrap gap-0.5 rounded-full border border-border bg-card p-[3px] max-md:w-full max-md:flex-nowrap max-md:overflow-x-auto max-md:scrollbar-hide max-md:[&>*]:shrink-0"
+          className="flex flex-wrap gap-1 rounded-[var(--r-md)] border border-border bg-card p-1.5"
         >
           {BRANCH_RANGES.map((r) => (
             <button key={r.days} role="tab" aria-selected={days === r.days} className={pillTabClass(days === r.days)} onClick={() => setDays(r.days)}>
