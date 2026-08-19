@@ -1,14 +1,18 @@
 ## Handoff
 
-- **Current Goal**: B 方案 **Phase 2 差異報告工具**（2026-08-19 完成）；下一步待使用者決定：VPS 最新資料日重跑報告，或進 **Phase 3 績效閉環**。
+- **Current Goal**: B 方案 **Phase 3 策略績效報告產出器**（`phase3-strategy-performance-report`）已新增；下一步需在 VPS 跑最新資料日產出 markdown 報告，供使用者決定 Active/Retired。Phase 2 差異報告的「是否重跑正式資料日」仍待你決定。
 - **Current Branch**: `main`
 - **Workflow(2026-08-19)**:規劃 → Grok 4.6 High；執行 → Auto agent；完成 → 更新 md + commit + push（見 `AGENTS.md`、`docs/17` Workflow D）
 - **Current Agent**: Cursor
 - **Work Completed（本次）**:
+  - 新增 Phase 3 策略績效報告產出器（只讀 DB）與 CLI `phase3-strategy-performance-report`：輸出每策略 5/10/20 日 win rate、avg/median 與最近區段(20d)表現（Markdown）。
   - 新增 CLI `phase2-diff-report`：比較解耦後分數 vs 舊制 S1–S10 bonus 回加模擬，產出 markdown，**不寫 DB**。
   - 本機樣本報告：`docs/reports/phase2_score_diff_2026-07-06.md`（77 檔、0 檔受影響——該日無 S1–S10 觸發加分）。
   - 先前已完成：13 策略驗證、手機版個股頁 RWD/分點圖修復（另 commit）。
 - **Files Changed**:
+  - `pipeline/radar/compute/strategy_performance.py`（新增 Phase 3 報告計算/Markdown 輸出）
+  - `pipeline/radar/cli.py`（新增 `phase3-strategy-performance-report`）
+  - `pipeline/tests/test_strategy_performance.py`（新增單元測試）
   - `pipeline/radar/compute/phase2_diff_report.py`（新增）
   - `pipeline/radar/cli.py`（註冊 `phase2-diff-report`）
   - `docs/reports/phase2_score_diff_2026-07-06.md`（本機樣本輸出）
@@ -35,13 +39,14 @@
   VPS 上對 `radar.db` 跑最新 `daily_scores` 日，產出報告後交 Reviewer/使用者確認，再決定是否批准全市場重算。
 - **Not Yet Done（專案層級）**:
   - **B 方案 Phase 2 剩餘**：VPS 最新資料日重跑差異報告 + 使用者批准後的正式全市場重算（高風險）。
-  - **B 方案 Phase 3**：各 S code 績效閉環（5/10/20 日勝率報告）。
+  - **B 方案 Phase 3**：產出「正式資料日」策略績效報告（工具已完成；仍需跑 VPS 最新資料日後交付報告檔）。
   - **WP-B6**：全市場歷史回補（`docs/30`，待使用者確認開跑）。
   - **WP-B7**：Supabase 白名單取代 Cloudflare Access（需資安審查）。
 - **Next Suggested Actions**:
   1. VPS 上 `git pull` 後跑 `phase2-diff-report`（不帶 `--date` 取最新日），比對本機 2026-07-06 樣本是否一致。
   2. 使用者看過報告後，再決定是否批准 `compute-indicators --all` 等正式重算（見 `docs/20` Phase 2 禁止事項）。
-  3. 或依 `docs/STATUS.md` 優先序改做 **Phase 3 績效閉環** / **WP-B6** / **WP-B7**。
+  3. VPS 上跑 `phase3-strategy-performance-report --out docs/reports/phase3_strategy_performance_<資料日>.md` 產出正式報告。
+  4. 或依 `docs/STATUS.md` 優先序改做 **WP-B6** / **WP-B7**。
 - **Files That Should Not Be Modified**:
   - `pipeline/radar/db.py` 的 WAL checkpoint 機制。
   - `docs/*` 核心規則文件（任務相關的 `STATUS`/規劃檔/workflow 檔依 Workflow D 必須同步；勿無關改動）。

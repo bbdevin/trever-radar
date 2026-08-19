@@ -184,16 +184,16 @@ Supabase Auth / watchlist 保留作跨裝置個人化,不再擴張假性會員�
 
 預計檔案:
 
-- `pipeline/radar/export/json_export.py`
-- 可能新增 `pipeline/radar/compute/strategy_performance.py`
+- `pipeline/radar/export/json_export.py`（Phase 3 進一步接 UI 時使用）
+- `pipeline/radar/compute/strategy_performance.py`（✅ 2026-08-19:只讀策略績效報告產出器）
 - 對應 pytest
 - `web/app/page.tsx` 與必要型別
 
 工作:
 
-1. 依 frozen S code reasons 連結 `fwd_5d/10d/20d`。
-2. 輸出每策略成熟樣本數、勝率、平均/中位報酬及最近區段表現。
-3. 首頁策略 UI 先按四類分群,顯示 Shadow/Active 狀態與樣本不足提示。
+1. 依 frozen S code reasons 連結 `fwd_5d/10d/20d`（由 `strategy_performance.py` 產出）。
+2. 輸出每策略成熟樣本數、勝率、平均/中位報酬及最近區段表現（先以 markdown 報告形式落檔）。
+3. 首頁策略 UI 先按四類分群,顯示 Shadow/Active 狀態與樣本不足提示（下一步接 UI；需要同步新增 JSON/型別）。
 4. 不以「出現檔數」代替績效;不隱藏失敗樣本。
 5. 使用者看過報告後才決定 Active / Retired 清單。
 

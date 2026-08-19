@@ -125,6 +125,22 @@ def cmd_phase2_diff_report(args):
     )
 
 
+def cmd_phase3_strategy_performance_report(args):
+    from .compute.strategy_performance import build_phase3_strategy_performance_report
+
+    info = build_phase3_strategy_performance_report(
+        date_from=args.date_from,
+        lookback_dates=args.lookback_dates,
+        recent_events=args.recent_events,
+        out=args.out,
+    )
+    print(
+        "phase3-strategy-perf "
+        f"out={info['out']} codes={info['codes']} events={info['events']} "
+        f"lookback_dates={info['lookback_dates']} recent_events={info['recent_events']}"
+    )
+
+
 def cmd_compute_branch_stats(args):
     from .compute.compute_branch_stats import compute_all
     compute_all()
@@ -284,6 +300,20 @@ def main(argv=None):
     p2r.add_argument("--date", default=None, help="YYYYMMDD; default latest daily_scores date")
     p2r.add_argument("--out", default=None, help="output markdown path")
     p2r.set_defaults(fn=cmd_phase2_diff_report)
+
+    p3 = sub.add_parser(
+        "phase3-strategy-performance-report",
+        help="phase3: strategy performance report (win_rate/avg/median over 5/10/20d)",
+    )
+    p3.add_argument(
+        "--date-from",
+        default=None,
+        help="YYYYMMDD or YYYY-MM-DD; default = latest-lookback window",
+    )
+    p3.add_argument("--lookback-dates", type=int, default=180, help="recent distinct score dates")
+    p3.add_argument("--recent-events", type=int, default=50, help="recent matured events for recent20 stats")
+    p3.add_argument("--out", default=None, help="output markdown path")
+    p3.set_defaults(fn=cmd_phase3_strategy_performance_report)
 
     bs = sub.add_parser("compute-branch-stats",
                         help="compute stats for tracked branches")
