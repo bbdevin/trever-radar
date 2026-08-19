@@ -496,22 +496,22 @@ export default function BranchPage() {
 
   return (
     <>
-      {/* IA-3: Page Brief */}
-      <div className="my-3.5 grid auto-cols-[minmax(100px,1fr)] grid-flow-col gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+      {/* IA-3: Page Brief — 2×2 grid，手機不橫滑 */}
+      <div className="my-3.5 grid grid-cols-2 gap-2 sm:grid-cols-4">
         <div className="flex flex-col gap-0.5 rounded-[var(--r-md)] border border-border bg-card px-3 py-2 shadow-[var(--shadow-card)]">
-          <span className="text-[10.5px] text-muted-foreground">{"入榜分點"}</span>
+          <span className="text-[10.5px] text-muted-foreground">{"排行榜分點數"}</span>
           <span className="num text-[15px] font-bold">{totalBranches}</span>
         </div>
         <div className="flex flex-col gap-0.5 rounded-[var(--r-md)] border border-border bg-card px-3 py-2 shadow-[var(--shadow-card)]">
-          <span className="text-[10.5px] text-muted-foreground">{"樣本足夠"}</span>
+          <span className="text-[10.5px] text-muted-foreground">{"績效樣本足夠"}</span>
           <span className="num text-[15px] font-bold">{enoughSampleCount}</span>
         </div>
         <div className="flex flex-col gap-0.5 rounded-[var(--r-md)] border border-border bg-card px-3 py-2 shadow-[var(--shadow-card)]">
-          <span className="text-[10.5px] text-muted-foreground">{"可追蹤"}</span>
+          <span className="text-[10.5px] text-muted-foreground">{"有歷史明細"}</span>
           <span className="num text-[15px] font-bold">{trackIndex.length}</span>
         </div>
         <div className="flex flex-col gap-0.5 rounded-[var(--r-md)] border border-border bg-card px-3 py-2 shadow-[var(--shadow-card)]">
-          <span className="text-[10.5px] text-muted-foreground">{"資料起始"}</span>
+          <span className="text-[10.5px] text-muted-foreground">{"資料起始日"}</span>
           <span className="num text-[13px] font-bold">{"2026-07-07"}</span>
         </div>
       </div>
