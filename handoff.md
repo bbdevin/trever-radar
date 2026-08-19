@@ -13,7 +13,7 @@
   - `pipeline/radar/cli.py`（註冊 `phase2-diff-report`）
   - `docs/reports/phase2_score_diff_2026-07-06.md`（本機樣本輸出）
   - `handoff.md`、`docs/STATUS.md`、`docs/20_simplification_strategy.md`（文件同步，見本次）
-- **Current Git Status**: 本輪含 Phase 2 文件同步 + Workflow D 常駐指令;待 commit/push。
+- **Current Git Status**: clean;最新 `b012494`(Workflow D + Phase 2 文件)已 push `main`。
 - **Known Issues**: 無策略相關 bug。策略邏輯改動後正式榜單需等 VPS 下一交易日增量重算才反映（見 `STATUS.md` 已知債務）。
 - **Errors/Logs**: 無
 - **Tests Run**:
