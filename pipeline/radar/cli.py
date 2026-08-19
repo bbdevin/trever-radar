@@ -115,6 +115,16 @@ def cmd_compute_performance(args):
           f"{info['complete_20d']} have 20d returns")
 
 
+def cmd_phase2_diff_report(args):
+    from .compute.phase2_diff_report import build_phase2_diff_report
+    info = build_phase2_diff_report(args.date, args.out)
+    print(
+        f"phase2-diff {info['date']}: {info['rows']} rows compared, "
+        f"tech affected {info['tech_affected']}, final affected {info['final_affected']}, "
+        f"watchline crossed {info['crossed_watch']} -> {info['out']}"
+    )
+
+
 def cmd_compute_branch_stats(args):
     from .compute.compute_branch_stats import compute_all
     compute_all()
@@ -268,6 +278,12 @@ def main(argv=None):
     perf.add_argument("--date", default=None, help="YYYYMMDD; refresh one signal date")
     perf.add_argument("--all", action="store_true", help="refresh every score row")
     perf.set_defaults(fn=cmd_compute_performance)
+
+    p2r = sub.add_parser("phase2-diff-report",
+                         help="phase2: compare decoupled scores vs legacy S1-S10 bonus")
+    p2r.add_argument("--date", default=None, help="YYYYMMDD; default latest daily_scores date")
+    p2r.add_argument("--out", default=None, help="output markdown path")
+    p2r.set_defaults(fn=cmd_phase2_diff_report)
 
     bs = sub.add_parser("compute-branch-stats",
                         help="compute stats for tracked branches")
