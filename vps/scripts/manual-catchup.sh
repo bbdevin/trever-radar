@@ -21,7 +21,7 @@ radar import-branch-trades --top 2500 --sleep 1.0   # 內建同日前 200 大權
 
 # 近 N 日缺口(每個日期先查已有資料,完整日自動跳過,重跑成本近零)
 radar backfill-branches --top 2500 --days "$DAYS" --sleep 1.2
-radar backfill-warrant-branches --top 200 --days "$DAYS" --sleep 1.2
+radar backfill-warrant-branches --top 6000 --days "$DAYS" --sleep 1.5
 
 # 重算(指標窗開 10 天涵蓋修補範圍)+ 上線影子路由
 radar compute-indicators --all --days 10
