@@ -1,6 +1,6 @@
 ## Handoff
 
-- **Current Goal**: Phase 3 工作 3（策略狀態 UI）已完成：`strategy_meta` 寫入 `radar.json`，首頁策略 Tab 顯示 Retired/Shadow badge，Retired 按鈕降級樣式。下一步：VPS 上跑 `export-json` 重新產出 `radar.json`（含 `strategy_meta`），再 deploy 至 Cloudflare。
+- **Current Goal**: 今日 UI 修正全數完成並上線（Phase 3 strategy_meta + KChart 工具列 + BranchFlowSection + 分點頁統計 card）。下一步可選：WP-B6 全市場回補（需使用者批准）或繼續 UI 細化。
 - **Current Branch**: `main`
 - **Workflow(2026-08-19)**:規劃 → Grok 4.6 High；執行 → Auto agent；完成 → 更新 md + commit + push（見 `AGENTS.md`、`docs/17` Workflow D）
 - **Current Agent**: Cursor
@@ -9,12 +9,15 @@
   - 新增 CLI `phase2-diff-report`：比較解耦後分數 vs 舊制 S1–S10 bonus 回加模擬，產出 markdown，**不寫 DB**。
   - 本機樣本報告：`docs/reports/phase2_score_diff_2026-07-06.md`（77 檔、0 檔受影響——該日無 S1–S10 觸發加分）。
   - 先前已完成：13 策略驗證、手機版個股頁 RWD/分點圖修復（另 commit）。
-- **Files Changed（本次 Phase 3 工作 3）**:
-  - `pipeline/radar/export/json_export.py`：新增 `_STRATEGY_STATUS`、`_build_strategy_meta()`，`radar.json` 輸出加 `strategy_meta` 欄位
-  - `web/lib/types.ts`：新增 `StrategyPerfHorizon`、`StrategyMeta` 型別；`RadarJson` 加 `strategy_meta?`
-  - `web/app/page.tsx`：策略 Tab 加 Retired/Shadow badge，Retired 按鈕灰化＋刪除線，desc 區顯示 20 日勝率/樣本摘要
+- **Files Changed（本次，2026-08-19）**:
+  - `pipeline/radar/export/json_export.py`：新增 `_STRATEGY_STATUS`、`_build_strategy_meta()`，`radar.json` 輸出加 `strategy_meta`
+  - `web/lib/types.ts`：新增 `StrategyPerfHorizon`、`StrategyMeta` 型別
+  - `web/app/page.tsx`：策略 Tab Retired/Shadow badge；Retired 按鈕降級樣式（灰化、hover 提示）；desc 欄顯示 20 日勝率/樣本摘要
+  - `web/components/KChart.tsx`：工具列拆成兩列（Row1 固定可見：日K/週K/月K + MACD/KD/RSI + 手機版主力/分點；Row2 均線 wrap：5日到年線 + 布林 + 桌機主力）
+  - `web/components/BranchFlowSection.tsx`：摘要 card 改對稱排列；時間範圍改 wrap 換行全部可見；說明文字縮短防截斷
+  - `web/app/branch/page.tsx`：統計列改 `grid-cols-2`（2×2）；標籤文字更清楚（「績效樣本足夠」「有歷史明細」「排行榜分點數」「資料起始日」）
   - `handoff.md`、`docs/STATUS.md`（文件同步）
-- **Current Git Status**: 未 commit；最新已 push commit 為 `7500902`。
+- **Current Git Status**: clean；最新 push `450f284`（branch page stats fix）。
 - **Known Issues**: 無策略相關 bug。策略邏輯改動後正式榜單需等 VPS 下一交易日增量重算才反映（見 `STATUS.md` 已知債務）。
 - **Errors/Logs**: 無
 - **Tests Run**:
@@ -35,15 +38,14 @@
   ```
   VPS 上對 `radar.db` 跑最新 `daily_scores` 日，產出報告後交 Reviewer/使用者確認，再決定是否批准全市場重算。
 - **Not Yet Done（專案層級）**:
-  - **Phase 3 UI 上線**：VPS 跑 `export-json` + `wrangler deploy`（含 `strategy_meta`），前端才能看到 Retired/Shadow badge。
-  - **B 方案 Phase 2 剩餘**：使用者批准後的正式全市場重算（高風險，watchline crossed=0，目前不需要）。
-  - **WP-B6**：全市場歷史回補（`docs/30`，待使用者確認開跑）。
+  - **WP-B6**：全市場歷史回補（`docs/30`，待使用者確認開跑，高風險，改正式 DB）。
+  - **B 方案 Phase 2 剩餘**：全市場重算（watchline crossed=0，目前不急，待使用者另案批准）。
   - **WP-B7**：Supabase 白名單取代 Cloudflare Access（需資安審查）。
+  - **Phase 3 下一步**：策略績效接 UI（Active 升級流程、首頁策略績效卡細化）。
 - **Next Suggested Actions**:
-  1. VPS：`git pull && docker build -t radar-pipeline pipeline`
-  2. VPS：`radar export-json`（`lib.sh` 的 `radar` 函式）然後 `deploy_data`，把含 `strategy_meta` 的新 JSON 推上線。
-  3. 確認首頁策略 Tab S2/S5 出現 Retired 標記。
-  4. 後續：WP-B6 / WP-B7 另案確認。
+  1. 使用者確認手機 UI 改動無誤（個股頁工具列 / 分點區 / 分點頁統計 card）。
+  2. 批准 WP-B6 全市場回補（VPS 執行，約 1–2 小時）。
+  3. 或繼續 UI 細化 / Phase 3 策略 UI 接 export。
 - **Files That Should Not Be Modified**:
   - `pipeline/radar/db.py` 的 WAL checkpoint 機制。
   - `docs/*` 核心規則文件（任務相關的 `STATUS`/規劃檔/workflow 檔依 Workflow D 必須同步；勿無關改動）。
