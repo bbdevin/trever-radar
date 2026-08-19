@@ -231,7 +231,7 @@ const BranchFlowSection = forwardRef<
     <section
       ref={ref}
       id={id}
-      className="mt-3.5 grid gap-3 overflow-x-auto rounded-[var(--r-lg)] border border-border bg-card p-3.5 shadow-[var(--shadow-card)]"
+      className="mt-3.5 grid min-w-0 max-w-full gap-3 overflow-hidden rounded-[var(--r-lg)] border border-border bg-card p-3.5 shadow-[var(--shadow-card)]"
     >
       {heading && (
         <div className="flex flex-col gap-0.5">
@@ -455,10 +455,16 @@ function BranchRow({
   onSelect?: (name: string) => void;
   selectDisabled?: boolean;
 }) {
-  const maxNet = b.history?.length ? Math.max(...b.history.map((h) => Math.abs(h.net))) || 1 : 1;
+  const history = b.history ?? [];
+  const maxNet = history.length ? Math.max(...history.map((h) => Math.abs(h.net)), 1) : 1;
   const checkboxOff = !!selectDisabled && !selected; // 已勾到上限時,未勾選的暫時不可再加
   return (
-    <div className="overflow-hidden rounded-[var(--r-sm)] border border-border bg-card transition-[box-shadow,border-color] hover:border-[color:var(--border-strong)] hover:shadow-[0_2px_6px_rgba(0,0,0,0.2)]">
+    <div
+      className={cn(
+        "rounded-[var(--r-sm)] border border-border bg-card transition-[box-shadow,border-color] hover:border-[color:var(--border-strong)] hover:shadow-[0_2px_6px_rgba(0,0,0,0.2)]",
+        !expanded && "overflow-hidden",
+      )}
+    >
       <div className="flex items-stretch">
         {onSelect && (
           <label
@@ -487,18 +493,43 @@ function BranchRow({
           <span className={cn("num font-bold", b.net > 0 ? "text-up" : b.net < 0 ? "text-down" : "text-foreground")}>{fmtLots(b.net)}張</span>
         </button>
       </div>
-      {expanded && b.history && (
-        <div className="mt-1 flex items-center gap-0.5 border-t border-[color:var(--line)] px-2.5 pt-2 pb-2 [height:48px]">
-          {b.history.map((h) => (
-            <div className="flex h-full min-w-[2px] flex-1 flex-col" key={h.t} title={`${h.t} 淨${h.net > 0 ? "買" : "賣"}: ${Math.abs(h.net)}張`}>
-              <div className="flex w-full flex-1 items-end pb-px">
-                {h.net > 0 && <div className="w-full rounded-sm bg-up opacity-85" style={{ height: `${(h.net / maxNet) * 100}%` }} />}
+      {expanded && (
+        <div className="border-t border-[color:var(--line)] px-2.5 pt-2 pb-2.5">
+          {history.length === 0 ? (
+            <p className="py-2 text-center text-[11px] text-muted-foreground">此區間無日別明細（僅有當日彙總）</p>
+          ) : (
+            <div
+              className="overflow-x-auto scrollbar-hide [-webkit-overflow-scrolling:touch]"
+              role="region"
+              aria-label={`${b.name} 近 ${history.length} 日淨買賣明細`}
+            >
+              <div className="flex min-w-max items-end gap-px py-0.5" style={{ height: 56 }}>
+                {history.map((h) => {
+                  const barH = h.net !== 0 ? Math.max(3, Math.round((Math.abs(h.net) / maxNet) * 26)) : 0;
+                  return (
+                    <div
+                      key={h.t}
+                      className="flex w-[5px] shrink-0 flex-col justify-center"
+                      title={`${h.t} 淨${h.net > 0 ? "買" : h.net < 0 ? "賣" : "—"}: ${Math.abs(h.net)}張`}
+                    >
+                      {h.net > 0 ? (
+                        <div className="flex h-[26px] flex-col justify-end">
+                          <div className="w-full rounded-sm bg-up opacity-90" style={{ height: barH }} />
+                        </div>
+                      ) : h.net < 0 ? (
+                        <div className="flex h-[26px] flex-col justify-start">
+                          <div className="w-full rounded-sm bg-down opacity-90" style={{ height: barH }} />
+                        </div>
+                      ) : (
+                        <div className="mx-auto h-0.5 w-full rounded-full bg-[color:var(--line)]" />
+                      )}
+                    </div>
+                  );
+                })}
               </div>
-              <div className="flex w-full flex-1 items-start pt-px">
-                {h.net < 0 && <div className="w-full rounded-sm bg-down opacity-85" style={{ height: `${(Math.abs(h.net) / maxNet) * 100}%` }} />}
-              </div>
+              <p className="mt-1 text-center text-[10px] text-muted-foreground md:hidden">← 左右滑動查看更多交易日 →</p>
             </div>
-          ))}
+          )}
         </div>
       )}
     </div>

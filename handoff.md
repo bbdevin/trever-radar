@@ -1,33 +1,43 @@
 ## Handoff
 
-- **Current Goal**: 實作 13 項選股策略（策略 1~13，略過無資料的策略 14 營收成長），並於前端加入「策略」頁籤與下拉/次選單以動態過濾。
-- **Current Branch**: `main` (目前工作區是乾淨的)
-- **Current Agent**: AGY (Google model)
-- **Work Completed**:
-  - 完成了上一個未提交的「產業下鑽子題材與 UI/UX 規範」之測試與 Push。
-  - 完成了「13 項選股策略」的實作規劃與評估。
-- **Files Changed**: 本次新任務尚未開始修改檔案。
-- **Current Git Status**: `working tree clean` (剛完成 push)。
-- **Known Issues**: 無
+- **Current Goal**: ~~實作 13 項選股策略~~ → **已於 2026-07-10 完成**；本次交接任務為**驗證現況 + 更新過期 handoff**（2026-08-19 確認）。
+- **Current Branch**: `main`（working tree clean）
+- **Current Agent**: Cursor（接手上任 AGY 的過期交接稿）
+- **Work Completed（本次）**:
+  - 比對 codebase 與 handoff，確認 13 策略後端/匯出/前端**均已實作**，原 handoff「Not Yet Done」為過期內容。
+  - 跑 `pytest tests/test_indicators.py tests/test_scores.py`：**63 passed**（含 S1–S10 正/反例、S 策略不解耦分數斷言）。
+  - 靜態核對：`json_export.py` 輸出 `strategies: { code: [stock_id] }`，與 `web/lib/types.ts` 及 `page.tsx` 消費方式一致；前後端 13 個 S code 清單一致。
+- **Files Changed**: `handoff.md`（本檔更新）；程式碼無 bug，未改 pipeline/web。
+- **Current Git Status**: 僅 `handoff.md` 待 commit（使用者未要求 commit 前不提交）。
+- **Known Issues**: 無策略相關 bug。策略邏輯改動後正式榜單需等 VPS 下一交易日增量重算才反映（見 `STATUS.md` 已知債務）。
 - **Errors/Logs**: 無
-- **Tests Run**: 無
-- **Not Yet Done**:
-  - **後端實作**：
-    1. 在 `pipeline/radar/compute/indicators.py` 加入新技術指標（如布林通道寬度、跳空缺口等），並在 `compute_series`/`score_technical` 實作策略 1 ~ 10。
-    2. 在 `pipeline/radar/compute/scores.py` 實作依賴籌碼的策略 11 ~ 13（法人連買、分點集中、融券軋空）。
-    3. 在 `pipeline/radar/export/json_export.py` 導出 `strategies: { "S1": [...], ... }` 以供前端使用。
-  - **前端實作**：
-    1. 修改 `web/lib/types.ts` 新增 `strategies` 型別。
-    2. 修改 `web/app/page.tsx`，將 `mark` 頁籤擴展為通用的 `strategies` 選單（如下拉選單或 pill-selector），讓使用者可切換並列出對應策略的股票清單。
+- **Tests Run**:
+  - `pytest tests/test_indicators.py tests/test_scores.py` → 63 passed
+  - `pytest tests/test_json_export.py` → 3 failed（Windows 本機 `ModuleNotFoundError: pipeline` 路徑問題，與策略無關；非本次範圍）
+- **13 策略實作位置（已完成，供後續 agent 參考）**:
+  | 策略 | 位置 | 備註 |
+  |---|---|---|
+  | S1–S10 | `pipeline/radar/compute/indicators.py` → `score_technical()` | S1 雙軌（嚴謹/放寬），放寬版 alias 併入 S1 榜 |
+  | S11–S13 | `pipeline/radar/compute/scores.py` | 法人連買、分點集中、融券軋空 |
+  | 匯出 | `pipeline/radar/export/json_export.py` L235–262, L502 | `strategies` 只存 `stock_id[]`，每榜 ≤40 檔 |
+  | 前端 | `web/app/page.tsx` | Tab `mark` + F4.2 四類分群 pills；`web/lib/types.ts` L181 |
+  | 測試 | `pipeline/tests/test_indicators.py` | S2–S10 正/反例 + 解耦回歸 |
+- **Not Yet Done（專案層級，非本 handoff 原目標）**:
+  - **B 方案 Phase 2 剩餘**：舊/新分數差異報告；VPS 全市場重算需使用者批准（高風險）。
+  - **B 方案 Phase 3**：各 S code 績效閉環（5/10/20 日勝率報告）。
+  - **WP-B6**：全市場歷史回補（`docs/30`，待使用者確認開跑）。
+  - **WP-B7**：Supabase 白名單取代 Cloudflare Access（需資安審查）。
 - **Next Suggested Actions**:
-  - 接手的 agent 請依照上方 **Not Yet Done** 的步驟，優先在 `indicators.py` 與 `scores.py` 實作這 13 個策略邏輯。若觸發策略，將 `code` (如 `S1_REBOUND`) 塞進 `reasons` 欄位。接著修改 `json_export.py` 將這 13 個策略的股票清單分別打包到 `radar.json`，最後實作前端切換介面。
+  1. 若需確認正式站策略榜有資料：登入後看首頁「策略」Tab 各 pill 檔數（需 VPS 已跑過當日管線）。
+  2. 若策略規則要調整：改 `indicators.py`/`scores.py` → 補測試 → **VPS pull 最新 main 後重算**（不可只 push 就期待榜單變）。
+  3. 下一個 agent 請依 `docs/STATUS.md` 優先序選任務，勿重複實作 13 策略。
 - **Files That Should Not Be Modified**:
   - `pipeline/radar/db.py` 的 WAL checkpoint 機制。
-  - `docs/*` 核心規則文件（除 `STATUS.md` 外不應隨意更動）。
+  - `docs/*` 核心規則文件（除 `STATUS.md` / `handoff.md` 外不應隨意更動）。
   - `.github/workflows/*.yml`（排程部署設定）。
 - **Risk Notes**:
-  - 需留意 13 個策略可能造成 `radar.json` 體積變大，請確保 `json_export.py` 中的 `strategies` 清單只存放 `stock_id` 陣列（如同原本的 `lists.mark`）。
-  - S12（主力分點集中）需計算前幾大買進分點的連續性與股價狀態，可能需要先載入多天的分點資料進行過濾，請留意記憶體與 SQL 查詢效能。
+  - 13 策略榜單在 `radar.json` 只存 `stock_id` 陣列，體積可控。
+  - S12 分點集中已在 `scores.py` 實作，依賴評分池分點資料（前 15 大買賣超裁剪）。
 
 ---
 

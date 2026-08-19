@@ -156,6 +156,17 @@ export default function KChart({
     if (typeof window !== "undefined") localStorage.setItem(LS_KEY, JSON.stringify(settings));
   }, [settings]);
 
+  // 手機版:首次勾選分點有資料時,自動切到「分點」子 pane(避免使用者不知道要手動切換)
+  const prevBranchFlowLen = useRef(0);
+  useEffect(() => {
+    const len = branchFlow?.length ?? 0;
+    if (isMobile && len > 0 && prevBranchFlowLen.current === 0) {
+      setMobilePaneKey("sel");
+      if (typeof window !== "undefined") localStorage.setItem(LS_MOBILE_PANE, "sel");
+    }
+    prevBranchFlowLen.current = len;
+  }, [branchFlow, isMobile]);
+
   // 依週期重取樣(日K→週/月K),指標對重取樣後序列計算 → 週K的MA20=20週線(主流慣例)
   const bars = useMemo(() => resample(candles, settings.tf), [candles, settings.tf]);
 
@@ -416,7 +427,7 @@ export default function KChart({
   };
 
   return (
-    <div id="stock-kchart">
+    <div id="stock-kchart" className="min-w-0 max-w-full overflow-hidden">
       {/* 工具列:桌機維持換行(逐位元不變);手機(max-md)單行橫滑不換行、各 chip min-h-11 觸控 */}
       <div className="flex flex-wrap items-center gap-1.5 px-0.5 py-2 max-md:flex-nowrap max-md:overflow-x-auto max-md:scrollbar-hide max-md:[&>*]:shrink-0 max-md:[&_label]:min-h-11 max-md:[&_button]:min-h-11">
         <span className="inline-flex gap-0.5 rounded-lg border border-border bg-card p-0.5">

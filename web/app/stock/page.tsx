@@ -137,20 +137,25 @@ function StockView() {
   const branchScore = data.scores?.branch ?? null;
 
   return (
-    <>
-      <div className="flex flex-wrap items-center gap-2.5 py-4 pb-2.5">
-        <a
-          href="/"
-          className="-ml-2.5 inline-flex items-center gap-1 rounded-full px-2.5 py-1.5 text-[13px] text-muted-foreground hover:bg-secondary hover:text-foreground"
-        >
-          <IconArrowLeft size={16} />
-          雷達
-        </a>
-        <span className="text-[19px] font-extrabold">{data.name}</span>
-        <span className="text-[13px] text-muted-foreground">
-          {data.id} · {MARKET_LABEL[data.market] ?? data.market}
-        </span>
-        <div className="ml-auto flex items-center gap-2">
+    <div className="min-w-0 max-w-full overflow-x-hidden">
+      <div className="flex flex-col gap-2 py-4 pb-2.5 md:flex-row md:flex-wrap md:items-center md:gap-2.5">
+        <div className="flex min-w-0 items-center gap-2">
+          <a
+            href="/"
+            className="-ml-2.5 inline-flex shrink-0 items-center gap-1 rounded-full px-2.5 py-1.5 text-[13px] text-muted-foreground hover:bg-secondary hover:text-foreground"
+          >
+            <IconArrowLeft size={16} />
+            雷達
+          </a>
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-[19px] font-extrabold" title={data.name}>{data.name}</div>
+            <div className="truncate text-[13px] text-muted-foreground">
+              {data.id} · {MARKET_LABEL[data.market] ?? data.market}
+            </div>
+          </div>
+          <WatchlistButton stockId={data.id} size={20} />
+        </div>
+        <div className="flex shrink-0 items-center gap-2 md:ml-auto">
           <span className={cn("num text-2xl font-extrabold tracking-[-0.3px]", CHG_TEXT[cls])}>
             {last.c.toLocaleString("zh-TW")}
           </span>
@@ -158,22 +163,21 @@ function StockView() {
             {fmtPct(chg)}
           </span>
         </div>
-        <WatchlistButton stockId={data.id} size={20} />
       </div>
-      <div className="mb-2.5 flex flex-wrap gap-3.5 text-xs text-muted-foreground">
-        <span>
+      <div className="mb-2.5 flex flex-col gap-1 text-xs text-muted-foreground sm:flex-row sm:flex-wrap sm:gap-3.5">
+        <span className="min-w-0 break-words">
           {last.t} {" · "} {"量"} <span className="num text-[color:var(--ink-2)]">{last.v.toLocaleString("zh-TW")}</span> {"張"} {" · "} {"額"}{" "}
           <span className="num text-[color:var(--ink-2)]">{fmtE8(last.amt)}</span>
         </span>
-        <span>
+        <span className="min-w-0 break-words">
           {"資料"} <span className="num text-[color:var(--ink-2)]">{cs.length.toLocaleString("zh-TW")}</span> {"個交易日(自"} {cs[0].t})
         </span>
       </div>
 
       {/* IA-2 + F3: Decision Header — why this stock appears, risks, key prices */}
       <StockDecisionHeader data={data} close={last.c} />
-      <div className="mb-2.5 flex flex-wrap items-center gap-2.5">
-        <div role="tablist" className="flex w-fit gap-0.5 rounded-full border border-border bg-card p-[3px]">
+      <div className="mb-2.5 flex min-w-0 flex-col gap-2 md:flex-row md:flex-wrap md:items-center md:gap-2.5">
+        <div role="tablist" className="flex w-fit shrink-0 gap-0.5 rounded-full border border-border bg-card p-[3px]">
           <button role="tab" aria-selected={view === "chart"} className={pillTabClass(view === "chart")} onClick={() => setView("chart")}>
             K線
           </button>
@@ -182,7 +186,10 @@ function StockView() {
           </button>
         </div>
         {view === "chart" && (
-          <div role="tablist" className="flex w-fit gap-0.5 rounded-full border border-border bg-card p-[3px]">
+          <div
+            role="tablist"
+            className="flex max-w-full gap-0.5 overflow-x-auto rounded-full border border-border bg-card p-[3px] scrollbar-hide [scrollbar-width:none] max-md:flex-nowrap max-md:[&>*]:shrink-0 [&::-webkit-scrollbar]:hidden"
+          >
             {RANGES.map((r) => (
               <button key={r.key} role="tab" aria-selected={range === r.key} className={pillTabClass(range === r.key)} onClick={() => setRange(r.key)}>
                 {r.label}
@@ -210,7 +217,7 @@ function StockView() {
           quoteDate={last.t}
         />
       )}
-    </>
+    </div>
   );
 }
 
@@ -234,22 +241,24 @@ function StockDecisionHeader({ data, close }: { data: StockJson; close: number }
   if (!scores && !reasons.length && !risks.length) return null;
 
   return (
-    <div className="mb-3 rounded-[var(--r-lg)] border border-border bg-card p-3.5 shadow-[var(--shadow-card)]">
+    <div className="mb-3 min-w-0 rounded-[var(--r-lg)] border border-border bg-card p-3.5 shadow-[var(--shadow-card)]">
       {/* Top row: score + source badge */}
-      <div className="mb-2.5 flex flex-wrap items-center gap-2">
-        {scores && (
-          <span className={cn("num text-[28px] font-extrabold leading-none", scores.final >= 65 ? "text-warn" : "text-[color:var(--ink-2)]")}>
-            {scores.final}
-          </span>
-        )}
-        <span className="text-[11.5px] text-muted-foreground">{"綱合評分"}</span>
-        {sourceLabel && (
-          <span className="rounded-md bg-[color:var(--ink-2)]/10 px-2 py-0.5 text-[10.5px] font-bold text-[color:var(--ink-2)]">
-            {sourceLabel}
-          </span>
-        )}
+      <div className="mb-2.5 flex min-w-0 flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          {scores && (
+            <span className={cn("num text-[28px] font-extrabold leading-none", scores.final >= 65 ? "text-warn" : "text-[color:var(--ink-2)]")}>
+              {scores.final}
+            </span>
+          )}
+          <span className="text-[11.5px] text-muted-foreground">{"綱合評分"}</span>
+          {sourceLabel && (
+            <span className="rounded-md bg-[color:var(--ink-2)]/10 px-2 py-0.5 text-[10.5px] font-bold text-[color:var(--ink-2)]">
+              {sourceLabel}
+            </span>
+          )}
+        </div>
         {/* Watch / Stop prices with distance */}
-        <div className="ml-auto flex flex-wrap gap-2 text-[11.5px]">
+        <div className="flex min-w-0 flex-wrap gap-2 text-[11.5px] sm:ml-auto">
           {watchPrice != null && (
             <span className="flex items-center gap-1 rounded-md border border-[color:var(--line)] px-2 py-0.5 text-[color:var(--accent-2)]">
               <span>{"觀察"}</span>
@@ -301,7 +310,7 @@ function TechnicalPanel({ data }: { data: StockJson }) {
   }
 
   return (
-    <div className="mt-3.5 grid gap-2.5 rounded-[var(--r-lg)] border border-border bg-card p-3.5 shadow-[var(--shadow-card)] md:grid-cols-[90px_1fr] md:items-center">
+    <div className="mt-3.5 min-w-0 grid gap-2.5 rounded-[var(--r-lg)] border border-border bg-card p-3.5 shadow-[var(--shadow-card)] md:grid-cols-[90px_1fr] md:items-center">
       <div className="flex flex-col gap-0.5">
         <span className="text-[11px] text-muted-foreground">技術分</span>
         <span className="num text-[30px] leading-none font-extrabold text-[color:var(--accent-2)]">{t.score}</span>
