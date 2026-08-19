@@ -30,7 +30,7 @@
 |---|---|---|
 | Phase 0 文件化 | ✅ 完成(2026-07-10) | 本文件及共同記憶入口已更新 |
 | Phase 1 UI 刪減與合併 | ✅ 完成(2026-07-10) | 低風險,但仍須先看現有 diff;完成後為 `docs/22` 騰出首頁空間 |
-| Phase 2 策略/分數解耦 | ⏳ 待確認 | 高風險資料語意變更;正式重算另設關卡 |
+| Phase 2 策略/分數解耦 | 🔄 進行中 | 解耦程式+測試已完成(2026-07-10);差異報告 CLI 已完成(2026-08-19);VPS 最新日報告+正式重算待使用者批准 |
 | Phase 3 策略績效閉環 | ⏳ 待確認 | 先做客觀報告,不由 agent 自動升級策略;有助判斷 S12 是否適合作 Armed 主訊號 |
 | Phase 4 排程簡化 | ⏳ 待確認 | 獨立高風險任務,不得與 Phase 1-3 混做 |
 | 之後 → `docs/22` Armed | 📝 規劃定案 | 見該文件 A1–A3;不屬本 B 方案 Phase 編號 |
@@ -161,8 +161,11 @@ Supabase Auth / watchlist 保留作跨裝置個人化,不再擴張假性會員�
 
 - `pipeline/radar/compute/indicators.py`
 - `pipeline/radar/compute/scores.py`
+- `pipeline/radar/compute/phase2_diff_report.py`（✅ 2026-08-19,CLI `phase2-diff-report`）
+- `pipeline/radar/cli.py`
 - `pipeline/tests/test_indicators.py`
 - `pipeline/tests/test_scores.py`
+- `docs/reports/phase2_score_diff_*.md`（差異報告輸出,不寫 DB）
 - 可能新增獨立純函式模組及對應測試,但不得重構整個 compute 目錄
 
 工作:
@@ -171,7 +174,7 @@ Supabase Auth / watchlist 保留作跨裝置個人化,不再擴張假性會員�
 2. 統一 S1-S13 為「只產生 tag/reason、不改分數」。
 3. 補 S2-S13 各自的正例、反例與邊界測試。
 4. 驗證 T1-T5 在移除策略 bonus 後仍符合 `docs/04` 原技術分規則。
-5. 產出舊/新 `tech_score` 差異報告,交 Reviewer 與使用者確認。
+5. 產出舊/新 `tech_score` 差異報告,交 Reviewer 與使用者確認。(✅ 工具已完成:`python -m pipeline.radar.cli phase2-diff-report [--date YYYYMMDD] [--out path]`;本機樣本見 `docs/reports/phase2_score_diff_2026-07-06.md`;**VPS 最新資料日重跑仍待確認**)
 
 **禁止事項**:完成程式碼不等於可重算正式資料。全市場 `compute-indicators --all`
 與重新部署會改變正式榜單,必須先由使用者另外確認 VPS / Actions 重算與回灌方式;

@@ -9,46 +9,64 @@
 
 ## 0. 怎麼用
 
-1. 複製 **§1 標準起手**(或 §3 激進版)。
-2. 填空:`本次任務`、`必讀加檔`、`建議 branch`(可選)、`額外約束`(可選)。
-3. 需要時加 **§2 角色變體**(Reviewer / Planner 接力)。
-4. 安全底線只守 `AGENTS.md` 危險清單與你填的 Confirmed Scope——**不要**在本檔維護過期的 Phase 清單。
+1. **規劃**:開新對話,選 **Grok 4.6 High**,複製 `docs/18`「Planner(Grok 4.6 High)」或下方 **§0.1**。
+2. **執行**:開 Executor 對話,選 **Auto agent**,複製 **§1 標準起手(Workflow D 版)** 或 `docs/18`「Executor(Auto agent)」;填入 Planner 產出的 Confirmed Scope。
+3. 需要時加 **§2 角色變體**(Reviewer / 接力)。
+4. 安全底線只守 `AGENTS.md` 危險清單與 Confirmed Scope——**不要**在本檔維護過期的 Phase 清單。
 
 任務真相來源(依序):人類這次貼的範圍 → 最新 handoff → `STATUS.md` → 對應 `docs/20`/`21`/`22`/`23`/`25`/其他規劃檔。
 
+### 0.1 Cursor 模型分工(2026-08-19 常駐)
+
+| 階段 | 模型 | 完成後 |
+|---|---|---|
+| Planner | Grok 4.6 High (`cursor-grok-4.6-high-fast`) | 輸出 Confirmed Scope + 要更新的 md 清單 |
+| Executor | Auto agent | 實作 + 更新 md + **commit + push**(不需再問) |
+
+詳細流程:`docs/17` Workflow D、`AGENTS.md`「Cursor 常駐指令」。
+
 ---
 
-## 1. 標準起手(建議預設:先 plan 再動手)
+## 1. 標準起手 — Workflow D 版(2026-08-19 預設:Auto 執行 + 自動 push)
 
-把 `【】` 換成這次的內容即可。
+把 `【】` 換成 Planner(Grok)或人類給的內容。Executor 對話請選 **Auto agent**。
 
 ```
-你現在是 Trever Radar 的 Executor(可為 AGY / 其他模型)。
+你現在是 Trever Radar 的 Executor(Cursor Auto agent)。
 
 必讀:
-1. AGENTS.md
+1. AGENTS.md(含「Cursor 常駐指令」)
 2. docs/project-context.md
 3. docs/STATUS.md
-4. docs/17_no_fable_workflow.md
+4. docs/17_no_fable_workflow.md(Workflow D)
 5. docs/18_handoff_template.md
-【必讀加檔:例如 docs/20、docs/22、docs/23、docs/19、handoff 路徑——依任務填;沒有就刪這行】
+6. handoff.md
+【必讀加檔:依 Scope 填;沒有就刪】
 
 開工前:
-- 看 git status、git diff、目前 branch
-- 對照 STATUS「未完成」與我下方的 Confirmed Scope;若衝突,先說明並停下,不要自行改優先序
+- git status、git diff、目前 branch
+- 以下方 Confirmed Scope 為準;與 STATUS 衝突則停下報告
 
 規則:
-- 先輸出理解摘要、預計改檔、風險、測試方式;等我回「確認」再改碼
-- 只做 Confirmed Scope;發現「順便可做」的只列出來問我,不自行擴大
-- 不重構無關檔;不改 .env / secrets;不改 workflow yaml(除非 Scope 明確要求)
-- 不動 WAL checkpoint、cache/release DB 鏈、adj_factor(除非 Scope 明確且已走高風險流程)
-- 不得 merge、不得自行 push main、不得觸發正式部署(除非我明確要求)
-- 完成後用 docs/18 輕量交接回報,並更新 STATUS 與本次相關規劃檔的狀態欄(若有)
+- 依 Scope 直接實作(Scope 來自 Grok Planner 或人類,已確認)
+- 只做 Confirmed Scope;「順便可做」只列出,不自行擴大
+- 不重構無關檔;不改 .env / secrets;不改 workflow yaml(除非 Scope 明確)
+- 不動 WAL checkpoint、adj_factor、未批准 DB 重算(AGENTS 危險清單)
+- 完成同一輪:更新 handoff.md + STATUS + 相關規劃檔 → git commit → git push(不需再問)
+- 不得 force push、merge 他人 PR、未批准高風險項
 
-Confirmed Scope(本次唯一可做範圍):
-【用幾句話或條列寫清:目標 / 可動檔案類型 / 驗收 / 明確不做什麼】
+Confirmed Scope:
+【Planner 產出或人類填寫】
 
-建議 branch(可選):【例如 agy/short-topic;沒有就讓 Executor 依任務自訂短分支名】
+branch:【通常 main;或 Scope 指定】
+```
+
+### 1.0 標準起手 — 需人工確認版(高風險 / Scope 未確認時)
+
+與 §1 Workflow D 版互斥。Scope 未定或走高風險流程時用此版,**不要**自動 push。
+
+```
+(同舊版 §1:先輸出 plan,等「確認」再改碼;不得自行 push main)
 ```
 
 ### 1.1 填空範例(僅示範格式,不是固定任務)
@@ -93,13 +111,14 @@ Confirmed Scope:
 先輸出理解摘要與剩餘 plan,等確認後只完成 Not Yet Done / Next Suggested Actions 內項目。
 ```
 
-### 2.3 請 Planner 更新任務(人類或另一模型)
+### 2.3 請 Planner 更新任務(Grok 4.6 High)
 
 ```
-你是 Planner,預設不改程式碼。
+你是 Planner。請用 Grok 4.6 High(cursor-grok-4.6-high-fast)。預設不改程式碼。
 讀 AGENTS.md、STATUS、相關 docs 後,更新或起草【要改的規劃檔 / STATUS 條目】建議稿。
-輸出:目標、優先序、建議交 Executor 的 Confirmed Scope 草稿、風險、不做清單。
-等我確認後,再決定是否寫入 docs(或交另一 agent 寫入)。
+輸出:目標、優先序、Confirmed Scope 草稿、要同步的 md 清單、風險、不做清單。
+交 Auto Executor 執行時,由 Executor 負責寫入 docs 並 commit/push(Workflow D)。
+若僅規劃、尚未交 Executor:可把 STATUS 建議稿貼給人類確認後再開 Executor 對話。
 ```
 
 ---
@@ -129,7 +148,8 @@ Confirmed Scope:
 
 | 預設不要讓 Executor 自行做 | 原因 |
 |---|---|
-| `git push main` / 正式部署 | `main` push 會部署 |
+| ~~`git push main`~~(2026-08-19 例外) | Workflow D 下一般功能/修正/文件可自動 push;**高風險項仍禁止** |
+| 未列 Scope 的 `git push main` / 正式部署 | Scope 不明或高風險時仍須人工 |
 | 改 workflow / secrets / DNS / Cloudflare Access 實設 | 高風險外部狀態 |
 | 未批准的 destructive migration、全市場重算回灌 | 資料語意與正式資料 |
 | 把 R2 當線上 SQLite | 見 `docs/21` |
@@ -143,7 +163,8 @@ Confirmed Scope:
 ## 5. 給人類的一句話流程
 
 ```
-Planner 更新 STATUS / docs → 你複製 §1 → 填 Confirmed Scope → 交給 AGY
+Grok 4.6 High 規劃(§2.3 / docs/18 Planner 提示詞) → 產出 Confirmed Scope
+→ Auto agent 執行(§1 Workflow D) → 自動更新 md + commit + push
 ```
 
 不要把過期的 Phase/WP 清單貼進本檔當永久真理;那會和 Planner 打架。

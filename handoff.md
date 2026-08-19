@@ -1,14 +1,19 @@
 ## Handoff
 
-- **Current Goal**: ~~實作 13 項選股策略~~ → **已於 2026-07-10 完成**；本次交接任務為**驗證現況 + 更新過期 handoff**（2026-08-19 確認）。
-- **Current Branch**: `main`（working tree clean）
-- **Current Agent**: Cursor（接手上任 AGY 的過期交接稿）
+- **Current Goal**: B 方案 **Phase 2 差異報告工具**（2026-08-19 完成）；下一步待使用者決定：VPS 最新資料日重跑報告，或進 **Phase 3 績效閉環**。
+- **Current Branch**: `main`
+- **Workflow(2026-08-19)**:規劃 → Grok 4.6 High；執行 → Auto agent；完成 → 更新 md + commit + push（見 `AGENTS.md`、`docs/17` Workflow D）
+- **Current Agent**: Cursor
 - **Work Completed（本次）**:
-  - 比對 codebase 與 handoff，確認 13 策略後端/匯出/前端**均已實作**，原 handoff「Not Yet Done」為過期內容。
-  - 跑 `pytest tests/test_indicators.py tests/test_scores.py`：**63 passed**（含 S1–S10 正/反例、S 策略不解耦分數斷言）。
-  - 靜態核對：`json_export.py` 輸出 `strategies: { code: [stock_id] }`，與 `web/lib/types.ts` 及 `page.tsx` 消費方式一致；前後端 13 個 S code 清單一致。
-- **Files Changed**: `handoff.md`（本檔更新）；程式碼無 bug，未改 pipeline/web。
-- **Current Git Status**: 僅 `handoff.md` 待 commit（使用者未要求 commit 前不提交）。
+  - 新增 CLI `phase2-diff-report`：比較解耦後分數 vs 舊制 S1–S10 bonus 回加模擬，產出 markdown，**不寫 DB**。
+  - 本機樣本報告：`docs/reports/phase2_score_diff_2026-07-06.md`（77 檔、0 檔受影響——該日無 S1–S10 觸發加分）。
+  - 先前已完成：13 策略驗證、手機版個股頁 RWD/分點圖修復（另 commit）。
+- **Files Changed**:
+  - `pipeline/radar/compute/phase2_diff_report.py`（新增）
+  - `pipeline/radar/cli.py`（註冊 `phase2-diff-report`）
+  - `docs/reports/phase2_score_diff_2026-07-06.md`（本機樣本輸出）
+  - `handoff.md`、`docs/STATUS.md`、`docs/20_simplification_strategy.md`（文件同步，見本次）
+- **Current Git Status**: 本輪含 Phase 2 文件同步 + Workflow D 常駐指令;待 commit/push。
 - **Known Issues**: 無策略相關 bug。策略邏輯改動後正式榜單需等 VPS 下一交易日增量重算才反映（見 `STATUS.md` 已知債務）。
 - **Errors/Logs**: 無
 - **Tests Run**:
@@ -22,18 +27,24 @@
   | 匯出 | `pipeline/radar/export/json_export.py` L235–262, L502 | `strategies` 只存 `stock_id[]`，每榜 ≤40 檔 |
   | 前端 | `web/app/page.tsx` | Tab `mark` + F4.2 四類分群 pills；`web/lib/types.ts` L181 |
   | 測試 | `pipeline/tests/test_indicators.py` | S2–S10 正/反例 + 解耦回歸 |
-- **Not Yet Done（專案層級，非本 handoff 原目標）**:
-  - **B 方案 Phase 2 剩餘**：舊/新分數差異報告；VPS 全市場重算需使用者批准（高風險）。
+- **Phase 2 diff report 用法**:
+  ```bash
+  python -m pipeline.radar.cli phase2-diff-report
+  python -m pipeline.radar.cli phase2-diff-report --date 20260706 --out docs/reports/phase2_score_diff_20260706.md
+  ```
+  VPS 上對 `radar.db` 跑最新 `daily_scores` 日，產出報告後交 Reviewer/使用者確認，再決定是否批准全市場重算。
+- **Not Yet Done（專案層級）**:
+  - **B 方案 Phase 2 剩餘**：VPS 最新資料日重跑差異報告 + 使用者批准後的正式全市場重算（高風險）。
   - **B 方案 Phase 3**：各 S code 績效閉環（5/10/20 日勝率報告）。
   - **WP-B6**：全市場歷史回補（`docs/30`，待使用者確認開跑）。
   - **WP-B7**：Supabase 白名單取代 Cloudflare Access（需資安審查）。
 - **Next Suggested Actions**:
-  1. 若需確認正式站策略榜有資料：登入後看首頁「策略」Tab 各 pill 檔數（需 VPS 已跑過當日管線）。
-  2. 若策略規則要調整：改 `indicators.py`/`scores.py` → 補測試 → **VPS pull 最新 main 後重算**（不可只 push 就期待榜單變）。
-  3. 下一個 agent 請依 `docs/STATUS.md` 優先序選任務，勿重複實作 13 策略。
+  1. VPS 上 `git pull` 後跑 `phase2-diff-report`（不帶 `--date` 取最新日），比對本機 2026-07-06 樣本是否一致。
+  2. 使用者看過報告後，再決定是否批准 `compute-indicators --all` 等正式重算（見 `docs/20` Phase 2 禁止事項）。
+  3. 或依 `docs/STATUS.md` 優先序改做 **Phase 3 績效閉環** / **WP-B6** / **WP-B7**。
 - **Files That Should Not Be Modified**:
   - `pipeline/radar/db.py` 的 WAL checkpoint 機制。
-  - `docs/*` 核心規則文件（除 `STATUS.md` / `handoff.md` 外不應隨意更動）。
+  - `docs/*` 核心規則文件（任務相關的 `STATUS`/規劃檔/workflow 檔依 Workflow D 必須同步；勿無關改動）。
   - `.github/workflows/*.yml`（排程部署設定）。
 - **Risk Notes**:
   - 13 策略榜單在 `radar.json` 只存 `stock_id` 陣列，體積可控。
@@ -41,4 +52,5 @@
 
 ---
 
-> 你現在是接手本專案的 agent。請先閱讀 AGENTS.md、docs/17_no_fable_workflow.md、docs/18_handoff_template.md、docs/STATUS.md 與此交接文件 handoff.md。請先輸出你理解的狀態、下一步計畫、你預計修改哪些檔案。等待使用者確認後才開始修改。
+> **Planner(Grok 4.6 High)**:讀 AGENTS.md、docs/17、STATUS、handoff → 產出 Confirmed Scope。  
+> **Executor(Auto)**:讀 Scope + Workflow D → 實作 → 更新 md → commit → push。Scope 未定或高風險時才「先 plan、等確認」。

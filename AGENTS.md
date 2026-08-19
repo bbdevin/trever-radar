@@ -75,9 +75,39 @@
 9. 任一 agent 中斷或沒額度不代表停擺,可交接給另一個 agent(見 `docs/17` Workflow B),交接照 `docs/18`。
 10. Reviewer 意見只是建議,不代表可自動 merge——人類看過才算數。
 
+## Cursor 常駐指令(2026-08-19 使用者定案)
+
+> 細節與提示詞模板見 `docs/17` Workflow D、`docs/18` 固定提示詞、`docs/24` §0.1。
+
+### 模型分工
+
+| 階段 | 模型 | Cursor 選項 / slug |
+|---|---|---|
+| **Planner**(功能規劃、架構取捨、優先序、Confirmed Scope) | **Grok 4.6 High** | `cursor-grok-4.6-high-fast` |
+| **Executor**(實作、修 bug、測試、文件同步、commit/push) | **Auto agent** | Cursor 預設 Auto(inherit) |
+
+規劃與執行**分開對話或分開 agent**:Planner 只產出 plan / Confirmed Scope / 要改的 docs 建議稿;Executor 依 plan 動手,不擅自改優先序或擴 scope。
+
+### 完成定義(功能或修正)
+
+每完成一項功能、修正或規劃落檔,Executor **必須在同一輪**:
+
+1. **更新相關 md**(至少視任務更新 `handoff.md`、`docs/STATUS.md`;若動到 B 方案/IA/資料/VPS 等,同步對應規劃檔如 `docs/20`/`25`/`31`/`vps/README.md` 等)。
+2. **`git commit`**(只 stage 本次任務相關檔案;訊息說明 why)。
+3. **`git push`** 至目前工作 branch(多數為 `main`)。
+
+**不需再詢問使用者是否 commit/push**,除非踩到下方「仍須人工確認」高風險項。
+
+### 仍須人工確認(不可因常駐指令自動做)
+
+- 正式 `radar.db` 全市場重算、回灌、VPS destructive 操作
+- 改 `.github/workflows/*.yml`、secrets、DNS、Cloudflare Access、WP-B7 登入切換
+- 資料刪除/重建、schema migration、WP-B6 開跑
+- `git push --force`、hard reset、merge 他人 PR(除非使用者另下指令)
+
 ## 本專案專屬危險清單
 
-- ⚠️ **`main` push 會直接觸發 Cloudflare Pages 正式部署**(`deploy.yml` on push)——**2026-07-18 WP-B3 cutover 後這只部署程式碼/前端,不影響資料**(資料由 VPS→Workers 資產獨立更新)。未經人類確認,不得 push `main`。
+- ⚠️ **`main` push 會直接觸發 Cloudflare Pages 正式部署**(`deploy.yml` on push)——**2026-07-18 WP-B3 cutover 後這只部署程式碼/前端,不影響資料**(資料由 VPS→Workers 資產獨立更新)。**2026-08-19 起**:一般功能/修正/文件同步可依「Cursor 常駐指令」自動 push `main`;**高風險項**(見上節「仍須人工確認」)仍須使用者批准。
 - ~~⚠️ 不動 DB 備份的 WAL 合併邏輯(四支 workflow 的 cache-save 前 `PRAGMA wal_checkpoint(TRUNCATE)`)~~ **已退役 2026-07-18(WP-B3)**:GitHub Actions 不再碰 DB,cache-save 鏈已隨雲端資料鏈退役;WAL checkpoint 教訓已搬進 VPS `vps/scripts/weekly-backup.sh`(見下方新條)。
 - ~~⚠️ 不動 cache / release `db-backup` 的 DB 續存鏈(5 支 workflow 共用 `radar-db` concurrency group)~~ **已退役 2026-07-18(WP-B3)**:VPS 為唯一寫者,不再有雲端 DB 續存鏈;5 支資料 workflow 已無觸發,回滾窗(~2026-08-01)後刪除(`docs/31` §9)。
 - ⚠️ **不動 `adj_factor` 還原價邏輯**。`daily_prices.adj_factor` 由 FinMind `TaiwanStockDividendResult` 累乘計算,技術指標與績效回填都依賴 `price * adj_factor`。
@@ -95,8 +125,8 @@
 
 | Role | 工作內容 | 限制 |
 |---|---|---|
-| **Planner** | 分析需求、功能整合、UI 統一、新功能、技術方案、風險與實作順序 | 預設只讀,不修改程式碼 |
-| **Executor** | 依照已確認的 plan 修改程式碼、補測試與更新必要文件 | 不自行擴張需求或更改已確認 plan |
+| **Planner** | 分析需求、功能整合、UI 統一、新功能、技術方案、風險與實作順序 | 預設只讀,不修改程式碼;**Cursor 預設用 Grok 4.6 High**(`cursor-grok-4.6-high-fast`) |
+| **Executor** | 依照已確認的 plan 修改程式碼、補測試、更新 md、commit、push | 不自行擴張需求;**Cursor 預設用 Auto agent**;完成後自動同步文件並 push(見常駐指令) |
 | **Reviewer** | 審查 plan 或 git diff,檢查錯誤、安全性、測試與 MVP 偏離 | 預設只讀,不可審查後直接修改 |
 | **Human User** | 決定架構、優先順序、merge、deploy、資料刪除及正式環境變更 | 唯一最終決策者 |
 

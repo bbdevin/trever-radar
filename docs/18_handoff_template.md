@@ -46,10 +46,32 @@
 
 > **交辦 AGY / Executor 的提示詞模板**見 `docs/24_agy_executor_prompts.md`(填 Confirmed Scope;任務以 STATUS/Planner 為準,不在 24 寫死功能清單)。
 > 本節保留跨模型通用短提示;長模板以 24 為準。
+>
+> **2026-08-19 Cursor 常駐**:規劃用 Grok 4.6 High,執行用 Auto;完成後自動更新 md + commit + push(見 `docs/17` Workflow D)。
 
-### 貼給新接手的 Executor(任何模型)
+### 貼給 Planner(Grok 4.6 High)
+
+> 你是 Trever Radar 的 **Planner**。請在 Cursor 選 **Grok 4.6 High**(`cursor-grok-4.6-high-fast`)。預設**只讀、不改程式碼**。
+>
+> 必讀:AGENTS.md、docs/project-context.md、docs/STATUS.md、docs/17_no_fable_workflow.md,以及本次任務相關規劃檔。
+>
+> 請輸出:理解摘要、A/B/C 或推薦方案、Confirmed Scope 草稿(目標/可動檔案/驗收/明確不做)、預計改哪些 md、風險、建議 Executor 下一步。
+>
+> 規劃完成後,把 Confirmed Scope 交給 **Auto agent** 執行(見下方 Executor 提示詞);不要在同一輪擅自開始大改程式碼。
+
+### 貼給 Executor(Auto agent,2026-08-19 預設)
+
+> 你是 Trever Radar 的 **Executor**。請用 Cursor **Auto agent**。先讀 AGENTS.md、docs/17 Workflow D、docs/STATUS.md、handoff.md,以及 Planner 給的 Confirmed Scope。
+>
+> 依 Scope 實作;跑相關測試/build;**同一輪**更新 handoff.md、docs/STATUS.md 與任務相關規劃檔;然後 **git commit + git push**,**不需再問使用者**。
+>
+> 禁止:擴大 Scope、force push、未批准的高風險項(見 AGENTS.md 常駐指令「仍須人工確認」)。
+
+### 貼給新接手的 Executor(任何模型,需人工確認 Scope 時)
 
 > 你現在是接手本專案的 agent。請先閱讀 AGENTS.md、docs/17_no_fable_workflow.md、docs/18_handoff_template.md、docs/STATUS.md。請先不要修改程式碼。請先輸出你理解的狀態、下一步計畫、你預計修改哪些檔案。等待使用者確認後才開始修改。
+>
+> *(Scope 已確認且走 Workflow D 時,改用上方「Executor(Auto agent)」提示詞,可不等確認並自動 commit/push。)*
 
 ### 貼給 Reviewer(任何模型,review 用)
 

@@ -16,6 +16,12 @@
 5. 不過度工程:V1-Free 無任何常駐伺服器、無雲端 DB 服務、無登入程式碼。
 6. 訊號文字用規則模板產生,不用 LLM(省 token、可回測、可重現)。
 
+## Cursor 協作預設(2026-08-19)
+
+- **規劃**:Grok 4.6 High(`cursor-grok-4.6-high-fast`)。
+- **執行**:Auto agent;完成後同步 `handoff.md`、`docs/STATUS.md` 等相關 md,並 **commit + push**(不需再問)。
+- 高風險(DB 重算、workflow/secrets、登入切換等)仍須人工批准。詳 `AGENTS.md`、`docs/17` Workflow D。
+
 ## 技術棧(2026-07-06 定案,取代舊 Laravel 方案)
 
 - 管線:Python 3.11 + requests + pandas + SQLAlchemy Core + SQLite(`pipeline/`)

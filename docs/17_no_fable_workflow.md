@@ -37,7 +37,43 @@ Cursor                                       = 控制中心(看、管、人工�
 6. 列修改摘要:修改了哪些檔案 / 內容 / 測試方式 / 風險 / 下一步。
 7. 交給 Reviewer review `git diff`。
 8. 依 review 意見修正。
-9. **使用者確認後**才 `commit` / `merge` / `push main`。
+9. **使用者確認後**才 `commit` / `merge` / `push main`——**例外**:見下方 **Workflow D(Cursor 常駐指令,2026-08-19)**。
+
+## Workflow D:Cursor 常駐指令(2026-08-19 使用者定案)
+
+> 摘要亦見 `AGENTS.md`「Cursor 常駐指令」。本節為 source of truth。
+
+### D1. 模型分工
+
+| 階段 | 用誰 | 做什麼 |
+|---|---|---|
+| **規劃** | **Grok 4.6 High**(`cursor-grok-4.6-high-fast`) | 讀 Required Reading → 分析/整合/優先序 → 輸出 Confirmed Scope、預計改檔、風險、驗收;預設不改程式碼 |
+| **執行** | **Auto agent**(Cursor 預設) | 依 Confirmed Scope 實作 → 跑測試 → 更新 md → commit → push |
+
+Planner 與 Executor **不要混在同一輪擅自改優先序**。規劃對話產出的 Scope 交給 Auto 執行;若執行中發現 Scope 與 `STATUS.md` 衝突,停下報告,不要自行拍板。
+
+### D2. 文件同步(每次完成必做)
+
+完成一項功能、bug 修正或規劃落檔後,**同一輪**更新(依任務取子集,不可只做程式不寫文件):
+
+| 必更新(幾乎每次) | 任務相關時再加 |
+|---|---|
+| `handoff.md` | `docs/20`(B 方案/策略) |
+| `docs/STATUS.md` | `docs/25`(IA/UI)、`docs/31`(資料/VPS)、`vps/README.md` |
+| | 對應 feature plan(如 `docs/24`/`27`/`30`) |
+
+### D3. Git(每次完成必做,不需再問使用者)
+
+1. 只 `git add` 本次任務相關檔案。
+2. `git commit`(Conventional Commits,subject 聚焦 why)。
+3. `git push`(通常 `main`)。
+
+**仍禁止自動做**:高風險清單(§高風險項目清單)、force push、未批准的 DB 重算/回灌、改 workflow/secrets。
+
+### D4. 與 Workflow A/B 的關係
+
+- 日常功能/修正:走 **Workflow D**,可跳過「等使用者確認才 push」。
+- 跨 agent 交接、高風險、Scope 不明:仍走 **Workflow B** + 高風險 A/B/C,**不可**用 D 繞過。
 
 ## Workflow B:模型/agent 交接流程
 
@@ -93,6 +129,8 @@ Reviewer 審查每個方案的風險
 ---
 
 ## 統一規劃流程(Planner 必遵)
+
+> **Cursor 預設 Planner 模型:Grok 4.6 High**(`cursor-grok-4.6-high-fast`)。提示詞見 `docs/18`「貼給 Planner(Grok 4.6 High)」。
 
 1. 閱讀 Required Reading(見 `AGENTS.md`)。
 2. 查看 `git status` 與必要背景。
