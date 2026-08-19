@@ -318,13 +318,13 @@ export default function RadarPage() {
                           <button
                             key={code}
                             onClick={() => setStrategy(code)}
-                            title={isRetired ? "此策略績效不佳，已標記為 Retired，僅供歷史參考" : st.label}
+                            title={isRetired ? "此策略在目前有限樣本下未顯示正向預測力，降級觀察中；樣本不足，非永久淘汰" : st.label}
                             className={cn(
                               "rounded-md px-2.5 py-1 text-[12.5px] font-medium transition-colors",
                               isActive
                                 ? "bg-[color:var(--ink-2)] text-[color:var(--bg-1)] shadow-[0_1px_2px_rgba(0,0,0,0.1)]"
                                 : isRetired
-                                  ? "bg-muted/50 text-muted-foreground/50 line-through hover:bg-muted/60"
+                                  ? "bg-muted/50 text-muted-foreground/50 hover:bg-muted/60"
                                   : "bg-muted text-muted-foreground hover:bg-muted/80",
                             )}
                           >
@@ -338,8 +338,8 @@ export default function RadarPage() {
                               {radar.strategies?.[code]?.length ?? 0}
                             </span>
                             {isRetired && !isActive && (
-                              <span className="ml-1 rounded bg-destructive/15 px-1 py-0.5 text-[9.5px] font-semibold text-destructive/70 no-underline">
-                                {"Retired"}
+                              <span className="ml-1 rounded bg-muted px-1 py-0.5 text-[9.5px] font-semibold text-muted-foreground/60 no-underline">
+                                {"樣本不足"}
                               </span>
                             )}
                             {!isRetired && insufficientSamples && !isActive && (
@@ -369,8 +369,8 @@ export default function RadarPage() {
                 return (
                   <span className="mt-0.5 text-[11px] text-muted-foreground/70">
                     {isRetired && (
-                      <span className="mr-1.5 rounded bg-destructive/15 px-1 py-0.5 text-[9.5px] font-semibold text-destructive/70">
-                        {"Retired"}
+                      <span className="mr-1.5 rounded bg-muted px-1 py-0.5 text-[9.5px] font-semibold text-muted-foreground/60">
+                        {"樣本不足·降級觀察"}
                       </span>
                     )}
                     {!isRetired && !meta.sufficient_samples && (
