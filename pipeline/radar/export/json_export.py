@@ -14,10 +14,67 @@ from sqlalchemy import bindparam, text
 
 from .. import config
 from ..db import get_engine, init_db
+from ..compute.strategy_performance import (
+    compute_strategy_performance_from_events,
+    fetch_strategy_events,
+)
+
+# 使用者確認的策略生命週期狀態(2026-08-19 Phase 3 報告後定案)
+# Active: 無;Shadow: 其餘;Retired: 停止主介面宣稱有效
+_STRATEGY_STATUS: dict[str, str] = {
+    "S1_REBOUND": "shadow",
+    "S2_BREAKOUT20": "retired",
+    "S3_MA_CONVERGE_BREAKOUT": "shadow",
+    "S4_VOLATILITY_CONTRACTION": "shadow",
+    "S5_PULLBACK_SUPPORT": "retired",
+    "S6_HIGH_BASE_BREAKOUT": "shadow",
+    "S7_MACD_ZERO_CROSS": "shadow",
+    "S8_GAP_BREAKOUT": "shadow",
+    "S9_MA5_TREND": "shadow",
+    "S10_BOTTOM_MACD": "shadow",
+    "S11_INSTI_BREAKOUT": "shadow",
+    "S12_BRANCH_ACCUMULATION": "shadow",
+    "S13_SHORT_SQUEEZE": "shadow",
+}
 
 DEFAULT_OUT = config.ROOT / "web" / "public" / "data"
 
-MIN_TURNOVER = 100_000_000          # 榜單門檻:成交金額 1 億
+MIN_TURNOVER = 100_000_000
+
+# 樣本門檻:20 日成熟樣本數達此值才視為「有足夠證據」
+_MIN_SAMPLES_20D = 30
+
+
+def _build_strategy_meta() -> dict[str, dict]:
+    """Build strategy_meta block for radar.json (read-only, no DB writes).
+
+    Returns a dict keyed by S code, each with:
+      status: 'active' | 'shadow' | 'retired'
+      label: str
+      h5/h10/h20: {samples, win_rate, avg_ret, median_ret}
+      sufficient_samples: bool  (h20.samples >= _MIN_SAMPLES_20D)
+    """
+    try:
+        events_by_code = fetch_strategy_events(lookback_dates=180)
+        perf = compute_strategy_performance_from_events(events_by_code, recent_events=50)
+    except Exception:
+        perf = {}
+
+    out: dict[str, dict] = {}
+    for code, status in _STRATEGY_STATUS.items():
+        p = perf.get(code, {})
+        h20 = p.get("per_horizon", {}).get("h20", {})
+        h10 = p.get("per_horizon", {}).get("h10", {})
+        h5 = p.get("per_horizon", {}).get("h5", {})
+        out[code] = {
+            "status": status,
+            "label": p.get("label", code),
+            "h5": h5,
+            "h10": h10,
+            "h20": h20,
+            "sufficient_samples": (h20.get("samples") or 0) >= _MIN_SAMPLES_20D,
+        }
+    return out          # 榜單門檻:成交金額 1 億
 SURGE_MIN_RATIO = 1.5
 MIN_WARRANT_TURNOVER = 20_000_000
 
@@ -500,6 +557,7 @@ def export_json(out_dir: Path | None = None) -> dict:
             "triggered": [s["id"] for s in all_stocks if s.get("state") == "triggered"],
         },
         "strategies": {code: [s["id"] for s in st_list] for code, st_list in strategies_lists.items()},
+        "strategy_meta": _build_strategy_meta(),
         "stocks": list(union.values()),
     }
     meta = {

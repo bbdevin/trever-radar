@@ -10,7 +10,7 @@ import StockCard from "@/components/StockCard";
 import IntradayPanel from "@/components/IntradayPanel";
 import { useSession, signInWithGoogle } from "@/lib/useSession";
 import { cn } from "@/lib/utils";
-import type { ListKey, MetaJson, RadarJson } from "@/lib/types";
+import type { ListKey, MetaJson, RadarJson, StrategyMeta } from "@/lib/types";
 import { SOURCE_LABEL, fmtE8 } from "@/lib/format";
 
 // TabKey for the 4 main task-oriented tabs
@@ -310,26 +310,43 @@ export default function RadarPage() {
                       {g.codes.map((code) => {
                         const st = STRATEGY_BY_KEY[code];
                         if (!st) return null;
+                        const meta: StrategyMeta | undefined = radar.strategy_meta?.[code];
+                        const isRetired = meta?.status === "retired";
+                        const isActive = strategy === code;
+                        const insufficientSamples = meta ? !meta.sufficient_samples : false;
                         return (
                           <button
                             key={code}
                             onClick={() => setStrategy(code)}
+                            title={isRetired ? "此策略績效不佳，已標記為 Retired，僅供歷史參考" : st.label}
                             className={cn(
                               "rounded-md px-2.5 py-1 text-[12.5px] font-medium transition-colors",
-                              strategy === code
+                              isActive
                                 ? "bg-[color:var(--ink-2)] text-[color:var(--bg-1)] shadow-[0_1px_2px_rgba(0,0,0,0.1)]"
-                                : "bg-muted text-muted-foreground hover:bg-muted/80",
+                                : isRetired
+                                  ? "bg-muted/50 text-muted-foreground/50 line-through hover:bg-muted/60"
+                                  : "bg-muted text-muted-foreground hover:bg-muted/80",
                             )}
                           >
                             {st.label}
                             <span
                               className={cn(
                                 "ml-1.5 rounded px-1 py-0.5 text-[10px]",
-                                strategy === code ? "bg-[color:var(--bg-1)]/20" : "bg-background",
+                                isActive ? "bg-[color:var(--bg-1)]/20" : "bg-background",
                               )}
                             >
                               {radar.strategies?.[code]?.length ?? 0}
                             </span>
+                            {isRetired && !isActive && (
+                              <span className="ml-1 rounded bg-destructive/15 px-1 py-0.5 text-[9.5px] font-semibold text-destructive/70 no-underline">
+                                {"Retired"}
+                              </span>
+                            )}
+                            {!isRetired && insufficientSamples && !isActive && (
+                              <span className="ml-1 rounded bg-muted px-1 py-0.5 text-[9.5px] font-normal text-muted-foreground/60 no-underline">
+                                {"Shadow"}
+                              </span>
+                            )}
                           </button>
                         );
                       })}
@@ -341,7 +358,33 @@ export default function RadarPage() {
           </div>
           <div className="mt-2.5 flex items-start gap-2 rounded-md border border-border bg-muted/30 px-3 py-2 text-[12.5px] text-muted-foreground">
             <IconStar size={14} className="mt-[2px] shrink-0 opacity-70" />
-            <span>{STRATEGIES.find((s) => s.key === strategy)?.desc}</span>
+            <div className="flex flex-col gap-1">
+              <span>{STRATEGIES.find((s) => s.key === strategy)?.desc}</span>
+              {(() => {
+                const meta = radar.strategy_meta?.[strategy];
+                if (!meta) return null;
+                const h20 = meta.h20;
+                const isRetired = meta.status === "retired";
+                const hasSamples = (h20?.samples ?? 0) > 0;
+                return (
+                  <span className="mt-0.5 text-[11px] text-muted-foreground/70">
+                    {isRetired && (
+                      <span className="mr-1.5 rounded bg-destructive/15 px-1 py-0.5 text-[9.5px] font-semibold text-destructive/70">
+                        {"Retired"}
+                      </span>
+                    )}
+                    {!isRetired && !meta.sufficient_samples && (
+                      <span className="mr-1.5 rounded bg-muted px-1 py-0.5 text-[9.5px] font-normal">
+                        {"Shadow · 樣本不足"}
+                      </span>
+                    )}
+                    {hasSamples
+                      ? `20日勝率 ${h20.win_rate != null ? h20.win_rate.toFixed(1) + "%" : "—"} ／樣本 ${h20.samples} 筆`
+                      : "20日樣本尚不足，績效待觀察"}
+                  </span>
+                );
+              })()}
+            </div>
           </div>
         </div>
       )}

@@ -167,6 +167,22 @@ export interface RadarStock {
   risks: string[];
 }
 
+export interface StrategyPerfHorizon {
+  samples: number;
+  win_rate: number | null;
+  avg_ret: number | null;
+  median_ret: number | null;
+}
+
+export interface StrategyMeta {
+  status: "active" | "shadow" | "retired";
+  label: string;
+  h5: StrategyPerfHorizon;
+  h10: StrategyPerfHorizon;
+  h20: StrategyPerfHorizon;
+  sufficient_samples: boolean;
+}
+
 export interface RadarJson {
   data_date: string;
   generated_at: string;
@@ -179,6 +195,7 @@ export interface RadarJson {
   concentration?: ConcentrationRow[]; // 集中度躍升榜(探索頁)
   lists: Record<ListKey, string[]>;
   strategies?: Record<string, string[]>;
+  strategy_meta?: Record<string, StrategyMeta>;
   stocks: RadarStock[];
 }
 
