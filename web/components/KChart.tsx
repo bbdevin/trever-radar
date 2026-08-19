@@ -428,14 +428,19 @@ export default function KChart({
 
   return (
     <div id="stock-kchart" className="min-w-0 max-w-full overflow-hidden">
-      {/* 工具列:桌機維持換行(逐位元不變);手機(max-md)單行橫滑不換行、各 chip min-h-11 觸控 */}
-      <div className="flex flex-wrap items-center gap-1.5 px-0.5 py-2 max-md:flex-nowrap max-md:overflow-x-auto max-md:scrollbar-hide max-md:[&>*]:shrink-0 max-md:[&_label]:min-h-11 max-md:[&_button]:min-h-11">
+      {/* 工具列：兩層設計
+          第一層：時間框架(日/週/月) + 副圖切換(MACD/KD/RSI) + 手機版主力/分點 — 固定可見，不橫滑
+          第二層：均線 chip + 布林 + 桌機主力買賣超 — wrap 換行，手機折疊展開
+      */}
+      {/* ── Row 1：固定可見選項 ── */}
+      <div className="flex min-w-0 flex-wrap items-center gap-1.5 px-0.5 pt-2 pb-1">
+        {/* 時間框架 */}
         <span className="inline-flex gap-0.5 rounded-lg border border-border bg-card p-0.5">
           {TF_DEFS.map((t) => (
             <button
               key={t.key}
               className={cn(
-                "rounded-md px-2.5 py-1 text-xs font-semibold text-muted-foreground",
+                "min-h-9 rounded-md px-3 py-1 text-xs font-semibold text-muted-foreground",
                 settings.tf === t.key && "bg-muted text-foreground shadow-[inset_0_0_0_1px_var(--border-strong)]",
               )}
               onClick={() => setSettings((s) => ({ ...s, tf: t.key }))}
@@ -444,11 +449,61 @@ export default function KChart({
             </button>
           ))}
         </span>
-        <span className="mx-1 h-[18px] w-px bg-[color:var(--line)]" />
+        <span className="h-[18px] w-px bg-[color:var(--line)]" />
+        {/* 副圖切換 MACD/KD/RSI */}
+        <span className="inline-flex gap-0.5 rounded-lg border border-border bg-card p-0.5">
+          {(["macd", "kd", "rsi"] as SubKey[]).map((k) => (
+            <button
+              key={k}
+              className={cn(
+                "min-h-9 rounded-md px-3 py-1 text-xs font-semibold text-muted-foreground",
+                settings.sub === k && (!isMobile || mobilePaneKey === "sub") && "bg-muted text-foreground shadow-[inset_0_0_0_1px_var(--border-strong)]",
+              )}
+              onClick={() => {
+                setSettings((s) => ({ ...s, sub: k }));
+                if (isMobile) handleMobilePaneChange("sub");
+              }}
+            >
+              {k.toUpperCase()}
+            </button>
+          ))}
+        </span>
+        {/* 手機版：主力 / 分點切換（桌機用均線列的 checkbox） */}
+        {isMobile && !!mainForce?.length && (
+          <>
+            <span className="h-[18px] w-px bg-[color:var(--line)]" />
+            <button
+              className={cn(
+                "min-h-9 rounded-lg px-3 py-1 text-xs font-semibold",
+                chipBase,
+                mobilePaneKey === "main" && "border-[color:var(--border-strong)] bg-muted text-foreground",
+              )}
+              onClick={() => handleMobilePaneChange("main")}
+            >
+              主力
+            </button>
+            <button
+              disabled={!branchFlow?.length}
+              aria-disabled={!branchFlow?.length}
+              className={cn(
+                "min-h-9 rounded-lg px-3 py-1 text-xs font-semibold",
+                chipBase,
+                !branchFlow?.length && "cursor-not-allowed opacity-40",
+                mobilePaneKey === "sel" && !!branchFlow?.length && "border-[color:var(--border-strong)] bg-muted text-foreground",
+              )}
+              onClick={() => branchFlow?.length && handleMobilePaneChange("sel")}
+            >
+              分點
+            </button>
+          </>
+        )}
+      </div>
+      {/* ── Row 2：均線 + 布林 + 桌機主力 ── */}
+      <div className="flex flex-wrap items-center gap-1.5 px-0.5 pb-2">
         {MA_DEFS.map((m) => (
           <label
             key={m.key}
-            className={chipBase}
+            className={cn(chipBase, "min-h-9")}
             style={settings.ma[m.key] ? { color: m.color, borderColor: m.color } : undefined}
           >
             <input
@@ -461,7 +516,7 @@ export default function KChart({
             {m.label}
           </label>
         ))}
-        <label className={chipBase} style={settings.boll ? { color: "#898781", borderColor: "#898781" } : undefined}>
+        <label className={cn(chipBase, "min-h-9")} style={settings.boll ? { color: "#898781", borderColor: "#898781" } : undefined}>
           <input
             type="checkbox"
             checked={settings.boll}
@@ -469,58 +524,9 @@ export default function KChart({
           />
           布林
         </label>
-        <span className="mx-1 h-[18px] w-px bg-[color:var(--line)]" />
-        {/* 副圖(MACD/KD/RSI):選 indicator;手機同時把子 pane 切回「副圖」→ 三選一的返回路徑 */}
-        {(["macd", "kd", "rsi"] as SubKey[]).map((k) => (
-          <button
-            key={k}
-            className={cn(
-              "rounded-lg",
-              chipBase,
-              settings.sub === k && (!isMobile || mobilePaneKey === "sub") && "border-[color:var(--border-strong)] bg-muted text-foreground",
-            )}
-            onClick={() => {
-              setSettings((s) => ({ ...s, sub: k }));
-              if (isMobile) handleMobilePaneChange("sub");
-            }}
-          >
-            {k.toUpperCase()}
-          </button>
-        ))}
-        {/* 手機版子 pane 三選一的另兩個選項:主力 / 分點(分點無勾選時 disabled)*/}
-        {isMobile && !!mainForce?.length && (
-          <>
-            <span className="mx-1 h-[18px] w-px bg-[color:var(--line)]" />
-            <button
-              className={cn(
-                "rounded-lg",
-                chipBase,
-                mobilePaneKey === "main" && "border-[color:var(--border-strong)] bg-muted text-foreground",
-              )}
-              onClick={() => handleMobilePaneChange("main")}
-            >
-              主力
-            </button>
-          </>
-        )}
-        {isMobile && (
-          <button
-            disabled={!branchFlow?.length}
-            aria-disabled={!branchFlow?.length}
-            className={cn(
-              "rounded-lg",
-              chipBase,
-              !branchFlow?.length && "cursor-not-allowed opacity-40",
-              mobilePaneKey === "sel" && !!branchFlow?.length && "border-[color:var(--border-strong)] bg-muted text-foreground",
-            )}
-            onClick={() => branchFlow?.length && handleMobilePaneChange("sel")}
-          >
-            分點
-          </button>
-        )}
-        {/* 桌機版:主力買賣超 checkbox(手機版由上方子 pane 切換控制)*/}
+        {/* 桌機版：主力買賣超 checkbox */}
         {!isMobile && !!mainForce?.length && (
-          <label className={chipBase} style={settings.mainForce ? { color: CUM_COLOR, borderColor: CUM_COLOR } : undefined}>
+          <label className={cn(chipBase, "min-h-9")} style={settings.mainForce ? { color: CUM_COLOR, borderColor: CUM_COLOR } : undefined}>
             <input
               type="checkbox"
               checked={settings.mainForce}
