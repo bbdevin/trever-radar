@@ -9,8 +9,9 @@
 
 1. **整站私人化**:Cloudflare Access 保護首頁、所有頁面、`/data/*`、正式
    `pages.dev`、preview deployment 與 `radar.techtrever.com`。只允許明確 email 名單。
-2. **Supabase 保留但不當安全邊界**:Google OAuth / watchlist 繼續提供個人自選;
-   整站能否進入由 Cloudflare Access 決定。
+2. **Supabase 保留**:Google OAuth / watchlist 繼續提供個人自選。
+   **2026-08-19 起另加應用層核准閘門**(`docs/sql/app_profiles.sql` + `AuthGate`):未登入看不到站內 UI,新帳號需管理員核准。
+   整站能否進入的**資料門鎖仍是 Cloudflare Access**;前端閘門不是 `/data` 安全邊界。Access 退役前不得宣稱 WP-B7 完成。
 3. **R2 不是資料庫引擎**:不能直接對 R2 裡的 `radar.db` 執行 SQLite SQL。
    R2 只存完整 SQLite 快照、未來拆出的 `branch_hist.db`、manifest/checksum 或靜態檔。
 4. **短期不取代 Actions cache**:日常熱 DB 仍走 Actions cache;cache miss 仍先保留現有
