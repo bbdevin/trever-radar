@@ -573,7 +573,7 @@ export default function BranchPage() {
             )}
             aria-pressed={filterDaytrade === "exclude"}
           >
-            {"排除雔日沖"}
+            {"排除隔日沖"}
           </button>
           {(filterSearch || filterTrackable || filterEnough || filterDaytrade !== "all") && (
             <button
@@ -631,7 +631,7 @@ export default function BranchPage() {
             <div className={cn("flex flex-col gap-4 w-full md:max-h-[85vh] md:overflow-y-auto pr-1 md:scrollbar-thin", trackOpen && "hidden md:flex")}>
               {filteredRankings.length === 0 && (
                 <div className="py-[46px] text-center text-sm text-muted-foreground">
-                  {"沒有符合筛選條件的分點。調整筛選條件或清除搜尋。"}
+                  {"沒有符合篩選條件的分點。調整篩選條件或清除搜尋。"}
                 </div>
               )}
               {filteredMain.length > 0 && (
