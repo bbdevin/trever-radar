@@ -7,6 +7,8 @@ import { supabase } from "@/lib/supabase";
 export type AppProfile = {
   user_id: string;
   email: string;
+  display_name: string | null;
+  avatar_url: string | null;
   role: "user" | "admin";
   status: "pending" | "approved" | "rejected";
 };
@@ -14,7 +16,7 @@ export type AppProfile = {
 async function fetchProfile(userId: string, email?: string | null): Promise<AppProfile | null> {
   const { data, error } = await supabase
     .from("app_profiles")
-    .select("user_id, email, role, status")
+    .select("user_id, email, display_name, avatar_url, role, status")
     .eq("user_id", userId)
     .maybeSingle();
   if (data) return data as AppProfile;
@@ -24,6 +26,8 @@ async function fetchProfile(userId: string, email?: string | null): Promise<AppP
     return {
       user_id: userId,
       email: email ?? "",
+      display_name: null,
+      avatar_url: null,
       role: isAdminEmail ? "admin" : "user",
       status: "approved",
     };

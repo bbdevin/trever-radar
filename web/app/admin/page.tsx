@@ -21,7 +21,7 @@ export default function AdminPage() {
   const refresh = useCallback(async () => {
     const { data, error: qErr } = await supabase
       .from("app_profiles")
-      .select("user_id, email, role, status, created_at, approved_at")
+      .select("user_id, email, display_name, avatar_url, role, status, created_at, approved_at")
       .order("created_at", { ascending: false });
     if (qErr) {
       setError(qErr.message);
@@ -106,10 +106,28 @@ export default function AdminPage() {
               key={r.user_id}
               className="flex min-w-0 flex-col gap-2 rounded-[var(--r-md)] border border-border bg-card px-3.5 py-3 sm:flex-row sm:items-center sm:justify-between"
             >
-              <div className="min-w-0">
-                <div className="truncate font-semibold text-foreground">{r.email}</div>
-                <div className="mt-0.5 text-[11.5px] text-muted-foreground">
-                  {r.role === "admin" ? "管理員" : "使用者"} · {statusLabel(r.status)} · {r.created_at.slice(0, 10)}
+              <div className="flex min-w-0 items-center gap-3">
+                {r.avatar_url ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={r.avatar_url}
+                    alt=""
+                    referrerPolicy="no-referrer"
+                    className="size-10 shrink-0 rounded-full border border-border object-cover"
+                  />
+                ) : (
+                  <span className="grid size-10 shrink-0 place-items-center rounded-full border border-border bg-muted text-[13px] font-bold text-muted-foreground">
+                    {(r.display_name ?? r.email).slice(0, 1).toUpperCase()}
+                  </span>
+                )}
+                <div className="min-w-0">
+                  <div className="truncate font-semibold text-foreground">{r.display_name || r.email}</div>
+                  {r.display_name ? (
+                    <div className="truncate text-[12px] text-muted-foreground">{r.email}</div>
+                  ) : null}
+                  <div className="mt-0.5 text-[11.5px] text-muted-foreground">
+                    {r.role === "admin" ? "管理員" : "使用者"} · {statusLabel(r.status)} · {r.created_at.slice(0, 10)}
+                  </div>
                 </div>
               </div>
               <div className="flex flex-wrap gap-1.5">
