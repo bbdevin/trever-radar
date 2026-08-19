@@ -31,7 +31,7 @@
 | `docs/18_handoff_template.md` | ✅ **current** | Agent 交接模板。 |
 | `docs/24_agy_executor_prompts.md` | ✅ **current** | 交辦 AGY/Executor 的**可填空模板**(起手/Reviewer/激進版);任務範圍以 STATUS + Planner 當次 Confirmed Scope 為準,本檔不鎖定具體 Phase 清單。 |
 | `docs/20_simplification_strategy.md` | ✅ **current,功能刪減與策略治理 source of truth** | 2026-07-10 使用者確認的 B 方案:停止擴張探索頁與新策略,策略/技術分解耦、績效閉環、UI 合併及排程簡化階段。 |
-| `docs/21_private_beta_access_r2_plan.md` | ⚠️ **Access 章節 current;R2 章節(R0-R4)已於 2026-07-15 作廢** | Cloudflare Access 整站白名單仍為門禁真相(至 `31` WP-B7);R2 因啟用需綁卡不採用,快照職責改 Google Drive(見 `31` v3 §4)。 |
+| `docs/21_private_beta_access_r2_plan.md` | ⚠️ **Access 待 WP-B7 關閉後改歷史;R2(R0-R4)已作廢** | 2026-08-19 起資料門鎖 = `/data` Worker JWT(見 `31` WP-B7);Access Application 仍須使用者在 Zero Trust 手動關閉。R2 不採用,快照改 Google Drive。 |
 | `docs/22_armed_tracking.md` | 📝 **規劃定案,程式未實作** | Armed/Triggered 狀態追蹤(未發動籌碼·權證池);須等 `20` Phase 1–3 與 `21` Access 有進度後另確認才實作,不新增策略/不抬綜合分。 |
 | `docs/23_product_ui_backlog.md` | 📝 **規劃定案,程式未實作** | Access/B/Armed 之後的功能與視覺優化 backlog(V1–V3 / F1–F4)+ Executor 工作包;不得插隊或引入新配色/第14策略。 |
 | `docs/25_ui_information_architecture_plan.md` | 📝 **任務導向 UI 規劃已落檔,程式未實作** | 將前端重整為掃描→判讀→追蹤任務流,含首頁/個股/分點/自選 IA Phase 與 Executor 驗收;不取代 `20`/`22`/`23`,每次只可另確認一個 Phase。 |

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { ArrowLeft } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
+import { dataFetch } from "@/lib/dataFetch";
 import { fmtLots, fmtAmount } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import {
@@ -132,7 +133,7 @@ export default function BranchTrackView({
     let cancelled = false;
     setLoading(true);
     setData(null);
-    fetch(`/data/branches/track/${entry.file}`)
+    dataFetch(`/data/branches/track/${entry.file}`)
       .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
       .then((j: BranchTrackFile) => { if (!cancelled) setData(j); })
       .catch(() => { if (!cancelled) setData(null); })

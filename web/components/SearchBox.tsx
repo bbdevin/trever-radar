@@ -3,6 +3,7 @@
 import { Search } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Command, CommandDialog, CommandEmpty, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
+import { dataFetch } from "@/lib/dataFetch";
 
 type IndexRow = [string, string, string, string]; // [id, name, market, industry]
 
@@ -16,7 +17,7 @@ export default function SearchBox() {
 
   useEffect(() => {
     if (!open || index) return;
-    fetch("/data/stocks_index.json")
+    dataFetch("/data/stocks_index.json")
       .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
       .then(setIndex)
       .catch(() => setIndex([]));

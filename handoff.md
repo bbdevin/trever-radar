@@ -1,31 +1,32 @@
 ## Handoff
 
-- **Current Goal**: WP-B7 前端核准閘門已實作。使用者需在 Supabase SQL Editor 執行 `docs/sql/app_profiles.sql`,再用 `a7033140327k@gmail.com` 登入後到 `/admin` 核准新使用者。Cloudflare Access **未拆除**。
+- **Current Goal**: WP-B7 關掉 Cloudflare Access、只留站內登入。程式已落地;使用者需在 VPS 設 secret + deploy,確認 `/data` 401 後,才在 Zero Trust 關閉 Access Application。
 - **Current Branch**: `main`
 - **Workflow(2026-08-19)**:規劃 → Grok 4.6 High；執行 → Auto agent；完成 → 更新 md + commit + push（見 `AGENTS.md`、`docs/17` Workflow D）
 - **Current Agent**: Cursor
 - **Work Completed（本次）**:
-  - 全頁 Google 登入(AuthGate)+ pending/rejected 等待頁
-  - `app_profiles` 表 SQL:既有使用者自動核准;指定管理員;新登入預設 pending
-  - `/admin` 核准/拒絕使用者
-- **Files Changed（本次 WP-B7 前端閘門）**:
-  - `docs/sql/app_profiles.sql`（新增,需人工在 Supabase 執行一次）
-  - `web/components/AuthGate.tsx`、`web/app/layout.tsx`、`web/lib/useSession.ts`
-  - `web/app/admin/page.tsx`、`web/components/AuthButton.tsx`、`web/components/DesktopNav.tsx`
-  - `handoff.md`、`docs/STATUS.md`、`docs/31_plan_b_vps_data_home.md`
-- **Known Issues**: 前端閘門不是 `/data` 安全邊界;Access 仍為整站門鎖。表尚未建立時前端暫時 fail-open,避免鎖死既有測試者。
-- **Not Yet Done（專案層級）**:
-  - **WP-B7 剩餘**:Worker 驗 Supabase JWT + 關 Access(需另案資安審查)。
-  - **WP-B6**:全市場歷史回補仍在 VPS tmux 跑(`backfill-branches` / `backfill-warrant-branches`)。
-  - **B 方案 Phase 2 剩餘**:全市場重算(watchline crossed=0,目前不急)。
+  - `/data` Worker 必須驗身分:Bearer JWT + `app_profiles.status=approved`,或 `X-Radar-Service-Key`
+  - 前端所有 `/data` fetch 改走 `dataFetch`(帶 Supabase JWT)
+  - 盤中 worker 夾帶 `X-Radar-Service-Key`;Access header 過渡期仍可並存
+- **Files Changed（本次 WP-B7 Worker JWT）**:
+  - `cloudflare-data-worker/src/index.js`、`wrangler.toml`、`README.md`
+  - `web/lib/dataFetch.ts` + 各頁 `dataFetch` 替換
+  - `pipeline/intraday/worker.py`、`.env.example`、`pipeline/tests/test_intraday_worker.py`
+  - `handoff.md`、`docs/STATUS.md`、`docs/31`、`docs/21`、`vps/README.md`、`AGENTS.md`
+- **Known Issues**: Access 仍在,會登兩次 Google,直到使用者關閉 Application。本機不得 wrangler deploy。
+- **Not Yet Done（需使用者操作）**:
+  1. VPS:`git pull` → `wrangler secret put RADAR_SERVICE_KEY` → 同一把寫入 `pipeline/intraday/.env` → `npx wrangler deploy`
+  2. 用 Access service token 測:無 key=401、帶 key=200
+  3. Zero Trust 關閉 Access Application
+  4. 無痕開站只見站內 Google 登入;裸 curl `/data/radar.json` 直接 401
 - **Next Suggested Actions**:
-  1. 使用者立刻在 Supabase 執行 `docs/sql/app_profiles.sql`。
-  2. 等 Cloudflare Pages 部署後,用管理員 Gmail 登入,確認 `/admin` 可見。
-  3. 分點/權證回補跑完後再 `compute-branch-stats` + `export-json` + deploy。
+  1. 依上方 VPS 步驟部署 Worker(先 secret 再 deploy)。
+  2. 確認 401 後關閉 Access。
+  3. 分點/權證回補跑完後再 `compute-branch-stats` + `export-json` + deploy(與本項分開)。
 - **Files That Should Not Be Modified**:
   - `pipeline/radar/db.py` 的 WAL checkpoint 機制。
-  - Cloudflare Access / Worker 路由(本輪不拆)。
-  - `.github/workflows/*.yml`（排程部署設定）。
+  - `.github/workflows/*.yml`
+  - 正式 `radar.db`(VPS 唯一寫者)
 
 ---
 

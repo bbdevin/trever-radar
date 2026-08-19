@@ -18,6 +18,7 @@ import BranchFlowSection, { MAX_SELECTED_BRANCHES } from "@/components/BranchFlo
 import ReasonPill from "@/components/ReasonPill";
 import { Skeleton } from "@/components/ui/skeleton";
 import WatchlistButton from "@/components/WatchlistButton";
+import { dataFetch } from "@/lib/dataFetch";
 import type { StockJson } from "@/lib/types";
 import { MARKET_LABEL, chgClass, fmtE8, fmtPct, fmtX } from "@/lib/format";
 import { signInWithGoogle, useSession } from "@/lib/useSession";
@@ -50,7 +51,7 @@ function StockView() {
   useEffect(() => {
     if (!id) return;
     setSelectedBranches(new Set()); // 換股重置勾選
-    fetch(`/data/stocks/${id}.json`)
+    dataFetch(`/data/stocks/${id}.json`)
       .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
       .then(setData)
       .catch(() => setError(true));

@@ -7,6 +7,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import WatchlistButton from "@/components/WatchlistButton";
+import { dataFetch } from "@/lib/dataFetch";
 import type { RadarJson, StockJson } from "@/lib/types";
 import { chgClass, fmtPct, MARKET_LABEL } from "@/lib/format";
 import { signInWithGoogle, useSession } from "@/lib/useSession";
@@ -61,7 +62,7 @@ function AddTodayArmedButton({ className }: { className?: string }) {
 
   useEffect(() => {
     let cancelled = false;
-    fetch("/data/radar.json")
+    dataFetch("/data/radar.json")
       .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
       .then((d: RadarJson) => { if (!cancelled) setArmed(d.lists?.armed ?? []); })
       .catch(() => { if (!cancelled) setArmed([]); });
@@ -183,7 +184,7 @@ export default function WatchlistPage() {
     Promise.all(
       items.map(async (it) => {
         try {
-          const res = await fetch(`/data/stocks/${it.stock_id}.json`);
+          const res = await dataFetch(`/data/stocks/${it.stock_id}.json`);
           if (!res.ok) return { stock_id: it.stock_id, data: null, found: false };
           const data = (await res.json()) as StockJson;
           return { stock_id: it.stock_id, data, found: true };

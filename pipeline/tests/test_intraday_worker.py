@@ -74,10 +74,8 @@ def test_fetch_403_first_time_fatal_with_access_hint(monkeypatch, caplog):
             worker.load_armed_list()
 
     log_text = caplog.text
-    # 403 分支的警告訊息應指引 Cloudflare Access service token
     assert "403" in log_text
-    assert "CF_ACCESS_CLIENT_ID" in log_text
-    # 首次即失敗 → 名單維持空
+    assert "RADAR_SERVICE_KEY" in log_text
     assert worker.armed_stocks == {}
 
 
@@ -104,24 +102,39 @@ def test_repeated_failure_keeps_previous_list(monkeypatch, caplog):
 
 
 def test_cf_access_headers_attached_when_env_set(monkeypatch):
-    """設定 CF_ACCESS_* 時,請求 headers 應自動夾帶 Access service token。"""
+    """設定 CF_ACCESS_* 時,請求 headers 應自動夾帶 Access service token(過渡期)。"""
     monkeypatch.setattr(worker, "CF_ACCESS_CLIENT_ID", "cid.example")
     monkeypatch.setattr(worker, "CF_ACCESS_CLIENT_SECRET", "csecret")
+    monkeypatch.setattr(worker, "RADAR_SERVICE_KEY", None)
 
     headers = worker._build_radar_headers()
     assert headers["CF-Access-Client-Id"] == "cid.example"
     assert headers["CF-Access-Client-Secret"] == "csecret"
     assert "User-Agent" in headers
+    assert "X-Radar-Service-Key" not in headers
 
 
-def test_no_cf_access_headers_when_env_missing(monkeypatch):
-    """未設 CF_ACCESS_* 時,不應夾帶 Access header(公開抓取)。"""
+def test_radar_service_key_header_attached_when_env_set(monkeypatch):
+    """設定 RADAR_SERVICE_KEY 時,請求應夾帶 X-Radar-Service-Key。"""
+    monkeypatch.setattr(worker, "RADAR_SERVICE_KEY", "radar-secret")
     monkeypatch.setattr(worker, "CF_ACCESS_CLIENT_ID", None)
     monkeypatch.setattr(worker, "CF_ACCESS_CLIENT_SECRET", None)
 
     headers = worker._build_radar_headers()
+    assert headers["X-Radar-Service-Key"] == "radar-secret"
+    assert "CF-Access-Client-Id" not in headers
+
+
+def test_no_cf_access_headers_when_env_missing(monkeypatch):
+    """未設 CF_ACCESS_* / RADAR_SERVICE_KEY 時,不應夾帶門鎖 header。"""
+    monkeypatch.setattr(worker, "CF_ACCESS_CLIENT_ID", None)
+    monkeypatch.setattr(worker, "CF_ACCESS_CLIENT_SECRET", None)
+    monkeypatch.setattr(worker, "RADAR_SERVICE_KEY", None)
+
+    headers = worker._build_radar_headers()
     assert "CF-Access-Client-Id" not in headers
     assert "CF-Access-Client-Secret" not in headers
+    assert "X-Radar-Service-Key" not in headers
 
 
 def test_process_trade_parses_raw_json_string_message(monkeypatch):

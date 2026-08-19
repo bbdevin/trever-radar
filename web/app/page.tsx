@@ -10,6 +10,7 @@ import StockCard from "@/components/StockCard";
 import IntradayPanel from "@/components/IntradayPanel";
 import { useSession, signInWithGoogle } from "@/lib/useSession";
 import { cn } from "@/lib/utils";
+import { dataFetch } from "@/lib/dataFetch";
 import type { ListKey, MetaJson, RadarJson, StrategyMeta } from "@/lib/types";
 import { SOURCE_LABEL, fmtE8 } from "@/lib/format";
 
@@ -111,11 +112,11 @@ export default function RadarPage() {
     });
 
   useEffect(() => {
-    fetch("/data/radar.json")
+    dataFetch("/data/radar.json")
       .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
       .then(setRadar)
       .catch(() => setError(true));
-    fetch("/data/meta.json")
+    dataFetch("/data/meta.json")
       .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
       .then(setMeta)
       .catch(() => {});

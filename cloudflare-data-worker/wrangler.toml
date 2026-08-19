@@ -11,7 +11,7 @@ directory = "../web/public/data"
 binding = "ASSETS"
 run_worker_first = true
 
-# WP-B2 影子驗證:先只掛 preview 路由
+# 影子期(WP-B2)路由
 [[routes]]
 pattern = "radar.techtrever.com/data-preview/*"
 zone_name = "techtrever.com"
@@ -20,3 +20,11 @@ zone_name = "techtrever.com"
 [[routes]]
 pattern = "radar.techtrever.com/data/*"
 zone_name = "techtrever.com"
+
+# 公開級金鑰(與前端 web/lib/supabase.ts 相同,僅能配合 RLS)
+[vars]
+SUPABASE_URL = "https://eroycvbgfitvyulfbbnw.supabase.co"
+SUPABASE_PUBLISHABLE_KEY = "sb_publishable_J87KLXMpmKX_ED471I13ug_ABiACBQY"
+
+# RADAR_SERVICE_KEY 用 wrangler secret,不進本檔:
+#   cd cloudflare-data-worker && npx wrangler secret put RADAR_SERVICE_KEY

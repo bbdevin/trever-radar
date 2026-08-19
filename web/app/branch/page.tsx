@@ -6,6 +6,7 @@ import { IconFlame, IconTrend, IconZap } from "@/components/Icons";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
 import BranchTrackView from "@/components/BranchTrackView";
+import { dataFetch } from "@/lib/dataFetch";
 import type { RadarJson } from "@/lib/types";
 import type { TrackIndexEntry } from "@/lib/branchTrack";
 import { MARKET_LABEL, fmtX } from "@/lib/format";
@@ -428,27 +429,27 @@ export default function BranchPage() {
   const [filterDaytrade, setFilterDaytrade] = useState<"all" | "exclude" | "only">("all");
 
   useEffect(() => {
-    fetch("/data/radar.json")
+    dataFetch("/data/radar.json")
       .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
       .then(setRadar)
       .catch(() => setError(true));
 
-    fetch("/data/branches/rankings.json")
+    dataFetch("/data/branches/rankings.json")
       .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
       .then(setRankingsData)
       .catch(() => setError(true));
 
-    fetch("/data/branches/today.json")
+    dataFetch("/data/branches/today.json")
       .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
       .then(setToday)
       .catch(() => setError(true));
 
-    fetch("/data/branches/warrant_branches.json")
+    dataFetch("/data/branches/warrant_branches.json")
       .then((r) => (r.ok ? r.json() : { "1d": [], "2d": [], "5d": [], "30d": [], "120d": [] }))
       .then(setWarrantBranches)
       .catch(() => {});
 
-    fetch("/data/branches/track/index.json")
+    dataFetch("/data/branches/track/index.json")
       .then((r) => (r.ok ? r.json() : []))
       .then((j: TrackIndexEntry[]) => {
         const arr = Array.isArray(j) ? j : [];

@@ -199,9 +199,9 @@ Worker trigger 的 `GH_TOKEN` PAT 在回滾窗結束後由使用者親自 revoke
 - 前端:JSON 讀取層(`web/lib`)統一加 token 注入與 401→導登入;未登入=看得到外殼與登入頁,看不到任何資料。
 - 盤中 worker 等程式化存取:發專用長效 service secret(Worker 側白名單),取代 Access service token。
 - 功能級授權:白名單表帶 feature flags(如 `intraday`, `branch`),Worker 依 path 前綴判定。
-- **切換順序**:Worker 驗證上線並實測(未登入 403、白名單外 Gmail 403、白名單內正常)→ 觀察數日 → 才關 Access。Access 關閉前雙鎖並存(使用者會登兩次,過渡期接受)。
-- **2026-08-19 前端閘門已上線(Access 仍在)**:未登入看到全頁 Google 登入;新帳號預設 pending,管理員於 `/admin` 核准。SQL:`docs/sql/app_profiles.sql`。既有 `auth.users` 回填為 approved。管理員:`a7033140327k@gmail.com`。**本階段不驗 `/data` JWT、不關 Access**——前端閘門不是資料安全邊界。
-- **驗收紅線**:任何時點都不允許「未認證可抓到 /data」的空窗;`docs/21` 在本 WP 完成前仍為門禁 source of truth,完成後其 Access 章節標記退役。
+- **切換順序**(2026-08-19 執行中):①VPS `wrangler secret put RADAR_SERVICE_KEY` 並寫入盤中 `.env` → ②`git pull` + `npx wrangler deploy`(只在 VPS、資產目錄須完整)→ ③用 Access service token 測:無 key=401、帶 key=200 → ④使用者在 Zero Trust **關閉** Access Application → ⑤無痕開站只見 Google 登入、裸 curl `/data/radar.json` 直接 401。
+- **2026-08-19 WP-B7 程式已落地(Access 待使用者關閉)**:`/data` Worker 驗 Bearer JWT + `app_profiles.approved`,或 `X-Radar-Service-Key`。前端 `dataFetch` 帶 token。盤中 worker 改帶 service key。Cloudflare Access Application **必須等 VPS deploy 後裸請求 401 才關**,關之前雙鎖並存。
+- **驗收紅線**:任何時點都不允許「未認證可抓到 /data」的空窗。Access 關閉後 `docs/21` Access 章節改歷史紀錄,門禁真相以本節與 `cloudflare-data-worker/README.md` 為準。
 
 ## 7. 各工作包風險表
 

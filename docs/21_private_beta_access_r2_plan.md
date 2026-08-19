@@ -1,17 +1,18 @@
 # 21 私人測試版 Access 與 R2 計畫(2026-07-10 定案)
 
 > 使用者已確認目前只做 **A 私人測試版**,不規劃公開註冊、付費牆或會員分級。
-> 本文件是 Cloudflare Access 與 R2/SQLite 儲存邊界的 source of truth。
-> 本次只完成規劃文件;建立 Access policy、R2 bucket、GitHub secrets 或修改 workflow
-> 都是高風險外部狀態變更,必須由使用者另行確認後分階段執行。
+> 本文件原是 Cloudflare Access 與 R2/SQLite 儲存邊界的 source of truth。
+> **2026-08-19 WP-B7**:資料門鎖改為 `/data` Worker 驗 Supabase JWT + 核准狀態(或 `RADAR_SERVICE_KEY`)。
+> Access Application **待使用者確認 Worker 401 後關閉**;關閉後本檔 Access 章節改歷史紀錄,門禁真相改看 `docs/31` WP-B7。
+> R2 章節(R0-R4)已於 2026-07-15 作廢。
 
 ## 1. 決策摘要
 
 1. **整站私人化**:Cloudflare Access 保護首頁、所有頁面、`/data/*`、正式
    `pages.dev`、preview deployment 與 `radar.techtrever.com`。只允許明確 email 名單。
 2. **Supabase 保留**:Google OAuth / watchlist 繼續提供個人自選。
-   **2026-08-19 起另加應用層核准閘門**(`docs/sql/app_profiles.sql` + `AuthGate`):未登入看不到站內 UI,新帳號需管理員核准。
-   整站能否進入的**資料門鎖仍是 Cloudflare Access**;前端閘門不是 `/data` 安全邊界。Access 退役前不得宣稱 WP-B7 完成。
+   **2026-08-19 起應用層核准閘門**(`docs/sql/app_profiles.sql` + `AuthGate`)+ **`/data` Worker JWT** 才是資料門鎖。
+   Cloudflare Access 為過渡雙鎖,確認 Worker 401 後關閉,不再當唯一門鎖。
 3. **R2 不是資料庫引擎**:不能直接對 R2 裡的 `radar.db` 執行 SQLite SQL。
    R2 只存完整 SQLite 快照、未來拆出的 `branch_hist.db`、manifest/checksum 或靜態檔。
 4. **短期不取代 Actions cache**:日常熱 DB 仍走 Actions cache;cache miss 仍先保留現有

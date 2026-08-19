@@ -119,6 +119,28 @@ cd cloudflare-data-worker
 npx wrangler deploy           # 資產內容 hash 去重,只上傳變動檔
 ```
 
+### WP-B7 資料門鎖(2026-08-19)
+
+`/data` Worker 必須驗身分。首次上線順序:**先 secret、再 deploy**,否則盤中 worker 會 401。
+
+```bash
+cd ~/trever-radar
+git pull --ff-only
+cd cloudflare-data-worker
+openssl rand -hex 32
+npx wrangler secret put RADAR_SERVICE_KEY   # 貼上同一把
+# 同一把寫進 pipeline/intraday/.env → RADAR_SERVICE_KEY=
+npx wrangler deploy                         # 只在本機有完整 web/public/data 時
+```
+
+驗收(Access 還在時,用既有 Access service token 穿過 Access 再看 Worker):
+
+1. 無 `X-Radar-Service-Key`、無 Bearer → **401** JSON(`login required`),不是榜單。
+2. 帶正確 `X-Radar-Service-Key` → 200。
+3. 確認 401 後,才在 Cloudflare Zero Trust 關閉 Access Application。
+
+不要在本機(開發機)wrangler deploy,會用空/不全的 JSON 覆蓋正式資產。
+
 驗收兩測(缺一不可,docs/31 §3.2):
 
 1. 已登入 Access 的瀏覽器開 `https://radar.techtrever.com/data-preview/radar.json` → 回 JSON。

@@ -73,12 +73,12 @@
 3. V1 不做盤中;V2 盤中 worker 常駐雲端伺服器仍不做,但 2026-07-12 改定案跑在使用者 VPS(docker+cron,非本機、非常駐服務,平日 08:50 啟動 13:35 自動收工),取代原「使用者本機」規劃(docs/24、`docs/vps_backfill_plan.md` Step 5)。
 4. W 底/頸線型態辨識不做,用「N 日新高/箱型上緣突破」替代。
 5. 權證分點僅抓上市權證熱門標的龍頭權證;上櫃權證無免費來源,不硬做。
-6. 前端無伺服器程式碼;登入交給 Cloudflare Access(2026-07-07 曾決定先不開、網站暫公開;**2026-07-13 已正式開啟鎖站**,設定紀錄見 `docs/21` §4 A3)。
+6. 前端無伺服器程式碼;登入 = 站內 Google OAuth + `app_profiles` 核准,資料門鎖 = `/data` Worker 驗 JWT(2026-08-19 WP-B7)。Cloudflare Access 為過渡雙鎖,確認 Worker 401 後關閉(歷史設定見 `docs/21` §4 A3)。
 7. SQLite 為唯一真相;JSON 是產出物,可隨時重建。
 8. 首頁「綜合」榜使用 `daily_scores.final`;分點分/權證分/技術分/法人融資分已接入,題材分暫為 NULL 並自動重分配權重。
 9. 技術指標與績效回填必須用還原價:`adj_price = price * adj_factor`;`adj_factor` 由 `python -m radar compute-adjustments --ids/--top/--all` 補,尚未全市場自動排程。
 10. 2026-07-10 使用者確認 B 方案(`docs/20`):S1-S13 最終應為不影響分數的策略 tag,以績效決定 Active/Retired;`/explore` 內容併回首頁與 `/branch`,不再擴張原剩餘 tab。實作與正式重算分階段另行確認。
-11. 2026-07-10 使用者確認 A 私人測試版(`docs/21`):Cloudflare Access 整站白名單;Supabase 只做個人化。(R2 部分已被取捨 16 取代)
+11. 2026-07-10 使用者確認 A 私人測試版(`docs/21`):邀請制、無公開註冊。門禁 2026-08-19 改站內登入 + Worker JWT;Access 待關閉。R2 已被取捨 16 取代。
 12. 2026-07-10 使用者確認 Armed 追蹤規劃(`docs/22`):用狀態池(未發動/已發動)重用 S12/W3/B3,不新增策略、不抬綜合分、不新開一級路由;實作排在 Access + B Phase 1–3 之後。
 13. 2026-07-10 使用者確認功能·視覺 backlog(`docs/23`):V1–V3 視覺優化與 F1–F4 低成本功能;不得插隊 Access/B/Armed,不得引入 ui-ux-pro-max 搜尋結果中的新配色/Inter 全站字體。
 14. 2026-07-11 使用者確認將任務導向 UI 規劃寫入 `docs/25`:前端以「掃描→判讀→追蹤」重整首頁/個股/分點/自選;規劃落檔不等於程式已授權,每次只確認一個 IA Phase,不藉 UI 重排改評分/JSON 語意或提前實作 Armed。

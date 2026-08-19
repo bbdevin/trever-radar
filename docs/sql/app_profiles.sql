@@ -6,7 +6,8 @@
 --   1. 既有 auth.users(已登入過 Google)一律視為已核准。
 --   2. a7033140327k@gmail.com 設為管理員(已存在或之後首次登入皆生效)。
 --   3. 之後新登入者預設 pending,需管理員在站內 /admin 核准。
--- 本輪不拆除 Cloudflare Access;Worker JWT 驗簽仍屬後續獨立步驟。
+-- 本輪起 `/data` Worker 會查本表 status=approved 才回 JSON。
+-- Cloudflare Access 待 VPS deploy 驗證 401 後由使用者關閉。
 
 create table if not exists public.app_profiles (
   user_id uuid primary key references auth.users(id) on delete cascade,

@@ -6,11 +6,28 @@
 
 ## 邊界(不得破壞)
 
-- **Phase 1 本 worker 不做身分驗證**:門禁由 Cloudflare Access 負責(整站鎖,含 /data)。
-  登入統一(Supabase JWT 白名單)是 docs/31 WP-B7 的事,需資安審查後另行實作。
+- **2026-08-19 WP-B7:本 worker 必須驗身分**,未通過一律 401/403,不得回 JSON。通過條件二擇一:
+  1. `X-Radar-Service-Key` 對上 wrangler secret `RADAR_SERVICE_KEY`(盤中 worker)
+  2. `Authorization: Bearer <Supabase JWT>`,且 `app_profiles.status = approved`
 - **DB 快照永不進資產**:資產目錄 = `web/public/data`(export-json 產物,只有 JSON);
   DB 備份只走 Google Drive(docs/31 §4),不得為了方便把 `.db`/`.db.gz` 放進資產目錄。
-- `/data-preview/*` 是 WP-B2 影子驗證通道,與 `/data/*` 讀同一份資產;cutover 後保留無妨。
+- `/data-preview/*` 是 WP-B2 影子驗證通道,與 `/data/*` 讀同一份資產;cutover 後保留無妨,同樣要驗身分。
+- **不要在本機 wrangler deploy**:本機 `web/public/data` 通常不完整,會覆蓋正式資產。只在 VPS 有完整 export 產物時 deploy。
+
+## 一次性密鑰(先 secret、再 deploy)
+
+Worker 程式上線後若還沒設 `RADAR_SERVICE_KEY`,盤中 worker 會立刻 401。順序必須是:
+
+```bash
+cd ~/trever-radar/cloudflare-data-worker
+openssl rand -hex 32   # 複製輸出
+npx wrangler secret put RADAR_SERVICE_KEY   # 貼上同一把
+# 同一把寫進 ~/trever-radar/pipeline/intraday/.env 的 RADAR_SERVICE_KEY=
+git pull   # 含本 worker 驗身分程式
+npx wrangler deploy    # 必須在 web/public/data 已有完整 JSON 的 VPS 上
+```
+
+公開級 `SUPABASE_URL` / `SUPABASE_PUBLISHABLE_KEY` 已在 `wrangler.toml` `[vars]`(與前端相同,僅能配合 RLS)。
 
 ## 部署(VPS,每輪資料更新自動執行)
 
@@ -29,22 +46,28 @@ npx wrangler deploy   # 讀 ../web/public/data;內容 hash 去重,只上傳變�
 
 首次 deploy 必須在「資產目錄有完整 export 產物」的機器上跑(= VPS),否則目錄不存在會失敗。
 
-cutover(docs/31 WP-B3)時:解除 `wrangler.toml` 內 `/data/*` 路由的註解,再 deploy 一次。
+## 驗收(關 Access 之前必過)
 
-## 驗收
+Access 還在時,裸 curl 會先被 Access 302,測不到 Worker 401。請用既有 Access service token 穿過 Access,再看 Worker 回應:
 
 ```bash
-# 影子期(WP-B2):
-# 1) 未登入(無 Access session)必須被擋(302 到 Access 登入頁,不是 JSON):
-curl -sI https://radar.techtrever.com/data-preview/radar.json | head -3
-# 2) 瀏覽器登入 Access 後開同一網址,應看到 JSON 且 freshness 為 VPS 影子輪產出。
+# 無 JWT、無 service key → 必須 401 JSON(login required),不是榜單
+curl -sS -D - -o - \
+  -H "CF-Access-Client-Id: $CF_ACCESS_CLIENT_ID" \
+  -H "CF-Access-Client-Secret: $CF_ACCESS_CLIENT_SECRET" \
+  https://radar.techtrever.com/data/radar.json | head -20
 
-# cutover 後(WP-B3):同樣兩測換成 /data/radar.json;另驗 304:
-curl -sI -H "Cookie: <Access session>" https://radar.techtrever.com/data/radar.json
-# 第二次帶 If-None-Match 應回 304。
+# 帶 service key → 200 JSON
+curl -sS -o /dev/null -w "%{http_code}\n" \
+  -H "CF-Access-Client-Id: $CF_ACCESS_CLIENT_ID" \
+  -H "CF-Access-Client-Secret: $CF_ACCESS_CLIENT_SECRET" \
+  -H "X-Radar-Service-Key: $RADAR_SERVICE_KEY" \
+  https://radar.techtrever.com/data/radar.json
 ```
 
-任何一測不符 → 停止切換,回報使用者(docs/31 §7 風險表 B0/B3 列)。
+確認 401 後才可在 Cloudflare Zero Trust 關閉 Access Application。關閉後裸 curl 應直接 401,不再 302。
+
+任何一測不符 → **不要關 Access**,回報使用者(docs/31 §7 風險表 B7 列)。
 
 ## 平台限制(現況遠低於上限)
 
@@ -52,5 +75,5 @@ curl -sI -H "Cookie: <Access session>" https://radar.techtrever.com/data/radar.j
 
 ## 快取策略
 
-`radar.json`/`meta.json` = `no-store`(榜單必須即時);其餘檔案 `max-age=300`。
-調整常數在 `src/index.js` 頂部。
+`radar.json`/`meta.json` = `private, no-store`;其餘檔案 `private, max-age=60`。
+身分相關回應不可進共享快取。調整常數在 `src/index.js` 頂部。

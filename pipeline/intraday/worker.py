@@ -17,9 +17,10 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
 # radar.json 改為 HTTP 抓取(雲端解耦:worker 只需自身 + .env 即可獨立部署,
 # 不再依賴 repo 內的 web/public/data/radar.json 實體檔)。
-RADAR_JSON_URL = os.getenv("RADAR_JSON_URL", "https://trever-radar.pages.dev/data/radar.json")
-# Cloudflare Access 服務權杖(預留):docs/21 Access 上線後 /data/radar.json 會被保護,
-# 屆時於 .env 補上這兩把 token,worker 會自動夾帶 header 穿透 Access;未設則以公開方式抓取。
+RADAR_JSON_URL = os.getenv("RADAR_JSON_URL", "https://radar.techtrever.com/data/radar.json")
+# WP-B7:Worker 驗 X-Radar-Service-Key(取代 Access 作為 /data 門鎖)。
+# Access 尚未關閉前,仍可同時帶 CF_ACCESS_* 穿透 Access;關閉後只靠 RADAR_SERVICE_KEY。
+RADAR_SERVICE_KEY = os.getenv("RADAR_SERVICE_KEY")
 CF_ACCESS_CLIENT_ID = os.getenv("CF_ACCESS_CLIENT_ID")
 CF_ACCESS_CLIENT_SECRET = os.getenv("CF_ACCESS_CLIENT_SECRET")
 
@@ -78,10 +79,14 @@ def evaluate_signals(state: dict, price: float, qty: int, now: datetime) -> list
 
 
 def _build_radar_headers():
-    """組出抓 radar.json 用的 headers;若 .env 提供 Cloudflare Access token 則一併夾帶。"""
+    """組出抓 radar.json 用的 headers。
+
+    必帶 X-Radar-Service-Key(WP-B7 Worker 門鎖)。Access 過渡期可同時夾帶 CF_ACCESS_*。
+    """
     headers = {"User-Agent": HTTP_USER_AGENT}
+    if RADAR_SERVICE_KEY:
+        headers["X-Radar-Service-Key"] = RADAR_SERVICE_KEY
     if CF_ACCESS_CLIENT_ID and CF_ACCESS_CLIENT_SECRET:
-        # docs/21 Cloudflare Access 上線後穿透 /data/radar.json 保護用
         headers["CF-Access-Client-Id"] = CF_ACCESS_CLIENT_ID
         headers["CF-Access-Client-Secret"] = CF_ACCESS_CLIENT_SECRET
     return headers
@@ -97,11 +102,11 @@ def fetch_radar_data():
     for attempt in range(1, HTTP_RETRIES + 1):
         try:
             resp = requests.get(RADAR_JSON_URL, headers=headers, timeout=HTTP_TIMEOUT)
-            if resp.status_code == 403:
-                # Access 保護生效但未帶 / 帶錯 service token
+            if resp.status_code in (401, 403):
                 raise RuntimeError(
-                    f"403 Forbidden from {RADAR_JSON_URL} — 若 Cloudflare Access (docs/21) 已上線,"
-                    "請於 .env 設定正確的 CF_ACCESS_CLIENT_ID / CF_ACCESS_CLIENT_SECRET"
+                    f"{resp.status_code} from {RADAR_JSON_URL} — 請於 .env 設定正確的 "
+                    "RADAR_SERVICE_KEY(與 wrangler secret 同一把);"
+                    "若 Cloudflare Access 尚未關閉,另需 CF_ACCESS_CLIENT_ID / CF_ACCESS_CLIENT_SECRET"
                 )
             resp.raise_for_status()
             return resp.json()
@@ -128,9 +133,9 @@ def load_armed_list():
             return
         logger.error(
             "首次抓取 radar.json 即失敗,無法取得 Armed 名單。"
-            f" 請確認 RADAR_JSON_URL ({RADAR_JSON_URL}) 可連線;"
-            " 若 Cloudflare Access (docs/21) 已上線,請檢查 .env 的 "
-            "CF_ACCESS_CLIENT_ID / CF_ACCESS_CLIENT_SECRET 是否正確。"
+            f" 請確認 RADAR_JSON_URL ({RADAR_JSON_URL}) 可連線,"
+            " 以及 .env 的 RADAR_SERVICE_KEY 與 wrangler secret 一致;"
+            " 若 Access 尚未關閉,另檢查 CF_ACCESS_CLIENT_ID / CF_ACCESS_CLIENT_SECRET。"
         )
         raise SystemExit(1)
 
