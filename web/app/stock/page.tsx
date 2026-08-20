@@ -165,12 +165,12 @@ function StockView() {
             [
               { key: "chart" as const, label: "K線" },
               { key: "chips" as const, label: "籌碼日報" },
-              { key: "insti" as const, label: "法人" },
+              { key: "insti" as const, label: "三大法人" },
               { key: "tech" as const, label: "技術" },
               { key: "warrant" as const, label: "權證" },
             ] as const
           ).map((t) => (
-            <button
+          <button
               key={t.key}
               type="button"
               role="tab"
