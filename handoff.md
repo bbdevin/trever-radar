@@ -1,22 +1,21 @@
 ## Handoff
 
-- **Current Goal**: IA-5b（法人/技術 tab、手機 K 線放大、買方賣方對半切）已落地,等實機掃讀。
+- **Current Goal**: 三大法人買賣超 tab 已對齊截圖版面,等實機掃讀。
 - **Current Branch**: `main`
 - **Workflow(2026-08-19)**:規劃 → Grok 4.6 High；執行 → Auto agent；完成 → 更新 md + commit + push（見 `AGENTS.md`、`docs/17` Workflow D）
 - **Current Agent**: Cursor
 - **Work Completed（本次）**:
-  - 個股一級分頁：`K線 | 籌碼日報 | 法人 | 技術 | 權證`
-  - K 線 tab 不再堆技術卡；手機圖高 `clamp(440px,68vh,640px)`
-  - 既有 `InstiPanel` 掛上法人 tab
-  - 買方/賣方改全寬左右對半切（籌碼日報 + 分點追蹤）
+  - 個股一級分頁：`K線 | 籌碼日報 | 三大法人 | 技術 | 權證`
+  - `InstiPanel`：外資/投信/自營商/三大法人全寬次切 → 買賣超柱+股價線 → 日表（比照截圖）
+  - 買方/賣方全寬對半切；手機 K 線放大
 - **Known Issues**:
   - **`import-geo` 等回補結束**:兩筆回補跑完前不要手動寫 DB。
-  - `insti_history` 需 VPS 已跑過含該欄的 `export-json`；缺資料時法人 tab 仍顯示分數/理由與誠實空狀態。
+  - `insti_history` 需 VPS 下次 `export-json` 後正式站才有完整日表。
 - **Not Yet Done**:
   - **docs/27 G3** 庫藏股
   - **docs/22** Quiet/Extended/Faded
 - **Next Suggested Actions**:
-  1. 手機：個股 → K線確認圖變大 → 法人/技術/籌碼日報對半切。
+  1. 手機：個股 → 三大法人，對照截圖看次切/圖/表。
   2. 回補結束 → `import-geo` + `export-json` + deploy。
 - **Files That Should Not Be Modified**:
   - Header 品牌 mark / `trever-radar-mark.svg`
