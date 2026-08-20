@@ -48,7 +48,7 @@ function StockChips({ items }: { items: { id: string; name: string; chg_pct: num
 }
 
 /** vs20 量能徽章:文字自帶 +/-,顏色不作唯一訊號 */
-function Vs20Badge({ vs20 }: { vs20: number | null }) {
+export function Vs20Badge({ vs20 }: { vs20: number | null }) {
   const d = dev({ vs20 });
   return (
     <span

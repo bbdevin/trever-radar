@@ -8,8 +8,9 @@ import { Skeleton } from "@/components/ui/skeleton";
 import MoneyFlow from "@/components/MoneyFlow";
 import StockCard from "@/components/StockCard";
 import IntradayPanel from "@/components/IntradayPanel";
+import ThemeGroupedList from "@/components/ThemeGroupedList";
 import { useSession, signInWithGoogle } from "@/lib/useSession";
-import { cn } from "@/lib/utils";
+import { cn, pillTabClass } from "@/lib/utils";
 import { dataFetch } from "@/lib/dataFetch";
 import type { ListKey, MetaJson, RadarJson, StrategyMeta } from "@/lib/types";
 import { SOURCE_LABEL, fmtE8 } from "@/lib/format";
@@ -64,6 +65,10 @@ const STRATEGY_BY_KEY: Record<string, (typeof STRATEGIES)[number]> = Object.from
   STRATEGIES.map((s) => [s.key, s]),
 );
 
+const THEME_SORT_TABS = new Set<TabKey>(["score", "scan"]);
+const LS_LIST_SORT = "trever.home.listSort.v1";
+type ListSort = "score" | "theme";
+
 function LoadingSkeleton() {
   return (
     <>
@@ -92,7 +97,26 @@ export default function RadarPage() {
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(() => new Set(["chips"]));
   const strategyDefaulted = useRef(false);
   const [moneyFlowOpen, setMoneyFlowOpen] = useState(false);
+  const [listSort, setListSort] = useState<ListSort>("score");
   const { session, loading } = useSession();
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(LS_LIST_SORT);
+      if (raw === "theme" || raw === "score") setListSort(raw);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  const setListSortPersist = (next: ListSort) => {
+    setListSort(next);
+    try {
+      localStorage.setItem(LS_LIST_SORT, next);
+    } catch {
+      /* ignore */
+    }
+  };
 
   // F4.2: 預設選中「籌碼事件」組第一個有檔數的策略(都無檔數則 S11);radar 載入後套一次,不覆寫使用者選擇。
   useEffect(() => {
@@ -407,11 +431,43 @@ export default function RadarPage() {
             : "今日此榜無符合條件的標的，或該類資料尚未更新。稍後回來再看，系統會依交易所公佈時間分批更新。"}
         </div>
       ) : (
-        <div className="grid grid-cols-1 gap-2.5 pb-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-          {shown.map((s, i) => (
-            <StockCard key={s.id} s={s} index={i} />
-          ))}
-        </div>
+        <>
+          {THEME_SORT_TABS.has(tab) && (
+            <div className="mb-2.5 flex flex-wrap items-center gap-2">
+              <span className="text-[12px] text-muted-foreground">{"排序"}</span>
+              <div role="tablist" className="flex gap-0.5 rounded-full border border-border bg-card p-[3px]">
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={listSort === "score"}
+                  className={cn("min-h-11", pillTabClass(listSort === "score"))}
+                  onClick={() => setListSortPersist("score")}
+                >
+                  {"分數"}
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={listSort === "theme"}
+                  className={cn("min-h-11", pillTabClass(listSort === "theme"))}
+                  onClick={() => setListSortPersist("theme")}
+                  title={radar.themes?.length ? "依當日最熱題材分組,一檔只出現一次" : "今日無題材資金流,維持原排序"}
+                >
+                  {"題材"}
+                </button>
+              </div>
+            </div>
+          )}
+          {THEME_SORT_TABS.has(tab) && listSort === "theme" ? (
+            <ThemeGroupedList stocks={shown} themes={radar.themes} />
+          ) : (
+            <div className="grid grid-cols-1 gap-2.5 pb-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+              {shown.map((s, i) => (
+                <StockCard key={s.id} s={s} index={i} />
+              ))}
+            </div>
+          )}
+        </>
       )}
 
       {/* Context: MoneyFlow collapsible */}
