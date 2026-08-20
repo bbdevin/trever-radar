@@ -15,6 +15,7 @@ from sqlalchemy import bindparam, text
 from .. import config
 from ..db import get_engine, init_db
 from .spark_day import attach_spark_day
+from ..pocket import apply_pocket
 from ..compute.strategy_performance import (
     compute_strategy_performance_from_events,
     fetch_strategy_events,
@@ -478,6 +479,22 @@ def export_json(out_dir: Path | None = None) -> dict:
             for r in conc_rows
         ), key=lambda x: x["vs20"], reverse=True)[:40]
 
+        # docs/27 G2:地緣/關鍵/題材 tag + 口袋名單(僅排序,不進 daily_scores.final)
+        pocket_ids = apply_pocket(
+            conn, all_stocks, dates, themes,
+            {r["id"] for r in concentration},
+        )
+        for sid in pocket_ids:
+            s = by_id.get(sid)
+            if s is None:
+                continue
+            if sid not in union:
+                union[sid] = s
+                s["spark"] = [row[0] for row in conn.execute(text(
+                    "SELECT close FROM (SELECT close, date FROM daily_prices "
+                    "WHERE stock_id = :s AND close IS NOT NULL AND date <= :d "
+                    "ORDER BY date DESC LIMIT 30) ORDER BY date"), {"s": sid, "d": d})]
+
         summary = conn.execute(text("""
             SELECT s.market,
                    SUM(p.turnover),
@@ -540,6 +557,7 @@ def export_json(out_dir: Path | None = None) -> dict:
         "generated_at": now,
         "freshness": freshness,
         "note": "綜合分=分點/權證/技術/法人/題材加權−風險扣分;≥65 為觀察門檻",
+        "pocket_note": "地緣/關鍵僅涵蓋每日評分池(有分點前15大);tag 不進綜合分",
         "summary_text": _build_summary_text(),
         "summary": [
             {"market": m, "turnover": t, "up": up, "down": down}
@@ -557,6 +575,7 @@ def export_json(out_dir: Path | None = None) -> dict:
             "warrant": [s["id"] for s in warrant],
             "armed": [s["id"] for s in all_stocks if s.get("state") == "armed"],
             "triggered": [s["id"] for s in all_stocks if s.get("state") == "triggered"],
+            "pocket": pocket_ids,
         },
         "strategies": {code: [s["id"] for s in st_list] for code, st_list in strategies_lists.items()},
         "strategy_meta": _build_strategy_meta(),
@@ -665,6 +684,8 @@ def export_json(out_dir: Path | None = None) -> dict:
                 "scores": s["scores"],
                 "reasons": s.get("reasons", []),
                 "raw_reasons": s.get("raw_reasons", []),
+                "pocket_tags": s.get("pocket_tags", []),
+                "pocket_score": s.get("pocket_score") or 0,
                 "risks": s.get("risks", []),
                 "branches": [
                     {"name": r[0], "buy": r[1] or 0, "sell": r[2] or 0,

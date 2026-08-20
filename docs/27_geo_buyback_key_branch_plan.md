@@ -51,7 +51,7 @@
 |---|---|---|---|
 | G0 PoC | 三個資料端點實測(欄位/頻率/授權)、分點名稱↔官方分公司**匹配率報告**、雙北噪音統計 | 無,**隨時可做** | 半天 |
 | G1 資料層 | ✅ **完成 2026-08-20**:`company_profiles` + `broker_branch_geo` + `import-geo`(週一 14:10);庫藏股無 OpenAPI,**buybacks 延後**不阻塞 GEO | G0 | 1 天 |
-| G2 地緣+關鍵+題材演算法 | 純函式(geo 圈判定/觸發/強度、K1、H1)+ 單元測試 + export tags | G1;**地緣涵蓋度依賴每日分點池廣度**(500 檔池偏熱門股;docs/26 WP-M2 全市場池後中小型股地緣才完整——先做可用,標注涵蓋限制) | 1.5 天 |
+| G2 地緣+關鍵+題材演算法 | ✅ **完成 2026-08-20**:`pipeline/radar/pocket.py` 純函式 + export `pocket_tags`/`lists.pocket`(不進 `daily_scores.final`);G4 才做首頁 tab | G1;**地緣涵蓋度依賴每日分點池廣度**(500 檔池偏熱門股;docs/26 WP-M2 全市場池後中小型股地緣才完整——先做可用,標注涵蓋限制) | 1.5 天 |
 | G3 庫藏股演算法 | KB1/KB2 純函式 + 測試 + export | G1 | 1 天 |
 | G4 口袋名單 UI | 首頁 tab + badges + 個股頁摘要併入 + /branch 徽章 | G2(G3 可後補) | 1.5 天 |
 
@@ -85,6 +85,14 @@
 - `broker_branch_geo` 以**正規化名稱**為 join key(唯一性 G1 驗證,同名衝突列出人工裁決);總公司/外資自動歸入排除集。
 - `company_profiles` 匯入時做縣市/行政區抽取 + 園區對照 + 台臺正規化;抽取失敗者標 null(fail-safe:不判地緣)。
 - 庫藏股資料源深挖為 G1 first task(找不到穩定免費源則 KB1/KB2 延後,不阻塞 GEO/KEY/THEME)。
+
+## G2 實作備註(2026-08-20)
+
+- **Shadow**:`pocket_tags` / `pocket_score` / `lists.pocket` 只在 export;不寫 `daily_scores`、不改 `final`。
+- **涵蓋**:地緣/關鍵只用已抓到的前 15 大分點(每日評分池);`radar.json.pocket_note` 標明。抽不到縣市或雙北缺行政區 → 不判地緣。
+- **強度 V1**:`strong` = ≥3 家地緣券商且(佔量 ≥1% 或佔前 15 淨買/賣 ≥40%),否則 `weak`。
+- **口袋入榜**:≥2 個 family(GEO/KEY/THEME/ARMED/CONC;BUYBACK 待 G3),`pocket_score` 權重見 §2,最多 40 檔。
+- **不上 UI**:首頁口袋 tab 與 badge 是 G4。
 
 ## 6. Reviewer 必查
 

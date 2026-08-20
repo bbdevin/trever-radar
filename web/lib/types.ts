@@ -68,6 +68,15 @@ export interface ActiveWarrant {
   branches?: BranchRow[]; // 該權證當日前8大分點進出(僅上市權證有來源)
 }
 
+export interface PocketTag {
+  code: string;
+  family: "GEO" | "KEY" | "THEME" | "BUYBACK";
+  text: string;
+  strength?: "weak" | "strong";
+  branches?: string[];
+  themes?: string[];
+}
+
 export interface StockJson {
   id: string;
   name: string;
@@ -76,6 +85,8 @@ export interface StockJson {
   scores: ScoreBreakdown | null;
   reasons: string[];
   raw_reasons?: ReasonItem[]; // 帶 code 的原始理由(JSON 既有);前端用 code 前綴判語意家族色
+  pocket_tags?: PocketTag[]; // docs/27 G2;不進綜合分
+  pocket_score?: number;
   risks: string[];
   technical: TechnicalSummary | null;
   branches: BranchRow[];
@@ -116,7 +127,7 @@ export interface SectorFlow {
   subs?: SectorSubFlow[]; // 產業內成分 ≥2 檔的題材,依金額取前 10;題材模式(themes)無此欄
 }
 
-export type ListKey = "score" | "hot" | "surge" | "strong" | "weak" | "warrant" | "armed" | "triggered";
+export type ListKey = "score" | "hot" | "surge" | "strong" | "weak" | "warrant" | "armed" | "triggered" | "pocket";
 
 export interface ConcentrationRow {
   id: string;
@@ -166,6 +177,9 @@ export interface RadarStock {
   sources?: ("branch" | "warrant")[];
   reasons: string[];
   raw_reasons?: ReasonItem[];
+  pocket_tags?: PocketTag[];
+  pocket_score?: number;
+  pocket_families?: string[];
   risks: string[];
 }
 
@@ -196,6 +210,7 @@ export interface RadarJson {
   themes?: SectorFlow[]; // 概念股資金流(成分重疊)
   concentration?: ConcentrationRow[]; // 集中度躍升榜(探索頁)
   lists: Record<ListKey, string[]>;
+  pocket_note?: string;
   strategies?: Record<string, string[]>;
   strategy_meta?: Record<string, StrategyMeta>;
   stocks: RadarStock[];

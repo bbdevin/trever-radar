@@ -113,6 +113,8 @@ class SectorSubsExportTests(unittest.TestCase):
 
         # 題材模式(themes)不帶 subs
         self.assertTrue(all("subs" not in t for t in radar.get("themes", [])))
+        self.assertIn("pocket", radar["lists"])
+        self.assertEqual(radar["lists"]["pocket"], [])
 
 
 class TrackedBranchHistoryExportTests(unittest.TestCase):
