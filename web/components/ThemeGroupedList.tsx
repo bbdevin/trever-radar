@@ -1,14 +1,32 @@
 "use client";
 
-import { useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { ChevronDown } from "lucide-react";
 import StockCard from "@/components/StockCard";
 import { Vs20Badge } from "@/components/MoneyFlow";
 import type { RadarStock, SectorFlow } from "@/lib/types";
 import { cn } from "@/lib/utils";
-import { groupStocksByHottestTheme, OTHER_THEME } from "@/lib/themeGroups";
+import { groupStocksByHottestTheme, OTHER_THEME, type ThemeStockGroup } from "@/lib/themeGroups";
 
-const OPEN_DEFAULT = 3;
+const OPEN_DEFAULT_MOBILE = 3;
+const MD_QUERY = "(min-width: 768px)";
+
+function useIsMd() {
+  const [isMd, setIsMd] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia(MD_QUERY);
+    const sync = () => setIsMd(mq.matches);
+    sync();
+    mq.addEventListener("change", sync);
+    return () => mq.removeEventListener("change", sync);
+  }, []);
+  return isMd;
+}
+
+function defaultOpen(groups: ThemeStockGroup[], isMd: boolean): Set<string> {
+  const src = isMd ? groups : groups.slice(0, OPEN_DEFAULT_MOBILE);
+  return new Set(src.map((g) => g.name));
+}
 
 export default function ThemeGroupedList({
   stocks,
@@ -17,13 +35,14 @@ export default function ThemeGroupedList({
   stocks: RadarStock[];
   themes: SectorFlow[] | undefined;
 }) {
+  const isMd = useIsMd();
   const groups = groupStocksByHottestTheme(stocks, themes);
-  const groupKey = groups?.map((g) => g.name).join("\0") ?? "";
+  const groupKey = `${isMd ? "md" : "sm"}:${groups?.map((g) => g.name).join("\0") ?? ""}`;
   const [open, setOpen] = useState<Set<string>>(() => new Set());
   const [seenKey, setSeenKey] = useState("");
-  if (groupKey !== seenKey) {
+  if (groups && groupKey !== seenKey) {
     setSeenKey(groupKey);
-    setOpen(new Set(groups?.slice(0, OPEN_DEFAULT).map((g) => g.name) ?? []));
+    setOpen(defaultOpen(groups, isMd));
   }
 
   if (!groups) {
@@ -46,18 +65,18 @@ export default function ThemeGroupedList({
 
   let cardIndex = 0;
   return (
-    <div className="flex flex-col gap-3 pb-4">
+    <div className="grid grid-cols-1 gap-2.5 pb-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
       {groups.map((g) => {
         const isOpen = open.has(g.name);
         const startIndex = cardIndex;
         if (isOpen) cardIndex += g.stocks.length;
         return (
-          <section key={g.name} className="min-w-0">
+          <Fragment key={g.name}>
             <button
               type="button"
               onClick={() => toggle(g.name)}
               aria-expanded={isOpen}
-              className="sticky top-[58px] z-20 flex min-h-11 w-full cursor-pointer items-center gap-2 rounded-[var(--r-md)] border border-border bg-background/92 px-3 py-2 text-left shadow-[var(--shadow-card)] backdrop-blur-md"
+              className="sticky top-[58px] z-20 col-span-full flex min-h-11 cursor-pointer items-center gap-2 rounded-[var(--r-md)] border border-border bg-background/92 px-3 py-2 text-left shadow-[var(--shadow-card)] backdrop-blur-md md:min-h-9 md:py-1.5"
             >
               <ChevronDown
                 size={15}
@@ -75,14 +94,11 @@ export default function ThemeGroupedList({
                 {g.stocks.length}
               </span>
             </button>
-            {isOpen && (
-              <div className="mt-2 grid grid-cols-1 gap-2.5 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                {g.stocks.map((s, i) => (
-                  <StockCard key={s.id} s={s} index={startIndex + i} />
-                ))}
-              </div>
-            )}
-          </section>
+            {isOpen &&
+              g.stocks.map((s, i) => (
+                <StockCard key={s.id} s={s} index={startIndex + i} />
+              ))}
+          </Fragment>
         );
       })}
     </div>
