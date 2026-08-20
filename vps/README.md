@@ -209,7 +209,7 @@ sqlite3 radar.db "PRAGMA integrity_check;"        # ok 才能用
 | `weekly-backup.sh` | 週六 05:00 | (新)checkpoint→integrity_check→gzip→Drive+retention |
 
 共用機制(`lib.sh`):
-- **flock 互斥**:`/tmp/radar-db.lock`,搶不到=跳過本輪+ntfy 通知(防上一輪超時堆疊)。
+- **flock 互斥**:`/tmp/radar-db.lock`,搶不到=跳過本輪+ntfy 通知(防上一輪超時堆疊)。長期歷史回補容器不拿這把鎖(docs/31 §2)。**2026-08-20**:分點/權證分點兩筆回補還在跑時不要手動 `import-geo`(會搶 `radar.db` 寫鎖);等回補結束或下週一 14:10 自動跑。詳 `docs/27`。
 - **開輪 `git pull --ff-only` + docker build**(layer cache,requirements 沒變近零成本)——舊碼算舊 reasons 的既有教訓。
 - **失敗 → ntfy High 告警,成功靜默**(週備份成功發一則 default 摘要)。
 - 非交易日:importer 靠 NoDataError 安全空跑,不手刻假日曆(既有定案)。

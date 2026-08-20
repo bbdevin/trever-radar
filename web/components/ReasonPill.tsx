@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -22,6 +23,8 @@ export function reasonFamily(code?: string | null): ReasonFamily {
   const s = /^S(\d+)/.exec(c);
   if (s) return Number(s[1]) >= 11 ? "chips" : "tech";
   if (/^T\d/.test(c)) return "tech";
+  if (c.startsWith("G1_") || c.startsWith("G2_") || c.startsWith("K1_")) return "chips";
+  if (c.startsWith("H1_") || c.startsWith("KB")) return "warrant";
   return "neutral";
 }
 
@@ -39,18 +42,24 @@ export default function ReasonPill({
   code,
   text,
   risk = false,
+  icon,
+  title,
   className,
 }: {
   code?: string | null;
   text: string;
   /** 呼叫端已知此項為風險(純文字風險列無 code)→ 強制風險家族 */
   risk?: boolean;
+  /** 取代圓點(口袋 badge 用星/火/圖釘;色仍走家族 token) */
+  icon?: ReactNode;
+  title?: string;
   className?: string;
 }) {
   const family = risk ? "risk" : reasonFamily(code);
   const f = FAMILY[family];
   return (
     <span
+      title={title}
       className={cn(
         "inline-flex min-w-0 items-center gap-1 rounded-full px-2 py-[3px] text-[11.5px] font-medium leading-[1.35]",
         f.pill,
@@ -59,6 +68,10 @@ export default function ReasonPill({
     >
       {family === "risk" ? (
         <AlertTriangle aria-hidden className="h-3 w-3 shrink-0" />
+      ) : icon ? (
+        <span aria-hidden className="inline-flex h-3 w-3 shrink-0 items-center justify-center [&_svg]:h-3 [&_svg]:w-3">
+          {icon}
+        </span>
       ) : (
         <span aria-hidden className={cn("h-1.5 w-1.5 shrink-0 rounded-full", f.dot)} />
       )}

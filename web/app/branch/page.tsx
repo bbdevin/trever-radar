@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Search, Info, TrendingUp, TrendingDown, Building2, User } from "lucide-react";
+import { Search, Info, TrendingUp, TrendingDown, Building2, User, Star } from "lucide-react";
 import { IconFlame, IconTrend, IconZap } from "@/components/Icons";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -80,6 +80,15 @@ function RankCard({ r, trackable, active }: { r: Ranking; trackable?: boolean; a
           {trackable && <span aria-hidden className="text-muted-foreground">›</span>}
         </h3>
         <div className="flex items-center gap-1.5">
+          {(r.rank_score >= 70 || r.source === "manual") && (
+            <span
+              title="關鍵分點:手動種子或可信度分數 ≥70"
+              className="inline-flex items-center gap-0.5 rounded-md bg-[color:var(--accent-2)]/12 px-1.5 py-0.5 text-[10.5px] font-bold text-[color:var(--accent-2)]"
+            >
+              <Star className="h-3 w-3" strokeWidth={1.8} />
+              {"關鍵"}
+            </span>
+          )}
           <span className={cn("rounded-md px-1.5 py-0.5 text-[10.5px] font-bold", badge.cls)}>{badge.label}</span>
           {r.is_daytrade === 1 && <span className="rounded-md bg-down/10 px-2 py-0.5 text-[11.5px] font-bold text-down">隔日沖</span>}
         </div>

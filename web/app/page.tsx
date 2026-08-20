@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useMemo, useRef } from "react";
-import { Clock, Search, TrendingUp, TrendingDown, Star, Sparkles, ShieldCheck, Zap, ChevronDown } from "lucide-react";
+import { Clock, Search, TrendingUp, TrendingDown, Star, Sparkles, ShieldCheck, Zap, ChevronDown, Briefcase } from "lucide-react";
 import { IconFlame, IconTrend, IconZap, IconRadar, IconPulse, IconStar, IconTrendDown } from "@/components/Icons";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -16,7 +16,7 @@ import type { ListKey, MetaJson, RadarJson, StrategyMeta } from "@/lib/types";
 import { SOURCE_LABEL, fmtE8 } from "@/lib/format";
 
 // TabKey for the 4 main task-oriented tabs
-type TabKey = "score" | "armed" | "triggered" | "scan" | "mark" | "warrant";
+type TabKey = "score" | "armed" | "triggered" | "pocket" | "scan" | "mark" | "warrant";
 
 // Scan modes within the "scan" tab
 type ScanModeKey = "hot" | "surge" | "strong" | "weak";
@@ -25,6 +25,7 @@ const TABS: { key: TabKey; label: string; hint: string; icon: any }[] = [
   { key: "score", label: "綜合", hint: "盤後綜合分數:分點/權證/技術/法人加權−風險扣分,≥65 為觀察門檻", icon: IconRadar },
   { key: "armed", label: "未發動", hint: "分點/權證籌碼異常進駐，且股價尚未表態", icon: ShieldCheck },
   { key: "triggered", label: "已發動", hint: "分點/權證籌碼進駐，且今日放量突破或創高", icon: Zap },
+  { key: "pocket", label: "口袋", hint: "地緣/關鍵分點/熱門題材疊加(≥2 理由);不進綜合分,僅排序", icon: Briefcase },
   { key: "scan", label: "市場掃描", hint: "多維度市場量價特徵掃描 (熱門/爆量/強勢/弱勢)", icon: IconZap },
   { key: "mark", label: "策略", hint: "進階量化選股，涵蓋技術面與籌碼面等多種策略", icon: IconStar },
   { key: "warrant", label: "權證", hint: "認購權證成交金額相對20日均值放大", icon: IconPulse },
@@ -65,7 +66,7 @@ const STRATEGY_BY_KEY: Record<string, (typeof STRATEGIES)[number]> = Object.from
   STRATEGIES.map((s) => [s.key, s]),
 );
 
-const THEME_SORT_TABS = new Set<TabKey>(["score", "scan"]);
+const THEME_SORT_TABS = new Set<TabKey>(["score", "scan", "pocket"]);
 const LS_LIST_SORT = "trever.home.listSort.v1";
 type ListSort = "score" | "theme";
 
@@ -426,12 +427,21 @@ export default function RadarPage() {
         </div>
       ) : shown.length === 0 ? (
         <div className="mx-auto max-w-md py-[46px] text-center text-sm leading-relaxed text-muted-foreground">
-          {tab === "score" || tab === "mark"
+          {tab === "pocket"
+            ? (radar.pocket_note
+              ?? "口袋名單要至少兩個獨立理由(地緣/關鍵分點/題材/未發動或集中度)才入榜。地緣目前僅涵蓋每日評分池,且要等公司住址匯入後才會出現。")
+            : tab === "score" || tab === "mark"
             ? "今日無達門檻的標的。寧缺勿濫是一大設計原則——沒有符合條件時不硬湊，也可能是盤後分點尚未更新。"
             : "今日此榜無符合條件的標的，或該類資料尚未更新。稍後回來再看，系統會依交易所公佈時間分批更新。"}
         </div>
       ) : (
         <>
+          {tab === "pocket" && radar.pocket_note && (
+            <p className="mb-2 text-[12px] leading-relaxed text-muted-foreground">
+              {radar.pocket_note}
+              {"。地緣為統計推測；分點≠單一人。"}
+            </p>
+          )}
           {THEME_SORT_TABS.has(tab) && (
             <div className="mb-2.5 flex flex-wrap items-center gap-2">
               <span className="text-[12px] text-muted-foreground">{"排序"}</span>

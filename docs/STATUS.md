@@ -84,7 +84,7 @@
 6. ~~R2 R0-R2(`docs/21`)~~ **2026-07-15 作廢**:R2 啟用需綁信用卡,不採用;快照職責改 Google Drive、還原演練併入 `docs/31` WP-B4。
 7. **B 方案 Phase 4—排程簡化提案**(`docs/20`,獨立高風險任務):保留資料取得時點,評估完整 build/deploy 由每日最多 5 次降為 14:10/22:10 兩次;不得在未完整審查 WAL/cache/release 鏈前修改 workflow。
   5b. **首頁掃讀體驗+個股頁資訊架構統一**(docs/28,2026-07-12 規劃定案):WP-H2 語意色彩層次(已完成 2026-07-12)→ **WP-H4 個股頁分點統一(2026-07-12 完成,commit 83649ae)**→ **WP-H1 題材分組(2026-08-20 完成)**:綜合/市場掃描可切「分數|題材」,一檔只歸當日最熱題材、sticky header;桌機與分數榜同 2/3/4 欄且預設全開,手機前 3 組展開→ **WP-H3 卡片走勢改當日分時(2026-08-20 完成)**:Fugle 1 分 K → `spark_day`/`spark_open`,缺資料標「30日」→ **WP-H5 手機版(2026-07-12 完成)**。**docs/28 已全部完成**。
-6a. **地緣券商+庫藏股分點+關鍵分點同買 → 口袋名單**(`docs/27`,2026-07-12 規劃定案):~~G0 資料 PoC~~ **2026-07-12 完成**;~~**G1 資料層 2026-08-20 完成**~~;~~**G2 演算法+export tags 2026-08-20 完成**~~(`pocket.py`:`G1_GEO_BUY`/`G2_GEO_SELL`/`K1_KEY_BUY`/`H1_HOT_THEME`,`lists.pocket` 排序用、不進綜合分)。**剩餘 G3(庫藏股,無 OpenAPI 可繼續延後)、G4(口袋 UI)**。地緣涵蓋度在 7a 全市場每日池後才完整;GEO tag 要等 `import-geo` 有列(週一 14:10 或 VPS 手動)。
+6a. **地緣券商+庫藏股分點+關鍵分點同買 → 口袋名單**(`docs/27`):~~G0~~ / ~~G1~~ / ~~G2~~ / ~~**G4 口袋 UI 2026-08-20 完成**~~(首頁「口袋」tab + badges + 個股頁摘要 + `/branch` 關鍵徽章)。**剩餘 G3 庫藏股**(無 OpenAPI,可繼續延後)。**`import-geo` 等兩筆回補結束再跑**(或下週一 14:10);回補進行中不要手動寫 DB。地緣涵蓋度在 7a 全市場每日池後才完整。
 7a. **全市場擴容**(`docs/26`,2026-07-12 使用者定案「有幾檔抓幾檔」):WP-M1 個股 JSON 池全市場 → ~~WP-M3 branch_hist.db 拆分~~(**2026-07-15 因 B 案取消**,見 docs/31 §9)→ WP-M2 一輪制與 WP-M4 全市場 march-back 併入 `docs/31` WP-B6,於 cutover 後執行。
 8. ~~deep-backfill --all~~ **執行狀態需另行查證**:完成與否不得只信本檔舊紀錄;若需 `task=adjust` 或 VPS 回灌,先依 `vps_backfill_plan.md` 與高風險流程確認。
 9. **分點排行資料累積**:可信度排行榜已完成,統計效力需 2–3 個月。地緣/關鍵分點人工名單、五年分點擴容、LINE Bot 依 B 方案延後;~~V2 盤中延後~~ 盤中已依 `docs/24` 重新規劃排入(見 4a)。
@@ -109,6 +109,8 @@
 
 ## 最近完成
 
+- 2026-08-20 **docs/27 G4 口袋名單 UI**:首頁「口袋」tab、卡片/個股頁 reason badges、`/branch` 關鍵分點徽章;不進綜合分、零新色票。
+- 2026-08-20 **VPS:`import-geo` 等回補結束**:分點+權證分點兩筆回補還在跑,不要手動 import-geo(搶寫鎖)。回補完再跑,或等下週一 14:10。落檔 `docs/27`、`vps/README.md`、handoff。
 - 2026-08-20 **docs/27 G2 地緣/關鍵/題材 tag**:export `pocket_tags`+`lists.pocket`(≥2 family 才入榜),不進綜合分、不做口袋 tab。GEO 要等 `import-geo`;KEY/THEME 下一次 `export-json` 即可。
 - 2026-08-20 **docs/27 G1 地緣資料層**:`company_profiles` + `broker_branch_geo`;`python -m radar import-geo`;週一 14:10 更新。庫藏股無 OpenAPI,buybacks 延後。不進綜合分。
 - 2026-08-20 **WP-H3 卡片當日分時**:export-json 用 `FUGLE_API_KEY` 抓 Fugle 當日 1 分 K,降採樣寫 `spark_day`/`spark_open`;同日快取 `data/spark_day.json`;前端相對開盤+平盤虛線,缺資料退回 30 日線。

@@ -16,6 +16,7 @@ import { IconArrowLeft } from "@/components/Icons";
 import KChart from "@/components/KChart";
 import BranchFlowSection, { MAX_SELECTED_BRANCHES } from "@/components/BranchFlowSection";
 import ReasonPill from "@/components/ReasonPill";
+import PocketBadges from "@/components/PocketBadges";
 import { Skeleton } from "@/components/ui/skeleton";
 import WatchlistButton from "@/components/WatchlistButton";
 import { dataFetch } from "@/lib/dataFetch";
@@ -239,7 +240,7 @@ function StockDecisionHeader({ data, close }: { data: StockJson; close: number }
   const hasWarrant = (scores?.warrant ?? 0) > 0;
   const sourceLabel = hasBranch && hasWarrant ? "分點+權證" : hasBranch ? "分點" : hasWarrant ? "權證" : null;
 
-  if (!scores && !reasons.length && !risks.length) return null;
+  if (!scores && !reasons.length && !risks.length && !(data.pocket_tags?.length)) return null;
 
   return (
     <div className="mb-3 min-w-0 rounded-[var(--r-lg)] border border-border bg-card p-3.5 shadow-[var(--shadow-card)]">
@@ -285,11 +286,12 @@ function StockDecisionHeader({ data, close }: { data: StockJson; close: number }
       </div>
 
       {/* Reasons + Risks(WP-H2 語意家族色 pills;詳情區不設家族數上限) */}
-      {(reasons.length > 0 || risks.length > 0) && (
+      {(reasons.length > 0 || risks.length > 0 || (data.pocket_tags?.length ?? 0) > 0) && (
         <div className="flex flex-wrap gap-1.5">
           {reasons.map((r, i) => (
             <ReasonPill key={`reason-${i}`} code={r.code} text={r.text} />
           ))}
+          <PocketBadges tags={data.pocket_tags} compact={false} />
           {risks.map((r, i) => (
             <ReasonPill key={`risk-${i}`} text={r} risk />
           ))}

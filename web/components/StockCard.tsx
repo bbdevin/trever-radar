@@ -2,6 +2,7 @@ import { ShieldCheck, Zap } from "lucide-react";
 import Sparkline from "@/components/Sparkline";
 import WatchlistButton from "@/components/WatchlistButton";
 import ReasonPill, { reasonFamily, type ReasonFamily } from "@/components/ReasonPill";
+import PocketBadges from "@/components/PocketBadges";
 import type { RadarStock } from "@/lib/types";
 import { MARKET_LABEL, chgClass, fmtE8, fmtLots, fmtPct, fmtX } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -135,6 +136,11 @@ export default function StockCard({ s, index = 99 }: { s: RadarStock; index?: nu
           </div>
         ) : (
           "未達評分門檻(20日均額 <3,000萬)"
+        )}
+        {(s.pocket_tags?.length ?? 0) > 0 && (
+          <div className={s.scores ? "mt-1" : "mt-1.5"}>
+            <PocketBadges tags={s.pocket_tags} />
+          </div>
         )}
       </div>
     </a>

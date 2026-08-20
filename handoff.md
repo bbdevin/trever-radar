@@ -1,22 +1,23 @@
 ## Handoff
 
-- **Current Goal**: docs/27 G2 演算法+export tags 已實作。下一包 G4(口袋名單 UI);G3 庫藏股可繼續延後。
+- **Current Goal**: docs/27 G4 口袋 UI 已實作。剩餘 G3 庫藏股可繼續延後。
 - **Current Branch**: `main`
 - **Workflow(2026-08-19)**:規劃 → Grok 4.6 High；執行 → Auto agent；完成 → 更新 md + commit + push（見 `AGENTS.md`、`docs/17` Workflow D）
 - **Current Agent**: Cursor
 - **Work Completed（本次）**:
-  - G2 純函式:`geo_trigger` / `key_buy_trigger` / `hot_theme_trigger` / `pocket_score`
-  - export 掛 `pocket_tags`、`pocket_score`、`lists.pocket`(≥2 family,最多 40);`pocket_note` 標涵蓋限制
-  - **不進** `daily_scores.final`;不做首頁口袋 tab(G4)
-  - 測試:`tests/test_pocket.py` + 既有 export 回歸
-- **Known Issues**: GEO tag 要等週一 14:10 `import-geo` 或 VPS 手動 `python -m radar import-geo`。KEY/THEME 下一次 VPS `export-json` 就會出現。地緣目前只涵蓋每日評分池前 15 大。
+  - 記錄:兩筆回補(分點 / 權證分點)跑完前**不要**手動 `import-geo`(見 `docs/27`、`vps/README.md`)
+  - G4:首頁「口袋」tab、`PocketBadges`、個股頁 F3 人話理由、`/branch` 關鍵徽章
+- **Known Issues**:
+  - **`import-geo` 等回補結束**(2026-08-20 使用者確認):不覆蓋回補表,但會搶 `radar.db` 寫鎖。回補完後再跑 `import-geo` + `export-json` + `wrangler deploy`;或不手動,等下週一 14:10。
+  - 口袋榜在 GEO 入庫前可能偏空(KEY/THEME 下一次 export 即可)。
+  - `/branch` 未做「地緣分點對某股」徽章(缺個股對照)。
 - **Not Yet Done**:
-  - **docs/27 G3–G4** 庫藏股 + 口袋 UI
+  - **docs/27 G3** 庫藏股(無 OpenAPI)
   - **docs/22** Quiet/Extended/Faded
   - **WP-B6** 回補完後 compute-branch-stats + export-json + deploy
 - **Next Suggested Actions**:
-  1. 下一包 G4(首頁口袋 tab + badges;可讀已 export 的 `lists.pocket`)。
-  2. 今日 14:10 仍可驗收 H3 分時。
+  1. 兩筆回補結束 → VPS `import-geo` + `export-json` + deploy(指令見上次對話)。
+  2. 驗收首頁「口袋」tab(可能先空;KEY/THEME 有 export 就會有檔)。
 - **Files That Should Not Be Modified**:
   - `pipeline/radar/db.py` 的 WAL checkpoint 機制。
   - `.github/workflows/*.yml`

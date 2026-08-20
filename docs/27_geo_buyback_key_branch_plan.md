@@ -53,7 +53,7 @@
 | G1 資料層 | ✅ **完成 2026-08-20**:`company_profiles` + `broker_branch_geo` + `import-geo`(週一 14:10);庫藏股無 OpenAPI,**buybacks 延後**不阻塞 GEO | G0 | 1 天 |
 | G2 地緣+關鍵+題材演算法 | ✅ **完成 2026-08-20**:`pipeline/radar/pocket.py` 純函式 + export `pocket_tags`/`lists.pocket`(不進 `daily_scores.final`);G4 才做首頁 tab | G1;**地緣涵蓋度依賴每日分點池廣度**(500 檔池偏熱門股;docs/26 WP-M2 全市場池後中小型股地緣才完整——先做可用,標注涵蓋限制) | 1.5 天 |
 | G3 庫藏股演算法 | KB1/KB2 純函式 + 測試 + export | G1 | 1 天 |
-| G4 口袋名單 UI | 首頁 tab + badges + 個股頁摘要併入 + /branch 徽章 | G2(G3 可後補) | 1.5 天 |
+| G4 口袋名單 UI | ✅ **完成 2026-08-20**:首頁「口袋」tab + StockCard/個股頁 badges + `/branch` 關鍵分點徽章;零新色票。GEO 資料仍等回補結束後 `import-geo` | G2(G3 可後補) | 1.5 天 |
 
 ## 5. 優先序建議
 
@@ -92,7 +92,21 @@
 - **涵蓋**:地緣/關鍵只用已抓到的前 15 大分點(每日評分池);`radar.json.pocket_note` 標明。抽不到縣市或雙北缺行政區 → 不判地緣。
 - **強度 V1**:`strong` = ≥3 家地緣券商且(佔量 ≥1% 或佔前 15 淨買/賣 ≥40%),否則 `weak`。
 - **口袋入榜**:≥2 個 family(GEO/KEY/THEME/ARMED/CONC;BUYBACK 待 G3),`pocket_score` 權重見 §2,最多 40 檔。
-- **不上 UI**:首頁口袋 tab 與 badge 是 G4。
+
+## G4 實作備註(2026-08-20)
+
+- 首頁狀態池「口袋」tab 讀 `lists.pocket`(已按 pocket_score 排序);可切分數/題材分組,與綜合榜同一套卡片牆。
+- badges 走既有 `ReasonPill` token:`G1`/`G2`/`K1`=籌碼青+圖釘/星,`H1`=權證琥珀+火。卡片最多 4 個 +N;個股頁 F3 顯示人話全文。
+- `/branch` 排行卡:`rank_score ≥ 70` 或 `source=manual` 標「關鍵」。**未做**「地緣分點對某股」徽章(排行 JSON 沒有個股對照,避免另開 export)。
+- 空榜教育文案用 `pocket_note`;誠實限制:統計推測、分點≠單一人、目前僅每日評分池。
+
+## VPS 待辦:import-geo 等回補結束(2026-08-20 使用者確認)
+
+分點回補(`backfill-branches`)與權證分點回補(`backfill-warrant-branches`)還在跑時,**不要**手動 `python -m radar import-geo`。
+
+- `import-geo` 只寫 `company_profiles` / `broker_branch_geo`,不會覆蓋回補進度。
+- 但仍與回補搶同一份 `radar.db` 寫鎖,有 `database is locked` 風險。
+- 回補結束後再跑(然後 `export-json` + `wrangler deploy`);或不手動,等下週一 14:10 `daily-market.sh` 自動 `import-geo`。
 
 ## 6. Reviewer 必查
 
