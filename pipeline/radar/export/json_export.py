@@ -663,6 +663,13 @@ def export_json(out_dir: Path | None = None) -> dict:
                 WHERE stock_id = :s AND date >= date(:d, '-730 days')
                 ORDER BY date DESC
             """), {"s": sid, "d": d}).fetchall()
+            insti_history_rows = conn.execute(text("""
+                SELECT date, foreign_net, trust_net, dealer_net, total_net
+                FROM daily_institutional
+                WHERE stock_id = :s AND date >= date(:d, '-400 days')
+                ORDER BY date DESC
+                LIMIT 240
+            """), {"s": sid, "d": d}).fetchall()
             history_by_date: dict[str, list] = {}
             for r in branch_history_rows:
                 history_by_date.setdefault(r[0], []).append({
@@ -705,6 +712,14 @@ def export_json(out_dir: Path | None = None) -> dict:
                      "volume_lots": (r[7] or 0) // 1000, "turnover": r[8] or 0,
                      "branches": wb.get(r[0], [])}
                     for r in active_warrants
+                ],
+                "insti_history": [
+                    {"t": r[0],
+                     "foreign": (r[1] or 0) // 1000,
+                     "trust": (r[2] or 0) // 1000,
+                     "dealer": (r[3] or 0) // 1000,
+                     "total": (r[4] or 0) // 1000}
+                    for r in insti_history_rows
                 ],
             }
             (stock_dir / f"{sid}.json").write_text(

@@ -4,7 +4,8 @@ import { forwardRef, useMemo, useState, useEffect } from "react";
 import { Clock } from "lucide-react";
 import type { ReasonItem, StockJson } from "@/lib/types";
 import { fmtLots } from "@/lib/format";
-import { cn, pillTabClass, halfSegClass } from "@/lib/utils";
+import { cn, pillTabClass } from "@/lib/utils";
+import BuySellSplit from "@/components/BuySellSplit";
 import ReasonPill from "@/components/ReasonPill";
 
 const BRANCH_RANGES = [
@@ -332,26 +333,12 @@ const BranchFlowSection = forwardRef<
         <p className="text-[11px] text-muted-foreground">點分點可看該券商在此股的進出明細與對應 K 線。</p>
       )}
 
-      <div className="grid w-full grid-cols-2 gap-0.5 rounded-lg border border-border bg-card p-0.5" role="tablist" aria-label="買超或賣超">
-        <button
-          type="button"
-          role="tab"
-          className={halfSegClass(sideTab === "buy", "buy")}
-          onClick={() => { setSideTab("buy"); setShowAllMobile(false); }}
-          aria-selected={sideTab === "buy"}
-        >
-          買方 Top{agg.top13Buy.length || 13}
-        </button>
-        <button
-          type="button"
-          role="tab"
-          className={halfSegClass(sideTab === "sell", "sell")}
-          onClick={() => { setSideTab("sell"); setShowAllMobile(false); }}
-          aria-selected={sideTab === "sell"}
-        >
-          賣方 Top{agg.top13Sell.length || 13}
-        </button>
-      </div>
+      <BuySellSplit
+        value={sideTab}
+        onChange={(next) => { setSideTab(next); setShowAllMobile(false); }}
+        buyLabel={`買方 Top${agg.top13Buy.length || 13}`}
+        sellLabel={`賣方 Top${agg.top13Sell.length || 13}`}
+      />
 
       <div className="flex flex-col gap-2.5 rounded-[var(--r-md)] border border-border bg-secondary p-3">
         <h3 className={cn("mb-1 border-b border-[color:var(--line)] pb-2 text-center text-[14.5px] font-bold", sideTab === "buy" ? "text-up" : "text-down")}>

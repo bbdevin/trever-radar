@@ -5,7 +5,8 @@ import { ArrowLeft } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { dataFetch } from "@/lib/dataFetch";
 import { fmtLots, fmtAmount } from "@/lib/format";
-import { cn, halfSegClass } from "@/lib/utils";
+import { cn } from "@/lib/utils";
+import BuySellSplit from "@/components/BuySellSplit";
 import {
   aggregateBranchRows,
   tradingDaysDesc,
@@ -272,26 +273,12 @@ export default function BranchTrackView({
         <div className="py-[46px] text-center text-sm text-muted-foreground">此期間無淨買賣超紀錄。</div>
       ) : (
         <div className="flex flex-col gap-3">
-          <div className="grid w-full grid-cols-2 gap-0.5 rounded-lg border border-border bg-card p-0.5" role="tablist" aria-label="買超或賣超">
-            <button
-              type="button"
-              role="tab"
-              className={halfSegClass(sideTab === "buy", "buy")}
-              onClick={() => setSideTab("buy")}
-              aria-selected={sideTab === "buy"}
-            >
-              買超 ({buys.length})
-            </button>
-            <button
-              type="button"
-              role="tab"
-              className={halfSegClass(sideTab === "sell", "sell")}
-              onClick={() => setSideTab("sell")}
-              aria-selected={sideTab === "sell"}
-            >
-              賣超 ({sells.length})
-            </button>
-          </div>
+          <BuySellSplit
+            value={sideTab}
+            onChange={setSideTab}
+            buyLabel={`買超 (${buys.length})`}
+            sellLabel={`賣超 (${sells.length})`}
+          />
           <p className="text-[11.5px] text-muted-foreground">
             近 {effectiveN} 交易日加總,前 {TOP_N}
           </p>

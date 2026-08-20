@@ -102,6 +102,14 @@ export interface StockJson {
   warrant: WarrantSummary | null;
   warrant_history: WarrantHistoryPoint[];
   active_warrants: ActiveWarrant[];
+  /** 三大法人日買賣超(張);新→舊。下次 export-json 後才有 */
+  insti_history?: {
+    t: string;
+    foreign: number;
+    trust: number;
+    dealer: number;
+    total: number;
+  }[];
 }
 
 /** 產業下鑽子題材(僅 sectors 帶;口徑同題材聚合但限定產業內成分) */
