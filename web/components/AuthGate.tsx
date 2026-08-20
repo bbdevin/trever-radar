@@ -2,7 +2,6 @@
 
 import type { ReactNode } from "react";
 import { signInWithGoogle, signOut, useSession } from "@/lib/useSession";
-import { IconRadar } from "@/components/Icons";
 import ThemeToggle from "@/components/ThemeToggle";
 import { Skeleton } from "@/components/ui/skeleton";
 
@@ -18,16 +17,16 @@ const GoogleIcon = () => (
 function GateShell({ children }: { children: ReactNode }) {
   return (
     <div className="relative flex min-h-[100dvh] flex-col items-center justify-center bg-background px-5">
-      <div className="absolute top-3 right-3">
+      <div className="absolute right-3 top-[calc(0.75rem+env(safe-area-inset-top))]">
         <ThemeToggle />
       </div>
       <div className="flex w-full max-w-[380px] flex-col items-center">
-        <span
-          className="mb-4 grid size-14 place-items-center rounded-[14px] text-white shadow-[0_2px_10px_rgba(57,135,229,0.35)]"
-          style={{ background: "var(--grad-accent)" }}
-        >
-          <IconRadar size={30} />
-        </span>
+        <img
+          src="/icons/trever-radar-mark.svg"
+          alt=""
+          aria-hidden="true"
+          className="mb-4 size-14 rounded-[14px] shadow-[0_2px_10px_rgba(57,135,229,0.35)]"
+        />
         <h1 className="text-[22px] font-extrabold tracking-tight text-foreground">Trever Radar</h1>
         <p className="mt-1 mb-7 text-[13.5px] text-muted-foreground">盤後找籌碼,盤中看發動</p>
         {children}

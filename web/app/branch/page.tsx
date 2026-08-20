@@ -7,6 +7,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
 import BranchTrackView from "@/components/BranchTrackView";
 import { dataFetch } from "@/lib/dataFetch";
+import { OFFLINE_DATA_COPY, isBrowserOffline } from "@/lib/pwa";
 import type { RadarJson } from "@/lib/types";
 import type { TrackIndexEntry } from "@/lib/branchTrack";
 import { MARKET_LABEL, fmtX } from "@/lib/format";
@@ -471,6 +472,9 @@ export default function BranchPage() {
   }, []);
 
   if (error) {
+    if (isBrowserOffline()) {
+      return <div className="py-[46px] text-center text-sm text-muted-foreground">{OFFLINE_DATA_COPY}</div>;
+    }
     return (
       <div className="py-[46px] text-center text-sm text-muted-foreground">
         找不到分點資料。請先執行{" "}

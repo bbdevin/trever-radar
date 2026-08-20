@@ -5,6 +5,7 @@ import AuthButton from "@/components/AuthButton";
 import AuthGate from "@/components/AuthGate";
 import BottomNav from "@/components/BottomNav";
 import DesktopNav from "@/components/DesktopNav";
+import PwaProvider from "@/components/PwaProvider";
 import SearchBox from "@/components/SearchBox";
 import ThemeToggle from "@/components/ThemeToggle";
 import { WatchlistProvider } from "@/lib/watchlist";
@@ -19,7 +20,11 @@ export const metadata: Metadata = {
   robots: { index: false, follow: false },
   manifest: "/manifest.webmanifest",
   icons: {
-    icon: [{ url: "/icons/trever-radar-mark.svg", type: "image/svg+xml" }],
+    icon: [
+      { url: "/icons/favicon-32.png", sizes: "32x32", type: "image/png" },
+      { url: "/icons/favicon-16.png", sizes: "16x16", type: "image/png" },
+      { url: "/icons/trever-radar-mark.svg", type: "image/svg+xml" },
+    ],
     apple: [{ url: "/icons/apple-touch-icon.png", sizes: "180x180", type: "image/png" }],
   },
   appleWebApp: {
@@ -49,40 +54,47 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               "(function(){try{if(localStorage.getItem('theme')==='light'){document.documentElement.classList.remove('dark')}}catch(e){}})()",
           }}
         />
-        <AuthGate>
-          <WatchlistProvider>
-            <header className="sticky top-0 z-40 border-b border-border bg-background/78 backdrop-blur-md backdrop-saturate-150">
-              <div className="container flex h-[58px] items-center gap-5">
-                <a href="/" className="flex items-center gap-2.5 text-foreground">
-                  <img
-                    src="/icons/trever-radar-mark.svg"
-                    alt=""
-                    aria-hidden="true"
-                    className="size-[34px] shrink-0 rounded-[10px] shadow-[0_2px_10px_rgba(57,135,229,0.35)]"
-                  />
-                  <span className="flex flex-col leading-tight">
-                    <span className="text-[16.5px] font-extrabold tracking-tight">Trever Radar</span>
-                    <em className="text-[11px] font-normal not-italic text-muted-foreground">盤後找籌碼,盤中看發動</em>
-                  </span>
-                </a>
-                <div className="ml-auto flex items-center">
-                  <SearchBox />
-                  <ThemeToggle />
-                  <AuthButton />
+        <PwaProvider>
+          <AuthGate>
+            <WatchlistProvider>
+              <header className="sticky top-0 z-40 border-b border-border bg-background/78 pt-[env(safe-area-inset-top)] backdrop-blur-md backdrop-saturate-150">
+                <div className="container flex h-[58px] items-center gap-5">
+                  <a href="/" className="flex items-center gap-2.5 text-foreground">
+                    <img
+                      src="/icons/trever-radar-mark.svg"
+                      alt=""
+                      aria-hidden="true"
+                      className="size-[34px] shrink-0 rounded-[10px] shadow-[0_2px_10px_rgba(57,135,229,0.35)]"
+                    />
+                    <span className="flex flex-col leading-tight">
+                      <span className="text-[16.5px] font-extrabold tracking-tight">Trever Radar</span>
+                      <em className="text-[11px] font-normal not-italic text-muted-foreground">盤後找籌碼,盤中看發動</em>
+                    </span>
+                  </a>
+                  <div className="ml-auto flex items-center">
+                    <SearchBox />
+                    <ThemeToggle />
+                    <AuthButton />
+                  </div>
+                  <DesktopNav />
                 </div>
-                <DesktopNav />
-              </div>
-            </header>
-            <main className="container">{children}</main>
-            <footer className="border-t border-border py-4 pb-[26px] text-[11.5px] text-muted-foreground max-md:mb-16">
-              <div className="container">
-                本系統僅彙整公開市場資料供個人研究,非投資建議;訊號不保證獲利;投資人應自行判斷並承擔風險。資料來源:臺灣證券交易所、證券櫃檯買賣中心。
-              </div>
-            </footer>
-            <BottomNav />
-            <Toaster position="bottom-center" richColors />
-          </WatchlistProvider>
-        </AuthGate>
+              </header>
+              <main className="container">{children}</main>
+              <footer className="border-t border-border py-4 pb-[26px] text-[11.5px] text-muted-foreground max-md:mb-[calc(4.5rem+env(safe-area-inset-bottom))]">
+                <div className="container">
+                  本系統僅彙整公開市場資料供個人研究,非投資建議;訊號不保證獲利;投資人應自行判斷並承擔風險。資料來源:臺灣證券交易所、證券櫃檯買賣中心。
+                </div>
+              </footer>
+              <BottomNav />
+            </WatchlistProvider>
+          </AuthGate>
+          <Toaster
+            position="bottom-center"
+            richColors
+            offset={{ bottom: 24 }}
+            mobileOffset={{ bottom: "calc(4.75rem + env(safe-area-inset-bottom))" }}
+          />
+        </PwaProvider>
       </body>
     </html>
   );

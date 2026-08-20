@@ -11,7 +11,7 @@ const ITEMS: NavItem[] = [
   { label: "自選", href: "/watchlist", icon: IconStar },
 ];
 
-const itemClass = "flex min-w-[62px] flex-col items-center gap-0.5 rounded-[10px] px-2.5 py-1 text-[10.5px] text-muted-foreground";
+const itemClass = "flex min-h-11 min-w-[62px] flex-col items-center justify-center gap-0.5 rounded-[10px] px-2.5 py-1 text-[10.5px] text-muted-foreground";
 
 /** 手機底部導航列(桌機隱藏) */
 export default function BottomNav() {

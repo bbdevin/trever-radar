@@ -1,0 +1,4 @@
+# Cloudflare Pages. SW must not be cached, otherwise update prompt never fires.
+/sw.js
+  Cache-Control: no-cache, no-store, must-revalidate
+  Service-Worker-Allowed: /

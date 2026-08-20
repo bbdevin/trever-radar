@@ -12,6 +12,7 @@ import ThemeGroupedList from "@/components/ThemeGroupedList";
 import { useSession, signInWithGoogle } from "@/lib/useSession";
 import { cn, pillTabClass } from "@/lib/utils";
 import { dataFetch } from "@/lib/dataFetch";
+import { OFFLINE_DATA_COPY, isBrowserOffline } from "@/lib/pwa";
 import type { ListKey, MetaJson, RadarJson, StrategyMeta } from "@/lib/types";
 import { SOURCE_LABEL, fmtE8 } from "@/lib/format";
 
@@ -160,6 +161,9 @@ export default function RadarPage() {
   }, [radar, tab, scanMode, strategy]);
 
   if (error) {
+    if (isBrowserOffline()) {
+      return <div className="py-[46px] text-center text-sm text-muted-foreground">{OFFLINE_DATA_COPY}</div>;
+    }
     return (
       <div className="py-[46px] text-center text-sm text-muted-foreground">
         {"找不到資訊檚。請先執行管線:"}

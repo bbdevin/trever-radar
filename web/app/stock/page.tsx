@@ -20,6 +20,7 @@ import PocketBadges from "@/components/PocketBadges";
 import { Skeleton } from "@/components/ui/skeleton";
 import WatchlistButton from "@/components/WatchlistButton";
 import { dataFetch } from "@/lib/dataFetch";
+import { OFFLINE_DATA_COPY, isBrowserOffline } from "@/lib/pwa";
 import type { StockJson } from "@/lib/types";
 import { MARKET_LABEL, chgClass, fmtE8, fmtPct, fmtX } from "@/lib/format";
 import { signInWithGoogle, useSession } from "@/lib/useSession";
@@ -120,7 +121,7 @@ function StockView() {
   if (error)
     return (
       <div className="py-[46px] text-center text-sm text-muted-foreground">
-        尚無 {id} 的個股資料檔。目前僅產出雷達榜單內的股票,之後擴大到全候選池。
+        {isBrowserOffline() ? OFFLINE_DATA_COPY : `尚無 ${id} 的個股資料檔。目前僅產出雷達榜單內的股票,之後擴大到全候選池。`}
       </div>
     );
   if (!data)
