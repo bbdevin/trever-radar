@@ -432,7 +432,11 @@ const BranchFlowSection = forwardRef<
           onClick={() => {
             if (chartAnchorId) document.getElementById(chartAnchorId)?.scrollIntoView({ behavior: "smooth", block: "start" });
           }}
-          className="fixed bottom-20 right-4 z-30 flex items-center gap-2 rounded-full border border-[color:var(--border-strong)] bg-card px-3.5 py-2 text-[12.5px] font-semibold text-foreground shadow-[0_4px_16px_rgba(0,0,0,0.4)] md:hidden"
+          className="fixed z-30 flex min-h-11 items-center gap-2 rounded-full border border-[color:var(--border-strong)] bg-card px-3.5 py-2 text-[12.5px] font-semibold text-foreground shadow-[0_4px_16px_rgba(0,0,0,0.4)] md:hidden"
+          style={{
+            bottom: "calc(5rem + env(safe-area-inset-bottom, 0px))",
+            right: "max(1rem, env(safe-area-inset-right, 0px))",
+          }}
           aria-label={`已疊圖 ${selectedCount} 檔,點擊回到上方圖表`}
         >
           <span className="h-2 w-2 rounded-full bg-primary" />

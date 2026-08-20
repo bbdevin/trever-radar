@@ -27,6 +27,8 @@
   --r-lg: 16px;
   --r-md: 12px;
   --r-sm: 8px;
+  /* sticky 錨點 = 頂欄 58px + iOS 瀏海（PWA viewport-fit:cover） */
+  --header-offset: calc(58px + env(safe-area-inset-top, 0px));
   --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.4);
   --shadow-lift: 0 8px 24px rgba(0, 0, 0, 0.45);
   --font-body: system-ui, -apple-system, "Segoe UI", "PingFang TC", "Microsoft JhengHei", "Noto Sans TC", sans-serif;
@@ -73,7 +75,7 @@
    放進 @layer base 才不會蓋掉之後套用在這些元素上的 Tailwind class(例如 <a className="text-foreground">)。 */
 @layer base {
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  html { color-scheme: light; scroll-behavior: smooth; min-height: 100dvh; }
+  html { color-scheme: light; scroll-behavior: smooth; min-height: 100dvh; overflow-x: clip; touch-action: manipulation; }
   html.dark { color-scheme: dark; }
   html.standalone { overscroll-behavior-y: none; }
   body {
@@ -103,6 +105,15 @@
 /* 手機橫滑 chips/pills 列隱藏捲軸(WP-H5;桌機不受影響,僅 max-md 情境使用) */
 .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
 .scrollbar-hide::-webkit-scrollbar { display: none; }
+
+/* 全螢幕覆層：內容避開瀏海 / Home indicator，背景仍可延伸到螢幕邊緣 */
+.safe-overlay {
+  padding-top: max(1rem, env(safe-area-inset-top, 0px));
+  padding-right: max(1rem, env(safe-area-inset-right, 0px));
+  padding-bottom: max(1rem, env(safe-area-inset-bottom, 0px));
+  padding-left: max(1rem, env(safe-area-inset-left, 0px));
+  overscroll-behavior: contain;
+}
 
 /* 台股慣例紅漲綠跌:KChart 十字游標 legend 用 innerHTML 動態插入,非 JSX className,
    所以保留這三個 bare class(其餘元件的漲跌色一律用 Tailwind text-up/text-down)。 */

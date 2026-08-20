@@ -19,15 +19,16 @@
 
 1. **對比**:內文文字對背景 ≥ 4.5:1(muted 文字只用於輔助資訊,不承載關鍵數字)。
 2. **觸控目標 ≥ 44px**:可點列/按鈕 `min-h-11`;視覺小的 icon 按鈕用外擴 hit area(如 `h-11 w-11` + 負 margin)。
-3. **條圖/橫條與文字分欄不重疊**:條的寬度只能在自己的「條軌」容器內縮放,數值文字放獨立 grid 欄位,永不被條侵入(2026-07 資金流向面板踩過的雷)。
-4. **動畫 150–300ms、只用 `transform`/`opacity`**(條長變化用 `scaleX`,不用 `width`);必須 respect `prefers-reduced-motion`(全站已全域處理,勿用 JS 動畫繞過)。
-5. **色彩不作唯一訊號**:漲跌/流入流出除了紅綠,必帶 +/-、↑/↓ 或文字(如 vs20 徽章寫「量能+96%」)。
-6. **行動優先**:斷點 375 / 768 / 1024 / 1440;手機單欄堆疊時,DOM 順序 = 視覺閱讀順序(不用 `order-*` hack,無障礙 reading order 才正確)。
-7. **下鑽必有返回/收合路徑**:展開面板要有明確關閉按鈕(X)+ 再點一次原列可收合;`aria-expanded` 標注狀態。
-8. **文字截斷**:固定欄寬的名稱用 `truncate` + `title` 屬性保留全文。
-9. **游標與回饋**:可點元素 `cursor-pointer` + hover 底色(`hover:bg-secondary`);選中態用 `bg-secondary` + inset ring(`shadow-[inset_0_0_0_1px_var(--border-strong)]`)。
-10. **空狀態要有教育性**(承 docs/07 §6):說明「為什麼是空的」而非只顯示無資料;載入中優先骨架屏而非 spinner。
-11. **SVG 不用 emoji**(同上 lucide 規則);資料日期標注(「分點資料:7/4」)避免誤以為即時。
+3. **PWA / iOS 安全區**:`viewport-fit:cover` + `black-translucent` 時,全螢幕 `fixed inset-0` 覆層**必須**用 `.safe-overlay`(見 `globals.css`),不可只寫 `p-4`。sticky 錨點用 `--header-offset`(`58px + safe-area-inset-top`),不要寫死 `top-[58px]`。下鑽返回鈕不得與狀態列重疊。
+4. **條圖/橫條與文字分欄不重疊**:條的寬度只能在自己的「條軌」容器內縮放,數值文字放獨立 grid 欄位,永不被條侵入(2026-07 資金流向面板踩過的雷)。
+5. **動畫 150–300ms、只用 `transform`/`opacity`**(條長變化用 `scaleX`,不用 `width`);必須 respect `prefers-reduced-motion`(全站已全域處理,勿用 JS 動畫繞過)。
+6. **色彩不作唯一訊號**:漲跌/流入流出除了紅綠,必帶 +/-、↑/↓ 或文字(如 vs20 徽章寫「量能+96%」)。
+7. **行動優先**:斷點 375 / 768 / 1024 / 1440;手機單欄堆疊時,DOM 順序 = 視覺閱讀順序(不用 `order-*` hack,無障礙 reading order 才正確)。
+8. **下鑽必有返回/收合路徑**:展開面板要有明確關閉按鈕(X)+ 再點一次原列可收合;`aria-expanded` 標注狀態。
+9. **文字截斷**:固定欄寬的名稱用 `truncate` + `title` 屬性保留全文。
+10. **游標與回饋**:可點元素 `cursor-pointer` + hover 底色(`hover:bg-secondary`);選中態用 `bg-secondary` + inset ring(`shadow-[inset_0_0_0_1px_var(--border-strong)]`)。
+11. **空狀態要有教育性**(承 docs/07 §6):說明「為什麼是空的」而非只顯示無資料;載入中優先骨架屏而非 spinner。
+12. **SVG 不用 emoji**(同上 lucide 規則);資料日期標注(「分點資料:7/4」)避免誤以為即時。
 
 ## 3. 對齊策略
 

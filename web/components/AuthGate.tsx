@@ -16,7 +16,7 @@ const GoogleIcon = () => (
 
 function GateShell({ children }: { children: ReactNode }) {
   return (
-    <div className="relative flex min-h-[100dvh] flex-col items-center justify-center bg-background px-5">
+    <div className="relative flex min-h-[100dvh] flex-col items-center justify-center bg-background px-5 pt-[max(1.25rem,env(safe-area-inset-top))] pb-[max(1.25rem,env(safe-area-inset-bottom))]">
       <div className="absolute right-3 top-[calc(0.75rem+env(safe-area-inset-top))]">
         <ThemeToggle />
       </div>

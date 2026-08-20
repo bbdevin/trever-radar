@@ -34,7 +34,7 @@ export default function ThemeToggle() {
       onClick={toggle}
       aria-label={mounted ? (isDark ? "切換至淺色模式" : "切換至深色模式") : "切換主題"}
       title="切換主題"
-      className="ml-2 grid size-8 shrink-0 place-items-center rounded-full border border-border bg-card text-muted-foreground transition-colors hover:text-foreground"
+      className="ml-1 grid size-11 shrink-0 place-items-center rounded-full border border-border bg-card text-muted-foreground transition-colors hover:text-foreground"
     >
       {mounted && !isDark ? <Moon size={16} /> : <Sun size={16} />}
     </button>

@@ -25,7 +25,7 @@ export default function AuthButton() {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
-        className="ml-2 grid size-8 shrink-0 place-items-center overflow-hidden rounded-full border border-border bg-card text-sm font-bold text-muted-foreground transition-colors hover:text-foreground"
+        className="ml-1 grid size-11 shrink-0 place-items-center overflow-hidden rounded-full border border-border bg-card text-sm font-bold text-muted-foreground transition-colors hover:text-foreground"
         title={session.user.email ?? ""}
       >
         {meta.avatar_url ? (

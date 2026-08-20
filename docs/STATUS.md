@@ -109,6 +109,7 @@
 
 ## 最近完成
 
+- 2026-08-20 **iOS safe-area 覆層清查**:分點追蹤全螢幕蓋屏(`fixed inset-0`)補 `.safe-overlay`,返回鈕不再疊狀態列;同步 sticky `--header-offset`、Dialog/搜尋、個股返回、Header 觸控 44px、登入頁與浮動 chip。未改配色/Logo。
 - 2026-08-20 **PWA 完善 + 品牌 PNG**:192/512 + maskable PNG(由 `trever-radar-mark.svg` 匯出,未重畫 Logo)、favicon 16/32、Apple Touch 180、`sw.js` 只 cache app shell(不碰 `/data`/JWT)、Android 安裝提示、iOS 加入主畫面說明、更新 toast、離線誠實橫幅、Header/BottomNav safe-area、登入頁改用正式 mark。manifest 仍為 `web/app/manifest.ts`。
 - 2026-08-20 **品牌 + PWA 身分**(commit `e3cefcd`):Header 改 TR Radar mark(`web/public/icons/trever-radar-mark.svg`)+ `web/app/manifest.ts` + Apple Web App metadata。方向=TR Monogram + Radar + 隱性 Wheel;主色 `#0D0D0D` / `#3987E5` / `#35B5C9` / `#8FD6FF`。**勿重做 Logo、勿改回舊綠 Design System。**
 - 2026-08-20 **docs/27 G4 口袋名單 UI**:首頁「口袋」tab、卡片/個股頁 reason badges、`/branch` 關鍵分點徽章;不進綜合分、零新色票。

@@ -145,7 +145,7 @@ function StockView() {
         <div className="flex min-w-0 items-center gap-2">
           <a
             href="/"
-            className="-ml-2.5 inline-flex shrink-0 items-center gap-1 rounded-full px-2.5 py-1.5 text-[13px] text-muted-foreground hover:bg-secondary hover:text-foreground"
+            className="-ml-2.5 inline-flex min-h-11 shrink-0 items-center gap-1 rounded-full px-2.5 text-[13px] text-muted-foreground hover:bg-secondary hover:text-foreground"
           >
             <IconArrowLeft size={16} />
             雷達

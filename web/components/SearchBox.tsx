@@ -52,7 +52,7 @@ export default function SearchBox() {
   return (
     <>
       <button
-        className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground hover:border-foreground/20"
+        className="inline-flex min-h-11 min-w-11 items-center justify-center gap-1.5 rounded-full border border-border bg-card px-3 text-xs text-muted-foreground transition-colors hover:text-foreground hover:border-foreground/20"
         onClick={() => setOpen(true)}
         aria-label="搜尋股票"
         title="搜尋(/)"

@@ -76,7 +76,7 @@ export default function ThemeGroupedList({
               type="button"
               onClick={() => toggle(g.name)}
               aria-expanded={isOpen}
-              className="sticky top-[58px] z-20 col-span-full flex min-h-11 cursor-pointer items-center gap-2 rounded-[var(--r-md)] border border-border bg-background/92 px-3 py-2 text-left shadow-[var(--shadow-card)] backdrop-blur-md md:min-h-9 md:py-1.5"
+              className="sticky top-[var(--header-offset)] z-20 col-span-full flex min-h-11 cursor-pointer items-center gap-2 rounded-[var(--r-md)] border border-border bg-background/92 px-3 py-2 text-left shadow-[var(--shadow-card)] backdrop-blur-md md:min-h-9 md:py-1.5"
             >
               <ChevronDown
                 size={15}

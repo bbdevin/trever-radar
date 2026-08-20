@@ -690,7 +690,7 @@ export default function BranchPage() {
 
             {/* 手機版專屬下鑽蓋屏（只在手機且 trackOpen 被打開時，多渲染一個帶有返回鍵的浮動詳情以保證返回路徑清晰） */}
             {trackOpen && trackBranch && trackNames.has(trackBranch) && (
-              <div className="md:hidden fixed inset-0 z-50 overflow-y-auto bg-background p-4 animate-in slide-in-from-right duration-200">
+              <div className="safe-overlay md:hidden fixed inset-0 z-50 overflow-y-auto bg-background animate-in slide-in-from-right duration-200">
                 <BranchTrackView
                   index={trackIndex}
                   branchName={trackBranch}
@@ -701,7 +701,7 @@ export default function BranchPage() {
               </div>
             )}
             {trackOpen && trackBranch && !trackNames.has(trackBranch) && (
-              <div className="md:hidden fixed inset-0 z-50 flex flex-col gap-4 bg-background p-4 animate-in slide-in-from-right duration-200">
+              <div className="safe-overlay md:hidden fixed inset-0 z-50 flex flex-col gap-4 bg-background animate-in slide-in-from-right duration-200">
                 <button
                   onClick={() => setTrackOpen(false)}
                   className="inline-flex min-h-11 w-fit items-center gap-1.5 rounded-full border border-border bg-card px-3 text-[13.5px] font-semibold text-muted-foreground transition-colors hover:text-foreground"

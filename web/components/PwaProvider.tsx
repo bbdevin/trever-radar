@@ -160,7 +160,7 @@ export default function PwaProvider({ children }: { children: React.ReactNode })
       {showInstall && (
         <div
           className={cn(
-            "fixed inset-x-0 z-50 mx-auto w-[min(100%-1.5rem,420px)] rounded-[var(--r-md)] border border-border bg-card p-3 shadow-[var(--shadow-lift)]",
+            "fixed inset-x-0 z-50 mx-auto w-[min(calc(100%-1.5rem-env(safe-area-inset-left)-env(safe-area-inset-right)),420px)] rounded-[var(--r-md)] border border-border bg-card p-3 shadow-[var(--shadow-lift)]",
             "max-md:bottom-[calc(4.25rem+env(safe-area-inset-bottom))] md:bottom-5",
           )}
           role="dialog"
