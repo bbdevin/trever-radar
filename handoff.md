@@ -1,27 +1,28 @@
 ## Handoff
 
-- **Current Goal**: docs/27 G4 口袋 UI 已實作。剩餘 G3 庫藏股可繼續延後。
-- **Current Branch**: `main`
+- **Current Goal**: 品牌+PWA 身分已整合進 `main`(`e3cefcd`)。不重做 Logo、不蓋 Header mark。等使用者下一任務(PWA 完善或資料/口袋驗收)。
+- **Current Branch**: `main` @ `e3cefcd`
 - **Workflow(2026-08-19)**:規劃 → Grok 4.6 High；執行 → Auto agent；完成 → 更新 md + commit + push（見 `AGENTS.md`、`docs/17` Workflow D）
 - **Current Agent**: Cursor
 - **Work Completed（本次）**:
-  - 記錄:兩筆回補(分點 / 權證分點)跑完前**不要**手動 `import-geo`(見 `docs/27`、`vps/README.md`)
-  - G4:首頁「口袋」tab、`PocketBadges`、個股頁 F3 人話理由、`/branch` 關鍵徽章
+  - `git pull --ff-only`:`540c5f0` → `e3cefcd`
+  - 品牌決策落檔:`docs/19`、`docs/project-context.md` 取捨 17、`STATUS`、本檔
 - **Known Issues**:
-  - **`import-geo` 等回補結束**(2026-08-20 使用者確認):不覆蓋回補表,但會搶 `radar.db` 寫鎖。回補完後再跑 `import-geo` + `export-json` + `wrangler deploy`;或不手動,等下週一 14:10。
-  - 口袋榜在 GEO 入庫前可能偏空(KEY/THEME 下一次 export 即可)。
-  - `/branch` 未做「地緣分點對某股」徽章(缺個股對照)。
+  - **`import-geo` 等回補結束**:兩筆回補跑完前不要手動寫 DB。
+  - PWA 目前只有 SVG icon + manifest;192/512 PNG、maskable、install UI、離線策略尚未做。
+  - `design-system/stock/MASTER.md` 可能仍寫舊綠/`#22C55E`/Fira——以現站為準,勿回改 Web。
 - **Not Yet Done**:
-  - **docs/27 G3** 庫藏股(無 OpenAPI)
+  - PWA 完善(install / PNG icons / iOS A2HS / standalone / safe-area / 更新提示);須 Network First 行情、不動登入 JWT、不改評分語意
+  - **docs/27 G3** 庫藏股
   - **docs/22** Quiet/Extended/Faded
-  - **WP-B6** 回補完後 compute-branch-stats + export-json + deploy
 - **Next Suggested Actions**:
-  1. 兩筆回補結束 → VPS `import-geo` + `export-json` + deploy(指令見上次對話)。
-  2. 驗收首頁「口袋」tab(可能先空;KEY/THEME 有 export 就會有檔)。
+  1. 使用者指定下一包再做(建議 PWA 優先序見對話:installability → PNG icons → iOS/Android 體驗 → standalone/safe-area)。
+  2. 回補結束 → `import-geo` + `export-json` + deploy。
 - **Files That Should Not Be Modified**:
-  - `pipeline/radar/db.py` 的 WAL checkpoint 機制。
+  - Header 品牌 mark / `web/public/icons/trever-radar-mark.svg` / `web/app/manifest.ts`(延伸可,另起衝突設定不可)
+  - `pipeline/radar/db.py` 的 WAL checkpoint
   - `.github/workflows/*.yml`
-  - 正式 `radar.db`(VPS 唯一寫者)
+  - 正式 `radar.db`
 
 ---
 

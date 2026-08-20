@@ -109,6 +109,7 @@
 
 ## 最近完成
 
+- 2026-08-20 **品牌 + PWA 身分**(commit `e3cefcd`):Header 改 TR Radar mark(`web/public/icons/trever-radar-mark.svg`)+ `web/app/manifest.ts` + Apple Web App metadata。方向=TR Monogram + Radar + 隱性 Wheel;主色 `#0D0D0D` / `#3987E5` / `#35B5C9` / `#8FD6FF`。**勿重做 Logo、勿改回舊綠 Design System。** PWA 後續(192/512 PNG、install、standalone、離線策略)另確認再開;不 cache 過期行情 JSON。
 - 2026-08-20 **docs/27 G4 口袋名單 UI**:首頁「口袋」tab、卡片/個股頁 reason badges、`/branch` 關鍵分點徽章;不進綜合分、零新色票。
 - 2026-08-20 **VPS:`import-geo` 等回補結束**:分點+權證分點兩筆回補還在跑,不要手動 import-geo(搶寫鎖)。回補完再跑,或等下週一 14:10。落檔 `docs/27`、`vps/README.md`、handoff。
 - 2026-08-20 **docs/27 G2 地緣/關鍵/題材 tag**:export `pocket_tags`+`lists.pocket`(≥2 family 才入榜),不進綜合分、不做口袋 tab。GEO 要等 `import-geo`;KEY/THEME 下一次 `export-json` 即可。

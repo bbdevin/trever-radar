@@ -85,3 +85,4 @@
 14. 2026-07-12 實作確認——docs/23 F 系列 + docs/25 IA Phase A-F 全部完成（commit `8d4aee5`）：首頁重排（IA-1A）、自選任務佇列（IA-4A+F1.1/F1.2）、個股判讀工作台（IA-2+F3）、分點研究工作台（IA-3）、日報摘要 pipeline（F2）、Sonner toast（V3.3）。尚未實作：IA-1B、IA-4B（待 Armed）、F1.3/F4（待 Armed）。
 15. 2026-07-12 新增 `DesktopNav.tsx` client component：桌機導覽安裝 `usePathname` active state，標題改為任務導向命名（今日雷達/分點研究/自選追蹤）；`layout.tsx` 原第 server-side NAV array 已移除。
 16. 2026-07-15 使用者定案**不用任何需綁信用卡的服務(含 Cloudflare R2)**:資料架構 B 案 v3(`docs/31`)= radar.db 常駐 VPS 單一寫者、資料層 Workers 靜態資產(VPS `wrangler deploy`)、備份 Google Drive 單雲(單雲風險知情接受)。
+17. 2026-08-20 品牌+PWA 身分(commit `e3cefcd`):**TR Monogram + Radar + 隱性 Wheel**;Header 用 `web/public/icons/trever-radar-mark.svg`;manifest=`web/app/manifest.ts`。**不要重做 Logo、不要蓋掉 Header mark、不要因 `design-system/stock/MASTER.md` 舊綠/`#22C55E`/Fira 把現站改回去。** PWA 先於原生;離線可 cache app shell,市場 JSON 必須 Network First,禁止把過期訊號當最新。不重寫 React Native。

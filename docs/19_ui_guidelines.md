@@ -10,7 +10,8 @@
 - **紅漲綠跌**(台股慣例,不可反轉成美股配色):`text-up` / `text-down`(對應 `--up: #e66767`、`--down: #0ca30c`);KChart 動態 innerHTML 用 bare class `.up`/`.down`。
 - **技術棧**:Tailwind CSS v4 + shadcn/ui(底層 `@base-ui/react`),既有元件慣用 arbitrary value 引 token(如 `text-[color:var(--ink-2)]`)。
 - **數字一律 `.num`**(Manrope,`font-variant-numeric: tabular-nums`):價格、金額、百分比、張數都要,否則跳動時寬度抖動。
-- **圖示一律 `lucide-react`**(stroke 1.8),**不用 emoji**;品牌 logo mark 例外(手刻 SVG,見 `web/components/Icons.tsx`)。
+- **圖示一律 `lucide-react`**(stroke 1.8),**不用 emoji**;**品牌 mark 例外**:Header / favicon / PWA 用 `web/public/icons/trever-radar-mark.svg`(commit `e3cefcd`,2026-08-20)。**不要**改回 `IconRadar`、不要重畫 Logo、不要用輪椅人物當主標。`design-system/stock/MASTER.md` 若仍寫 `#22C55E` / Fira,以現站 UI 為準,勿把網站改回舊綠。
+- **品牌主色(mark / PWA,2026-08-20)**:Background `#0D0D0D`、Radar Blue `#3987E5`、Signal Cyan `#35B5C9`、Signal Ice `#8FD6FF`、White `#FFFFFF`。頁面語意 token 仍走 `globals.css`;台股紅漲綠跌不變。PWA 先於原生 App;離線不得 cache 過期行情 JSON 當最新。
 - 進場動畫慣例:`animate-[fadeUp_0.35s_ease_backwards]`(keyframe 在 globals.css);全域已有 `prefers-reduced-motion: reduce` 一刀切關閉動畫。
 
 ## 2. 本專案採用的 ui-ux-pro-max 關鍵規則
