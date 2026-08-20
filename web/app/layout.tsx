@@ -7,7 +7,6 @@ import BottomNav from "@/components/BottomNav";
 import DesktopNav from "@/components/DesktopNav";
 import SearchBox from "@/components/SearchBox";
 import ThemeToggle from "@/components/ThemeToggle";
-import { IconRadar } from "@/components/Icons";
 import { WatchlistProvider } from "@/lib/watchlist";
 import "./globals.css";
 
@@ -18,6 +17,16 @@ export const metadata: Metadata = {
   title: "Trever Radar — 台股籌碼雷達",
   description: "盤後找籌碼,盤中看發動。私人研究工具,非投資建議。",
   robots: { index: false, follow: false },
+  manifest: "/manifest.webmanifest",
+  icons: {
+    icon: [{ url: "/icons/trever-radar-mark.svg", type: "image/svg+xml" }],
+    apple: [{ url: "/icons/apple-touch-icon.png", sizes: "180x180", type: "image/png" }],
+  },
+  appleWebApp: {
+    capable: true,
+    title: "Trever Radar",
+    statusBarStyle: "black-translucent",
+  },
 };
 
 export const viewport: Viewport = {
@@ -45,12 +54,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <header className="sticky top-0 z-40 border-b border-border bg-background/78 backdrop-blur-md backdrop-saturate-150">
               <div className="container flex h-[58px] items-center gap-5">
                 <a href="/" className="flex items-center gap-2.5 text-foreground">
-                  <span
-                    className="grid size-[34px] shrink-0 place-items-center rounded-[10px] text-white shadow-[0_2px_10px_rgba(57,135,229,0.35)]"
-                    style={{ background: "var(--grad-accent)" }}
-                  >
-                    <IconRadar size={22} />
-                  </span>
+                  <img
+                    src="/icons/trever-radar-mark.svg"
+                    alt=""
+                    aria-hidden="true"
+                    className="size-[34px] shrink-0 rounded-[10px] shadow-[0_2px_10px_rgba(57,135,229,0.35)]"
+                  />
                   <span className="flex flex-col leading-tight">
                     <span className="text-[16.5px] font-extrabold tracking-tight">Trever Radar</span>
                     <em className="text-[11px] font-normal not-italic text-muted-foreground">盤後找籌碼,盤中看發動</em>
