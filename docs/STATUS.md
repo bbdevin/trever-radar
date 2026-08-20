@@ -109,6 +109,7 @@
 
 ## 最近完成
 
+- 2026-08-20 **使用者核准入口整合**:管理員「使用者核准」只留右上帳號選單,不再出現在桌機頂部導覽。
 - 2026-08-20 **WP-H1 首頁題材分組**:綜合/市場掃描加「分數|題材」切換;桌機與分數榜同一套 2/3/4 欄卡片牆(組標題 col-span-full,預設全開),手機仍前 3 組展開。
 - 2026-08-20 **WP-B7 Access 關閉並驗收**:裸 curl `/data/radar.json` 直接 401;使用者確認無痕開站為站內 Google 登入、管理員登入後資料正常。門禁只剩站內登入 + Worker JWT/`RADAR_SERVICE_KEY`。
 - 2026-08-19 **WP-B7 Worker JWT**:`/data` Worker 驗 Bearer JWT + `app_profiles.approved`,或 `X-Radar-Service-Key`;前端 `dataFetch` 帶 token;盤中 worker 改帶 service key。

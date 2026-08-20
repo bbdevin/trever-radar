@@ -2,7 +2,6 @@
 
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
-import { useSession } from "@/lib/useSession";
 
 const NAV = [
   { label: "今日雷達", href: "/" },
@@ -13,11 +12,9 @@ const NAV = [
 /** 桌機頂部導覽（手機隱藏）——使用 usePathname 呈現 active state */
 export default function DesktopNav() {
   const path = usePathname();
-  const { isAdmin } = useSession();
-  const items = isAdmin ? [...NAV, { label: "使用者核准", href: "/admin" }] : NAV;
   return (
     <nav className="hidden gap-0.5 md:flex" aria-label="主導覽">
-      {items.map((n) => {
+      {NAV.map((n) => {
         const isActive = path === n.href || (n.href !== "/" && path.startsWith(n.href));
         return (
           <a

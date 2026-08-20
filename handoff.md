@@ -5,7 +5,7 @@
 - **Workflow(2026-08-19)**:規劃 → Grok 4.6 High；執行 → Auto agent；完成 → 更新 md + commit + push（見 `AGENTS.md`、`docs/17` Workflow D）
 - **Current Agent**: Cursor
 - **Work Completed（本次）**:
-  - 桌機題材模式改與分數榜同一套多欄 grid:組標題橫跨整列,卡片 2/3/4 欄;桌機預設全開
+  - 「使用者核准」只留帳號選單,從桌機頂部導覽拿掉避免重複
 - **Known Issues**: 空題材日(`radar.themes` 空)自動 fallback 原排序。Armed/Triggered/策略不套題材分組(依 docs/28)。
 - **Not Yet Done**:
   - **WP-H3** 卡片當日分時(下一包;A 案,需 Fugle token)
