@@ -306,7 +306,7 @@ export default function KChart({
         else if (effPane === "sel") addFlowPane(flow.sel!, 2);
         else addSub(2);
         titlesRef.current = []; // 手機不建 pane 內 watermark(避免小 pane 壓資料),數值走上方 compact legend
-        // 主圖佔比加大;子 pane 於總高 clamp(360,52vh,480) 下仍 ≥120px
+        // 主圖佔比加大;子 pane 於放大後總高仍 ≥120px
         paneFactor(0, 13);
         paneFactor(1, 4);
         paneFactor(2, 11);
@@ -556,8 +556,8 @@ export default function KChart({
           ref={ref}
           className={cn(
             "w-full rounded-t-none rounded-b-[var(--r-lg)] border border-border bg-card p-2 shadow-[var(--shadow-card)]",
-            // 手機版(<768px):單一子 pane,固定總高 clamp(360,52vh,480);桌機依 pane 數 vh clamp
-            isMobile && "[height:clamp(360px,52vh,480px)]",
+            // 手機版(<768px):放大主圖區,技術摘要已獨立成 tab 不再擠高度
+            isMobile && "[height:clamp(440px,68vh,640px)]",
             !isMobile && extraPanes === 0 && "[height:clamp(440px,68vh,740px)]",
             !isMobile && extraPanes === 1 && "[height:clamp(520px,80vh,900px)]",
             !isMobile && extraPanes === 2 && "[height:clamp(600px,88vh,1050px)]",

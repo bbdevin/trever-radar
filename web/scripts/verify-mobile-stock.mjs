@@ -33,16 +33,24 @@ try {
   });
   assert(!overflow, `頁面橫向溢出：scrollWidth > clientWidth (${await page.evaluate(() => [document.documentElement.scrollWidth, document.documentElement.clientWidth])})`);
 
-  // 3) 買超/賣超分頁
-  const buyTab = page.getByRole("tab", { name: /買超/ });
-  const sellTab = page.getByRole("tab", { name: /賣超/ });
+  // 3) 買超/賣超對半切分頁
+  const buyTab = page.getByRole("tab", { name: /買方/ });
+  const sellTab = page.getByRole("tab", { name: /賣方/ });
   await buyTab.waitFor({ state: "visible" });
-  assert(await buyTab.getAttribute("aria-selected") === "true", "籌碼日報未預設買超分頁");
+  assert(await buyTab.getAttribute("aria-selected") === "true", "籌碼日報未預設買方分頁");
   await sellTab.click();
-  assert(await sellTab.getAttribute("aria-selected") === "true", "切到賣超分頁失敗");
+  assert(await sellTab.getAttribute("aria-selected") === "true", "切到賣方分頁失敗");
   await buyTab.click();
 
-  // 4) 點第一個分點 → 下鑽覆層（K 線 + 進出表）
+  // 4) 法人 / 技術 tab 存在
+  await page.getByRole("tab", { name: "法人" }).click();
+  await page.getByText("法人分").first().waitFor({ state: "visible", timeout: 5000 });
+  await page.getByRole("tab", { name: "技術" }).click();
+  await page.getByText("技術分").first().waitFor({ state: "visible", timeout: 5000 });
+  await chipsTab.click();
+  await page.waitForSelector("#branch", { timeout: 5000 });
+
+  // 5) 點第一個分點 → 下鑽覆層（K 線 + 進出表）
   const firstBranch = page.locator("#branch button").filter({ hasText: /張$/ }).first();
   await firstBranch.click();
   const backBtn = page.getByRole("button", { name: "返回籌碼日報" });
@@ -54,7 +62,8 @@ try {
 
   console.log("✓ 手機 viewport 375×812 驗收通過");
   console.log("  - 無頁面橫向溢出");
-  console.log("  - 籌碼日報買超/賣超分頁可切");
+  console.log("  - 籌碼日報買方/賣方對半切可切");
+  console.log("  - 法人 / 技術獨立 tab");
   console.log("  - 點分點進入下鑽並可返回");
 } catch (e) {
   failures.push(`執行錯誤: ${e.message}`);

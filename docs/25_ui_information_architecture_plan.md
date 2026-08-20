@@ -20,6 +20,7 @@
 | IA-4A 自選追蹤手動版 | ✅ **完成(2026-07-12, commit `8d4aee5`)** — 完整重寫 watchlist/page.tsx：距觀察/失效價%、5 種排序、分組（需要注意/一般追蹤） |
 | IA-4B Armed 狀態增強 | ⛔ 待 docs/22 A1-A3（受制關卡，不得超前） |
 | IA-5 個股 K線/籌碼日報分層 | ✅ **完成(2026-08-20)** — 一級分頁 `K線 \| 籌碼日報 \| 權證`；籌碼買超/賣超分頁；點分點下鑽進出+對應 K 線 |
+| IA-5b 法人/技術分頁 + 手機放大圖 | ✅ **完成(2026-08-20)** — 加 `法人`/`技術` tab；K 線 tab 不再堆技術卡；手機圖高 clamp(440,68vh,640)；買方/賣方全寬對半切 |
 | IA-3b 分點追蹤買超/賣超 | ✅ **完成(2026-08-20)** — `BranchTrackView` 改買超/賣超分頁，不再兩表往下滑 |
 
 所有 Phase 共用限制:
@@ -418,6 +419,10 @@ K線
 - `web/components/BranchFlowSection.tsx`
 - `web/components/BranchDrillView.tsx`（新增）
 - `web/components/KChart.tsx`（可選 `branchFlowLabel`）
+
+## 13b. IA-5b 法人／技術獨立 + 手機放大圖(2026-08-20)
+
+一級分頁擴為 `K線 | 籌碼日報 | 法人 | 技術 | 權證`。K 線只留圖；`InstiPanel`（既有元件）掛法人 tab；`TechnicalPanel` 移出 K 線堆疊。手機 K 線高度改 `clamp(440px,68vh,640px)`。買方/賣方改全寬 `grid-cols-2` 對半切（`halfSegClass`）。
 
 ## 14. IA-3b 分點追蹤買超 / 賣超分頁(2026-08-20)
 

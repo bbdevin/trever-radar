@@ -4,7 +4,7 @@ import { forwardRef, useMemo, useState, useEffect } from "react";
 import { Clock } from "lucide-react";
 import type { ReasonItem, StockJson } from "@/lib/types";
 import { fmtLots } from "@/lib/format";
-import { cn, pillTabClass } from "@/lib/utils";
+import { cn, pillTabClass, halfSegClass } from "@/lib/utils";
 import ReasonPill from "@/components/ReasonPill";
 
 const BRANCH_RANGES = [
@@ -332,34 +332,24 @@ const BranchFlowSection = forwardRef<
         <p className="text-[11px] text-muted-foreground">點分點可看該券商在此股的進出明細與對應 K 線。</p>
       )}
 
-      <div className="flex gap-1 rounded-lg border border-border bg-card p-0.5 w-fit" role="tablist" aria-label="買超或賣超">
+      <div className="grid w-full grid-cols-2 gap-0.5 rounded-lg border border-border bg-card p-0.5" role="tablist" aria-label="買超或賣超">
         <button
           type="button"
           role="tab"
-          className={cn(
-            "min-h-11 rounded-md px-4 py-1.5 text-xs font-semibold transition-colors",
-            sideTab === "buy"
-              ? "bg-up/15 text-up shadow-[inset_0_0_0_1px_rgba(230,103,103,0.4)]"
-              : "text-muted-foreground hover:text-foreground",
-          )}
+          className={halfSegClass(sideTab === "buy", "buy")}
           onClick={() => { setSideTab("buy"); setShowAllMobile(false); }}
           aria-selected={sideTab === "buy"}
         >
-          買超 ({agg.top13Buy.length})
+          買方 Top{agg.top13Buy.length || 13}
         </button>
         <button
           type="button"
           role="tab"
-          className={cn(
-            "min-h-11 rounded-md px-4 py-1.5 text-xs font-semibold transition-colors",
-            sideTab === "sell"
-              ? "bg-down/15 text-down shadow-[inset_0_0_0_1px_rgba(12,163,12,0.4)]"
-              : "text-muted-foreground hover:text-foreground",
-          )}
+          className={halfSegClass(sideTab === "sell", "sell")}
           onClick={() => { setSideTab("sell"); setShowAllMobile(false); }}
           aria-selected={sideTab === "sell"}
         >
-          賣超 ({agg.top13Sell.length})
+          賣方 Top{agg.top13Sell.length || 13}
         </button>
       </div>
 

@@ -16,6 +16,7 @@ import { IconArrowLeft } from "@/components/Icons";
 import KChart from "@/components/KChart";
 import BranchFlowSection from "@/components/BranchFlowSection";
 import BranchDrillView from "@/components/BranchDrillView";
+import InstiPanel from "@/components/InstiPanel";
 import ReasonPill from "@/components/ReasonPill";
 import PocketBadges from "@/components/PocketBadges";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -47,7 +48,7 @@ function StockView() {
   const [data, setData] = useState<StockJson | null>(null);
   const [error, setError] = useState(false);
   const [range, setRange] = useState<(typeof RANGES)[number]["key"]>("1y");
-  const [view, setView] = useState<"chart" | "chips" | "warrant">("chart");
+  const [view, setView] = useState<"chart" | "chips" | "insti" | "tech" | "warrant">("chart");
   const [drillBranch, setDrillBranch] = useState<string | null>(null);
 
   useEffect(() => {
@@ -155,20 +156,36 @@ function StockView() {
       {/* IA-2 + F3: Decision Header — why this stock appears, risks, key prices */}
       <StockDecisionHeader data={data} close={last.c} />
       <div className="mb-2.5 flex min-w-0 flex-col gap-2 md:flex-row md:flex-wrap md:items-center md:gap-2.5">
-        <div role="tablist" className="flex w-fit max-w-full shrink-0 gap-0.5 overflow-x-auto rounded-full border border-border bg-card p-[3px] scrollbar-hide">
-          <button type="button" role="tab" aria-selected={view === "chart"} className={pillTabClass(view === "chart")} onClick={() => setView("chart")}>
-            K線
-          </button>
-          <button type="button" role="tab" aria-selected={view === "chips"} className={pillTabClass(view === "chips")} onClick={() => setView("chips")}>
-            籌碼日報
-          </button>
-          <button type="button" role="tab" aria-selected={view === "warrant"} className={pillTabClass(view === "warrant")} onClick={() => setView("warrant")}>
-            權證
-          </button>
+        <div
+          role="tablist"
+          aria-label="個股內容"
+          className="flex w-full max-w-full shrink-0 gap-0.5 overflow-x-auto rounded-full border border-border bg-card p-[3px] scrollbar-hide [scrollbar-width:none] max-md:flex-nowrap max-md:[&>*]:shrink-0 [&::-webkit-scrollbar]:hidden md:w-fit"
+        >
+          {(
+            [
+              { key: "chart" as const, label: "K線" },
+              { key: "chips" as const, label: "籌碼日報" },
+              { key: "insti" as const, label: "法人" },
+              { key: "tech" as const, label: "技術" },
+              { key: "warrant" as const, label: "權證" },
+            ] as const
+          ).map((t) => (
+            <button
+              key={t.key}
+              type="button"
+              role="tab"
+              aria-selected={view === t.key}
+              className={pillTabClass(view === t.key)}
+              onClick={() => setView(t.key)}
+            >
+              {t.label}
+            </button>
+          ))}
         </div>
         {view === "chart" && (
           <div
             role="tablist"
+            aria-label="K線區間"
             className="flex max-w-full gap-0.5 overflow-x-auto rounded-full border border-border bg-card p-[3px] scrollbar-hide [scrollbar-width:none] max-md:flex-nowrap max-md:[&>*]:shrink-0 [&::-webkit-scrollbar]:hidden"
           >
             {RANGES.map((r) => (
@@ -180,7 +197,6 @@ function StockView() {
         )}
       </div>
       {view === "chart" && <KChart candles={cs} visibleDays={visibleDays} mainForce={mainForce} />}
-      {view === "chart" && <TechnicalPanel data={data} />}
       {view === "chips" && (
         <BranchFlowSection
           branches={data.branches}
@@ -193,6 +209,8 @@ function StockView() {
           onOpenBranch={setDrillBranch}
         />
       )}
+      {view === "insti" && <InstiPanel data={data} candles={cs} />}
+      {view === "tech" && <TechnicalPanel data={data} />}
       {view === "warrant" && <WarrantPanel data={data} />}
 
       {drillBranch && (

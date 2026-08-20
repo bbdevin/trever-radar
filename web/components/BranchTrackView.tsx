@@ -5,7 +5,7 @@ import { ArrowLeft } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { dataFetch } from "@/lib/dataFetch";
 import { fmtLots, fmtAmount } from "@/lib/format";
-import { cn } from "@/lib/utils";
+import { cn, halfSegClass } from "@/lib/utils";
 import {
   aggregateBranchRows,
   tradingDaysDesc,
@@ -272,16 +272,11 @@ export default function BranchTrackView({
         <div className="py-[46px] text-center text-sm text-muted-foreground">此期間無淨買賣超紀錄。</div>
       ) : (
         <div className="flex flex-col gap-3">
-          <div className="flex gap-1 rounded-lg border border-border bg-card p-0.5 w-fit" role="tablist" aria-label="買超或賣超">
+          <div className="grid w-full grid-cols-2 gap-0.5 rounded-lg border border-border bg-card p-0.5" role="tablist" aria-label="買超或賣超">
             <button
               type="button"
               role="tab"
-              className={cn(
-                "min-h-11 rounded-md px-4 py-1.5 text-xs font-semibold transition-colors",
-                sideTab === "buy"
-                  ? "bg-up/15 text-up shadow-[inset_0_0_0_1px_rgba(230,103,103,0.4)]"
-                  : "text-muted-foreground hover:text-foreground",
-              )}
+              className={halfSegClass(sideTab === "buy", "buy")}
               onClick={() => setSideTab("buy")}
               aria-selected={sideTab === "buy"}
             >
@@ -290,12 +285,7 @@ export default function BranchTrackView({
             <button
               type="button"
               role="tab"
-              className={cn(
-                "min-h-11 rounded-md px-4 py-1.5 text-xs font-semibold transition-colors",
-                sideTab === "sell"
-                  ? "bg-down/15 text-down shadow-[inset_0_0_0_1px_rgba(12,163,12,0.4)]"
-                  : "text-muted-foreground hover:text-foreground",
-              )}
+              className={halfSegClass(sideTab === "sell", "sell")}
               onClick={() => setSideTab("sell")}
               aria-selected={sideTab === "sell"}
             >
