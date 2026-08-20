@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import {
   type ColumnDef,
@@ -14,7 +14,8 @@ import {
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { IconArrowLeft } from "@/components/Icons";
 import KChart from "@/components/KChart";
-import BranchFlowSection, { MAX_SELECTED_BRANCHES } from "@/components/BranchFlowSection";
+import BranchFlowSection from "@/components/BranchFlowSection";
+import BranchDrillView from "@/components/BranchDrillView";
 import ReasonPill from "@/components/ReasonPill";
 import PocketBadges from "@/components/PocketBadges";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -46,30 +47,24 @@ function StockView() {
   const [data, setData] = useState<StockJson | null>(null);
   const [error, setError] = useState(false);
   const [range, setRange] = useState<(typeof RANGES)[number]["key"]>("1y");
-  const [view, setView] = useState<"chart" | "warrant">("chart");
-  const [selectedBranches, setSelectedBranches] = useState<Set<string>>(new Set());
-  const branchSectionRef = useRef<HTMLElement | null>(null);
+  const [view, setView] = useState<"chart" | "chips" | "warrant">("chart");
+  const [drillBranch, setDrillBranch] = useState<string | null>(null);
 
   useEffect(() => {
     if (!id) return;
-    setSelectedBranches(new Set()); // 換股重置勾選
+    setDrillBranch(null);
     dataFetch(`/data/stocks/${id}.json`)
       .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
       .then(setData)
       .catch(() => setError(true));
   }, [id]);
 
-  // #branch hash 導航：資料載入後自動捲動到分點區並切換到 chart view
+  // #branch hash：開籌碼日報分頁（IA-5；舊行為是捲到 K 線下方分點區）
   useEffect(() => {
     if (!data) return;
     if (typeof window === "undefined") return;
     if (window.location.hash === "#branch") {
-      setView("chart");
-      // 稍等 DOM 渲染完再捲動
-      const timer = setTimeout(() => {
-        branchSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-      }, 300);
-      return () => clearTimeout(timer);
+      setView("chips");
     }
   }, [data]);
 
@@ -86,26 +81,6 @@ function StockView() {
       .map((d) => ({ t: d.t, net: d.branches.reduce((s, b) => s + b.net, 0) }))
       .sort((a, b) => (a.t < b.t ? -1 : 1));
   }, [data]);
-
-  // 分點進出:勾選分點集合的每日 net 加總;該日勾選分點都未上榜 → 缺日留白(不補 0)
-  const branchFlow = useMemo(() => {
-    const bh = data?.branch_history;
-    if (!bh?.length || selectedBranches.size === 0) return undefined;
-    const pts: { t: string; net: number }[] = [];
-    for (const d of bh) {
-      const rows = d.branches.filter((b) => selectedBranches.has(b.n));
-      if (rows.length) pts.push({ t: d.t, net: rows.reduce((s, b) => s + b.net, 0) });
-    }
-    return pts.length ? pts.sort((a, b) => (a.t < b.t ? -1 : 1)) : undefined;
-  }, [data, selectedBranches]);
-
-  const toggleBranch = (name: string) =>
-    setSelectedBranches((prev) => {
-      const next = new Set(prev);
-      if (next.has(name)) next.delete(name);
-      else if (next.size < MAX_SELECTED_BRANCHES) next.add(name);
-      return next;
-    });
 
   // 分點理由過濾：B* 系列(分點) + S11-S13(籌碼事件)
   // 必須在所有條件 return 之前宣告，符合 Rules of Hooks
@@ -180,11 +155,14 @@ function StockView() {
       {/* IA-2 + F3: Decision Header — why this stock appears, risks, key prices */}
       <StockDecisionHeader data={data} close={last.c} />
       <div className="mb-2.5 flex min-w-0 flex-col gap-2 md:flex-row md:flex-wrap md:items-center md:gap-2.5">
-        <div role="tablist" className="flex w-fit shrink-0 gap-0.5 rounded-full border border-border bg-card p-[3px]">
-          <button role="tab" aria-selected={view === "chart"} className={pillTabClass(view === "chart")} onClick={() => setView("chart")}>
+        <div role="tablist" className="flex w-fit max-w-full shrink-0 gap-0.5 overflow-x-auto rounded-full border border-border bg-card p-[3px] scrollbar-hide">
+          <button type="button" role="tab" aria-selected={view === "chart"} className={pillTabClass(view === "chart")} onClick={() => setView("chart")}>
             K線
           </button>
-          <button role="tab" aria-selected={view === "warrant"} className={pillTabClass(view === "warrant")} onClick={() => setView("warrant")}>
+          <button type="button" role="tab" aria-selected={view === "chips"} className={pillTabClass(view === "chips")} onClick={() => setView("chips")}>
+            籌碼日報
+          </button>
+          <button type="button" role="tab" aria-selected={view === "warrant"} className={pillTabClass(view === "warrant")} onClick={() => setView("warrant")}>
             權證
           </button>
         </div>
@@ -194,31 +172,40 @@ function StockView() {
             className="flex max-w-full gap-0.5 overflow-x-auto rounded-full border border-border bg-card p-[3px] scrollbar-hide [scrollbar-width:none] max-md:flex-nowrap max-md:[&>*]:shrink-0 [&::-webkit-scrollbar]:hidden"
           >
             {RANGES.map((r) => (
-              <button key={r.key} role="tab" aria-selected={range === r.key} className={pillTabClass(range === r.key)} onClick={() => setRange(r.key)}>
+              <button key={r.key} type="button" role="tab" aria-selected={range === r.key} className={pillTabClass(range === r.key)} onClick={() => setRange(r.key)}>
                 {r.label}
               </button>
             ))}
           </div>
         )}
       </div>
-      {view === "chart" && <KChart candles={cs} visibleDays={visibleDays} mainForce={mainForce} branchFlow={branchFlow} />}
-      {view === "warrant" && <WarrantPanel data={data} />}
+      {view === "chart" && <KChart candles={cs} visibleDays={visibleDays} mainForce={mainForce} />}
       {view === "chart" && <TechnicalPanel data={data} />}
-      {/* WP-H4: 分點進出區升級為唯一真相 — 帶分點分徽章 + 理由/風險 pills；id="branch" 供 #branch 錨點捲動 */}
-      {view === "chart" && (
+      {view === "chips" && (
         <BranchFlowSection
-          ref={branchSectionRef}
           branches={data.branches}
           branchHistory={data.branch_history}
           score={branchScore}
           reasons={branchReasons}
           heading="分點進出"
-          selected={selectedBranches}
-          onToggleSelect={toggleBranch}
           id="branch"
-          chartAnchorId="stock-kchart"
           quoteDate={last.t}
+          onOpenBranch={setDrillBranch}
         />
+      )}
+      {view === "warrant" && <WarrantPanel data={data} />}
+
+      {drillBranch && (
+        <div className="safe-overlay fixed inset-0 z-50 overflow-y-auto bg-background">
+          <BranchDrillView
+            stockName={data.name}
+            stockId={data.id}
+            branchName={drillBranch}
+            candles={cs}
+            branchHistory={data.branch_history}
+            onBack={() => setDrillBranch(null)}
+          />
+        </div>
       )}
     </div>
   );

@@ -19,6 +19,8 @@
 | IA-3 分點研究工作台 | ✅ **完成(2026-07-12, commit `df02e6e`)** — rankings 改雙欄 Master-Detail 響應式佈局，左滾動排行榜帶 active 高亮，右即時渲染詳情或無 track 提示，取消獨立追蹤按鈕 |
 | IA-4A 自選追蹤手動版 | ✅ **完成(2026-07-12, commit `8d4aee5`)** — 完整重寫 watchlist/page.tsx：距觀察/失效價%、5 種排序、分組（需要注意/一般追蹤） |
 | IA-4B Armed 狀態增強 | ⛔ 待 docs/22 A1-A3（受制關卡，不得超前） |
+| IA-5 個股 K線/籌碼日報分層 | ✅ **完成(2026-08-20)** — 一級分頁 `K線 \| 籌碼日報 \| 權證`；籌碼買超/賣超分頁；點分點下鑽進出+對應 K 線 |
+| IA-3b 分點追蹤買超/賣超 | ✅ **完成(2026-08-20)** — `BranchTrackView` 改買超/賣超分頁，不再兩表往下滑 |
 
 所有 Phase 共用限制:
 
@@ -321,6 +323,8 @@ compact list → 分點 detail → 明確返回
 | 4 | IA-4A 自選手動版 | ✅ 可另確認 | 現有 stock JSON + Supabase watchlist |
 | 之後 | IA-1B 榜單收斂 | ⚠️ 另確認 | 與 `docs/23` F4 / `docs/22` A2 重疊 |
 | 之後 | IA-4B Armed 增強 | ⛔ 待 Armed | `docs/22` A1–A3 |
+| 5 | IA-5 個股籌碼分層 | ✅ **2026-08-20 完成** | 使用者確認與 IA-3b 同批落地 |
+| 6 | IA-3b 分點追蹤分頁 | ✅ **2026-08-20 完成** | 與 IA-5 同一買超/賣超模式 |
 
 Access A0–A2 仍是全專案最高外部狀態優先；本文件不代表 UI 工作可自行插隊。
 若使用者明示允許 UI Pilot 與 Access/B Phase 2–3 並行，Executor 才可依單一 Phase 開工。
@@ -380,3 +384,41 @@ Confirmed Scope:
 
 Executor 開工前仍須先回報理解、檔案、風險與測試，等待使用者確認。完成後更新本檔
 §0 狀態表與 `STATUS.md`，Reviewer 只 review 該 Phase diff，不順便實作下一 Phase。
+
+## 13. IA-5 個股 K 線 / 籌碼日報分層(2026-08-20)
+
+### 13.1 目標
+
+把「看圖」與「讀籌碼表」拆成同級分頁，避免 K 線、技術摘要、買超表、賣超表全部垂直堆疊。
+
+### 13.2 結構
+
+```text
+Stock Decision Header（不變）
+
+一級分頁: K線 | 籌碼日報 | 權證
+
+K線
+  區間 pills + KChart（主力買賣超 pane 仍在圖上）+ 技術摘要
+  不再掛完整 BranchFlowSection
+
+籌碼日報
+  統計天數 + 摘要 + 買超 | 賣超 分頁（全斷點單欄，不再桌機雙欄）
+  點分點列 → .safe-overlay 下鑽：該分點進出表 + 對應 K 線（branchFlow 單一分點）
+
+權證
+  不變
+```
+
+`#branch` hash 開籌碼日報分頁。不新增路由、不改 JSON 語意、不下單/AI chrome。
+
+### 13.3 檔案
+
+- `web/app/stock/page.tsx`
+- `web/components/BranchFlowSection.tsx`
+- `web/components/BranchDrillView.tsx`（新增）
+- `web/components/KChart.tsx`（可選 `branchFlowLabel`）
+
+## 14. IA-3b 分點追蹤買超 / 賣超分頁(2026-08-20)
+
+`BranchTrackView` 期間淨買超與反向賣超改成分頁，預設買超；點股票進 `/stock?id=#branch`。資料聚合仍用既有 `aggregateBranchRows`。

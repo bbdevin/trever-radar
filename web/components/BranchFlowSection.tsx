@@ -27,13 +27,8 @@ function fmtMD(isoDate: string): string {
 }
 
 /**
- * 分點進出共用區塊:時間範圍(1-240日+自訂)+ N 日淨流/家數摘要 + 前 13 大買/賣超列表。
- * 個股頁 K 線視圖下方的唯一分點區（WP-H4 升級版）：
- * - 傳入 score/reasons 時顯示分點分徽章與理由膠囊
- * - heading 控制頂部標題顯示；右側 meta 標籌碼交易日，落後報價日時 warn 防誤以為今日
- * - id 供 #branch 錨點捲動
- * - 手機版(<768px)：買/賣超改 segmented tabs(預設買超)，單欄顯示；勾選後顯示浮動回饋 chip
- * 桌機版維持雙欄(逐位元不變)。
+ * 籌碼日報：時間範圍(1-240日+自訂)+ N 日淨流/家數摘要 + 買超/賣超分頁列表。
+ * IA-5：買超|賣超在所有斷點都是分頁，不再雙欄並排。點列開下鑽(onOpenBranch)。
  */
 /** 圖表疊加勾選上限:超過視覺與效能都失焦 */
 export const MAX_SELECTED_BRANCHES = 10;
@@ -50,6 +45,8 @@ const BranchFlowSection = forwardRef<
     /** 已勾選分點名集合(K 線視圖用,狀態上提到個股頁);與 onToggleSelect 同時傳入才顯示 checkbox */
     selected?: Set<string>;
     onToggleSelect?: (name: string) => void;
+    /** 點分點列 → 下鑽該分點進出明細+對應 K 線 */
+    onOpenBranch?: (name: string) => void;
     /** 手機版浮動回饋 chip 點擊後捲動回的目標元素 id(通常為 KChart 容器)*/
     chartAnchorId?: string;
     /** 當頁最新報價交易日(通常 candles 末日);與籌碼日比對判斷是否暫用舊資料 */
@@ -70,14 +67,14 @@ const BranchFlowSection = forwardRef<
     chartAnchorId,
     quoteDate,
     branchStale,
+    onOpenBranch,
   },
   ref
 ) {
   const [days, setDays] = useState<number | "custom">(5);
   const [customDays, setCustomDays] = useState<string>("5");
   const [expandedBranch, setExpandedBranch] = useState<string | null>(null);
-  // 手機版:買/賣超 segmented tab(預設買超)+ 預設前 8 列、可展開全部
-  const [mobileTab, setMobileTab] = useState<"buy" | "sell">("buy");
+  const [sideTab, setSideTab] = useState<"buy" | "sell">("buy");
   const [showAllMobile, setShowAllMobile] = useState(false);
   // 手機版偵測(<768px)。本元件僅在資料載入後於 client 渲染(SSR 顯示骨架屏),初始化讀 matchMedia 無 hydration mismatch。
   const [isMobile, setIsMobile] = useState(
@@ -325,98 +322,83 @@ const BranchFlowSection = forwardRef<
         </div>
       </div>
 
-      {/* 勾選提示（桌機版文字說明）*/}
-      {selectable && (
+      {selectable && !onOpenBranch && (
         <div className="hidden md:block text-[11px] text-muted-foreground" aria-live="polite">
           勾選分點後,於上方 K 線圖疊加「分點進出」柱狀圖(最多 {MAX_SELECTED_BRANCHES} 個
           {atLimit ? ",已達上限,取消其他勾選後才能再加" : `,已勾選 ${selectedCount} 個`})。
         </div>
       )}
+      {onOpenBranch && (
+        <p className="text-[11px] text-muted-foreground">點分點可看該券商在此股的進出明細與對應 K 線。</p>
+      )}
 
-      {/* 手機版：買超/賣超 segmented tab selector */}
-      <div className="md:hidden flex gap-1 rounded-lg border border-border bg-card p-0.5 w-fit">
+      <div className="flex gap-1 rounded-lg border border-border bg-card p-0.5 w-fit" role="tablist" aria-label="買超或賣超">
         <button
+          type="button"
+          role="tab"
           className={cn(
-            "rounded-md px-4 py-1.5 text-xs font-semibold transition-colors",
-            mobileTab === "buy"
+            "min-h-11 rounded-md px-4 py-1.5 text-xs font-semibold transition-colors",
+            sideTab === "buy"
               ? "bg-up/15 text-up shadow-[inset_0_0_0_1px_rgba(230,103,103,0.4)]"
               : "text-muted-foreground hover:text-foreground",
           )}
-          onClick={() => setMobileTab("buy")}
-          aria-pressed={mobileTab === "buy"}
+          onClick={() => { setSideTab("buy"); setShowAllMobile(false); }}
+          aria-selected={sideTab === "buy"}
         >
           買超 ({agg.top13Buy.length})
         </button>
         <button
+          type="button"
+          role="tab"
           className={cn(
-            "rounded-md px-4 py-1.5 text-xs font-semibold transition-colors",
-            mobileTab === "sell"
+            "min-h-11 rounded-md px-4 py-1.5 text-xs font-semibold transition-colors",
+            sideTab === "sell"
               ? "bg-down/15 text-down shadow-[inset_0_0_0_1px_rgba(12,163,12,0.4)]"
               : "text-muted-foreground hover:text-foreground",
           )}
-          onClick={() => setMobileTab("sell")}
-          aria-pressed={mobileTab === "sell"}
+          onClick={() => { setSideTab("sell"); setShowAllMobile(false); }}
+          aria-selected={sideTab === "sell"}
         >
           賣超 ({agg.top13Sell.length})
         </button>
       </div>
 
-      {/* 手機版：單欄顯示（< 768px），桌機版：雙欄 */}
-      <div className="grid grid-cols-1 gap-3.5 md:grid-cols-2">
-        {/* 買超欄：手機版只在 buy tab 時顯示 */}
-        <div className={cn("flex flex-col gap-2.5 rounded-[var(--r-md)] border border-border bg-secondary p-3", mobileTab !== "buy" && "hidden md:flex")}>
-          <h3 className="mb-1 border-b border-[color:var(--line)] pb-2 text-center text-[14.5px] font-bold text-up">前 13 大買超分點</h3>
-          <div className="flex flex-col gap-1.5">
-            {buyRows.map((b) => (
-              <BranchRow
-                key={b.name}
-                b={b}
-                expanded={expandedBranch === b.name}
-                onToggle={() => setExpandedBranch(expandedBranch === b.name ? null : b.name)}
-                selected={selected?.has(b.name) ?? false}
-                onSelect={selectable ? onToggleSelect : undefined}
-                selectDisabled={atLimit}
-              />
-            ))}
-            {agg.top13Buy.length === 0 && <div className="py-[46px] text-center text-sm text-muted-foreground">無買超紀錄</div>}
-          </div>
-          {agg.top13Buy.length > MOBILE_ROW_LIMIT && (
-            <button
-              className="md:hidden mt-0.5 min-h-11 rounded-[var(--r-sm)] border border-[color:var(--line)] text-[12.5px] font-semibold text-[color:var(--ink-2)] hover:bg-card"
-              onClick={() => setShowAllMobile((v) => !v)}
-              aria-expanded={showAllMobile}
-            >
-              {showAllMobile ? "收合" : `展開全部 ${agg.top13Buy.length}`}
-            </button>
+      <div className="flex flex-col gap-2.5 rounded-[var(--r-md)] border border-border bg-secondary p-3">
+        <h3 className={cn("mb-1 border-b border-[color:var(--line)] pb-2 text-center text-[14.5px] font-bold", sideTab === "buy" ? "text-up" : "text-down")}>
+          {sideTab === "buy" ? "前 13 大買超分點" : "前 13 大賣超分點"}
+        </h3>
+        <div className="flex flex-col gap-1.5">
+          {(sideTab === "buy" ? buyRows : sellRows).map((b) => (
+            <BranchRow
+              key={b.name}
+              b={b}
+              expanded={!onOpenBranch && expandedBranch === b.name}
+              onToggle={() => setExpandedBranch(expandedBranch === b.name ? null : b.name)}
+              onOpen={onOpenBranch ? () => onOpenBranch(b.name) : undefined}
+              selected={selected?.has(b.name) ?? false}
+              onSelect={selectable && !onOpenBranch ? onToggleSelect : undefined}
+              selectDisabled={atLimit}
+            />
+          ))}
+          {sideTab === "buy" && agg.top13Buy.length === 0 && (
+            <div className="py-[46px] text-center text-sm text-muted-foreground">無買超紀錄</div>
+          )}
+          {sideTab === "sell" && agg.top13Sell.length === 0 && (
+            <div className="py-[46px] text-center text-sm text-muted-foreground">無賣超紀錄</div>
           )}
         </div>
-        {/* 賣超欄：手機版只在 sell tab 時顯示 */}
-        <div className={cn("flex flex-col gap-2.5 rounded-[var(--r-md)] border border-border bg-secondary p-3", mobileTab !== "sell" && "hidden md:flex")}>
-          <h3 className="mb-1 border-b border-[color:var(--line)] pb-2 text-center text-[14.5px] font-bold text-down">前 13 大賣超分點</h3>
-          <div className="flex flex-col gap-1.5">
-            {sellRows.map((b) => (
-              <BranchRow
-                key={b.name}
-                b={b}
-                expanded={expandedBranch === b.name}
-                onToggle={() => setExpandedBranch(expandedBranch === b.name ? null : b.name)}
-                selected={selected?.has(b.name) ?? false}
-                onSelect={selectable ? onToggleSelect : undefined}
-                selectDisabled={atLimit}
-              />
-            ))}
-            {agg.top13Sell.length === 0 && <div className="py-[46px] text-center text-sm text-muted-foreground">無賣超紀錄</div>}
-          </div>
-          {agg.top13Sell.length > MOBILE_ROW_LIMIT && (
-            <button
-              className="md:hidden mt-0.5 min-h-11 rounded-[var(--r-sm)] border border-[color:var(--line)] text-[12.5px] font-semibold text-[color:var(--ink-2)] hover:bg-card"
-              onClick={() => setShowAllMobile((v) => !v)}
-              aria-expanded={showAllMobile}
-            >
-              {showAllMobile ? "收合" : `展開全部 ${agg.top13Sell.length}`}
-            </button>
-          )}
-        </div>
+        {((sideTab === "buy" ? agg.top13Buy : agg.top13Sell).length > MOBILE_ROW_LIMIT) && (
+          <button
+            type="button"
+            className="md:hidden mt-0.5 min-h-11 rounded-[var(--r-sm)] border border-[color:var(--line)] text-[12.5px] font-semibold text-[color:var(--ink-2)] hover:bg-card"
+            onClick={() => setShowAllMobile((v) => !v)}
+            aria-expanded={showAllMobile}
+          >
+            {showAllMobile
+              ? "收合"
+              : `展開全部 ${(sideTab === "buy" ? agg.top13Buy : agg.top13Sell).length}`}
+          </button>
+        )}
       </div>
 
       {!heading && (
@@ -455,6 +437,7 @@ function BranchRow({
   b,
   expanded,
   onToggle,
+  onOpen,
   selected,
   onSelect,
   selectDisabled,
@@ -462,6 +445,7 @@ function BranchRow({
   b: { name: string; net: number; history?: { t: string; net: number }[] };
   expanded: boolean;
   onToggle: () => void;
+  onOpen?: () => void;
   selected?: boolean;
   onSelect?: (name: string) => void;
   selectDisabled?: boolean;
@@ -496,9 +480,9 @@ function BranchRow({
         )}
         <button
           type="button"
-          aria-expanded={expanded}
+          aria-expanded={onOpen ? undefined : expanded}
           className="flex min-h-11 w-full min-w-0 cursor-pointer items-baseline justify-between px-2.5 py-2 text-left text-[12.5px] select-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-primary"
-          onClick={onToggle}
+          onClick={onOpen ?? onToggle}
         >
           <span className="truncate font-semibold text-[color:var(--ink-2)]" title={b.name}>{b.name}</span>
           <span className={cn("num font-bold", b.net > 0 ? "text-up" : b.net < 0 ? "text-down" : "text-foreground")}>{fmtLots(b.net)}張</span>

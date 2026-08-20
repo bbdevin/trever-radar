@@ -102,6 +102,7 @@ export default function KChart({
   visibleDays,
   mainForce,
   branchFlow,
+  branchFlowLabel,
 }: {
   candles: Candle[];
   visibleDays: number;
@@ -109,7 +110,10 @@ export default function KChart({
   mainForce?: NetPoint[];
   /** 已勾選分點集合的每日 net 加總;缺省時不渲染分點進出 pane */
   branchFlow?: NetPoint[];
+  /** 分點進出 pane 標題;下鑽單一分點時傳分點名 */
+  branchFlowLabel?: string;
 }) {
+  const selLabel = branchFlowLabel ?? SEL_TITLE;
   const ref = useRef<HTMLDivElement>(null);
   const legendRef = useRef<HTMLDivElement>(null);
   const mobileLegendRef = useRef<HTMLDivElement>(null);
@@ -317,10 +321,10 @@ export default function KChart({
         if (showMain) addFlowPane(flow.main!, mainPane);
         if (showSel) addFlowPane(flow.sel!, selPane);
         mfTitle = showMain ? mkTitle(mainPane, MF_TITLE) : null;
-        selTitle = showSel ? mkTitle(selPane, SEL_TITLE) : null;
+        selTitle = showSel ? mkTitle(selPane, selLabel) : null;
         titlesRef.current = [
           ...(mfTitle ? [{ wm: mfTitle as { applyOptions: (o: unknown) => void }, base: MF_TITLE }] : []),
-          ...(selTitle ? [{ wm: selTitle as { applyOptions: (o: unknown) => void }, base: SEL_TITLE }] : []),
+          ...(selTitle ? [{ wm: selTitle as { applyOptions: (o: unknown) => void }, base: selLabel }] : []),
         ];
         // 副圖優先(2026-07-19 使用者定案:K 縮、副圖加大):K 隨額外 pane 數 24→20→18 讓位;
         // 900px 視窗實際高:0e K~290/量~92/副圖~193;1e K~229/量~80/副圖各~183;全開 K~184/量~72/副圖各~164
@@ -335,7 +339,7 @@ export default function KChart({
       // 手機 compact legend 初始文字(pane 名);游標移動時附加買賣超/累計數值
       if (mobile && mobileLegendRef.current) {
         mobileLegendRef.current.textContent =
-          effPane === "main" ? MF_TITLE : effPane === "sel" ? SEL_TITLE : `副圖 · ${settings.sub.toUpperCase()}`;
+          effPane === "main" ? MF_TITLE : effPane === "sel" ? selLabel : `副圖 · ${settings.sub.toUpperCase()}`;
       }
 
       // legend:十字游標顯示 OHLC 與均線值;主力/分點數值直接更新在對應 pane 標題(帶正負號)
@@ -359,13 +363,13 @@ export default function KChart({
           const ml = mobileLegendRef.current;
           if (ml && (effPane === "main" || effPane === "sel")) {
             const byT = effPane === "main" ? mainByTime : selByTime;
-            const title = effPane === "main" ? MF_TITLE : SEL_TITLE;
+            const title = effPane === "main" ? MF_TITLE : selLabel;
             const p = t ? byT.get(t) : undefined;
             ml.textContent = p ? `${title} 買賣超 ${fmtLots(p.net)}張 · 累計 ${fmtLots(p.cum)}張` : title;
           }
         } else {
           updTitle(mfTitle, mainByTime, MF_TITLE, t);
-          updTitle(selTitle, selByTime, SEL_TITLE, t);
+          updTitle(selTitle, selByTime, selLabel, t);
         }
         const el = legendRef.current;
         if (!el) return;
@@ -397,7 +401,7 @@ export default function KChart({
       chartRef.current = undefined;
       titlesRef.current = [];
     };
-  }, [bars, calc, flow, settings, visibleDays, mobilePaneKey, isMobile]);
+  }, [bars, calc, flow, settings, visibleDays, mobilePaneKey, isMobile, selLabel]);
 
   // 主題切換:就地更新既有 chart 的 grid/軸/水印色(不重建 → 不閃爍)。chart 建立時已用當下主題色,故此處僅處理「建立後」的切換。
   useEffect(() => {

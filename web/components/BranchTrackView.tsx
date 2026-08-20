@@ -43,25 +43,22 @@ function TableSkeleton() {
 }
 
 function AggTable({
-  title,
-  hint,
   rows,
   stocks,
 }: {
-  title: string;
-  hint: string;
   rows: { stock_id: string; net_lots: number; pct_avg: number | null }[];
   stocks: BranchTrackFile["stocks"];
 }) {
-  if (rows.length === 0) return null;
-  return (
-    <div className="flex flex-col gap-1.5">
-      <div className="flex items-baseline gap-2">
-        <h3 className="text-[14px] font-semibold text-foreground">{title}</h3>
-        <span className="text-xs text-muted-foreground">{hint}</span>
+  if (rows.length === 0) {
+    return (
+      <div className="rounded-[var(--r-lg)] border border-border bg-card px-4 py-[46px] text-center text-sm text-muted-foreground">
+        此分頁沒有符合的股票。可切到另一側查看。
       </div>
-      <div className="overflow-x-auto rounded-[var(--r-lg)] border border-border bg-card shadow-[var(--shadow-card)]">
-        <table className="w-full border-collapse text-[13px]">
+    );
+  }
+  return (
+    <div className="overflow-x-auto rounded-[var(--r-lg)] border border-border bg-card shadow-[var(--shadow-card)]">
+      <table className="w-full border-collapse text-[13px]">
           <thead>
             <tr>
               <th className="px-3.5 py-2.5 text-left font-semibold text-muted-foreground">股票</th>
@@ -77,11 +74,11 @@ function AggTable({
               return (
                 <tr
                   key={r.stock_id}
-                  onClick={() => { window.location.href = `/stock?id=${r.stock_id}`; }}
+                  onClick={() => { window.location.href = `/stock?id=${r.stock_id}#branch`; }}
                   className="num cursor-pointer border-t border-[color:var(--line)] transition-colors duration-200 hover:bg-secondary"
                 >
                   <td className="px-3.5 py-2.5 text-left">
-                    <a href={`/stock?id=${r.stock_id}`} onClick={(e) => e.stopPropagation()} className="flex flex-col gap-0.5 font-sans">
+                    <a href={`/stock?id=${r.stock_id}#branch`} onClick={(e) => e.stopPropagation()} className="flex flex-col gap-0.5 font-sans">
                       <b className="text-sm font-bold text-foreground">{meta?.name ?? r.stock_id}</b>
                       <small className="text-[11px] text-muted-foreground">{r.stock_id}</small>
                     </a>
@@ -101,7 +98,6 @@ function AggTable({
           </tbody>
         </table>
       </div>
-    </div>
   );
 }
 
@@ -123,6 +119,7 @@ export default function BranchTrackView({
   const [loading, setLoading] = useState(false);
   const [period, setPeriod] = useState<number | "custom">(20);
   const [customRaw, setCustomRaw] = useState("30");
+  const [sideTab, setSideTab] = useState<"buy" | "sell">("buy");
 
   // 換分點時重載檔案(index 提供 branch_name → file 對照,檔名為確定性 hash)
   useEffect(() => {
@@ -271,15 +268,44 @@ export default function BranchTrackView({
         <div className="rounded-[var(--r-lg)] border border-border bg-card px-4 py-[46px] text-center text-sm text-muted-foreground">
           此分點近 {data?.days ?? 120} 日無買賣超紀錄。免費分點資料自 2026-07-07 起累積,且僅涵蓋每日前 15 大買賣超,冷門進出不可見。
         </div>
+      ) : buys.length === 0 && sells.length === 0 ? (
+        <div className="py-[46px] text-center text-sm text-muted-foreground">此期間無淨買賣超紀錄。</div>
       ) : (
-        <div className="flex flex-col gap-5">
-          <AggTable title="期間淨買超" hint={`近 ${effectiveN} 交易日加總,前 ${TOP_N}`} rows={buys} stocks={data.stocks} />
-          {sells.length > 0 && (
-            <AggTable title="期間反向賣超" hint={`近 ${effectiveN} 交易日淨賣出,前 ${TOP_N}`} rows={sells} stocks={data.stocks} />
-          )}
-          {buys.length === 0 && sells.length === 0 && (
-            <div className="py-[46px] text-center text-sm text-muted-foreground">此期間無淨買賣超紀錄。</div>
-          )}
+        <div className="flex flex-col gap-3">
+          <div className="flex gap-1 rounded-lg border border-border bg-card p-0.5 w-fit" role="tablist" aria-label="買超或賣超">
+            <button
+              type="button"
+              role="tab"
+              className={cn(
+                "min-h-11 rounded-md px-4 py-1.5 text-xs font-semibold transition-colors",
+                sideTab === "buy"
+                  ? "bg-up/15 text-up shadow-[inset_0_0_0_1px_rgba(230,103,103,0.4)]"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+              onClick={() => setSideTab("buy")}
+              aria-selected={sideTab === "buy"}
+            >
+              買超 ({buys.length})
+            </button>
+            <button
+              type="button"
+              role="tab"
+              className={cn(
+                "min-h-11 rounded-md px-4 py-1.5 text-xs font-semibold transition-colors",
+                sideTab === "sell"
+                  ? "bg-down/15 text-down shadow-[inset_0_0_0_1px_rgba(12,163,12,0.4)]"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+              onClick={() => setSideTab("sell")}
+              aria-selected={sideTab === "sell"}
+            >
+              賣超 ({sells.length})
+            </button>
+          </div>
+          <p className="text-[11.5px] text-muted-foreground">
+            近 {effectiveN} 交易日加總,前 {TOP_N}
+          </p>
+          <AggTable rows={sideTab === "buy" ? buys : sells} stocks={data.stocks} />
           {data.truncated && (
             <p className="text-[11.5px] text-muted-foreground">資料量過大,已裁切至最近 120 個交易日。</p>
           )}
