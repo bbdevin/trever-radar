@@ -14,6 +14,7 @@ from sqlalchemy import bindparam, text
 
 from .. import config
 from ..db import get_engine, init_db
+from .spark_day import attach_spark_day
 from ..compute.strategy_performance import (
     compute_strategy_performance_from_events,
     fetch_strategy_events,
@@ -329,6 +330,7 @@ def export_json(out_dir: Path | None = None) -> dict:
                 "SELECT close FROM (SELECT close, date FROM daily_prices "
                 "WHERE stock_id = :s AND close IS NOT NULL AND date <= :d "
                 "ORDER BY date DESC LIMIT 30) ORDER BY date"), {"s": s["id"], "d": d})]
+        attach_spark_day(union, d)
 
         # ── 族群資金流(官方產業別;題材標籤之後人工維護再加) ──
         sector_today: dict[str, dict] = {}

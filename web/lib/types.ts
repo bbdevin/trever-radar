@@ -140,7 +140,9 @@ export interface ScoreBreakdown {
 }
 
 export interface RadarStock {
-  spark: number[]; // 近 30 日收盤
+  spark: number[]; // 近 30 日收盤;缺當日分時時當 fallback
+  spark_day?: number[]; // 當日分時(降採樣 ~60 點)
+  spark_open?: number; // 當日開盤,分時圖平盤基準
   id: string;
   name: string;
   market: "twse" | "tpex";

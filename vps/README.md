@@ -213,7 +213,7 @@ sqlite3 radar.db "PRAGMA integrity_check;"        # ok 才能用
 - **開輪 `git pull --ff-only` + docker build**(layer cache,requirements 沒變近零成本)——舊碼算舊 reasons 的既有教訓。
 - **失敗 → ntfy High 告警,成功靜默**(週備份成功發一則 default 摘要)。
 - 非交易日:importer 靠 NoDataError 安全空跑,不手刻假日曆(既有定案)。
-- deploy 憑證只在主機(`vps/.env`),容器只拿到 `RADAR_FINMIND_TOKEN`——權限分離。
+- deploy 憑證只在主機(`vps/.env`),容器只拿到 `RADAR_FINMIND_TOKEN` 與 `FUGLE_API_KEY`(後者從 `pipeline/intraday/.env` 讀入,WP-H3 當日分時與盤中 worker 同一把)——權限分離。
 
 安裝(一次):
 

@@ -30,17 +30,15 @@
 - 層次規則寫進 docs/19:主要資訊 `foreground`、語意資訊家族色、輔助說明才 `muted-foreground`;每卡語意色 ≤3 家族(超過收「+N」)避免變花。
 - 驗收:深淺雙主題對比 ≥4.5(淺色 token 已於 2026-07-12 補強,直接受益);與 V1 狀態色條不打架(色條=狀態、pill=理由,位置分離)。
 
-## WP-H3 卡片走勢圖改「當日分時」(有一個使用者決策點)
+## WP-H3 卡片走勢圖改「當日分時」 ✅ 2026-08-20
 
-**現況**:spark = 近 30 日收盤線,資訊量趨近零。**目標**:當日分時走勢(相對開盤,紅漲綠跌,平盤虛線)。
+**現況(已上線)**:有 `spark_day` 時卡片畫當日分時(相對開盤、紅漲綠跌、平盤虛線);缺資料退回近 30 日線並標「30日」。
 
 **資料方案**:
-- **A(建議)盤後 Fugle REST 抓當日 1 分 K**:榜單聯集 ~150–200 檔,60 req/min 限速下 ~3–4 分鐘,加進 daily-market/insti/branches 的 export 前步驟;降採樣 ~60 點寫 `stocks[].spark_day`(+開盤價基準)。
-  - ✅ **決策已定(2026-07-12):使用者批准 A 案**;✅ **金鑰命名(2026-08-20):沿用既有 `FUGLE_API_KEY`**,不另開 `RADAR_FUGLE_TOKEN`。Fugle 官方稱 API Key,與盤中 worker 同一把;cutover 後金鑰只在 VPS `pipeline/intraday/.env`(H3 實作時再注入 `radar-pipeline` 容器),**不進 GitHub Actions secret**。B 案降為缺資料日的 fallback 呈現。
-  - 限制:Fugle 分時**只有當日**可查(隔日補不到)→ 非交易日/缺資料日 fallback 顯示近 30 日線並標小字「30日」;歷史不回補。
-- **B(零新金鑰 fallback)當日 OHLC 迷你圖**:開盤→高低範圍→收盤的單日 range bar + 漲跌色。零成本零金鑰,但非「走勢」;使用者不批 A 時採用。
-- 前端:sparkline 元件支援兩型(分時線/30日線),tooltip 免(卡片層級);維持 CLS=0(容器定高)。
-- 驗收:14:10 後當日分時上線;缺資料 fallback 正常;JSON 體積增量回報(60 點 × 200 檔 ≈ 可忽略)。
+- **A 案已實作**:盤後 Fugle REST `intraday/candles/{symbol}?timeframe=1`,榜單聯集約 150–200 檔、間隔 1.05s(~3–4 分鐘),降採樣最多 60 點寫 `stocks[].spark_day` + `spark_open`。
+  - 金鑰沿用 VPS `FUGLE_API_KEY`(盤中 `pipeline/intraday/.env`;`vps/scripts/lib.sh` 注入 `radar-pipeline` 容器)。**不進 GitHub Actions secret**。
+  - 同日快取 `data/spark_day.json`(14:10 抓一次,16:10/17:40 之後的 export 重用);Fugle 分時只有當日 → 非交易日沿用最後交易日快取,沒快取就 fallback。
+- 前端:Sparkline 兩型;容器高 34px 維持 CLS=0。
 
 ## WP-H4 個股頁分點資訊統一(去重疊) ✅ 2026-07-14
 
@@ -91,10 +89,10 @@
 | H2 色彩層次 | 無 | 1 天 | ✅ **完成 2026-07-12**(commit 5104065,ReasonPill 全站家族色,verifier CONFIRMED) |
 | H1 題材分組 | 無 | 1 天 | ✅ **完成 2026-08-20** |
 | H4 分點統一 | 無 | 0.5–1 天 | ✅ **完成 2026-07-14** |
-| H3 當日走勢 | ~~等決策~~ **A 案已批准(2026-07-12)**;金鑰沿用 VPS `FUGLE_API_KEY`(盤中 `.env` 已有,不另設) | 1.5 天 | ✅(可開工) |
+| H3 當日走勢 | ✅ **完成 2026-08-20** | 1.5 天 | ✅ |
 | H5 圖表/分點手機版 | 無;建議與 H4 同一 executor(同批檔案) | 1.5 天 | ✅ **完成 2026-07-14** |
 
-四包彼此獨立可並行;與 docs/26(降序)/27(等回灌)不衝突,屬純前端+輕 export,**隨時可開工**。
+四包彼此獨立;docs/28 已全部完成。
 
 ## Reviewer 必查
 

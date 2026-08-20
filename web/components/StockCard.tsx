@@ -33,6 +33,7 @@ function cardStatus(s: RadarStock): CardStatus {
 export default function StockCard({ s, index = 99 }: { s: RadarStock; index?: number }) {
   const cls = chgClass(s.chg_pct);
   const status = cardStatus(s);
+  const day = (s.spark_day?.length ?? 0) >= 2 && s.spark_open != null;
   return (
     <a
       href={`/stock?id=${s.id}`}
@@ -90,11 +91,11 @@ export default function StockCard({ s, index = 99 }: { s: RadarStock; index?: nu
 
       <div className="flex items-center gap-2">
         <div className="h-[34px] flex-1 [&_svg]:h-[34px] [&_svg]:w-full">
-          <Sparkline data={s.spark} id={s.id} />
+          <Sparkline data={day ? s.spark_day! : s.spark} id={s.id} open={day ? s.spark_open : undefined} />
         </div>
-        <span className="whitespace-nowrap text-[10.5px] text-muted-foreground">
-          近{Math.min(s.spark?.length ?? 0, 30)}日
-        </span>
+        {!day && (
+          <span className="whitespace-nowrap text-[10.5px] text-muted-foreground">30日</span>
+        )}
       </div>
 
       {/* V1.1 次要細項:4 欄堆疊 → 收斂成一行小字,降層級不刪資料 */}

@@ -9,6 +9,7 @@ data/*.db-journal
 data/*.db-shm
 data/*.db-wal
 data/*.gz
+data/spark_day.json
 web/public/data/
 
 # node

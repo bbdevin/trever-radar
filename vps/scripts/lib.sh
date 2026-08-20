@@ -43,11 +43,18 @@ sync_code() {
   docker build -q -t radar-pipeline pipeline >/dev/null
 }
 
+# FUGLE_API_KEY:優先 vps/.env;否則讀盤中 worker 的 pipeline/intraday/.env(WP-H3 與盤中同一把)。
+if [ -z "${FUGLE_API_KEY:-}" ] && [ -f "$REPO/pipeline/intraday/.env" ]; then
+  FUGLE_API_KEY="$(grep -E '^FUGLE_API_KEY=' "$REPO/pipeline/intraday/.env" | tail -n 1 | cut -d= -f2- | tr -d '\r' | sed -e 's/^["'\'']//' -e 's/["'\'']$//' || true)"
+  export FUGLE_API_KEY
+fi
+
 # 跑管線一個指令。容器內 /app = repo 根;第三個 -v 必掛,export-json 產物才會落地主機。
-# 只傳 RADAR_FINMIND_TOKEN 進容器(deploy 憑證留在主機,權限分離)。
+# 只傳 RADAR_FINMIND_TOKEN / FUGLE_API_KEY 進容器(deploy 憑證留在主機,權限分離)。
 radar() {
   docker run --rm \
     -e RADAR_FINMIND_TOKEN="${RADAR_FINMIND_TOKEN:-}" \
+    -e FUGLE_API_KEY="${FUGLE_API_KEY:-}" \
     -v "$REPO/pipeline":/app/pipeline \
     -v "$REPO/data":/app/data \
     -v "$REPO/web/public/data":/app/web/public/data \
