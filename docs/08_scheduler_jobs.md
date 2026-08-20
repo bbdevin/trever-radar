@@ -6,7 +6,7 @@
 
 | 台北時間 | 執行者(VPS cron script / GitHub Actions) | 內容 |
 |---|---|---|
-| 平日 14:10 | VPS `vps/scripts/daily-market.sh` | 日K+權證成交(14:00 公布)→ 當日權證彙總 → 指標增量(--days 5)→ 綜合分 →(週一)概念股更新 → export-json(**含 Fugle 當日 1 分 K spark_day**,約 +3–4 分鐘;同日後續輪走 `data/spark_day.json` 快取)→ `wrangler deploy` |
+| 平日 14:10 | VPS `vps/scripts/daily-market.sh` | 日K+權證成交(14:00 公布)→ 當日權證彙總 → 指標增量(--days 5)→ 綜合分 →(週一)概念股更新 + **import-geo**(公司/分點地址,docs/27 G1) → export-json(**含 Fugle 當日 1 分 K spark_day**,約 +3–4 分鐘;同日後續輪走 `data/spark_day.json` 快取)→ `wrangler deploy` |
 | 平日 16:10 | VPS `vps/scripts/daily-insti.sh` | 法人買賣超(16:00 公布)+ 權證主檔 → 重算分數 → export-json → deploy |
 | 平日 17:40 | VPS `vps/scripts/daily-branches.sh` | 融資券 + 法人補抓 + 分點爬蟲(80檔+15權證)+ 分點統計 + 分數 + 績效回填 → export-json → prune → deploy |
 | 平日 21:00 | VPS `vps/scripts/daily-branches.sh`(第二輪,同一支 script) | 同上,補晚公布/前段失敗(全部冪等) → export-json → deploy |

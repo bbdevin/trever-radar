@@ -50,7 +50,7 @@
 | WP | 內容 | 依賴 | 估時 |
 |---|---|---|---|
 | G0 PoC | 三個資料端點實測(欄位/頻率/授權)、分點名稱↔官方分公司**匹配率報告**、雙北噪音統計 | 無,**隨時可做** | 半天 |
-| G1 資料層 | 三新表 + importer(company weekly/broker monthly/buyback daily)+ 種子測試;接進排程(佔用極小) | G0 | 1 天 |
+| G1 資料層 | ✅ **完成 2026-08-20**:`company_profiles` + `broker_branch_geo` + `import-geo`(週一 14:10);庫藏股無 OpenAPI,**buybacks 延後**不阻塞 GEO | G0 | 1 天 |
 | G2 地緣+關鍵+題材演算法 | 純函式(geo 圈判定/觸發/強度、K1、H1)+ 單元測試 + export tags | G1;**地緣涵蓋度依賴每日分點池廣度**(500 檔池偏熱門股;docs/26 WP-M2 全市場池後中小型股地緣才完整——先做可用,標注涵蓋限制) | 1.5 天 |
 | G3 庫藏股演算法 | KB1/KB2 純函式 + 測試 + export | G1 | 1 天 |
 | G4 口袋名單 UI | 首頁 tab + badges + 個股頁摘要併入 + /branch 徽章 | G2(G3 可後補) | 1.5 天 |

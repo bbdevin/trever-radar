@@ -253,3 +253,28 @@ branch_rankings = Table(
     Column("is_daytrade", Boolean),
     Column("source", Text)
 )
+
+# docs/27 G1:公司與券商分點地址(口袋名單前置)。庫藏股無穩定 OpenAPI,本包不建 buybacks。
+company_profiles = Table(
+    "company_profiles",
+    metadata,
+    Column("stock_id", Text, primary_key=True),
+    Column("address", Text),
+    Column("city", Text),
+    Column("district", Text),
+    Column("market", Text, nullable=False),
+    Column("updated_at", Text, nullable=False),
+)
+
+broker_branch_geo = Table(
+    "broker_branch_geo",
+    metadata,
+    Column("name_key", Text, primary_key=True),   # 正規化名稱,與 branch_trades.branch_name join
+    Column("broker_id", Text),
+    Column("branch_name", Text, nullable=False),
+    Column("address", Text),
+    Column("city", Text),
+    Column("district", Text),
+    Column("kind", Text, nullable=False),         # branch / hq / foreign
+    Column("updated_at", Text, nullable=False),
+)

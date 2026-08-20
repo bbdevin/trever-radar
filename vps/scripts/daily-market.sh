@@ -14,6 +14,7 @@ radar compute-scores
 # 概念股題材每週一更新(鏡像 daily-market.yml 的 Weekly concept-theme refresh)
 if [ "$(taipei_date +%u)" = "1" ]; then
   radar import-themes
+  radar import-geo
 fi
 
 radar export-json

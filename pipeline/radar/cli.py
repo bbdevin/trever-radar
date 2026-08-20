@@ -146,6 +146,11 @@ def cmd_compute_branch_stats(args):
     compute_all()
 
 
+def cmd_import_geo(_args):
+    from .import_geo import import_geo
+    import_geo()
+
+
 def cmd_import_stock_info(_args):
     from .importer import import_stock_info
     print(f"industry filled for {import_stock_info()} stocks")
@@ -248,6 +253,11 @@ def main(argv=None):
     sub.add_parser("import-stock-info",
                    help="fill stocks.industry via FinMind (one request)"
                    ).set_defaults(fn=cmd_import_stock_info)
+
+    sub.add_parser(
+        "import-geo",
+        help="company + broker-branch addresses for pocket-list geo (docs/27 G1)",
+    ).set_defaults(fn=cmd_import_geo)
 
     th = sub.add_parser("import-themes", help="concept-stock groups (fubon public page)")
     th.add_argument("--limit", type=int, default=None, help="only first N groups (testing)")
