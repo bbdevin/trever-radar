@@ -36,7 +36,7 @@
 
 **資料方案**:
 - **A(建議)盤後 Fugle REST 抓當日 1 分 K**:榜單聯集 ~150–200 檔,60 req/min 限速下 ~3–4 分鐘,加進 daily-market/insti/branches 的 export 前步驟;降採樣 ~60 點寫 `stocks[].spark_day`(+開盤價基準)。
-  - ✅ **決策已定(2026-07-12):使用者批准 A 案**——Fugle key 進 GitHub Actions secret(`RADAR_FUGLE_TOKEN`,與 FinMind token 同等級慣例;此為「金鑰只進 VPS .env」政策的獲准例外)。**實作時使用者需親自到 repo Settings → Secrets 新增該 secret**(agent 不碰金鑰值);B 案降為缺資料日的 fallback 呈現。
+  - ✅ **決策已定(2026-07-12):使用者批准 A 案**;✅ **金鑰命名(2026-08-20):沿用既有 `FUGLE_API_KEY`**,不另開 `RADAR_FUGLE_TOKEN`。Fugle 官方稱 API Key,與盤中 worker 同一把;cutover 後金鑰只在 VPS `pipeline/intraday/.env`(H3 實作時再注入 `radar-pipeline` 容器),**不進 GitHub Actions secret**。B 案降為缺資料日的 fallback 呈現。
   - 限制:Fugle 分時**只有當日**可查(隔日補不到)→ 非交易日/缺資料日 fallback 顯示近 30 日線並標小字「30日」;歷史不回補。
 - **B(零新金鑰 fallback)當日 OHLC 迷你圖**:開盤→高低範圍→收盤的單日 range bar + 漲跌色。零成本零金鑰,但非「走勢」;使用者不批 A 時採用。
 - 前端:sparkline 元件支援兩型(分時線/30日線),tooltip 免(卡片層級);維持 CLS=0(容器定高)。
@@ -91,7 +91,7 @@
 | H2 色彩層次 | 無 | 1 天 | ✅ **完成 2026-07-12**(commit 5104065,ReasonPill 全站家族色,verifier CONFIRMED) |
 | H1 題材分組 | 無 | 1 天 | ✅ **完成 2026-08-20** |
 | H4 分點統一 | 無 | 0.5–1 天 | ✅ **完成 2026-07-14** |
-| H3 當日走勢 | ~~等決策~~ **A 案已批准(2026-07-12)**;實作首步 = 使用者親自新增 `RADAR_FUGLE_TOKEN` secret | 1.5 天 | ✅(secret 設好即可動工) |
+| H3 當日走勢 | ~~等決策~~ **A 案已批准(2026-07-12)**;金鑰沿用 VPS `FUGLE_API_KEY`(盤中 `.env` 已有,不另設) | 1.5 天 | ✅(可開工) |
 | H5 圖表/分點手機版 | 無;建議與 H4 同一 executor(同批檔案) | 1.5 天 | ✅ **完成 2026-07-14** |
 
 四包彼此獨立可並行;與 docs/26(降序)/27(等回灌)不衝突,屬純前端+輕 export,**隨時可開工**。
