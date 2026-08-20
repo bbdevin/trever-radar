@@ -7,7 +7,7 @@
 | 項目 | 值 |
 |---|---|
 | 正式網址 | https://radar.techtrever.com(= https://trever-radar.pages.dev) |
-| 公開狀態 | **已鎖站(私人測試版)**:門禁 = 站內 Google 登入 + `/data` Worker 驗 JWT/核准狀態(或 `RADAR_SERVICE_KEY`)。Cloudflare Access 已於 2026-08-20 關閉(裸 curl `/data/radar.json` 直接 401,不再 302)。noindex + robots.txt 保留。 |
+| 公開狀態 | **已鎖站(私人測試版)**:門禁 = 站內 Google 登入 + `/data` Worker 驗 JWT/核准狀態(或 `RADAR_SERVICE_KEY`)。Cloudflare Access 已於 2026-08-20 關閉(裸 curl `/data/radar.json` 直接 401;無痕開站為站內 Google 登入,管理員登入後資料正常)。noindex + robots.txt 保留。 |
 | 自動排程 | **2026-07-18 WP-B3 cutover 後:資料 = VPS cron(`vps/scripts/` 五條每日輪 + weekly-backup,時間表見 `docs/31` §3)直接 `wrangler deploy` Workers 靜態資產到 `/data/*`**;GitHub Actions 只剩 push main 觸發 `deploy`(純 build+deploy,無資料步驟)。5 支資料 workflow 檔案保留但已無觸發源(Worker cron 已停),回滾窗兩週後刪(`docs/31` §9)。`docs/08` §0 已改寫為 VPS cron 表(WP-B5,2026-07-18) |
 | Repo | github.com/bbdevin/trever-radar(**公開**;2026-07-18 cutover 時曾轉 private,但 private 觸發 GitHub Actions 帳戶 Billing 阻斷,修復需綁付款方式——使用者依免綁卡原則決定改回 public。GitHub 自 WP-B1 起零資料,docs/10 §3 合規紅線不受影響) |
 | DB | SQLite。**2026-07-18 WP-B3 cutover 完成:VPS 主本 = 唯一寫者與唯一真相**,備份 = VPS 本機 + Google Drive 週快照(`docs/31` §4)。雲端鏈(Actions cache 續存)已退役,回滾窗兩週內保留 workflow 檔案不刪 |
@@ -109,7 +109,7 @@
 
 ## 最近完成
 
-- 2026-08-20 **WP-B7 Access 關閉**:裸 curl `https://radar.techtrever.com/data/radar.json` 直接 401(不再 302)。門禁只剩站內 Google 登入 + Worker JWT/`RADAR_SERVICE_KEY`。
+- 2026-08-20 **WP-B7 Access 關閉並驗收**:裸 curl `/data/radar.json` 直接 401;使用者確認無痕開站為站內 Google 登入、管理員登入後資料正常。門禁只剩站內登入 + Worker JWT/`RADAR_SERVICE_KEY`。
 - 2026-08-19 **WP-B7 Worker JWT**:`/data` Worker 驗 Bearer JWT + `app_profiles.approved`,或 `X-Radar-Service-Key`;前端 `dataFetch` 帶 token;盤中 worker 改帶 service key。
 - 2026-08-19 **WP-B7 前端核准閘門**:全頁 Google 登入、`docs/sql/app_profiles.sql`、`/admin` 核准頁;既有 auth.users 回填已核准,`a7033140327k@gmail.com` 為管理員。
 - 2026-08-19 **手機版 UI 修正（多頁）**：個股頁 KChart 工具列拆兩列（Row1 固定：時間框架/副圖/主力分點；Row2 均線 wrap）；分點進出區摘要 card 對稱排列、時間範圍 wrap 全顯；分點頁統計列改 2×2 grid、標籤文字更清楚、資料起始日截斷修正。commits `b00916a`/`01b6c01`/`57f97a7`/`450f284`。

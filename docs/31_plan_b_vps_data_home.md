@@ -212,7 +212,7 @@ Worker trigger 的 `GH_TOKEN` PAT 在回滾窗結束後由使用者親自 revoke
 | B2 | compute-branch-stats 真實資料 RAM 超標 | 串流版已修;超標則移週六輪或加 swap |
 | B3 | cutover 當日兩邊都跑/都沒跑 | 順序固定「先切資料源、再停 Worker trigger」;當日人工盯 14:10 輪 |
 | B3 | JSON 快取殘留舊資料 | radar.json no-store;其餘短 TTL;驗收含「更新後 5 分內前端可見」 |
-| B7 | 驗證邏輯寫錯=資料裸奔 | 獨立 WP + security 審查 + Access 先不拆的雙鎖過渡 |
+| B7 | 驗證邏輯寫錯=資料裸奔 | Worker 必須驗 JWT/service key(2026-08-20 Access 已關);改驗證邏輯須先確認未登入 401 |
 | 長期 | VPS 單點:磁碟壞=最多丟一週資料 | Drive 週快照;快照後幾天可 backfill 重建(§4 災難恢復認知) |
 | 長期 | 備份單雲:Google 帳號被鎖=只剩 VPS 單份 | 使用者知情接受(§4);日後可加 B2/MEGA 一行補第二朵雲 |
 | 長期 | VPS 靜默死機無告警 | §5.3 站外看門狗 |

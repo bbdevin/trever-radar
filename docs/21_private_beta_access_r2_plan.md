@@ -63,8 +63,8 @@ GitHub Actions(單一 radar-db concurrency)
 ```
 
 **當前狀態**:
-- ✅ **網站私人化 (Access) 已完成**:2026-07-13 由使用者於 Cloudflare 後台手動完成。
-- ⏳ **R2 備份機制**:尚未建立,restore chain 仍是 cache → GitHub Release。不得宣稱 R2 遷移已完成。
+- ✅ **網站私人化**:2026-07-13 Access A0-A2;2026-08-20 WP-B7 關閉 Access,改站內 Google 登入 + `/data` Worker JWT。
+- ⛔ **R2**:2026-07-15 作廢(啟用需綁卡);快照改 Google Drive。
 
 ## 4. Access 實作計畫 (已完成)
 
@@ -276,9 +276,9 @@ Actions cache → R2 current verified snapshot → GitHub Release → 明確失�
 | Phase | 狀態 |
 |---|---|
 | 文件規劃 | ✅ 完成(2026-07-10) |
-| Access A0-A2 | ⏳ 待使用者確認並操作/授權 |
-| R2 R0 建資源 | ⏳ 待確認 |
-| R2 R1 Shadow backup | ⏳ 待 R0 |
-| R2 R2 Restore drill | ⏳ 待 R1 兩份快照 |
-| R2 R3 Workflow fallback | ⛔ 未授權 |
+| Access A0-A2 | ✅ 2026-07-13 完成;✅ 2026-08-20 退役(改 Worker JWT) |
+| R2 R0 建資源 | ⛔ 2026-07-15 作廢(需綁卡) |
+| R2 R1 Shadow backup | ⛔ 作廢 |
+| R2 R2 Restore drill | ⛔ 作廢(改 Google Drive,見 `31` §4) |
+| R2 R3 Workflow fallback | ⛔ 作廢 |
 | R2 R4 / 分點 P2 | ⛔ 延後 |

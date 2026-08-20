@@ -46,28 +46,19 @@ npx wrangler deploy   # 讀 ../web/public/data;內容 hash 去重,只上傳變�
 
 首次 deploy 必須在「資產目錄有完整 export 產物」的機器上跑(= VPS),否則目錄不存在會失敗。
 
-## 驗收(關 Access 之前必過)
-
-Access 還在時,裸 curl 會先被 Access 302,測不到 Worker 401。請用既有 Access service token 穿過 Access,再看 Worker 回應:
+## 驗收(2026-08-20 Access 已關)
 
 ```bash
-# 無 JWT、無 service key → 必須 401 JSON(login required),不是榜單
-curl -sS -D - -o - \
-  -H "CF-Access-Client-Id: $CF_ACCESS_CLIENT_ID" \
-  -H "CF-Access-Client-Secret: $CF_ACCESS_CLIENT_SECRET" \
-  https://radar.techtrever.com/data/radar.json | head -20
+# 未登入 → 必須 401 JSON(login required),不是榜單、不是 302
+curl -sS -D - -o - https://radar.techtrever.com/data/radar.json | head -15
 
-# 帶 service key → 200 JSON
+# 帶 service key → 200
 curl -sS -o /dev/null -w "%{http_code}\n" \
-  -H "CF-Access-Client-Id: $CF_ACCESS_CLIENT_ID" \
-  -H "CF-Access-Client-Secret: $CF_ACCESS_CLIENT_SECRET" \
   -H "X-Radar-Service-Key: $RADAR_SERVICE_KEY" \
   https://radar.techtrever.com/data/radar.json
 ```
 
-確認 401 後才可在 Cloudflare Zero Trust 關閉 Access Application。關閉後裸 curl 應直接 401,不再 302。
-
-任何一測不符 → **不要關 Access**,回報使用者(docs/31 §7 風險表 B7 列)。
+無痕開站應為站內 Google 登入。任何一測變成未認證可讀 JSON → 立刻回報,屬資料裸奔。
 
 ## 平台限制(現況遠低於上限)
 
