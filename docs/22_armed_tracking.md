@@ -1,12 +1,16 @@
-# 22 Armed 狀態追蹤(待開發,2026-07-10 規劃定案)
+# 22 Armed 狀態追蹤(2026-07-10 規劃定案;2026-08-20 Extended/Faded 程式落地)
 
 > 本文件記錄使用者於 2026-07-10 確認納入待開發的產品方向:
 > 用「雷達狀態」追蹤**籌碼/權證已進駐但股價尚未發動**與**已發動/強勢續追**,
 > 取代再加第 14 策略或第 7 個近似榜單。
 >
-> **狀態**:📝 規劃已定案,程式尚未實作。實作須等 `docs/20` B 方案 Phase 1–3
-> 與 `docs/21` Access A0–A2 有明確進度後,另獲使用者確認單一 Phase 才動手。
-> 既有 Python + SQLite + 靜態 JSON + Next.js 架構不翻案。
+> **狀態(2026-08-20)**:
+> - ✅ A1–A2 Armed/Triggered 已上線(export + 首頁 tab + 卡片徽章)
+> - ✅ A3 一鍵加入今日 Armed(自選,見 docs/23 F1.3)
+> - ✅ **Extended / Faded 同日近似**(export `derive_radar_state` + `lists.extended`/`lists.faded` + 首頁「追高風險」「失效」tab + 卡片徽章)。**正式站需等下次 VPS `export-json`** 才有新 list;前端已相容空陣列。
+> - 延後:進駐天數精算(`armed_days`)、跨日狀態持久、門檻依績效校準
+>
+> 既有 Python + SQLite + 靜態 JSON + Next.js 架構不翻案。不新增策略 code、不抬綜合分。
 
 ## 1. 為什麼要做
 
@@ -53,71 +57,69 @@ Quiet（無訊號）
 Armed 之後出現帶量突破 / 創 N 日新高(重用 T2),或當日強勢且分點/權證訊號仍在。
 **主追蹤敘事**用「由 Armed 轉 Triggered」,不當日漲幅榜當唯一「強勢」定義。
 
-### 2.3 Extended / Faded
+### 2.3 Extended / Faded(2026-08-20 同日近似實作)
 
-- **Extended**:已漲一截 + 既有風險(RSI 過熱、爆量長上影等)→ 追高風險標籤。
-- **Faded**:不再符合 Armed/Triggered,或觸及失效價邏輯 → 移出主池或標失效。
+純函式:`pipeline/radar/export/json_export.py::derive_radar_state`(單元測試 `pipeline/tests/test_derive_radar_state.py`)。
+
+- **Extended**:`sources` 仍在 + 有風險(`score_risks` 或 tech risks) + 已漲一截(`chg≥7%` 或 `chg5≥12%`,或突破態且 `chg≥5%`/`chg5≥10%`)→ `lists.extended` / 首頁「追高風險」。
+- **Faded**:收盤 ≤ `stop_price` 時覆寫為 faded(含仍有 sources 的情況);或無 sources 但當日有評分且觸及失效價 → `lists.faded` / 首頁「失效」。
+- **Quiet**:無 state(不另開 tab)。
+- **誠實限制**:無跨日狀態表,故非「由 Armed 轉 Faded」的時間序列;進駐天數仍延後。
 
 ## 3. UI 最小方案(不新開一級路由)
 
-1. **首頁主 tab「未發動」(Armed)**  
-   欄位:來源徽章、進駐連續天數、距觀察價%、一句理由、一句風險。
-2. **次 tab「已發動」(Triggered)**  
-   合併心智上的強勢/突破追蹤;hot/surge/strong 可收成「市場掃描」次選或單一表 + filter。
-3. **`/watchlist` = 追蹤工作台**  
-   手動 ★ 保留;可選「一鍵將今日 Armed 加入自選」(仍走既有 Supabase watchlist)。
-4. **`/branch`**  
-   只做分點工作流;權證分點資料供 Armed 計算與實驗檢視,文案依 `docs/20` 降級為「權證分點異動(實驗)」。
+1. **首頁主 tab「未發動」(Armed)**
+2. **次 tab「已發動」(Triggered)**
+3. **「追高風險」(Extended) / 「失效」(Faded)**(2026-08-20) — 接在已發動之後;空 list 時前端顯示 0 檔即可。
+4. **`/watchlist` = 追蹤工作台** — 手動 ★ 保留;一鍵加入今日 Armed 已做。
+5. **`/branch`** — 只做分點工作流;權證分點文案依 `docs/20` 降級為實驗。
 
 **刻意不做**(本文件範圍內):
 
 - 第 14 個策略 code、新綜合分權重、把權證分點納入 `final`
 - 新一級導航頁、推播/LINE(無常駐伺服器)
-- 地緣/關鍵分點、五年分點、V2 盤中(仍依 `docs/20` 延後)
+- 地緣/關鍵分點五年擴容(另案)
 
-## 4. 資料契約(實作時再細化)
+## 4. 資料契約
 
 原則:SQLite 真相不變;JSON 為產出物。優先在 export 層組狀態,避免大改 schema。
 
-建議產出(名稱可調,語意固定):
+已產出:
 
-- `radar.json` → `lists.armed` / `lists.triggered`(或等效 `states` 欄)
-- 每檔帶:`state`、`sources[]`、`armed_days`、既有 scores / warrant 摘要 / watch·stop
-- 重用:`daily_scores.reasons`(S12 等)、`buy_concentration`、權證彙總倍數、T2 突破條件
+- `radar.json` → `lists.armed` / `lists.triggered` / `lists.extended` / `lists.faded`
+- 每檔:`state`(`armed`|`triggered`|`extended`|`faded`|null)、`sources[]`、既有 scores / warrant / watch·stop
+- 重用:`daily_scores.reasons`(S12 等)、權證彙總倍數、T2、`stop_price`、risks
 
-禁止:為 Armed 新建會膨脹 DB 的歷史大表;禁止未授權改 workflow / WAL / cache 鏈。
+禁止:為 Armed 新建會膨脹 DB 的歷史大表;禁止未授權改 workflow / 正式 DB。
 
 ## 5. 與其他文件的關係
 
 | 文件 | 關係 |
 |---|---|
-| `docs/20` | **先做** UI 刪減、策略解耦、績效閉環;本功能是其後的產品下一刀,不取代 B 方案 |
-| `docs/21` | **先做** Access 鎖站;追蹤功能再強,公開靜態 JSON 仍可被抓則無意義 |
-| `docs/04` | Armed 條件對齊 W3 / B3 / 組合推論;門檻仍是起始值,靠績效校準 |
-| `docs/07` / `19` | 實作前端時再改頁面規格與 UI 規範對照 |
+| `docs/20` | B 方案 Phase 完成後的產品下一刀;不取代 B 方案 |
+| `docs/21` | Access 已退役;門禁見 WP-B7 / `docs/31` |
+| `docs/04` | Armed 條件對齊 W3 / B3;門檻仍是起始值 |
+| `docs/07` / `19` | 前端規格與 UI 規範 |
 
-## 6. 建議實作順序(待使用者逐段確認)
+## 6. 實作順序
 
-| 順序 | 內容 | 依賴 |
+| 順序 | 內容 | 狀態 |
 |---|---|---|
-| 前置 | Access A0–A2 + B Phase 1(騰出首頁/branch 空間) | `21` / `20` |
-| 建議並行認知 | B Phase 2–3(確認 S12 等 tag 值不值得當 Armed 主訊號) | `20` |
-| **A1** | export:`lists.armed` / 來源徽章 / 風險欄;單元測試 | 本文件 §2.1、§4 |
-| **A2** | 首頁「未發動」「已發動」tab;市場近似榜收斂 | 本文件 §3 |
-| **A3** | 自選狀態色 + 可選一鍵加入今日 Armed | Supabase watchlist 已存在 |
-| 延後 | 進駐天數精算、自動失效清單、門檻依績效校準 | 需日序列與使用者看過報告 |
+| **A1** | export:`lists.armed` / 來源徽章 / 風險欄 | ✅ |
+| **A2** | 首頁「未發動」「已發動」tab | ✅ |
+| **A3** | 自選一鍵加入今日 Armed | ✅ |
+| **A4** | Extended / Faded 同日近似 + UI | ✅ 2026-08-20(等 VPS export) |
+| 延後 | 進駐天數精算、跨日自動失效清單、門檻依績效校準 | 📝 |
 
 ## 7. 成功標準
 
 - 打開首頁能在一個池掃完「籌碼或權證進駐、價未動」標的,不必切 13 策略。
 - `both` 來源可一眼辨識;權證單來源不宣稱「主力卡位」。
-- 強勢追蹤主敘事是 Armed→Triggered,不是純漲幅排序。
+- 強勢追蹤主敘事是 Armed→Triggered;Extended/Faded 可從主池旁路掃讀。
 - 未新增策略 code、未抬高綜合分、未新開一級路由、未納入 `final`。
-- 實作前仍須使用者確認單一 Phase;不得與 workflow / R2 / 五年分點混做。
 
 ## 8. 給 Executor 的固定起手式
 
-1. 讀 `AGENTS.md`、`project-context.md`、`STATUS.md`、`docs/20`、`docs/21`、本文件。
-2. 確認使用者指定的是 A1 / A2 / A3 哪一段,且前置依賴已滿足或使用者明示可並行。
-3. 列預計檔案、測試、對正式 JSON 的影響 → **等確認再改碼**。
-4. 完成後更新 `STATUS.md` 本文件狀態列,留下 handoff。
+1. 讀 `AGENTS.md`、`project-context.md`、`STATUS.md`、`docs/20`、本文件。
+2. 改 export 狀態機時同步單元測試與前端 `ListKey`/`state` 型別。
+3. 不在回補進行中對正式 `radar.db` 跑 export;程式可先合 main,等空檔再 deploy 資料。

@@ -32,7 +32,7 @@
 | Phase 1 UI 刪減與合併 | ✅ 完成(2026-07-10) | 低風險,但仍須先看現有 diff;完成後為 `docs/22` 騰出首頁空間 |
 | Phase 2 策略/分數解耦 | 🔄 進行中 | 解耦程式+測試已完成(2026-07-10);差異報告 CLI 已完成(2026-08-19);VPS 最新日報告+正式重算待使用者批准 |
 | Phase 3 策略績效閉環 | ⏳ 待確認 | 先做客觀報告,不由 agent 自動升級策略;有助判斷 S12 是否適合作 Armed 主訊號 |
-| Phase 4 排程簡化 | ⏳ 待確認 | 獨立高風險任務,不得與 Phase 1-3 混做 |
+| Phase 4 排程簡化 | 📝 提案稿已改寫(2026-08-20) | 對齊 VPS cron+Worker 資料層;cron/script **未改**,待另確認目標態或變體 B |
 | 之後 → `docs/22` Armed | 📝 規劃定案 | 見該文件 A1–A3;不屬本 B 方案 Phase 編號 |
 
 ## 2. 審計依據與核心問題
@@ -197,17 +197,48 @@ Supabase Auth / watchlist 保留作跨裝置個人化,不再擴張假性會員�
 4. 不以「出現檔數」代替績效;不隱藏失敗樣本。
 5. 使用者看過報告後才決定 Active / Retired 清單。
 
-### Phase 4:排程與部署簡化(獨立高風險任務)
+### Phase 4:排程與部署簡化(獨立高風險任務)— **提案稿(2026-08-20 改寫,尚未執行)**
 
-目標是保留資料取得時點,將完整 build/deploy 從每交易日最多 5 次降到 2 次:
+> **背景校正(WP-B3 後)**:舊稿假設 GitHub Actions 每日最多 5 次完整 build/deploy + cache/release DB 續存鏈。**現行真相**(`docs/08` §0、`docs/31`):`radar.db` 常駐 VPS 單一寫者;每日多輪 VPS cron 各自 `export-json` + `wrangler deploy`(資料 Worker 資產);GitHub `deploy.yml` 只在 push `main` 時部署**程式碼/前端**,不碰資料。WAL checkpoint 在 `vps/scripts/weekly-backup.sh`,不在 Actions。
 
-- 14:10:行情快速版部署。
-- 16:10 / 17:40 / 21:00:只更新 DB 並安全續存。
-- 22:10:完整資料版 export/build/deploy。
+#### 4.1 目標(不變的產品意圖)
 
-此階段會碰 `.github/workflows/*.yml`、Cloudflare Worker、WAL checkpoint 與 cache/release
-續存鏈,必須另走 `docs/17` 高風險流程。執行前完整閱讀五支資料 workflow、
-`deploy.yml`、`cloudflare-trigger/*`、`docs/08` 與 `docs/15`;不得移除 WAL checkpoint。
+保留各資料源取得時點(行情 14:00、法人 16:00、分點晚間補抓),但降低「全量 JSON 匯出 + Worker 資料部署」的尖峰次數與重疊風險,避免多輪搶 `flock` / 重複 Fugle spark 抓取。
+
+#### 4.2 建議目標態(待使用者確認後才改 cron / script)
+
+| 台北時間 | 仍跑資料取得 | export-json + Worker deploy | 備註 |
+|---|---|---|---|
+| 平日 14:10 | 日K+權證+指標+分數(+週一 geo) | **是**(行情快照版) | 首頁資料日當天變今天;含 spark_day |
+| 平日 16:10 | 法人+權證主檔+重算分數 | **否**(只寫 DB) | 法人 freshness 可在前端標「暫用前日」直到晚間 deploy |
+| 平日 17:40 | 融資券+分點+分數+績效 | **否**(只寫 DB) | 與現行 `daily-branches` 同源 |
+| 平日 21:00 | 分點第二輪(冪等補抓) | **否**(只寫 DB) | |
+| 平日 22:10 | 融資券保底+重算 | **是**(完整資料版) | 合併當日所有晚公布資料後一次匯出 |
+| 每天 01:10 / 週六備份 | 不變 | 備份腳本不變 | 不得移除 `wal_checkpoint` + `integrity_check` |
+
+可選變體(若使用者寧願法人一到就上站):
+
+- **變體 B**:14:10 + **16:10** + 22:10 三次資料 deploy(法人優先於分點)。
+
+#### 4.3 明確不在本 Phase 自動執行
+
+- 不改 `.github/workflows/*.yml`(資料 workflow 已無觸發,刪檔另案依 `docs/31` §9)。
+- 不改 Cloudflare Pages / DNS / secrets。
+- 不碰正式 `radar.db` destructive 操作。
+- 執行時只動 `vps/scripts/*.sh` 與 `vps/scripts/crontab.example`,並同步 `docs/08` §0 / `vps/README.md`。
+
+#### 4.4 執行前檢查清單(獲確認後)
+
+1. 讀 `vps/scripts/lib.sh` flock 行為與各 daily-*.sh 尾段 `export-json`/`deploy_data` 呼叫點。
+2. 確認 16:10–21:00「只寫 DB」時,前端 `freshness.stale` 文案仍誠實。
+3. 確認 22:10 一輪能涵蓋法人+分點+融資券,失敗有 ntfy。
+4. 回滾:把各 script 尾段 deploy 加回即可(cron 時間表可暫不變)。
+
+#### 4.5 狀態
+
+📝 **提案已落檔,程式/cron 未改**。需使用者另確認「目標態或變體 B」後才開 Executor 實作包。
+
+此階段會碰 VPS cron 與資料部署頻率,必須另走 `docs/17` 高風險流程。執行前完整閱讀 `docs/08` §0、`docs/31`、`vps/README.md`、各 `vps/scripts/daily-*.sh`;不得移除 WAL checkpoint。
 
 ## 6. Reviewer 必查項目
 

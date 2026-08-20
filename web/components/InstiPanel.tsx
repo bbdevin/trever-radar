@@ -106,8 +106,8 @@ export default function InstiPanel({ data, candles }: { data: StockJson; candles
       )}
 
       {!history.length ? (
-        <p className="rounded-[var(--r-md)] border border-border bg-card px-3.5 py-8 text-center text-sm text-muted-foreground">
-          近 240 日三大法人買賣超會在下次資料匯出後出現。法人分仍可先看。
+        <p className="rounded-[var(--r-md)] border border-border bg-card px-3.5 py-6 text-center text-sm text-muted-foreground">
+          法人日表待下次匯出。上方法人分仍可先看。
         </p>
       ) : (
         <>

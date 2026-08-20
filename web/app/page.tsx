@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useMemo, useRef } from "react";
-import { Clock, Search, TrendingUp, TrendingDown, Star, Sparkles, ShieldCheck, Zap, ChevronDown, Briefcase } from "lucide-react";
+import { Clock, Search, TrendingUp, TrendingDown, Star, Sparkles, ShieldCheck, Zap, ChevronDown, Briefcase, AlertTriangle, Ban } from "lucide-react";
 import { IconFlame, IconTrend, IconZap, IconRadar, IconPulse, IconStar, IconTrendDown } from "@/components/Icons";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -16,8 +16,8 @@ import { OFFLINE_DATA_COPY, isBrowserOffline } from "@/lib/pwa";
 import type { ListKey, MetaJson, RadarJson, StrategyMeta } from "@/lib/types";
 import { SOURCE_LABEL, fmtE8 } from "@/lib/format";
 
-// TabKey for the 4 main task-oriented tabs
-type TabKey = "score" | "armed" | "triggered" | "pocket" | "scan" | "mark" | "warrant";
+// TabKey for the main task-oriented tabs
+type TabKey = "score" | "armed" | "triggered" | "extended" | "faded" | "pocket" | "scan" | "mark" | "warrant";
 
 // Scan modes within the "scan" tab
 type ScanModeKey = "hot" | "surge" | "strong" | "weak";
@@ -26,6 +26,8 @@ const TABS: { key: TabKey; label: string; hint: string; icon: any }[] = [
   { key: "score", label: "綜合", hint: "盤後綜合分數:分點/權證/技術/法人加權−風險扣分,≥65 為觀察門檻", icon: IconRadar },
   { key: "armed", label: "未發動", hint: "分點/權證籌碼異常進駐，且股價尚未表態", icon: ShieldCheck },
   { key: "triggered", label: "已發動", hint: "分點/權證籌碼進駐，且今日放量突破或創高", icon: Zap },
+  { key: "extended", label: "追高風險", hint: "籌碼仍在，但已漲一截且帶風險標籤（過熱/長上影等）", icon: AlertTriangle },
+  { key: "faded", label: "失效", hint: "觸及失效價，或籌碼訊號已淡出（同日近似）", icon: Ban },
   { key: "pocket", label: "口袋", hint: "地緣/關鍵分點/熱門題材疊加(≥2 理由);不進綜合分,僅排序", icon: Briefcase },
   { key: "scan", label: "市場掃描", hint: "多維度市場量價特徵掃描 (熱門/爆量/強勢/弱勢)", icon: IconZap },
   { key: "mark", label: "策略", hint: "進階量化選股，涵蓋技術面與籌碼面等多種策略", icon: IconStar },

@@ -39,6 +39,55 @@ _STRATEGY_STATUS: dict[str, str] = {
     "S13_SHORT_SQUEEZE": "shadow",
 }
 
+
+def derive_radar_state(
+    *,
+    sources: list[str],
+    c_pct: float,
+    c5_pct: float,
+    technical: dict | None,
+    score_risks: list,
+    close: float | None,
+    stop_price: float | None,
+    score_final: float | None,
+) -> str | None:
+    """Quiet→Armed→Triggered→Extended→Faded（docs/22）。同日近似，無跨日 armed_days。"""
+    touched_stop = (
+        stop_price is not None
+        and close is not None
+        and float(close) <= float(stop_price)
+    )
+    if sources:
+        reasons = (technical or {}).get("reasons") or []
+        has_t2 = any(r.get("code") == "T2_20D_HIGH" for r in reasons)
+        is_breakout = c_pct >= 4.0 or has_t2
+        is_quiet = c_pct < 3.0 and c5_pct < 8.0
+        tech_risks = (technical or {}).get("risks") or []
+        has_risk = bool(score_risks) or bool(tech_risks)
+        # Extended：已漲一截 + 既有風險 → 追高風險（§2.3）
+        is_extended = has_risk and (
+            c_pct >= 7.0
+            or c5_pct >= 12.0
+            or (is_breakout and (c_pct >= 5.0 or c5_pct >= 10.0))
+        )
+        if is_extended:
+            state: str | None = "extended"
+        elif is_breakout:
+            state = "triggered"
+        elif is_quiet:
+            state = "armed"
+        else:
+            state = None
+        if touched_stop:
+            return "faded"
+        return state
+    # 來源已無，但觸及失效價且當日有評分 → Faded（無跨日歷史時的同日近似）
+    if touched_stop and score_final is not None:
+        return "faded"
+    return None
+
+
+
 DEFAULT_OUT = config.ROOT / "web" / "public" / "data"
 
 MIN_TURNOVER = 100_000_000
@@ -194,31 +243,33 @@ def export_json(out_dir: Path | None = None) -> dict:
                     "reasons": json.loads(tech_reasons or "[]"),
                     "risks": json.loads(tech_risks or "[]"),
                 }
-            # Armed / Triggered State Machine
+            # Armed / Triggered / Extended / Faded (docs/22)
             c_pct = chg_pct or 0
             c5_pct = chg5_pct or 0
             raw_rs = json.loads(score_reasons or "[]")
+            raw_risks = json.loads(score_risks or "[]")
             has_branch = any(r.get("code") == "S12_BRANCH_ACCUMULATION" for r in raw_rs) and (turnover or 0) >= MIN_TURNOVER
             has_warrant = False
             if warrant and warrant.get("call_turnover_ratio") is not None:
                 if warrant["call_turnover_ratio"] >= 1.5 and warrant["call_turnover"] >= MIN_WARRANT_TURNOVER:
                     has_warrant = True
-                    
+
             sources = []
             if has_branch:
                 sources.append("branch")
             if has_warrant:
                 sources.append("warrant")
-                
-            state = None
-            if sources:
-                has_t2 = technical and any(r.get("code") == "T2_20D_HIGH" for r in technical.get("reasons", []))
-                is_breakout = c_pct >= 4.0 or has_t2
-                is_quiet = c_pct < 3.0 and c5_pct < 8.0
-                if is_breakout:
-                    state = "triggered"
-                elif is_quiet:
-                    state = "armed"
+
+            state = derive_radar_state(
+                sources=sources,
+                c_pct=c_pct,
+                c5_pct=c5_pct,
+                technical=technical,
+                score_risks=raw_risks,
+                close=close,
+                stop_price=stop_price,
+                score_final=score_final,
+            )
 
             all_stocks.append({
                 "id": sid, "name": name, "market": market, "industry": industry,
@@ -246,7 +297,7 @@ def export_json(out_dir: Path | None = None) -> dict:
                 "sources": sources,
                 "reasons": [x["text"] for x in raw_rs[:4]],
                 "raw_reasons": raw_rs,
-                "risks": [x["text"] for x in json.loads(score_risks or "[]")[:3]],
+                "risks": [x["text"] for x in raw_risks[:3]],
             })
 
         # ── 榜單(動態,依今日行情,保底15檔,上限40檔) ──
@@ -575,6 +626,8 @@ def export_json(out_dir: Path | None = None) -> dict:
             "warrant": [s["id"] for s in warrant],
             "armed": [s["id"] for s in all_stocks if s.get("state") == "armed"],
             "triggered": [s["id"] for s in all_stocks if s.get("state") == "triggered"],
+            "extended": [s["id"] for s in all_stocks if s.get("state") == "extended"],
+            "faded": [s["id"] for s in all_stocks if s.get("state") == "faded"],
             "pocket": pocket_ids,
         },
         "strategies": {code: [s["id"] for s in st_list] for code, st_list in strategies_lists.items()},

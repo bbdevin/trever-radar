@@ -154,8 +154,8 @@ function StockView() {
       </div>
 
       {/* IA-2 + F3: Decision Header — why this stock appears, risks, key prices */}
-      <StockDecisionHeader data={data} close={last.c} />
-      <div className="mb-2.5 flex min-w-0 flex-col gap-2 md:flex-row md:flex-wrap md:items-center md:gap-2.5">
+      <StockDecisionHeader key={view} data={data} close={last.c} defaultCollapsed={view === "chart"} />
+      <div className="sticky top-0 z-20 -mx-1 mb-2.5 flex min-w-0 flex-col gap-2 bg-background/95 px-1 py-1.5 backdrop-blur-sm md:static md:mx-0 md:bg-transparent md:px-0 md:py-0 md:backdrop-blur-none md:flex-row md:flex-wrap md:items-center md:gap-2.5">
         <div
           role="tablist"
           aria-label="個股內容"
@@ -230,13 +230,22 @@ function StockView() {
 }
 
 /** IA-2 + F3: Decision Header — shown before chart to answer "why is this here + when to exit" */
-function StockDecisionHeader({ data, close }: { data: StockJson; close: number }) {
+function StockDecisionHeader({
+  data,
+  close,
+  defaultCollapsed = false,
+}: {
+  data: StockJson;
+  close: number;
+  defaultCollapsed?: boolean;
+}) {
   const scores = data.scores;
   // 個股頁詳情區不設家族數上限;帶 code 的 raw_reasons 用來判語意家族色,缺時退回純文字(中性)。
   const reasons = (data.raw_reasons?.length ? data.raw_reasons : (data.reasons ?? []).map((text) => ({ text, code: undefined }))).slice(0, 3);
   const risks = (data.risks ?? []).slice(0, 2);
   const watchPrice = scores?.watch_price;
   const stopPrice = scores?.stop_price;
+  const [open, setOpen] = useState(!defaultCollapsed);
 
   const distPct = (price: number, target: number) =>
     ((price - target) / Math.abs(target)) * 100;
@@ -249,58 +258,105 @@ function StockDecisionHeader({ data, close }: { data: StockJson; close: number }
   if (!scores && !reasons.length && !risks.length && !(data.pocket_tags?.length)) return null;
 
   return (
-    <div className="mb-3 min-w-0 rounded-[var(--r-lg)] border border-border bg-card p-3.5 shadow-[var(--shadow-card)]">
-      {/* Top row: score + source badge */}
-      <div className="mb-2.5 flex min-w-0 flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
-        <div className="flex min-w-0 flex-wrap items-center gap-2">
-          {scores && (
-            <span className={cn("num text-[28px] font-extrabold leading-none", scores.final >= 65 ? "text-warn" : "text-[color:var(--ink-2)]")}>
-              {scores.final}
-            </span>
-          )}
-          <span className="text-[11.5px] text-muted-foreground">{"綱合評分"}</span>
-          {sourceLabel && (
-            <span className="rounded-md bg-[color:var(--ink-2)]/10 px-2 py-0.5 text-[10.5px] font-bold text-[color:var(--ink-2)]">
-              {sourceLabel}
-            </span>
-          )}
-        </div>
-        {/* Watch / Stop prices with distance */}
-        <div className="flex min-w-0 flex-wrap gap-2 text-[11.5px] sm:ml-auto">
+    <div className="mb-3 min-w-0 rounded-[var(--r-lg)] border border-border bg-card shadow-[var(--shadow-card)]">
+      <button
+        type="button"
+        className="flex w-full min-w-0 items-center gap-2 px-3.5 py-2.5 text-left"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+      >
+        {scores && (
+          <span className={cn("num text-[22px] font-extrabold leading-none sm:text-[28px]", scores.final >= 65 ? "text-warn" : "text-[color:var(--ink-2)]")}>
+            {scores.final}
+          </span>
+        )}
+        <span className="text-[11.5px] text-muted-foreground">綜合評分</span>
+        {sourceLabel && (
+          <span className="rounded-md bg-[color:var(--ink-2)]/10 px-2 py-0.5 text-[10.5px] font-bold text-[color:var(--ink-2)]">
+            {sourceLabel}
+          </span>
+        )}
+        <div className="ml-auto flex shrink-0 items-center gap-2 text-[11.5px]">
           {watchPrice != null && (
-            <span className="flex items-center gap-1 rounded-md border border-[color:var(--line)] px-2 py-0.5 text-[color:var(--accent-2)]">
-              <span>{"觀察"}</span>
+            <span className="hidden items-center gap-1 rounded-md border border-[color:var(--line)] px-2 py-0.5 text-[color:var(--accent-2)] sm:inline-flex">
+              <span>觀察</span>
               <span className="num font-bold">{watchPrice.toFixed(2)}</span>
-              <span className="text-muted-foreground">
-                ({distPct(close, watchPrice) > 0 ? "+" : ""}{distPct(close, watchPrice).toFixed(1)}%)
-              </span>
             </span>
           )}
           {stopPrice != null && (
             <span className={cn(
-              "flex items-center gap-1 rounded-md border px-2 py-0.5",
+              "hidden items-center gap-1 rounded-md border px-2 py-0.5 sm:inline-flex",
               distPct(close, stopPrice) < 5 ? "border-destructive/40 text-destructive" : "border-[color:var(--line)] text-up",
             )}>
-              <span>{"失效"}</span>
+              <span>失效</span>
               <span className="num font-bold">{stopPrice.toFixed(2)}</span>
-              <span className={cn("text-muted-foreground", distPct(close, stopPrice) < 5 && "text-destructive")}>
-                ({distPct(close, stopPrice) > 0 ? "+" : ""}{distPct(close, stopPrice).toFixed(1)}%)
-              </span>
             </span>
           )}
+          {open ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
         </div>
-      </div>
+      </button>
 
-      {/* Reasons + Risks(WP-H2 語意家族色 pills;詳情區不設家族數上限) */}
-      {(reasons.length > 0 || risks.length > 0 || (data.pocket_tags?.length ?? 0) > 0) && (
-        <div className="flex flex-wrap gap-1.5">
-          {reasons.map((r, i) => (
-            <ReasonPill key={`reason-${i}`} code={r.code} text={r.text} />
-          ))}
-          <PocketBadges tags={data.pocket_tags} compact={false} />
-          {risks.map((r, i) => (
-            <ReasonPill key={`risk-${i}`} text={r} risk />
-          ))}
+      {open && (
+        <div className="border-t border-[color:var(--line)] px-3.5 py-3">
+          <div className="mb-2.5 flex min-w-0 flex-wrap gap-2 text-[11.5px] sm:hidden">
+            {watchPrice != null && (
+              <span className="flex items-center gap-1 rounded-md border border-[color:var(--line)] px-2 py-0.5 text-[color:var(--accent-2)]">
+                <span>觀察</span>
+                <span className="num font-bold">{watchPrice.toFixed(2)}</span>
+                <span className="text-muted-foreground">
+                  ({distPct(close, watchPrice) > 0 ? "+" : ""}{distPct(close, watchPrice).toFixed(1)}%)
+                </span>
+              </span>
+            )}
+            {stopPrice != null && (
+              <span className={cn(
+                "flex items-center gap-1 rounded-md border px-2 py-0.5",
+                distPct(close, stopPrice) < 5 ? "border-destructive/40 text-destructive" : "border-[color:var(--line)] text-up",
+              )}>
+                <span>失效</span>
+                <span className="num font-bold">{stopPrice.toFixed(2)}</span>
+                <span className={cn("text-muted-foreground", distPct(close, stopPrice) < 5 && "text-destructive")}>
+                  ({distPct(close, stopPrice) > 0 ? "+" : ""}{distPct(close, stopPrice).toFixed(1)}%)
+                </span>
+              </span>
+            )}
+          </div>
+          {(reasons.length > 0 || risks.length > 0 || (data.pocket_tags?.length ?? 0) > 0) && (
+            <div className="flex flex-wrap gap-1.5">
+              {reasons.map((r, i) => (
+                <ReasonPill key={`reason-${i}`} code={r.code} text={r.text} />
+              ))}
+              <PocketBadges tags={data.pocket_tags} compact={false} />
+              {risks.map((r, i) => (
+                <ReasonPill key={`risk-${i}`} text={r} risk />
+              ))}
+            </div>
+          )}
+          {(watchPrice != null || stopPrice != null) && (
+            <div className="mt-2.5 hidden min-w-0 flex-wrap gap-2 text-[11.5px] sm:flex">
+              {watchPrice != null && (
+                <span className="flex items-center gap-1 rounded-md border border-[color:var(--line)] px-2 py-0.5 text-[color:var(--accent-2)]">
+                  <span>觀察</span>
+                  <span className="num font-bold">{watchPrice.toFixed(2)}</span>
+                  <span className="text-muted-foreground">
+                    ({distPct(close, watchPrice) > 0 ? "+" : ""}{distPct(close, watchPrice).toFixed(1)}%)
+                  </span>
+                </span>
+              )}
+              {stopPrice != null && (
+                <span className={cn(
+                  "flex items-center gap-1 rounded-md border px-2 py-0.5",
+                  distPct(close, stopPrice) < 5 ? "border-destructive/40 text-destructive" : "border-[color:var(--line)] text-up",
+                )}>
+                  <span>失效</span>
+                  <span className="num font-bold">{stopPrice.toFixed(2)}</span>
+                  <span className={cn("text-muted-foreground", distPct(close, stopPrice) < 5 && "text-destructive")}>
+                    ({distPct(close, stopPrice) > 0 ? "+" : ""}{distPct(close, stopPrice).toFixed(1)}%)
+                  </span>
+                </span>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>

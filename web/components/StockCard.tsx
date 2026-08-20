@@ -1,4 +1,4 @@
-import { ShieldCheck, Zap } from "lucide-react";
+import { ShieldCheck, Zap, AlertTriangle, Ban } from "lucide-react";
 import Sparkline from "@/components/Sparkline";
 import WatchlistButton from "@/components/WatchlistButton";
 import ReasonPill, { reasonFamily, type ReasonFamily } from "@/components/ReasonPill";
@@ -31,10 +31,16 @@ function cardStatus(s: RadarStock): CardStatus {
   return "neutral";
 }
 
+function sourceSuffix(s: RadarStock): string | null {
+  if (!s.sources?.length) return null;
+  return s.sources.length > 1 ? "Both" : s.sources[0] === "branch" ? "分點" : "權證";
+}
+
 export default function StockCard({ s, index = 99 }: { s: RadarStock; index?: number }) {
   const cls = chgClass(s.chg_pct);
   const status = cardStatus(s);
   const day = (s.spark_day?.length ?? 0) >= 2 && s.spark_open != null;
+  const src = sourceSuffix(s);
   return (
     <a
       href={`/stock?id=${s.id}`}
@@ -49,13 +55,24 @@ export default function StockCard({ s, index = 99 }: { s: RadarStock; index?: nu
             {s.state === "armed" && (
               <span className="inline-flex items-center gap-0.5 rounded bg-up/10 px-1.5 py-0.5 text-[10px] font-bold text-up">
                 <ShieldCheck className="h-3 w-3" /> Armed
-                {s.sources && s.sources.length > 0 && <span>: {s.sources.length > 1 ? "Both" : s.sources[0] === "branch" ? "分點" : "權證"}</span>}
+                {src && <span>: {src}</span>}
               </span>
             )}
             {s.state === "triggered" && (
               <span className="inline-flex items-center gap-0.5 rounded bg-down/10 px-1.5 py-0.5 text-[10px] font-bold text-down">
                 <Zap className="h-3 w-3 fill-current" /> Triggered
-                {s.sources && s.sources.length > 0 && <span>: {s.sources.length > 1 ? "Both" : s.sources[0] === "branch" ? "分點" : "權證"}</span>}
+                {src && <span>: {src}</span>}
+              </span>
+            )}
+            {s.state === "extended" && (
+              <span className="inline-flex items-center gap-0.5 rounded bg-warn/15 px-1.5 py-0.5 text-[10px] font-bold text-warn">
+                <AlertTriangle className="h-3 w-3" /> Extended
+                {src && <span>: {src}</span>}
+              </span>
+            )}
+            {s.state === "faded" && (
+              <span className="inline-flex items-center gap-0.5 rounded bg-muted px-1.5 py-0.5 text-[10px] font-bold text-muted-foreground">
+                <Ban className="h-3 w-3" /> Faded
               </span>
             )}
           </div>
