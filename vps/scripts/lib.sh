@@ -37,9 +37,16 @@ acquire_db_lock() {
 
 # 開輪先拉 code(策略邏輯在程式碼裡,舊碼算出舊 reasons——既有教訓);
 # 映像重 build 靠 docker layer cache,requirements.txt 沒變時近零成本。
+# core.filemode=false:VPS 上 chmod +x script 不會被 git 當成「本地修改」擋 pull
+# (2026-08-21 事故:本地 dirty scripts → pull Aborting → 全日無 export)。
 sync_code() {
   cd "$REPO"
-  git pull --ff-only
+  git config core.filemode false
+  if ! git pull --ff-only; then
+    # 常見殘渣:手動改過 / CRLF / 舊 filemode;丟掉 vps/scripts 本地改動後重試一次
+    git checkout -- vps/scripts/ || true
+    git pull --ff-only
+  fi
   docker build -q -t radar-pipeline pipeline >/dev/null
 }
 

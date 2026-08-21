@@ -109,6 +109,7 @@
 
 ## 最近完成
 
+- 2026-08-21 **VPS 資料凍結搶修**:根因=VPS 本地 dirty `vps/scripts` 擋 `git pull`,cron 全日無 export。已停回補、pull 最新、補抓 2026-08-20 並 deploy;正式 `data_date=2026-08-20`。盤中 worker 重建後上線。`lib.sh` 加 `core.filemode false` + pull 失敗 reset scripts 重試。
 - 2026-08-20 **三包非 VPS**:①個股掃讀微優化(訊號摘要可收合、sticky tab、法人空態縮短);②docs/22 A4 Extended/Faded(export+首頁「追高風險」「失效」+徽章;等 VPS export);③docs/20 Phase 4 提案稿改寫(對齊 VPS cron,未改 cron)。
 - 2026-08-20 **IA-5b**：個股加「法人」「技術」tab；K 線 tab 只留圖並放大手機高度；買方/賣方改全寬對半切（籌碼日報＋分點追蹤）。
 - 2026-08-20 **IA-5 + IA-3b 籌碼分層**：個股頁 `K線 | 籌碼日報 | 權證`；籌碼日報買超/賣超分頁；點分點下鑽進出+對應 K 線（`.safe-overlay`）。分點追蹤頁同樣改買超/賣超分頁，不再兩表往下滑。`#branch` 開籌碼日報。未改評分/JSON/配色。
