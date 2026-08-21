@@ -301,18 +301,37 @@ def push_signal(stock_id: str, stock_name: str, signal_type: str, signal_desc: s
     except Exception as e:
         logger.error(f"Failed to push signal to Supabase: {e}")
 
+def upsert_heartbeat(status: str) -> None:
+    """寫入 heartbeat;若尚未跑 additive SQL(無 monitor_* 欄)則降級只寫舊欄位。"""
+    base = {
+        "id": 1,
+        "status": status,
+        "last_active_at": datetime.now(timezone.utc).isoformat(),
+    }
+    full = {
+        **base,
+        "monitor_used": len(armed_stocks),
+        "monitor_cap": MAX_MONITOR,
+    }
+    try:
+        supabase.table("worker_heartbeat").upsert(full).execute()
+    except Exception as e:
+        msg = str(e)
+        if "monitor_cap" in msg or "monitor_used" in msg or "PGRST204" in msg:
+            logger.warning(
+                "heartbeat 無 monitor_* 欄位,降級寫入(請執行 docs/sql/worker_heartbeat_monitor_cap.sql): %s",
+                e,
+            )
+            supabase.table("worker_heartbeat").upsert(base).execute()
+        else:
+            raise
+
+
 async def update_heartbeat():
     """定期更新 Worker 存活狀態 + 監控額度(used/cap)。"""
     while True:
         try:
-            payload = {
-                "id": 1,
-                "status": "online",
-                "last_active_at": datetime.now(timezone.utc).isoformat(),
-                "monitor_used": len(armed_stocks),
-                "monitor_cap": MAX_MONITOR,
-            }
-            supabase.table("worker_heartbeat").upsert(payload).execute()
+            upsert_heartbeat("online")
             logger.debug("Heartbeat updated.")
         except Exception as e:
             logger.error(f"Heartbeat failed: {e}")
@@ -413,13 +432,7 @@ async def main():
     if past_close(datetime.now()):
         logger.info("Already past market close. Shutting down worker.")
         stock.disconnect()
-        supabase.table("worker_heartbeat").upsert({
-            "id": 1,
-            "status": "offline",
-            "last_active_at": datetime.now(timezone.utc).isoformat(),
-            "monitor_used": len(armed_stocks),
-            "monitor_cap": MAX_MONITOR,
-        }).execute()
+        upsert_heartbeat("offline")
         return
 
     # 保持連線，直到 13:35 (本機時間);期間每 5 分重整自選/Armed 並增量訂閱
@@ -442,13 +455,7 @@ async def main():
 
     stock.disconnect()  # 同上,SDK 為同步方法
     # 離線時更新 heartbeat
-    supabase.table("worker_heartbeat").upsert({
-        "id": 1,
-        "status": "offline",
-        "last_active_at": datetime.now(timezone.utc).isoformat(),
-        "monitor_used": len(armed_stocks),
-        "monitor_cap": MAX_MONITOR,
-    }).execute()
+    upsert_heartbeat("offline")
 
 if __name__ == '__main__':
     asyncio.run(main())
