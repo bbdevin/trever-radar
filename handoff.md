@@ -1,7 +1,11 @@
 ## Handoff
 
-- **Current Goal**: 盤中監控 UX 第二輪（導覽／標籤／額度／排除 ETF）
+- **Current Goal**: VPS 歷史回補已恢復(分點+權證分點);今日 cron 有 pause guard
 - **Branch**: `main`
-- **Human**: 請在 Supabase 執行一次 `docs/sql/worker_heartbeat_monitor_cap.sql`（否則額度顯示為 —/5）
-- **Done**: 首頁拿掉盤中區塊；導覽首頁右側=監控；I1–I4 兩欄+色標；大單人話金額；ETF(00*)排除；VPS worker 需重建
-- **Next**: 下交易日 08:50 觀察「監控 n/5」
+- **VPS 進行中**:
+  - `radar-bf-branches`: `backfill-branches --top 2500 --days 730 --sleep 1.5`(不拿 flock)
+  - `radar-bf-warrant`: `backfill-warrant-branches --top 6000 --days 130 --sleep 2.5`
+  - `~/bf-cron-guard.sh`: 排程窗或 `/tmp/radar-db.lock` 被佔時 `docker pause` 兩容器
+- **看進度**: `docker logs -f radar-bf-branches` / `radar-bf-warrant`; guard log=`~/bf-cron-guard.log`
+- **跑完後**: `compute-branch-stats` → `export-json` → wrangler deploy(勿長時間握 flock);再跑 `import-geo` 或等週一 14:10
+- **勿做**: 回補期間手動 `import-geo`、用 `manual-catchup.sh` 包整段回補(會握 flock 擋 cron)
