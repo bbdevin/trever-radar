@@ -35,13 +35,18 @@ logger = logging.getLogger(__name__)
 supabase: Client = None
 
 # --- State Management ---
-armed_stocks = {}  # { '2330': { 'name': '台積電', 'watch_price': 1000, 'adv20': 50000, 'last_price': 0, 'volume': 0, 'trades_5m': [] } }
-sent_signals = set() # To avoid spamming the same signal for the same stock
+# pool: "armed" | "watchlist" | "both"
+armed_stocks = {}  # { '2330': { name, watch_price, adv20, last_price, volume, trades_5m, pool } }
+sent_signals = set()  # To avoid spamming the same signal for the same stock
+_subscribed_symbols: set[str] = set()  # 已向 Fugle 訂閱的代號（重整監控池時增量訂閱）
 
 # 台股盤中時段 09:00–13:30(240 分鐘交易,含前收盤集合競價緩衝算 270)
 TRADING_START_MINUTES = 9 * 60
 TRADING_SESSION_MINUTES = 270
 I2_MIN_ELAPSED_MINUTES = 5  # 開盤前幾分鐘量能基期還不穩,不判 I-2 避免開盤就誤觸
+# Fugle 免費額度約束:Armed + 自選聯集,未發動優先(docs/24 §2)
+MAX_MONITOR = 40
+POOL_LABEL = {"armed": "未發動", "watchlist": "自選", "both": "雙池"}
 
 
 def evaluate_signals(state: dict, price: float, qty: int, now: datetime) -> list[tuple[str, str]]:
@@ -119,8 +124,46 @@ def fetch_radar_data():
     return None
 
 
+def fetch_watchlist_ids() -> list[str]:
+    """以 service_role 讀取所有使用者的自選代號(私人測試版通常一人或少數)。
+
+    失敗回傳空列表,不中斷 Armed 監控。
+    """
+    if supabase is None:
+        return []
+    try:
+        res = supabase.table("watchlist").select("stock_id").execute()
+        out: list[str] = []
+        seen: set[str] = set()
+        for row in res.data or []:
+            sid = (row or {}).get("stock_id")
+            if sid and sid not in seen:
+                seen.add(sid)
+                out.append(str(sid))
+        return out
+    except Exception as e:
+        logger.error("Failed to fetch watchlist ids: %s", e)
+        return []
+
+
+def _entry_from_stock(sid: str, stock: dict | None, pool: str) -> dict:
+    s = stock or {}
+    tech = s.get("tech") or {}
+    watch_price = tech.get("watch_price") or s.get("close") or 0
+    adv20 = tech.get("adv20") or 0
+    return {
+        "name": s.get("name") or sid,
+        "watch_price": watch_price,
+        "adv20": adv20,
+        "last_price": 0,
+        "volume": 0,
+        "trades_5m": [],
+        "pool": pool,
+    }
+
+
 def load_armed_list():
-    """從遠端 radar.json 讀取昨日的 Armed 名單與相關基準數據。
+    """從遠端 radar.json 讀取今日 Armed,並合併 Supabase 自選進監控池。
 
     抓取失敗時:
       - 若記憶體已有上一次成功抓到的名單 → 沿用該名單繼續跑(不清空)。
@@ -129,43 +172,72 @@ def load_armed_list():
     radar_data = fetch_radar_data()
     if radar_data is None:
         if armed_stocks:
-            logger.warning("沿用上一次成功抓取的 Armed 名單(本次抓取失敗,共 %d 檔）。", len(armed_stocks))
+            logger.warning("沿用上一次成功抓取的監控名單(本次抓取失敗,共 %d 檔）。", len(armed_stocks))
             return
         logger.error(
-            "首次抓取 radar.json 即失敗,無法取得 Armed 名單。"
+            "首次抓取 radar.json 即失敗,無法取得監控名單。"
             f" 請確認 RADAR_JSON_URL ({RADAR_JSON_URL}) 可連線,"
             " 以及 .env 的 RADAR_SERVICE_KEY 與 wrangler secret 一致;"
             " 若 Access 尚未關閉,另檢查 CF_ACCESS_CLIENT_ID / CF_ACCESS_CLIENT_SECRET。"
         )
         raise SystemExit(1)
 
-    # 先組出新名單,抓取成功才整批替換,避免半途覆寫掉可用的舊名單
-    new_armed = {}
-    armed_ids = radar_data.get('lists', {}).get('armed', [])
-    stocks = {s['id']: s for s in radar_data.get('stocks', [])}
+    armed_ids = [str(x) for x in radar_data.get("lists", {}).get("armed", [])]
+    stocks = {s["id"]: s for s in radar_data.get("stocks", []) if s.get("id")}
+    watch_ids = fetch_watchlist_ids()
+    armed_set = set(armed_ids)
+    watch_set = set(watch_ids)
 
+    # 未發動優先,再接自選;聯集截斷 MAX_MONITOR
+    ordered: list[str] = []
     for sid in armed_ids:
-        if sid in stocks:
-            s = stocks[sid]
-            # 取得 watch_price, 如果沒有則取昨日收盤價 (close) 作為暫代
-            tech = s.get('tech', {})
-            watch_price = tech.get('watch_price', s.get('close', 0))
-            adv20 = tech.get('adv20', 0)
+        if sid not in ordered:
+            ordered.append(sid)
+    for sid in watch_ids:
+        if sid not in ordered:
+            ordered.append(sid)
+    truncated = ordered[MAX_MONITOR:]
+    ordered = ordered[:MAX_MONITOR]
+    if truncated:
+        logger.warning(
+            "監控池超過上限 %d,略過 %d 檔(自選末段優先被裁)。",
+            MAX_MONITOR,
+            len(truncated),
+        )
 
-            new_armed[sid] = {
-                'name': s.get('name', ''),
-                'watch_price': watch_price,
-                'adv20': adv20,
-                'last_price': 0,
-                'volume': 0,
-                'trades_5m': []  # store (timestamp, price)
-            }
+    new_armed: dict = {}
+    for sid in ordered:
+        in_a = sid in armed_set
+        in_w = sid in watch_set
+        if in_a and in_w:
+            pool = "both"
+        elif in_a:
+            pool = "armed"
+        else:
+            pool = "watchlist"
+        # 保留盤中已累積的量/價(重整名單時不歸零,避免 I-2 失真)
+        prev = armed_stocks.get(sid)
+        entry = _entry_from_stock(sid, stocks.get(sid), pool)
+        if prev:
+            entry["last_price"] = prev.get("last_price", 0)
+            entry["volume"] = prev.get("volume", 0)
+            entry["trades_5m"] = prev.get("trades_5m", [])
+        new_armed[sid] = entry
 
     armed_stocks.clear()
     armed_stocks.update(new_armed)
-    logger.info(f"Loaded {len(armed_stocks)} Armed stocks to monitor.")
+    n_a = sum(1 for v in new_armed.values() if v["pool"] in ("armed", "both"))
+    n_w = sum(1 for v in new_armed.values() if v["pool"] in ("watchlist", "both"))
+    logger.info(
+        "Loaded %d monitor stocks (armed≈%d, watchlist≈%d, cap=%d).",
+        len(armed_stocks),
+        n_a,
+        n_w,
+        MAX_MONITOR,
+    )
 
-def push_signal(stock_id: str, stock_name: str, signal_type: str, signal_desc: str, price: float, volume: int):
+
+def push_signal(stock_id: str, stock_name: str, signal_type: str, signal_desc: str, price: float, volume: int, pool: str = "armed"):
     """將訊號寫入 Supabase。
 
     2026-07-17 回歸:這支原本是 async def,呼叫端用 asyncio.create_task() 排程。
@@ -182,13 +254,15 @@ def push_signal(stock_id: str, stock_name: str, signal_type: str, signal_desc: s
         # Avoid spamming the same signal within the session
         return
 
-    logger.info(f"🚨 [SIGNAL {signal_type}] {stock_name} ({stock_id}) - {signal_desc} @ {price}")
+    pool_tag = POOL_LABEL.get(pool, pool)
+    full_desc = f"{signal_desc} · 來源:{pool_tag}"
+    logger.info(f"🚨 [SIGNAL {signal_type}] {stock_name} ({stock_id}) - {full_desc} @ {price}")
     try:
         data = {
             "stock_id": stock_id,
             "stock_name": stock_name,
             "signal_type": signal_type,
-            "signal_desc": signal_desc,
+            "signal_desc": full_desc,
             "price": price,
             "volume": volume
         }
@@ -236,7 +310,15 @@ def process_trade(message):
         state['trades_5m'] = [(t, p) for t, p in state['trades_5m'] if now - t <= timedelta(minutes=5)]
 
         for signal_type, desc in evaluate_signals(state, price, qty, now):
-            push_signal(sid, state['name'], signal_type, desc, price, state['volume'])
+            push_signal(
+                sid,
+                state["name"],
+                signal_type,
+                desc,
+                price,
+                state["volume"],
+                pool=state.get("pool", "armed"),
+            )
 
     except Exception as e:
         logger.error(f"Error processing trade: {e}", exc_info=True)
@@ -255,7 +337,7 @@ async def main():
 
     load_armed_list()
     if not armed_stocks:
-        logger.warning("No Armed stocks to monitor. Exiting.")
+        logger.warning("No stocks to monitor (armed+watchlist empty). Exiting.")
         return
 
     # Start Heartbeat background task
@@ -271,24 +353,38 @@ async def main():
     # 官方範例也是直接呼叫、不加 await;await 一個非 coroutine 的回傳值(None)會直接 TypeError。
     stock.connect()
 
-    # 訂閱所有 Armed 股票
-    for sid in armed_stocks.keys():
-        logger.info(f"Subscribing {sid}...")
-        stock.subscribe({
-            'channel': 'trades',
-            'symbol': sid
-        })
-        # 避免觸發 Fugle WS rate limit
-        await asyncio.sleep(0.1)
+    async def subscribe_all():
+        for sid in list(armed_stocks.keys()):
+            if sid in _subscribed_symbols:
+                continue
+            logger.info("Subscribing %s...", sid)
+            stock.subscribe({
+                "channel": "trades",
+                "symbol": sid,
+            })
+            _subscribed_symbols.add(sid)
+            # 避免觸發 Fugle WS rate limit
+            await asyncio.sleep(0.1)
 
+    await subscribe_all()
     logger.info("All subscriptions complete. Monitoring...")
 
-    # 保持連線，直到 13:35 (本機時間)
+    # 保持連線，直到 13:35 (本機時間);期間每 5 分重整自選/Armed 並增量訂閱
+    last_reload = time.monotonic()
     while True:
         now = datetime.now()
         if now.hour == 13 and now.minute >= 35:
             logger.info("Market closed. Shutting down worker.")
             break
+        if time.monotonic() - last_reload >= 300:
+            try:
+                load_armed_list()
+                await subscribe_all()
+            except SystemExit:
+                logger.warning("監控名單重整失敗(fatal),沿用現有訂閱繼續。")
+            except Exception as e:
+                logger.error("監控名單重整失敗: %s", e)
+            last_reload = time.monotonic()
         await asyncio.sleep(10)
 
     stock.disconnect()  # 同上,SDK 為同步方法

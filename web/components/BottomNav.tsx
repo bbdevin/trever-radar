@@ -1,13 +1,14 @@
 "use client";
 
 import { usePathname } from "next/navigation";
-import { IconCompass, IconRadar, IconStar } from "@/components/Icons";
+import { IconCompass, IconPulse, IconRadar, IconStar } from "@/components/Icons";
 import { cn } from "@/lib/utils";
 
 type NavItem = { label: string; href?: string; icon: any; badge?: string };
 const ITEMS: NavItem[] = [
   { label: "雷達", href: "/", icon: IconRadar },
   { label: "分點", href: "/branch", icon: IconCompass },
+  { label: "盤中", href: "/intraday", icon: IconPulse },
   { label: "自選", href: "/watchlist", icon: IconStar },
 ];
 
@@ -24,7 +25,16 @@ export default function BottomNav() {
     >
       {ITEMS.map((it) =>
         it.href ? (
-          <a key={it.label} href={it.href} className={cn(itemClass, path === it.href && "text-primary")}>
+          <a
+            key={it.label}
+            href={it.href}
+            aria-current={path === it.href || (it.href !== "/" && path.startsWith(it.href!)) ? "page" : undefined}
+            className={cn(
+              itemClass,
+              "cursor-pointer transition-colors duration-200",
+              (path === it.href || (it.href !== "/" && path.startsWith(it.href!))) && "text-primary",
+            )}
+          >
             <it.icon size={21} />
             <span>{it.label}</span>
           </a>

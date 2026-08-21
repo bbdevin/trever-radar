@@ -45,10 +45,13 @@ def _reset_state(monkeypatch):
     """每個測試前清空模組全域狀態,並讓 time.sleep 變 no-op(避免退避真的睡)。"""
     worker.armed_stocks.clear()
     worker.sent_signals.clear()
+    worker._subscribed_symbols.clear()
+    monkeypatch.setattr(worker, "supabase", None)
     monkeypatch.setattr(worker.time, "sleep", lambda *a, **k: None)
     yield
     worker.armed_stocks.clear()
     worker.sent_signals.clear()
+    worker._subscribed_symbols.clear()
 
 
 def test_fetch_200_populates_armed_list(monkeypatch):
@@ -62,6 +65,26 @@ def test_fetch_200_populates_armed_list(monkeypatch):
     assert worker.armed_stocks["2330"]["watch_price"] == 1050
     assert worker.armed_stocks["2330"]["adv20"] == 50000
     assert worker.armed_stocks["2330"]["name"] == "台積電"
+    assert worker.armed_stocks["2330"]["pool"] == "armed"
+
+
+def test_watchlist_merged_into_monitor_pool(monkeypatch):
+    """自選併入監控池:Armed 優先,自選後接;同檔標 both。"""
+    monkeypatch.setattr(worker.requests, "get",
+                        lambda *a, **k: _DummyResp(200, _radar_payload()))
+    mock_sb = MagicMock()
+    mock_sb.table.return_value.select.return_value.execute.return_value = MagicMock(
+        data=[{"stock_id": "2330"}, {"stock_id": "2303"}],
+    )
+    monkeypatch.setattr(worker, "supabase", mock_sb)
+
+    worker.load_armed_list()
+
+    assert set(worker.armed_stocks.keys()) == {"2330", "2454", "2303"}
+    assert worker.armed_stocks["2330"]["pool"] == "both"
+    assert worker.armed_stocks["2454"]["pool"] == "armed"
+    assert worker.armed_stocks["2303"]["pool"] == "watchlist"
+    assert worker.armed_stocks["2303"]["name"] == "2303"  # 不在 radar stocks → 用代號
 
 
 def test_fetch_403_first_time_fatal_with_access_hint(monkeypatch, caplog):
@@ -98,7 +121,7 @@ def test_repeated_failure_keeps_previous_list(monkeypatch, caplog):
 
     # 名單被保留(沿用上次成功結果)
     assert set(worker.armed_stocks.keys()) == {"2330", "2454"}
-    assert "沿用上一次成功抓取的 Armed 名單" in caplog.text
+    assert "沿用上一次成功抓取的監控名單" in caplog.text
 
 
 def test_cf_access_headers_attached_when_env_set(monkeypatch):
