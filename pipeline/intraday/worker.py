@@ -44,8 +44,10 @@ _subscribed_symbols: set[str] = set()  # 已向 Fugle 訂閱的代號（重整�
 TRADING_START_MINUTES = 9 * 60
 TRADING_SESSION_MINUTES = 270
 I2_MIN_ELAPSED_MINUTES = 5  # 開盤前幾分鐘量能基期還不穩,不判 I-2 避免開盤就誤觸
-# Fugle 免費額度約束:Armed + 自選聯集,未發動優先(docs/24 §2)
-MAX_MONITOR = 40
+# Fugle「基本用戶」免費方案:台股 WS 訂閱數上限 5(1 channel × N 檔 = N 訂閱)。
+# 見 https://developer.fugle.tw/docs/pricing/ — 超過會訂閱失敗/被拒,寧缺勿濫。
+# 可用環境變數 FUGLE_WS_MAX_SUBSCRIBE 覆寫(付費方案再調高)。
+MAX_MONITOR = max(1, int(os.getenv("FUGLE_WS_MAX_SUBSCRIBE", "5")))
 POOL_LABEL = {"armed": "未發動", "watchlist": "自選", "both": "雙池"}
 
 

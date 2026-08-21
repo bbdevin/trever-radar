@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils";
 const NAV = [
   { label: "今日雷達", href: "/" },
   { label: "分點研究", href: "/branch" },
-  { label: "盤中雷達", href: "/intraday" },
+  { label: "盤中監控", href: "/intraday" },
   { label: "自選追蹤", href: "/watchlist" },
 ];
 

@@ -220,11 +220,11 @@ export default function IntradayPanel({
           <Activity className="h-4 w-4 shrink-0 text-primary" aria-hidden />
           <div className="min-w-0">
             <h2 className="text-sm font-bold text-foreground">
-              {isFull ? "盤中訊號" : "盤中雷達"}
+              {isFull ? "監控訊號" : "盤中監控"}
             </h2>
             {!isFull && (
               <p className="truncate text-[11px] text-muted-foreground">
-                監控未發動 + 自選 · 有異動才推播
+                監控未發動 + 自選 · 最多 5 檔 · 有異動才推播
               </p>
             )}
           </div>
@@ -245,7 +245,7 @@ export default function IntradayPanel({
       {isFull && (
         <div className="border-b border-border px-4 py-3">
           <p className="mb-2 text-[12.5px] leading-relaxed text-muted-foreground">
-            Worker 盤中訂閱「今日未發動」與「自選」聯集（上限約 40 檔）。符合門檻才寫入即時訊號；同檔同類型當日只推一次。訊號為觀察提醒，非下單建議。
+            Worker 盤中監控「今日未發動」與「自選」聯集。Fugle 免費額度最多 5 檔同時訂閱（未發動優先）。符合門檻才寫入即時訊號；同檔同類型當日只推一次。訊號為觀察提醒，非下單建議。
           </p>
           <ul className="grid gap-2 sm:grid-cols-2">
             {LEGEND.map((code) => {

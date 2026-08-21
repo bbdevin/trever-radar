@@ -87,6 +87,34 @@ def test_watchlist_merged_into_monitor_pool(monkeypatch):
     assert worker.armed_stocks["2303"]["name"] == "2303"  # 不在 radar stocks → 用代號
 
 
+def test_monitor_pool_caps_at_fugle_free_ws_limit(monkeypatch):
+    """Fugle 基本用戶 WS 訂閱上限 5:超過則裁切,未發動優先於自選。"""
+    monkeypatch.setattr(worker, "MAX_MONITOR", 5)
+    payload = {
+        "lists": {"armed": ["1001", "1002", "1003"]},
+        "stocks": [
+            {"id": f"100{i}", "name": f"A{i}", "close": 10, "tech": {"watch_price": 11, "adv20": 100}}
+            for i in range(1, 4)
+        ] + [
+            {"id": f"200{i}", "name": f"W{i}", "close": 10, "tech": {"watch_price": 11, "adv20": 100}}
+            for i in range(1, 5)
+        ],
+    }
+    monkeypatch.setattr(worker.requests, "get",
+                        lambda *a, **k: _DummyResp(200, payload))
+    mock_sb = MagicMock()
+    mock_sb.table.return_value.select.return_value.execute.return_value = MagicMock(
+        data=[{"stock_id": f"200{i}"} for i in range(1, 5)],
+    )
+    monkeypatch.setattr(worker, "supabase", mock_sb)
+
+    worker.load_armed_list()
+
+    assert len(worker.armed_stocks) == 5
+    assert set(worker.armed_stocks.keys()) == {"1001", "1002", "1003", "2001", "2002"}
+    assert "2003" not in worker.armed_stocks
+
+
 def test_fetch_403_first_time_fatal_with_access_hint(monkeypatch, caplog):
     """情境二:403 且首次抓取 → fatal exit,且訊息指引檢查 Access token。"""
     monkeypatch.setattr(worker.requests, "get",

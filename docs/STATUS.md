@@ -109,7 +109,8 @@
 
 ## 最近完成
 
-- 2026-08-21 **盤中雷達 UX**：`/intraday` 導覽頁（夾在分點與自選之間）；I-1～I-4 人話標籤（大單／爆量／急拉／發動）+ 規則說明；Realtime 訂閱；worker 監控池 = Armed ∪ 自選（上限 40）。**VPS worker 映像需重建後自選才會進池**。
+- 2026-08-21 **盤中監控**：導覽改「監控」；Fugle 免費 WS 上限改 **5 檔**（`FUGLE_WS_MAX_SUBSCRIBE`）；Armed∪自選；VPS worker 重建。
+- 2026-08-21 **盤中雷達 UX**：`/intraday` 導覽頁；I-1～I-4 人話標籤；Realtime；worker 併自選。
 - 2026-08-21 **VPS 資料凍結搶修**:根因=VPS 本地 dirty `vps/scripts` 擋 `git pull`,cron 全日無 export。已停回補、pull 最新、補抓 2026-08-20 並 deploy;正式 `data_date=2026-08-20`。盤中 worker 重建後上線。`lib.sh` 加 `core.filemode false` + pull 失敗 reset scripts 重試。
 - 2026-08-20 **三包非 VPS**:①個股掃讀微優化(訊號摘要可收合、sticky tab、法人空態縮短);②docs/22 A4 Extended/Faded(export+首頁「追高風險」「失效」+徽章;等 VPS export);③docs/20 Phase 4 提案稿改寫(對齊 VPS cron,未改 cron)。
 - 2026-08-20 **IA-5b**：個股加「法人」「技術」tab；K 線 tab 只留圖並放大手機高度；買方/賣方改全寬對半切（籌碼日報＋分點追蹤）。

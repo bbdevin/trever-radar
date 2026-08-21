@@ -8,7 +8,7 @@ type NavItem = { label: string; href?: string; icon: any; badge?: string };
 const ITEMS: NavItem[] = [
   { label: "雷達", href: "/", icon: IconRadar },
   { label: "分點", href: "/branch", icon: IconCompass },
-  { label: "盤中", href: "/intraday", icon: IconPulse },
+  { label: "監控", href: "/intraday", icon: IconPulse },
   { label: "自選", href: "/watchlist", icon: IconStar },
 ];
 
