@@ -17,6 +17,7 @@ import KChart from "@/components/KChart";
 import BranchFlowSection from "@/components/BranchFlowSection";
 import BranchDrillView from "@/components/BranchDrillView";
 import InstiPanel from "@/components/InstiPanel";
+import WarrantBranchPanel from "@/components/WarrantBranchPanel";
 import ReasonPill from "@/components/ReasonPill";
 import PocketBadges from "@/components/PocketBadges";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -476,11 +477,18 @@ function WarrantPanel({ data }: { data: StockJson }) {
   });
 
   if (!data.warrant) {
-    return <div className="py-[46px] text-center text-sm text-muted-foreground">目前沒有可彙總的權證成交資料</div>;
+    return (
+      <div className="grid gap-3">
+        <WarrantBranchPanel stockId={data.id} />
+        <div className="py-[46px] text-center text-sm text-muted-foreground">目前沒有可彙總的權證成交資料</div>
+      </div>
+    );
   }
 
   return (
-    <div className="grid gap-3 rounded-[var(--r-lg)] border border-border bg-card p-3.5 shadow-[var(--shadow-card)]">
+    <div className="grid gap-3">
+      <WarrantBranchPanel stockId={data.id} />
+      <div className="grid gap-3 rounded-[var(--r-lg)] border border-border bg-card p-3.5 shadow-[var(--shadow-card)]">
       <div className="grid grid-cols-2 gap-2.5 md:grid-cols-4">
         <div className="flex flex-col gap-0.5 rounded-[var(--r-sm)] border border-border bg-secondary p-2.5">
           <span className="text-[11px] text-muted-foreground">認購成交</span>
@@ -602,6 +610,7 @@ function WarrantPanel({ data }: { data: StockJson }) {
       ) : (
         <div className="py-[46px] text-center text-sm text-muted-foreground">今日沒有權證成交明細</div>
       )}
+      </div>
     </div>
   );
 }
