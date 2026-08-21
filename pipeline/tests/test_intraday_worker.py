@@ -255,7 +255,39 @@ def test_i1_large_single_trade():
     state = _signal_state()
     now = datetime(2026, 7, 20, 9, 30)
     signals = worker.evaluate_signals(state, price=500.0, qty=20, now=now)
-    assert ("I-1", "單筆大單 1000萬") in signals
+    # 500*20*1000 = 1000萬 = 1千萬
+    assert ("I-1", "單筆大單 1千萬") in signals
+
+
+def test_format_twd_amount_units():
+    assert worker.format_twd_amount(5_000_000) == "5百萬"
+    assert worker.format_twd_amount(10_000_000) == "1千萬"
+    assert worker.format_twd_amount(100_000_000) == "1億"
+    assert worker.format_twd_amount(150_000_000) == "1.5億"
+
+
+def test_etf_ids_excluded_from_monitor_pool(monkeypatch):
+    payload = {
+        "lists": {"armed": ["0050", "2330"]},
+        "stocks": [
+            {"id": "0050", "name": "元大台灣50", "close": 100, "tech": {"watch_price": 101, "adv20": 1}},
+            {"id": "2330", "name": "台積電", "close": 1000, "tech": {"watch_price": 1050, "adv20": 50000}},
+            {"id": "00878", "name": "國泰永續高股息", "close": 20, "tech": {"watch_price": 21, "adv20": 1}},
+        ],
+    }
+    monkeypatch.setattr(worker.requests, "get",
+                        lambda *a, **k: _DummyResp(200, payload))
+    mock_sb = MagicMock()
+    mock_sb.table.return_value.select.return_value.execute.return_value = MagicMock(
+        data=[{"stock_id": "00878"}, {"stock_id": "2454"}],
+    )
+    monkeypatch.setattr(worker, "supabase", mock_sb)
+
+    worker.load_armed_list()
+
+    assert "0050" not in worker.armed_stocks
+    assert "00878" not in worker.armed_stocks
+    assert "2330" in worker.armed_stocks
 
 
 def test_i1_not_triggered_below_threshold():

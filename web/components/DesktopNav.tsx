@@ -4,13 +4,13 @@ import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 
 const NAV = [
-  { label: "今日雷達", href: "/" },
+  { label: "首頁", href: "/" },
+  { label: "監控", href: "/intraday" },
   { label: "分點研究", href: "/branch" },
-  { label: "盤中監控", href: "/intraday" },
   { label: "自選追蹤", href: "/watchlist" },
 ];
 
-/** 桌機頂部導覽（手機隱藏）——使用 usePathname 呈現 active state */
+/** 桌機頂部導覽（手機隱藏）——首頁右側接監控 */
 export default function DesktopNav() {
   const path = usePathname();
   return (
@@ -23,7 +23,7 @@ export default function DesktopNav() {
             href={n.href}
             aria-current={isActive ? "page" : undefined}
             className={cn(
-              "rounded-full px-3.5 py-1.5 text-[13.5px] font-semibold transition-colors",
+              "cursor-pointer rounded-full px-3.5 py-1.5 text-[13.5px] font-semibold transition-colors duration-200",
               isActive
                 ? "bg-muted text-foreground shadow-[inset_0_0_0_1px_var(--border-strong)]"
                 : "text-muted-foreground hover:bg-secondary hover:text-foreground",

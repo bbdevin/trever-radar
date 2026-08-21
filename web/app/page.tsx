@@ -7,7 +7,6 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
 import MoneyFlow from "@/components/MoneyFlow";
 import StockCard from "@/components/StockCard";
-import IntradayPanel from "@/components/IntradayPanel";
 import ThemeGroupedList from "@/components/ThemeGroupedList";
 import { useSession, signInWithGoogle } from "@/lib/useSession";
 import { cn, pillTabClass } from "@/lib/utils";
@@ -238,9 +237,6 @@ export default function RadarPage() {
           ))}
         </div>
       )}
-
-      {/* Intraday Panel */}
-      <IntradayPanel />
 
       {/* Primary Queue: tabs + stock list */}
       <div className="my-1.5 mb-3 flex items-center gap-2.5">

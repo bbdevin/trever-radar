@@ -109,7 +109,7 @@
 
 ## 最近完成
 
-- 2026-08-21 **盤中監控**：導覽改「監控」；Fugle 免費 WS 上限改 **5 檔**（`FUGLE_WS_MAX_SUBSCRIBE`）；Armed∪自選；VPS worker 重建。
+- 2026-08-21 **盤中監控 UX**：導覽「首頁｜監控｜…」；首頁拿掉嵌入面板；I-1～I-4 兩欄標籤色；大單金額改億／千萬／百萬；額度 n/5；排除 00 開頭 ETF。需在 Supabase 執行 `docs/sql/worker_heartbeat_monitor_cap.sql`。
 - 2026-08-21 **盤中雷達 UX**：`/intraday` 導覽頁；I-1～I-4 人話標籤；Realtime；worker 併自選。
 - 2026-08-21 **VPS 資料凍結搶修**:根因=VPS 本地 dirty `vps/scripts` 擋 `git pull`,cron 全日無 export。已停回補、pull 最新、補抓 2026-08-20 並 deploy;正式 `data_date=2026-08-20`。盤中 worker 重建後上線。`lib.sh` 加 `core.filemode false` + pull 失敗 reset scripts 重試。
 - 2026-08-20 **三包非 VPS**:①個股掃讀微優化(訊號摘要可收合、sticky tab、法人空態縮短);②docs/22 A4 Extended/Faded(export+首頁「追高風險」「失效」+徽章;等 VPS export);③docs/20 Phase 4 提案稿改寫(對齊 VPS cron,未改 cron)。

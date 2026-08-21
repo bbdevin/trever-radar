@@ -51,6 +51,28 @@ MAX_MONITOR = max(1, int(os.getenv("FUGLE_WS_MAX_SUBSCRIBE", "5")))
 POOL_LABEL = {"armed": "未發動", "watchlist": "自選", "both": "雙池"}
 
 
+def is_etf_id(sid: str) -> bool:
+    """台股 ETF 代號多為 00 開頭(0050/0056/00878…);個股監控不納入。"""
+    s = str(sid).strip()
+    return s.startswith("00") and s.isdigit()
+
+
+def format_twd_amount(amount: float) -> str:
+    """適讀金額:億 / 千萬 / 百萬 / 萬。"""
+    if amount >= 100_000_000:
+        v = amount / 100_000_000
+        return f"{v:.0f}億" if v >= 10 else f"{v:.1f}".rstrip("0").rstrip(".") + "億"
+    if amount >= 10_000_000:
+        v = amount / 10_000_000
+        return f"{v:.0f}千萬" if v >= 10 else f"{v:.1f}".rstrip("0").rstrip(".") + "千萬"
+    if amount >= 1_000_000:
+        v = amount / 1_000_000
+        return f"{v:.0f}百萬" if v >= 10 else f"{v:.1f}".rstrip("0").rstrip(".") + "百萬"
+    if amount >= 10_000:
+        return f"{amount / 10_000:.0f}萬"
+    return f"{amount:.0f}元"
+
+
 def evaluate_signals(state: dict, price: float, qty: int, now: datetime) -> list[tuple[str, str]]:
     """純函式(docs/24 §2.2 規則):依這筆成交後的狀態,回傳應觸發的 (signal_type, desc)
     列表。不做任何 I/O、不碰 asyncio/Supabase,方便單元測試——process_trade 只負責
@@ -60,7 +82,7 @@ def evaluate_signals(state: dict, price: float, qty: int, now: datetime) -> list
 
     # I-1 大單:單筆 >= 500 萬
     if amount >= 5_000_000:
-        signals.append(("I-1", f"單筆大單 {amount/10000:.0f}萬"))
+        signals.append(("I-1", f"單筆大單 {format_twd_amount(amount)}"))
 
     # I-2 爆量:累積量 vs 依開盤至今經過時間等比例換算的 ADV20 基準,達 2 倍
     # (docs/24 §2.2 原設計要「同時刻量能基準曲線」,pipeline 尚未輸出這份曲線——
@@ -184,9 +206,15 @@ def load_armed_list():
         )
         raise SystemExit(1)
 
-    armed_ids = [str(x) for x in radar_data.get("lists", {}).get("armed", [])]
+    raw_armed = [str(x) for x in radar_data.get("lists", {}).get("armed", [])]
+    raw_watch = fetch_watchlist_ids()
+    etf_skipped = [s for s in raw_armed + raw_watch if is_etf_id(s)]
+    if etf_skipped:
+        logger.info("略過 ETF 不納入監控: %s", ",".join(sorted(set(etf_skipped))))
+
+    armed_ids = [s for s in raw_armed if not is_etf_id(s)]
     stocks = {s["id"]: s for s in radar_data.get("stocks", []) if s.get("id")}
-    watch_ids = fetch_watchlist_ids()
+    watch_ids = [s for s in raw_watch if not is_etf_id(s)]
     armed_set = set(armed_ids)
     watch_set = set(watch_ids)
 
@@ -274,10 +302,17 @@ def push_signal(stock_id: str, stock_name: str, signal_type: str, signal_desc: s
         logger.error(f"Failed to push signal to Supabase: {e}")
 
 async def update_heartbeat():
-    """定期更新 Worker 存活狀態"""
+    """定期更新 Worker 存活狀態 + 監控額度(used/cap)。"""
     while True:
         try:
-            supabase.table("worker_heartbeat").upsert({"id": 1, "status": "online", "last_active_at": datetime.now(timezone.utc).isoformat()}).execute()
+            payload = {
+                "id": 1,
+                "status": "online",
+                "last_active_at": datetime.now(timezone.utc).isoformat(),
+                "monitor_used": len(armed_stocks),
+                "monitor_cap": MAX_MONITOR,
+            }
+            supabase.table("worker_heartbeat").upsert(payload).execute()
             logger.debug("Heartbeat updated.")
         except Exception as e:
             logger.error(f"Heartbeat failed: {e}")
@@ -382,6 +417,8 @@ async def main():
             "id": 1,
             "status": "offline",
             "last_active_at": datetime.now(timezone.utc).isoformat(),
+            "monitor_used": len(armed_stocks),
+            "monitor_cap": MAX_MONITOR,
         }).execute()
         return
 
@@ -405,7 +442,13 @@ async def main():
 
     stock.disconnect()  # 同上,SDK 為同步方法
     # 離線時更新 heartbeat
-    supabase.table("worker_heartbeat").upsert({"id": 1, "status": "offline", "last_active_at": datetime.now(timezone.utc).isoformat()}).execute()
+    supabase.table("worker_heartbeat").upsert({
+        "id": 1,
+        "status": "offline",
+        "last_active_at": datetime.now(timezone.utc).isoformat(),
+        "monitor_used": len(armed_stocks),
+        "monitor_cap": MAX_MONITOR,
+    }).execute()
 
 if __name__ == '__main__':
     asyncio.run(main())
