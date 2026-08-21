@@ -371,11 +371,25 @@ async def main():
     await subscribe_all()
     logger.info("All subscriptions complete. Monitoring...")
 
+    def past_close(now: datetime) -> bool:
+        # 13:35 起收工;14:00 之後啟動(煙測/誤觸)也應立刻退出
+        return now.hour > 13 or (now.hour == 13 and now.minute >= 35)
+
+    if past_close(datetime.now()):
+        logger.info("Already past market close. Shutting down worker.")
+        stock.disconnect()
+        supabase.table("worker_heartbeat").upsert({
+            "id": 1,
+            "status": "offline",
+            "last_active_at": datetime.now(timezone.utc).isoformat(),
+        }).execute()
+        return
+
     # 保持連線，直到 13:35 (本機時間);期間每 5 分重整自選/Armed 並增量訂閱
     last_reload = time.monotonic()
     while True:
         now = datetime.now()
-        if now.hour == 13 and now.minute >= 35:
+        if past_close(now):
             logger.info("Market closed. Shutting down worker.")
             break
         if time.monotonic() - last_reload >= 300:
