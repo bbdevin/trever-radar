@@ -23,3 +23,11 @@ CRON_TZ=Asia/Taipei
 # pipeline/intraday/.env 填好六個變數(見 pipeline/intraday/.env.example,
 # 含 2026-07-13 Access 上線後必填的 CF_ACCESS_CLIENT_ID/SECRET)。
 50 8 * * 1-5   docker run --rm --name radar-worker --env-file /home/huang/trever-radar/pipeline/intraday/.env radar-worker >> /home/huang/radar-worker.log 2>&1
+
+# 回補容器保護(docs/33):單實例 flock;@reboot + 每 5 分保活
+@reboot        /home/huang/trever-radar/vps/scripts/bf-cron-guard.sh >> /home/huang/bf-cron-guard.log 2>&1
+*/5 * * * *    pgrep -f 'vps/scripts/bf-cron-guard.sh' >/dev/null || /home/huang/trever-radar/vps/scripts/bf-cron-guard.sh >> /home/huang/bf-cron-guard.log 2>&1
+
+# 回補中途動態上線(docs/33 S1):03/09/12/20 — 避開 14:10/16:10/17:40–19:30/21:00/22:10
+# 腳本內再次檢查 daily 窗與 radar-db.lock;無 bf 容器則 noop
+0 3,9,12,20 * * *  /home/huang/trever-radar/vps/scripts/mid-backfill-publish.sh >> /home/huang/radar-cron.log 2>&1

@@ -1,7 +1,7 @@
 # 回補中途動態上線（Mid-Backfill Publish）
 
-> 狀態：**規劃定案待實作**（2026-08-24 使用者偏好「逐步動態更新」）  
-> 相關：`docs/31` §2（回補不拿 flock）、`vps/README.md`、現有 `~/bf-cron-guard.sh`
+> 狀態：**S1 已實作**（2026-08-24）— `vps/scripts/mid-backfill-publish.sh` + `bf-cron-guard.sh` + crontab.example  
+> 相關：`docs/31` §2（回補不拿 flock）、`vps/README.md`
 
 ## 1. 問題
 
@@ -48,7 +48,7 @@ mid-backfill-publish.sh（新）
 
 | 方案 | 做法 | 優點 | 缺點 |
 |---|---|---|---|
-| **A. 定時（建議）** | crontab 例：`0 3,9,12,19 * * *`（避開 14:05–15:00 / 16:05–16:50 / 17:35–19:30 / 20:55–22:50） | 簡單可預期 | 回補快時可能「空轉 export」 |
+| **A. 定時（已落地）** | crontab:`0 3,9,12,20 * * *`（腳本內避開 daily-* 窗；20:00 避開 17:40–19:30 branches） | 簡單可預期 | 回補快時可能「空轉 export」 |
 | B. 里程碑 | 監看 log，每跨過一個月交易日觸發 | 與進度對齊 | 實作較複雜 |
 | C. 僅手動 | `vps/scripts/mid-backfill-publish.sh` | 零風險 | 要人記得跑 |
 
@@ -95,14 +95,10 @@ mid-backfill-publish.sh（新）
 - 模擬 daily 窗內觸發：腳本跳過且回補不被誤 pause 太久
 - 無 bf 容器：exit 0
 
-## 5. Confirmed Scope（請使用者勾選）
+## 5. Confirmed Scope
 
-請回覆要採哪一種再開工：
-
-- [ ] **S1（建議）**：腳本 + 收編 guard + crontab 例；VPS 掛 `03/09/12/19` 四次（跳過交易日敏感窗已寫在腳本內）
-- [ ] **S2**：只要腳本與文件，**先不改 VPS crontab**（需要時手動跑）
-- [ ] **S3**：定時但更密／更疏（請指定時刻）
-- [ ] stats：**每次都跑**（預設）／隔次才跑／永遠 `SKIP_STATS=1` 只 export
+- [x] **S1（2026-08-24 使用者確認）**:腳本 + 收編 guard + crontab `0 3,9,12,20`(避開 17:40–19:30,改 20:00)+ 腳本內再擋 daily 窗／lock
+- [x] stats:**每次都跑**(可用 `SKIP_STATS=1` 手動略過)
 
 ## 6. 風險
 
