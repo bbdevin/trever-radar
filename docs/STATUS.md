@@ -109,6 +109,7 @@
 
 ## 最近完成
 
+- 2026-08-24 **回補中途動態上線規劃**:`docs/33_mid_backfill_publish_plan.md`——長回補期間定時 pause→stats→export/deploy→resume，不必等全部跑完才更新網站。待使用者確認 Scope（S1 掛 cron / S2 僅手動）。
 - 2026-08-21 **個股權證分頁＝權證分點動向**：與 `/branch` 同源 `warrant_branches.json`；顯示分點買超／賣超（萬）、展開標示哪幾檔權證；區間 pills；門檻 ≥500 萬。
 - 2026-08-21 **VPS 先上線再回補**:回補 pause 期間跑完 `import-geo` + `compute-branch-stats` + export/deploy(不握長 flock);正式 `data_date=2026-08-21`、`branch_rankings` as_of=08-20、pocket 有資料。16:10 `daily-insti` 正常搶鎖。歷史回補容器仍由 `bf-cron-guard` 在 cron 窗 pause。
 - 2026-08-21 **VPS 恢復歷史回補**:重開 `radar-bf-branches`(`--top 2500 --days 730`)與 `radar-bf-warrant`(`--top 6000 --days 130`),**不拿** `/tmp/radar-db.lock`;`~/bf-cron-guard.sh` 在 daily-* 窗或 flock 被佔時 `docker pause`,避免再擋今日排程。進度:`docker logs -f radar-bf-*`;跑完再 stats/export/`import-geo`。

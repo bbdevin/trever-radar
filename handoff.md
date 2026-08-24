@@ -1,7 +1,9 @@
 ## Handoff
 
-- **Current Goal**: 個股權證分頁已加「權證分點動向」(買／賣超萬元 + 權證展開)
+- **Current Goal**: 回補中途動態上線 — 規劃已落檔，等使用者確認 Scope
 - **Branch**: `main`
-- **Done**: `WarrantBranchPanel` 讀 `/data/branches/warrant_branches.json` 依標的篩選;區間 1/2/5/30/120 日;門檻同分點頁 ≥500 萬
-- **VPS 背景**: `radar-bf-*` 回補 + `bf-cron-guard`(cron 窗 pause)
-- **Next**: push 後 Cloudflare Pages 部署;回補完可選再 stats/export
+- **Plan**: `docs/33_mid_backfill_publish_plan.md`
+- **建議 Scope S1**: `mid-backfill-publish.sh` + 收編 `bf-cron-guard` + crontab 03/09/12/19（腳本內避開 daily 窗）；每次含 `compute-branch-stats`
+- **備選 S2**: 只做腳本，不改 VPS crontab（手動觸發）
+- **VPS 背景**: `radar-bf-*` 仍在跑（分點≈2025-12、權證≈2026-07）
+- **Next**: 使用者勾選 S1/S2/S3 + stats 頻率後，Executor 實作
