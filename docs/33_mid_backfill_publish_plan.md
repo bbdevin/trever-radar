@@ -48,7 +48,7 @@ mid-backfill-publish.sh（新）
 
 | 方案 | 做法 | 優點 | 缺點 |
 |---|---|---|---|
-| **A. 定時（已落地）** | crontab:`0 3,9,12,20 * * *`（腳本內避開 daily-* 窗；20:00 避開 17:40–19:30 branches） | 簡單可預期 | 回補快時可能「空轉 export」 |
+| **A. 定時（已落地）** | crontab:`09/12`=`SKIP_STATS=1`（白天只 export）；`03/20`=完整含 stats（腳本內避開 daily-* 窗） | 白天輕、晚上重算排行 | 白天 `/branch` 排行可能略舊到當晚 |
 | B. 里程碑 | 監看 log，每跨過一個月交易日觸發 | 與進度對齊 | 實作較複雜 |
 | C. 僅手動 | `vps/scripts/mid-backfill-publish.sh` | 零風險 | 要人記得跑 |
 

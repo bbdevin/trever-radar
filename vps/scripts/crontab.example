@@ -29,5 +29,7 @@ CRON_TZ=Asia/Taipei
 */5 * * * *    pgrep -f 'vps/scripts/bf-cron-guard.sh' >/dev/null || /home/huang/trever-radar/vps/scripts/bf-cron-guard.sh >> /home/huang/bf-cron-guard.log 2>&1
 
 # 回補中途動態上線(docs/33 S1):03/09/12/20 — 避開 14:10/16:10/17:40–19:30/21:00/22:10
+# stats 重(20–40分)只在凌晨/晚上;白天只 export 加深 JSON
 # 腳本內再次檢查 daily 窗與 radar-db.lock;無 bf 容器則 noop
-0 3,9,12,20 * * *  /home/huang/trever-radar/vps/scripts/mid-backfill-publish.sh >> /home/huang/radar-cron.log 2>&1
+0 9,12 * * *   SKIP_STATS=1 /home/huang/trever-radar/vps/scripts/mid-backfill-publish.sh >> /home/huang/radar-cron.log 2>&1
+0 3,20 * * *   /home/huang/trever-radar/vps/scripts/mid-backfill-publish.sh >> /home/huang/radar-cron.log 2>&1

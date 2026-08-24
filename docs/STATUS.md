@@ -109,7 +109,7 @@
 
 ## 最近完成
 
-- 2026-08-24 **回補中途動態上線 S1 落地**:`mid-backfill-publish.sh` + `bf-cron-guard.sh`;VPS cron `03/09/12/20` + guard 保活;避開 daily 窗與 DB lock。詳 `docs/33`。
+- 2026-08-24 **回補中途動態上線 S1 落地**:`mid-backfill-publish.sh` + `bf-cron-guard.sh`;VPS cron `09/12` 只 export、`03/20` 含 stats;避開 daily 窗與 DB lock。詳 `docs/33`。
 - 2026-08-24 **回補中途動態上線規劃**:`docs/33_mid_backfill_publish_plan.md`——長回補期間定時 pause→stats→export/deploy→resume，不必等全部跑完才更新網站。
 - 2026-08-21 **個股權證分頁＝權證分點動向**：與 `/branch` 同源 `warrant_branches.json`；顯示分點買超／賣超（萬）、展開標示哪幾檔權證；區間 pills；門檻 ≥500 萬。
 - 2026-08-21 **VPS 先上線再回補**:回補 pause 期間跑完 `import-geo` + `compute-branch-stats` + export/deploy(不握長 flock);正式 `data_date=2026-08-21`、`branch_rankings` as_of=08-20、pocket 有資料。16:10 `daily-insti` 正常搶鎖。歷史回補容器仍由 `bf-cron-guard` 在 cron 窗 pause。
