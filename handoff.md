@@ -1,5 +1,5 @@
 ## Handoff
 
-- **Done**: I-1 分級門檻 + 略過試搓；監控 UI 隱藏 08:50 類訊號
-- **VPS**: `git pull` 後下次 08:50 worker 自動吃新碼（或手動重啟 radar-worker）
+- **Done**: 個股籌碼日報依「此檔」回補深度顯示區間；超深度區間 disabled + 自動降檔
+- **File**: `web/components/BranchFlowSection.tsx`
 - **Branch**: `main`

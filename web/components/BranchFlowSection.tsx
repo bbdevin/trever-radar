@@ -89,10 +89,37 @@ const BranchFlowSection = forwardRef<
     return () => mq.removeEventListener("change", on);
   }, []);
 
-  const activeDays = days === "custom" ? parseInt(customDays) || 1 : days;
+  const activeDaysRaw = days === "custom" ? parseInt(customDays) || 1 : days;
+  /** 此股實際可用交易日數(每檔回補深度不同) */
+  const availableDays = branchHistory?.length ?? 0;
+  /** 聚合用天數:不超過此股真實深度 */
+  const activeDays = availableDays > 0 ? Math.min(activeDaysRaw, availableDays) : activeDaysRaw;
 
   // 籌碼最新交易日(history 新→舊);無 history 不腦補「今日」
   const branchAsOf = branchHistory?.length ? branchHistory[0].t : null;
+  /** 此股 branch_history 實際涵蓋區間(回補深度會影響最早日;每股不同) */
+  const branchDepth = useMemo(() => {
+    if (!branchHistory?.length) return null;
+    return {
+      newest: branchHistory[0].t,
+      oldest: branchHistory[branchHistory.length - 1].t,
+      days: branchHistory.length,
+    };
+  }, [branchHistory]);
+
+  // 換股或回補加深後:若目前選的天數超過此股深度,自動降到可用最大值
+  useEffect(() => {
+    if (!branchDepth) return;
+    if (days !== "custom" && typeof days === "number" && days > branchDepth.days) {
+      const fit =
+        [...BRANCH_RANGES].reverse().find((r) => r.days <= branchDepth.days)?.days ?? branchDepth.days;
+      setDays(fit);
+    } else if (days === "custom") {
+      const n = parseInt(customDays) || 1;
+      if (n > branchDepth.days) setCustomDays(String(branchDepth.days));
+    }
+  }, [branchDepth, days, customDays]);
+
   const rangeMeta = useMemo(() => {
     if (!branchHistory?.length) return null;
     const sliced = branchHistory.slice(0, activeDays);
@@ -218,12 +245,34 @@ const BranchFlowSection = forwardRef<
       </span>
     ) : null;
 
+  const depthChip =
+    branchDepth != null ? (
+      <span
+        className="inline-flex shrink-0 items-center gap-1 rounded-md border border-border bg-muted/40 px-2 py-1 text-[11.5px] font-medium text-foreground"
+        title={`此檔分點進出歷史：${branchDepth.oldest} ～ ${branchDepth.newest}，共 ${branchDepth.days} 個交易日。每檔回補進度不同，最早日以本檔為準。`}
+        aria-label={`此檔分點資料涵蓋 ${fmtMD(branchDepth.oldest)} 至 ${fmtMD(branchDepth.newest)}，共 ${branchDepth.days} 交易日`}
+      >
+        <span className="text-muted-foreground">此檔</span>
+        <span className="num font-bold">
+          {fmtMD(branchDepth.oldest)}–{fmtMD(branchDepth.newest)}
+        </span>
+        <span className="text-muted-foreground">（{branchDepth.days} 日）</span>
+      </span>
+    ) : null;
+
   const rangeHint =
-    rangeMeta && activeDays > 1
-      ? `區間 ${fmtMD(rangeMeta.start)}–${fmtMD(rangeMeta.end)}（${rangeMeta.available} 交易日${
-          rangeMeta.available < activeDays ? "，僅有此深度" : ""
-        }）· `
-      : "";
+    rangeMeta && activeDaysRaw > 1
+      ? `已選 ${activeDaysRaw} 日${
+          activeDays < activeDaysRaw ? `→實際 ${activeDays} 日` : ""
+        } · ${fmtMD(rangeMeta.start)}–${fmtMD(rangeMeta.end)}（${rangeMeta.available} 交易日）· `
+      : branchDepth
+        ? `此檔分點 ${fmtMD(branchDepth.oldest)}–${fmtMD(branchDepth.newest)}（${branchDepth.days} 日）· `
+        : branches.length
+          ? "僅最新一日分點 · "
+          : "";
+
+  const shallowRange =
+    branchDepth != null && activeDaysRaw > branchDepth.days;
 
   return (
     <section
@@ -235,15 +284,21 @@ const BranchFlowSection = forwardRef<
         <div className="flex flex-col gap-0.5">
           <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-1.5">
             <h2 className="text-[15px] font-bold text-foreground">{heading}</h2>
-            {asOfChip}
+            <div className="flex flex-wrap items-center justify-end gap-1.5">
+              {depthChip}
+              {asOfChip}
+            </div>
           </div>
           <span className="text-[11px] leading-relaxed text-muted-foreground">
             {rangeHint}盤後 T+1、每日前 15 大買賣超裁剪版，僅供籌碼觀察。
           </span>
         </div>
       )}
-      {!heading && asOfChip && (
-        <div className="flex justify-end">{asOfChip}</div>
+      {!heading && (depthChip || asOfChip) && (
+        <div className="flex flex-wrap justify-end gap-1.5">
+          {depthChip}
+          {asOfChip}
+        </div>
       )}
 
       {/* 分點分卡 + 摘要統計：手機 2+2 對稱四格；有分點分時多一格 → 手機 3 格第一列 + 獨佔淨流 */}
@@ -291,19 +346,52 @@ const BranchFlowSection = forwardRef<
         </div>
       )}
 
-      {/* 時間範圍選擇：wrap 換行，所有選項可見，不橫滑 */}
+      {/* 時間範圍：超過此股回補深度的選項 disabled */}
       <div className="mb-3.5">
+        {shallowRange && branchDepth && (
+          <p className="mb-2 text-[11px] font-medium text-warn" role="status">
+            此檔分點僅回補到 {branchDepth.oldest}（{branchDepth.days} 交易日），已改以實際深度計算。
+          </p>
+        )}
         <div
           role="tablist"
           className="flex flex-wrap gap-1 rounded-[var(--r-md)] border border-border bg-card p-1.5"
         >
-          {BRANCH_RANGES.map((r) => (
-            <button key={r.days} role="tab" aria-selected={days === r.days} className={pillTabClass(days === r.days)} onClick={() => setDays(r.days)}>
-              {r.label}
-            </button>
-          ))}
+          {BRANCH_RANGES.map((r) => {
+            const beyond = branchDepth != null && r.days > branchDepth.days;
+            const selected = days === r.days;
+            return (
+              <button
+                key={r.days}
+                type="button"
+                role="tab"
+                aria-selected={selected}
+                disabled={beyond}
+                title={
+                  beyond && branchDepth
+                    ? `此檔僅有 ${branchDepth.days} 日分點（最早 ${branchDepth.oldest}），無法選 ${r.label}`
+                    : undefined
+                }
+                className={cn(
+                  pillTabClass(selected),
+                  beyond && "cursor-not-allowed opacity-40",
+                )}
+                onClick={() => {
+                  if (!beyond) setDays(r.days);
+                }}
+              >
+                {r.label}
+              </button>
+            );
+          })}
           <div className={cn("inline-flex items-center gap-1.5 rounded-full pr-1", days === "custom" && "bg-muted shadow-[inset_0_0_0_1px_var(--border-strong)]")}>
-            <button role="tab" aria-selected={days === "custom"} className={pillTabClass(false)} onClick={() => setDays("custom")}>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={days === "custom"}
+              className={pillTabClass(false)}
+              onClick={() => setDays("custom")}
+            >
               自訂
             </button>
             {days === "custom" && (
@@ -311,12 +399,12 @@ const BranchFlowSection = forwardRef<
                 type="number"
                 inputMode="numeric"
                 min={1}
-                max={240}
+                max={branchDepth?.days ?? 480}
                 value={customDays}
                 onChange={(e) => setCustomDays(e.target.value)}
                 className="num w-[50px] rounded-md border border-[color:var(--line)] bg-card px-1.5 py-0.5 text-xs text-foreground outline-none focus:border-primary"
                 placeholder="天數"
-                aria-label="自訂聚合天數"
+                aria-label={`自訂聚合天數（此檔上限 ${branchDepth?.days ?? "—"}）`}
               />
             )}
           </div>
