@@ -67,6 +67,8 @@ class MarginExportTests(unittest.TestCase):
         self.assertIn("margin_history", stock)
         hist = stock["margin_history"]
         self.assertEqual(len(hist), 2)
+        self.assertIn("margin_meta", stock)
+        self.assertEqual(stock["margin_meta"]["backfill_target_days"], 240)
         latest = hist[0]
         self.assertEqual(latest["t"], D)
         self.assertEqual(latest["balance"], 1020)

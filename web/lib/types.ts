@@ -112,6 +112,7 @@ export interface StockJson {
   }[];
   /** 資券日統計(張);新→舊。含融資成本估算(docs/34) */
   margin_history?: MarginHistoryPoint[];
+  margin_meta?: MarginMeta;
 }
 
 export interface MarginHistoryPoint {
@@ -127,6 +128,14 @@ export interface MarginHistoryPoint {
   short_balance: number | null;
   short_prev: number | null;
   cost_est: number | null;
+}
+
+export interface MarginMeta {
+  display_from: string;
+  display_to: string;
+  db_earliest: string | null;
+  backfill_target_days: number;
+  window_label?: string;
 }
 
 export interface MarginUsageItem {

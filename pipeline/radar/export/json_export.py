@@ -6,7 +6,7 @@ money-flow panel built from industry sums vs their 20-day averages.
 """
 import hashlib
 import json
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -21,6 +21,7 @@ from ..compute.strategy_performance import (
     fetch_strategy_events,
 )
 from ..compute.margin_cost import build_margin_cost_series
+from ..compute.display_window import display_window_bounds, window_label
 
 # 使用者確認的策略生命週期狀態(2026-08-19 Phase 3 報告後定案)
 # Active: 無;Shadow: 其餘;Retired: 停止主介面宣稱有效
@@ -131,7 +132,9 @@ SURGE_MIN_RATIO = 1.5
 MIN_WARRANT_TURNOVER = 20_000_000
 
 
-def _margin_history_payload(conn, sid: str, d: str) -> list[dict]:
+def _margin_history_payload(conn, sid: str, d: str) -> tuple[list[dict], dict]:
+    today = date.fromisoformat(d)
+    display_from, display_to = display_window_bounds(today)
     rows = conn.execute(text("""
         SELECT m.date, m.margin_balance, m.margin_prev, m.margin_limit,
                m.margin_buy, m.margin_sell, m.margin_repay,
@@ -139,11 +142,27 @@ def _margin_history_payload(conn, sid: str, d: str) -> list[dict]:
                p.close
         FROM daily_margins m
         LEFT JOIN daily_prices p ON p.stock_id = m.stock_id AND p.date = m.date
-        WHERE m.stock_id = :s AND m.date >= date(:d, '-400 days')
+        WHERE m.stock_id = :s AND m.date >= :from_d AND m.date <= :to_d
         ORDER BY m.date ASC
-    """), {"s": sid, "d": d}).fetchall()
+    """), {"s": sid, "from_d": display_from, "to_d": display_to}).fetchall()
+    db_earliest = conn.execute(text(
+        "SELECT MIN(date) FROM daily_margins WHERE stock_id = :s"
+    ), {"s": sid}).scalar()
+    stock_latest = conn.execute(text(
+        "SELECT MAX(date) FROM daily_margins WHERE stock_id = :s"
+    ), {"s": sid}).scalar()
+    eff_to = display_to
+    if stock_latest and stock_latest < eff_to:
+        eff_to = stock_latest
+    meta = {
+        "display_from": display_from,
+        "display_to": eff_to,
+        "db_earliest": db_earliest,
+        "backfill_target_days": 240,
+        "window_label": window_label(display_from, eff_to, today),
+    }
     if not rows:
-        return []
+        return [], meta
     cost_series = build_margin_cost_series([(r[4], r[1], r[9]) for r in rows])
     out = []
     for i, r in enumerate(rows):
@@ -163,7 +182,7 @@ def _margin_history_payload(conn, sid: str, d: str) -> list[dict]:
             "short_prev": r[8],
             "cost_est": round(cost_series[i], 2) if cost_series[i] is not None else None,
         })
-    return list(reversed(out))[:240]
+    return list(reversed(out)), meta
 
 
 def _export_margin_usage(out: Path, conn, d: str, m_date: str | None) -> None:
@@ -834,6 +853,7 @@ def export_json(out_dir: Path | None = None) -> dict:
                 {"t": dt, "branches": sorted(branches, key=lambda x: -abs(x["net"]))[:12]}
                 for dt, branches in sorted(history_by_date.items(), reverse=True)[:480]
             ]
+            margin_hist, margin_meta = _margin_history_payload(conn, sid, d)
             payload = {
                 "id": sid, "name": s["name"], "market": s["market"],
                 "candles": [
@@ -875,7 +895,8 @@ def export_json(out_dir: Path | None = None) -> dict:
                      "total": (r[4] or 0) // 1000}
                     for r in insti_history_rows
                 ],
-                "margin_history": _margin_history_payload(conn, sid, d),
+                "margin_history": margin_hist,
+                "margin_meta": margin_meta,
             }
             (stock_dir / f"{sid}.json").write_text(
                 json.dumps(payload, ensure_ascii=False), encoding="utf-8")

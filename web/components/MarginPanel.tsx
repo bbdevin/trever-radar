@@ -1,17 +1,23 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import type { Candle, MarginHistoryPoint, StockJson } from "@/lib/types";
-import { fmtLots } from "@/lib/format";
+import type { Candle, MarginHistoryPoint, MarginMeta, StockJson } from "@/lib/types";
+import { fmtLots, fmtLotsPlain } from "@/lib/format";
 import { cn, pillTabClass } from "@/lib/utils";
 
-const CHART_DAYS = 60;
 const TABLE_PREVIEW = 20;
 
 function fmtMD(iso: string): string {
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
   if (!m) return iso;
   return `${m[2]}/${m[3]}`;
+}
+
+function fmtYMD(iso: string | undefined): string {
+  if (!iso) return "—";
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
+  if (!m) return iso;
+  return `${m[1]}/${m[2]}/${m[3]}`;
 }
 
 function fmtUsage(u: number | null | undefined): string {
@@ -21,39 +27,58 @@ function fmtUsage(u: number | null | undefined): string {
 
 export default function MarginPanel({ data, candles }: { data: StockJson; candles: Candle[] }) {
   const [mode, setMode] = useState<"margin" | "short">("margin");
+  const [view, setView] = useState<"balance" | "usage">("balance");
   const [showCost, setShowCost] = useState(true);
   const [showAll, setShowAll] = useState(false);
 
   const history = data.margin_history ?? [];
+  const meta: MarginMeta | undefined = data.margin_meta;
   const latest = history[0];
 
   const chartRows = useMemo(() => {
-    const slice = history.slice(0, CHART_DAYS).slice().reverse();
+    const slice = history.slice().reverse();
     const closeByT = new Map(candles.map((c) => [c.t, c.c]));
     return slice.map((r) => ({ ...r, close: closeByT.get(r.t) ?? null }));
   }, [history, candles]);
 
   const maxAbsChg = Math.max(1, ...chartRows.map((r) => Math.abs(r.chg ?? 0)));
-  const maxBal = Math.max(1, ...chartRows.map((r) => (mode === "margin" ? r.balance ?? 0 : r.short_balance ?? 0)));
+  const maxBal = Math.max(
+    1,
+    ...chartRows.map((r) => (mode === "margin" ? r.balance ?? 0 : r.short_balance ?? 0)),
+  );
+  const usages = chartRows.map((r) => r.usage).filter((u): u is number => u != null);
+  const maxUsage = Math.max(0.01, ...usages, 0.01);
+  const minUsage = usages.length ? Math.min(...usages) : 0;
 
   const tableRows = showAll ? history : history.slice(0, TABLE_PREVIEW);
 
   const usage = latest?.usage ?? null;
   const hot = usage != null && usage >= 0.6;
 
+  const windowNote =
+    meta?.display_from && meta?.display_to
+      ? `顯示 ${fmtYMD(meta.display_from)}–${fmtYMD(meta.display_to)}（${meta.window_label ?? "當年度"}）`
+      : history.length > 0
+        ? `近 ${history.length} 日`
+        : null;
+
   return (
     <div className="grid min-w-0 gap-3">
+      {windowNote && (
+        <p className="text-[12px] text-muted-foreground">{windowNote}</p>
+      )}
+
       <div className="flex min-w-0 flex-wrap items-center gap-2 rounded-[var(--r-md)] border border-border bg-card px-3 py-2.5 text-[12px]">
         <span className="text-muted-foreground">資券</span>
         {latest && (
           <>
             <span>
-              融資餘額 <span className="num font-semibold text-foreground">{fmtLots(latest.balance)}</span> 張
+              融資餘額{" "}
+              <span className="num font-semibold text-foreground">{fmtLotsPlain(latest.balance)}</span> 張
             </span>
             <span>
               增減{" "}
               <span className={cn("num font-semibold", (latest.chg ?? 0) >= 0 ? "text-up" : "text-down")}>
-                {(latest.chg ?? 0) >= 0 ? "+" : ""}
                 {fmtLots(latest.chg)}
               </span>
             </span>
@@ -66,7 +91,9 @@ export default function MarginPanel({ data, candles }: { data: StockJson; candle
             {latest.cost_est != null && (
               <span>
                 融資成本{" "}
-                <span className="num font-semibold text-foreground">{latest.cost_est.toLocaleString("zh-TW")}</span>
+                <span className="num font-semibold text-foreground">
+                  {latest.cost_est.toLocaleString("zh-TW")}
+                </span>
                 <span className="text-muted-foreground">（估算）</span>
               </span>
             )}
@@ -104,7 +131,7 @@ export default function MarginPanel({ data, candles }: { data: StockJson; candle
               type="button"
               role="tab"
               aria-selected={mode === t.key}
-              className={pillTabClass(mode === t.key)}
+              className={cn("min-h-11 cursor-pointer", pillTabClass(mode === t.key))}
               onClick={() => setMode(t.key)}
             >
               {t.label}
@@ -112,29 +139,56 @@ export default function MarginPanel({ data, candles }: { data: StockJson; candle
           ))}
         </div>
         {mode === "margin" && (
-          <button
-            type="button"
-            className={cn(
-              "rounded-full border px-3 py-1 text-[12px] font-semibold transition-colors",
-              showCost
-                ? "border-primary/40 bg-primary/10 text-primary"
-                : "border-border text-muted-foreground hover:bg-secondary",
-            )}
-            onClick={() => setShowCost((v) => !v)}
-          >
-            融資成本線
-          </button>
+          <>
+            <div
+              role="tablist"
+              aria-label="圖表檢視"
+              className="flex gap-0.5 rounded-full border border-border bg-card p-[3px]"
+            >
+              {(
+                [
+                  { key: "balance" as const, label: "餘額" },
+                  { key: "usage" as const, label: "使用率" },
+                ] as const
+              ).map((t) => (
+                <button
+                  key={t.key}
+                  type="button"
+                  role="tab"
+                  aria-selected={view === t.key}
+                  className={cn("min-h-11 cursor-pointer", pillTabClass(view === t.key))}
+                  onClick={() => setView(t.key)}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
+            <button
+              type="button"
+              className={cn(
+                "min-h-11 cursor-pointer rounded-full border px-3 py-1 text-[12px] font-semibold transition-colors duration-200",
+                showCost
+                  ? "border-primary/40 bg-primary/10 text-primary"
+                  : "border-border text-muted-foreground hover:bg-secondary",
+              )}
+              onClick={() => setShowCost((v) => !v)}
+            >
+              融資成本線
+            </button>
+          </>
         )}
       </div>
 
       {chartRows.length === 0 ? (
         <div className="rounded-[var(--r-md)] border border-border bg-card px-4 py-8 text-center text-sm text-muted-foreground">
-          尚無資券歷史（下次 export-json 後顯示）
+          窗內尚無資券歷史
+          {meta?.db_earliest ? `（資料自 ${fmtYMD(meta.db_earliest)} 起）` : ""}
         </div>
       ) : (
         <div className="rounded-[var(--r-lg)] border border-border bg-card p-3 shadow-[var(--shadow-card)]">
           <div className="mb-2 text-[12px] font-semibold text-muted-foreground">
-            近 {chartRows.length} 日 · 柱=增減 · 線=餘額
+            {chartRows.length} 日 · 柱=增減 · 線=
+            {mode === "margin" ? (view === "usage" ? "使用率" : "餘額") : "融券餘額"}
             {mode === "margin" && showCost ? " · 灰=成本(估)" : ""}
           </div>
           <div className="relative h-[200px] w-full">
@@ -143,7 +197,7 @@ export default function MarginPanel({ data, candles }: { data: StockJson; candle
                 const chg = r.chg ?? 0;
                 const h = (Math.abs(chg) / maxAbsChg) * 35;
                 const x = (i / Math.max(chartRows.length, 1)) * 100;
-                const w = 100 / Math.max(chartRows.length, 1) * 0.7;
+                const w = (100 / Math.max(chartRows.length, 1)) * 0.7;
                 const y = chg >= 0 ? 50 - h : 50;
                 return (
                   <rect
@@ -157,7 +211,7 @@ export default function MarginPanel({ data, candles }: { data: StockJson; candle
                   />
                 );
               })}
-              {mode === "margin" && showCost && (
+              {mode === "margin" && showCost && view === "balance" && (
                 <polyline
                   fill="none"
                   stroke="var(--ink-2)"
@@ -183,9 +237,15 @@ export default function MarginPanel({ data, candles }: { data: StockJson; candle
                 strokeWidth="0.8"
                 points={chartRows
                   .map((r, i) => {
-                    const bal = mode === "margin" ? r.balance ?? 0 : r.short_balance ?? 0;
                     const x = ((i + 0.5) / Math.max(chartRows.length, 1)) * 100;
-                    const y = 88 - (bal / maxBal) * 38;
+                    let y: number;
+                    if (mode === "margin" && view === "usage") {
+                      const u = r.usage ?? minUsage;
+                      y = 88 - ((u - minUsage) / (maxUsage - minUsage || 1)) * 38;
+                    } else {
+                      const bal = mode === "margin" ? r.balance ?? 0 : r.short_balance ?? 0;
+                      y = 88 - (bal / maxBal) * 38;
+                    }
                     return `${x},${y}`;
                   })
                   .join(" ")}
@@ -204,6 +264,7 @@ export default function MarginPanel({ data, candles }: { data: StockJson; candle
               <th className="px-3 py-2 font-semibold">增減</th>
               {mode === "margin" && (
                 <>
+                  <th className="px-3 py-2 font-semibold">限額</th>
                   <th className="px-3 py-2 font-semibold">使用率</th>
                   <th className="px-3 py-2 font-semibold">成本(估)</th>
                 </>
@@ -222,12 +283,13 @@ export default function MarginPanel({ data, candles }: { data: StockJson; candle
               return (
                 <tr key={r.t} className="border-b border-border/60 last:border-0">
                   <td className="num px-3 py-2">{fmtMD(r.t)}</td>
-                  <td className="num px-3 py-2">{fmtLots(bal)}</td>
-                  <td className={cn("num px-3 py-2", (chg ?? 0) >= 0 ? "text-up" : "text-down")}>
-                    {chg == null ? "—" : `${chg >= 0 ? "+" : ""}${fmtLots(chg)}`}
+                  <td className="num px-3 py-2">{fmtLotsPlain(bal)}</td>
+                  <td className={cn("num px-3 py-2", (chg ?? 0) > 0 ? "text-up" : (chg ?? 0) < 0 ? "text-down" : "")}>
+                    {chg == null ? "—" : fmtLots(chg)}
                   </td>
                   {mode === "margin" && (
                     <>
+                      <td className="num px-3 py-2 text-muted-foreground">{fmtLotsPlain(r.limit)}</td>
                       <td className="num px-3 py-2">{fmtUsage(r.usage)}</td>
                       <td className="num px-3 py-2">{r.cost_est?.toLocaleString("zh-TW") ?? "—"}</td>
                     </>
@@ -241,10 +303,10 @@ export default function MarginPanel({ data, candles }: { data: StockJson; candle
       {history.length > TABLE_PREVIEW && (
         <button
           type="button"
-          className="text-[12px] font-semibold text-primary hover:underline"
+          className="cursor-pointer text-[12px] font-semibold text-primary hover:underline"
           onClick={() => setShowAll((v) => !v)}
         >
-          {showAll ? "收合" : `顯示全部 ${history.length} 日`}
+          {showAll ? "收合" : `顯示窗內全部 ${history.length} 日`}
         </button>
       )}
     </div>

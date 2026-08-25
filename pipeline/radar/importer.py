@@ -99,6 +99,83 @@ def _import_margin(conn, rows, date: str) -> int:
     return upsert(conn, schema.daily_margins, out)
 
 
+def backfill_margin(
+    days: int = 240,
+    sleep_s: float = 0.4,
+    dry_run: bool = False,
+    min_rows: int = 500,
+) -> dict:
+    """Backfill TWSE/TPEx margin for recent trading days with gaps or missing buy fields.
+
+    Unlike ``backfill()``, checks ``daily_margins`` completeness per date instead of
+    skipping when ``daily_prices`` already has the day.
+    """
+    import time as time_mod
+
+    from sqlalchemy import text
+
+    init_db()
+    with get_engine().connect() as conn:
+        trading_days = [
+            r[0]
+            for r in conn.execute(
+                text(
+                    "SELECT DISTINCT date FROM daily_prices "
+                    "ORDER BY date DESC LIMIT :cap"
+                ),
+                {"cap": days + 60},
+            ).fetchall()
+        ]
+    targets = list(reversed(trading_days[:days]))
+
+    imported = skipped = errors = 0
+    for d_iso in targets:
+        ds = d_iso.replace("-", "")
+        with get_engine().connect() as conn:
+            row = conn.execute(
+                text(
+                    "SELECT COUNT(*), "
+                    "SUM(CASE WHEN margin_buy IS NULL THEN 1 ELSE 0 END) "
+                    "FROM daily_margins WHERE date = :d"
+                ),
+                {"d": d_iso},
+            ).fetchone()
+        cnt = int(row[0] or 0)
+        null_buy = int(row[1] or 0)
+        need = cnt < min_rows or (cnt > 0 and null_buy > cnt * 0.05)
+        if not need:
+            skipped += 1
+            continue
+        if dry_run:
+            print(
+                f"backfill-margin dry-run {d_iso}: rows={cnt} null_buy={null_buy}",
+                flush=True,
+            )
+            imported += 1
+            continue
+        results = import_daily(ds, ["margin"])
+        margin_results = [r for r in results if r.get("dataset") == "margin"]
+        ok = any(r["status"] == "ok" for r in margin_results)
+        empty = margin_results and all(r["status"] == "empty" for r in margin_results)
+        if ok:
+            imported += 1
+            print(f"backfill-margin {d_iso} ok ({imported} imported)", flush=True)
+        elif empty:
+            skipped += 1
+        else:
+            errors += 1
+            print(f"backfill-margin {d_iso} error", flush=True)
+        time_mod.sleep(sleep_s)
+
+    return {
+        "days_target": len(targets),
+        "imported": imported,
+        "skipped": skipped,
+        "errors": errors,
+        "dry_run": dry_run,
+    }
+
+
 def backfill(days: int, datasets: list[str] | None = None) -> dict:
     """Import the last `days` trading days (skips weekends and already-imported dates).
 

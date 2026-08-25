@@ -39,6 +39,16 @@ def cmd_backfill(args):
           f"({info['imported']} newly imported, {info['probes']} probes)")
 
 
+def cmd_backfill_margin(args):
+    from .importer import backfill_margin
+    info = backfill_margin(args.days, args.sleep, args.dry_run, args.min_rows)
+    print(
+        f"backfill-margin: target={info['days_target']} imported={info['imported']} "
+        f"skipped={info['skipped']} errors={info['errors']}"
+        + (" (dry-run)" if info["dry_run"] else "")
+    )
+
+
 def cmd_deep_backfill(args):
     from .importer import deep_backfill
     ids = args.ids.split(",") if args.ids else None
@@ -216,6 +226,16 @@ def main(argv=None):
     bf.add_argument("--days", type=int, default=240)
     bf.add_argument("--datasets", default="quotes", help="comma list, default quotes")
     bf.set_defaults(fn=cmd_backfill)
+
+    bfm = sub.add_parser(
+        "backfill-margin",
+        help="backfill margin gaps for last N trading days (TWSE+TPEx, docs/34 A4)",
+    )
+    bfm.add_argument("--days", type=int, default=240)
+    bfm.add_argument("--sleep", type=float, default=0.4, help="seconds between days")
+    bfm.add_argument("--min-rows", type=int, default=500, help="min rows/day to skip re-import")
+    bfm.add_argument("--dry-run", action="store_true", help="list gap days only")
+    bfm.set_defaults(fn=cmd_backfill_margin)
 
     dp = sub.add_parser("deep-backfill", help="since-IPO history via FinMind (1 request/stock)")
     dp.add_argument("--ids", default=None, help="comma list, e.g. 2330,2317")

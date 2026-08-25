@@ -34,3 +34,6 @@ CRON_TZ=Asia/Taipei
 
 # 分點排行專用(docs/33 S1.1):每日 23:30 — pause bf → stats → export(記憶體不足則跳過)
 30 23 * * *    /home/huang/trever-radar/vps/scripts/safe-branch-stats.sh >> /home/huang/radar-cron.log 2>&1
+
+# 資券 240 日回補(docs/34 A4):週日 02:30 — 一次性(DONE flag);避開 daily 窗
+30 2 * * 0     /home/huang/trever-radar/vps/scripts/backfill-margin.sh >> /home/huang/radar-cron.log 2>&1

@@ -73,7 +73,7 @@
 **顯示歷史窗（定案）**
 
 ```
-display_from = max(當年-01-01, today − 6 個月)
+display_from = min(當年-01-01, today − 6 個月)
 display_to   = 最新一週 as_of
 ```
 
@@ -194,11 +194,11 @@ bal_t   = 融資今日餘額（張）
 
 ### 5.3 Export
 
-個股 JSON 新增 `margin_history`（近 **120–240 交易日**）：
+個股 JSON 新增 `margin_history`（**Phase A4 前**：近 240 交易日硬上限；**A4 後**：對齊 §5.5 顯示窗，見下）：
 
 ```json
 {
-  "date": "2026-08-22",
+  "t": "2026-08-22",
   "balance": 4405,
   "prev": 4325,
   "limit": 20000,
@@ -210,12 +210,135 @@ bal_t   = 融資今日餘額（張）
 }
 ```
 
+另附 `margin_meta`（A4）：
+
+```json
+{
+  "display_from": "2026-01-01",
+  "display_to": "2026-08-24",
+  "db_earliest": "2025-08-26",
+  "backfill_target_days": 240
+}
+```
+
 ### 5.4 UI（個股 tab「資券」）
 
 - 子切換：融資｜融券｜（當沖／借券 — Phase C，可先殼或標「尚未接入」）  
 - 圖：增減柱 + 餘額線 + 股價；可選疊融資成本線  
 - 表：日期、餘額、增減、使用率％、融資成本（估算）  
 - freshness：`radar.freshness.margin`
+
+### 5.5 資券歷史回補 + 顯示窗（Phase A4，對齊大戶 §3.2）
+
+> **使用者定案（2026-08-25）**：DB 回補 **約 1 個日曆年（240 交易日）** 全市場資券；**UI／export 顯示窗** 與規劃中的大戶 tab 相同公式。
+
+#### 5.5.1 現況差距
+
+| 項目 | 現況 | 缺口 |
+|---|---|---|
+| DB 深度 | 每晚 `import-daily margin` 增量；A0 前舊列可能缺 `margin_buy` 等 | 需 **240 交易日** 全市場回補＋舊列補欄 |
+| export | `_margin_history_payload` 查 400 曆日、截 240 列 | 未用「當年／跨年前 6 月」窗 |
+| UI | `MarginPanel` 圖固定近 **60 日** | 未標示顯示區間；未對齊大戶 UX |
+
+#### 5.5.2 顯示窗公式（與大戶 §3.2 共用）
+
+```python
+# pipeline/radar/compute/display_window.py（A4 抽共用；B1 大戶 export 復用）
+display_from = min(當年-01-01, today − 6 個月)
+display_to   = 該檔最新一筆 margin 日期（≤ radar.data_date 的 margin as_of）
+```
+
+| 情境 | 例（today） | 顯示區間 |
+|---|---|---|
+| 當年度內 | 2026-08-25 | **2026-01-01**～最新資券日（約 8 個月） |
+| 跨年初期 | 2027-01-15 | **2026-07-15**～2027-01-15（自動帶前 6 月） |
+| 2027-08 | 2027-08-20 | **2027-01-01**～最新（又回到「只看當年」） |
+
+- **日頻**（資券）vs **週頻**（TDCC 大戶）：公式相同，粒度不同。  
+- DB 可保留 **240 交易日** 緩衝；**export／UI 只出 display_from～display_to 內列**。  
+- 個股若窗內資料不足（新上市／長期停牌）：誠實標「窗內僅 N 日」。
+
+#### 5.5.3 回補範圍（DB）
+
+| 項目 | 定案 |
+|---|---|
+| 深度 | **240 交易日**（≈ 1 曆年；與 `backfill --days 240` 同量級） |
+| 範圍 | **全市場** 上市＋上櫃 `type=stock`（ETF 可選：與現行 importer 一致一併 upsert） |
+| 來源 | TWSE `MI_MARGN`（1 req/日）+ TPEx `margin/balance`（1 req/日）— **勿** FinMind 逐檔 |
+| 欄位 | A0 全欄：餘額／前日／限額／買賣／現償（融資＋融券） |
+| 估計請求 | 240 日 × 2 源 ≈ **480 HTTP**；禮貌 sleep 0.3–0.5s/日 → **約 5–15 分鐘** |
+| 估計列數 | ~2,500 檔 × 240 日 ≈ **60 萬列** upsert（`daily_margins` 已存在則更新買進欄） |
+
+**與現有 `backfill` 差異**：現行 `backfill()` 以 `daily_prices` 有無該日決定是否跳過，**無法**只補「有報價但缺 margin／缺 buy 欄」的日期。A4 新增 **`backfill-margin`**（或 `backfill --datasets margin --only-gaps`）：
+
+1. 由 `daily_prices` 或交易日曆 walk 出最近 240 個交易日  
+2. 若該日 `daily_margins` 列數 < 門檻（如 <500）或 `margin_buy IS NULL` 占比過高 → 跑 `import-daily --datasets margin`  
+3. 寫 `import_logs`；可 `--dry-run` 列缺口日數  
+
+**CLI（提案）**：
+
+```bash
+# VPS 一次性（需使用者確認；回補中避開與 branch/warrant bf 搶 DB 寫可選 pause）
+python -m radar backfill-margin --days 240 --sleep 0.4
+
+# 驗收
+python -m radar backfill-margin --days 240 --dry-run
+sqlite3 data/radar.db "SELECT date, COUNT(*), SUM(margin_buy IS NULL) FROM daily_margins GROUP BY date ORDER BY date DESC LIMIT 5;"
+```
+
+#### 5.5.4 Export 調整（A4）
+
+| 項目 | 定案 |
+|---|---|
+| 查詢 | `WHERE date >= display_from AND date <= display_to`（per-stock `display_to` = 該檔 max date） |
+| 上限 | 窗內全列（通常 ≤ ~180 交易日）；**不再**硬截 240 |
+| 成本 | 仍 export 時 `build_margin_cost_series`；回補後 `margin_buy` 填滿 → 窗內成本線可畫 |
+| meta | 每檔 `margin_meta.display_from/to/db_earliest` |
+| radar.json | 可選全域 `margin_backfill_days: 240` 供 UI 說明 |
+
+#### 5.5.5 UI 調整（對齊大戶 tab 節奏）
+
+參考 §4.3 大戶 tab，資券 tab **A4 後**：
+
+1. **區間標籤**（圖表上方，muted）：`顯示 2026/01/01–2026/08/24（當年度）` 或 `顯示近 6 個月（跨年度）`  
+2. **子切換**（已有）：融資｜融券  
+3. **檢視**（新增，可選 A4.1）：`餘額`｜`使用率` — 圖主線切換（類大戶「張數比例｜持股人數」）  
+4. **圖**：預設畫 **整個 display 窗**（移除 `CHART_DAYS=60` 硬編）；手機高度維持 ~200px，X 軸自動稀釋標籤  
+5. **表**：窗內全列；預設展開近 20 日，「顯示窗內全部 N 日」  
+6. **缺口**：窗內無資料 → 教育性空狀態＋「資料自 YYYY-MM 回補中」  
+
+**不做的**：不做多年 export；不做使用者自訂起迄（窗公式固定）。
+
+#### 5.5.6 VPS 執行與風險
+
+| 項目 | 建議 |
+|---|---|
+| 時機 | 週末或 branch/warrant bf **pause 窗**；或獨跑（480 req 輕量，通常不必 pause） |
+| 完成後 | `export-json` + `deploy_data`（可 mid-publish 若 bf 進行中） |
+| 與 nightly | 回補為一次性；之後仍靠 `daily-margin` / `daily-branches` 增量 |
+| 風險 | TWSE 節假日 `NoDataError` 安全跳過；TPEx 欄位缺 buy 時成本線仍可能 null |
+| 高� risk | **須使用者確認**才在 VPS 跑；Executor 不自行 destructive |
+
+```mermaid
+flowchart TD
+  subgraph backfill [A4 backfill-margin]
+    D240[240 trading days]
+    TWSE[MI_MARGN]
+    TPEx[TPEx margin]
+    D240 --> TWSE --> daily_margins
+    D240 --> TPEx --> daily_margins
+  end
+  subgraph export [export-json]
+    WIN[display_window max year-start today-6m]
+    daily_margins --> WIN
+    WIN --> margin_history
+    WIN --> margin_meta
+  end
+  subgraph ui [MarginPanel]
+    margin_history --> chart[chart full window]
+    margin_meta --> label[interval badge]
+  end
+```
 
 ---
 
@@ -268,11 +391,12 @@ flowchart LR
 | **A1** | `compute_margin_cost` + export `margin_history` + `margin_usage` 榜 | pytest 過；成本線可畫；UI 標「估算」 |
 | **A2** | 個股「資券」tab | 餘額／增減／使用率／融資成本 |
 | **A3** | `/margin` 排行 + 導覽 | 使用率高→低；可點進個股資券 |
+| **A4** | **資券 240 日回補** + **display 窗** + UI 對齊大戶 | DB 240 交易日全市場；export/UI = max(元旦, today−6月)；圖表畫滿窗 |
 | **B1** | TDCC provider + 表 + 週 cron；export 窗 = max(當年元旦, today−6月) | 2027-01 可見約 6 個月；2026-08 僅當年度 |
 | **B2** | 個股大戶 UI：400/600/800/1000 + 張數比例｜持股人數 | 切 1000 張時比例與人數語意一致 |
 | **C** | 當沖、借券賣 | 獨立資料源與驗收 |
 
-**實作順序**：A0→A1→A2→A3 → B1→B2。**每次只開一個 Phase**。
+**實作順序**：A0→A1→A2→A3 → **A4** → B1→B2。**每次只開一個 Phase**。
 
 ---
 
@@ -283,6 +407,8 @@ flowchart LR
 - [x] **Phase A2** — 個股資券 tab（2026-08-25）
 - [x] **Phase A3** — 使用率排行頁（2026-08-25）
 - [x] **A3 UI 跟進** — 首頁資券 tab／定義文／去重複 summary_text／漏檔修復（2026-08-25）
+- [x] **Phase A4** — 程式：`backfill-margin`、`display_window`、export `margin_meta`、MarginPanel（2026-08-25）
+- [ ] **Phase A4 VPS** — `backfill-margin.sh` 排程執行中（週日 02:30 + 首跑 23:15）
 - [ ] **Phase B** — TDCC 大戶（待確認）
 - [ ] **Phase B1** — TDCC 週更入庫
 - [ ] **Phase B2** — 大戶 UI（門檻 + 雙模式 + 顯示窗）
@@ -310,8 +436,11 @@ flowchart LR
 | Schema | `pipeline/radar/schema.py` |
 | TWSE margin | `pipeline/radar/providers/twse.py` |
 | Import | `pipeline/radar/importer.py` |
+| **A4 回補** | `pipeline/radar/importer.py`（`backfill_margin`）、`pipeline/radar/cli.py` |
+| **A4 顯示窗** | `pipeline/radar/compute/display_window.py`（新建，B1 復用） |
 | 評分（使用率已有） | `pipeline/radar/compute/scores.py` |
 | Export | `pipeline/radar/export/json_export.py` |
 | 個股頁 | `web/app/stock/page.tsx` |
+| 資券 UI | `web/components/MarginPanel.tsx` |
 | 新頁 | `web/app/margin/page.tsx` |
 | Cron 範例 | `vps/scripts/crontab.example` |
