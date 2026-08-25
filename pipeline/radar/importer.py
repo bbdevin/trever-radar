@@ -87,9 +87,14 @@ def _import_insti(conn, rows, date: str) -> int:
 
 def _import_margin(conn, rows, date: str) -> int:
     d = iso(date)
-    out = [{"stock_id": r.code, "date": d, "margin_balance": r.margin_balance,
-            "margin_prev": r.margin_prev, "margin_limit": r.margin_limit,
-            "short_balance": r.short_balance, "short_prev": r.short_prev}
+    out = [{"stock_id": r.code, "date": d,
+            "margin_balance": r.margin_balance, "margin_prev": r.margin_prev,
+            "margin_limit": r.margin_limit,
+            "margin_buy": r.margin_buy, "margin_sell": r.margin_sell,
+            "margin_repay": r.margin_repay,
+            "short_balance": r.short_balance, "short_prev": r.short_prev,
+            "short_buy": r.short_buy, "short_sell": r.short_sell,
+            "short_repay": r.short_repay}
            for r in rows if classify(r.code) in ("stock", "etf")]
     return upsert(conn, schema.daily_margins, out)
 

@@ -122,9 +122,15 @@ def fetch_margin(date: str) -> list[MarginRow]:
             continue
         rows.append(MarginRow(
             code=r[0].strip(),
+            margin_buy=to_int(r[2]),
+            margin_sell=to_int(r[3]),
+            margin_repay=to_int(r[4]),
             margin_balance=to_int(r[6]),
             margin_prev=to_int(r[5]),
             margin_limit=to_int(r[7]),
+            short_buy=to_int(r[8]),
+            short_sell=to_int(r[9]),
+            short_repay=to_int(r[10]),
             short_balance=to_int(r[12]),
             short_prev=to_int(r[11]),
         ))

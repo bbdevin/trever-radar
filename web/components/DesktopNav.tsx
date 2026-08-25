@@ -7,6 +7,7 @@ const NAV = [
   { label: "首頁", href: "/" },
   { label: "監控", href: "/intraday" },
   { label: "分點研究", href: "/branch" },
+  { label: "資券", href: "/margin" },
   { label: "自選追蹤", href: "/watchlist" },
 ];
 

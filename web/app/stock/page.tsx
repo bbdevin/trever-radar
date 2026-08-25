@@ -17,6 +17,7 @@ import KChart from "@/components/KChart";
 import BranchFlowSection from "@/components/BranchFlowSection";
 import BranchDrillView from "@/components/BranchDrillView";
 import InstiPanel from "@/components/InstiPanel";
+import MarginPanel from "@/components/MarginPanel";
 import WarrantBranchPanel from "@/components/WarrantBranchPanel";
 import ReasonPill from "@/components/ReasonPill";
 import PocketBadges from "@/components/PocketBadges";
@@ -46,10 +47,11 @@ const CHG_BADGE: Record<string, string> = {
 
 function StockView() {
   const id = useSearchParams().get("id");
+  const tabParam = useSearchParams().get("tab");
   const [data, setData] = useState<StockJson | null>(null);
   const [error, setError] = useState(false);
   const [range, setRange] = useState<(typeof RANGES)[number]["key"]>("1y");
-  const [view, setView] = useState<"chart" | "chips" | "insti" | "tech" | "warrant">("chart");
+  const [view, setView] = useState<"chart" | "chips" | "insti" | "margin" | "tech" | "warrant">("chart");
   const [drillBranch, setDrillBranch] = useState<string | null>(null);
 
   useEffect(() => {
@@ -68,7 +70,10 @@ function StockView() {
     if (window.location.hash === "#branch") {
       setView("chips");
     }
-  }, [data]);
+    if (tabParam === "margin") {
+      setView("margin");
+    }
+  }, [data, tabParam]);
 
   const visibleDays = useMemo(() => {
     const days = RANGES.find((r) => r.key === range)?.days ?? Infinity;
@@ -167,6 +172,7 @@ function StockView() {
               { key: "chart" as const, label: "K線" },
               { key: "chips" as const, label: "籌碼日報" },
               { key: "insti" as const, label: "三大法人" },
+              { key: "margin" as const, label: "資券" },
               { key: "tech" as const, label: "技術" },
               { key: "warrant" as const, label: "權證" },
             ] as const
@@ -211,6 +217,7 @@ function StockView() {
         />
       )}
       {view === "insti" && <InstiPanel data={data} candles={cs} />}
+      {view === "margin" && <MarginPanel data={data} candles={cs} />}
       {view === "tech" && <TechnicalPanel data={data} />}
       {view === "warrant" && <WarrantPanel data={data} />}
 

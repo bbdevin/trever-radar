@@ -1,6 +1,6 @@
 # 資券／大戶散戶／使用率排行
 
-> 狀態：**規劃定案（2026-08-25）** — 程式未實作；每次只開一個 Phase，Executor 動手前需使用者確認  
+> 狀態：**Phase A0–A3 已實作（2026-08-25）**；Phase B/C 待確認。每次只開一個 Phase。
 > 對齊：`docs/20`（不進綜合分、不新增第 14 策略）、`docs/03`（官方免費優先）、`docs/25`（個股 tab IA）
 
 ## 1. 背景
@@ -276,10 +276,10 @@ flowchart LR
 
 ## 9. Confirmed Scope
 
-- [ ] **Phase A0** — `daily_margins` 全欄 + importer（使用者確認後 Executor）
-- [ ] **Phase A1** — 融資成本估算 + export 榜單
-- [ ] **Phase A2** — 個股資券 tab
-- [ ] **Phase A3** — 使用率排行頁
+- [x] **Phase A0** — `daily_margins` 全欄 + importer（2026-08-25）
+- [x] **Phase A1** — 融資成本估算 + export 榜單（2026-08-25）
+- [x] **Phase A2** — 個股資券 tab（2026-08-25）
+- [x] **Phase A3** — 使用率排行頁（2026-08-25）
 - [ ] **Phase B1** — TDCC 週更入庫
 - [ ] **Phase B2** — 大戶 UI（門檻 + 雙模式 + 顯示窗）
 - [ ] **Phase C** — 當沖／借券（後續另確認）

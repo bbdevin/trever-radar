@@ -1,5 +1,5 @@
 ## Handoff
 
-- **Done**: 資券／大戶／使用率排行規劃落檔 `docs/34_margin_shareholder_plan.md`（Phase A/B/C；不進綜合分）
-- **Next**: 使用者確認單一 Phase 後 Executor 動手（建議從 A0 開始）
+- **Done**: docs/34 Phase A0–A3——資券欄位、融資成本估算、export、個股 tab、/margin 排行
+- **Next**: VPS `export-json` + deploy 上線；歷史買進欄需 daily-margin 回補後成本線才完整；Phase B TDCC 大戶待確認
 - **Branch**: `main`

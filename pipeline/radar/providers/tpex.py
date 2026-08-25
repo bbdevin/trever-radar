@@ -116,13 +116,31 @@ def fetch_margin(date: str) -> list[MarginRow]:
     missing = [n for n in need if n not in idx]
     if missing:
         raise RuntimeError(f"tpex margin {date}: missing fields {missing}; got {fields}")
+    opt = {
+        "margin_buy": idx.get("資買進"),
+        "margin_sell": idx.get("資賣出"),
+        "margin_repay": idx.get("資現償"),
+        "short_buy": idx.get("券買進"),
+        "short_sell": idx.get("券賣出"),
+        "short_repay": idx.get("券現償"),
+    }
     rows = []
     for r in table["data"]:
+        def _col(key: str) -> int | None:
+            i = opt.get(key)
+            return to_int(r[i]) if i is not None else None
+
         rows.append(MarginRow(
             code=str(r[idx["代號"]]).strip(),
+            margin_buy=_col("margin_buy"),
+            margin_sell=_col("margin_sell"),
+            margin_repay=_col("margin_repay"),
             margin_balance=to_int(r[idx["資餘額"]]),
             margin_prev=to_int(r[idx["前資餘額(張)"]]),
             margin_limit=to_int(r[idx["資限額"]]),
+            short_buy=_col("short_buy"),
+            short_sell=_col("short_sell"),
+            short_repay=_col("short_repay"),
             short_balance=to_int(r[idx["券餘額"]]),
             short_prev=to_int(r[idx["前券餘額(張)"]]),
         ))

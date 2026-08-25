@@ -103,8 +103,14 @@ daily_margins = Table(
     Column("margin_balance", Integer),             # 融資今日餘額(張)
     Column("margin_prev", Integer),                # 融資前日餘額(張)
     Column("margin_limit", Integer),               # 融資限額(張)
+    Column("margin_buy", Integer),                 # 融資買進(張)
+    Column("margin_sell", Integer),
+    Column("margin_repay", Integer),               # 融資現金償還
     Column("short_balance", Integer),              # 融券今日餘額(張)
     Column("short_prev", Integer),
+    Column("short_buy", Integer),
+    Column("short_sell", Integer),
+    Column("short_repay", Integer),
     Index("ix_daily_margins_date", "date"),
 )
 

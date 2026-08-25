@@ -57,6 +57,19 @@ def _migrate_sqlite(conn):
     if "description" not in stock_cols:
         conn.exec_driver_sql("ALTER TABLE stocks ADD COLUMN description TEXT")
 
+    margin_cols = {r[1] for r in conn.exec_driver_sql("PRAGMA table_info(daily_margins)").fetchall()}
+    margin_additions = {
+        "margin_buy": "INTEGER",
+        "margin_sell": "INTEGER",
+        "margin_repay": "INTEGER",
+        "short_buy": "INTEGER",
+        "short_sell": "INTEGER",
+        "short_repay": "INTEGER",
+    }
+    for name, sql_type in margin_additions.items():
+        if name not in margin_cols:
+            conn.exec_driver_sql(f"ALTER TABLE daily_margins ADD COLUMN {name} {sql_type}")
+
     view_check = conn.exec_driver_sql("SELECT type FROM sqlite_master WHERE name='branch_trades'").scalar()
     if view_check == 'table':
         conn.exec_driver_sql("ALTER TABLE branch_trades RENAME TO branch_trades_old")

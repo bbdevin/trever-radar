@@ -20,6 +20,7 @@ from ..compute.strategy_performance import (
     compute_strategy_performance_from_events,
     fetch_strategy_events,
 )
+from ..compute.margin_cost import build_margin_cost_series
 
 # 使用者確認的策略生命週期狀態(2026-08-19 Phase 3 報告後定案)
 # Active: 無;Shadow: 其餘;Retired: 停止主介面宣稱有效
@@ -128,6 +129,86 @@ def _build_strategy_meta() -> dict[str, dict]:
     return out          # 榜單門檻:成交金額 1 億
 SURGE_MIN_RATIO = 1.5
 MIN_WARRANT_TURNOVER = 20_000_000
+
+
+def _margin_history_payload(conn, sid: str, d: str) -> list[dict]:
+    rows = conn.execute(text("""
+        SELECT m.date, m.margin_balance, m.margin_prev, m.margin_limit,
+               m.margin_buy, m.margin_sell, m.margin_repay,
+               m.short_balance, m.short_prev,
+               p.close
+        FROM daily_margins m
+        LEFT JOIN daily_prices p ON p.stock_id = m.stock_id AND p.date = m.date
+        WHERE m.stock_id = :s AND m.date >= date(:d, '-400 days')
+        ORDER BY m.date ASC
+    """), {"s": sid, "d": d}).fetchall()
+    if not rows:
+        return []
+    cost_series = build_margin_cost_series([(r[4], r[1], r[9]) for r in rows])
+    out = []
+    for i, r in enumerate(rows):
+        bal, prev, lim = r[1], r[2], r[3]
+        usage = round(bal / lim, 4) if bal is not None and lim else None
+        out.append({
+            "t": r[0],
+            "balance": bal,
+            "prev": prev,
+            "limit": lim,
+            "usage": usage,
+            "chg": None if (bal is None or prev is None) else bal - prev,
+            "buy": r[4],
+            "sell": r[5],
+            "repay": r[6],
+            "short_balance": r[7],
+            "short_prev": r[8],
+            "cost_est": round(cost_series[i], 2) if cost_series[i] is not None else None,
+        })
+    return list(reversed(out))[:240]
+
+
+def _export_margin_usage(out: Path, conn, d: str, m_date: str | None) -> None:
+    if not m_date:
+        return
+    rows = conn.execute(text("""
+        SELECT m.stock_id, s.name, m.margin_balance, m.margin_prev, m.margin_limit,
+               p.close, pp.close
+        FROM daily_margins m
+        JOIN stocks s ON s.id = m.stock_id AND s.type = 'stock'
+        JOIN daily_prices p ON p.stock_id = m.stock_id AND p.date = :d
+        LEFT JOIN daily_prices pp ON pp.stock_id = m.stock_id AND pp.date = (
+            SELECT MAX(date) FROM daily_prices
+            WHERE stock_id = m.stock_id AND date < :d
+        )
+        WHERE m.date = :m_date AND m.margin_limit IS NOT NULL AND m.margin_limit > 0
+          AND m.margin_balance IS NOT NULL
+    """), {"d": d, "m_date": m_date}).fetchall()
+    items = []
+    for sid, name, bal, prev, lim, close, prev_close in rows:
+        chg_pct = round((close - prev_close) / prev_close * 100, 2) if close and prev_close else None
+        items.append({
+            "id": sid,
+            "name": name,
+            "usage": round(bal / lim, 4),
+            "balance": bal,
+            "limit": lim,
+            "chg": None if (bal is None or prev is None) else bal - prev,
+            "close": close,
+            "chg_pct": chg_pct,
+        })
+    items.sort(key=lambda x: x["usage"], reverse=True)
+    items = items[:80]
+    rank_dir = out / "rankings"
+    rank_dir.mkdir(exist_ok=True)
+    now = datetime.now(ZoneInfo(config.TZ)).isoformat(timespec="seconds")
+    (rank_dir / "margin_usage.json").write_text(
+        json.dumps({
+            "as_of": m_date,
+            "data_date": d,
+            "generated_at": now,
+            "items": items,
+        }, ensure_ascii=False),
+        encoding="utf-8",
+    )
 
 
 def export_json(out_dir: Path | None = None) -> dict:
@@ -644,6 +725,9 @@ def export_json(out_dir: Path | None = None) -> dict:
     (out / "radar.json").write_text(json.dumps(radar, ensure_ascii=False), encoding="utf-8")
     (out / "meta.json").write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
 
+    with engine.connect() as conn:
+        _export_margin_usage(out, conn, d, m_date)
+
     # 全市場搜尋索引(id/名稱/市場/產業/描述;compact 陣列省體積)
     with engine.connect() as conn:
         idx = [[r[0], r[1], r[2], r[3] or "", r[4] or ""] for r in conn.execute(text(
@@ -774,6 +858,7 @@ def export_json(out_dir: Path | None = None) -> dict:
                      "total": (r[4] or 0) // 1000}
                     for r in insti_history_rows
                 ],
+                "margin_history": _margin_history_payload(conn, sid, d),
             }
             (stock_dir / f"{sid}.json").write_text(
                 json.dumps(payload, ensure_ascii=False), encoding="utf-8")

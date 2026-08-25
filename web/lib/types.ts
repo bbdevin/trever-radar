@@ -110,6 +110,41 @@ export interface StockJson {
     dealer: number;
     total: number;
   }[];
+  /** 資券日統計(張);新→舊。含融資成本估算(docs/34) */
+  margin_history?: MarginHistoryPoint[];
+}
+
+export interface MarginHistoryPoint {
+  t: string;
+  balance: number | null;
+  prev: number | null;
+  limit: number | null;
+  usage: number | null;
+  chg: number | null;
+  buy: number | null;
+  sell: number | null;
+  repay: number | null;
+  short_balance: number | null;
+  short_prev: number | null;
+  cost_est: number | null;
+}
+
+export interface MarginUsageItem {
+  id: string;
+  name: string;
+  usage: number;
+  balance: number;
+  limit: number;
+  chg: number | null;
+  close: number | null;
+  chg_pct: number | null;
+}
+
+export interface MarginUsageJson {
+  as_of: string | null;
+  data_date: string;
+  generated_at: string;
+  items: MarginUsageItem[];
 }
 
 /** 產業下鑽子題材(僅 sectors 帶;口徑同題材聚合但限定產業內成分) */

@@ -30,5 +30,11 @@ class MarginRow:
     margin_balance: int | None  # 張
     margin_prev: int | None
     margin_limit: int | None
-    short_balance: int | None
-    short_prev: int | None
+    margin_buy: int | None = None
+    margin_sell: int | None = None
+    margin_repay: int | None = None
+    short_balance: int | None = None
+    short_prev: int | None = None
+    short_buy: int | None = None
+    short_sell: int | None = None
+    short_repay: int | None = None
