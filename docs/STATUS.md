@@ -88,6 +88,7 @@
 7a. **全市場擴容**(`docs/26`,2026-07-12 使用者定案「有幾檔抓幾檔」):WP-M1 個股 JSON 池全市場 → ~~WP-M3 branch_hist.db 拆分~~(**2026-07-15 因 B 案取消**,見 docs/31 §9)→ WP-M2 一輪制與 WP-M4 全市場 march-back 併入 `docs/31` WP-B6,於 cutover 後執行。
 8. ~~deep-backfill --all~~ **執行狀態需另行查證**:完成與否不得只信本檔舊紀錄;若需 `task=adjust` 或 VPS 回灌,先依 `vps_backfill_plan.md` 與高風險流程確認。
 9. **分點排行資料累積**:可信度排行榜已完成,統計效力需 2–3 個月。地緣/關鍵分點人工名單、五年分點擴容、LINE Bot 依 B 方案延後;~~V2 盤中延後~~ 盤中已依 `docs/24` 重新規劃排入(見 4a)。
+10. **資券／大戶／使用率排行**(`docs/34`,2026-08-25 規劃定案):Phase A 擴 MI_MARGN+融資成本估算+個股資券 tab+使用率榜;Phase B TDCC 大戶(門檻 400/600/800/1000、張數比例｜持股人數);不進綜合分。**程式未實作**,每次只開一 Phase,Executor 動手前需使用者確認。
 
 ## 已知債務 / 注意
 
@@ -110,6 +111,7 @@
 ## 最近完成
 
 - 2026-08-24 **回補中途動態上線 S1 落地**:`mid-backfill-publish.sh` + `bf-cron-guard.sh`;VPS cron mid 只 export。
+- 2026-08-25 **資券／大戶／使用率排行規劃定案**:`docs/34_margin_shareholder_plan.md`——Phase A 資券+成本估算+排行；Phase B TDCC 大戶(400/600/800/1000、張數比例｜人數、顯示窗 max(當年元旦,today−6月))；不進綜合分；程式未實作。
 - 2026-08-25 **S1.1 OOM 修復**:夜間含 stats 兩次被 OOM;改 mid 預設略過 stats、新增 `safe-branch-stats.sh`@23:30、`compute_branch_stats` 增量累加降記憶體。詳 `docs/33`。
 - 2026-08-24 **回補中途動態上線規劃**:`docs/33_mid_backfill_publish_plan.md`——長回補期間定時 pause→stats→export/deploy→resume，不必等全部跑完才更新網站。
 - 2026-08-21 **個股權證分頁＝權證分點動向**：與 `/branch` 同源 `warrant_branches.json`；顯示分點買超／賣超（萬）、展開標示哪幾檔權證；區間 pills；門檻 ≥500 萬。
