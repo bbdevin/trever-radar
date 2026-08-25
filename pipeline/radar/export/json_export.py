@@ -169,12 +169,20 @@ def _margin_history_payload(conn, sid: str, d: str) -> list[dict]:
 def _export_margin_usage(out: Path, conn, d: str, m_date: str | None) -> None:
     if not m_date:
         return
+    # 收盤價對齊資券資料日 m_date(勿硬綁 quotes 日 d):資券常晚一天,
+    # 否則有餘額但當日尚未有價(或停牌)的高使用率股會被 INNER JOIN 整排濾掉。
     rows = conn.execute(text("""
         SELECT m.stock_id, s.name, m.margin_balance, m.margin_prev, m.margin_limit,
-               p.close, pp.close
+               COALESCE(pm.close, p.close) AS close,
+               COALESCE(ppm.close, pp.close) AS prev_close
         FROM daily_margins m
         JOIN stocks s ON s.id = m.stock_id AND s.type = 'stock'
-        JOIN daily_prices p ON p.stock_id = m.stock_id AND p.date = :d
+        LEFT JOIN daily_prices pm ON pm.stock_id = m.stock_id AND pm.date = :m_date
+        LEFT JOIN daily_prices ppm ON ppm.stock_id = m.stock_id AND ppm.date = (
+            SELECT MAX(date) FROM daily_prices
+            WHERE stock_id = m.stock_id AND date < :m_date
+        )
+        LEFT JOIN daily_prices p ON p.stock_id = m.stock_id AND p.date = :d
         LEFT JOIN daily_prices pp ON pp.stock_id = m.stock_id AND pp.date = (
             SELECT MAX(date) FROM daily_prices
             WHERE stock_id = m.stock_id AND date < :d

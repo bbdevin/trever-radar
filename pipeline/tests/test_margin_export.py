@@ -80,6 +80,32 @@ class MarginExportTests(unittest.TestCase):
         self.assertEqual(rank["items"][0]["id"], "2317")  # 80% usage > 51%
         self.assertGreater(rank["items"][0]["usage"], rank["items"][1]["usage"])
 
+    def test_ranking_keeps_stock_missing_quote_day_price(self):
+        """資券日有價、quotes 日無價時仍應進榜(倉和類案例)。"""
+        eng = db.get_engine()
+        with eng.begin() as conn:
+            conn.execute(schema.stocks.insert(), [
+                {"id": "6538", "name": "倉和", "market": "tpex", "type": "stock", "is_active": 1},
+            ])
+            # 只有資券日有價;quotes 日 D 沒有 → 舊 INNER JOIN 會濾掉
+            conn.execute(schema.daily_prices.insert(), [
+                {"stock_id": "6538", "date": P, "close": 193.0, "volume": 1000, "turnover": 193_000_000},
+            ])
+            conn.execute(schema.daily_margins.insert(), [
+                {"stock_id": "6538", "date": D, "margin_balance": 8497, "margin_prev": 8487,
+                 "margin_limit": 9610, "margin_buy": 50, "short_balance": 0, "short_prev": 0},
+            ])
+            conn.execute(schema.daily_scores.insert(), [
+                {"stock_id": "6538", "date": D, "final": 60},
+            ])
+        export_json(self.out)
+        rank = json.loads((self.out / "rankings" / "margin_usage.json").read_text(encoding="utf-8"))
+        ids = [x["id"] for x in rank["items"]]
+        self.assertIn("6538", ids)
+        row = next(x for x in rank["items"] if x["id"] == "6538")
+        self.assertAlmostEqual(row["usage"], 8497 / 9610, places=3)
+        self.assertEqual(rank["items"][0]["id"], "6538")  # ~88% 應居冠
+
 
 if __name__ == "__main__":
     unittest.main()
