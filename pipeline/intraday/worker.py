@@ -40,10 +40,18 @@ armed_stocks = {}  # { '2330': { name, watch_price, adv20, last_price, volume, t
 sent_signals = set()  # To avoid spamming the same signal for the same stock
 _subscribed_symbols: set[str] = set()  # 已向 Fugle 訂閱的代號（重整監控池時增量訂閱）
 
-# 台股盤中時段 09:00–13:30(240 分鐘交易,含前收盤集合競價緩衝算 270)
+# 台股連續競價 09:00–13:30;08:30–09:00 為開盤集合競價(試搓),不計盤中訊號
 TRADING_START_MINUTES = 9 * 60
-TRADING_SESSION_MINUTES = 270
+TRADING_END_MINUTES = 13 * 60 + 30
+TRADING_SESSION_MINUTES = TRADING_END_MINUTES - TRADING_START_MINUTES  # 270
 I2_MIN_ELAPSED_MINUTES = 5  # 開盤前幾分鐘量能基期還不穩,不判 I-2 避免開盤就誤觸
+
+# I-1 大單:依日均成交額分級(docs/24 §2.2);固定 500 萬對中小型過嚴
+I1_MIN_AMOUNT = 800_000       # 下限 80 萬
+I1_MAX_AMOUNT = 5_000_000     # 上限 500 萬(大型股)
+I1_TURNOVER_PCT = 0.004       # 約日均成交額 0.4%
+I1_FALLBACK_AMOUNT = 2_000_000  # 無日均額資料時用 200 萬(較舊固定 500 萬友善)
+
 # Fugle「基本用戶」免費方案:台股 WS 訂閱數上限 5(1 channel × N 檔 = N 訂閱)。
 # 見 https://developer.fugle.tw/docs/pricing/ — 超過會訂閱失敗/被拒,寧缺勿濫。
 # 可用環境變數 FUGLE_WS_MAX_SUBSCRIBE 覆寫(付費方案再調高)。
@@ -55,6 +63,26 @@ def is_etf_id(sid: str) -> bool:
     """台股 ETF 代號為 00 開頭(0050/0056/00878/00679B…);對齊 classify.py,個股監控不納入。"""
     s = str(sid).strip().upper()
     return s.startswith("00")
+
+
+def in_continuous_trading(now: datetime) -> bool:
+    """是否在連續競價時段(09:00–13:30)。試搓 / 盤後回傳 False。"""
+    mins = now.hour * 60 + now.minute
+    return TRADING_START_MINUTES <= mins <= TRADING_END_MINUTES
+
+
+def i1_amount_threshold(state: dict, price: float) -> float:
+    """依日均成交額分級的 I-1 單筆金額門檻(TWD)。"""
+    turnover = float(state.get("turnover") or 0)
+    if turnover <= 0:
+        adv = float(state.get("adv20") or 0)
+        px = float(price or state.get("last_price") or 0)
+        if adv > 0 and px > 0:
+            # adv20 為張;金額 ≈ 張 × 1000 股 × 現價
+            turnover = adv * px * 1000
+    if turnover <= 0:
+        return float(I1_FALLBACK_AMOUNT)
+    return max(I1_MIN_AMOUNT, min(I1_MAX_AMOUNT, turnover * I1_TURNOVER_PCT))
 
 
 def format_twd_amount(amount: float) -> str:
@@ -76,13 +104,20 @@ def format_twd_amount(amount: float) -> str:
 def evaluate_signals(state: dict, price: float, qty: int, now: datetime) -> list[tuple[str, str]]:
     """純函式(docs/24 §2.2 規則):依這筆成交後的狀態,回傳應觸發的 (signal_type, desc)
     列表。不做任何 I/O、不碰 asyncio/Supabase,方便單元測試——process_trade 只負責
-    更新 state 與呼叫這支函式,推播交給呼叫端。"""
+    更新 state 與呼叫這支函式,推播交給呼叫端。
+
+    試搓(09:00 前)不產生任何訊號。
+    """
+    if not in_continuous_trading(now):
+        return []
+
     signals = []
     amount = price * qty * 1000  # 成交金額(TWD)
 
-    # I-1 大單:單筆 >= 500 萬
-    if amount >= 5_000_000:
-        signals.append(("I-1", f"單筆大單 {format_twd_amount(amount)}"))
+    # I-1 大單:依日均成交額分級(中小型下限 80 萬,大型上限 500 萬)
+    thr = i1_amount_threshold(state, price)
+    if amount >= thr:
+        signals.append(("I-1", f"單筆大單 {format_twd_amount(amount)}(門檻{format_twd_amount(thr)})"))
 
     # I-2 爆量:累積量 vs 依開盤至今經過時間等比例換算的 ADV20 基準,達 2 倍
     # (docs/24 §2.2 原設計要「同時刻量能基準曲線」,pipeline 尚未輸出這份曲線——
@@ -172,13 +207,29 @@ def fetch_watchlist_ids() -> list[str]:
 
 def _entry_from_stock(sid: str, stock: dict | None, pool: str) -> dict:
     s = stock or {}
-    tech = s.get("tech") or {}
-    watch_price = tech.get("watch_price") or s.get("close") or 0
-    adv20 = tech.get("adv20") or 0
+    scores = s.get("scores") or {}
+    # radar.json 用 technical/scores;舊測試夾具可能用 tech
+    tech = s.get("tech") or s.get("technical") or {}
+    watch_price = (
+        scores.get("watch_price")
+        or tech.get("watch_price")
+        or s.get("watch_price")
+        or s.get("close")
+        or 0
+    )
+    adv20 = tech.get("adv20") or s.get("adv20") or 0
+    if not adv20:
+        # 由今日量 / 量比回推 20 日均量(張)
+        vr = s.get("volume_ratio")
+        vl = s.get("volume_lots")
+        if vr and vl and float(vr) > 0:
+            adv20 = float(vl) / float(vr)
+    turnover = s.get("turnover") or 0
     return {
         "name": s.get("name") or sid,
         "watch_price": watch_price,
         "adv20": adv20,
+        "turnover": turnover,
         "last_price": 0,
         "volume": 0,
         "trades_5m": [],
@@ -356,14 +407,20 @@ def process_trade(message):
         qty = data.get("volume", 0)
 
         state = armed_stocks[sid]
-        state['last_price'] = price
-        state['volume'] += qty
+        now = datetime.now()
+
+        # 試搓(08:30–09:00)與盤後:只刷新現價,不累積量、不推訊號
+        if not in_continuous_trading(now):
+            state["last_price"] = price
+            return
+
+        state["last_price"] = price
+        state["volume"] += qty
 
         # 紀錄最近 5 分鐘的價格用於急拉計算
-        now = datetime.now()
-        state['trades_5m'].append((now, price))
+        state["trades_5m"].append((now, price))
         # 清理 5 分鐘前的紀錄
-        state['trades_5m'] = [(t, p) for t, p in state['trades_5m'] if now - t <= timedelta(minutes=5)]
+        state["trades_5m"] = [(t, p) for t, p in state["trades_5m"] if now - t <= timedelta(minutes=5)]
 
         for signal_type, desc in evaluate_signals(state, price, qty, now):
             push_signal(

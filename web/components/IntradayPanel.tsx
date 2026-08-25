@@ -10,6 +10,7 @@ import {
   formatSignalTime,
   humanizeSignalDesc,
   isEtfStockId,
+  isRegularSessionSignal,
   parsePoolSource,
   poolSourceLabel,
   SIGNAL_PILL,
@@ -61,7 +62,8 @@ function useIntradayFeed(enabled: boolean) {
       .limit(80)
       .then(({ data }) => {
         if (data) {
-          const rows = (data as IntradaySignal[]).filter((s) => !isEtfStockId(s.stock_id));
+          const rows = (data as IntradaySignal[])
+            .filter((s) => !isEtfStockId(s.stock_id) && isRegularSessionSignal(s.created_at));
           setSignals(sortSignalsNewestFirst(rows).slice(0, 40));
         }
         setLoaded(true);
@@ -83,7 +85,7 @@ function useIntradayFeed(enabled: boolean) {
         { event: "INSERT", schema: "public", table: "intraday_signals" },
         (payload) => {
           const row = payload.new as IntradaySignal;
-          if (!row?.stock_id || isEtfStockId(row.stock_id)) return;
+          if (!row?.stock_id || isEtfStockId(row.stock_id) || !isRegularSessionSignal(row.created_at)) return;
           setSignals((prev) => sortSignalsNewestFirst([row, ...prev]).slice(0, 60));
         },
       )
@@ -260,7 +262,7 @@ export default function IntradayPanel() {
 
       <div className="border-b border-border px-4 py-3">
         <p className="mb-3 text-[12.5px] leading-relaxed text-muted-foreground">
-          監控「今日未發動」與「自選」聯集（排除 ETF）。Fugle 免費方案最多同時訂閱 {monitorCap}{" "}
+          監控「今日未發動」與「自選」聯集（排除 ETF）。僅計算 09:00–13:30 連續競價（試搓不計）。Fugle 免費方案最多同時訂閱 {monitorCap}{" "}
           檔。符合門檻才推播；同檔同類型當日只推一次。訊號為觀察提醒，非下單建議。
         </p>
         <ul className="grid grid-cols-2 gap-2">

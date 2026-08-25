@@ -16,8 +16,8 @@ export const SIGNAL_META: Record<string, SignalMeta> = {
   "I-1": {
     code: "I-1",
     label: "大單",
-    meaning: "出現單筆大額成交",
-    rule: "單筆成交金額 ≥ 500 萬",
+    meaning: "出現相對該股體量的單筆大額成交",
+    rule: "單筆金額 ≥ 日均成交額約 0.4%（下限 80 萬、上限 500 萬；無資料時 200 萬）",
     breakout: false,
     family: "chips",
   },
@@ -97,6 +97,22 @@ export function formatSignalTime(iso: string): string {
   const hm = `${get("hour")}:${get("minute")}:${get("second")}`;
   if (ymd === today) return hm;
   return `${get("month")}/${get("day")} ${get("hour")}:${get("minute")}`;
+}
+
+/** 連續競價 09:00–13:30；試搓 08:30–09:00 歷史雜訊不顯示 */
+export function isRegularSessionSignal(iso: string): boolean {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return false;
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Taipei",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(d);
+  const hour = Number(parts.find((p) => p.type === "hour")?.value ?? "0");
+  const minute = Number(parts.find((p) => p.type === "minute")?.value ?? "0");
+  const mins = hour * 60 + minute;
+  return mins >= 9 * 60 && mins <= 13 * 60 + 30;
 }
 
 export function signalMeta(type: IntradaySignalType): SignalMeta {

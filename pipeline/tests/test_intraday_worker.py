@@ -243,7 +243,7 @@ def test_process_trade_delivers_signal_without_a_running_event_loop(monkeypatch)
 
 
 def _signal_state(**overrides):
-    base = {"name": "測試股", "watch_price": 0, "adv20": 0,
+    base = {"name": "測試股", "watch_price": 0, "adv20": 0, "turnover": 0,
             "last_price": 0, "volume": 0, "trades_5m": []}
     base.update(overrides)
     return base
@@ -252,11 +252,28 @@ def _signal_state(**overrides):
 # evaluate_signals() 是純函式,不需要 asyncio/Supabase,直接測規則本身(docs/24 §2.2)。
 
 def test_i1_large_single_trade():
-    state = _signal_state()
+    state = _signal_state(turnover=2_000_000_000)  # 日均 20 億 → 門檻封頂 500 萬
     now = datetime(2026, 7, 20, 9, 30)
     signals = worker.evaluate_signals(state, price=500.0, qty=20, now=now)
     # 500*20*1000 = 1000萬 = 1千萬
-    assert ("I-1", "單筆大單 1千萬") in signals
+    assert any(s[0] == "I-1" and "1千萬" in s[1] for s in signals)
+
+
+def test_i1_midcap_lower_threshold():
+    # 日均 1 億 → 門檻 40 萬,但下限抬到 80 萬;單筆 100 萬應觸發
+    state = _signal_state(turnover=100_000_000)
+    now = datetime(2026, 7, 20, 9, 30)
+    thr = worker.i1_amount_threshold(state, 50.0)
+    assert thr == worker.I1_MIN_AMOUNT
+    signals = worker.evaluate_signals(state, price=50.0, qty=20, now=now)  # 100 萬
+    assert any(s[0] == "I-1" for s in signals)
+
+
+def test_i1_ignores_premarket_auction():
+    state = _signal_state(turnover=2_000_000_000)
+    now = datetime(2026, 7, 20, 8, 50)  # 試搓
+    signals = worker.evaluate_signals(state, price=500.0, qty=20, now=now)
+    assert signals == []
 
 
 def test_format_twd_amount_units():
@@ -298,10 +315,29 @@ def test_etf_ids_excluded_from_monitor_pool(monkeypatch):
     assert "2330" in worker.armed_stocks
 
 
+def test_entry_reads_scores_watch_price_and_turnover():
+    entry = worker._entry_from_stock(
+        "2603",
+        {
+            "id": "2603",
+            "name": "長榮",
+            "close": 180,
+            "turnover": 800_000_000,
+            "volume_lots": 4000,
+            "volume_ratio": 2.0,
+            "scores": {"watch_price": 185, "final": 70},
+        },
+        "armed",
+    )
+    assert entry["watch_price"] == 185
+    assert entry["turnover"] == 800_000_000
+    assert entry["adv20"] == 2000.0  # 4000 / 2
+
+
 def test_i1_not_triggered_below_threshold():
-    state = _signal_state()
+    state = _signal_state(turnover=2_000_000_000)  # 門檻 500 萬
     now = datetime(2026, 7, 20, 9, 30)
-    signals = worker.evaluate_signals(state, price=500.0, qty=1, now=now)
+    signals = worker.evaluate_signals(state, price=500.0, qty=1, now=now)  # 50 萬
     assert not any(s[0] == "I-1" for s in signals)
 
 

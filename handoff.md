@@ -1,5 +1,5 @@
 ## Handoff
 
-- **Done**: 監控訊號新→舊排序 + 排除 ETF（含 0050）
-- **Files**: `web/components/IntradayPanel.tsx`, `web/lib/intradaySignals.ts`, `pipeline/intraday/worker.py`
-- **Next**: Pages deploy 後硬重新整理看監控頁
+- **Done**: I-1 分級門檻 + 略過試搓；監控 UI 隱藏 08:50 類訊號
+- **VPS**: `git pull` 後下次 08:50 worker 自動吃新碼（或手動重啟 radar-worker）
+- **Branch**: `main`
