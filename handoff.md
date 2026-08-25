@@ -1,6 +1,6 @@
 ## Handoff
 
-- **Done（2026-08-25）**: Phase A4 程式——`backfill-margin`、`display_window`、`margin_meta` export、MarginPanel 全窗
-- **Next**: VPS `backfill-margin.sh`（排程 23:15 首跑 / 週日 02:30）；完成後個股資券 tab 有整年窗內歷史
+- **Done（2026-08-25）**: WP-M1——個股 JSON 全市場每日更新（不綁評分池）；今日無報價仍寫最新 K 線
+- **Next**: VPS `export-json` + deploy（全市場首次較久）；確認 6538 等檔不再卡 8/21；A4 margin 回補仍排 19:35
 - **Branch**: `main`
-- **VPS**: `~/trever-radar/vps/scripts/backfill-margin.sh`；DONE flag `~/margin-backfill.done`
+- **Key**: `pipeline/radar/export/json_export.py`、`docs/26`

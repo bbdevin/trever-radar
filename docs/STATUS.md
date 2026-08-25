@@ -85,7 +85,7 @@
 7. **B 方案 Phase 4—排程簡化**(`docs/20`):📝 **2026-08-20 提案稿已改寫**（對齊 VPS cron + Worker 資料層;建議 14:10/22:10 兩次資料 deploy,中間輪只寫 DB）。**cron/script 未改**,待使用者確認目標態或變體 B 後另開實作。不得未確認就改 `vps/scripts` 或 workflow。
   5b. **首頁掃讀體驗+個股頁資訊架構統一**(docs/28,2026-07-12 規劃定案):WP-H2 語意色彩層次(已完成 2026-07-12)→ **WP-H4 個股頁分點統一(2026-07-12 完成,commit 83649ae)**→ **WP-H1 題材分組(2026-08-20 完成)**:綜合/市場掃描可切「分數|題材」,一檔只歸當日最熱題材、sticky header;桌機與分數榜同 2/3/4 欄且預設全開,手機前 3 組展開→ **WP-H3 卡片走勢改當日分時(2026-08-20 完成)**:Fugle 1 分 K → `spark_day`/`spark_open`,缺資料標「30日」→ **WP-H5 手機版(2026-07-12 完成)**。**docs/28 已全部完成**。
 6a. **地緣券商+庫藏股分點+關鍵分點同買 → 口袋名單**(`docs/27`):~~G0~~ / ~~G1~~ / ~~G2~~ / ~~**G4 口袋 UI 2026-08-20 完成**~~(首頁「口袋」tab + badges + 個股頁摘要 + `/branch` 關鍵徽章)。**剩餘 G3 庫藏股**(無 OpenAPI,可繼續延後)。**`import-geo` 等兩筆回補結束再跑**(或下週一 14:10);回補進行中不要手動寫 DB。地緣涵蓋度在 7a 全市場每日池後才完整。
-7a. **全市場擴容**(`docs/26`,2026-07-12 使用者定案「有幾檔抓幾檔」):WP-M1 個股 JSON 池全市場 → ~~WP-M3 branch_hist.db 拆分~~(**2026-07-15 因 B 案取消**,見 docs/31 §9)→ WP-M2 一輪制與 WP-M4 全市場 march-back 併入 `docs/31` WP-B6,於 cutover 後執行。
+7a. **全市場擴容**(`docs/26`,2026-07-12 使用者定案「有幾檔抓幾檔」):~~WP-M1 個股 JSON 池全市場~~ **✅ 2026-08-25**(`export-json` 全 active stock/etf 每日更新,不綁評分池) → ~~WP-M3 branch_hist.db 拆分~~(**2026-07-15 因 B 案取消**,見 docs/31 §9)→ WP-M2 一輪制與 WP-M4 全市場 march-back 併入 `docs/31` WP-B6,於 cutover 後執行。
 8. ~~deep-backfill --all~~ **執行狀態需另行查證**:完成與否不得只信本檔舊紀錄;若需 `task=adjust` 或 VPS 回灌,先依 `vps_backfill_plan.md` 與高風險流程確認。
 9. **分點排行資料累積**:可信度排行榜已完成,統計效力需 2–3 個月。地緣/關鍵分點人工名單、五年分點擴容、LINE Bot 依 B 方案延後;~~V2 盤中延後~~ 盤中已依 `docs/24` 重新規劃排入(見 4a)。
 10. **資券／大戶／使用率排行**(`docs/34`):A0–A3 已上線；**A4 程式已 merge（2026-08-25）**——240 日回補 CLI + 顯示窗 `min(元旦,today−6月)` + MarginPanel；VPS 回補排程中。
@@ -110,6 +110,7 @@
 
 ## 最近完成
 
+- 2026-08-25 **WP-M1 個股 JSON 全市場**:`export-json` 改寫全部 active stock/etf(不綁評分池);今日無報價仍更新最新 K 線,修倉和類卡在舊日。
 - 2026-08-25 **資券 Phase A4 實作**：`backfill-margin`、display 窗、`margin_meta`、MarginPanel；VPS `backfill-margin.sh` 排程 23:15 首跑。
 - 2026-08-25 **融資排行表欄位**：限額／已用／較前日使用率；export `usage_chg`。
 - 2026-08-25 **資券 Phase A 實作**:`docs/34` A0–A3——`daily_margins` 買進/賣出/現償、融資成本估算、`margin_history` export、`/margin` 排行、個股資券 tab；VPS 已 mid-publish。

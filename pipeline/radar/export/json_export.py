@@ -772,13 +772,12 @@ def export_json(out_dir: Path | None = None) -> dict:
     (out / "stocks_index.json").write_text(
         json.dumps(idx, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
 
-    # 個股 K 線 JSON:榜單聯集=全歷史;其餘評分池=近 600 根(控部署體積)
+    # 個股 K 線 JSON(docs/26 WP-M1):全市場 stock/etf 每日更新;
+    # 榜單聯集=全歷史;其餘裁近 600 根。不再依賴「當日評分池」才重寫。
     stock_dir = out / "stocks"
     stock_dir.mkdir(exist_ok=True)
     by_id_all = {s["id"]: s for s in all_stocks}
     with engine.connect() as conn:
-        pool_ids = [r[0] for r in conn.execute(text(
-            "SELECT stock_id FROM daily_scores WHERE date = :d"), {"d": d})]
         # 權證分點(當日,權證代號=6碼)→ {權證id: 前8大進出}
         wb: dict[str, list] = {}
         for r in conn.execute(text(
@@ -790,11 +789,31 @@ def export_json(out_dir: Path | None = None) -> dict:
             rows_list.sort(key=lambda x: -abs(x["net"] or 0))
             del rows_list[8:]
 
-        export_ids = list(dict.fromkeys(list(union.keys()) + pool_ids))
+        meta_rows = conn.execute(text(
+            "SELECT id, name, market, industry, description FROM stocks "
+            "WHERE type IN ('stock', 'etf') AND is_active = 1 "
+            "AND EXISTS (SELECT 1 FROM daily_prices p WHERE p.stock_id = stocks.id "
+            "            AND p.close IS NOT NULL)"
+        )).fetchall()
+        stock_meta = {r[0]: r for r in meta_rows}
+        # 榜單優先(全歷史),其餘依代號排序,穩定輸出
+        export_ids = list(dict.fromkeys(
+            list(union.keys()) + sorted(stock_meta.keys())
+        ))
         for sid in export_ids:
             s = by_id_all.get(sid)
             if s is None:
-                continue
+                m = stock_meta.get(sid)
+                if m is None:
+                    continue
+                # 今日無報價(停牌/未進 quotes)仍匯出最新 K 線,避免個股頁卡在舊 JSON
+                s = {
+                    "id": m[0], "name": m[1], "market": m[2],
+                    "industry": m[3], "description": m[4],
+                    "warrant": None, "technical": None, "scores": None,
+                    "reasons": [], "raw_reasons": [],
+                    "pocket_tags": [], "pocket_score": 0, "risks": [],
+                }
             if sid in union:
                 candles = conn.execute(text(
                     "SELECT p.date, p.open, p.high, p.low, p.close, p.volume, p.turnover, p.adj_factor "
@@ -829,13 +848,19 @@ def export_json(out_dir: Path | None = None) -> dict:
                 WHERE stock_id = :s AND date = :d
                 ORDER BY net_lots DESC
             """), {"s": sid, "d": d}).fetchall()
-            
-            branch_history_rows = conn.execute(text("""
-                SELECT date, branch_name, buy_lots, sell_lots, net_lots
-                FROM branch_trades
-                WHERE stock_id = :s AND date >= date(:d, '-730 days')
-                ORDER BY date DESC
-            """), {"s": sid, "d": d}).fetchall()
+
+            has_any_branch = conn.execute(text(
+                "SELECT 1 FROM branch_trades WHERE stock_id = :s LIMIT 1"
+            ), {"s": sid}).scalar()
+            if has_any_branch:
+                branch_history_rows = conn.execute(text("""
+                    SELECT date, branch_name, buy_lots, sell_lots, net_lots
+                    FROM branch_trades
+                    WHERE stock_id = :s AND date >= date(:d, '-730 days')
+                    ORDER BY date DESC
+                """), {"s": sid, "d": d}).fetchall()
+            else:
+                branch_history_rows = []
             insti_history_rows = conn.execute(text("""
                 SELECT date, foreign_net, trust_net, dealer_net, total_net
                 FROM daily_institutional
