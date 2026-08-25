@@ -20,10 +20,23 @@ export function fmtLots(n: number | null | undefined): string {
   return n > 0 ? `+${s}` : n < 0 ? `-${s}` : "0";
 }
 
+/** 張數／股數（無正負號，用於餘額、限額） */
+export function fmtLotsPlain(n: number | null | undefined): string {
+  if (n == null) return "—";
+  return n.toLocaleString("zh-TW");
+}
+
 export function fmtPct(n: number | null | undefined): string {
   if (n == null) return "—";
   const arrow = n > 0 ? "▲" : n < 0 ? "▼" : "";
   return `${arrow}${Math.abs(n).toFixed(2)}%`;
+}
+
+/** 使用率變化（百分點，可正可負） */
+export function fmtUsageChg(n: number | null | undefined): string {
+  if (n == null) return "—";
+  const arrow = n > 0 ? "▲" : n < 0 ? "▼" : "";
+  return `${arrow}${Math.abs(n).toFixed(1)}%`;
 }
 
 export function fmtX(n: number | null | undefined): string {

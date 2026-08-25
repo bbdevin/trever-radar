@@ -6,7 +6,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { dataFetch } from "@/lib/dataFetch";
 import { OFFLINE_DATA_COPY, isBrowserOffline } from "@/lib/pwa";
 import type { MarginUsageJson } from "@/lib/types";
-import { chgClass, fmtLots, fmtPct } from "@/lib/format";
+import { chgClass, fmtLots, fmtLotsPlain, fmtUsageChg } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 /** 融資使用率定義（首頁 tab／/margin 共用） */
@@ -91,27 +91,31 @@ export default function MarginUsageRank({ embedded = false }: Props) {
 
       <div className="mb-3 flex items-start gap-2 rounded-[var(--r-md)] border border-[color:var(--warn)]/30 bg-[color:var(--warn)]/10 px-3 py-2 text-[12px] text-muted-foreground">
         <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-[color:var(--warn)]" aria-hidden />
-        <span>使用率 ≥ 60% 的列以琥珀色標示，提醒融資過熱風險；漲跌另以紅／綠與箭頭表示，色彩非唯一訊號。</span>
+        <span>使用率 ≥ 60% 的列以琥珀色標示。「較前日」為融資使用率百分點變化；增減為融資餘額張數。色彩非唯一訊號。</span>
       </div>
 
       <div className="overflow-x-auto rounded-[var(--r-lg)] border border-border bg-card shadow-[var(--shadow-card)]">
-        <table className="w-full min-w-[640px] text-left text-[13px]">
+        <table className="w-full min-w-[720px] text-left text-[13px]">
           <thead className="border-b border-border bg-secondary/40 text-[12px] text-muted-foreground">
             <tr>
               <th className="px-3 py-2.5 font-semibold">#</th>
               <th className="px-3 py-2.5 font-semibold">代號</th>
               <th className="px-3 py-2.5 font-semibold">名稱</th>
               <th className="px-3 py-2.5 font-semibold">使用率</th>
-              <th className="px-3 py-2.5 font-semibold">餘額</th>
+              <th className="px-3 py-2.5 font-semibold">融資限額</th>
+              <th className="px-3 py-2.5 font-semibold">已用張數</th>
               <th className="px-3 py-2.5 font-semibold">增減</th>
+              <th className="px-3 py-2.5 font-semibold" title="較前一日融資使用率（百分點）">
+                較前日
+              </th>
               <th className="px-3 py-2.5 font-semibold">收盤</th>
-              <th className="px-3 py-2.5 font-semibold">漲跌</th>
             </tr>
           </thead>
           <tbody>
             {data.items.map((row, idx) => {
               const hot = row.usage >= 0.6;
-              const cls = chgClass(row.chg_pct);
+              const usageChg = row.usage_chg ?? row.chg_pct ?? null;
+              const usageCls = chgClass(usageChg);
               return (
                 <tr
                   key={row.id}
@@ -126,31 +130,32 @@ export default function MarginUsageRank({ embedded = false }: Props) {
                       {row.id}
                     </a>
                   </td>
-                  <td className="max-w-[140px] truncate px-3 py-2.5" title={row.name}>
+                  <td className="max-w-[120px] truncate px-3 py-2.5" title={row.name}>
                     {row.name}
                   </td>
                   <td className={cn("num px-3 py-2.5 font-bold", hot && "text-[color:var(--warn)]")}>
                     {(row.usage * 100).toFixed(1)}%
                   </td>
-                  <td className="num px-3 py-2.5">{fmtLots(row.balance)}</td>
+                  <td className="num px-3 py-2.5 text-muted-foreground">{fmtLotsPlain(row.limit)}</td>
+                  <td className="num px-3 py-2.5 font-medium">{fmtLotsPlain(row.balance)}</td>
                   <td
                     className={cn(
                       "num px-3 py-2.5",
-                      (row.chg ?? 0) >= 0 ? "text-up" : "text-down",
+                      (row.chg ?? 0) > 0 ? "text-up" : (row.chg ?? 0) < 0 ? "text-down" : "",
                     )}
                   >
-                    {row.chg == null ? "—" : `${row.chg >= 0 ? "+" : ""}${fmtLots(row.chg)}`}
+                    {row.chg == null ? "—" : fmtLots(row.chg)}
                   </td>
-                  <td className="num px-3 py-2.5">{row.close?.toLocaleString("zh-TW") ?? "—"}</td>
                   <td
                     className={cn(
                       "num px-3 py-2.5 font-semibold",
-                      cls === "up" && "text-up",
-                      cls === "down" && "text-down",
+                      usageCls === "up" && "text-up",
+                      usageCls === "down" && "text-down",
                     )}
                   >
-                    {fmtPct(row.chg_pct)}
+                    {fmtUsageChg(usageChg)}
                   </td>
+                  <td className="num px-3 py-2.5">{row.close?.toLocaleString("zh-TW") ?? "—"}</td>
                 </tr>
               );
             })}

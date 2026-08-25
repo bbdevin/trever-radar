@@ -173,10 +173,15 @@ def _export_margin_usage(out: Path, conn, d: str, m_date: str | None) -> None:
     # 否則有餘額但當日尚未有價(或停牌)的高使用率股會被 INNER JOIN 整排濾掉。
     rows = conn.execute(text("""
         SELECT m.stock_id, s.name, m.margin_balance, m.margin_prev, m.margin_limit,
+               mp.margin_balance AS prev_bal, mp.margin_limit AS prev_lim,
                COALESCE(pm.close, p.close) AS close,
                COALESCE(ppm.close, pp.close) AS prev_close
         FROM daily_margins m
         JOIN stocks s ON s.id = m.stock_id AND s.type = 'stock'
+        LEFT JOIN daily_margins mp ON mp.stock_id = m.stock_id AND mp.date = (
+            SELECT MAX(date) FROM daily_margins
+            WHERE stock_id = m.stock_id AND date < :m_date
+        )
         LEFT JOIN daily_prices pm ON pm.stock_id = m.stock_id AND pm.date = :m_date
         LEFT JOIN daily_prices ppm ON ppm.stock_id = m.stock_id AND ppm.date = (
             SELECT MAX(date) FROM daily_prices
@@ -191,17 +196,21 @@ def _export_margin_usage(out: Path, conn, d: str, m_date: str | None) -> None:
           AND m.margin_balance IS NOT NULL
     """), {"d": d, "m_date": m_date}).fetchall()
     items = []
-    for sid, name, bal, prev, lim, close, prev_close in rows:
-        chg_pct = round((close - prev_close) / prev_close * 100, 2) if close and prev_close else None
+    for sid, name, bal, prev, lim, prev_bal, prev_lim, close, prev_close in rows:
+        usage = round(bal / lim, 4)
+        pb = prev if prev is not None else prev_bal
+        pl = prev_lim if prev_lim and prev_lim > 0 else lim
+        prev_usage = round(pb / pl, 4) if pb is not None and pl and pl > 0 else None
+        usage_chg = round((usage - prev_usage) * 100, 2) if prev_usage is not None else None
         items.append({
             "id": sid,
             "name": name,
-            "usage": round(bal / lim, 4),
+            "usage": usage,
             "balance": bal,
             "limit": lim,
             "chg": None if (bal is None or prev is None) else bal - prev,
+            "usage_chg": usage_chg,
             "close": close,
-            "chg_pct": chg_pct,
         })
     items.sort(key=lambda x: x["usage"], reverse=True)
     items = items[:80]

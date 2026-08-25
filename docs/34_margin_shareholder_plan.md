@@ -225,8 +225,9 @@ bal_t   = 融資今日餘額（張）
 |---|---|
 | 路由 | `web/app/margin/page.tsx`（薄殼）+ 共用 `web/components/MarginUsageRank.tsx` |
 | Export | `/data/rankings/margin_usage.json` |
-| 列 | `{ id, name, usage, balance, limit, chg, close, chg_pct }` |
+| 列 | `{ id, name, usage, balance, limit, chg, usage_chg, close }` |
 | 排序 | `usage = balance/limit`，limit>0、type=stock，**高→低**，上限 40–80 |
+| 較前日 | `usage_chg` = 今日使用率 − 前日使用率（百分點）；前日限額 join 前一日 `daily_margins` |
 | 導覽 | **首頁 pill「資券」**（`/?tab=margin`，手機可達）；桌機 `DesktopNav` 同連；`/margin` 保留深連 |
 | 提示 | usage≥60% 對齊 `R_MARGIN_HOT`；頁內定義：餘額÷限額、限額＝交易所公布可融資上限張數（各股不同）；**不進綜合分** |
 | 收盤對齊 | export 以資券 `as_of` LEFT JOIN 日 K；缺 quotes 日不剔除高使用率列（2026-08-25 修） |

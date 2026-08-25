@@ -136,8 +136,11 @@ export interface MarginUsageItem {
   balance: number;
   limit: number;
   chg: number | null;
+  /** 較前一日使用率變化（百分點，例 +1.4 = 88.4%→89.8%） */
+  usage_chg: number | null;
   close: number | null;
-  chg_pct: number | null;
+  /** @deprecated 股價漲跌幅，新 export 已改 usage_chg */
+  chg_pct?: number | null;
 }
 
 export interface MarginUsageJson {

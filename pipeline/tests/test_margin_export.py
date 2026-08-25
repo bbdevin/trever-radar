@@ -79,6 +79,11 @@ class MarginExportTests(unittest.TestCase):
         self.assertGreaterEqual(len(rank["items"]), 2)
         self.assertEqual(rank["items"][0]["id"], "2317")  # 80% usage > 51%
         self.assertGreater(rank["items"][0]["usage"], rank["items"][1]["usage"])
+        top = rank["items"][0]
+        self.assertEqual(top["limit"], 1000)
+        self.assertEqual(top["balance"], 800)
+        self.assertIn("usage_chg", top)
+        self.assertNotIn("chg_pct", top)
 
     def test_ranking_keeps_stock_missing_quote_day_price(self):
         """資券日有價、quotes 日無價時仍應進榜(倉和類案例)。"""
