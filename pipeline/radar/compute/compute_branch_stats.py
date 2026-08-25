@@ -136,17 +136,70 @@ def _r2(x: float | None) -> float | None:
     return round(x, 2) if x is not None else None
 
 
+class _BranchAgg:
+    """分點跨股 pooled 增量累加器(避免把全部事件 list 留在記憶體)。"""
+
+    __slots__ = (
+        "n_events", "sum_pctile", "n_matured", "win_count", "sum_ret5",
+        "n_ev_90", "n_matured_90", "sum_ret5_90", "n_ev_2y", "amount",
+        "dt_obs", "dt_paybacks",
+    )
+
+    def __init__(self) -> None:
+        self.n_events = 0
+        self.sum_pctile = 0.0
+        self.n_matured = 0
+        self.win_count = 0
+        self.sum_ret5 = 0.0
+        self.n_ev_90 = 0
+        self.n_matured_90 = 0
+        self.sum_ret5_90 = 0.0
+        self.n_ev_2y = 0
+        self.amount = 0.0
+        self.dt_obs = 0
+        self.dt_paybacks = 0
+
+    def add_obs(self, net: float, sell: float) -> None:
+        if not net or net <= 0:
+            return
+        self.dt_obs += 1
+        if (sell or 0) >= DAYTRADE_PAYBACK * net:
+            self.dt_paybacks += 1
+
+    def add_event(self, date: str, fwd5: float | None, pctile: float,
+                  cutoff90: str, cutoff2y: str) -> None:
+        self.n_events += 1
+        self.sum_pctile += pctile
+        if date >= cutoff90:
+            self.n_ev_90 += 1
+        if date >= cutoff2y:
+            self.n_ev_2y += 1
+        if fwd5 is None:
+            return
+        self.n_matured += 1
+        self.sum_ret5 += fwd5
+        if fwd5 > 0:
+            self.win_count += 1
+        if date >= cutoff90:
+            self.n_matured_90 += 1
+            self.sum_ret5_90 += fwd5
+
+    def is_daytrade(self) -> bool:
+        if self.dt_obs < DAYTRADE_MIN_OBS:
+            return False
+        return (self.dt_paybacks / self.dt_obs) >= DAYTRADE_RATE
+
+
 def compute_all():
     """計算 branch_stock_stats + branch_rankings,並自動增減 tracked_branches。"""
     init_db()
     engine = get_engine()
     now = datetime.now(ZoneInfo(config.TZ)).isoformat(timespec="seconds")
 
-    # 分點層級 pool(以事件為單位)。串流式逐檔累加,峰值記憶體 = 單檔資料 + 累加器。
-    branch_events: dict[str, list[dict]] = defaultdict(list)
-    branch_obs: dict[str, list[tuple[float, float]]] = defaultdict(list)
-    branch_amount: dict[str, float] = defaultdict(float)
-    stock_stats: dict[tuple[str, str], dict] = {}
+    # 分點層級 pool:增量累加(OOM 修復 2026-08-25:不再保留全事件 list)。
+    # stock_stats 用緊湊 tuple,峰值 ≈ 單檔 trades + 累加器。
+    branch_aggs: dict[str, _BranchAgg] = {}
+    stock_stats: dict[tuple[str, str], tuple] = {}
 
     with engine.connect() as conn:
         as_of = conn.execute(text("SELECT MAX(date) FROM branch_trades")).scalar()
@@ -175,7 +228,7 @@ def compute_all():
 
         # 逐檔處理:載入單股價格序列與其 branch_trades 列 → 算完累加 → 迭代結束即釋放。
         # branch_trades PK 前導為 stock_id,WHERE b.stock_id=:sid 走 PK,不需額外索引。
-        for sid in stock_ids:
+        for n_done, sid in enumerate(stock_ids, 1):
             prows = conn.execute(text(
                 "SELECT date, open, close, adj_factor FROM daily_prices "
                 "WHERE stock_id = :sid AND close IS NOT NULL ORDER BY date"
@@ -208,6 +261,11 @@ def compute_all():
                 if not qual_dates:
                     continue
 
+                agg = branch_aggs.get(br)
+                if agg is None:
+                    agg = _BranchAgg()
+                    branch_aggs[br] = agg
+
                 # 隔日沖觀察:每個資格買超日 → 次一交易日同分點賣出張(無紀錄=0)。
                 obs: list[tuple[float, float]] = []
                 for qd in qual_dates:
@@ -218,11 +276,12 @@ def compute_all():
                         nrow = datemap.get(trading_dates[idx + 1])
                         next_sell = (nrow["sell"] if nrow else 0) or 0
                     obs.append((net, next_sell))
+                    agg.add_obs(net, next_sell)
                 st_daytrade, _ = daytrade_flag(obs)
 
-                # 合併事件 + 前瞻報酬 + 買點分位。
+                # 合併事件 + 前瞻報酬 + 買點分位 → 直接打進累加器。
                 events = merge_consecutive_events(qual_dates, date_index)
-                ev_records: list[dict] = []
+                matured_vals: list[float] = []
                 for ed in events:
                     perf = forward_returns(adj_candles, ed)
                     fwd5 = perf["fwd_5d"] if perf else None
@@ -232,11 +291,12 @@ def compute_all():
                         window = [c for c in adj_close[max(0, idx - 19):idx + 1] if c is not None]
                         if window:
                             pctile = price_percentile(adj_close[idx], min(window), max(window))
-                    ev_records.append({"date": ed, "fwd5": fwd5, "pctile": pctile})
+                    agg.add_event(ed, fwd5, pctile, cutoff90, cutoff2y)
+                    if fwd5 is not None:
+                        matured_vals.append(fwd5)
 
-                matured = [e["fwd5"] for e in ev_records if e["fwd5"] is not None]
-                win_rate = (100.0 * sum(1 for f in matured if f > 0) / len(matured)) if matured else None
-                avg_ret5 = (sum(matured) / len(matured)) if matured else None
+                win_rate = (100.0 * sum(1 for f in matured_vals if f > 0) / len(matured_vals)) if matured_vals else None
+                avg_ret5 = (sum(matured_vals) / len(matured_vals)) if matured_vals else None
 
                 # 近 90 日資格買超日金額(未還原價):net_lots * 1000 股 * 當日收盤。
                 amt = 0.0
@@ -245,42 +305,35 @@ def compute_all():
                         cl = close_by_date.get(qd)
                         if cl:
                             amt += (datemap[qd]["net"] or 0) * 1000 * cl
+                agg.amount += amt
 
-                stock_stats[(br, sid)] = {
-                    "events_count": len(events),
-                    "win_rate": _r1(win_rate),
-                    "avg_ret5": _r2(avg_ret5),
-                    "is_daytrade_suspect": st_daytrade,
-                    "last_active_date": qual_dates[-1],
-                }
+                # 緊湊 tuple:(events, win, ret5, daytrade, last_active)
+                stock_stats[(br, sid)] = (
+                    len(events), _r1(win_rate), _r2(avg_ret5), st_daytrade, qual_dates[-1],
+                )
 
-                branch_events[br].extend(ev_records)
-                branch_obs[br].extend(obs)
-                branch_amount[br] += amt
+            if n_done % 400 == 0:
+                print(f"branch stats progress: {n_done}/{len(stock_ids)} stocks", flush=True)
 
     # 分點彙總(跨個股 pooled)。
     branch_meta: dict[str, dict] = {}
-    for br, evs in branch_events.items():
-        n_events = len(evs)
-        matured = [e["fwd5"] for e in evs if e["fwd5"] is not None]
-        win_rate = (100.0 * sum(1 for f in matured if f > 0) / len(matured)) if matured else None
-        avg_ret5 = (sum(matured) / len(matured)) if matured else None
-        avg_pctile = sum(e["pctile"] for e in evs) / n_events if n_events else 0.5
-
-        ev90 = [e["fwd5"] for e in evs if e["date"] >= cutoff90 and e["fwd5"] is not None]
-        avg90 = (sum(ev90) / len(ev90)) if ev90 else None
+    for br, agg in branch_aggs.items():
+        n_events = agg.n_events
+        win_rate = (100.0 * agg.win_count / agg.n_matured) if agg.n_matured else None
+        avg_ret5 = (agg.sum_ret5 / agg.n_matured) if agg.n_matured else None
+        avg_pctile = (agg.sum_pctile / n_events) if n_events else 0.5
+        avg90 = (agg.sum_ret5_90 / agg.n_matured_90) if agg.n_matured_90 else None
         recency = recency_factor(avg90, avg_ret5)
-        score = credibility_score(win_rate, avg_ret5, avg_pctile, branch_amount[br], recency)
-        is_dt, _ = daytrade_flag(branch_obs[br])
+        score = credibility_score(win_rate, avg_ret5, avg_pctile, agg.amount, recency)
 
         branch_meta[br] = {
             "score": score,
             "n_events": n_events,
             "win_rate": win_rate,
             "avg_ret5": avg_ret5,
-            "is_dt": is_dt,
-            "n_ev_90": sum(1 for e in evs if e["date"] >= cutoff90),
-            "n_ev_2y": sum(1 for e in evs if e["date"] >= cutoff2y),
+            "is_dt": agg.is_daytrade(),
+            "n_ev_90": agg.n_ev_90,
+            "n_ev_2y": agg.n_ev_2y,
         }
 
     # 排行快照:pooled 事件數 >= 5 入榜。
@@ -305,7 +358,16 @@ def compute_all():
     # branch_stock_stats 只寫入 入榜分點 ∪ 追蹤名單分點(避免表爆量)。
     persist = ranked_names | set(tracked.keys())
     stat_records = [
-        {"branch_name": br, "stock_id": sid, **s, "updated_at": now}
+        {
+            "branch_name": br,
+            "stock_id": sid,
+            "events_count": s[0],
+            "win_rate": s[1],
+            "avg_ret5": s[2],
+            "is_daytrade_suspect": s[3],
+            "last_active_date": s[4],
+            "updated_at": now,
+        }
         for (br, sid), s in stock_stats.items() if br in persist
     ]
 

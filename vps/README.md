@@ -210,7 +210,8 @@ sqlite3 radar.db "PRAGMA integrity_check;"        # ok 才能用
 
 共用機制(`lib.sh`):
 - **flock 互斥**:`/tmp/radar-db.lock`,搶不到=跳過本輪+ntfy 通知(防上一輪超時堆疊)。長期歷史回補容器不拿這把鎖(docs/31 §2)。**2026-08-20**:分點/權證分點兩筆回補還在跑時不要手動 `import-geo`(會搶 `radar.db` 寫鎖);等回補結束或下週一 14:10 自動跑。詳 `docs/27`。
-- **2026-08-24 回補中途動態上線(S1 已落地)**:`mid-backfill-publish.sh` + `bf-cron-guard.sh`;crontab `09/12`=`SKIP_STATS`、`03/20`=含 stats + guard 保活。避開 daily 窗與 `radar-db.lock`。詳 `docs/33`。
+- **2026-08-24 回補中途動態上線(S1)**:`mid-backfill-publish.sh` + `bf-cron-guard.sh`;crontab `03/09/12/20` mid 只 export。
+- **2026-08-25 S1.1**:mid 預設略過 stats(防 OOM);`safe-branch-stats.sh` @ 23:30 專跑排行;stats 程式改增量累加。詳 `docs/33`。
 - **2026-08-21 回補與 cron 並行**:歷史回補用具名容器 `radar-bf-branches` / `radar-bf-warrant`(勿用 `manual-catchup.sh` 包長跑——它會握 flock)。另跑 `bf-cron-guard`(已收進 `vps/scripts/`)。
 - **開輪 `git pull --ff-only` + docker build**(layer cache,requirements 沒變近零成本)——舊碼算舊 reasons 的既有教訓。
 - **失敗 → ntfy High 告警,成功靜默**(週備份成功發一則 default 摘要)。

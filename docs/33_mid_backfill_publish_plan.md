@@ -1,6 +1,6 @@
 # 回補中途動態上線（Mid-Backfill Publish）
 
-> 狀態：**S1 已實作**（2026-08-24）— `vps/scripts/mid-backfill-publish.sh` + `bf-cron-guard.sh` + crontab.example  
+> 狀態：**S1 + S1.1 已實作**（2026-08-25）— mid 預設略過 stats；`safe-branch-stats.sh` @ 23:30；stats 增量累加防 OOM  
 > 相關：`docs/31` §2（回補不拿 flock）、`vps/README.md`
 
 ## 1. 問題
@@ -37,18 +37,24 @@ mid-backfill-publish.sh（新）
   1. 若正在 daily-* 窗 → 跳過（exit 0 + log）
   2. disk free < 4G → 跳過 + ntfy default 警告
   3. pause 兩個 bf 容器；暫停/協調 guard（寫 flag）
-  4. （預設開啟）compute-branch-stats   # 可用 SKIP_STATS=1 略過加速
+  4. （預設略過）compute-branch-stats   # mid 預設不跑;排行改 23:30 safe-branch-stats
   5. export-json → wrangler deploy      # 不長握 flock；stats/export 期間靠 pause 隔離寫入
   6. 記進度到 ~/mid-publish.state（時間、branch 最舊已密化日期粗標、warrant 進度）
   7. unpause bf；清 flag；重開 guard
   8. ntfy default：「中途上線完成」+ 簡短進度
 ```
 
+**S1.1（2026-08-25）**：VPS 僅 ~1.7G RAM，`compute-branch-stats` 在歷史加深後尖峰 ~1.5G 兩次 OOM（20:00 / 03:00）。定案：
+
+- mid-publish **預設略過 stats**（`RUN_STATS=1` 才強制）
+- 新增 `safe-branch-stats.sh` @ **23:30**：pause bf → mem 門檻 → stats → export
+- `compute_branch_stats` 改增量累加器，降低事件 list 記憶體
+
 ### 3.1 觸發策略（建議採 A + 手動）
 
 | 方案 | 做法 | 優點 | 缺點 |
 |---|---|---|---|
-| **A. 定時（已落地）** | crontab:`09/12`=`SKIP_STATS=1`（白天只 export）；`03/20`=完整含 stats（腳本內避開 daily-* 窗） | 白天輕、晚上重算排行 | 白天 `/branch` 排行可能略舊到當晚 |
+| **A. 定時（已落地）** | crontab:`0 3,9,12,20` mid=只 export；`23:30`=`safe-branch-stats.sh`（專跑 stats） | mid 不 OOM；排行每晚更新 | stats 失敗時排行多舊一天 |
 | B. 里程碑 | 監看 log，每跨過一個月交易日觸發 | 與進度對齊 | 實作較複雜 |
 | C. 僅手動 | `vps/scripts/mid-backfill-publish.sh` | 零風險 | 要人記得跑 |
 
@@ -98,7 +104,7 @@ mid-backfill-publish.sh（新）
 ## 5. Confirmed Scope
 
 - [x] **S1（2026-08-24 使用者確認）**:腳本 + 收編 guard + crontab `0 3,9,12,20`(避開 17:40–19:30,改 20:00)+ 腳本內再擋 daily 窗／lock
-- [x] stats:**每次都跑**(可用 `SKIP_STATS=1` 手動略過)
+- [x] **S1.1（2026-08-25）**:mid 預設略過 stats;新增 `safe-branch-stats.sh` @ 23:30;stats 增量累加降記憶體(修 OOM)
 
 ## 6. 風險
 

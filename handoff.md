@@ -1,7 +1,6 @@
 ## Handoff
 
-- **Current Goal**: mid-publish — stats 改晚上跑
+- **Current Goal**: S1.1 mid 略過 stats + 23:30 safe-branch-stats + stats 降記憶體
 - **Branch**: `main`
-- **Cron**: `09/12`=`SKIP_STATS=1`（只 export）；`03/20`=含 `compute-branch-stats`
-- **Done**: 已取消今日 15:05 完整 mid-publish waiter
-- **Next**: 今晚 20:00 觀察完整 mid-publish；白天 09/12 仍會加深 JSON
+- **Scripts**: `mid-backfill-publish.sh`(預設無 stats), `safe-branch-stats.sh` @ 23:30
+- **Next**: 觀察今晚 23:30 ntfy「safe-stats ok」;確認無 OOM
