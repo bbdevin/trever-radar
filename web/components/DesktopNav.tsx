@@ -1,26 +1,31 @@
 "use client";
 
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
+import { Suspense } from "react";
 import { cn } from "@/lib/utils";
 
 const NAV = [
-  { label: "首頁", href: "/" },
-  { label: "監控", href: "/intraday" },
-  { label: "分點研究", href: "/branch" },
-  { label: "資券", href: "/margin" },
-  { label: "自選追蹤", href: "/watchlist" },
+  { label: "首頁", href: "/", match: (path: string, tab: string | null) => path === "/" && tab !== "margin" },
+  { label: "監控", href: "/intraday", match: (path: string) => path.startsWith("/intraday") },
+  { label: "分點研究", href: "/branch", match: (path: string) => path.startsWith("/branch") },
+  {
+    label: "資券",
+    href: "/?tab=margin",
+    match: (path: string, tab: string | null) => path.startsWith("/margin") || (path === "/" && tab === "margin"),
+  },
+  { label: "自選追蹤", href: "/watchlist", match: (path: string) => path.startsWith("/watchlist") },
 ];
 
-/** 桌機頂部導覽（手機隱藏）——首頁右側接監控 */
-export default function DesktopNav() {
+function DesktopNavInner() {
   const path = usePathname();
+  const tab = useSearchParams().get("tab");
   return (
     <nav className="hidden gap-0.5 md:flex" aria-label="主導覽">
       {NAV.map((n) => {
-        const isActive = path === n.href || (n.href !== "/" && path.startsWith(n.href));
+        const isActive = n.match(path, tab);
         return (
           <a
-            key={n.href}
+            key={n.label}
             href={n.href}
             aria-current={isActive ? "page" : undefined}
             className={cn(
@@ -35,5 +40,14 @@ export default function DesktopNav() {
         );
       })}
     </nav>
+  );
+}
+
+/** 桌機頂部導覽（手機隱藏）——資券進首頁 tab，BottomNav 維持 ≤4 項 */
+export default function DesktopNav() {
+  return (
+    <Suspense fallback={<nav className="hidden gap-0.5 md:flex" aria-label="主導覽" />}>
+      <DesktopNavInner />
+    </Suspense>
   );
 }

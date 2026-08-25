@@ -73,7 +73,7 @@ export default function MarginPanel({ data, candles }: { data: StockJson; candle
           </>
         )}
         <a
-          href="/margin"
+          href="/?tab=margin"
           className="ml-auto text-[12px] font-semibold text-primary hover:underline"
         >
           使用率排行 →
@@ -81,7 +81,10 @@ export default function MarginPanel({ data, candles }: { data: StockJson; candle
       </div>
 
       <p className="text-[11px] leading-relaxed text-muted-foreground">
-        融資成本為系統依官方買進與收盤價遞推之估算值，非證交所公布、亦非個人實際成本。
+        <span className="font-medium text-foreground/90">融資使用率</span>
+        {" = 融資餘額 ÷ 融資限額（限額為交易所公布該股最多可融資張數，各股不同）。"}
+        {" ≥60% 視為過熱風險觀察。"}
+        {" 融資成本為系統依官方買進與收盤價遞推之估算值，非證交所公布、亦非個人實際成本。"}
       </p>
 
       <div className="flex flex-wrap gap-2">

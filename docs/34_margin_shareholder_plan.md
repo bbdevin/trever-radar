@@ -223,12 +223,13 @@ bal_t   = 融資今日餘額（張）
 
 | 項目 | 定案 |
 |---|---|
-| 路由 | `web/app/margin/page.tsx` |
+| 路由 | `web/app/margin/page.tsx`（薄殼）+ 共用 `web/components/MarginUsageRank.tsx` |
 | Export | `/data/rankings/margin_usage.json` |
 | 列 | `{ id, name, usage, balance, limit, chg, close, chg_pct }` |
 | 排序 | `usage = balance/limit`，limit>0、type=stock，**高→低**，上限 40–80 |
-| 導覽 | 桌機 `DesktopNav`；手機可自資券 tab 連排行或 BottomNav「資券榜」（避免擠爆可放次級入口） |
-| 提示 | usage≥60% 對齊 `R_MARGIN_HOT` 語意；**不進綜合分** |
+| 導覽 | **首頁 pill「資券」**（`/?tab=margin`，手機可達）；桌機 `DesktopNav` 同連；`/margin` 保留深連 |
+| 提示 | usage≥60% 對齊 `R_MARGIN_HOT`；頁內定義：餘額÷限額、限額＝交易所公布可融資上限張數（各股不同）；**不進綜合分** |
+| 收盤對齊 | export 以資券 `as_of` LEFT JOIN 日 K；缺 quotes 日不剔除高使用率列（2026-08-25 修） |
 
 ---
 
@@ -280,6 +281,8 @@ flowchart LR
 - [x] **Phase A1** — 融資成本估算 + export 榜單（2026-08-25）
 - [x] **Phase A2** — 個股資券 tab（2026-08-25）
 - [x] **Phase A3** — 使用率排行頁（2026-08-25）
+- [x] **A3 UI 跟進** — 首頁資券 tab／定義文／去重複 summary_text／漏檔修復（2026-08-25）
+- [ ] **Phase B** — TDCC 大戶（待確認）
 - [ ] **Phase B1** — TDCC 週更入庫
 - [ ] **Phase B2** — 大戶 UI（門檻 + 雙模式 + 顯示窗）
 - [ ] **Phase C** — 當沖／借券（後續另確認）

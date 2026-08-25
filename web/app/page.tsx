@@ -1,13 +1,15 @@
 "use client";
 
-import { useEffect, useState, useMemo, useRef } from "react";
-import { Clock, Search, TrendingUp, TrendingDown, Star, Sparkles, ShieldCheck, Zap, ChevronDown, Briefcase, AlertTriangle, Ban } from "lucide-react";
+import { useEffect, useState, useMemo, useRef, Suspense } from "react";
+import { useSearchParams } from "next/navigation";
+import { Clock, ShieldCheck, Zap, ChevronDown, Briefcase, AlertTriangle, Ban, Percent } from "lucide-react";
 import { IconFlame, IconTrend, IconZap, IconRadar, IconPulse, IconStar, IconTrendDown } from "@/components/Icons";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
 import MoneyFlow from "@/components/MoneyFlow";
 import StockCard from "@/components/StockCard";
 import ThemeGroupedList from "@/components/ThemeGroupedList";
+import MarginUsageRank from "@/components/MarginUsageRank";
 import { useSession, signInWithGoogle } from "@/lib/useSession";
 import { cn, pillTabClass } from "@/lib/utils";
 import { dataFetch } from "@/lib/dataFetch";
@@ -15,23 +17,86 @@ import { OFFLINE_DATA_COPY, isBrowserOffline } from "@/lib/pwa";
 import type { ListKey, MetaJson, RadarJson, StrategyMeta } from "@/lib/types";
 import { SOURCE_LABEL, fmtE8 } from "@/lib/format";
 
-// TabKey for the main task-oriented tabs
-type TabKey = "score" | "armed" | "triggered" | "extended" | "faded" | "pocket" | "scan" | "mark" | "warrant";
+// TabKey for the main task-oriented tabs（資券嵌首頁，手機 BottomNav 不另開第 5 項）
+type TabKey =
+  | "score"
+  | "armed"
+  | "triggered"
+  | "extended"
+  | "faded"
+  | "pocket"
+  | "margin"
+  | "scan"
+  | "mark"
+  | "warrant";
 
 // Scan modes within the "scan" tab
 type ScanModeKey = "hot" | "surge" | "strong" | "weak";
 
 const TABS: { key: TabKey; label: string; hint: string; icon: any }[] = [
-  { key: "score", label: "綜合", hint: "盤後綜合分數:分點/權證/技術/法人加權−風險扣分,≥65 為觀察門檻", icon: IconRadar },
-  { key: "armed", label: "未發動", hint: "分點/權證籌碼異常進駐，且股價尚未表態", icon: ShieldCheck },
-  { key: "triggered", label: "已發動", hint: "分點/權證籌碼進駐，且今日放量突破或創高", icon: Zap },
-  { key: "extended", label: "追高風險", hint: "籌碼仍在，但已漲一截且帶風險標籤（過熱/長上影等）", icon: AlertTriangle },
-  { key: "faded", label: "失效", hint: "觸及失效價，或籌碼訊號已淡出（同日近似）", icon: Ban },
-  { key: "pocket", label: "口袋", hint: "地緣/關鍵分點/熱門題材疊加(≥2 理由);不進綜合分,僅排序", icon: Briefcase },
-  { key: "scan", label: "市場掃描", hint: "多維度市場量價特徵掃描 (熱門/爆量/強勢/弱勢)", icon: IconZap },
-  { key: "mark", label: "策略", hint: "進階量化選股，涵蓋技術面與籌碼面等多種策略", icon: IconStar },
-  { key: "warrant", label: "權證", hint: "認購權證成交金額相對20日均值放大", icon: IconPulse },
+  {
+    key: "score",
+    label: "綜合",
+    hint: "依盤後綜合分排序（分點／權證／技術／法人加權 − 風險扣分）。≥65 為觀察門檻——用來掃「今天籌碼與技術都偏強」的名單。",
+    icon: IconRadar,
+  },
+  {
+    key: "armed",
+    label: "未發動",
+    hint: "分點或權證籌碼已異常進駐，但股價尚未明顯表態。適合盤中盯「何時發動」，不是已經大漲的名單。",
+    icon: ShieldCheck,
+  },
+  {
+    key: "triggered",
+    label: "已發動",
+    hint: "籌碼進駐且今日放量突破或創高——價格已開始反應訊號，偏「確認發動」而非提前埋伏。",
+    icon: Zap,
+  },
+  {
+    key: "extended",
+    label: "追高風險",
+    hint: "籌碼仍在，但漲幅已大或帶過熱／長上影等風險標籤。提醒勿盲目追高，不是加碼建議。",
+    icon: AlertTriangle,
+  },
+  {
+    key: "faded",
+    label: "失效",
+    hint: "收盤觸及失效價，或籌碼訊號已淡出（同日近似）。表示先前觀察條件可能已不成立。",
+    icon: Ban,
+  },
+  {
+    key: "pocket",
+    label: "口袋",
+    hint: "地緣／關鍵分點／熱門題材等理由疊加（≥2）的觀察池；不進綜合分，只做排序與提醒。",
+    icon: Briefcase,
+  },
+  {
+    key: "margin",
+    label: "資券",
+    hint: "全市場融資使用率（餘額÷限額）排行。越高＝融資額度越緊；≥60% 視為過熱風險觀察，不進綜合分。",
+    icon: Percent,
+  },
+  {
+    key: "scan",
+    label: "市場掃描",
+    hint: "依量價特徵掃描：熱門、爆量、強勢、弱勢——偏市場廣度，不依綜合分。",
+    icon: IconZap,
+  },
+  {
+    key: "mark",
+    label: "策略",
+    hint: "進階規則選股（技術／籌碼等策略標籤）。需登入；績效標籤僅供觀察。",
+    icon: IconStar,
+  },
+  {
+    key: "warrant",
+    label: "權證",
+    hint: "認購權證成交金額相對 20 日均值放大的標的——籌碼熱度參考，非下單建議。",
+    icon: IconPulse,
+  },
 ];
+
+const TAB_KEYS = new Set<string>(TABS.map((t) => t.key));
 
 const SCAN_MODES: { key: ScanModeKey; label: string; hint: string; icon: typeof IconFlame }[] = [
   { key: "hot", label: "熱門排行", hint: "成交金額最大", icon: IconFlame },
@@ -90,6 +155,15 @@ function LoadingSkeleton() {
 }
 
 export default function RadarPage() {
+  return (
+    <Suspense fallback={<LoadingSkeleton />}>
+      <RadarView />
+    </Suspense>
+  );
+}
+
+function RadarView() {
+  const searchParams = useSearchParams();
   const [radar, setRadar] = useState<RadarJson | null>(null);
   const [meta, setMeta] = useState<MetaJson | null>(null);
   const [error, setError] = useState(false);
@@ -102,6 +176,11 @@ export default function RadarPage() {
   const [moneyFlowOpen, setMoneyFlowOpen] = useState(false);
   const [listSort, setListSort] = useState<ListSort>("score");
   const { session, loading } = useSession();
+
+  useEffect(() => {
+    const q = searchParams.get("tab");
+    if (q && TAB_KEYS.has(q)) setTab(q as TabKey);
+  }, [searchParams]);
 
   useEffect(() => {
     try {
@@ -150,7 +229,7 @@ export default function RadarPage() {
   }, []);
 
   const shown = useMemo(() => {
-    if (!radar) return [];
+    if (!radar || tab === "margin") return [];
     const byId = new Map(radar.stocks.map((s) => [s.id, s]));
     if (tab === "mark") {
       return (radar.strategies?.[strategy] ?? []).map((id) => byId.get(id)!).filter(Boolean);
@@ -160,6 +239,18 @@ export default function RadarPage() {
     }
     return (radar.lists?.[tab as ListKey] ?? []).map((id) => byId.get(id)!).filter(Boolean);
   }, [radar, tab, scanMode, strategy]);
+
+  const selectTab = (next: TabKey) => {
+    setTab(next);
+    try {
+      const url = new URL(window.location.href);
+      if (next === "score") url.searchParams.delete("tab");
+      else url.searchParams.set("tab", next);
+      window.history.replaceState(null, "", url.pathname + url.search + url.hash);
+    } catch {
+      /* ignore */
+    }
+  };
 
   if (error) {
     if (isBrowserOffline()) {
@@ -229,49 +320,53 @@ export default function RadarPage() {
         </Alert>
       )}
 
-      {/* F2: Daily summary text */}
-      {(radar.summary_text?.length ?? 0) > 0 && (
-        <div className="mb-3 flex flex-col gap-1 rounded-[var(--r-md)] border border-border bg-card px-3.5 py-2.5">
-          {radar.summary_text!.map((s, i) => (
-            <p key={i} className="text-[12.5px] leading-[1.5] text-muted-foreground">{s}</p>
-          ))}
-        </div>
-      )}
-
       {/* Primary Queue: tabs + stock list */}
-      <div className="my-1.5 mb-3 flex items-center gap-2.5">
+      <div className="my-1.5 mb-2">
         <div
           role="tablist"
+          aria-label="觀察名單"
           className="flex max-w-full gap-0.5 overflow-x-auto rounded-full border border-border bg-card p-[3px] whitespace-nowrap [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         >
           {TABS.map((t) => {
-            const count = t.key === "scan" 
-              ? radar.lists?.[scanMode]?.length ?? 0 
-              : t.key === "mark" 
-                ? 0 
-                : radar.lists?.[t.key as ListKey]?.length ?? 0;
+            const count =
+              t.key === "scan"
+                ? radar.lists?.[scanMode]?.length ?? 0
+                : t.key === "mark" || t.key === "margin"
+                  ? null
+                  : radar.lists?.[t.key as ListKey]?.length ?? 0;
             return (
               <button
                 key={t.key}
+                type="button"
                 role="tab"
                 aria-selected={tab === t.key}
                 className={cn(
-                  "inline-flex min-h-11 items-center gap-1.5 rounded-full px-4 py-2 text-[13.5px] font-semibold text-muted-foreground transition-colors",
+                  "inline-flex min-h-11 cursor-pointer items-center gap-1.5 rounded-full px-4 py-2 text-[13.5px] font-semibold text-muted-foreground transition-colors duration-200",
                   tab === t.key && "bg-muted text-foreground shadow-[inset_0_0_0_1px_var(--border-strong)]",
                 )}
-                onClick={() => setTab(t.key)}
+                onClick={() => selectTab(t.key)}
                 title={t.hint}
               >
-                <t.icon size={15} className="opacity-85" />
+                <t.icon size={15} className="opacity-85" aria-hidden />
                 {t.label}
-                {t.key !== "mark" && (
+                {count != null && (
                   <small className="num text-[11px] text-muted-foreground">{count}</small>
                 )}
               </button>
             );
           })}
         </div>
-        <span className="hidden text-xs text-muted-foreground lg:inline">{TABS.find((t) => t.key === tab)?.hint}</span>
+        {tab !== "margin" && (
+          <p
+            className="mt-2.5 rounded-[var(--r-md)] border border-border/80 bg-muted/25 px-3 py-2 text-[12.5px] leading-relaxed text-foreground/90"
+            role="note"
+          >
+            <span className="mr-1.5 font-semibold text-foreground">
+              {TABS.find((t) => t.key === tab)?.label}
+            </span>
+            {TABS.find((t) => t.key === tab)?.hint}
+          </p>
+        )}
       </div>
 
       {/* Sub-selector for Market Scan */}
@@ -417,12 +512,16 @@ export default function RadarPage() {
         </div>
       )}
 
-      {tab === "mark" && !loading && !session ? (
+      {tab === "margin" ? (
+        <div className="mb-4 animate-[fadeUp_0.35s_ease_backwards]">
+          <MarginUsageRank embedded />
+        </div>
+      ) : tab === "mark" && !loading && !session ? (
         <div className="flex flex-col items-center gap-4 py-[46px] text-center text-sm text-muted-foreground">
           <span>進階策略榜單為會員專屬功能，請先登入 Google 帳號解鎖。</span>
           <button
             onClick={signInWithGoogle}
-            className="rounded-md border border-border bg-card px-4 py-2 text-sm text-foreground"
+            className="min-h-11 cursor-pointer rounded-md border border-border bg-card px-4 py-2 text-sm text-foreground transition-colors duration-200 hover:bg-secondary"
           >
             {"使用 Google 登入"}
           </button>
@@ -452,7 +551,7 @@ export default function RadarPage() {
                   type="button"
                   role="tab"
                   aria-selected={listSort === "score"}
-                  className={cn("min-h-11", pillTabClass(listSort === "score"))}
+                  className={cn("min-h-11 cursor-pointer", pillTabClass(listSort === "score"))}
                   onClick={() => setListSortPersist("score")}
                 >
                   {"分數"}
@@ -461,7 +560,7 @@ export default function RadarPage() {
                   type="button"
                   role="tab"
                   aria-selected={listSort === "theme"}
-                  className={cn("min-h-11", pillTabClass(listSort === "theme"))}
+                  className={cn("min-h-11 cursor-pointer", pillTabClass(listSort === "theme"))}
                   onClick={() => setListSortPersist("theme")}
                   title={radar.themes?.length ? "依當日最熱題材分組,一檔只出現一次" : "今日無題材資金流,維持原排序"}
                 >

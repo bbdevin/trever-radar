@@ -88,7 +88,7 @@
 7a. **全市場擴容**(`docs/26`,2026-07-12 使用者定案「有幾檔抓幾檔」):WP-M1 個股 JSON 池全市場 → ~~WP-M3 branch_hist.db 拆分~~(**2026-07-15 因 B 案取消**,見 docs/31 §9)→ WP-M2 一輪制與 WP-M4 全市場 march-back 併入 `docs/31` WP-B6,於 cutover 後執行。
 8. ~~deep-backfill --all~~ **執行狀態需另行查證**:完成與否不得只信本檔舊紀錄;若需 `task=adjust` 或 VPS 回灌,先依 `vps_backfill_plan.md` 與高風險流程確認。
 9. **分點排行資料累積**:可信度排行榜已完成,統計效力需 2–3 個月。地緣/關鍵分點人工名單、五年分點擴容、LINE Bot 依 B 方案延後;~~V2 盤中延後~~ 盤中已依 `docs/24` 重新規劃排入(見 4a)。
-10. **資券／大戶／使用率排行**(`docs/34`):~~Phase A~~ **A0–A3 已實作（2026-08-25）**——擴 `daily_margins` 買進欄、融資成本估算、個股資券 tab、`/margin` 使用率榜；**待 VPS export-json 後上線**。Phase B TDCC 大戶待確認。
+10. **資券／大戶／使用率排行**(`docs/34`):~~Phase A~~ **A0–A3 已實作並上線（2026-08-25）**；同日 UI 優化：首頁「資券」tab（手機可達）、tab 說明文、使用率定義備註、移除重複 `summary_text` 資訊框；排行收盤價對齊資券 as_of（修倉和等高使用率被濾）。Phase B TDCC 大戶待確認。
 
 ## 已知債務 / 注意
 
@@ -110,8 +110,9 @@
 
 ## 最近完成
 
-- 2026-08-24 **回補中途動態上線 S1 落地**:`mid-backfill-publish.sh` + `bf-cron-guard.sh`;VPS cron mid 只 export。
-- 2026-08-25 **資券 Phase A 實作**:`docs/34` A0–A3——`daily_margins` 買進/賣出/現償、融資成本估算、`margin_history` export、`/margin` 排行、個股資券 tab；待 VPS export-json。
+- 2026-08-25 **首頁／資券 UI 優化（ui-ux-pro-max + docs/19）**：移除與市場卡／freshness 重複的 `summary_text` 資訊框；首頁 tab 選中後顯示定義說明（綜合／未發動／已發動／追高風險／失效…）；融資使用率定義（餘額÷限額、限額語意、≥60% 過熱）；「資券」併入首頁 tab（`/?tab=margin`），BottomNav 維持 4 項、桌機導覽連到首頁 tab；元件 `MarginUsageRank.tsx` 共用 `/margin`。
+- 2026-08-25 **融資排行漏檔修復**：export 改 LEFT JOIN 並以資券 as_of 對齊收盤；倉和等高使用率不再因缺「股價日」K 線被濾掉。
+- 2026-08-25 **資券 Phase A 實作**:`docs/34` A0–A3——`daily_margins` 買進/賣出/現償、融資成本估算、`margin_history` export、`/margin` 排行、個股資券 tab；VPS 已 mid-publish。
 - 2026-08-25 **S1.1 OOM 修復**:夜間含 stats 兩次被 OOM;改 mid 預設略過 stats、新增 `safe-branch-stats.sh`@23:30、`compute_branch_stats` 增量累加降記憶體。詳 `docs/33`。
 - 2026-08-24 **回補中途動態上線規劃**:`docs/33_mid_backfill_publish_plan.md`——長回補期間定時 pause→stats→export/deploy→resume，不必等全部跑完才更新網站。
 - 2026-08-21 **個股權證分頁＝權證分點動向**：與 `/branch` 同源 `warrant_branches.json`；顯示分點買超／賣超（萬）、展開標示哪幾檔權證；區間 pills；門檻 ≥500 萬。
