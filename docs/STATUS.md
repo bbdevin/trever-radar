@@ -115,6 +115,7 @@
 - 2026-08-21 **個股權證分頁＝權證分點動向**：與 `/branch` 同源 `warrant_branches.json`；顯示分點買超／賣超（萬）、展開標示哪幾檔權證；區間 pills；門檻 ≥500 萬。
 - 2026-08-21 **VPS 先上線再回補**:回補 pause 期間跑完 `import-geo` + `compute-branch-stats` + export/deploy(不握長 flock);正式 `data_date=2026-08-21`、`branch_rankings` as_of=08-20、pocket 有資料。16:10 `daily-insti` 正常搶鎖。歷史回補容器仍由 `bf-cron-guard` 在 cron 窗 pause。
 - 2026-08-21 **VPS 恢復歷史回補**:重開 `radar-bf-branches`(`--top 2500 --days 730`)與 `radar-bf-warrant`(`--top 6000 --days 130`),**不拿** `/tmp/radar-db.lock`;`~/bf-cron-guard.sh` 在 daily-* 窗或 flock 被佔時 `docker pause`,避免再擋今日排程。進度:`docker logs -f radar-bf-*`;跑完再 stats/export/`import-geo`。
+- 2026-08-25 **監控訊號 UX**：列表強制新→舊排序；今日顯示時分秒、跨日顯示日期；UI 隱藏 `00*` ETF（含元大台灣50／歷史訊號）；worker `is_etf_id` 與 classify 對齊。
 - 2026-08-21 **盤中監控 UX**：導覽「首頁｜監控｜…」；首頁拿掉嵌入面板；I-1～I-4 兩欄標籤色；大單金額改億／千萬／百萬；額度 n/5；排除 00 開頭 ETF。需在 Supabase 執行 `docs/sql/worker_heartbeat_monitor_cap.sql`。
 - 2026-08-21 **盤中雷達 UX**：`/intraday` 導覽頁；I-1～I-4 人話標籤；Realtime；worker 併自選。
 - 2026-08-21 **VPS 資料凍結搶修**:根因=VPS 本地 dirty `vps/scripts` 擋 `git pull`,cron 全日無 export。已停回補、pull 最新、補抓 2026-08-20 並 deploy;稍後 catchup 後正式 `data_date=2026-08-21`(法人/融資/分點 freshness 仍可能 lag 至當日稍晚 cron)。盤中 worker 重建後上線。`lib.sh` 加 `core.filemode false` + pull 失敗 reset scripts 重試。

@@ -7,11 +7,14 @@ import { useSession } from "@/lib/useSession";
 import { cn } from "@/lib/utils";
 import {
   DEFAULT_MONITOR_CAP,
+  formatSignalTime,
   humanizeSignalDesc,
+  isEtfStockId,
   parsePoolSource,
   poolSourceLabel,
   SIGNAL_PILL,
   signalMeta,
+  sortSignalsNewestFirst,
 } from "@/lib/intradaySignals";
 
 export interface IntradaySignal {
@@ -55,9 +58,12 @@ function useIntradayFeed(enabled: boolean) {
       .from("intraday_signals")
       .select("*")
       .order("created_at", { ascending: false })
-      .limit(40)
+      .limit(80)
       .then(({ data }) => {
-        if (data) setSignals(data as IntradaySignal[]);
+        if (data) {
+          const rows = (data as IntradaySignal[]).filter((s) => !isEtfStockId(s.stock_id));
+          setSignals(sortSignalsNewestFirst(rows).slice(0, 40));
+        }
         setLoaded(true);
       });
 
@@ -76,7 +82,9 @@ function useIntradayFeed(enabled: boolean) {
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "intraday_signals" },
         (payload) => {
-          setSignals((prev) => [payload.new as IntradaySignal, ...prev].slice(0, 60));
+          const row = payload.new as IntradaySignal;
+          if (!row?.stock_id || isEtfStockId(row.stock_id)) return;
+          setSignals((prev) => sortSignalsNewestFirst([row, ...prev]).slice(0, 60));
         },
       )
       .on(
@@ -191,11 +199,8 @@ function SignalRow({ s }: { s: IntradaySignal }) {
     >
       <div className="min-w-0 flex-1 space-y-1.5">
         <div className="flex flex-wrap items-center gap-1.5">
-          <span className="num font-mono text-[11px] text-muted-foreground">
-            {new Date(s.created_at).toLocaleTimeString("zh-TW", {
-              timeZone: "Asia/Taipei",
-              hour12: false,
-            })}
+          <span className="num font-mono text-[11px] tabular-nums text-muted-foreground">
+            {formatSignalTime(s.created_at)}
           </span>
           <span
             className={cn(

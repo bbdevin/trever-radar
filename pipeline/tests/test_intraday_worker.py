@@ -266,6 +266,14 @@ def test_format_twd_amount_units():
     assert worker.format_twd_amount(150_000_000) == "1.5億"
 
 
+def test_is_etf_id_covers_letter_suffix():
+    assert worker.is_etf_id("0050")
+    assert worker.is_etf_id("00878")
+    assert worker.is_etf_id("00679B")
+    assert not worker.is_etf_id("2330")
+    assert not worker.is_etf_id("03001")  # 權證 03xxxx
+
+
 def test_etf_ids_excluded_from_monitor_pool(monkeypatch):
     payload = {
         "lists": {"armed": ["0050", "2330"]},

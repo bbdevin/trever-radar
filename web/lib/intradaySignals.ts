@@ -57,6 +57,48 @@ export const SIGNAL_PILL: Record<SignalMeta["family"], string> = {
 /** Fugle 基本用戶免費 WS 上限（與 worker FUGLE_WS_MAX_SUBSCRIBE 預設一致） */
 export const DEFAULT_MONITOR_CAP = 5;
 
+/** 台股 ETF 代號：00 開頭（0050／00878／00679B…）。對齊 pipeline classify / worker。 */
+export function isEtfStockId(sid: string): boolean {
+  return String(sid).trim().toUpperCase().startsWith("00");
+}
+
+/** 監控訊號：新 → 舊（created_at desc） */
+export function sortSignalsNewestFirst<T extends { created_at: string }>(rows: T[]): T[] {
+  return [...rows].sort((a, b) => {
+    const tb = Date.parse(b.created_at) || 0;
+    const ta = Date.parse(a.created_at) || 0;
+    if (tb !== ta) return tb - ta;
+    return (Number((b as { id?: number }).id) || 0) - (Number((a as { id?: number }).id) || 0);
+  });
+}
+
+/** 台北時間：今日顯示 HH:mm:ss，跨日顯示 MM/DD HH:mm */
+export function formatSignalTime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Taipei",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).formatToParts(d);
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
+  const ymd = `${get("year")}-${get("month")}-${get("day")}`;
+  const today = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Taipei",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+  const hm = `${get("hour")}:${get("minute")}:${get("second")}`;
+  if (ymd === today) return hm;
+  return `${get("month")}/${get("day")} ${get("hour")}:${get("minute")}`;
+}
+
 export function signalMeta(type: IntradaySignalType): SignalMeta {
   return (
     SIGNAL_META[type] ?? {

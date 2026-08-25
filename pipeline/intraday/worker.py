@@ -52,9 +52,9 @@ POOL_LABEL = {"armed": "未發動", "watchlist": "自選", "both": "雙池"}
 
 
 def is_etf_id(sid: str) -> bool:
-    """台股 ETF 代號多為 00 開頭(0050/0056/00878…);個股監控不納入。"""
-    s = str(sid).strip()
-    return s.startswith("00") and s.isdigit()
+    """台股 ETF 代號為 00 開頭(0050/0056/00878/00679B…);對齊 classify.py,個股監控不納入。"""
+    s = str(sid).strip().upper()
+    return s.startswith("00")
 
 
 def format_twd_amount(amount: float) -> str:
