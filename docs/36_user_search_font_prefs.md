@@ -1,6 +1,6 @@
 # 搜尋歷史 ＋ 帳號綁定文字縮放
 
-> 狀態：**程式已實作（2026-08-26）**；**須人工在 Supabase 執行** [`docs/sql/user_ui_prefs.sql`](sql/user_ui_prefs.sql) 後雲端偏好才會生效。  
+> 狀態：**程式已實作（2026-08-26）**；**Supabase SQL 已由使用者執行**（`docs/sql/user_ui_prefs.sql`）。  
 > UI：ui-ux-pro-max＋`docs/19`（Lucide、無 emoji、現站品牌色）。
 
 ## 1. 功能
@@ -33,7 +33,7 @@
 - [x] UserPrefsProvider＋CSS
 - [x] FontScaleToggle
 - [x] SearchBox 歷史
-- [ ] **人工**：Supabase 執行 `user_ui_prefs.sql`
+- [x] **人工**：Supabase 執行 `user_ui_prefs.sql`（2026-08-26 使用者完成）
 
 ## 5. 驗收
 
