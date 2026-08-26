@@ -749,7 +749,10 @@ def import_tdcc_shareholding() -> dict:
     from .providers.tdcc_shareholding import fetch_tdcc_shareholding
 
     init_db()
-    rows = fetch_tdcc_shareholding()
+    return _upsert_tdcc_rows(fetch_tdcc_shareholding(), source_tag="holders")
+
+
+def _upsert_tdcc_rows(rows, source_tag: str = "holders") -> dict:
     payload = [
         {
             "stock_id": r.stock_id,
@@ -768,9 +771,83 @@ def import_tdcc_shareholding() -> dict:
         _log(
             conn,
             "tdcc",
-            "holders",
+            source_tag,
             (as_of or "00000000").replace("-", ""),
             n,
             "ok",
         )
     return {"rows": n, "stocks": stocks, "as_of": as_of}
+
+
+def backfill_tdcc_from_archive(
+    date_from: str = "2026-04-01",
+    date_to: str | None = None,
+    *,
+    sleep_s: float = 0.4,
+    dry_run: bool = False,
+    skip_existing: bool = True,
+) -> dict:
+    """從 wirelessr/tdcc-opendata-archive 回補週快照(官方 endpoint 無歷史)。
+
+    預設 2026-04-01～今天;archive 實際約自 2026-04-30 起。
+    """
+    from datetime import date
+
+    from sqlalchemy import text
+
+    from .providers.tdcc_shareholding import (
+        fetch_archive_week,
+        list_archive_weeks_in_range,
+    )
+
+    init_db()
+    if date_to is None:
+        date_to = date.today().isoformat()
+    weeks = list_archive_weeks_in_range(date_from, date_to)
+    existing: set[str] = set()
+    if skip_existing:
+        with get_engine().connect() as conn:
+            existing = {
+                r[0]
+                for r in conn.execute(
+                    text("SELECT DISTINCT as_of FROM shareholding_dispersion")
+                ).fetchall()
+            }
+    planned = [w for w in weeks if not (skip_existing and w in existing)]
+    print(
+        f"backfill-tdcc archive: range={date_from}..{date_to} "
+        f"listed={len(weeks)} skip={len(weeks) - len(planned)} todo={len(planned)}"
+        f"{' dry-run' if dry_run else ''}",
+        flush=True,
+    )
+    imported = 0
+    skipped = len(weeks) - len(planned)
+    errors: list[str] = []
+    for i, w in enumerate(planned):
+        if dry_run:
+            print(f"  would import {w}", flush=True)
+            continue
+        try:
+            rows = fetch_archive_week(w)
+            info = _upsert_tdcc_rows(rows, source_tag="holders-archive")
+            imported += 1
+            print(
+                f"  [{i + 1}/{len(planned)}] {w} as_of={info['as_of']} "
+                f"stocks={info['stocks']} rows={info['rows']}",
+                flush=True,
+            )
+        except Exception as e:  # noqa: BLE001
+            errors.append(f"{w}: {e}")
+            print(f"  [{i + 1}/{len(planned)}] {w} ERROR {e}", flush=True)
+        if sleep_s > 0 and i + 1 < len(planned):
+            time.sleep(sleep_s)
+    return {
+        "date_from": date_from,
+        "date_to": date_to,
+        "listed": len(weeks),
+        "planned": len(planned),
+        "imported": imported,
+        "skipped": skipped,
+        "errors": errors,
+        "dry_run": dry_run,
+    }

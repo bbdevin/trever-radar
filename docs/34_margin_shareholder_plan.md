@@ -80,6 +80,7 @@ display_to   = 最新一週 as_of
 - 例：2026-08 看 → 2026-01-01～至今（當年度）  
 - 例：2027-01 看 → 約 2026-07～2027-01（跨年初期自動帶前 6 個月）  
 - V1 不做多年回補；DB 可多留緩衝，**UI／export 只出上述窗**
+- **2026-08-26**：官方 CSV 無歷史 → 可用社群 archive 一次性回補（`radar backfill-tdcc --from 2026-04-01`；約自 2026-04-30 起有檔；見 §4.5）
 
 ### 3.3 資券（TWSE／TPEx）
 
@@ -153,6 +154,25 @@ Export 每週每檔預聚合（N ∈ {400,600,800,1000}）：
 - **定案槽位（2026-08-26）**：**週六 06:30** `weekly-tdcc.sh`（在週六 05:00 Drive 備份之後；避開 03:00 mid 與平日 daily）  
 - 總架構圖：[`docs/35_vps_schedule_architecture.md`](35_vps_schedule_architecture.md)  
 - 寫入 `vps/scripts/crontab.example`；**VPS 掛載需使用者確認**
+
+### 4.5 Archive 歷史回補（2026-08-26）
+
+官方 `getOD.ashx?id=1-5` **只保留最新週**。一次性歷史用社群歸檔 [wirelessr/tdcc-opendata-archive](https://github.com/wirelessr/tdcc-opendata-archive)（2026 約自 **2026-04-30**）。
+
+```bash
+# CLI（VPS，握 db lock／pause bf 後）
+radar backfill-tdcc --from 2026-04-01 --sleep 0.4   # --to 預設今天；已有 as_of 略過
+radar export-json && # deploy_data via weekly script helper
+# 或：SKIP_QUIET=1 bash vps/scripts/backfill-tdcc.sh
+```
+
+| 旗標 | 意義 |
+|---|---|
+| `--dry-run` | 只列將匯入的週 |
+| `--force` | 重灌已存在的 as_of |
+| `SKIP_QUIET=1` | 腳本略過安靜窗檢查（手動盤中／盤後） |
+
+1–4 月缺口：archive 無檔則無法補；勿爬集保個股頁。
 
 ---
 
@@ -412,7 +432,8 @@ flowchart LR
 - [ ] **Phase A4 VPS** — `backfill-margin.sh` 排程執行中（週日 02:30 + 首跑 23:15）
 - [x] **Phase B1** — TDCC 週更入庫（`import-tdcc`、`shareholding_dispersion`、`weekly-tdcc.sh`；2026-08-26）
 - [x] **Phase B2** — 大戶 UI（個股 tab「大戶」＋門檻／雙模式；2026-08-26）
-- [ ] **Phase B VPS** — 首次手動 `import-tdcc` + 掛週六 06:30 cron（待人工）
+- [x] **Phase B archive 回補 CLI** — `backfill-tdcc`（wirelessr archive；2026-08-26）；VPS 手動跑見 §4.5
+- [ ] **Phase B VPS** — 週六 06:30 cron 已掛；archive 回補待人工執行一次
 - [ ] **Phase C** — 當沖／借券（後續另確認）
 - [x] **每日分點全股票** — `import-branch-trades --top 0`（不含 ETF；2026-08-26）
 

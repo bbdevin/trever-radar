@@ -120,6 +120,27 @@ def cmd_import_tdcc(args):
     )
 
 
+def cmd_backfill_tdcc(args):
+    from .importer import backfill_tdcc_from_archive
+
+    info = backfill_tdcc_from_archive(
+        date_from=args.date_from,
+        date_to=args.date_to,
+        sleep_s=args.sleep,
+        dry_run=args.dry_run,
+        skip_existing=not args.force,
+    )
+    print(
+        f"backfill-tdcc: listed={info['listed']} planned={info['planned']} "
+        f"imported={info['imported']} skipped={info['skipped']} "
+        f"errors={len(info['errors'])}"
+    )
+    if info["errors"]:
+        for e in info["errors"][:10]:
+            print(f"  err: {e}")
+        raise SystemExit(1)
+
+
 def cmd_compute_scores(args):
     from .compute.scores import compute_scores
     info = compute_scores(args.date)
@@ -330,6 +351,31 @@ def main(argv=None):
         help="TDCC weekly shareholding dispersion (docs/34 B1)",
     )
     tdcc.set_defaults(fn=cmd_import_tdcc)
+
+    btdcc = sub.add_parser(
+        "backfill-tdcc",
+        help="backfill TDCC weeks from wirelessr archive (docs/34; official has no history)",
+    )
+    btdcc.add_argument(
+        "--from",
+        dest="date_from",
+        default="2026-04-01",
+        help="YYYY-MM-DD inclusive (default 2026-04-01; archive ~from 2026-04-30)",
+    )
+    btdcc.add_argument(
+        "--to",
+        dest="date_to",
+        default=None,
+        help="YYYY-MM-DD inclusive (default today)",
+    )
+    btdcc.add_argument("--sleep", type=float, default=0.4)
+    btdcc.add_argument("--dry-run", action="store_true", help="list weeks only")
+    btdcc.add_argument(
+        "--force",
+        action="store_true",
+        help="re-import weeks already in DB",
+    )
+    btdcc.set_defaults(fn=cmd_backfill_tdcc)
 
     sc = sub.add_parser("compute-scores", help="V1 composite daily scores (docs/04)")
     sc.add_argument("--date", default=None, help="YYYYMMDD; default latest trading day")

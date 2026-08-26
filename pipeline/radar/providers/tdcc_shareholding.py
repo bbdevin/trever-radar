@@ -1,19 +1,28 @@
 """TDCC 集保戶股權分散表(docs/34 B1)。
 
-來源:https://opendata.tdcc.com.tw/getOD.ashx?id=1-5
-欄位:資料日期、證券代號、持股分級、人數、股數、占集保庫存數比例％
+來源:https://opendata.tdcc.com.tw/getOD.ashx?id=1-5 （僅最新一週）
+歷史回補:wirelessr/tdcc-opendata-archive（官方每週覆寫,社群週快照）
 """
 from __future__ import annotations
 
 import csv
 import io
+import json
 import re
 from dataclasses import dataclass
+from datetime import date
 
 from ..http import _get
 
 TDCC_URL = "https://opendata.tdcc.com.tw/getOD.ashx?id=1-5"
+ARCHIVE_API = (
+    "https://api.github.com/repos/wirelessr/tdcc-opendata-archive/contents/snapshots/{year}"
+)
+ARCHIVE_RAW = (
+    "https://raw.githubusercontent.com/wirelessr/tdcc-opendata-archive/main/snapshots/{year}/{ymd}.csv"
+)
 _TIER_RE = re.compile(r"(\d+)")
+_YMD_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})\.csv$")
 
 
 @dataclass(frozen=True)
@@ -133,20 +142,66 @@ def parse_tdcc_csv(text: str) -> list[ShareholdingRow]:
     return rows_out
 
 
+def decode_tdcc_bytes(raw: bytes) -> str:
+    for enc in ("utf-8-sig", "utf-8", "big5", "cp950"):
+        try:
+            return raw.decode(enc)
+        except UnicodeDecodeError:
+            continue
+    return raw.decode("utf-8", errors="replace")
+
+
 def fetch_tdcc_shareholding() -> list[ShareholdingRow]:
     """Download latest full-market TDCC CSV and parse."""
     r = _get(TDCC_URL, throttle=0.5)
-    raw = r.content
-    text = None
-    for enc in ("utf-8-sig", "utf-8", "big5", "cp950"):
-        try:
-            text = raw.decode(enc)
-            break
-        except UnicodeDecodeError:
-            continue
-    if text is None:
-        text = raw.decode("utf-8", errors="replace")
-    rows = parse_tdcc_csv(text)
+    rows = parse_tdcc_csv(decode_tdcc_bytes(r.content))
     if not rows:
         raise RuntimeError("tdcc shareholding: empty parse")
+    return rows
+
+
+def list_archive_weeks(year: int) -> list[str]:
+    """List YYYY-MM-DD weeks available in wirelessr archive for a calendar year."""
+    url = ARCHIVE_API.format(year=year)
+    r = _get(url, throttle=0.3)
+    try:
+        items = r.json()
+    except Exception as e:  # noqa: BLE001
+        raise RuntimeError(f"tdcc archive list parse failed: {e}") from e
+    if not isinstance(items, list):
+        # GitHub API error payload
+        raise RuntimeError(f"tdcc archive list unexpected: {json.dumps(items)[:200]}")
+    out: list[str] = []
+    for it in items:
+        name = (it or {}).get("name") or ""
+        m = _YMD_RE.match(name)
+        if m:
+            out.append(m.group(1))
+    out.sort()
+    return out
+
+
+def list_archive_weeks_in_range(date_from: str, date_to: str) -> list[str]:
+    """Inclusive ISO date range → archive week dates (multi-year OK)."""
+    d0 = date.fromisoformat(date_from)
+    d1 = date.fromisoformat(date_to)
+    if d1 < d0:
+        raise ValueError(f"date_to {date_to} < date_from {date_from}")
+    weeks: list[str] = []
+    for y in range(d0.year, d1.year + 1):
+        for w in list_archive_weeks(y):
+            wd = date.fromisoformat(w)
+            if d0 <= wd <= d1:
+                weeks.append(w)
+    return weeks
+
+
+def fetch_archive_week(ymd: str) -> list[ShareholdingRow]:
+    """Download one archived weekly CSV (YYYY-MM-DD)."""
+    y = ymd[:4]
+    url = ARCHIVE_RAW.format(year=y, ymd=ymd)
+    r = _get(url, throttle=0.4)
+    rows = parse_tdcc_csv(decode_tdcc_bytes(r.content))
+    if not rows:
+        raise RuntimeError(f"tdcc archive {ymd}: empty parse")
     return rows

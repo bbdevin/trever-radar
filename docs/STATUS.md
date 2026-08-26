@@ -110,6 +110,7 @@
 
 ## 最近完成
 
+- 2026-08-26 **TDCC archive 回補 CLI**：`radar backfill-tdcc --from 2026-04-01`（wirelessr 週快照；官方無歷史）；`vps/scripts/backfill-tdcc.sh`。**VPS 待人工跑一次**（見 `docs/34` §4.5）。
 - 2026-08-26 **大戶表 UI**：個股 tab 表改為日期｜大戶持股｜增減｜散戶｜內部人；紅漲綠跌＋+/-（`HoldersPanel`）；export 補 `retail_pct`（下次 export 後散戶有值；內部人暫 —）。
 - 2026-08-26 **`docs/sql` migration 命名統一**：`YYYYMMDDHHMMSS_描述.sql`；見 `docs/sql/README.md`。既有 7 檔已改名並更新 STATUS／36／21／worker 引用。
 - 2026-08-26 **docs/35 S2 程式落地＋VPS 已掛**：`bf-supervisor`（單寫者／自啟／ntfy）、`safe-branch-stats`＋scores、安靜窗收進 `lib.sh`；**TDCC B1/B2**（`import-tdcc`、個股「大戶」tab、`weekly-tdcc.sh` @ 週六 06:30）。**VPS**：crontab 已掛 supervisor／tdcc；`BF_ORDER=warrant,branches`（先權證）；`disk-cleanup.sh` 每日 07:40（首跑 +2G free）。`backfill-branches top=0` 已修（`7b2c003`）。

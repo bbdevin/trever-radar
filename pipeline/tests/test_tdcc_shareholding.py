@@ -73,5 +73,26 @@ class TestThreshold(unittest.TestCase):
         self.assertAlmostEqual(retail["shares_pct"], 17.0)
 
 
+class TestArchiveRange(unittest.TestCase):
+    def test_filter_weeks_in_range(self):
+        from datetime import date as date_cls
+
+        from radar.providers import tdcc_shareholding as mod
+
+        fake = ["2026-04-30", "2026-05-08", "2026-08-21", "2026-09-05"]
+
+        def fake_list(year: int):
+            return [w for w in fake if w.startswith(str(year))]
+
+        orig = mod.list_archive_weeks
+        mod.list_archive_weeks = fake_list  # type: ignore[assignment]
+        try:
+            got = mod.list_archive_weeks_in_range("2026-04-01", "2026-08-26")
+            self.assertEqual(got, ["2026-04-30", "2026-05-08", "2026-08-21"])
+            self.assertTrue(all(date_cls.fromisoformat(w) >= date_cls(2026, 4, 1) for w in got))
+        finally:
+            mod.list_archive_weeks = orig  # type: ignore[assignment]
+
+
 if __name__ == "__main__":
     unittest.main()
