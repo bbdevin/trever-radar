@@ -48,11 +48,9 @@ type RowView = {
   holdersDelta: number | null;
   retailHolders: number | null;
   retailHoldersDelta: number | null;
-  insider: number | null;
-  insiderDelta: number | null;
 };
 
-/** 個股「大戶」tab：TDCC 週更＋董監月更（docs/34 B2/D1/D2）。 */
+/** 個股「大戶」tab：TDCC 週更＋董監月更明細（docs/34 B2/D1；D2 內部人％ UI 暫隱藏）。 */
 export default function HoldersPanel({ data }: { data: StockJson }) {
   const [threshold, setThreshold] = useState<(typeof THRESHOLDS)[number]>(400);
   const [mode, setMode] = useState<"pct" | "holders" | "directors">("pct");
@@ -78,8 +76,6 @@ export default function HoldersPanel({ data }: { data: StockJson }) {
       const olderRetail = older?.retail_pct ?? null;
       const retailHolders = r.retail_holders ?? null;
       const olderRetailHolders = older?.retail_holders ?? null;
-      const insider = r.insider_pct ?? null;
-      const olderInsider = older?.insider_pct ?? null;
       return {
         t: r.t,
         major,
@@ -93,9 +89,6 @@ export default function HoldersPanel({ data }: { data: StockJson }) {
           retailHolders != null && olderRetailHolders != null
             ? retailHolders - olderRetailHolders
             : null,
-        insider,
-        insiderDelta:
-          insider != null && olderInsider != null ? insider - olderInsider : null,
       };
     });
   }, [history, key]);
@@ -305,14 +298,11 @@ export default function HoldersPanel({ data }: { data: StockJson }) {
                   </th>
                   {mode === "pct" ? (
                     <>
-                      <th scope="col" className="w-[28%] px-1 py-2 text-right font-medium sm:px-1.5" title="大戶持股％與增減">
+                      <th scope="col" className="w-[41%] px-1 py-2 text-right font-medium sm:px-1.5" title="大戶持股％與增減">
                         大戶<span className="font-normal opacity-70">%</span>
                       </th>
-                      <th scope="col" className="w-[27%] px-1 py-2 text-right font-medium sm:px-1.5" title="散戶持股％">
+                      <th scope="col" className="w-[41%] px-1 py-2 text-right font-medium sm:px-1.5" title="散戶持股％">
                         散戶<span className="font-normal opacity-70">%</span>
-                      </th>
-                      <th scope="col" className="w-[27%] px-1 py-2 text-right font-medium sm:px-1.5" title="董監加總÷集保庫存（月更）">
-                        內部人<span className="font-normal opacity-70">%</span>
                       </th>
                     </>
                   ) : (
@@ -400,17 +390,6 @@ export default function HoldersPanel({ data }: { data: StockJson }) {
                       >
                         {fmtNum(r.retail)}
                       </td>
-                      <td
-                        className={cn(
-                          "num px-1 py-1.5 text-right sm:px-1.5",
-                          r.insider == null
-                            ? "text-muted-foreground"
-                            : trendClass(r.insiderDelta),
-                        )}
-                        title={meta?.insider_note ?? undefined}
-                      >
-                        {fmtNum(r.insider)}
-                      </td>
                     </tr>
                   );
                 })}
@@ -427,9 +406,7 @@ export default function HoldersPanel({ data }: { data: StockJson }) {
             </button>
           )}
           <p className="text-[11px] text-muted-foreground">
-            大戶第二行＝週增減（紅增綠減）。散戶＝未滿 400 張。內部人＝去重後（持股＋關係人）÷集保（月更
-            {meta?.insider_as_of_ym ? `，最新 ${meta.insider_as_of_ym}` : ""}
-            ）。
+            大戶第二行＝週增減（紅增綠減）。散戶＝未滿 400 張。週表暫不顯示內部人％（口徑待定）；明細見「董監持股」。
           </p>
         </>
       )}

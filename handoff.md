@@ -1,7 +1,6 @@
 - **Done（2026-08-26）**:
-  - 內部人％公式修正：姓名去重＋目前持股＋關係人合計（對齊籌碼／元大；2476≈12.09）
-  - Phase D1/D2 已上線；`monthly-directors.sh` crontab 掛載仍待人工
+  - 週表「內部人％」暫隱藏（口徑不穩）；保留「董監持股」分頁
 - **Next**:
-  1. VPS：`git pull` → `radar export-json` + deploy（公式在 export，不必重跑 import）
-  2. 掛 crontab 16 日槽
+  1. 掛 crontab 董監月槽（16 日 07:00）
+  2. 內部人％若要重開：先定分母（集保週／已發行）與分子規則再開 UI
 - **Branch**: `main`

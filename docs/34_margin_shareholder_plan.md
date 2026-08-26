@@ -192,7 +192,7 @@ insider_pct = sum_unique_name(目前持股 + 關係人合計) / SUM(TDCC tiers.s
 - **分母**：該月內最近一週 `shareholding_dispersion` 股數加總（集保庫存）；ffill 到週列。
 - 抽樣：鉅祥 2476（2026-07）≈ **12.05–12.09%**（視當月 TDCC 週），修正前誤為 ~10.48%（雙列加總且未加關係人）。
 
-**UI**（`HoldersPanel`）：pills `大戶比｜持股人數｜董監持股`；大戶比週表欄 `日期｜大戶｜散戶｜內部人`。
+**UI**（`HoldersPanel`）：pills `大戶比｜持股人數｜董監持股`；大戶比週表欄 `日期｜大戶｜散戶`（**內部人％欄 2026-08-26 暫隱藏**——與籌碼 App 口徑仍難 100% 對齊；export 仍可帶 `insider_pct` 備日後重開）。
 
 ---
 
