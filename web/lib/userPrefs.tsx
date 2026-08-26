@@ -13,6 +13,7 @@ import { supabase } from "@/lib/supabase";
 import { useSession } from "@/lib/useSession";
 
 export type FontScale = "md" | "lg" | "xl";
+export type ThemeMode = "dark" | "light";
 
 export type SearchHistoryItem = {
   stock_id: string;
@@ -21,11 +22,16 @@ export type SearchHistoryItem = {
 
 const FONT_SCALES: FontScale[] = ["md", "lg", "xl"];
 const ZOOM: Record<FontScale, string> = { md: "1", lg: "1.125", xl: "1.25" };
-const LOCAL_KEY = "font_scale";
+const LOCAL_FONT = "font_scale";
+const LOCAL_THEME = "theme";
 const HISTORY_LIMIT = 20;
 
 function isFontScale(v: unknown): v is FontScale {
   return v === "md" || v === "lg" || v === "xl";
+}
+
+function isThemeMode(v: unknown): v is ThemeMode {
+  return v === "dark" || v === "light";
 }
 
 function applyFontScale(scale: FontScale) {
@@ -34,9 +40,14 @@ function applyFontScale(scale: FontScale) {
   document.body.style.zoom = ZOOM[scale];
 }
 
+function applyTheme(mode: ThemeMode) {
+  if (typeof document === "undefined") return;
+  document.documentElement.classList.toggle("dark", mode === "dark");
+}
+
 function readLocalScale(): FontScale {
   try {
-    const v = localStorage.getItem(LOCAL_KEY);
+    const v = localStorage.getItem(LOCAL_FONT);
     if (isFontScale(v)) return v;
   } catch {
     /* ignore */
@@ -44,30 +55,67 @@ function readLocalScale(): FontScale {
   return "md";
 }
 
+/** 預設深色；僅本機明確存 light 才淺色。*/
+function readLocalTheme(): ThemeMode {
+  try {
+    const v = localStorage.getItem(LOCAL_THEME);
+    if (isThemeMode(v)) return v;
+  } catch {
+    /* ignore */
+  }
+  return "dark";
+}
+
 interface UserPrefsContextValue {
   fontScale: FontScale;
+  theme: ThemeMode;
   searchHistory: SearchHistoryItem[];
   loading: boolean;
   setFontScale: (scale: FontScale) => Promise<void>;
   cycleFontScale: () => Promise<void>;
+  setTheme: (mode: ThemeMode) => Promise<void>;
+  toggleTheme: () => Promise<void>;
   pushSearch: (stockId: string) => Promise<void>;
   clearSearchHistory: () => Promise<void>;
 }
 
 const UserPrefsContext = createContext<UserPrefsContextValue | null>(null);
 
-/** 全站字級與搜尋歷史（登入綁帳號；未登入字級僅本機）。*/
+/** 字級／主題／搜尋歷史：本機 + 登入後雲端帳號。預設深色。*/
 export function UserPrefsProvider({ children }: { children: ReactNode }) {
   const { session } = useSession();
   const [fontScale, setFontScaleState] = useState<FontScale>("md");
+  const [theme, setThemeState] = useState<ThemeMode>("dark");
   const [searchHistory, setSearchHistory] = useState<SearchHistoryItem[]>([]);
   const [loading, setLoading] = useState(true);
 
+  const persistCloud = useCallback(
+    async (next: { font_scale: FontScale; theme: ThemeMode }) => {
+      if (!session) return;
+      const { error } = await supabase.from("user_ui_prefs").upsert(
+        {
+          user_id: session.user.id,
+          font_scale: next.font_scale,
+          theme: next.theme,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "user_id" },
+      );
+      if (error && !/does not exist|schema cache|column.*theme/i.test(error.message)) {
+        console.warn("user_ui_prefs upsert", error.message);
+      }
+    },
+    [session],
+  );
+
   const refresh = useCallback(async () => {
     if (!session) {
-      const local = readLocalScale();
-      setFontScaleState(local);
-      applyFontScale(local);
+      const localScale = readLocalScale();
+      const localTheme = readLocalTheme();
+      setFontScaleState(localScale);
+      setThemeState(localTheme);
+      applyFontScale(localScale);
+      applyTheme(localTheme);
       setSearchHistory([]);
       setLoading(false);
       return;
@@ -75,7 +123,7 @@ export function UserPrefsProvider({ children }: { children: ReactNode }) {
     setLoading(true);
     const uid = session.user.id;
     const [prefsRes, histRes] = await Promise.all([
-      supabase.from("user_ui_prefs").select("font_scale").eq("user_id", uid).maybeSingle(),
+      supabase.from("user_ui_prefs").select("font_scale, theme").eq("user_id", uid).maybeSingle(),
       supabase
         .from("search_history")
         .select("stock_id, searched_at")
@@ -84,17 +132,20 @@ export function UserPrefsProvider({ children }: { children: ReactNode }) {
         .limit(HISTORY_LIMIT),
     ]);
 
-    let scale: FontScale = "md";
-    if (prefsRes.data && isFontScale(prefsRes.data.font_scale)) {
-      scale = prefsRes.data.font_scale;
-    } else if (!prefsRes.error || /does not exist|schema cache/i.test(prefsRes.error.message ?? "")) {
-      // 無列或表未建：用本機，登入後稍後 upsert
-      scale = readLocalScale();
+    let scale = readLocalScale();
+    let mode = readLocalTheme();
+    if (prefsRes.data) {
+      if (isFontScale(prefsRes.data.font_scale)) scale = prefsRes.data.font_scale;
+      if (isThemeMode(prefsRes.data.theme)) mode = prefsRes.data.theme;
     }
+
     setFontScaleState(scale);
+    setThemeState(mode);
     applyFontScale(scale);
+    applyTheme(mode);
     try {
-      localStorage.setItem(LOCAL_KEY, scale);
+      localStorage.setItem(LOCAL_FONT, scale);
+      localStorage.setItem(LOCAL_THEME, mode);
     } catch {
       /* ignore */
     }
@@ -111,9 +162,9 @@ export function UserPrefsProvider({ children }: { children: ReactNode }) {
     void refresh();
   }, [refresh]);
 
-  // 首屏：未等 session 前先套本機字級，減少閃爍
   useEffect(() => {
     applyFontScale(readLocalScale());
+    applyTheme(readLocalTheme());
   }, []);
 
   const setFontScale = useCallback(
@@ -121,24 +172,13 @@ export function UserPrefsProvider({ children }: { children: ReactNode }) {
       setFontScaleState(scale);
       applyFontScale(scale);
       try {
-        localStorage.setItem(LOCAL_KEY, scale);
+        localStorage.setItem(LOCAL_FONT, scale);
       } catch {
         /* ignore */
       }
-      if (!session) return;
-      const { error } = await supabase.from("user_ui_prefs").upsert(
-        {
-          user_id: session.user.id,
-          font_scale: scale,
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: "user_id" },
-      );
-      if (error && !/does not exist|schema cache/i.test(error.message)) {
-        console.warn("user_ui_prefs upsert", error.message);
-      }
+      await persistCloud({ font_scale: scale, theme });
     },
-    [session],
+    [persistCloud, theme],
   );
 
   const cycleFontScale = useCallback(async () => {
@@ -146,6 +186,24 @@ export function UserPrefsProvider({ children }: { children: ReactNode }) {
     const next = FONT_SCALES[(i + 1) % FONT_SCALES.length]!;
     await setFontScale(next);
   }, [fontScale, setFontScale]);
+
+  const setTheme = useCallback(
+    async (mode: ThemeMode) => {
+      setThemeState(mode);
+      applyTheme(mode);
+      try {
+        localStorage.setItem(LOCAL_THEME, mode);
+      } catch {
+        /* ignore */
+      }
+      await persistCloud({ font_scale: fontScale, theme: mode });
+    },
+    [persistCloud, fontScale],
+  );
+
+  const toggleTheme = useCallback(async () => {
+    await setTheme(theme === "dark" ? "light" : "dark");
+  }, [theme, setTheme]);
 
   const pushSearch = useCallback(
     async (stockId: string) => {
@@ -165,7 +223,6 @@ export function UserPrefsProvider({ children }: { children: ReactNode }) {
         console.warn("search_history upsert", error.message, error);
         return;
       }
-      // 修剪超過 20 筆
       const { data: all } = await supabase
         .from("search_history")
         .select("stock_id, searched_at")
@@ -199,14 +256,28 @@ export function UserPrefsProvider({ children }: { children: ReactNode }) {
   const value = useMemo(
     () => ({
       fontScale,
+      theme,
       searchHistory,
       loading,
       setFontScale,
       cycleFontScale,
+      setTheme,
+      toggleTheme,
       pushSearch,
       clearSearchHistory,
     }),
-    [fontScale, searchHistory, loading, setFontScale, cycleFontScale, pushSearch, clearSearchHistory],
+    [
+      fontScale,
+      theme,
+      searchHistory,
+      loading,
+      setFontScale,
+      cycleFontScale,
+      setTheme,
+      toggleTheme,
+      pushSearch,
+      clearSearchHistory,
+    ],
   );
 
   return <UserPrefsContext.Provider value={value}>{children}</UserPrefsContext.Provider>;

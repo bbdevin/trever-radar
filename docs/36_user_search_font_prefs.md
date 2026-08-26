@@ -8,7 +8,8 @@
 | 功能 | 行為 | 儲存 |
 |---|---|---|
 | 搜尋歷史 | 開搜尋框且關鍵字空白 → 最近代號；點選進個股；「清除歷史」 | Supabase `search_history`；**僅登入** |
-| 文字縮放 | Header「A」循環：標準 / 較大 / 最大（100% / 112.5% / 125%） | Supabase `user_ui_prefs.font_scale`；未登入本機暫存，登入後以帳號為準 |
+| 文字縮放 | Header／大頭貼選單：標準 / 較大 / 最大 | 本機 + Supabase |
+| 深淺色 | 預設**深色**；選單／登入頁可切 | 本機 + Supabase `theme` |
 
 ## 2. 字級代碼
 
@@ -35,6 +36,7 @@
 - [x] SearchBox 歷史
 - [x] **人工**：Supabase 執行 `user_ui_prefs.sql`（2026-08-26 使用者完成）
 - [x] **修復**：選股後 `await pushSearch` 再導頁（避免請求被取消）；補 `GRANT`（見 `user_ui_prefs_grants.sql`）
+- [x] **主題綁帳號**：`theme` 欄（預設 dark）；補跑 `user_ui_prefs_theme.sql`
 
 ## 5. 驗收
 

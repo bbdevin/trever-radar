@@ -3,14 +3,17 @@
 -- 只建表與 RLS，不含金鑰，可安全進版控。
 --
 -- 行為：
---   1. user_ui_prefs.font_scale：md（標準）/ lg（較大）/ xl（最大），綁定帳號。
+--   1. user_ui_prefs.font_scale：md／lg／xl；theme：dark／light（預設 dark）。本機 + 帳號。
 --   2. search_history：每位使用者最近搜尋的股票代號（前端上限 20 筆）。
 --   3. RLS：authenticated 只能 CRUD 自己的列（比照 watchlist）。
+-- 表已存在時補 theme：另跑 docs/sql/user_ui_prefs_theme.sql
 
 create table if not exists public.user_ui_prefs (
   user_id uuid primary key references auth.users(id) on delete cascade,
   font_scale text not null default 'md'
     check (font_scale in ('md', 'lg', 'xl')),
+  theme text not null default 'dark'
+    check (theme in ('dark', 'light')),
   updated_at timestamptz not null default now()
 );
 

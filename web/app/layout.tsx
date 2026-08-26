@@ -56,8 +56,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           }}
         />
         <PwaProvider>
-          <AuthGate>
-            <UserPrefsProvider>
+          <UserPrefsProvider>
+            <AuthGate>
               <WatchlistProvider>
               <header className="sticky top-0 z-40 border-b border-border bg-background/78 pt-[env(safe-area-inset-top)] backdrop-blur-md backdrop-saturate-150">
                 <div className="container flex h-[58px] items-center gap-5">
@@ -89,8 +89,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               </footer>
               <BottomNav />
               </WatchlistProvider>
-            </UserPrefsProvider>
-          </AuthGate>
+            </AuthGate>
+          </UserPrefsProvider>
           <Toaster
             position="bottom-center"
             richColors
