@@ -1,5 +1,5 @@
 ## Handoff
 
-- **Done（2026-08-26）**: 修搜尋歷史未寫入——選股後改 `await pushSearch` 再導頁；補 `docs/sql/user_ui_prefs_grants.sql`
-- **Next（人工）**: Supabase 再跑一次 `user_ui_prefs_grants.sql`；部署後重搜一檔驗收
+- **Done（2026-08-26）**: Header：搜尋旁加重新整理；字級／深淺色移入大頭貼選單（登出上方）
+- **Next**: 驗收搜尋歷史（須已跑 grants SQL）；排程管家見 `docs/35`
 - **Branch**: `main`

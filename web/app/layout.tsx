@@ -1,14 +1,13 @@
 import type { Metadata, Viewport } from "next";
 import { Manrope } from "next/font/google";
 import { Toaster } from "sonner";
+import SearchBox from "@/components/SearchBox";
+import ReloadButton from "@/components/ReloadButton";
 import AuthButton from "@/components/AuthButton";
 import AuthGate from "@/components/AuthGate";
 import BottomNav from "@/components/BottomNav";
 import DesktopNav from "@/components/DesktopNav";
 import PwaProvider from "@/components/PwaProvider";
-import SearchBox from "@/components/SearchBox";
-import ThemeToggle from "@/components/ThemeToggle";
-import FontScaleToggle from "@/components/FontScaleToggle";
 import { WatchlistProvider } from "@/lib/watchlist";
 import { UserPrefsProvider } from "@/lib/userPrefs";
 import "./globals.css";
@@ -76,8 +75,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                   </a>
                   <div className="ml-auto flex items-center">
                     <SearchBox />
-                    <FontScaleToggle />
-                    <ThemeToggle />
+                    <ReloadButton />
                     <AuthButton />
                   </div>
                   <DesktopNav />
