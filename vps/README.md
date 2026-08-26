@@ -202,9 +202,9 @@ sqlite3 radar.db "PRAGMA integrity_check;"        # ok 才能用
 | Script | 時刻(台北) | 對應 workflow |
 |---|---|---|
 | `daily-market.sh` | 14:10 一–五 | daily-market(quotes→權證彙總→指標→分數→週一題材→export→deploy) |
-| `daily-insti.sh` | 16:10 一–五 | daily-insti(法人→權證主檔→分數→export→deploy) |
-| `daily-branches.sh` | 17:40 + 21:00 一–五 | daily-branches(margin/insti 補抓→分點爬蟲→分點統計→分數→績效→export→prune→deploy) |
-| `daily-margin.sh` | 22:10 一–五 | daily-margin(融資券保底→分數→績效→export→deploy) |
+| `daily-insti.sh` | 16:10 一–五 | daily-insti(**上櫃日K 補抓**→指標→法人→權證主檔(失敗不擋)→分數→export→deploy) |
+| `daily-branches.sh` | 17:40 + 21:00 一–五 | daily-branches(quotes/margin/insti 補抓→指標→分點爬蟲→分點統計→分數→績效→export→prune→deploy) |
+| `daily-margin.sh` | 22:10 一–五 | daily-margin(日K+融資券保底→分數→績效→export→deploy) |
 | `data-backfill.sh` | 01:10 每日 | data-backfill task=deep(深歷史增量) |
 | `weekly-backup.sh` | 週六 05:00 | (新)checkpoint→integrity_check→gzip→Drive+retention |
 

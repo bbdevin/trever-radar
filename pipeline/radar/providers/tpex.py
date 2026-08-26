@@ -22,7 +22,11 @@ def _table(j, what: str, date: str, first_field: str):
 
 
 def fetch_daily_quotes(date: str) -> list[Quote]:
-    """dailyQuotes type=AL — all OTC securities incl. 7xxxxx warrants (~10k rows)."""
+    """dailyQuotes type=AL — all OTC securities incl. 7xxxxx warrants (~10k rows).
+
+    TPEx often has not populated this table at 14:10 (TWSE MI_INDEX is usually ready).
+    Callers retry at 16:10 / 17:40 / 22:10; empty → NoDataError, not a hard fail.
+    """
     j = get_json(f"{BASE}/afterTrading/dailyQuotes",
                  {"date": roc_date(date), "type": "AL", "response": "json"})
     table = _table(j, "dailyQuotes", date, "代號")

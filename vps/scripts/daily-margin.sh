@@ -6,7 +6,8 @@ source "$(dirname "$0")/lib.sh"
 acquire_db_lock
 sync_code
 
-radar import-daily --datasets margin
+# 保底:上櫃日K 若稍早仍 empty,22:10 再抓一次。
+radar import-daily --datasets quotes,margin
 radar compute-scores
 radar compute-performance
 radar export-json

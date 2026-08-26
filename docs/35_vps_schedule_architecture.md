@@ -48,10 +48,10 @@ flowchart TB
 
 | 時間 | 腳本 | 含算分／統計 |
 |---|---|---|
-| 14:10 | `daily-market.sh` | indicators → **scores**；（週一）themes／geo |
-| 16:10 | `daily-insti.sh` | **scores** |
-| 17:40／21:00 | `daily-branches.sh` | 全股票分點 `--top 0` → **branch-stats** → **scores** → **performance** |
-| 22:10 | `daily-margin.sh` | **scores** → **performance** |
+| 14:10 | `daily-market.sh` | indicators → **scores**；（週一）themes／geo。上櫃 quotes 此時常 empty |
+| 16:10 | `daily-insti.sh` | **上櫃日K 補抓** → indicators → insti → **scores**（權證主檔失敗不擋） |
+| 17:40／21:00 | `daily-branches.sh` | 再補 quotes → indicators → 全股票分點 `--top 0` → **branch-stats** → **scores** → **performance** |
+| 22:10 | `daily-margin.sh` | 再補 quotes + margin → **scores** → **performance** |
 
 皆握 `/tmp/radar-db.lock`，結束 export＋deploy。
 
