@@ -79,7 +79,9 @@
 
 ### 貼給新對話接手的 agent(任何模型)
 
-> 請先讀 AGENTS.md、docs/project-context.md、docs/STATUS.md、docs/17_no_fable_workflow.md,再讀 git status 與 git diff 確認現況。先輸出理解摘要與 plan,不要直接開始改程式碼,等我確認範圍後再動手。
+> 請先讀 AGENTS.md、docs/project-context.md、docs/STATUS.md、docs/17_no_fable_workflow.md,**以及根目錄 `handoff.md`（內含當前現況摘要與可貼提示詞）**,再讀 git status 與 git diff 確認現況。先輸出理解摘要與 plan,不要直接開始改程式碼,等我確認範圍後再動手。
+>
+> 若 `handoff.md` 頂部有「下一對話可貼上」區塊,優先貼該區塊(已綁定當前 HEAD／VPS／待辦);本段為通用後備。
 
 ### 貼給 Claude Code(Pilotfish)
 
