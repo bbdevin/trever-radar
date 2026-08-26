@@ -126,6 +126,9 @@ export interface HoldersThresholdCell {
 export interface HoldersHistoryPoint {
   t: string;
   thresholds: Record<string, HoldersThresholdCell>;
+  /** 未滿 400 張散戶持股％（export 後才有；舊 JSON 可能缺） */
+  retail_pct?: number | null;
+  retail_holders?: number | null;
 }
 
 export interface HoldersMeta {

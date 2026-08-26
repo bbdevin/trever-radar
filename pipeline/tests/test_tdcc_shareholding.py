@@ -3,7 +3,11 @@ from __future__ import annotations
 
 import unittest
 
-from radar.compute.shareholding import aggregate_all_thresholds, aggregate_threshold
+from radar.compute.shareholding import (
+    aggregate_all_thresholds,
+    aggregate_retail,
+    aggregate_threshold,
+)
 from radar.providers.tdcc_shareholding import parse_tdcc_csv, parse_tdcc_date, parse_tier
 
 
@@ -56,6 +60,17 @@ class TestThreshold(unittest.TestCase):
         out = aggregate_all_thresholds(rows)
         self.assertEqual(out["1000"]["holders"], 5)
         self.assertEqual(out["800"]["holders"], 25)
+
+    def test_retail_under_400(self):
+        tiers = {
+            1: (1000, 1, 5.0),
+            11: (200, 1, 12.0),
+            12: (100, 1, 10.0),
+            15: (5, 1, 4.0),
+        }
+        retail = aggregate_retail(tiers)
+        self.assertEqual(retail["holders"], 1200)
+        self.assertAlmostEqual(retail["shares_pct"], 17.0)
 
 
 if __name__ == "__main__":

@@ -12,16 +12,14 @@ THRESHOLD_TIERS: dict[int, tuple[int, ...]] = {
     1000: (15,),
 }
 THRESHOLDS = (400, 600, 800, 1000)
+# 散戶：未滿 400 張 = tier 1–11（與 ≥400 大戶互補；中間帶已含於此）
+RETAIL_TIERS = tuple(range(1, 12))
 
 
-def aggregate_threshold(
+def _sum_tiers(
     tiers: dict[int, tuple[int, int, float]],
-    threshold_lots: int,
+    want: tuple[int, ...],
 ) -> dict[str, float | int]:
-    """tiers: tier → (holders, shares, pct). Return holders + shares_pct."""
-    want = THRESHOLD_TIERS.get(threshold_lots)
-    if not want:
-        raise ValueError(f"unsupported threshold: {threshold_lots}")
     holders = 0
     pct = 0.0
     for t in want:
@@ -33,6 +31,24 @@ def aggregate_threshold(
     return {"holders": holders, "shares_pct": round(pct, 4)}
 
 
+def aggregate_threshold(
+    tiers: dict[int, tuple[int, int, float]],
+    threshold_lots: int,
+) -> dict[str, float | int]:
+    """tiers: tier → (holders, shares, pct). Return holders + shares_pct."""
+    want = THRESHOLD_TIERS.get(threshold_lots)
+    if not want:
+        raise ValueError(f"unsupported threshold: {threshold_lots}")
+    return _sum_tiers(tiers, want)
+
+
+def aggregate_retail(
+    tiers: dict[int, tuple[int, int, float]],
+) -> dict[str, float | int]:
+    """未滿 400 張散戶持股（docs/34 §4.1 V1）。"""
+    return _sum_tiers(tiers, RETAIL_TIERS)
+
+
 def aggregate_all_thresholds(
     tier_rows: Iterable[tuple[int, int, int, float]],
 ) -> dict[str, dict[str, float | int]]:
@@ -41,3 +57,12 @@ def aggregate_all_thresholds(
     for tier, holders, shares, pct in tier_rows:
         tiers[int(tier)] = (int(holders or 0), int(shares or 0), float(pct or 0.0))
     return {str(th): aggregate_threshold(tiers, th) for th in THRESHOLDS}
+
+
+def tiers_dict_from_rows(
+    tier_rows: Iterable[tuple[int, int, int, float]],
+) -> dict[int, tuple[int, int, float]]:
+    tiers: dict[int, tuple[int, int, float]] = {}
+    for tier, holders, shares, pct in tier_rows:
+        tiers[int(tier)] = (int(holders or 0), int(shares or 0), float(pct or 0.0))
+    return tiers

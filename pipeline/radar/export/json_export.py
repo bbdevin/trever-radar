@@ -134,7 +134,11 @@ MIN_WARRANT_TURNOVER = 20_000_000
 
 def _holders_history_payload(conn, sid: str, d: str) -> tuple[list[dict], dict]:
     """Weekly 大戶門檻序列 + display meta (docs/34 B1/B2)."""
-    from ..compute.shareholding import aggregate_all_thresholds
+    from ..compute.shareholding import (
+        aggregate_all_thresholds,
+        aggregate_retail,
+        tiers_dict_from_rows,
+    )
 
     today = date.fromisoformat(d)
     display_from, display_to = display_window_bounds(today)
@@ -168,8 +172,15 @@ def _holders_history_payload(conn, sid: str, d: str) -> tuple[list[dict], dict]:
         by_asof.setdefault(as_of, []).append((tier, holders, shares, pct))
     out = []
     for as_of in sorted(by_asof.keys()):
-        thresholds = aggregate_all_thresholds(by_asof[as_of])
-        out.append({"t": as_of, "thresholds": thresholds})
+        rows = by_asof[as_of]
+        thresholds = aggregate_all_thresholds(rows)
+        retail = aggregate_retail(tiers_dict_from_rows(rows))
+        out.append({
+            "t": as_of,
+            "thresholds": thresholds,
+            "retail_pct": retail["shares_pct"],
+            "retail_holders": retail["holders"],
+        })
     out.reverse()  # 新→舊,對齊 margin_history
     return out, meta
 
