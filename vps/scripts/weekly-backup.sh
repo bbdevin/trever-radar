@@ -17,7 +17,7 @@ db_sql() {
 db_sql "PRAGMA wal_checkpoint(TRUNCATE);" >/dev/null
 CHECK="$(db_sql 'PRAGMA integrity_check;')"
 if [ "$CHECK" != "ok" ]; then
-  notify "integrity_check FAILED: ${CHECK} — snapshot NOT uploaded"
+  notify "資料庫完整性檢查失敗（${CHECK}），本次快照未上傳" high "失敗"
   exit 1
 fi
 
@@ -34,4 +34,4 @@ rclone lsf gdrive:trever-radar-backup/ --files-only \
   | awk 'NR<=4 {next} { ym=substr($0,7,6); if (!(ym in seen)) { seen[ym]=1; next } print }' \
   | while read -r f; do rclone deletefile "gdrive:trever-radar-backup/$f"; done
 
-notify "weekly snapshot ok: radar-${STAMP}.db.gz" default
+notify_ok "週備份完成：radar-${STAMP}.db.gz 已上傳 Drive"

@@ -34,25 +34,25 @@ fi
 
 if in_radar_quiet_window; then
   echo "inside quiet window — skip (protect daily-*/weekend)"
-  notify "mid-publish skipped: quiet window" default
+  notify_skip "正值日更／週末安靜窗，中途上線略過"
   exit 0
 fi
 
 if fuser /tmp/radar-db.lock >/dev/null 2>&1; then
   echo "radar-db.lock held — skip"
-  notify "mid-publish skipped: radar-db.lock held" default
+  notify_skip "資料庫鎖占用，中途上線略過"
   exit 0
 fi
 
 FREE="$(free_gb)"
 awk -v f="$FREE" -v m="$MIN_FREE_GB" 'BEGIN { exit !(f+0 >= m+0) }' || {
   echo "disk free ${FREE}G < ${MIN_FREE_GB}G — skip"
-  notify "mid-publish skipped: disk free ${FREE}G < ${MIN_FREE_GB}G" default
+  notify_skip "磁碟空間不足（剩 ${FREE}G，需 ≥${MIN_FREE_GB}G），中途上線略過"
   exit 0
 }
 
 # 恢復失敗告警(正式步驟);stats 失敗另處理,不整輪炸掉
-trap 'notify "FAILED at line $LINENO (tail ~/radar-cron.log)"' ERR
+install_fail_trap
 trap 'rm -f "$FLAG" 2>/dev/null || true' EXIT
 
 touch "$FLAG"
@@ -79,7 +79,7 @@ if [ "$WANT_STATS" = "1" ]; then
   if [ "${MEM:-0}" -lt "$MIN_MEM_MB" ]; then
     echo "MemAvailable ${MEM}MB < ${MIN_MEM_MB}MB — skip stats, continue export"
     STATS_NOTE="skipped_low_mem"
-    notify "mid-publish: skip stats (mem ${MEM}MB)" default
+    notify_warn "記憶體偏低（${MEM}MB），略過分點統計，仍會匯出上線"
   else
     echo "compute-branch-stats (mem=${MEM}MB)"
     set +e
@@ -91,7 +91,7 @@ if [ "$WANT_STATS" = "1" ]; then
     else
       STATS_NOTE="failed_rc_${rc}"
       echo "compute-branch-stats failed rc=$rc — continue export"
-      notify "mid-publish: stats failed rc=$rc; export continues" default
+      notify_warn "分點統計失敗（碼 ${rc}），仍繼續匯出上線"
     fi
   fi
 fi
@@ -122,5 +122,5 @@ if ! pgrep -f 'vps/scripts/bf-supervisor.sh' >/dev/null 2>&1; then
   nohup bash "$REPO/vps/scripts/bf-supervisor.sh" >> "${BF_SUPERVISOR_LOG:-$HOME/bf-supervisor.log}" 2>&1 &
 fi
 
-notify "mid-publish ok (stats=$STATS_NOTE) site refreshed; backfill resumed" default
+notify_ok "回補中途上線完成（網站已刷新；統計=${STATS_NOTE}）"
 echo "=== mid-backfill-publish done $(taipei_date -Is) ==="

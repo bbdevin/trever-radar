@@ -19,3 +19,4 @@ fi
 
 radar export-json
 deploy_data
+notify_ok "收盤行情已更新並上線（上市日K／指標／分數）"

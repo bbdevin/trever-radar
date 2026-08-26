@@ -14,7 +14,7 @@ echo "=== weekly-tdcc start $(taipei_date -Is) ==="
 
 if fuser /tmp/radar-db.lock >/dev/null 2>&1; then
   echo "radar-db.lock held — skip"
-  notify "tdcc skipped: db lock" default
+  notify_skip "資料庫鎖占用，大戶週更略過"
   exit 0
 fi
 
@@ -27,7 +27,7 @@ if bf_container_running; then
 fi
 
 # 正式步驟恢復 High 告警
-trap 'notify "FAILED at line $LINENO (tail ~/radar-cron.log)"' ERR
+install_fail_trap
 
 acquire_db_lock
 sync_code
@@ -51,5 +51,5 @@ if ! pgrep -f 'vps/scripts/bf-supervisor.sh' >/dev/null 2>&1; then
   nohup bash "$REPO/vps/scripts/bf-supervisor.sh" >> "${BF_SUPERVISOR_LOG:-$HOME/bf-supervisor.log}" 2>&1 &
 fi
 
-notify "tdcc weekly ok; holders refreshed" default
+notify_ok "大戶持股週更完成並上線"
 echo "=== weekly-tdcc done $(taipei_date -Is) ==="

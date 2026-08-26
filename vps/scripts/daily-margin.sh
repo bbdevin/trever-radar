@@ -12,3 +12,4 @@ radar compute-scores
 radar compute-performance
 radar export-json
 deploy_data
+notify_ok "融資融券資料已更新並上線"

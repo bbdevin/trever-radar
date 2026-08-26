@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 共用函式(docs/31 §2 實作規範)。所有 vps/scripts/*.sh 都 source 本檔。
-# 慣例:失敗 → ntfy High 告警;成功靜默。非交易日 importer 靠 NoDataError 安全空跑(既有哲學)。
+# 慣例:失敗 → ntfy High;日更／週更成功 → 繁中 notify_ok;非交易日 importer 靠 NoDataError 安全空跑。
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -14,23 +14,64 @@ fi
 
 SCRIPT_NAME="$(basename "${0:-lib.sh}")"
 
-# $1=訊息,$2=priority(預設 high;成功摘要用 default)
-notify() {
-  [ -n "${NTFY:-}" ] || return 0
-  curl -s -m 10 \
-    -H "Priority: ${2:-high}" \
-    -H "Title: radar-vps ${SCRIPT_NAME}" \
-    -d "$1" "https://ntfy.sh/${NTFY}" >/dev/null || true
+# 排程中文名(ntfy 標題用)
+job_zh() {
+  case "$SCRIPT_NAME" in
+    daily-market.sh) echo "收盤行情" ;;
+    daily-tpex-quotes.sh) echo "上櫃日K" ;;
+    daily-insti.sh) echo "三大法人" ;;
+    daily-branches.sh) echo "分點籌碼" ;;
+    daily-margin.sh) echo "融資融券" ;;
+    weekly-backup.sh) echo "週備份" ;;
+    weekly-tdcc.sh) echo "大戶持股" ;;
+    mid-backfill-publish.sh) echo "回補中途上線" ;;
+    safe-branch-stats.sh) echo "分點排行" ;;
+    data-backfill.sh) echo "深歷史" ;;
+    bf-supervisor.sh) echo "歷史回補" ;;
+    monthly-directors.sh) echo "董監持股" ;;
+    backfill-margin.sh) echo "資券回補" ;;
+    backfill-tdcc.sh) echo "大戶回補" ;;
+    disk-cleanup.sh) echo "磁碟清理" ;;
+    manual-catchup.sh) echo "手動追補" ;;
+    *) echo "${SCRIPT_NAME%.sh}" ;;
+  esac
 }
 
-trap 'notify "FAILED at line $LINENO (tail ~/radar-cron.log)"' ERR
+# $1=內文 $2=priority(預設 high) $3=標題後綴(成功/失敗/略過/注意;可空)
+notify() {
+  [ -n "${NTFY:-}" ] || return 0
+  local msg="$1"
+  local pri="${2:-high}"
+  local kind="${3:-}"
+  local title
+  if [ -n "$kind" ]; then
+    title="$(job_zh) · ${kind}"
+  else
+    title="$(job_zh)"
+  fi
+  curl -s -m 10 \
+    -H "Priority: ${pri}" \
+    -H "Title: ${title}" \
+    -d "$msg" "https://ntfy.sh/${NTFY}" >/dev/null || true
+}
+
+notify_ok() { notify "$1" default "成功"; }
+notify_skip() { notify "$1" default "略過"; }
+notify_warn() { notify "$1" default "注意"; }
+
+install_fail_trap() {
+  trap 'notify "執行到第 ${LINENO} 行失敗，請查看 ~/radar-cron.log" high "失敗"' ERR
+}
+
+# 慣例:失敗 → ntfy High;日更／週更成功 → notify_ok 一則 default。
+install_fail_trap
 
 # 互斥鎖:防「上一輪超時未結束」堆疊(WAL+busy_timeout 是第一層,這是第二層保險)。
 # 搶不到=跳過本輪並通知。長期歷史回補容器(WP-B6/WP-M4)刻意不拿這把鎖(docs/31 §2)。
 acquire_db_lock() {
   exec 9>/tmp/radar-db.lock
   if ! flock -n 9; then
-    notify "skipped: previous round still holds /tmp/radar-db.lock" default
+    notify_skip "上一輪還在跑（資料庫鎖占用），本輪略過"
     exit 0
   fi
 }

@@ -31,8 +31,7 @@ radar compute-branch-stats
 radar export-json
 deploy_data
 
-notify "manual-catchup 資料追補完成,開始快照" default
-
+notify_ok "資料追補完成，接著做週備份快照"
 # 釋放本程序的 DB 鎖,讓 weekly-backup.sh 自己拿鎖做快照
 exec 9>&-
 "$REPO/vps/scripts/weekly-backup.sh"

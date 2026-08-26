@@ -47,7 +47,7 @@ FREED=$((AFTER - BEFORE))
 log "done free=${AFTER}G delta=${FREED}G"
 
 if [ "$AFTER" -lt "$MIN_FREE_GB" ]; then
-  notify "disk-cleanup: only ${AFTER}G free (need ≥${MIN_FREE_GB}G)" high
+  notify "清理後仍只剩 ${AFTER}G（建議 ≥${MIN_FREE_GB}G）" high "注意"
 else
-  notify "disk-cleanup: ${AFTER}G free (Δ${FREED}G)" default
+  notify_ok "磁碟清理完成，目前剩餘 ${AFTER}G（本次釋出約 ${FREED}G）"
 fi

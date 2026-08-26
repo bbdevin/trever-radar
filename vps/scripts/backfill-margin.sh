@@ -23,13 +23,13 @@ fi
 dow=$(TZ=Asia/Taipei date +%u)
 if [ "$dow" -ne 7 ] && in_radar_quiet_window; then
   echo "inside quiet window — skip"
-  notify "margin backfill skipped: quiet window" default
+  notify_skip "正值安靜窗，資券回補略過"
   exit 0
 fi
 
 if fuser /tmp/radar-db.lock >/dev/null 2>&1; then
   echo "radar-db.lock held — skip"
-  notify "margin backfill skipped: db lock" default
+  notify_skip "資料庫鎖占用，資券回補略過"
   exit 0
 fi
 
@@ -58,5 +58,5 @@ if [ "$PAUSED" -eq 1 ]; then
 fi
 
 rm -f "$FLAG"
-notify "margin backfill ok (${DAYS}d)" default
+notify_ok "資券約 ${DAYS} 日回補完成並上線"
 echo "=== backfill-margin done $(taipei_date -Is) ==="

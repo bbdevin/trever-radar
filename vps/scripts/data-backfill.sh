@@ -8,3 +8,4 @@ acquire_db_lock
 sync_code
 
 radar deep-backfill --all --sleep 6.5
+notify_ok "深歷史增量完成（已拉深的會自動跳過）"

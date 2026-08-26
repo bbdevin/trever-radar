@@ -79,7 +79,7 @@ flowchart TB
 |---|---|
 | Drive 備份 | 週六 05:00（**早於** TDCC 06:30） |
 | 盤中 worker | 平日 08:50–13:35 |
-| ntfy | 失敗 High；回補完成／TDCC 週更結果 default |
+| ntfy | 失敗 High；日更／週更成功繁中摘要（如「三大法人 · 成功」）；回補完成／TDCC 週更 default |
 
 ## 3. 平日時間軸（示意）
 

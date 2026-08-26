@@ -25,7 +25,7 @@
 | 平日 08:50–13:35 | 盤中訊號雷達 worker(docker+cron,同一台 VPS,docs/24 Part A) | 讀 `https://radar.techtrever.com/data/radar.json` 判定 I-1~I-4 訊號,寫 Supabase,首頁盤中面板即時顯示;13:35 自動收工 |
 | push `main` | GitHub Actions `deploy.yml` | checkout → npm build → wrangler pages deploy(**只管程式碼/前端,不碰資料**) |
 
-- **共用機制**(`vps/scripts/lib.sh`):`flock -n /tmp/radar-db.lock` 互斥(搶不到=跳過本輪+ntfy 通知)、開輪先 `git pull --ff-only`+docker build(layer cache)、失敗 ntfy High 告警成功靜默、非交易日靠 `NoDataError` 安全空跑。
+- **共用機制**(`vps/scripts/lib.sh`):`flock -n /tmp/radar-db.lock` 互斥(搶不到=跳過本輪+ntfy 通知)、開輪先 `git pull --ff-only`+docker build(layer cache)、**失敗 ntfy High／日更成功繁中摘要**、非交易日靠 `NoDataError` 安全空跑。
 - **DB 續存**:VPS `data/radar.db` 為唯一常駐主本,無 Actions cache/release 續存鏈(已隨 WP-B3 退役)。
 - **舊 GitHub Actions 資料 workflow 已無觸發**:`daily-market/daily-insti/daily-branches/daily-margin/data-backfill.yml` 檔案仍在 repo(Cloudflare Worker trigger 的 cron 已清空,回滾窗保留),預定 ~2026-08-01 回滾窗結束後依 `docs/31` §9 刪除。
 - 本機開發:同一套 CLI,`python -m radar export-json` 後前端讀 `web/public/data/*.json`;本機 DB 僅開發用,**正式真相在 VPS**。

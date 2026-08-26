@@ -12,3 +12,4 @@ radar compute-indicators --all --days 5
 radar compute-scores
 radar export-json
 deploy_data
+notify_ok "上櫃日K已補齊並上線"

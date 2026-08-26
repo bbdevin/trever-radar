@@ -13,8 +13,9 @@ radar compute-indicators --all --days 5
 radar import-daily --datasets insti
 # 權證主檔偶發 timeout 不得擋法人/日K 上線
 if ! radar import-warrant-master; then
-  notify "import-warrant-master failed; continuing scores/export" default
+  notify_warn "權證主檔暫時抓不到，已略過；三大法人與日K仍會上線"
 fi
 radar compute-scores
 radar export-json
 deploy_data
+notify_ok "三大法人資料已更新並上線"

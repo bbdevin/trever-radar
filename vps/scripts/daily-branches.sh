@@ -18,3 +18,4 @@ radar compute-performance
 radar export-json
 radar prune
 deploy_data
+notify_ok "分點籌碼已更新並上線（含融資／法人補抓）"

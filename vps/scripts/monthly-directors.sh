@@ -13,13 +13,13 @@ echo "=== monthly-directors start $(taipei_date -Is) ==="
 
 if [ "${SKIP_QUIET:-0}" != "1" ] && in_radar_quiet_window; then
   echo "inside quiet window — skip (SKIP_QUIET=1 to run anyway)"
-  notify "directors skipped: quiet window" default
+  notify_skip "正值安靜窗，董監月更略過"
   exit 0
 fi
 
 if fuser /tmp/radar-db.lock >/dev/null 2>&1; then
   echo "radar-db.lock held — skip"
-  notify "directors skipped: db lock" default
+  notify_skip "資料庫鎖占用，董監月更略過"
   exit 0
 fi
 
@@ -31,7 +31,7 @@ if bf_container_running; then
   sleep 3
 fi
 
-trap 'notify "FAILED at line $LINENO (tail ~/radar-cron.log)"' ERR
+install_fail_trap
 
 acquire_db_lock
 sync_code
@@ -48,5 +48,5 @@ if [ "$PAUSED" -eq 1 ]; then
   PAUSED=0
 fi
 
-notify "directors monthly ok" default
+notify_ok "董監持股月更完成並上線"
 echo "=== monthly-directors done $(taipei_date -Is) ==="

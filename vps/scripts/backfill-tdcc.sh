@@ -23,13 +23,13 @@ fi
 
 if [ "${SKIP_QUIET:-0}" != "1" ] && in_radar_quiet_window; then
   echo "inside quiet window — skip (SKIP_QUIET=1 to run anyway)"
-  notify "tdcc archive backfill skipped: quiet window" default
+  notify_skip "正值安靜窗，大戶歷史回補略過"
   exit 0
 fi
 
 if fuser /tmp/radar-db.lock >/dev/null 2>&1; then
   echo "radar-db.lock held — skip"
-  notify "tdcc archive backfill skipped: db lock" default
+  notify_skip "資料庫鎖占用，大戶歷史回補略過"
   exit 0
 fi
 
@@ -42,7 +42,7 @@ if bf_container_running; then
   sleep 3
 fi
 
-trap 'notify "FAILED at line $LINENO (tail ~/radar-cron.log)"' ERR
+install_fail_trap
 
 acquire_db_lock
 sync_code
@@ -65,5 +65,5 @@ if [ "$PAUSED" -eq 1 ]; then
   unpause_bf_containers
 fi
 
-notify "tdcc archive backfill ok (${FROM}..)" default
+notify_ok "大戶歷史回補完成（自 ${FROM} 起）並上線"
 echo "=== backfill-tdcc done $(taipei_date -Is) ==="

@@ -27,37 +27,37 @@ echo "=== safe-branch-stats start $(taipei_date -Is) ==="
 
 if in_radar_quiet_window; then
   echo "inside quiet window — skip"
-  notify "safe-stats skipped: quiet window" default
+  notify_skip "正值日更安靜窗，分點排行略過"
   exit 0
 fi
 
 if fuser /tmp/radar-db.lock >/dev/null 2>&1; then
   echo "radar-db.lock held — skip"
-  notify "safe-stats skipped: radar-db.lock held" default
+  notify_skip "資料庫鎖占用，分點排行略過"
   exit 0
 fi
 
 if [ -f "$FLAG" ]; then
   echo "mid-publish flag present — skip"
-  notify "safe-stats skipped: mid-publish in progress" default
+  notify_skip "回補中途上線進行中，分點排行略過"
   exit 0
 fi
 
 FREE="$(free_gb)"
 awk -v f="$FREE" -v m="$MIN_FREE_GB" 'BEGIN { exit !(f+0 >= m+0) }' || {
   echo "disk free ${FREE}G < ${MIN_FREE_GB}G — skip"
-  notify "safe-stats skipped: disk free ${FREE}G" default
+  notify_skip "磁碟空間不足（剩 ${FREE}G），分點排行略過"
   exit 0
 }
 
 MEM="$(mem_available_mb)"
 if [ "${MEM:-0}" -lt "$MIN_MEM_MB" ]; then
   echo "MemAvailable ${MEM}MB < ${MIN_MEM_MB}MB — skip"
-  notify "safe-stats skipped: mem ${MEM}MB < ${MIN_MEM_MB}MB" default
+  notify_skip "記憶體不足（${MEM}MB < ${MIN_MEM_MB}MB），分點排行略過"
   exit 0
 fi
 
-trap 'notify "FAILED at line $LINENO (tail ~/radar-cron.log)"' ERR
+install_fail_trap
 trap 'rm -f "$FLAG" 2>/dev/null || true; unpause_bf_containers' EXIT
 
 touch "$FLAG"
@@ -84,7 +84,7 @@ SCORES_NOTE="skipped"
 if [ "$rc" -ne 0 ]; then
   STATS_NOTE="failed_rc_${rc}"
   echo "compute-branch-stats failed rc=$rc"
-  notify "safe-stats FAILED: compute-branch-stats rc=$rc" high
+  notify "分點統計失敗（碼 ${rc}），本輪中止" high "失敗"
   rm -f "$FLAG"
   unpause_bf_containers
   exit "$rc"
@@ -99,7 +99,7 @@ if [ "${SKIP_SCORES:-0}" != "1" ]; then
   if [ "$src" -ne 0 ]; then
     SCORES_NOTE="failed_rc_${src}"
     echo "compute-scores failed rc=$src (continue to export)"
-    notify "safe-stats WARN: compute-scores rc=$src" default
+    notify_warn "綜合分數重算失敗（碼 ${src}），仍繼續匯出"
   else
     SCORES_NOTE="ok"
   fi
@@ -134,5 +134,5 @@ if ! pgrep -f 'vps/scripts/bf-supervisor.sh' >/dev/null 2>&1; then
   nohup bash "$REPO/vps/scripts/bf-supervisor.sh" >> "${BF_SUPERVISOR_LOG:-$HOME/bf-supervisor.log}" 2>&1 &
 fi
 
-notify "safe-stats ok; stats=$STATS_NOTE scores=$SCORES_NOTE" default
+notify_ok "分點排行與分數夜間重算完成（統計=${STATS_NOTE}，分數=${SCORES_NOTE}）"
 echo "=== safe-branch-stats done $(taipei_date -Is) ==="

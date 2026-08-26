@@ -99,7 +99,7 @@ start_job() {
     -v "$REPO/web/public/data":/app/web/public/data \
     radar-pipeline python -m radar "$@" >/dev/null; then
     log "FAILED to start $name"
-    notify "bf-supervisor: failed to start $name" high
+    notify "無法啟動容器 ${name}" high "失敗"
     return 1
   fi
   return 0
@@ -109,7 +109,6 @@ mark_done() {
   local flag="$1" label="$2"
   taipei_date -Is > "$flag"
   log "DONE $label → $flag"
-  notify "bf-supervisor: $label complete" default
 }
 
 BRANCH_FAILS=0
@@ -132,24 +131,24 @@ run_branches_phase() {
       ec=$(container_exit_code "$BRANCH_NAME")
       if [ "$ec" = "0" ]; then
         BRANCH_FAILS=0
-        mark_done "$BRANCHES_DONE" "branches"
+        mark_done "$BRANCHES_DONE" "分點"
         docker rm -f "$BRANCH_NAME" >/dev/null 2>&1 || true
         if [ -f "$WARRANT_DONE" ]; then
-          notify "bf-supervisor: all history backfill complete" default
+          notify_ok "分點與權證歷史回補全部完成"
           write_state idle "all_complete"
         else
-          notify "bf-supervisor: branches complete; next=warrant" default
+          notify_ok "分點歷史回補完成，接著跑權證分點"
         fi
       else
         BRANCH_FAILS=$((BRANCH_FAILS + 1))
         log "branches exited rc=$ec fails=$BRANCH_FAILS/$MAX_FAILS"
         if [ "$BRANCH_FAILS" -ge "$MAX_FAILS" ]; then
-          notify "bf-supervisor: branches gave up after $MAX_FAILS fails (rc=$ec)" high
+          notify "分點回補連續失敗 ${MAX_FAILS} 次（碼 ${ec}），暫時放棄" high "失敗"
           write_state branches "gave_up:$ec"
           sleep 600
           return 0
         fi
-        notify "bf-supervisor: branches exited rc=$ec; will restart ($BRANCH_FAILS/$MAX_FAILS)" default
+        notify_warn "分點回補異常結束（碼 ${ec}），將重啟（${BRANCH_FAILS}/${MAX_FAILS}）"
         write_state branches "restart_wait:$ec"
         sleep "$RESTART_SLEEP"
         if should_hold; then return 0; fi
@@ -187,24 +186,24 @@ run_warrant_phase() {
       ec=$(container_exit_code "$WARRANT_NAME")
       if [ "$ec" = "0" ]; then
         WARRANT_FAILS=0
-        mark_done "$WARRANT_DONE" "warrant"
+        mark_done "$WARRANT_DONE" "權證分點"
         docker rm -f "$WARRANT_NAME" >/dev/null 2>&1 || true
         if [ -f "$BRANCHES_DONE" ]; then
-          notify "bf-supervisor: all history backfill complete" default
+          notify_ok "分點與權證歷史回補全部完成"
           write_state idle "all_complete"
         else
-          notify "bf-supervisor: warrant complete; next=branches" default
+          notify_ok "權證分點歷史回補完成，接著跑分點"
         fi
       else
         WARRANT_FAILS=$((WARRANT_FAILS + 1))
         log "warrant exited rc=$ec fails=$WARRANT_FAILS/$MAX_FAILS"
         if [ "$WARRANT_FAILS" -ge "$MAX_FAILS" ]; then
-          notify "bf-supervisor: warrant gave up after $MAX_FAILS fails (rc=$ec)" high
+          notify "權證分點回補連續失敗 ${MAX_FAILS} 次（碼 ${ec}），暫時放棄" high "失敗"
           write_state warrant "gave_up:$ec"
           sleep 600
           return 0
         fi
-        notify "bf-supervisor: warrant exited rc=$ec; will restart ($WARRANT_FAILS/$MAX_FAILS)" default
+        notify_warn "權證分點回補異常結束（碼 ${ec}），將重啟（${WARRANT_FAILS}/${MAX_FAILS}）"
         write_state warrant "restart_wait:$ec"
         sleep "$RESTART_SLEEP"
         if should_hold; then return 0; fi

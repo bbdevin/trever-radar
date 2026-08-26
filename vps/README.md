@@ -215,7 +215,7 @@ sqlite3 radar.db "PRAGMA integrity_check;"        # ok 才能用
 - **2026-08-25 S1.1**:mid 預設略過 stats(防 OOM);`safe-branch-stats.sh` @ 23:30 專跑排行;stats 程式改增量累加。詳 `docs/33`。
 - **2026-08-21 回補與 cron 並行**:歷史回補用具名容器 `radar-bf-branches` / `radar-bf-warrant`(勿用 `manual-catchup.sh` 包長跑——它會握 flock)。另跑 `bf-cron-guard`(已收進 `vps/scripts/`)。
 - **開輪 `git pull --ff-only` + docker build**(layer cache,requirements 沒變近零成本)——舊碼算舊 reasons 的既有教訓。
-- **失敗 → ntfy High 告警,成功靜默**(週備份成功發一則 default 摘要)。
+- **失敗 → ntfy High；日更／週更成功 → 繁中摘要**（標題如「三大法人 · 成功」）。
 - 非交易日:importer 靠 NoDataError 安全空跑,不手刻假日曆(既有定案)。
 - deploy 憑證只在主機(`vps/.env`),容器只拿到 `RADAR_FINMIND_TOKEN` 與 `FUGLE_API_KEY`(後者從 `pipeline/intraday/.env` 讀入,WP-H3 當日分時與盤中 worker 同一把)——權限分離。
 
