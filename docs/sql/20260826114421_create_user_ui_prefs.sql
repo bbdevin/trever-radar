@@ -6,7 +6,7 @@
 --   1. user_ui_prefs.font_scale：md／lg／xl；theme：dark／light（預設 dark）。本機 + 帳號。
 --   2. search_history：每位使用者最近搜尋的股票代號（前端上限 20 筆）。
 --   3. RLS：authenticated 只能 CRUD 自己的列（比照 watchlist）。
--- 表已存在時補 theme：另跑 docs/sql/user_ui_prefs_theme.sql
+-- 表已存在時補 theme：另跑 docs/sql/20260826115525_add_user_ui_prefs_theme.sql
 
 create table if not exists public.user_ui_prefs (
   user_id uuid primary key references auth.users(id) on delete cascade,

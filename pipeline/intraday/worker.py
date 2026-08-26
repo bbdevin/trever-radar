@@ -370,7 +370,7 @@ def upsert_heartbeat(status: str) -> None:
         msg = str(e)
         if "monitor_cap" in msg or "monitor_used" in msg or "PGRST204" in msg:
             logger.warning(
-                "heartbeat 無 monitor_* 欄位,降級寫入(請執行 docs/sql/worker_heartbeat_monitor_cap.sql): %s",
+                "heartbeat 無 monitor_* 欄位,降級寫入(請執行 docs/sql/20260821145158_add_worker_heartbeat_monitor_cap.sql): %s",
                 e,
             )
             supabase.table("worker_heartbeat").upsert(base).execute()

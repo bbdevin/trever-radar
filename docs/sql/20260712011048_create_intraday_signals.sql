@@ -1,4 +1,4 @@
--- docs/sql/intraday_signals.sql
+-- docs/sql/20260712011048_create_intraday_signals.sql
 -- 本表用於紀錄盤中即時觸發的訊號 (I-1 大單, I-2 爆量, I-3 急拉, I-4 發動)
 -- 搭配 docs/24 盤中訊號雷達架構使用
 

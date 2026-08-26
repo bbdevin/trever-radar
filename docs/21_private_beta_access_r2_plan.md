@@ -10,7 +10,7 @@
 1. **整站私人化**:Cloudflare Access 保護首頁、所有頁面、`/data/*`、正式
    `pages.dev`、preview deployment 與 `radar.techtrever.com`。只允許明確 email 名單。
 2. **Supabase 保留**:Google OAuth / watchlist 繼續提供個人自選。
-   **2026-08-19 起應用層核准閘門**(`docs/sql/app_profiles.sql` + `AuthGate`)+ **`/data` Worker JWT** 才是資料門鎖。
+   **2026-08-19 起應用層核准閘門**(`docs/sql/20260819171000_create_app_profiles.sql` + `AuthGate`)+ **`/data` Worker JWT** 才是資料門鎖。
    Cloudflare Access 已於 2026-08-20 關閉,不再當門鎖。
 3. **R2 不是資料庫引擎**:不能直接對 R2 裡的 `radar.db` 執行 SQLite SQL。
    R2 只存完整 SQLite 快照、未來拆出的 `branch_hist.db`、manifest/checksum 或靜態檔。

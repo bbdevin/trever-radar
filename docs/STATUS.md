@@ -55,7 +55,7 @@
 - [x] 現代 fintech UI:深色、玻璃頂欄、手機底部導航、SVG 圖示、Manrope 數字字體、骨架屏、RWD 375–1440
 - [x] 台股慣例紅漲綠跌、免責聲明常駐
 - [x] **觀察價/失效價**(2026-07-10,04 §10):`daily_scores` 新增 `watch_price`/`stop_price`,股票卡與個股頁技術面板顯示
-- [x] **自選股**(2026-07-10):Supabase `watchlist` 表 + RLS(見 `docs/sql/watchlist.sql`,需人工在 Supabase 執行一次);全站 Context 只查一次、卡片與個股頁 ★ 按鈕、新頁 `/watchlist`
+- [x] **自選股**(2026-07-10):Supabase `watchlist` 表 + RLS(見 `docs/sql/20260710002358_create_watchlist.sql`,需人工在 Supabase 執行一次);全站 Context 只查一次、卡片與個股頁 ★ 按鈕、新頁 `/watchlist`
 - [x] **探索頁**(2026-07-10,部分):新頁 `/explore`,先做**集中度**(前5大買超分點佔量躍升排行,新純函式 `buy_concentration` 從既有 B3 評分邏輯抽出)與**題材**(重用首頁資金流 `themes` 資料)兩個 tab;地緣/關鍵分點/分點績效榜/權證異動因需人工名單或與 `/branch` 重疊,暫緩
 - [x] **分點追蹤視角**(2026-07-11,docs/24 Part B B1+B2):export 為每個 tracked branch(manual+auto)產 `branches/track/{hash}.json`(近 120 日曆日的緊湊 `[date,stock_id,net_lots,pct]` 列 + 股名/期末收盤對照;檔名為 branch_name 的 sha1 前 16 碼,index.json 列對照)+ 種子 DB 單元測試;前端 `/branch` 排行榜點分點卡片(或「分點追蹤視角」鈕)切入同 tab 視圖,近 1/5/10/20/自訂日 pills(自訂 clamp 可用交易日數),客戶端純函式 `aggregateBranchRows` 加總出淨買超/反向賣超表(語意化 table、估算金額 net×1000×close、平均佔比),誠實限制標注;`npm run build` 過、pytest 全過、聚合 3 案例 node 驗證通過,未新增依賴/未改 token。
 - [x] **WP-V1 首頁/自選 5 秒掃讀優化**(2026-07-11,docs/23 §2 V1):股票卡次要細項(金額/量比/外資/投信)由 4 欄堆疊收斂成一行小字降層級(不刪資料);卡片左側 3px inset 狀態色條(有明顯風險扣分→destructive/風險紅、綜合分≥65 觀察門檻→warn/琥珀、其餘→中性 line,僅用既有 token 且色條非唯一訊號);自選/branch 可點列補 `min-h-11`+`cursor-pointer`+`transition-colors`,★ 鈕與 branch 展開鈕補 `aria-label`/`aria-expanded`;首頁教育性空狀態文案、`/watchlist` 載入改多列 Skeleton;`npm run build` 過,未新增依賴/未改配色 token 語意。
@@ -110,9 +110,10 @@
 
 ## 最近完成
 
+- 2026-08-26 **`docs/sql` migration 命名統一**：`YYYYMMDDHHMMSS_描述.sql`；見 `docs/sql/README.md`。既有 7 檔已改名並更新 STATUS／36／21／worker 引用。
 - 2026-08-26 **docs/35 S2 程式落地＋VPS 已掛**：`bf-supervisor`（單寫者／自啟／ntfy）、`safe-branch-stats`＋scores、安靜窗收進 `lib.sh`；**TDCC B1/B2**（`import-tdcc`、個股「大戶」tab、`weekly-tdcc.sh` @ 週六 06:30）。**VPS**：crontab 已掛 supervisor／tdcc；`BF_ORDER=warrant,branches`（先權證）；`disk-cleanup.sh` 每日 07:40（首跑 +2G free）。`backfill-branches top=0` 已修（`7b2c003`）。
 - 2026-08-26 **修字級／深淺色選單無反應**：頭像選單改原生 button；`userPrefs` 只依 `userId` 重拉並擋住進行中 refresh 蓋寫本機切換。
-- 2026-08-26 **搜尋歷史＋文字縮放**：每位登入使用者搜尋紀錄（可清除）與 Header「A」三档字級綁帳號（`docs/36`）。**Supabase `user_ui_prefs.sql` 已執行**。
+- 2026-08-26 **搜尋歷史＋文字縮放**：每位登入使用者搜尋紀錄（可清除）與 Header「A」三档字級綁帳號（`docs/36`）。**Supabase `20260826114421_create_user_ui_prefs.sql` 已執行**。
 - 2026-08-26 **VPS 四層排程架構定案（文件）**：[`docs/35_vps_schedule_architecture.md`](35_vps_schedule_architecture.md)——日更真相／歷史加深（含 bf-supervisor 目標）／發布／大戶週六 06:30；已同步 `08`§0、`33` S2、`34` §4.4。**程式尚未實作**。
 - 2026-08-26 **分點每日全股票**：`import-branch-trades --top 0`（當日有報價 type=stock，不含 ETF）；法人／資券本已是全市場單請求。大戶比率＝TDCC 週更，Phase B 待實作。
 - 2026-08-26 **倉和卡 8/24**：DB 已有 8/25，個股 JSON 未重匯；觸發 force export。
@@ -128,7 +129,7 @@
 - 2026-08-25 **籌碼日報深度顯示**：個股「分點進出」依**該檔** `branch_history` 顯示涵蓋區間；超過回補天數的 120/240/2年等選項 disabled，並自動降到可用深度。
 - 2026-08-25 **監控 I-1／試搓**:大單改日均額 0.4% 分級(80萬–500萬);08:30–09:00 試搓不計訊號;UI 隱藏試搓歷史;修正 watch_price／adv20 讀取。
 - 2026-08-25 **監控訊號 UX**：列表強制新→舊排序；今日顯示時分秒、跨日顯示日期；UI 隱藏 `00*` ETF（含元大台灣50／歷史訊號）；worker `is_etf_id` 與 classify 對齊。
-- 2026-08-21 **盤中監控 UX**：導覽「首頁｜監控｜…」；首頁拿掉嵌入面板；I-1～I-4 兩欄標籤色；大單金額改億／千萬／百萬；額度 n/5；排除 00 開頭 ETF。需在 Supabase 執行 `docs/sql/worker_heartbeat_monitor_cap.sql`。
+- 2026-08-21 **盤中監控 UX**：導覽「首頁｜監控｜…」；首頁拿掉嵌入面板；I-1～I-4 兩欄標籤色；大單金額改億／千萬／百萬；額度 n/5；排除 00 開頭 ETF。需在 Supabase 執行 `docs/sql/20260821145158_add_worker_heartbeat_monitor_cap.sql`。
 - 2026-08-21 **盤中雷達 UX**：`/intraday` 導覽頁；I-1～I-4 人話標籤；Realtime；worker 併自選。
 - 2026-08-21 **VPS 資料凍結搶修**:根因=VPS 本地 dirty `vps/scripts` 擋 `git pull`,cron 全日無 export。已停回補、pull 最新、補抓 2026-08-20 並 deploy;稍後 catchup 後正式 `data_date=2026-08-21`(法人/融資/分點 freshness 仍可能 lag 至當日稍晚 cron)。盤中 worker 重建後上線。`lib.sh` 加 `core.filemode false` + pull 失敗 reset scripts 重試。
 - 2026-08-20 **三包非 VPS**:①個股掃讀微優化(訊號摘要可收合、sticky tab、法人空態縮短);②docs/22 A4 Extended/Faded(export+首頁「追高風險」「失效」+徽章;等 VPS export);③docs/20 Phase 4 提案稿改寫(對齊 VPS cron,未改 cron)。
@@ -146,7 +147,7 @@
 - 2026-08-20 **WP-H1 首頁題材分組**:綜合/市場掃描加「分數|題材」切換;桌機與分數榜同一套 2/3/4 欄卡片牆(組標題 col-span-full,預設全開),手機仍前 3 組展開。
 - 2026-08-20 **WP-B7 Access 關閉並驗收**:裸 curl `/data/radar.json` 直接 401;使用者確認無痕開站為站內 Google 登入、管理員登入後資料正常。門禁只剩站內登入 + Worker JWT/`RADAR_SERVICE_KEY`。
 - 2026-08-19 **WP-B7 Worker JWT**:`/data` Worker 驗 Bearer JWT + `app_profiles.approved`,或 `X-Radar-Service-Key`;前端 `dataFetch` 帶 token;盤中 worker 改帶 service key。
-- 2026-08-19 **WP-B7 前端核准閘門**:全頁 Google 登入、`docs/sql/app_profiles.sql`、`/admin` 核准頁;既有 auth.users 回填已核准,`a7033140327k@gmail.com` 為管理員。
+- 2026-08-19 **WP-B7 前端核准閘門**:全頁 Google 登入、`docs/sql/20260819171000_create_app_profiles.sql`、`/admin` 核准頁;既有 auth.users 回填已核准,`a7033140327k@gmail.com` 為管理員。
 - 2026-08-19 **手機版 UI 修正（多頁）**：個股頁 KChart 工具列拆兩列（Row1 固定：時間框架/副圖/主力分點；Row2 均線 wrap）；分點進出區摘要 card 對稱排列、時間範圍 wrap 全顯；分點頁統計列改 2×2 grid、標籤文字更清楚、資料起始日截斷修正。commits `b00916a`/`01b6c01`/`57f97a7`/`450f284`。
 - 2026-08-19 **Cursor 協作常駐指令 + Phase 2 文件同步**:使用者定案 Workflow D——規劃用 Grok 4.6 High、執行用 Auto agent,完成功能/修正後自動更新 md 並 commit/push(高風險項除外);落檔 `AGENTS.md`、`docs/17`/`18`/`24`、`docs/project-context.md`。同日 Phase 2 差異報告 CLI(`phase2-diff-report`)與本機樣本報告文件同步(`docs/20`、`STATUS` Phase 2 條目)。
 - 2026-07-18 **WP-B5 文件大同步完成**:`docs/31` §9 退役清單逐項落文件——`AGENTS.md` 危險清單改寫(WAL checkpoint/cache-release 續存鏈/DB 1GB 上限三條退役,換上「VPS 單一寫者不得破壞」「備份前 checkpoint+integrity_check」「資料與部署權限分離」三條)、`docs/08_scheduler_jobs.md` §0 重寫為 VPS cron 表、`DEPLOY.md` 改為資料/部署分離架構說明、`docs/vps_backfill_plan.md` Step 4e 上傳流程標記作廢、`docs/STATUS.md`(本檔)、`docs/32_wp_b3_cutover_runbook.md` 狀態標頭改為已執行、`docs/31` §12 補執行紀錄。未動任何程式碼/workflow yaml。
@@ -174,7 +175,7 @@
 - 2026-07-08 Mark策略演算法與獨立榜單: 新增「Mark策略」演算法（20日內漲停、5日內爆量、MACD零上金叉），於 `indicators.py` 中進行嚴格判定，並在前端首頁新增獨立的「Mark策略」頁籤。
 - 2026-07-09 排程觸發改 Cloudflare Worker:實測發現 GitHub 原生 `schedule:` 延遲 2.5–3.5 小時,新增 `cloudflare-trigger/`(Cloudflare Worker,單一 10 分鐘 cron + 程式碼比對時間表)取代;4 支既有 workflow 拿掉 `schedule:`,新增 `daily-margin.yml`(22:10 台北融資券保底輪);修正隨手發現的 `daily-branches`/`data-backfill` 備份步驟隱性依賴 `event_name=='schedule'` 的 bug(原本手動觸發會意外覆蓋週備份);Worker 已部署並以 `gh run list` 驗證觸發成功;修補 Worker `fetch()` 端點原本無驗證可被任何人觸發 workflow 的漏洞,加上 token 驗證。
 - 2026-07-11 個股頁 K 線下方分點進出:抽出共用元件 `web/components/BranchFlowSection.tsx`(時間範圍+N日淨流/家數摘要+前13大買/賣超兩欄列表,聚合邏輯自原 BranchPanel 原樣搬移),掛進 K 線視圖技術摘要之後(標題「分點進出」),分點 Tab 改引用同一元件——同一份邏輯兩處用;區塊自帶期間 state(預設 5 日)不與 K 線區間連動;`pillTabClass` 提到 `lib/utils.ts` 供兩處共用;`cd web; npm run build` 全過。
-- 2026-07-10 觀察價/失效價 + 自選股 + 探索頁(集中度/題材):`daily_scores` 新增 `watch_price`/`stop_price`/`buy_concentration`/`concentration_avg20`(additive migration);純函式 `watch_stop_prices`/`buy_concentration` 各有單元測試,`buy_concentration` 從既有 B3 評分邏輯抽出重用;`export-json` 帶出至股票卡/個股頁/新的 `radar.json.concentration` 榜;前端新增 Supabase-backed 自選股(`web/lib/watchlist.tsx` Context + `WatchlistButton` + `/watchlist` 頁,需人工執行 `docs/sql/watchlist.sql` 建表)與 `/explore` 頁(集中度+題材 2 個 tab,地緣/關鍵分點/分點績效榜/權證異動因人工名單或與 `/branch` 重疊而暫緩);全專案 `npm run build`(含 static export)與 16 項 pytest 皆過。
+- 2026-07-10 觀察價/失效價 + 自選股 + 探索頁(集中度/題材):`daily_scores` 新增 `watch_price`/`stop_price`/`buy_concentration`/`concentration_avg20`(additive migration);純函式 `watch_stop_prices`/`buy_concentration` 各有單元測試,`buy_concentration` 從既有 B3 評分邏輯抽出重用;`export-json` 帶出至股票卡/個股頁/新的 `radar.json.concentration` 榜;前端新增 Supabase-backed 自選股(`web/lib/watchlist.tsx` Context + `WatchlistButton` + `/watchlist` 頁,需人工執行 `docs/sql/20260710002358_create_watchlist.sql` 建表)與 `/explore` 頁(集中度+題材 2 個 tab,地緣/關鍵分點/分點績效榜/權證異動因人工名單或與 `/branch` 重疊而暫緩);全專案 `npm run build`(含 static export)與 16 項 pytest 皆過。
 - 2026-07-10 前端 UI 遷移 Tailwind CSS v4 + shadcn/ui(尚未 commit):分階段(header/nav/搜尋/auth → 首頁 → 個股頁 → branch/explore/watchlist → 清理舊 CSS)把全站手刻 CSS 換成 Tailwind utility + shadcn 元件,視覺目標是與遷移前逐頁比對不走樣(每階段皆截圖比對深色模式,並用本機 DB 產出的真實資料而非空狀態驗證);過程中發現並修掉兩個遷移期間才浮現的既有 bug——① 舊 `.grid` class 名稱與 Tailwind 內建 `grid`/`grid-cols-*` utility 直接碰撞,unlayered 規則蓋過 Tailwind 的 layered utility,導致多處 4 欄版面被壓成 3 欄且會換行,已刪除該舊規則;② shadcn `@theme inline` 的 `--color-border`/`--color-accent` 一度被誤指到 legacy brand token,深色模式因數值巧合沒發作,但淺色模式的邊框/hover 底色會全部跑掉,已修正並補上 body 背景色改用 shadcn token,讓淺色模式真正可用(站上切換 toggle 已於 2026-07-11 補上,見 docs/23 V3.1)。`npm run build` 全過,globals.css 從 912 行清到約 210 行。
 
 - 2026-07-10 分點可信度排行榜(docs/13 §2b/§3a/§3b,commit `cae4fd1`):`compute_branch_stats.py` 由佔位邏輯改為真實統計——事件擷取(淨買超≥成交值1%、連續交易日合併、事件日=段首日)、重用 `forward_returns` 以還原價計前瞻報酬與 5 日勝率、隔日沖判定(次日回吐≥70% 比率≥60%)、可信度分數 0-100(勝率30/報酬25/買點分位15/規模10/近效20,級距為 V1 起始值待校準);`branch_rankings` 保留歷史快照(只刪同 as_of);`tracked_branches` 自動入選/移出(僅動 source='auto');export 只取最新快照且隔日沖獨立輸出;/branch 排行榜 tab 補樣本不足/來源徽章/隔日沖獨立區;新增 27 項單元測試(全套 44 過),verifier 種子 DB 實測 CONFIRMED。

@@ -24,6 +24,7 @@
 | `docs/33_mid_backfill_publish_plan.md` | ✅ S1/S1.1 已實作;📝 S2 指向 `35` | mid＋safe-stats;S2=supervisor／scores／大戶總圖 |
 | `docs/34_margin_shareholder_plan.md` | ✅ A0–A4 程式;📝 Phase B 待做 | 資券／大戶;大戶週六 06:30 槽已寫入 §4.4 |
 | `docs/36_user_search_font_prefs.md` | ✅ **已上線(2026-08-26)** | 搜尋歷史＋字級綁帳號；SQL 已執行 |
+| `docs/sql/README.md` | ✅ **current(2026-08-26)** | Supabase 手跑 SQL 命名：`YYYYMMDDHHMMSS_描述.sql`；不適用 VPS SQLite |
 | `docs/08_scheduler_jobs.md` §1 | 🗑️ **已刪除(2026-07-09)** | 原 Laravel job chain 格式舊排程稿,與 §0 矛盾且從未實作,已刪除。§2(盤中管線)/§3(每週每月)為 V2 尚未實作的設計參考,保留。 |
 | `docs/00_blueprint.md` | ⚠️ **表格欄位過時** | 頂部有 2026-07-06 修訂註記,但「架構」欄仍寫 Laravel/PG16/VM,讀表格本身會誤導。 |
 | `docs/12_zero_cost_pivot.md` | ✅ **current** | 現行零成本架構(Python+SQLite+Next.js+GitHub Actions+Cloudflare Pages)的定案文件。 |
@@ -64,6 +65,7 @@
 - 動資料庫/排程/R2 → `docs/08_scheduler_jobs.md` §0 + `docs/21_private_beta_access_r2_plan.md` + `.github/workflows/*.yml`
 - 動評分規則 → `docs/04_signal_rules.md` + `pipeline/radar/compute/scores.py` + 對應 test
 - 動前端頁面 → `docs/07_frontend_pages.md` 對應章節 + `docs/19_ui_guidelines.md` + `docs/25_ui_information_architecture_plan.md`(若涉及資訊架構/功能合併) + 該頁面檔案
+- 動登入／Access／Supabase SQL → `docs/21` + `docs/sql/README.md`（新檔必須時間戳命名）
 - 動資安/登入 → `docs/10_security_legal.md` + `docs/14_feature_wave2.md` §4 + `docs/21_private_beta_access_r2_plan.md`
 
 ## Golden Rules

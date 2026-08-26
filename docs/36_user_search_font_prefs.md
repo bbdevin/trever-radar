@@ -1,6 +1,6 @@
 # 搜尋歷史 ＋ 帳號綁定文字縮放
 
-> 狀態：**程式已實作（2026-08-26）**；**Supabase SQL 已由使用者執行**（`docs/sql/user_ui_prefs.sql`）。  
+> 狀態：**程式已實作（2026-08-26）**；**Supabase SQL 已由使用者執行**（`docs/sql/20260826114421_create_user_ui_prefs.sql`）。  
 > UI：ui-ux-pro-max＋`docs/19`（Lucide、無 emoji、現站品牌色）。
 
 ## 1. 功能
@@ -34,9 +34,9 @@
 - [x] UserPrefsProvider＋CSS
 - [x] FontScaleToggle
 - [x] SearchBox 歷史
-- [x] **人工**：Supabase 執行 `user_ui_prefs.sql`（2026-08-26 使用者完成）
-- [x] **修復**：選股後 `await pushSearch` 再導頁（避免請求被取消）；補 `GRANT`（見 `user_ui_prefs_grants.sql`）
-- [x] **主題綁帳號**：`theme` 欄（預設 dark）；補跑 `user_ui_prefs_theme.sql`
+- [x] **人工**：Supabase 執行 `20260826114421_create_user_ui_prefs.sql`（2026-08-26 使用者完成）
+- [x] **修復**：選股後 `await pushSearch` 再導頁（避免請求被取消）；補 `GRANT`（見 `20260826114857_grant_user_ui_prefs.sql`）
+- [x] **主題綁帳號**：`theme` 欄（預設 dark）；補跑 `20260826115525_add_user_ui_prefs_theme.sql`
 
 ## 5. 驗收
 
