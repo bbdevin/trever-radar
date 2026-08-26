@@ -5,7 +5,7 @@ import type { Candle } from "@/lib/types";
 import { fmtLots } from "@/lib/format";
 import { bollinger, kd, macd, rsi, sma } from "@/lib/indicators";
 import { barsForDays, periodKey, resample, type Timeframe } from "@/lib/resample";
-import { cn } from "@/lib/utils";
+import { cn, pillTabClass, segBtnClass } from "@/lib/utils";
 
 const TF_DEFS: { key: Timeframe; label: string }[] = [
   { key: "D", label: "日K" },
@@ -444,12 +444,7 @@ export default function KChart({
             <button
               key={t.key}
               type="button"
-              className={cn(
-                "min-h-9 cursor-pointer rounded-md px-3 py-1 text-xs font-semibold transition-colors duration-200",
-                settings.tf === t.key
-                  ? "bg-[color:var(--accent-2)] text-white shadow-sm"
-                  : "text-muted-foreground hover:bg-secondary/80 hover:text-foreground",
-              )}
+              className={segBtnClass(settings.tf === t.key, "accent")}
               onClick={() => setSettings((s) => ({ ...s, tf: t.key }))}
             >
               {t.label}
@@ -465,12 +460,7 @@ export default function KChart({
             <button
               key={k}
               type="button"
-              className={cn(
-                "min-h-9 cursor-pointer rounded-md px-3 py-1 text-xs font-semibold transition-colors duration-200",
-                subActive
-                  ? "bg-[color:var(--warn)] text-white shadow-sm dark:text-[#141412]"
-                  : "text-muted-foreground hover:bg-secondary/80 hover:text-foreground",
-              )}
+              className={segBtnClass(subActive, "warn")}
               onClick={() => {
                 setSettings((s) => ({ ...s, sub: k }));
                 if (isMobile) handleMobilePaneChange("sub");
@@ -489,7 +479,8 @@ export default function KChart({
               className={cn(
                 "min-h-9 rounded-lg px-3 py-1 text-xs font-semibold",
                 chipBase,
-                mobilePaneKey === "main" && "border-[color:var(--border-strong)] bg-muted text-foreground",
+                mobilePaneKey === "main" &&
+                  "border-[color:var(--accent-2)] bg-[color:var(--accent-2)]/15 text-[color:var(--accent-2)]",
               )}
               onClick={() => handleMobilePaneChange("main")}
             >
@@ -502,7 +493,9 @@ export default function KChart({
                 "min-h-9 rounded-lg px-3 py-1 text-xs font-semibold",
                 chipBase,
                 !branchFlow?.length && "cursor-not-allowed opacity-40",
-                mobilePaneKey === "sel" && !!branchFlow?.length && "border-[color:var(--border-strong)] bg-muted text-foreground",
+                mobilePaneKey === "sel" &&
+                  !!branchFlow?.length &&
+                  "border-[color:var(--warn)] bg-[color:var(--warn)]/15 text-[color:var(--warn)]",
               )}
               onClick={() => branchFlow?.length && handleMobilePaneChange("sel")}
             >

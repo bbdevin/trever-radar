@@ -2,7 +2,7 @@
 
 import { usePathname, useSearchParams } from "next/navigation";
 import { Suspense } from "react";
-import { cn } from "@/lib/utils";
+import { cn, navPillClass } from "@/lib/utils";
 
 const NAV = [
   { label: "首頁", href: "/", match: (path: string, tab: string | null) => path === "/" && tab !== "margin" },
@@ -23,12 +23,7 @@ function DesktopNavInner() {
             key={n.label}
             href={n.href}
             aria-current={isActive ? "page" : undefined}
-            className={cn(
-              "cursor-pointer rounded-full px-3.5 py-1.5 text-[13.5px] font-semibold transition-colors duration-200",
-              isActive
-                ? "bg-muted text-foreground shadow-[inset_0_0_0_1px_var(--border-strong)]"
-                : "text-muted-foreground hover:bg-secondary hover:text-foreground",
-            )}
+            className={cn(navPillClass(isActive))}
           >
             {n.label}
           </a>

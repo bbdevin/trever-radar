@@ -1,6 +1,6 @@
 - **Done（2026-08-26）**:
-  - 週表「內部人％」暫隱藏（口徑不穩）；保留「董監持股」分頁
+  - 全站選取態清查：`pillTabClass`／`navPillClass`／`segBtnClass`／`filterChipClass`（primary／accent／warn）；去掉灰底 inset
 - **Next**:
   1. 掛 crontab 董監月槽（16 日 07:00）
-  2. 內部人％若要重開：先定分母（集保週／已發行）與分子規則再開 UI
+  2. 內部人％若重開：先定口徑再開 UI
 - **Branch**: `main`

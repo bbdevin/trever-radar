@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { useSession } from "@/lib/useSession";
 import type { AppProfile } from "@/lib/useSession";
-import { cn } from "@/lib/utils";
+import { pillTabClass } from "@/lib/utils";
 
 type ProfileRow = AppProfile & {
   created_at: string;
@@ -76,20 +76,14 @@ export default function AdminPage() {
       <div className="mb-3 flex gap-1 rounded-full border border-border bg-card p-[3px] w-fit">
         <button
           type="button"
-          className={cn(
-            "rounded-full px-3.5 py-1.5 text-[13px] font-semibold",
-            tab === "pending" ? "bg-muted text-foreground" : "text-muted-foreground",
-          )}
+          className={pillTabClass(tab === "pending")}
           onClick={() => setTab("pending")}
         >
           待核准 ({rows.filter((r) => r.status === "pending").length})
         </button>
         <button
           type="button"
-          className={cn(
-            "rounded-full px-3.5 py-1.5 text-[13px] font-semibold",
-            tab === "all" ? "bg-muted text-foreground" : "text-muted-foreground",
-          )}
+          className={pillTabClass(tab === "all")}
           onClick={() => setTab("all")}
         >
           全部 ({rows.length})

@@ -27,7 +27,7 @@
 7. **行動優先**:斷點 375 / 768 / 1024 / 1440;手機單欄堆疊時,DOM 順序 = 視覺閱讀順序(不用 `order-*` hack,無障礙 reading order 才正確)。
 8. **下鑽必有返回/收合路徑**:展開面板要有明確關閉按鈕(X)+ 再點一次原列可收合;`aria-expanded` 標注狀態。
 9. **文字截斷**:固定欄寬的名稱用 `truncate` + `title` 屬性保留全文。
-10. **游標與回饋**:可點元素 `cursor-pointer` + hover 底色(`hover:bg-secondary`);選中態用 `bg-secondary` + inset ring(`shadow-[inset_0_0_0_1px_var(--border-strong)]`)。
+10. **游標與回饋**:可點元素 `cursor-pointer` + hover(`hover:bg-secondary/80`)+ `transition-colors duration-200`。**選取態**(2026-08-26):禁止只用灰底 inset ring(`bg-muted` + `border-strong`)——對比不足。一律用 `web/lib/utils.ts`：`pillTabClass`／`navPillClass`（主藍 primary）、`segBtnClass`（日K=accent 青綠、MACD=warn 琥珀）、`filterChipClass`、列表列用 `softSelectClass`。買／賣語意用 `bg-up/20`／`bg-down/20`。
 11. **空狀態要有教育性**(承 docs/07 §6):說明「為什麼是空的」而非只顯示無資料;載入中優先骨架屏而非 spinner。
 12. **SVG 不用 emoji**(同上 lucide 規則);資料日期標注(「分點資料:7/4」)避免誤以為即時。
 13. **Tab／篩選選中說明**(2026-08-25):首頁觀察名單等橫向 pill tab，選中後必須在下方顯示**可見定義句**(非僅 `title` hover)；桌機隱藏、手機也要看得到。文案說明「這榜代表什麼／不代表什麼」，避免與空狀態／免責重複堆疊。

@@ -5,7 +5,7 @@ import { ArrowLeft } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { dataFetch } from "@/lib/dataFetch";
 import { fmtLots, fmtAmount } from "@/lib/format";
-import { cn } from "@/lib/utils";
+import { cn, pillTabClass } from "@/lib/utils";
 import BuySellSplit from "@/components/BuySellSplit";
 import {
   aggregateBranchRows,
@@ -210,26 +210,22 @@ export default function BranchTrackView({
         <div role="tablist" aria-label="期間" className="flex flex-wrap gap-0.5 rounded-full border border-border bg-card p-[3px]">
           {PRESET_PERIODS.map((p) => (
             <button
+              type="button"
               key={p}
               role="tab"
               aria-selected={period === p}
               onClick={() => setPeriod(p)}
-              className={cn(
-                "min-h-11 rounded-full px-3.5 text-[13.5px] font-semibold text-muted-foreground transition-colors",
-                period === p && "bg-muted text-foreground shadow-[inset_0_0_0_1px_var(--border-strong)]",
-              )}
+              className={cn("min-h-11", pillTabClass(period === p))}
             >
               近 {p} 日
             </button>
           ))}
           <button
+            type="button"
             role="tab"
             aria-selected={period === "custom"}
             onClick={() => setPeriod("custom")}
-            className={cn(
-              "min-h-11 rounded-full px-3.5 text-[13.5px] font-semibold text-muted-foreground transition-colors",
-              period === "custom" && "bg-muted text-foreground shadow-[inset_0_0_0_1px_var(--border-strong)]",
-            )}
+            className={cn("min-h-11", pillTabClass(period === "custom"))}
           >
             自訂
           </button>

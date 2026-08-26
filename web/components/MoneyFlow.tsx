@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import { ChevronRight, X } from "lucide-react";
 import type { SectorFlow } from "@/lib/types";
 import { chgClass, fmtE8, fmtPct } from "@/lib/format";
-import { cn } from "@/lib/utils";
+import { cn, pillTabClass, softSelectClass } from "@/lib/utils";
 
 type Mode = "industry" | "theme";
 type SortBy = "volume" | "price";
@@ -16,12 +16,6 @@ function dev(g: { vs20: number | null }): number | null {
 
 const CAP = 150; // 條長上限 ±150%
 const ALL_SUB = "__all__"; // 下鑽面板「全部成分股」sentinel
-
-const segTabClass = (active: boolean) =>
-  cn(
-    "rounded-full px-3 py-1 text-[12.5px] font-semibold text-muted-foreground transition-colors",
-    active && "bg-muted text-foreground shadow-[inset_0_0_0_1px_var(--border-strong)]",
-  );
 
 /** 成分股 chips(下鑽共用;sub.top 無 turnover 時自動省略該欄) */
 function StockChips({ items }: { items: { id: string; name: string; chg_pct: number | null; turnover?: number }[] }) {
@@ -120,7 +114,7 @@ export default function MoneyFlow({ sectors, themes }: { sectors: SectorFlow[]; 
       <button
         className={cn(
           "grid min-h-11 w-full cursor-pointer grid-cols-[86px_minmax(0,1fr)_92px] items-center gap-2.5 rounded-[10px] px-2 py-1.5 text-left text-foreground transition-colors hover:bg-secondary",
-          selected === g.name && "bg-secondary shadow-[inset_0_0_0_1px_var(--border-strong)]",
+          selected === g.name && softSelectClass(true),
         )}
         onClick={() => select(selected === g.name ? null : g.name)}
         aria-expanded={selected === g.name}
@@ -171,11 +165,11 @@ export default function MoneyFlow({ sectors, themes }: { sectors: SectorFlow[]; 
       <div className="mb-2.5 flex flex-wrap items-center gap-3">
         <h2 className="text-[15px] font-bold">資金流向</h2>
         <div className="inline-flex gap-0.5 rounded-full border border-border bg-card p-[3px]">
-          <button className={segTabClass(mode === "industry")} onClick={() => { setMode("industry"); select(null); }}>
+          <button className={pillTabClass(mode === "industry", "accent")} onClick={() => { setMode("industry"); select(null); }}>
             產業
           </button>
           <button
-            className={cn(segTabClass(mode === "theme"), !hasThemes && "cursor-not-allowed opacity-50")}
+            className={cn(pillTabClass(mode === "theme", "accent"), !hasThemes && "cursor-not-allowed opacity-50")}
             onClick={() => { setMode("theme"); select(null); }}
             disabled={!hasThemes}
             title={hasThemes ? "概念股分類(成分重疊)" : "題材資料累積中"}
@@ -184,10 +178,10 @@ export default function MoneyFlow({ sectors, themes }: { sectors: SectorFlow[]; 
           </button>
         </div>
         <div className="ml-auto inline-flex gap-0.5 rounded-full border border-border bg-card p-[3px]">
-          <button className={segTabClass(sortBy === "volume")} onClick={() => { setSortBy("volume"); select(null); }}>
+          <button className={pillTabClass(sortBy === "volume", "warn")} onClick={() => { setSortBy("volume"); select(null); }}>
             資金量能
           </button>
-          <button className={segTabClass(sortBy === "price")} onClick={() => { setSortBy("price"); select(null); }}>
+          <button className={pillTabClass(sortBy === "price", "warn")} onClick={() => { setSortBy("price"); select(null); }}>
             漲跌幅
           </button>
         </div>
@@ -256,7 +250,7 @@ export default function MoneyFlow({ sectors, themes }: { sectors: SectorFlow[]; 
                     <button
                       className={cn(
                         "flex min-h-11 w-full cursor-pointer items-center gap-2 rounded-[10px] px-2 py-1.5 text-left transition-colors hover:bg-secondary",
-                        open && "bg-secondary shadow-[inset_0_0_0_1px_var(--border-strong)]",
+                        open && softSelectClass(true),
                       )}
                       onClick={() => setSubSel(open ? null : sub.name)}
                       aria-expanded={open}
@@ -290,7 +284,7 @@ export default function MoneyFlow({ sectors, themes }: { sectors: SectorFlow[]; 
                 <button
                   className={cn(
                     "flex min-h-11 w-full cursor-pointer items-center gap-2 rounded-[10px] px-2 py-1.5 text-left transition-colors hover:bg-secondary",
-                    subSel === ALL_SUB && "bg-secondary shadow-[inset_0_0_0_1px_var(--border-strong)]",
+                    subSel === ALL_SUB && softSelectClass(true),
                   )}
                   onClick={() => setSubSel(subSel === ALL_SUB ? null : ALL_SUB)}
                   aria-expanded={subSel === ALL_SUB}

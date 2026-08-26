@@ -25,8 +25,8 @@ export default function BuySellSplit({
         role="tab"
         aria-selected={value === "buy"}
         className={cn(
-          "min-h-11 px-2 text-[13.5px] font-bold transition-colors",
-          value === "buy" ? "bg-secondary text-up" : "text-muted-foreground hover:text-foreground",
+          "min-h-11 cursor-pointer px-2 text-[13.5px] font-bold transition-colors duration-200",
+          value === "buy" ? "bg-up/20 text-up shadow-sm" : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground",
         )}
         onClick={() => onChange("buy")}
       >
@@ -37,8 +37,8 @@ export default function BuySellSplit({
         role="tab"
         aria-selected={value === "sell"}
         className={cn(
-          "min-h-11 border-l border-border px-2 text-[13.5px] font-bold transition-colors",
-          value === "sell" ? "bg-secondary text-down" : "text-muted-foreground hover:text-foreground",
+          "min-h-11 cursor-pointer border-l border-border px-2 text-[13.5px] font-bold transition-colors duration-200",
+          value === "sell" ? "bg-down/20 text-down shadow-sm" : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground",
         )}
         onClick={() => onChange("sell")}
       >

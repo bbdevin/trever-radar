@@ -156,7 +156,7 @@ export default function MarginPanel({ data, candles }: { data: StockJson; candle
                   type="button"
                   role="tab"
                   aria-selected={view === t.key}
-                  className={cn("min-h-11 cursor-pointer", pillTabClass(view === t.key))}
+                  className={cn("min-h-11 cursor-pointer", pillTabClass(view === t.key, "accent"))}
                   onClick={() => setView(t.key)}
                 >
                   {t.label}

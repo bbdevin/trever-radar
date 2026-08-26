@@ -377,12 +377,12 @@ const BranchFlowSection = forwardRef<
               </button>
             );
           })}
-          <div className={cn("inline-flex items-center gap-1.5 rounded-full pr-1", days === "custom" && "bg-muted shadow-[inset_0_0_0_1px_var(--border-strong)]")}>
+          <div className={cn("inline-flex items-center gap-1.5 rounded-full pr-1", days === "custom" && "bg-primary/10")}>
             <button
               type="button"
               role="tab"
               aria-selected={days === "custom"}
-              className={pillTabClass(false)}
+              className={pillTabClass(days === "custom")}
               onClick={() => setDays("custom")}
             >
               自訂

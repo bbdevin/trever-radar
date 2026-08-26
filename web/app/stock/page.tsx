@@ -549,7 +549,7 @@ function WarrantPanel({ data }: { data: StockJson }) {
                         className={cn(
                           "border-t border-[color:var(--line)] px-1.5 py-2 font-semibold text-muted-foreground select-none",
                           i < 2 ? "text-left" : "text-right",
-                          sorted && "text-foreground shadow-[inset_0_0_0_1px_var(--border-strong)]",
+                          sorted && "bg-primary/10 text-primary",
                         )}
                       >
                         {canSort ? (

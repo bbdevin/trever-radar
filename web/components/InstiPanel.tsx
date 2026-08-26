@@ -127,8 +127,8 @@ export default function InstiPanel({ data, candles }: { data: StockJson; candles
                   "min-h-11 px-1 text-[12.5px] font-bold transition-colors",
                   i > 0 && "border-l border-border",
                   series === s.key
-                    ? "bg-secondary text-foreground"
-                    : "text-muted-foreground hover:text-foreground",
+                    ? "bg-primary text-primary-foreground shadow-sm"
+                    : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground",
                 )}
                 onClick={() => setSeries(s.key)}
               >

@@ -11,7 +11,7 @@ import StockCard from "@/components/StockCard";
 import ThemeGroupedList from "@/components/ThemeGroupedList";
 import MarginUsageRank from "@/components/MarginUsageRank";
 import { useSession, signInWithGoogle } from "@/lib/useSession";
-import { cn, pillTabClass } from "@/lib/utils";
+import { cn, navPillClass, pillTabClass } from "@/lib/utils";
 import { dataFetch } from "@/lib/dataFetch";
 import { OFFLINE_DATA_COPY, isBrowserOffline } from "@/lib/pwa";
 import type { ListKey, MetaJson, RadarJson, StrategyMeta } from "@/lib/types";
@@ -341,8 +341,8 @@ function RadarView() {
                 role="tab"
                 aria-selected={tab === t.key}
                 className={cn(
-                  "inline-flex min-h-11 cursor-pointer items-center gap-1.5 rounded-full px-4 py-2 text-[13.5px] font-semibold text-muted-foreground transition-colors duration-200",
-                  tab === t.key && "bg-muted text-foreground shadow-[inset_0_0_0_1px_var(--border-strong)]",
+                  "inline-flex min-h-11 items-center gap-1.5",
+                  navPillClass(tab === t.key),
                 )}
                 onClick={() => selectTab(t.key)}
                 title={t.hint}
@@ -350,7 +350,7 @@ function RadarView() {
                 <t.icon size={15} className="opacity-85" aria-hidden />
                 {t.label}
                 {count != null && (
-                  <small className="num text-[11px] text-muted-foreground">{count}</small>
+                  <small className={cn("num text-[11px]", tab === t.key ? "text-primary-foreground/80" : "text-muted-foreground")}>{count}</small>
                 )}
               </button>
             );
@@ -378,10 +378,10 @@ function RadarView() {
                 key={mode.key}
                 onClick={() => setScanMode(mode.key)}
                 className={cn(
-                  "rounded-md px-2.5 py-1.5 text-[12.5px] font-medium transition-colors inline-flex items-center gap-1.5",
+                  "inline-flex cursor-pointer items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[12.5px] font-medium transition-colors duration-200",
                   scanMode === mode.key
-                    ? "bg-[color:var(--ink-2)] text-[color:var(--bg-1)] shadow-[0_1px_2px_rgba(0,0,0,0.1)]"
-                    : "bg-card border border-border text-muted-foreground hover:bg-secondary",
+                    ? "bg-[color:var(--accent-2)] text-white shadow-sm"
+                    : "border border-border bg-card text-muted-foreground hover:bg-secondary hover:text-foreground",
                 )}
                 title={mode.hint}
               >
@@ -389,8 +389,8 @@ function RadarView() {
                 <span>{mode.label}</span>
                 <span
                   className={cn(
-                    "num text-[10.5px] rounded px-1 py-0.5",
-                    scanMode === mode.key ? "bg-[color:var(--bg-1)]/20" : "bg-muted",
+                    "num rounded px-1 py-0.5 text-[10.5px]",
+                    scanMode === mode.key ? "bg-white/20" : "bg-muted",
                   )}
                 >
                   {radar.lists?.[mode.key]?.length ?? 0}
@@ -443,9 +443,9 @@ function RadarView() {
                             onClick={() => setStrategy(code)}
                             title={isRetired ? "此策略在目前有限樣本下未顯示正向預測力，降級觀察中；樣本不足，非永久淘汰" : st.label}
                             className={cn(
-                              "rounded-md px-2.5 py-1 text-[12.5px] font-medium transition-colors",
+                              "cursor-pointer rounded-md px-2.5 py-1 text-[12.5px] font-medium transition-colors duration-200",
                               isActive
-                                ? "bg-[color:var(--ink-2)] text-[color:var(--bg-1)] shadow-[0_1px_2px_rgba(0,0,0,0.1)]"
+                                ? "bg-primary text-primary-foreground shadow-sm"
                                 : isRetired
                                   ? "bg-muted/50 text-muted-foreground/50 hover:bg-muted/60"
                                   : "bg-muted text-muted-foreground hover:bg-muted/80",
@@ -455,7 +455,7 @@ function RadarView() {
                             <span
                               className={cn(
                                 "ml-1.5 rounded px-1 py-0.5 text-[10px]",
-                                isActive ? "bg-[color:var(--bg-1)]/20" : "bg-background",
+                                isActive ? "bg-primary-foreground/20" : "bg-background",
                               )}
                             >
                               {radar.strategies?.[code]?.length ?? 0}

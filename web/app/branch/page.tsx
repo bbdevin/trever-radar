@@ -11,7 +11,7 @@ import { OFFLINE_DATA_COPY, isBrowserOffline } from "@/lib/pwa";
 import type { RadarJson } from "@/lib/types";
 import type { TrackIndexEntry } from "@/lib/branchTrack";
 import { MARKET_LABEL, fmtX } from "@/lib/format";
-import { cn } from "@/lib/utils";
+import { cn, filterChipClass, navPillClass } from "@/lib/utils";
 
 type Ranking = {
   branch_name: string;
@@ -244,10 +244,7 @@ function TabPill({ active, onClick, title, icon: Icon, label }: { active: boolea
       aria-selected={active}
       onClick={onClick}
       title={title}
-      className={cn(
-        "inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[13.5px] font-semibold text-muted-foreground transition-colors",
-        active && "bg-muted text-foreground shadow-[inset_0_0_0_1px_var(--border-strong)]",
-      )}
+      className={cn("inline-flex items-center gap-1.5", navPillClass(active))}
     >
       <Icon size={15} className="opacity-85" />
       {label}
@@ -555,24 +552,14 @@ export default function BranchPage() {
           </div>
           <button
             onClick={() => setFilterTrackable(v => !v)}
-            className={cn(
-              "rounded-full px-3 py-1 text-[12px] font-semibold transition-colors",
-              filterTrackable
-                ? "bg-[color:var(--ink-2)] text-[color:var(--bg-1)]"
-                : "bg-muted text-muted-foreground hover:bg-secondary",
-            )}
+            className={filterChipClass(filterTrackable, "accent")}
             aria-pressed={filterTrackable}
           >
             {"可追蹤"}
           </button>
           <button
             onClick={() => setFilterEnough(v => !v)}
-            className={cn(
-              "rounded-full px-3 py-1 text-[12px] font-semibold transition-colors",
-              filterEnough
-                ? "bg-[color:var(--ink-2)] text-[color:var(--bg-1)]"
-                : "bg-muted text-muted-foreground hover:bg-secondary",
-            )}
+            className={filterChipClass(filterEnough, "accent")}
             aria-pressed={filterEnough}
           >
             {"樣本足夠"}
@@ -580,10 +567,10 @@ export default function BranchPage() {
           <button
             onClick={() => setFilterDaytrade(v => v === "exclude" ? "all" : "exclude")}
             className={cn(
-              "rounded-full px-3 py-1 text-[12px] font-semibold transition-colors",
+              "cursor-pointer rounded-full px-3 py-1 text-[12px] font-semibold transition-colors duration-200",
               filterDaytrade === "exclude"
-                ? "bg-down/15 text-down"
-                : "bg-muted text-muted-foreground hover:bg-secondary",
+                ? "bg-down/20 text-down shadow-sm"
+                : "bg-muted text-muted-foreground hover:bg-secondary hover:text-foreground",
             )}
             aria-pressed={filterDaytrade === "exclude"}
           >

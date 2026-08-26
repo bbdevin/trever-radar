@@ -31,7 +31,7 @@ export default function BottomNav() {
             key={it.label}
             href={it.href}
             aria-current={active ? "page" : undefined}
-            className={cn(itemClass, active && "text-primary")}
+            className={cn(itemClass, active && "bg-primary/12 font-semibold text-primary")}
           >
             <it.icon size={21} />
             <span>{it.label}</span>
