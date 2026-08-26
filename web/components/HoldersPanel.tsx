@@ -86,7 +86,7 @@ export default function HoldersPanel({ data }: { data: StockJson; candles?: Cand
       <div className="flex min-w-0 flex-wrap items-center gap-2">
         <span className="text-[12px] text-muted-foreground">檢視</span>
         <button type="button" className={pillTabClass(mode === "pct")} onClick={() => setMode("pct")}>
-          張數比例
+          大戶比
         </button>
         <button
           type="button"
@@ -100,7 +100,7 @@ export default function HoldersPanel({ data }: { data: StockJson; candles?: Cand
       <div className="flex min-w-0 flex-wrap items-center gap-3 rounded-[var(--r-md)] border border-border bg-card px-3 py-2.5 text-[12px]">
         <span className="text-muted-foreground">最新 {fmtYMD(latest?.t)}</span>
         <span>
-          ≥{threshold} 張比例{" "}
+          ≥{threshold} 張大戶比{" "}
           <span className="num font-semibold text-foreground">{fmtPct(latestCell?.shares_pct)}</span>
         </span>
         <span>
@@ -133,7 +133,7 @@ export default function HoldersPanel({ data }: { data: StockJson; candles?: Cand
           <thead className="border-b border-border bg-muted/40 text-muted-foreground">
             <tr>
               <th className="px-2.5 py-2 font-medium">週結算</th>
-              <th className="px-2.5 py-2 font-medium">{mode === "pct" ? "持股比例" : "持股人數"}</th>
+              <th className="px-2.5 py-2 font-medium">{mode === "pct" ? "大戶比" : "持股人數"}</th>
             </tr>
           </thead>
           <tbody>

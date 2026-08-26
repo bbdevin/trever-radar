@@ -76,18 +76,6 @@ const BranchFlowSection = forwardRef<
   const [customDays, setCustomDays] = useState<string>("5");
   const [expandedBranch, setExpandedBranch] = useState<string | null>(null);
   const [sideTab, setSideTab] = useState<"buy" | "sell">("buy");
-  const [showAllMobile, setShowAllMobile] = useState(false);
-  // 手機版偵測(<768px)。本元件僅在資料載入後於 client 渲染(SSR 顯示骨架屏),初始化讀 matchMedia 無 hydration mismatch。
-  const [isMobile, setIsMobile] = useState(
-    () => typeof window !== "undefined" && !window.matchMedia("(min-width:768px)").matches,
-  );
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const mq = window.matchMedia("(min-width:768px)");
-    const on = () => setIsMobile(!mq.matches);
-    mq.addEventListener("change", on);
-    return () => mq.removeEventListener("change", on);
-  }, []);
 
   const activeDaysRaw = days === "custom" ? parseInt(customDays) || 1 : days;
   /** 此股實際可用交易日數(每檔回補深度不同) */
@@ -203,11 +191,9 @@ const BranchFlowSection = forwardRef<
   const selectable = onToggleSelect != null && !!branchHistory?.length;
   const atLimit = (selected?.size ?? 0) >= MAX_SELECTED_BRANCHES;
   const selectedCount = selected?.size ?? 0;
-  // 手機版預設前 8 列,可展開全部;桌機版恆顯示全部(逐位元不變)
-  const MOBILE_ROW_LIMIT = 8;
-  const collapse = isMobile && !showAllMobile;
-  const buyRows = collapse ? agg.top13Buy.slice(0, MOBILE_ROW_LIMIT) : agg.top13Buy;
-  const sellRows = collapse ? agg.top13Sell.slice(0, MOBILE_ROW_LIMIT) : agg.top13Sell;
+  // 買賣方 Top13 一律全列顯示(不再手機先收成 8 列再「展開」)
+  const buyRows = agg.top13Buy;
+  const sellRows = agg.top13Sell;
 
   const asOfChip =
     branchAsOf != null ? (
@@ -423,7 +409,7 @@ const BranchFlowSection = forwardRef<
 
       <BuySellSplit
         value={sideTab}
-        onChange={(next) => { setSideTab(next); setShowAllMobile(false); }}
+        onChange={setSideTab}
         buyLabel={`買方 Top${agg.top13Buy.length || 13}`}
         sellLabel={`賣方 Top${agg.top13Sell.length || 13}`}
       />
@@ -452,18 +438,6 @@ const BranchFlowSection = forwardRef<
             <div className="py-[46px] text-center text-sm text-muted-foreground">無賣超紀錄</div>
           )}
         </div>
-        {((sideTab === "buy" ? agg.top13Buy : agg.top13Sell).length > MOBILE_ROW_LIMIT) && (
-          <button
-            type="button"
-            className="md:hidden mt-0.5 min-h-11 rounded-[var(--r-sm)] border border-[color:var(--line)] text-[12.5px] font-semibold text-[color:var(--ink-2)] hover:bg-card"
-            onClick={() => setShowAllMobile((v) => !v)}
-            aria-expanded={showAllMobile}
-          >
-            {showAllMobile
-              ? "收合"
-              : `展開全部 ${(sideTab === "buy" ? agg.top13Buy : agg.top13Sell).length}`}
-          </button>
-        )}
       </div>
 
       {!heading && (
