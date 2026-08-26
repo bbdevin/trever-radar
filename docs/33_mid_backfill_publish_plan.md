@@ -1,6 +1,7 @@
 # 回補中途動態上線（Mid-Backfill Publish）
 
 > 狀態：**S1 + S1.1 已實作**（2026-08-25）— mid 預設略過 stats；`safe-branch-stats.sh` @ 23:30；stats 增量累加防 OOM  
+> **S2 架構定案**（2026-08-26，程式未實作）：四層總圖見 [`docs/35_vps_schedule_architecture.md`](35_vps_schedule_architecture.md)（含 bf-supervisor 自啟、大戶週槽、23:30＋scores）  
 > 相關：`docs/31` §2（回補不拿 flock）、`vps/README.md`
 
 ## 1. 問題
@@ -105,6 +106,7 @@ mid-backfill-publish.sh（新）
 
 - [x] **S1（2026-08-24 使用者確認）**:腳本 + 收編 guard + crontab `0 3,9,12,20`(避開 17:40–19:30,改 20:00)+ 腳本內再擋 daily 窗／lock
 - [x] **S1.1（2026-08-25）**:mid 預設略過 stats;新增 `safe-branch-stats.sh` @ 23:30;stats 增量累加降記憶體(修 OOM)
+- [ ] **S2（2026-08-26 架構定案，程式待做）**:`bf-supervisor` 全自動單寫者回補＋完成 ntfy；safe-stats＋scores；TDCC 週六 06:30 納入總圖——詳 `docs/35`
 
 ## 6. 風險
 

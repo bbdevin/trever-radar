@@ -19,7 +19,10 @@
 | `docs/05_database_schema.md` | ⚠️ **標題過時,內容部分適用** | 標題寫「PostgreSQL 16」,實際是 SQLite(見 `pipeline/radar/schema.py`)。表設計概念(分點裁剪策略、欄位規劃)仍可參考,但語法/引擎描述以程式碼為準。 |
 | `docs/02_mvp_scope.md` | ⚠️ **登入段過時** | 寫「登入(Laravel Breeze)」,實際是 Cloudflare Access / Supabase Google OAuth(見 `12`、`14`§4)。其餘範圍界定仍適用。 |
 | `docs/11_ai_dev_workflow.md` | ❌ **superseded** | 全文 PHP 內容(`Modules/Scoring/*.php`、`php artisan`、pint/phpstan/phpunit、trunk-based+PR)為舊方案且**從未被實際執行**(實際是直接 push `main`)。已改寫為指向本檔與 `docs/17`/`docs/18`,技術棧對照改為 Python。 |
-| `docs/08_scheduler_jobs.md` §0 | ✅ **current(2026-07-18 改寫)** | 排程總表已改寫為 **VPS cron 表**(WP-B3 cutover 後,資料排程唯一真相在 VPS `vps/scripts/`+`vps/scripts/crontab.example`,不再是 GitHub Actions);GitHub 側只剩 push→`deploy.yml`(code only)。 |
+| `docs/08_scheduler_jobs.md` §0 | ✅ **current(2026-08-26 補 mid/stats/大戶槽)** | VPS cron 總表;四層架構圖見 `docs/35` |
+| `docs/35_vps_schedule_architecture.md` | 📝 **架構定案,管家／TDCC 程式未實作(2026-08-26)** | 日更／歷史回補自啟／mid／大戶週槽四層 mermaid;動排程或回補生命週期時必讀 |
+| `docs/33_mid_backfill_publish_plan.md` | ✅ S1/S1.1 已實作;📝 S2 指向 `35` | mid＋safe-stats;S2=supervisor／scores／大戶總圖 |
+| `docs/34_margin_shareholder_plan.md` | ✅ A0–A4 程式;📝 Phase B 待做 | 資券／大戶;大戶週六 06:30 槽已寫入 §4.4 |
 | `docs/08_scheduler_jobs.md` §1 | 🗑️ **已刪除(2026-07-09)** | 原 Laravel job chain 格式舊排程稿,與 §0 矛盾且從未實作,已刪除。§2(盤中管線)/§3(每週每月)為 V2 尚未實作的設計參考,保留。 |
 | `docs/00_blueprint.md` | ⚠️ **表格欄位過時** | 頂部有 2026-07-06 修訂註記,但「架構」欄仍寫 Laravel/PG16/VM,讀表格本身會誤導。 |
 | `docs/12_zero_cost_pivot.md` | ✅ **current** | 現行零成本架構(Python+SQLite+Next.js+GitHub Actions+Cloudflare Pages)的定案文件。 |

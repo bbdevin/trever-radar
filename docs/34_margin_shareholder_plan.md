@@ -150,7 +150,8 @@ Export 每週每檔預聚合（N ∈ {400,600,800,1000}）：
 ### 4.4 排程
 
 - 新 provider：`pipeline/radar/providers/tdcc_shareholding.py`  
-- 週六或週日輕量 job（避開平日 daily 窗、mid-publish）  
+- **定案槽位（2026-08-26）**：**週六 06:30** `weekly-tdcc.sh`（在週六 05:00 Drive 備份之後；避開 03:00 mid 與平日 daily）  
+- 總架構圖：[`docs/35_vps_schedule_architecture.md`](35_vps_schedule_architecture.md)  
 - 寫入 `vps/scripts/crontab.example`；**VPS 掛載需使用者確認**
 
 ---
@@ -438,7 +439,7 @@ flowchart LR
 | 三大法人 | `daily-insti` 16:10 + branches 補抓 | 全市場單請求 | 已是全股票+ETF；非評分池 |
 | 融資融券 | `daily-margin` 22:10 + branches 補抓 | 全市場單請求 | 同上；A4 已回補 240 日 |
 | 分點 | `daily-branches` 17:40／21:00 | **`--top 0` = 當日有報價全部 type=stock（不含 ETF）** | 2026-08-26 起；約 1,400–2,000 檔×~1s ≈ 30–40 分／輪 |
-| **大戶比率** | 週更（TDCC） | 全股票 | **尚未實作**（`docs/34` Phase B）；來源為集保週結算 CSV，**無法日更** |
+| **大戶比率** | 週更（TDCC） | 全股票 | **尚未實作**（Phase B）；排程槽 **週六 06:30**（見 `docs/35`）；來源集保週結算 CSV，**無法日更** |
 
 **倉和卡在 8/24 根因（已釐清）**：DB 後來已有 8/25 收盤，但個股 JSON 在價格進庫後沒有再跑一次全市場 `export-json`。WP-M1 已改「不綁評分池」；之後每晚 branches／margin／stats 輪都會重匯。
 

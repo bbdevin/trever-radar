@@ -3,17 +3,24 @@
 ## 0. 現行 VPS cron 排程總表(2026-07-18 WP-B3 cutover 後,單一真相)
 
 > **架構變更(2026-07-18 WP-B3 cutover)**:`radar.db` 常駐 VPS,VPS 為唯一寫者。VPS cron(`vps/scripts/`,見 `vps/crontab.example` 樣板實體在 `vps/scripts/crontab.example`)跑完每輪管線後直接 `export-json` + `cd cloudflare-data-worker && npx wrangler deploy`,把 JSON 當 Cloudflare Worker 靜態資產上傳,`radar.techtrever.com/data/*` 即傳即生效(不經 GitHub、不經 Pages build)。GitHub Actions 只剩 push `main` 觸發的 `deploy.yml`(純 code build+deploy,不碰資料)。詳細規劃見 `docs/31` §2/§3,實際指令序見 `vps/README.md` §9。
+>
+> **四層總圖（日更／歷史回補／發布／大戶）**:見 [`docs/35_vps_schedule_architecture.md`](35_vps_schedule_architecture.md)（2026-08-26 定案；bf-supervisor／TDCC 程式待做）。
 
 | 台北時間 | 執行者(VPS cron script / GitHub Actions) | 內容 |
 |---|---|---|
 | 平日 14:10 | VPS `vps/scripts/daily-market.sh` | 日K+權證成交(14:00 公布)→ 當日權證彙總 → 指標增量(--days 5)→ 綜合分 →(週一)概念股更新 + **import-geo**(公司/分點地址,docs/27 G1) → export-json(**含 Fugle 當日 1 分 K spark_day**,約 +3–4 分鐘;同日後續輪走 `data/spark_day.json` 快取)→ `wrangler deploy` |
 | 平日 16:10 | VPS `vps/scripts/daily-insti.sh` | 法人買賣超(16:00 公布)+ 權證主檔 → 重算分數 → export-json → deploy |
-| 平日 17:40 | VPS `vps/scripts/daily-branches.sh` | 融資券 + 法人補抓 + 分點爬蟲(80檔+15權證)+ 分點統計 + 分數 + 績效回填 → export-json → prune → deploy |
+| 平日 17:40 | VPS `vps/scripts/daily-branches.sh` | 融資券 + 法人補抓 + **分點全股票 `--top 0`(不含 ETF)+熱門上市權證** + 分點統計 + 分數 + 績效回填 → export-json → prune → deploy |
 | 平日 21:00 | VPS `vps/scripts/daily-branches.sh`(第二輪,同一支 script) | 同上,補晚公布/前段失敗(全部冪等) → export-json → deploy |
 | 平日 22:10 | VPS `vps/scripts/daily-margin.sh` | 融資券保底輪:只補 margin(不含分點爬蟲)+ 重算分數,因 TWSE MI_MARGN 公布時間可能晚於 21:00 → export-json → deploy |
 | 每天 01:10 | VPS `vps/scripts/data-backfill.sh` | 深歷史增量(已拉深自動跳過 → 日常近零請求,只補新上市/缺漏) |
+| 每天 03/09/12/20:00 | VPS `mid-backfill-publish.sh` | 回補中途上線:pause bf → 預設只 export → deploy(docs/33) |
+| 每天 23:30 | VPS `safe-branch-stats.sh` | pause bf → compute-branch-stats → export(目標另加 scores,見 docs/35) |
 | 週六 05:00 | VPS `vps/scripts/weekly-backup.sh` | 備份:`wal_checkpoint(TRUNCATE)` → `integrity_check`(必須 `ok`)→ gzip → `rclone` 上傳 Google Drive(唯一雲端備份;retention 近 4 份+每月 1 份) |
-| 平日 08:50–13:35 | 盤中訊號雷達 worker(docker+cron,同一台 VPS,docs/24 Part A) | 讀 `https://radar.techtrever.com/data/radar.json`(Cloudflare Access service token)判定 I-1~I-4 訊號,寫 Supabase,首頁盤中面板即時顯示;13:35 自動收工 |
+| 週六 06:30 | VPS `weekly-tdcc.sh`(**規劃**) | TDCC 大戶全市場週更 → export → deploy(docs/34 Phase B;docs/35) |
+| 週日 02:30 | VPS `backfill-margin.sh` | 資券約 240 日回補(done flag 則跳過;docs/34 A4) |
+| @reboot + */5 | `bf-cron-guard.sh`(目標改 `bf-supervisor`) | 日更／mid 窗 pause 歷史 bf;目標:掛掉自啟、單寫者(docs/35) |
+| 平日 08:50–13:35 | 盤中訊號雷達 worker(docker+cron,同一台 VPS,docs/24 Part A) | 讀 `https://radar.techtrever.com/data/radar.json` 判定 I-1~I-4 訊號,寫 Supabase,首頁盤中面板即時顯示;13:35 自動收工 |
 | push `main` | GitHub Actions `deploy.yml` | checkout → npm build → wrangler pages deploy(**只管程式碼/前端,不碰資料**) |
 
 - **共用機制**(`vps/scripts/lib.sh`):`flock -n /tmp/radar-db.lock` 互斥(搶不到=跳過本輪+ntfy 通知)、開輪先 `git pull --ff-only`+docker build(layer cache)、失敗 ntfy High 告警成功靜默、非交易日靠 `NoDataError` 安全空跑。

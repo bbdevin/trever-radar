@@ -1,5 +1,5 @@
 ## Handoff
 
-- **Done（2026-08-26）**: 分點每日改 `--top 0` 全股票(不含 ETF)；釐清倉和卡 8/24＝JSON 未在 8/25 進庫後重匯
-- **Next**: VPS force `export-json`；Phase B TDCC 大戶週更（使用者已要求，待實作）
+- **Done（2026-08-26）**: 四層排程／回補／大戶架構圖落檔 `docs/35`；同步 `08`§0、`33` S2、`34` 週六 06:30 槽
+- **Next**: 實作包 1（bf-supervisor＋DB 抗鎖＋safe-stats scores）→ 包 2（TDCC Phase B）
 - **Branch**: `main`
