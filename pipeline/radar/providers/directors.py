@@ -136,3 +136,24 @@ def fetch_tpex_directors() -> list[DirectorRow]:
 
 def fetch_all_directors() -> list[DirectorRow]:
     return fetch_twse_directors() + fetch_tpex_directors()
+
+
+def insider_numerator_shares(
+    rows: list[tuple[str, int | None, int | None]],
+) -> int:
+    """內部人％分子（對齊籌碼類 App）。
+
+    - 同一姓名兼職雙列（董事＋經理）只計一次（取目前持股較大列，關係人同列）。
+    - 每人貢獻 = 目前持股 + 內部人關係人目前持股合計（關係人欄為關係人側，與本人相加）。
+    """
+    by_name: dict[str, tuple[int, int]] = {}
+    for name, shares, related in rows:
+        key = (name or "").strip()
+        if not key:
+            continue
+        sh = int(shares or 0)
+        rel = int(related or 0)
+        prev = by_name.get(key)
+        if prev is None or sh > prev[0] or (sh == prev[0] and rel > prev[1]):
+            by_name[key] = (sh, rel)
+    return sum(sh + rel for sh, rel in by_name.values())

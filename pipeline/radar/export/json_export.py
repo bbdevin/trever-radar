@@ -170,19 +170,27 @@ def _directors_latest_payload(conn, sid: str) -> dict | None:
 
 
 def _insider_monthly_pcts(conn, sid: str) -> list[tuple[str, float]]:
-    """(as_of_ym, insider_pct) 升序。pct = 董監目前持股加總 / 該月內最近 TDCC 週股數加總。"""
-    monthly = conn.execute(text("""
-        SELECT as_of_ym, SUM(shares) AS sh
-        FROM director_holdings
-        WHERE stock_id = :s
-        GROUP BY as_of_ym
-        ORDER BY as_of_ym ASC
+    """(as_of_ym, insider_pct) 升序。
+
+    分子＝姓名去重後 (目前持股＋關係人合計)；分母＝該月內最近 TDCC 週股數加總。
+    （對齊籌碼／元大口徑；兼職雙列不去重會灌水、不加關係人會偏低。）
+    """
+    from ..providers.directors import insider_numerator_shares
+
+    months = conn.execute(text("""
+        SELECT DISTINCT as_of_ym FROM director_holdings
+        WHERE stock_id = :s ORDER BY as_of_ym ASC
     """), {"s": sid}).fetchall()
-    if not monthly:
+    if not months:
         return []
     out: list[tuple[str, float]] = []
-    for ym, sh in monthly:
-        # 該月最後一天或該月內最後一週 TDCC
+    for (ym,) in months:
+        detail = conn.execute(text("""
+            SELECT name, shares, related_shares FROM director_holdings
+            WHERE stock_id = :s AND as_of_ym = :ym
+        """), {"s": sid, "ym": ym}).fetchall()
+        sh = insider_numerator_shares([(r[0], r[1], r[2]) for r in detail])
+        # 該月最後一週 TDCC（month_end 用 28 夠覆蓋週五）
         month_end = f"{ym}-28"
         tdcc_shares = conn.execute(text("""
             SELECT SUM(shares) FROM shareholding_dispersion
@@ -241,7 +249,7 @@ def _holders_history_payload(conn, sid: str, d: str) -> tuple[list[dict], dict]:
         "note": "週資料、級距為集保分級彙總，≠分點主力",
         "insider_as_of_ym": insider_ym,
         "insider_note": (
-            "內部人％＝董監目前持股加總÷集保庫存（月更 ffill；不加關係人合計）"
+            "內部人％＝姓名去重後（目前持股＋關係人合計）÷集保庫存（月更 ffill）"
             if insider_ym
             else None
         ),

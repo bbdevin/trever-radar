@@ -185,11 +185,12 @@ radar export-json && # deploy_data via weekly script helper
 | 排程 | **每月 16 日 07:00** `monthly-directors.sh` | 隨 D1 import／export |
 
 ```
-insider_pct = sum(目前持股股數) / SUM(TDCC tiers.shares) × 100
+insider_pct = sum_unique_name(目前持股 + 關係人合計) / SUM(TDCC tiers.shares) × 100
 ```
 
-- 分子不加「關係人合計」（避免雙計）；V1 不含 OpenAPI 未列之純 10% 大股東 → 與籌碼 App 可能略差，UI 註腳標明。
-- 分母＝該檔最近一週 `shareholding_dispersion` 股數加總（集保庫存）。
+- **分子（2026-08-26 對齊籌碼／元大）**：同一姓名兼職雙列只計一次；每人＝`目前持股`＋`內部人關係人目前持股合計`（關係人欄為關係人側加總）。V1 仍不含 OpenAPI 未列之純 10% 大股東。
+- **分母**：該月內最近一週 `shareholding_dispersion` 股數加總（集保庫存）；ffill 到週列。
+- 抽樣：鉅祥 2476（2026-07）≈ **12.05–12.09%**（視當月 TDCC 週），修正前誤為 ~10.48%（雙列加總且未加關係人）。
 
 **UI**（`HoldersPanel`）：pills `大戶比｜持股人數｜董監持股`；大戶比週表欄 `日期｜大戶｜散戶｜內部人`。
 

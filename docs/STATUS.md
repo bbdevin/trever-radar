@@ -111,6 +111,7 @@
 ## 最近完成
 
 - 2026-08-26 **Phase D1/D2 董監＋內部人％**：`import-directors`（TWSE/TPEx OpenAPI）、`director_holdings`、HoldersPanel「董監持股」分頁；週表 `insider_pct` ffill。VPS 月槽見 `monthly-directors.sh`（crontab.example；掛載待人工）。
+- 2026-08-26 **內部人％公式修正**：姓名去重＋（目前持股＋關係人合計）÷集保；對齊籌碼／元大（2476≈12.09；舊式~10.48）。
 - 2026-08-26 **TDCC archive 回補已上 VPS**：`backfill-tdcc` 灌入 16 週（2026-04-30～08-14；08-21 已有略過）+ export/deploy 完成（`~/tdcc-archive-backfill.done`）。
 - 2026-08-26 **TDCC archive 回補 CLI**：`radar backfill-tdcc --from 2026-04-01`（wirelessr 週快照；官方無歷史）；`vps/scripts/backfill-tdcc.sh`。
 - 2026-08-26 **大戶表 UI**：個股 tab 表改為日期｜大戶持股｜增減｜散戶｜內部人；紅漲綠跌＋+/-（`HoldersPanel`）；export 補 `retail_pct`（下次 export 後散戶有值；內部人暫 —）。

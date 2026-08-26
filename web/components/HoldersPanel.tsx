@@ -427,7 +427,7 @@ export default function HoldersPanel({ data }: { data: StockJson }) {
             </button>
           )}
           <p className="text-[11px] text-muted-foreground">
-            大戶第二行＝週增減（紅增綠減）。散戶＝未滿 400 張。內部人＝董監加總÷集保（月更
+            大戶第二行＝週增減（紅增綠減）。散戶＝未滿 400 張。內部人＝去重後（持股＋關係人）÷集保（月更
             {meta?.insider_as_of_ym ? `，最新 ${meta.insider_as_of_ym}` : ""}
             ）。
           </p>

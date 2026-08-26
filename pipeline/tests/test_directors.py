@@ -3,7 +3,11 @@ from __future__ import annotations
 
 import unittest
 
-from radar.providers.directors import parse_director_rows, parse_roc_ym
+from radar.providers.directors import (
+    insider_numerator_shares,
+    parse_director_rows,
+    parse_roc_ym,
+)
 
 
 SAMPLE_TWSE = [
@@ -41,6 +45,18 @@ class TestDirectorParse(unittest.TestCase):
         self.assertEqual(r.shares_at_election, 6392834)
         self.assertEqual(r.pledged_shares, 1600000)
         self.assertAlmostEqual(r.pledged_pct or 0, 21.46)
+
+    def test_insider_numerator_dedup_plus_related(self):
+        # 兼職雙列同名只計一次；每人 = 目前 + 關係人
+        rows = [
+            ("林映誌", 3_588_439, 950_533),
+            ("林映誌", 3_588_439, 950_533),  # 董事＋副總
+            ("林於晃", 8_612_089, 5_687_897),
+        ]
+        self.assertEqual(
+            insider_numerator_shares(rows),
+            3_588_439 + 950_533 + 8_612_089 + 5_687_897,
+        )
 
 
 if __name__ == "__main__":
