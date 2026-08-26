@@ -34,6 +34,7 @@ import { cn, pillTabClass } from "@/lib/utils";
 const RANGES = [
   { key: "1m", label: "1月", days: 22 },
   { key: "3m", label: "3月", days: 66 },
+  { key: "6m", label: "6月", days: 132 },
   { key: "1y", label: "1年", days: 240 },
   { key: "5y", label: "5年", days: 1200 },
   { key: "all", label: "全部", days: Infinity },
@@ -51,7 +52,7 @@ function StockView() {
   const tabParam = useSearchParams().get("tab");
   const [data, setData] = useState<StockJson | null>(null);
   const [error, setError] = useState(false);
-  const [range, setRange] = useState<(typeof RANGES)[number]["key"]>("1y");
+  const [range, setRange] = useState<(typeof RANGES)[number]["key"]>("6m");
   const [view, setView] = useState<"chart" | "chips" | "insti" | "margin" | "holders" | "tech" | "warrant">("chart");
   const [drillBranch, setDrillBranch] = useState<string | null>(null);
 
