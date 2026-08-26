@@ -5,10 +5,12 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
 }
 
-/** 膠囊分頁按鈕樣式(K線/範圍/分點期間等共用) */
+/** 膠囊分頁按鈕樣式(個股 tab／K線區間／大戶門檻等共用) */
 export function pillTabClass(active: boolean) {
   return cn(
-    "rounded-full bg-transparent px-3.5 py-1.5 text-[12.5px] font-semibold text-[color:var(--ink-2)]",
-    active && "bg-muted text-foreground shadow-[inset_0_0_0_1px_var(--border-strong)]",
+    "cursor-pointer rounded-full px-3.5 py-1.5 text-[12.5px] font-semibold transition-colors duration-200",
+    active
+      ? "bg-primary text-primary-foreground shadow-sm"
+      : "bg-transparent text-muted-foreground hover:bg-secondary/80 hover:text-foreground",
   )
 }
