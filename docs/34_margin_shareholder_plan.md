@@ -410,6 +410,9 @@ flowchart LR
 - [x] **Phase A4** — 程式：`backfill-margin`、`display_window`、export `margin_meta`、MarginPanel（2026-08-25）
 - [ ] **Phase A4 VPS** — `backfill-margin.sh` 排程執行中（週日 02:30 + 首跑 23:15）
 - [ ] **Phase B** — TDCC 大戶（**使用者 2026-08-26 要求納入排程**；週更、全股票；待開實作）
+- [ ] **Phase B1** — TDCC 週更入庫
+- [ ] **Phase B2** — 大戶 UI（門檻 + 雙模式 + 顯示窗）
+- [ ] **Phase C** — 當沖／借券（後續另確認）
 - [x] **每日分點全股票** — `import-branch-trades --top 0`（不含 ETF；2026-08-26）
 
 ---
