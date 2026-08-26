@@ -11,6 +11,7 @@
 - **技術棧**:Tailwind CSS v4 + shadcn/ui(底層 `@base-ui/react`),既有元件慣用 arbitrary value 引 token(如 `text-[color:var(--ink-2)]`)。
 - **數字一律 `.num`**(Manrope,`font-variant-numeric: tabular-nums`):價格、金額、百分比、張數都要,否則跳動時寬度抖動。
 - **圖示一律 `lucide-react`**(stroke 1.8),**不用 emoji**;**品牌 mark 例外**:Header / favicon / PWA 用 `web/public/icons/trever-radar-mark.svg`(commit `e3cefcd`,2026-08-20)。**不要**改回 `IconRadar`、不要重畫 Logo、不要用輪椅人物當主標。`design-system/stock/MASTER.md` 若仍寫 `#22C55E` / Fira,以現站 UI 為準,勿把網站改回舊綠。
+- **Header 控制**(2026-08-26):搜尋(`/`)+`FontScaleToggle`(ALargeSmall,標準/較大/最大,帳號綁定見 `docs/36`)+`ThemeToggle`+登入;`SearchBox` 空態顯示每位使用者搜尋歷史(可清除)。
 - **品牌主色(mark / PWA,2026-08-20)**:Background `#0D0D0D`、Radar Blue `#3987E5`、Signal Cyan `#35B5C9`、Signal Ice `#8FD6FF`、White `#FFFFFF`。頁面語意 token 仍走 `globals.css`;台股紅漲綠跌不變。PWA 先於原生 App。
 - **PWA(2026-08-20 完善)**:延伸 `web/app/manifest.ts`(192/512 PNG + maskable,勿另起衝突 manifest)。App shell 由 `web/public/sw.js` cache; **`/data/*` 與 Supabase 一律不進 SW cache**,`dataFetch` 用 `cache: 'no-store'`。離線只顯示「目前離線」,禁止把過期訊號當最新。PNG 由 `web/scripts/generate-pwa-icons.mjs` 從 `trever-radar-mark.svg` 匯出(`npm run icons`),不要手繪新 Logo。
 - 進場動畫慣例:`animate-[fadeUp_0.35s_ease_backwards]`(keyframe 在 globals.css);全域已有 `prefers-reduced-motion: reduce` 一刀切關閉動畫。

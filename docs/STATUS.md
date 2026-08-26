@@ -110,6 +110,7 @@
 
 ## 最近完成
 
+- 2026-08-26 **搜尋歷史＋文字縮放**：每位登入使用者搜尋紀錄（可清除）與 Header「A」三档字級綁帳號（`docs/36`）。**請在 Supabase 執行** `docs/sql/user_ui_prefs.sql` 後雲端偏好才會生效。
 - 2026-08-26 **VPS 四層排程架構定案（文件）**：[`docs/35_vps_schedule_architecture.md`](35_vps_schedule_architecture.md)——日更真相／歷史加深（含 bf-supervisor 目標）／發布／大戶週六 06:30；已同步 `08`§0、`33` S2、`34` §4.4。**程式尚未實作**。
 - 2026-08-26 **分點每日全股票**：`import-branch-trades --top 0`（當日有報價 type=stock，不含 ETF）；法人／資券本已是全市場單請求。大戶比率＝TDCC 週更，Phase B 待實作。
 - 2026-08-26 **倉和卡 8/24**：DB 已有 8/25，個股 JSON 未重匯；觸發 force export。

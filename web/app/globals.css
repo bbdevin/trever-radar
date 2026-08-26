@@ -227,3 +227,14 @@ main { min-height: 62vh; }
     @apply font-sans;
   }
 }
+
+/* 帳號綁定文字縮放(docs/36):rem 基底 + body zoom(覆蓋大量 text-[Npx]) */
+html[data-font-scale="md"] {
+  font-size: 100%;
+}
+html[data-font-scale="lg"] {
+  font-size: 112.5%;
+}
+html[data-font-scale="xl"] {
+  font-size: 125%;
+}

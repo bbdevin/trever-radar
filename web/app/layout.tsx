@@ -8,7 +8,9 @@ import DesktopNav from "@/components/DesktopNav";
 import PwaProvider from "@/components/PwaProvider";
 import SearchBox from "@/components/SearchBox";
 import ThemeToggle from "@/components/ThemeToggle";
+import FontScaleToggle from "@/components/FontScaleToggle";
 import { WatchlistProvider } from "@/lib/watchlist";
+import { UserPrefsProvider } from "@/lib/userPrefs";
 import "./globals.css";
 
 // 數字與拉丁字用 Manrope(build 時自託管);中文走系統字體堆疊
@@ -51,12 +53,13 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <script
           dangerouslySetInnerHTML={{
             __html:
-              "(function(){try{if(localStorage.getItem('theme')==='light'){document.documentElement.classList.remove('dark')}}catch(e){}})()",
+              "(function(){try{if(localStorage.getItem('theme')==='light'){document.documentElement.classList.remove('dark')}var s=localStorage.getItem('font_scale');if(s==='md'||s==='lg'||s==='xl'){document.documentElement.dataset.fontScale=s;var z={md:'1',lg:'1.125',xl:'1.25'};if(document.body)document.body.style.zoom=z[s]||'1'}}catch(e){}})()",
           }}
         />
         <PwaProvider>
           <AuthGate>
-            <WatchlistProvider>
+            <UserPrefsProvider>
+              <WatchlistProvider>
               <header className="sticky top-0 z-40 border-b border-border bg-background/78 pt-[env(safe-area-inset-top)] backdrop-blur-md backdrop-saturate-150">
                 <div className="container flex h-[58px] items-center gap-5">
                   <a href="/" className="flex items-center gap-2.5 text-foreground">
@@ -73,6 +76,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                   </a>
                   <div className="ml-auto flex items-center">
                     <SearchBox />
+                    <FontScaleToggle />
                     <ThemeToggle />
                     <AuthButton />
                   </div>
@@ -86,7 +90,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 </div>
               </footer>
               <BottomNav />
-            </WatchlistProvider>
+              </WatchlistProvider>
+            </UserPrefsProvider>
           </AuthGate>
           <Toaster
             position="bottom-center"

@@ -23,6 +23,7 @@
 | `docs/35_vps_schedule_architecture.md` | 📝 **架構定案,管家／TDCC 程式未實作(2026-08-26)** | 日更／歷史回補自啟／mid／大戶週槽四層 mermaid;動排程或回補生命週期時必讀 |
 | `docs/33_mid_backfill_publish_plan.md` | ✅ S1/S1.1 已實作;📝 S2 指向 `35` | mid＋safe-stats;S2=supervisor／scores／大戶總圖 |
 | `docs/34_margin_shareholder_plan.md` | ✅ A0–A4 程式;📝 Phase B 待做 | 資券／大戶;大戶週六 06:30 槽已寫入 §4.4 |
+| `docs/36_user_search_font_prefs.md` | ✅ **程式已實作(2026-08-26);SQL 待人工執行** | 搜尋歷史＋字級綁帳號;`docs/sql/user_ui_prefs.sql` |
 | `docs/08_scheduler_jobs.md` §1 | 🗑️ **已刪除(2026-07-09)** | 原 Laravel job chain 格式舊排程稿,與 §0 矛盾且從未實作,已刪除。§2(盤中管線)/§3(每週每月)為 V2 尚未實作的設計參考,保留。 |
 | `docs/00_blueprint.md` | ⚠️ **表格欄位過時** | 頂部有 2026-07-06 修訂註記,但「架構」欄仍寫 Laravel/PG16/VM,讀表格本身會誤導。 |
 | `docs/12_zero_cost_pivot.md` | ✅ **current** | 現行零成本架構(Python+SQLite+Next.js+GitHub Actions+Cloudflare Pages)的定案文件。 |

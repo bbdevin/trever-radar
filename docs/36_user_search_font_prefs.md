@@ -1,0 +1,41 @@
+# 搜尋歷史 ＋ 帳號綁定文字縮放
+
+> 狀態：**程式已實作（2026-08-26）**；**須人工在 Supabase 執行** [`docs/sql/user_ui_prefs.sql`](sql/user_ui_prefs.sql) 後雲端偏好才會生效。  
+> UI：ui-ux-pro-max＋`docs/19`（Lucide、無 emoji、現站品牌色）。
+
+## 1. 功能
+
+| 功能 | 行為 | 儲存 |
+|---|---|---|
+| 搜尋歷史 | 開搜尋框且關鍵字空白 → 最近代號；點選進個股；「清除歷史」 | Supabase `search_history`；**僅登入** |
+| 文字縮放 | Header「A」循環：標準 / 較大 / 最大（100% / 112.5% / 125%） | Supabase `user_ui_prefs.font_scale`；未登入本機暫存，登入後以帳號為準 |
+
+## 2. 字級代碼
+
+| 代碼 | UI 文案 | 縮放 |
+|---|---|---|
+| `md` | 標準 | 1 |
+| `lg` | 較大 | 1.125 |
+| `xl` | 最大 | 1.25 |
+
+實作：`html[data-font-scale]`＋`body { zoom }`（站上大量 px 字級需 zoom 才會變大）。
+
+## 3. 前端
+
+- `web/lib/userPrefs.tsx` — Provider
+- `web/components/FontScaleToggle.tsx`
+- `web/components/SearchBox.tsx` — 空態歷史
+- `web/app/layout.tsx` — Provider＋Toggle
+
+## 4. Confirmed Scope
+
+- [x] SQL 稿＋本檔
+- [x] UserPrefsProvider＋CSS
+- [x] FontScaleToggle
+- [x] SearchBox 歷史
+- [ ] **人工**：Supabase 執行 `user_ui_prefs.sql`
+
+## 5. 驗收
+
+- A 搜兩檔 → 重開見歷史 → 清除後空；B 看不到 A 的歷史。
+- A 設最大 → 重登仍最大；B 預設標準。
