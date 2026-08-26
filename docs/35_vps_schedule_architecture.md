@@ -49,7 +49,7 @@ flowchart TB
 | 時間 | 腳本 | 含算分／統計 |
 |---|---|---|
 | 14:10 | `daily-market.sh` | indicators → **scores**；（週一）themes／geo。上櫃 quotes 此時常 empty |
-| 15:00 | `daily-tpex-quotes.sh` | **上櫃日K 主補抓** → indicators → **scores** → export（crontab 掛載待人工） |
+| 15:00 | `daily-tpex-quotes.sh` | **上櫃日K 主補抓** → indicators → **scores** → export |
 | 16:10 | `daily-insti.sh` | quotes 保底 → indicators → insti → **scores**（權證主檔失敗不擋） |
 | 17:40／21:00 | `daily-branches.sh` | 再補 quotes → indicators → 全股票分點 `--top 0` → **branch-stats** → **scores** → **performance** |
 | 22:10 | `daily-margin.sh` | 再補 quotes + margin → **scores** → **performance** |

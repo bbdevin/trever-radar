@@ -112,7 +112,7 @@
 
 - 2026-08-26 **Phase D1/D2 董監＋內部人％**：`import-directors`（TWSE/TPEx OpenAPI）、`director_holdings`、HoldersPanel「董監持股」分頁；週表 `insider_pct` ffill。VPS 月槽見 `monthly-directors.sh`（crontab.example；掛載待人工）。
 - 2026-08-26 **內部人％公式修正**：姓名去重＋（目前持股＋關係人合計）÷集保；對齊籌碼／元大（2476≈12.09；舊式~10.48）。
-- 2026-08-26 **上櫃 15:00 主補抓槽**：新增 `daily-tpex-quotes.sh`（quotes→指標→分數→export）；`crontab.example` 平日 15:00；安靜窗 14:05–15:45。**VPS crontab 掛載待人工**。14:10 上市閃電不變；16:10／17:40／22:10 仍保底再抓。
+- 2026-08-26 **上櫃 15:00 主補抓槽**：新增 `daily-tpex-quotes.sh`（quotes→指標→分數→export）；**VPS crontab 已掛**平日 15:00；安靜窗 14:05–15:45。14:10 上市閃電不變；16:10／17:40／22:10 仍保底再抓。
 - 2026-08-26 **上櫃日K 14:10 常 empty**：上市已是當日、上櫃卡前一日（`tpex dailyQuotes: no populated table`）。根因＝抓太早＋無後續補抓。已手動補齊 08-24／25／26 上櫃全日K（先前 08-24／25 僅 ~367 檔半套，約 520 檔看起來停在 08-21）。
 - 2026-08-26 **週表內部人％暫隱藏**：口徑仍難穩對齊；UI 拿掉欄位，保留「董監持股」明細分頁。
 - 2026-08-26 **TDCC archive 回補已上 VPS**：`backfill-tdcc` 灌入 16 週（2026-04-30～08-14；08-21 已有略過）+ export/deploy 完成（`~/tdcc-archive-backfill.done`）。
