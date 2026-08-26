@@ -1,9 +1,7 @@
 - **Done（2026-08-26）**:
-  - `radar backfill-tdcc`：從 wirelessr archive 回補大戶週（預設 2026-04-01～今；實際約 04-30 起）
-  - `vps/scripts/backfill-tdcc.sh`（`SKIP_QUIET=1` 可手動）
-  - 大戶表 UI 紅漲綠跌；export `retail_pct`
+  - VPS 已跑完 TDCC archive 回補：16 週入庫（04-30～08-14；08-21 略過）+ export + deploy（15:26 完成）
+  - 大戶表 UI 紅漲綠跌；`retail_pct` 已進本次 export
 - **Next**:
-  1. **VPS 手動**：`SKIP_QUIET=1 bash ~/trever-radar/vps/scripts/backfill-tdcc.sh`（先 git pull）
-  2. 驗個股大戶表多週＋散戶欄
-  3. 權證回補／盤後 daily
+  1. 硬刷新個股「大戶」驗多週＋散戶欄
+  2. 權證回補／盤後 daily
 - **Branch**: `main`
