@@ -223,7 +223,7 @@ function StockView() {
       )}
       {view === "insti" && <InstiPanel data={data} candles={cs} />}
       {view === "margin" && <MarginPanel data={data} candles={cs} />}
-      {view === "holders" && <HoldersPanel data={data} candles={cs} />}
+      {view === "holders" && <HoldersPanel data={data} />}
       {view === "tech" && <TechnicalPanel data={data} />}
       {view === "warrant" && <WarrantPanel data={data} />}
 

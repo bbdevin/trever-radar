@@ -20,7 +20,7 @@ function fmtPct(v: number | null | undefined): string {
 }
 
 /** 個股「大戶」tab：TDCC 週更門檻＋張數比例｜持股人數（docs/34 B2）。 */
-export default function HoldersPanel({ data }: { data: StockJson; candles?: Candle[] }) {
+export default function HoldersPanel({ data }: { data: StockJson }) {
   const [threshold, setThreshold] = useState<(typeof THRESHOLDS)[number]>(400);
   const [mode, setMode] = useState<"pct" | "holders">("pct");
   const [showAll, setShowAll] = useState(false);

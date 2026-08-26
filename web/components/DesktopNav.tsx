@@ -8,11 +8,6 @@ const NAV = [
   { label: "首頁", href: "/", match: (path: string, tab: string | null) => path === "/" && tab !== "margin" },
   { label: "監控", href: "/intraday", match: (path: string) => path.startsWith("/intraday") },
   { label: "分點研究", href: "/branch", match: (path: string) => path.startsWith("/branch") },
-  {
-    label: "資券",
-    href: "/?tab=margin",
-    match: (path: string, tab: string | null) => path.startsWith("/margin") || (path === "/" && tab === "margin"),
-  },
   { label: "自選追蹤", href: "/watchlist", match: (path: string) => path.startsWith("/watchlist") },
 ];
 
@@ -43,7 +38,7 @@ function DesktopNavInner() {
   );
 }
 
-/** 桌機頂部導覽（手機隱藏）——資券進首頁 tab，BottomNav 維持 ≤4 項 */
+/** 桌機頂部導覽（手機隱藏）——資券已在首頁 tab／個股頁，不重複掛導覽；BottomNav 維持 ≤4 項 */
 export default function DesktopNav() {
   return (
     <Suspense fallback={<nav className="hidden gap-0.5 md:flex" aria-label="主導覽" />}>
