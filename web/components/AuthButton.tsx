@@ -12,6 +12,10 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { FONT_SCALE_LABEL, useUserPrefs } from "@/lib/userPrefs";
 import { signOut, useSession } from "@/lib/useSession";
+import { cn } from "@/lib/utils";
+
+const prefBtnClass =
+  "relative flex w-full cursor-pointer items-center gap-1.5 rounded-md px-1.5 py-1 text-left text-sm outline-hidden select-none hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground focus-visible:outline-none [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4";
 
 /** 已登入使用者選單。字級／主題在登出上方（本機+帳號）。 */
 export default function AuthButton() {
@@ -38,7 +42,7 @@ export default function AuthButton() {
           initial
         )}
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="min-w-[220px]">
+      <DropdownMenuContent align="end" className="min-w-55">
         <DropdownMenuGroup>
           <DropdownMenuLabel className="font-normal break-all text-muted-foreground">
             {session.user.email}
@@ -55,26 +59,27 @@ export default function AuthButton() {
             </DropdownMenuItem>
           )}
           <DropdownMenuSeparator />
-          <DropdownMenuItem
-            className="cursor-pointer"
-            onSelect={(e) => {
-              e.preventDefault();
+          {/* 不用 Menu.Item：Base UI 的 item onClick 合併順序不穩；改原生 button 保證切換有反應 */}
+          <button
+            type="button"
+            className={cn(prefBtnClass)}
+            onClick={() => {
               void cycleFontScale();
             }}
           >
             <ALargeSmall />
             文字大小：{FONT_SCALE_LABEL[fontScale]}
-          </DropdownMenuItem>
-          <DropdownMenuItem
-            className="cursor-pointer"
-            onSelect={(e) => {
-              e.preventDefault();
+          </button>
+          <button
+            type="button"
+            className={cn(prefBtnClass)}
+            onClick={() => {
               void toggleTheme();
             }}
           >
             {isDark ? <Sun /> : <Moon />}
             {isDark ? "切換淺色模式" : "切換深色模式"}
-          </DropdownMenuItem>
+          </button>
           <DropdownMenuSeparator />
           <DropdownMenuItem variant="destructive" className="cursor-pointer" onClick={() => signOut()}>
             <LogOut />

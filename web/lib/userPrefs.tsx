@@ -6,6 +6,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -84,17 +85,21 @@ const UserPrefsContext = createContext<UserPrefsContextValue | null>(null);
 /** 字級／主題／搜尋歷史：本機 + 登入後雲端帳號。預設深色。*/
 export function UserPrefsProvider({ children }: { children: ReactNode }) {
   const { session } = useSession();
+  /** 只用 user id，避免 TOKEN_REFRESHED 換 session 物件就重拉雲端蓋掉剛切的本機值 */
+  const userId = session?.user?.id ?? null;
   const [fontScale, setFontScaleState] = useState<FontScale>("md");
   const [theme, setThemeState] = useState<ThemeMode>("dark");
   const [searchHistory, setSearchHistory] = useState<SearchHistoryItem[]>([]);
   const [loading, setLoading] = useState(true);
+  /** 使用者已手動切過字級／主題時遞增；進行中的 refresh 不得蓋回舊雲端值 */
+  const localWriteGen = useRef(0);
 
   const persistCloud = useCallback(
     async (next: { font_scale: FontScale; theme: ThemeMode }) => {
-      if (!session) return;
+      if (!userId) return;
       const { error } = await supabase.from("user_ui_prefs").upsert(
         {
-          user_id: session.user.id,
+          user_id: userId,
           font_scale: next.font_scale,
           theme: next.theme,
           updated_at: new Date().toISOString(),
@@ -105,11 +110,11 @@ export function UserPrefsProvider({ children }: { children: ReactNode }) {
         console.warn("user_ui_prefs upsert", error.message);
       }
     },
-    [session],
+    [userId],
   );
 
   const refresh = useCallback(async () => {
-    if (!session) {
+    if (!userId) {
       const localScale = readLocalScale();
       const localTheme = readLocalTheme();
       setFontScaleState(localScale);
@@ -120,17 +125,29 @@ export function UserPrefsProvider({ children }: { children: ReactNode }) {
       setLoading(false);
       return;
     }
+    const genAtStart = localWriteGen.current;
     setLoading(true);
-    const uid = session.user.id;
     const [prefsRes, histRes] = await Promise.all([
-      supabase.from("user_ui_prefs").select("font_scale, theme").eq("user_id", uid).maybeSingle(),
+      supabase.from("user_ui_prefs").select("font_scale, theme").eq("user_id", userId).maybeSingle(),
       supabase
         .from("search_history")
         .select("stock_id, searched_at")
-        .eq("user_id", uid)
+        .eq("user_id", userId)
         .order("searched_at", { ascending: false })
         .limit(HISTORY_LIMIT),
     ]);
+
+    if (!histRes.error && histRes.data) {
+      setSearchHistory(histRes.data as SearchHistoryItem[]);
+    } else {
+      setSearchHistory([]);
+    }
+
+    // 拉雲端期間使用者已手動切換 → 只更新歷史，字級／主題以本機為準
+    if (genAtStart !== localWriteGen.current) {
+      setLoading(false);
+      return;
+    }
 
     let scale = readLocalScale();
     let mode = readLocalTheme();
@@ -150,13 +167,8 @@ export function UserPrefsProvider({ children }: { children: ReactNode }) {
       /* ignore */
     }
 
-    if (!histRes.error && histRes.data) {
-      setSearchHistory(histRes.data as SearchHistoryItem[]);
-    } else {
-      setSearchHistory([]);
-    }
     setLoading(false);
-  }, [session]);
+  }, [userId]);
 
   useEffect(() => {
     void refresh();
@@ -167,8 +179,18 @@ export function UserPrefsProvider({ children }: { children: ReactNode }) {
     applyTheme(readLocalTheme());
   }, []);
 
+  /** 狀態變更時再套一次 DOM，避免被其他腳本／導航蓋掉 */
+  useEffect(() => {
+    applyFontScale(fontScale);
+  }, [fontScale]);
+
+  useEffect(() => {
+    applyTheme(theme);
+  }, [theme]);
+
   const setFontScale = useCallback(
     async (scale: FontScale) => {
+      localWriteGen.current += 1;
       setFontScaleState(scale);
       applyFontScale(scale);
       try {
@@ -189,6 +211,7 @@ export function UserPrefsProvider({ children }: { children: ReactNode }) {
 
   const setTheme = useCallback(
     async (mode: ThemeMode) => {
+      localWriteGen.current += 1;
       setThemeState(mode);
       applyTheme(mode);
       try {
@@ -207,7 +230,7 @@ export function UserPrefsProvider({ children }: { children: ReactNode }) {
 
   const pushSearch = useCallback(
     async (stockId: string) => {
-      if (!session) return;
+      if (!userId) return;
       const id = stockId.trim();
       if (!id) return;
       const now = new Date().toISOString();
@@ -216,7 +239,7 @@ export function UserPrefsProvider({ children }: { children: ReactNode }) {
         return [{ stock_id: id, searched_at: now }, ...rest].slice(0, HISTORY_LIMIT);
       });
       const { error } = await supabase.from("search_history").upsert(
-        { user_id: session.user.id, stock_id: id, searched_at: now },
+        { user_id: userId, stock_id: id, searched_at: now },
         { onConflict: "user_id,stock_id" },
       );
       if (error) {
@@ -226,32 +249,28 @@ export function UserPrefsProvider({ children }: { children: ReactNode }) {
       const { data: all } = await supabase
         .from("search_history")
         .select("stock_id, searched_at")
-        .eq("user_id", session.user.id)
+        .eq("user_id", userId)
         .order("searched_at", { ascending: false });
       if (all && all.length > HISTORY_LIMIT) {
         const drop = all.slice(HISTORY_LIMIT).map((r) => r.stock_id);
-        await supabase
-          .from("search_history")
-          .delete()
-          .eq("user_id", session.user.id)
-          .in("stock_id", drop);
+        await supabase.from("search_history").delete().eq("user_id", userId).in("stock_id", drop);
       }
     },
-    [session],
+    [userId],
   );
 
   const clearSearchHistory = useCallback(async () => {
-    if (!session) {
+    if (!userId) {
       setSearchHistory([]);
       return;
     }
     setSearchHistory([]);
-    const { error } = await supabase.from("search_history").delete().eq("user_id", session.user.id);
+    const { error } = await supabase.from("search_history").delete().eq("user_id", userId);
     if (error && !/does not exist|schema cache/i.test(error.message)) {
       console.warn("search_history clear", error.message);
       await refresh();
     }
-  }, [session, refresh]);
+  }, [userId, refresh]);
 
   const value = useMemo(
     () => ({
