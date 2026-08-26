@@ -29,6 +29,7 @@ CRON_TZ=Asia/Taipei
 */5 * * * *    pgrep -f 'vps/scripts/bf-cron-guard.sh' >/dev/null || /home/huang/trever-radar/vps/scripts/bf-cron-guard.sh >> /home/huang/bf-cron-guard.log 2>&1
 
 # 歷史回補管家(docs/35):單寫者＋Exit 自啟＋完成 ntfy;與 guard 並存
+# 目前 VPS 優先權證:環境 BF_ORDER=warrant,branches(見 ~/bf-supervisor.env 或 crontab)
 @reboot        /home/huang/trever-radar/vps/scripts/bf-supervisor.sh >> /home/huang/bf-supervisor.log 2>&1
 */10 * * * *   pgrep -f 'vps/scripts/bf-supervisor.sh' >/dev/null || /home/huang/trever-radar/vps/scripts/bf-supervisor.sh >> /home/huang/bf-supervisor.log 2>&1
 
@@ -44,3 +45,6 @@ CRON_TZ=Asia/Taipei
 
 # TDCC 大戶週更(docs/34 B1 / docs/35):週六 06:30(備份 05:00 之後)
 30 6 * * 6     /home/huang/trever-radar/vps/scripts/weekly-tdcc.sh >> /home/huang/radar-cron.log 2>&1
+
+# 磁碟清理(不動 radar.db):docker dangling + log trim + npm cache;低於 4G 則 ntfy
+40 7 * * *     /home/huang/trever-radar/vps/scripts/disk-cleanup.sh >> /home/huang/disk-cleanup.log 2>&1

@@ -1,14 +1,23 @@
 #!/usr/bin/env bash
 # 歷史回補管家(docs/35 Layer 2):同時只一個寫者、Exit 後自啟、完成 ntfy。
-# 順序:branches → warrant(避免雙容器搶 SQLite → database is locked)。
+# 順序:預設 branches → warrant;BF_ORDER=warrant,branches 可改(仍單寫者,不並跑)。
 # 安靜窗／mid flag／db lock／margin flag 期間不新開容器(已跑的交給 bf-cron-guard pause)。
 #
 # 環境:
 #   BF_BRANCH_TOP(預設 0 全股票) BF_BRANCH_DAYS(490) BF_WARRANT_TOP(200) BF_WARRANT_DAYS(120)
 #   BF_SLEEP(1.2) BF_RESTART_SLEEP(120) BF_DONE_DIR(~)
+#   BF_ORDER=branches,warrant|warrant,branches
 #   FORCE_BF=1 忽略 done flag 重跑
 # crontab:@reboot + */10 保活(見 crontab.example)
 source "$(dirname "$0")/lib.sh"
+
+# 可選覆寫:~/bf-supervisor.env(例 BF_ORDER=warrant,branches)
+if [ -f "${BF_SUPERVISOR_ENV:-$HOME/bf-supervisor.env}" ]; then
+  set -a
+  # shellcheck disable=SC1090
+  . "${BF_SUPERVISOR_ENV:-$HOME/bf-supervisor.env}"
+  set +a
+fi
 
 trap - ERR
 
@@ -105,9 +114,121 @@ mark_done() {
 
 BRANCH_FAILS=0
 WARRANT_FAILS=0
+# 逗號分隔相位;預設先分點。使用者可設 BF_ORDER=warrant,branches
+BF_ORDER="${BF_ORDER:-branches,warrant}"
+
+run_branches_phase() {
+  if [ "${FORCE_BF:-0}" != "1" ] && [ -f "$BRANCHES_DONE" ]; then
+    return 1
+  fi
+  bst=$(container_status "$BRANCH_NAME")
+  case "$bst" in
+    running|paused)
+      write_state branches "alive:$bst"
+      sleep 60
+      return 0
+      ;;
+    exited)
+      ec=$(container_exit_code "$BRANCH_NAME")
+      if [ "$ec" = "0" ]; then
+        BRANCH_FAILS=0
+        mark_done "$BRANCHES_DONE" "branches"
+        docker rm -f "$BRANCH_NAME" >/dev/null 2>&1 || true
+        if [ -f "$WARRANT_DONE" ]; then
+          notify "bf-supervisor: all history backfill complete" default
+          write_state idle "all_complete"
+        else
+          notify "bf-supervisor: branches complete; next=warrant" default
+        fi
+      else
+        BRANCH_FAILS=$((BRANCH_FAILS + 1))
+        log "branches exited rc=$ec fails=$BRANCH_FAILS/$MAX_FAILS"
+        if [ "$BRANCH_FAILS" -ge "$MAX_FAILS" ]; then
+          notify "bf-supervisor: branches gave up after $MAX_FAILS fails (rc=$ec)" high
+          write_state branches "gave_up:$ec"
+          sleep 600
+          return 0
+        fi
+        notify "bf-supervisor: branches exited rc=$ec; will restart ($BRANCH_FAILS/$MAX_FAILS)" default
+        write_state branches "restart_wait:$ec"
+        sleep "$RESTART_SLEEP"
+        if should_hold; then return 0; fi
+        start_job "$BRANCH_NAME" backfill-branches --top "$BRANCH_TOP" --days "$BRANCH_DAYS" --sleep "$SLEEP_S" || true
+      fi
+      return 0
+      ;;
+    missing|*)
+      wst=$(container_status "$WARRANT_NAME")
+      if [ "$wst" = "running" ] || [ "$wst" = "paused" ]; then
+        write_state wait "warrant_still_alive"
+        sleep 60
+        return 0
+      fi
+      start_job "$BRANCH_NAME" backfill-branches --top "$BRANCH_TOP" --days "$BRANCH_DAYS" --sleep "$SLEEP_S" || true
+      write_state branches "started"
+      sleep 30
+      return 0
+      ;;
+  esac
+}
+
+run_warrant_phase() {
+  if [ "${FORCE_BF:-0}" != "1" ] && [ -f "$WARRANT_DONE" ]; then
+    return 1
+  fi
+  wst=$(container_status "$WARRANT_NAME")
+  case "$wst" in
+    running|paused)
+      write_state warrant "alive:$wst"
+      sleep 60
+      return 0
+      ;;
+    exited)
+      ec=$(container_exit_code "$WARRANT_NAME")
+      if [ "$ec" = "0" ]; then
+        WARRANT_FAILS=0
+        mark_done "$WARRANT_DONE" "warrant"
+        docker rm -f "$WARRANT_NAME" >/dev/null 2>&1 || true
+        if [ -f "$BRANCHES_DONE" ]; then
+          notify "bf-supervisor: all history backfill complete" default
+          write_state idle "all_complete"
+        else
+          notify "bf-supervisor: warrant complete; next=branches" default
+        fi
+      else
+        WARRANT_FAILS=$((WARRANT_FAILS + 1))
+        log "warrant exited rc=$ec fails=$WARRANT_FAILS/$MAX_FAILS"
+        if [ "$WARRANT_FAILS" -ge "$MAX_FAILS" ]; then
+          notify "bf-supervisor: warrant gave up after $MAX_FAILS fails (rc=$ec)" high
+          write_state warrant "gave_up:$ec"
+          sleep 600
+          return 0
+        fi
+        notify "bf-supervisor: warrant exited rc=$ec; will restart ($WARRANT_FAILS/$MAX_FAILS)" default
+        write_state warrant "restart_wait:$ec"
+        sleep "$RESTART_SLEEP"
+        if should_hold; then return 0; fi
+        start_job "$WARRANT_NAME" backfill-warrant-branches --top "$WARRANT_TOP" --days "$WARRANT_DAYS" --sleep "$SLEEP_S" || true
+      fi
+      return 0
+      ;;
+    missing|*)
+      bst=$(container_status "$BRANCH_NAME")
+      if [ "$bst" = "running" ] || [ "$bst" = "paused" ]; then
+        write_state wait "branches_still_alive"
+        sleep 60
+        return 0
+      fi
+      start_job "$WARRANT_NAME" backfill-warrant-branches --top "$WARRANT_TOP" --days "$WARRANT_DAYS" --sleep "$SLEEP_S" || true
+      write_state warrant "started"
+      sleep 30
+      return 0
+      ;;
+  esac
+}
 
 # 單實例長跑
-log "supervisor start (repo=$REPO)"
+log "supervisor start (repo=$REPO order=$BF_ORDER)"
 write_state boot "start"
 
 while true; do
@@ -124,101 +245,21 @@ while true; do
     continue
   fi
 
-  # --- branches ---
-  if [ "${FORCE_BF:-0}" = "1" ] || [ ! -f "$BRANCHES_DONE" ]; then
-    bst=$(container_status "$BRANCH_NAME")
-    case "$bst" in
-      running|paused)
-        write_state branches "alive:$bst"
-        sleep 60
-        continue
+  handled=0
+  IFS=',' read -r -a phases <<< "$BF_ORDER"
+  for phase in "${phases[@]}"; do
+    phase=$(echo "$phase" | tr -d '[:space:]')
+    case "$phase" in
+      branches)
+        if run_branches_phase; then handled=1; break; fi
         ;;
-      exited)
-        ec=$(container_exit_code "$BRANCH_NAME")
-        if [ "$ec" = "0" ]; then
-          BRANCH_FAILS=0
-          mark_done "$BRANCHES_DONE" "branches"
-          docker rm -f "$BRANCH_NAME" >/dev/null 2>&1 || true
-        else
-          BRANCH_FAILS=$((BRANCH_FAILS + 1))
-          log "branches exited rc=$ec fails=$BRANCH_FAILS/$MAX_FAILS"
-          if [ "$BRANCH_FAILS" -ge "$MAX_FAILS" ]; then
-            notify "bf-supervisor: branches gave up after $MAX_FAILS fails (rc=$ec)" high
-            write_state branches "gave_up:$ec"
-            sleep 600
-            continue
-          fi
-          notify "bf-supervisor: branches exited rc=$ec; will restart ($BRANCH_FAILS/$MAX_FAILS)" default
-          write_state branches "restart_wait:$ec"
-          sleep "$RESTART_SLEEP"
-          if should_hold; then continue; fi
-          start_job "$BRANCH_NAME" backfill-branches --top "$BRANCH_TOP" --days "$BRANCH_DAYS" --sleep "$SLEEP_S" || true
-        fi
-        continue
-        ;;
-      missing|*)
-        wst=$(container_status "$WARRANT_NAME")
-        if [ "$wst" = "running" ] || [ "$wst" = "paused" ]; then
-          write_state wait "warrant_still_alive"
-          sleep 60
-          continue
-        fi
-        start_job "$BRANCH_NAME" backfill-branches --top "$BRANCH_TOP" --days "$BRANCH_DAYS" --sleep "$SLEEP_S" || true
-        write_state branches "started"
-        sleep 30
-        continue
+      warrant)
+        if run_warrant_phase; then handled=1; break; fi
         ;;
     esac
-  fi
+  done
 
-  # --- warrant(僅在 branches 完成後) ---
-  if [ "${FORCE_BF:-0}" = "1" ] || [ ! -f "$WARRANT_DONE" ]; then
-    wst=$(container_status "$WARRANT_NAME")
-    case "$wst" in
-      running|paused)
-        write_state warrant "alive:$wst"
-        sleep 60
-        continue
-        ;;
-      exited)
-        ec=$(container_exit_code "$WARRANT_NAME")
-        if [ "$ec" = "0" ]; then
-          WARRANT_FAILS=0
-          mark_done "$WARRANT_DONE" "warrant"
-          docker rm -f "$WARRANT_NAME" >/dev/null 2>&1 || true
-          notify "bf-supervisor: all history backfill complete" default
-          write_state idle "all_complete"
-        else
-          WARRANT_FAILS=$((WARRANT_FAILS + 1))
-          log "warrant exited rc=$ec fails=$WARRANT_FAILS/$MAX_FAILS"
-          if [ "$WARRANT_FAILS" -ge "$MAX_FAILS" ]; then
-            notify "bf-supervisor: warrant gave up after $MAX_FAILS fails (rc=$ec)" high
-            write_state warrant "gave_up:$ec"
-            sleep 600
-            continue
-          fi
-          notify "bf-supervisor: warrant exited rc=$ec; will restart ($WARRANT_FAILS/$MAX_FAILS)" default
-          write_state warrant "restart_wait:$ec"
-          sleep "$RESTART_SLEEP"
-          if should_hold; then continue; fi
-          start_job "$WARRANT_NAME" backfill-warrant-branches --top "$WARRANT_TOP" --days "$WARRANT_DAYS" --sleep "$SLEEP_S" || true
-        fi
-        continue
-        ;;
-      missing|*)
-        bst=$(container_status "$BRANCH_NAME")
-        if [ "$bst" = "running" ] || [ "$bst" = "paused" ]; then
-          write_state wait "branches_still_alive"
-          sleep 60
-          continue
-        fi
-        start_job "$WARRANT_NAME" backfill-warrant-branches --top "$WARRANT_TOP" --days "$WARRANT_DAYS" --sleep "$SLEEP_S" || true
-        write_state warrant "started"
-        sleep 30
-        continue
-        ;;
-    esac
+  if [ "$handled" = "0" ]; then
+    sleep 120
   fi
-
-  sleep 120
 done
