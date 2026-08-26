@@ -294,7 +294,8 @@ def main(argv=None):
     bt = sub.add_parser("import-branch-trades",
                         help="scrape top-15 branch buys/sells (MoneyDJ mirrors)")
     bt.add_argument("--date", default=None, help="YYYYMMDD; default latest trading day")
-    bt.add_argument("--top", type=int, default=80, help="pool size by composite score")
+    bt.add_argument("--top", type=int, default=80,
+                    help="score-pool size; 0 = all type=stock with quotes that day (no ETF)")
     bt.add_argument("--ids", default=None, help="comma list overrides pool")
     bt.add_argument("--sleep", type=float, default=1.2, help="overall request interval")
     bt.set_defaults(fn=cmd_import_branch_trades)

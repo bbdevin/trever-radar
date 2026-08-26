@@ -8,7 +8,8 @@ sync_code
 
 radar import-daily --datasets insti,margin
 radar seed-branches
-radar import-branch-trades --top 2500 --sleep 1.0
+# top=0: 當日有報價的全部 type=stock(不含 ETF);另含熱門上市權證分點
+radar import-branch-trades --top 0 --sleep 1.0
 radar compute-branch-stats
 radar compute-scores
 radar compute-performance

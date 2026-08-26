@@ -549,10 +549,13 @@ def backfill_warrant_branches(top: int = 200, days: int = 120, sleep_s: float = 
 def import_branch_trades(date: str | None = None, top: int = 80,
                          ids: list[str] | None = None, warrants: int = 200,
                          sleep_s: float = 1.2) -> dict:
-    """富邦公開頁抓分點進出(每筆一請求,節流 3 秒)。
+    """富邦公開頁抓分點進出(每筆一請求,節流)。
 
-    池 = 當日 daily_scores 前 top 檔(綜合分排序);無分數時退回成交金額前 top。
-    另抓當日成交金額前 `warrants` 大的上市權證(權證分點;上櫃權證該頁無資料)。
+    池選擇:
+    - ``ids`` 指定清單時只用該清單
+    - ``top <= 0``: **全部**當日有報價的 ``type=stock``(不含 ETF)
+    - 否則: 當日 daily_scores 前 top 檔;無分數則退回成交金額前 top(僅 stock)
+    另抓當日成交金額前 ``warrants`` 大的上市權證(權證分點;上櫃權證該頁無資料)。
     """
     from sqlalchemy import text
 
@@ -569,10 +572,19 @@ def import_branch_trades(date: str | None = None, top: int = 80,
     with engine.connect() as conn:
         if ids:
             targets = ids
+        elif top <= 0:
+            # 全股票(不含 ETF):當日有收盤價者
+            targets = [r[0] for r in conn.execute(text(
+                "SELECT p.stock_id FROM daily_prices p "
+                "JOIN stocks s ON s.id = p.stock_id AND s.type = 'stock' AND s.is_active = 1 "
+                "WHERE p.date = :d AND p.close IS NOT NULL "
+                "ORDER BY p.stock_id"), {"d": iso_d})]
         else:
             targets = [r[0] for r in conn.execute(text(
-                "SELECT stock_id FROM daily_scores WHERE date = :d "
-                "ORDER BY final DESC LIMIT :n"), {"d": iso_d, "n": top})]
+                "SELECT ds.stock_id FROM daily_scores ds "
+                "JOIN stocks s ON s.id = ds.stock_id AND s.type = 'stock' "
+                "WHERE ds.date = :d "
+                "ORDER BY ds.final DESC LIMIT :n"), {"d": iso_d, "n": top})]
             if not targets:
                 targets = [r[0] for r in conn.execute(text(
                     "SELECT p.stock_id FROM daily_prices p "
@@ -586,6 +598,8 @@ def import_branch_trades(date: str | None = None, top: int = 80,
                 "WHERE d.date = :d AND w.market = 'twse' AND w.kind IN ('call','put') "
                 "ORDER BY d.turnover DESC LIMIT :n"), {"d": iso_d, "n": warrants})]
 
+    print(f"branch trades pool: {len(targets)} targets "
+          f"(top={top}, warrants={0 if ids else warrants})", flush=True)
     done = empty = failed = written = 0
     for sid in targets:
         try:

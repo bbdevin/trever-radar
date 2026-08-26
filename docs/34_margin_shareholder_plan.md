@@ -409,10 +409,8 @@ flowchart LR
 - [x] **A3 UI 跟進** — 首頁資券 tab／定義文／去重複 summary_text／漏檔修復（2026-08-25）
 - [x] **Phase A4** — 程式：`backfill-margin`、`display_window`、export `margin_meta`、MarginPanel（2026-08-25）
 - [ ] **Phase A4 VPS** — `backfill-margin.sh` 排程執行中（週日 02:30 + 首跑 23:15）
-- [ ] **Phase B** — TDCC 大戶（待確認）
-- [ ] **Phase B1** — TDCC 週更入庫
-- [ ] **Phase B2** — 大戶 UI（門檻 + 雙模式 + 顯示窗）
-- [ ] **Phase C** — 當沖／借券（後續另確認）
+- [ ] **Phase B** — TDCC 大戶（**使用者 2026-08-26 要求納入排程**；週更、全股票；待開實作）
+- [x] **每日分點全股票** — `import-branch-trades --top 0`（不含 ETF；2026-08-26）
 
 ---
 
@@ -426,6 +424,20 @@ flowchart LR
 | 1000 張邊界 | tier 14/15 邊界；實作後抽樣對照 TDCC 官網 |
 | cron | 只改 `vps/scripts/crontab.example`；**不改 `.github/workflows`** |
 | 綜合分 | 本功能純觀察；對齊 `docs/20` |
+
+---
+
+## 12. 每日資料覆蓋（2026-08-26 使用者定案）
+
+| 資料 | 排程 | 範圍 | 備註 |
+|---|---|---|---|
+| 日 K | `daily-market` 14:10 | TWSE/TPEx **全市場單請求**（含 ETF） | 當日**無成交**個股官方報表本身無列 → DB／JSON 不會有該日 K |
+| 三大法人 | `daily-insti` 16:10 + branches 補抓 | 全市場單請求 | 已是全股票+ETF；非評分池 |
+| 融資融券 | `daily-margin` 22:10 + branches 補抓 | 全市場單請求 | 同上；A4 已回補 240 日 |
+| 分點 | `daily-branches` 17:40／21:00 | **`--top 0` = 當日有報價全部 type=stock（不含 ETF）** | 2026-08-26 起；約 1,400–2,000 檔×~1s ≈ 30–40 分／輪 |
+| **大戶比率** | 週更（TDCC） | 全股票 | **尚未實作**（`docs/34` Phase B）；來源為集保週結算 CSV，**無法日更** |
+
+**倉和卡在 8/24 根因（已釐清）**：DB 後來已有 8/25 收盤，但個股 JSON 在價格進庫後沒有再跑一次全市場 `export-json`。WP-M1 已改「不綁評分池」；之後每晚 branches／margin／stats 輪都會重匯。
 
 ---
 
@@ -444,3 +456,4 @@ flowchart LR
 | 資券 UI | `web/components/MarginPanel.tsx` |
 | 新頁 | `web/app/margin/page.tsx` |
 | Cron 範例 | `vps/scripts/crontab.example` |
+| 分點每日 | `vps/scripts/daily-branches.sh`（`--top 0` 全股票） |

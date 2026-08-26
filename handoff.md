@@ -1,6 +1,5 @@
 ## Handoff
 
-- **Done（2026-08-25）**: WP-M1——個股 JSON 全市場每日更新（不綁評分池）；今日無報價仍寫最新 K 線
-- **Next**: VPS `export-json` + deploy（全市場首次較久）；確認 6538 等檔不再卡 8/21；A4 margin 回補仍排 19:35
+- **Done（2026-08-26）**: 分點每日改 `--top 0` 全股票(不含 ETF)；釐清倉和卡 8/24＝JSON 未在 8/25 進庫後重匯
+- **Next**: VPS force `export-json`；Phase B TDCC 大戶週更（使用者已要求，待實作）
 - **Branch**: `main`
-- **Key**: `pipeline/radar/export/json_export.py`、`docs/26`
