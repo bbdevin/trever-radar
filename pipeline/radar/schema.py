@@ -297,3 +297,20 @@ shareholding_dispersion = Table(
     Column("pct", Float),                         # 占集保庫存％
     Index("ix_shareholding_dispersion_as_of", "as_of"),
 )
+
+# docs/34 §4.6 D1:董監事持股餘額明細(月更 OpenAPI)
+director_holdings = Table(
+    "director_holdings",
+    metadata,
+    Column("stock_id", Text, primary_key=True),
+    Column("as_of_ym", Text, primary_key=True),   # YYYY-MM
+    Column("title", Text, primary_key=True),
+    Column("name", Text, primary_key=True),
+    Column("shares", Integer),                    # 目前持股(股)
+    Column("shares_at_election", Integer),
+    Column("pledged_shares", Integer),
+    Column("pledged_pct", Float),
+    Column("related_shares", Integer),
+    Column("market", Text),                       # twse | tpex
+    Index("ix_director_holdings_ym", "as_of_ym"),
+)

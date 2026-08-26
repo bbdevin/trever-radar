@@ -174,6 +174,25 @@ radar export-json && # deploy_data via weekly script helper
 
 1–4 月缺口：archive 無檔則無法補；勿爬集保個股頁。
 
+### 4.6 Phase D — 董監持股分頁＋內部人％（2026-08-26）
+
+與 TDCC **不同源**：董監／內部人來自證交所／櫃買 **月更** OpenAPI（公司次月 15 日前申報上月）。
+
+| | D1 董監持股分頁 | D2 週表內部人％ |
+|---|---|---|
+| 來源 | 上市 `t187ap11_L`；上櫃 `mopsfin_t187ap11_O` | 同左明細加總 |
+| 粒度 | 每人每月一列 | 每檔每月一點 → ffill 到週列 |
+| 排程 | **每月 16 日 07:00** `monthly-directors.sh` | 隨 D1 import／export |
+
+```
+insider_pct = sum(目前持股股數) / SUM(TDCC tiers.shares) × 100
+```
+
+- 分子不加「關係人合計」（避免雙計）；V1 不含 OpenAPI 未列之純 10% 大股東 → 與籌碼 App 可能略差，UI 註腳標明。
+- 分母＝該檔最近一週 `shareholding_dispersion` 股數加總（集保庫存）。
+
+**UI**（`HoldersPanel`）：pills `大戶比｜持股人數｜董監持股`；大戶比週表欄 `日期｜大戶｜散戶｜內部人`。
+
 ---
 
 ## 5. 功能 2 — 個股資券
@@ -415,9 +434,11 @@ flowchart LR
 | **A4** | **資券 240 日回補** + **display 窗** + UI 對齊大戶 | DB 240 交易日全市場；export/UI = max(元旦, today−6月)；圖表畫滿窗 |
 | **B1** | TDCC provider + 表 + 週 cron；export 窗 = max(當年元旦, today−6月) | 2027-01 可見約 6 個月；2026-08 僅當年度 |
 | **B2** | 個股大戶 UI：400/600/800/1000 + 張數比例｜持股人數 | 切 1000 張時比例與人數語意一致 |
+| **D1** | 董監持股分頁（月更明細） | OpenAPI 抽樣一致；pills 有「董監持股」 |
+| **D2** | 週表內部人％（ffill） | 有董監資料檔非全 —；公式見 §4.6 |
 | **C** | 當沖、借券賣 | 獨立資料源與驗收 |
 
-**實作順序**：A0→A1→A2→A3 → **A4** → B1→B2。**每次只開一個 Phase**。
+**實作順序**：A0→A1→A2→A3 → **A4** → B1→B2 → **D1→D2**。**每次只開一個 Phase**（D1/D2 本輪一併落地）。
 
 ---
 
@@ -433,7 +454,10 @@ flowchart LR
 - [x] **Phase B1** — TDCC 週更入庫（`import-tdcc`、`shareholding_dispersion`、`weekly-tdcc.sh`；2026-08-26）
 - [x] **Phase B2** — 大戶 UI（個股 tab「大戶」＋門檻／雙模式；2026-08-26）
 - [x] **Phase B archive 回補 CLI** — `backfill-tdcc`（wirelessr archive；2026-08-26）；VPS 手動跑見 §4.5
-- [ ] **Phase B VPS** — 週六 06:30 cron 已掛；archive 回補待人工執行一次
+- [x] **Phase B VPS archive** — 2026-08-26 已灌 16 週＋export/deploy
+- [x] **Phase D1** — 董監持股分頁（`director_holdings`、`import-directors`、HoldersPanel；2026-08-26）
+- [x] **Phase D2** — 週表內部人％ ffill（2026-08-26）
+- [ ] **Phase D VPS** — `monthly-directors.sh` 掛 crontab（每月 16 日 07:00；待人工）
 - [ ] **Phase C** — 當沖／借券（後續另確認）
 - [x] **每日分點全股票** — `import-branch-trades --top 0`（不含 ETF；2026-08-26）
 
@@ -479,6 +503,9 @@ flowchart LR
 | Export | `pipeline/radar/export/json_export.py` |
 | 個股頁 | `web/app/stock/page.tsx` |
 | 資券 UI | `web/components/MarginPanel.tsx` |
+| 大戶／董監 UI | `web/components/HoldersPanel.tsx` |
+| 董監 import | `pipeline/radar/providers/directors.py`、`import-directors` |
 | 新頁 | `web/app/margin/page.tsx` |
 | Cron 範例 | `vps/scripts/crontab.example` |
 | 分點每日 | `vps/scripts/daily-branches.sh`（`--top 0` 全股票） |
+| 董監月更 | `vps/scripts/monthly-directors.sh` |

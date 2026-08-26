@@ -851,3 +851,53 @@ def backfill_tdcc_from_archive(
         "errors": errors,
         "dry_run": dry_run,
     }
+
+
+def import_directors(ym: str | None = None) -> dict:
+    """Fetch latest TWSE+TPEx 董監明細 → director_holdings (docs/34 §4.6 D1).
+
+    OpenAPI 僅最新月;ym 若指定則只保留該月列(不符則錯誤)。
+    """
+    from sqlalchemy import text
+
+    from .providers.directors import fetch_all_directors
+
+    init_db()
+    rows = fetch_all_directors()
+    if ym:
+        rows = [r for r in rows if r.as_of_ym == ym]
+        if not rows:
+            raise RuntimeError(f"import-directors: no rows for ym={ym}")
+    payload = [
+        {
+            "stock_id": r.stock_id,
+            "as_of_ym": r.as_of_ym,
+            "title": r.title,
+            "name": r.name,
+            "shares": r.shares,
+            "shares_at_election": r.shares_at_election,
+            "pledged_shares": r.pledged_shares,
+            "pledged_pct": r.pledged_pct,
+            "related_shares": r.related_shares,
+            "market": r.market,
+        }
+        for r in rows
+    ]
+    months = sorted({r["as_of_ym"] for r in payload})
+    stocks = len({r["stock_id"] for r in payload})
+    with get_engine().begin() as conn:
+        for m in months:
+            conn.execute(
+                text("DELETE FROM director_holdings WHERE as_of_ym = :ym"),
+                {"ym": m},
+            )
+        n = upsert(conn, schema.director_holdings, payload, chunk=2000)
+        _log(
+            conn,
+            "mops",
+            "directors",
+            (months[-1] if months else "0000-00").replace("-", "") + "01",
+            n,
+            "ok",
+        )
+    return {"rows": n, "stocks": stocks, "months": months}

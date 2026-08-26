@@ -132,8 +132,81 @@ SURGE_MIN_RATIO = 1.5
 MIN_WARRANT_TURNOVER = 20_000_000
 
 
+def _directors_latest_payload(conn, sid: str) -> dict | None:
+    """最新申報月董監明細(docs/34 §4.6 D1)。"""
+    ym = conn.execute(text(
+        "SELECT MAX(as_of_ym) FROM director_holdings WHERE stock_id = :s"
+    ), {"s": sid}).scalar()
+    if not ym:
+        return None
+    rows = conn.execute(text("""
+        SELECT title, name, shares, shares_at_election, pledged_shares, pledged_pct,
+               related_shares, market
+        FROM director_holdings
+        WHERE stock_id = :s AND as_of_ym = :ym
+        ORDER BY shares DESC, name ASC
+    """), {"s": sid, "ym": ym}).fetchall()
+    if not rows:
+        return None
+    return {
+        "as_of_ym": ym,
+        "source": "twse_tpex_openapi",
+        "note": "月更；證交所／櫃買董監事持股餘額明細",
+        "rows": [
+            {
+                "title": r[0],
+                "name": r[1],
+                "shares": r[2],
+                "lots": round((r[2] or 0) / 1000, 2),
+                "shares_at_election": r[3],
+                "pledged_shares": r[4],
+                "pledged_pct": r[5],
+                "related_shares": r[6],
+                "market": r[7],
+            }
+            for r in rows
+        ],
+    }
+
+
+def _insider_monthly_pcts(conn, sid: str) -> list[tuple[str, float]]:
+    """(as_of_ym, insider_pct) 升序。pct = 董監目前持股加總 / 該月內最近 TDCC 週股數加總。"""
+    monthly = conn.execute(text("""
+        SELECT as_of_ym, SUM(shares) AS sh
+        FROM director_holdings
+        WHERE stock_id = :s
+        GROUP BY as_of_ym
+        ORDER BY as_of_ym ASC
+    """), {"s": sid}).fetchall()
+    if not monthly:
+        return []
+    out: list[tuple[str, float]] = []
+    for ym, sh in monthly:
+        # 該月最後一天或該月內最後一週 TDCC
+        month_end = f"{ym}-28"
+        tdcc_shares = conn.execute(text("""
+            SELECT SUM(shares) FROM shareholding_dispersion
+            WHERE stock_id = :s AND as_of = (
+                SELECT MAX(as_of) FROM shareholding_dispersion
+                WHERE stock_id = :s AND as_of <= :me AND as_of >= :ms
+            )
+        """), {"s": sid, "me": month_end, "ms": f"{ym}-01"}).scalar()
+        if not tdcc_shares:
+            tdcc_shares = conn.execute(text("""
+                SELECT SUM(shares) FROM shareholding_dispersion
+                WHERE stock_id = :s AND as_of = (
+                    SELECT MAX(as_of) FROM shareholding_dispersion
+                    WHERE stock_id = :s AND as_of <= :me
+                )
+            """), {"s": sid, "me": month_end}).scalar()
+        if not tdcc_shares or not sh:
+            continue
+        out.append((ym, round(100.0 * float(sh) / float(tdcc_shares), 4)))
+    return out
+
+
 def _holders_history_payload(conn, sid: str, d: str) -> tuple[list[dict], dict]:
-    """Weekly 大戶門檻序列 + display meta (docs/34 B1/B2)."""
+    """Weekly 大戶門檻序列 + display meta + 內部人％ ffill (docs/34 B1/B2/D2)."""
     from ..compute.shareholding import (
         aggregate_all_thresholds,
         aggregate_retail,
@@ -157,6 +230,8 @@ def _holders_history_payload(conn, sid: str, d: str) -> tuple[list[dict], dict]:
     eff_to = display_to
     if stock_latest and stock_latest < eff_to:
         eff_to = stock_latest
+    insider_series = _insider_monthly_pcts(conn, sid)
+    insider_ym = insider_series[-1][0] if insider_series else None
     meta = {
         "display_from": display_from,
         "display_to": eff_to,
@@ -164,6 +239,12 @@ def _holders_history_payload(conn, sid: str, d: str) -> tuple[list[dict], dict]:
         "window_label": window_label(display_from, eff_to, today),
         "source": "tdcc",
         "note": "週資料、級距為集保分級彙總，≠分點主力",
+        "insider_as_of_ym": insider_ym,
+        "insider_note": (
+            "內部人％＝董監目前持股加總÷集保庫存（月更 ffill；不加關係人合計）"
+            if insider_ym
+            else None
+        ),
     }
     if not raw:
         return [], meta
@@ -175,11 +256,20 @@ def _holders_history_payload(conn, sid: str, d: str) -> tuple[list[dict], dict]:
         rows = by_asof[as_of]
         thresholds = aggregate_all_thresholds(rows)
         retail = aggregate_retail(tiers_dict_from_rows(rows))
+        # ffill: 取 as_of 所屬月及之前最後一個有值的申報月
+        as_ym = as_of[:7]
+        insider_pct = None
+        for ym, pct_v in insider_series:
+            if ym <= as_ym:
+                insider_pct = pct_v
+            else:
+                break
         out.append({
             "t": as_of,
             "thresholds": thresholds,
             "retail_pct": retail["shares_pct"],
             "retail_holders": retail["holders"],
+            "insider_pct": insider_pct,
         })
     out.reverse()  # 新→舊,對齊 margin_history
     return out, meta
@@ -933,6 +1023,7 @@ def export_json(out_dir: Path | None = None) -> dict:
             ]
             margin_hist, margin_meta = _margin_history_payload(conn, sid, d)
             holders_hist, holders_meta = _holders_history_payload(conn, sid, d)
+            directors_latest = _directors_latest_payload(conn, sid)
             payload = {
                 "id": sid, "name": s["name"], "market": s["market"],
                 "candles": [
@@ -978,6 +1069,7 @@ def export_json(out_dir: Path | None = None) -> dict:
                 "margin_meta": margin_meta,
                 "holders_history": holders_hist,
                 "holders_meta": holders_meta,
+                "directors_latest": directors_latest,
             }
             (stock_dir / f"{sid}.json").write_text(
                 json.dumps(payload, ensure_ascii=False), encoding="utf-8")

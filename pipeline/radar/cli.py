@@ -120,6 +120,15 @@ def cmd_import_tdcc(args):
     )
 
 
+def cmd_import_directors(args):
+    from .importer import import_directors
+
+    info = import_directors(args.ym)
+    print(
+        f"directors: months={info['months']} stocks={info['stocks']} rows={info['rows']}"
+    )
+
+
 def cmd_backfill_tdcc(args):
     from .importer import backfill_tdcc_from_archive
 
@@ -351,6 +360,17 @@ def main(argv=None):
         help="TDCC weekly shareholding dispersion (docs/34 B1)",
     )
     tdcc.set_defaults(fn=cmd_import_tdcc)
+
+    idir = sub.add_parser(
+        "import-directors",
+        help="TWSE/TPEx monthly director holdings (docs/34 §4.6 D1)",
+    )
+    idir.add_argument(
+        "--ym",
+        default=None,
+        help="YYYY-MM; default = whatever OpenAPI latest month returns",
+    )
+    idir.set_defaults(fn=cmd_import_directors)
 
     btdcc = sub.add_parser(
         "backfill-tdcc",

@@ -46,5 +46,8 @@ CRON_TZ=Asia/Taipei
 # TDCC 大戶週更(docs/34 B1 / docs/35):週六 06:30(備份 05:00 之後)
 30 6 * * 6     /home/huang/trever-radar/vps/scripts/weekly-tdcc.sh >> /home/huang/radar-cron.log 2>&1
 
+# 董監持股月更(docs/34 §4.6):每月 16 日 07:00(申報截止後)
+0 7 16 * *     /home/huang/trever-radar/vps/scripts/monthly-directors.sh >> /home/huang/radar-cron.log 2>&1
+
 # 磁碟清理(不動 radar.db):docker dangling + log trim + npm cache;低於 4G 則 ntfy
 40 7 * * *     /home/huang/trever-radar/vps/scripts/disk-cleanup.sh >> /home/huang/disk-cleanup.log 2>&1

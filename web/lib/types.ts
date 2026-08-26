@@ -116,6 +116,8 @@ export interface StockJson {
   /** TDCC 大戶週序列(docs/34 B1/B2);新→舊 */
   holders_history?: HoldersHistoryPoint[];
   holders_meta?: HoldersMeta;
+  /** 董監最新月明細(docs/34 §4.6 D1) */
+  directors_latest?: DirectorsLatest | null;
 }
 
 export interface HoldersThresholdCell {
@@ -129,6 +131,8 @@ export interface HoldersHistoryPoint {
   /** 未滿 400 張散戶持股％（export 後才有；舊 JSON 可能缺） */
   retail_pct?: number | null;
   retail_holders?: number | null;
+  /** 董監持股加總÷集保庫存％（月更 ffill） */
+  insider_pct?: number | null;
 }
 
 export interface HoldersMeta {
@@ -138,6 +142,27 @@ export interface HoldersMeta {
   window_label?: string;
   source?: string;
   note?: string;
+  insider_as_of_ym?: string | null;
+  insider_note?: string | null;
+}
+
+export interface DirectorsLatestRow {
+  title: string;
+  name: string;
+  shares: number;
+  lots: number;
+  shares_at_election?: number | null;
+  pledged_shares?: number | null;
+  pledged_pct?: number | null;
+  related_shares?: number | null;
+  market?: string;
+}
+
+export interface DirectorsLatest {
+  as_of_ym: string;
+  source?: string;
+  note?: string;
+  rows: DirectorsLatestRow[];
 }
 
 export interface MarginHistoryPoint {
