@@ -197,12 +197,13 @@ sqlite3 radar.db "PRAGMA integrity_check;"        # ok 才能用
 
 ## 9. 每日排程(WP-B2,cron)
 
-腳本在 `vps/scripts/`,一支 cron 項對應一支 script,全部鏡像現行 5 支 workflow 的指令序:
+腳本在 `vps/scripts/`,一支 cron 項對應一支 script。多數鏡像舊 5 支 workflow 指令序;15:00 `daily-tpex-quotes.sh` 為 VPS 新增(上櫃晚公布):
 
 | Script | 時刻(台北) | 對應 workflow |
 |---|---|---|
-| `daily-market.sh` | 14:10 一–五 | daily-market(quotes→權證彙總→指標→分數→週一題材→export→deploy) |
-| `daily-insti.sh` | 16:10 一–五 | daily-insti(**上櫃日K 補抓**→指標→法人→權證主檔(失敗不擋)→分數→export→deploy) |
+| `daily-market.sh` | 14:10 一–五 | daily-market(quotes→權證彙總→指標→分數→週一題材→export→deploy;上櫃常 empty) |
+| `daily-tpex-quotes.sh` | 15:00 一–五 | 上櫃日K 主補抓→權證彙總→指標→分數→export→deploy（**crontab 掛載待人工**） |
+| `daily-insti.sh` | 16:10 一–五 | daily-insti(quotes 保底→指標→法人→權證主檔(失敗不擋)→分數→export→deploy) |
 | `daily-branches.sh` | 17:40 + 21:00 一–五 | daily-branches(quotes/margin/insti 補抓→指標→分點爬蟲→分點統計→分數→績效→export→prune→deploy) |
 | `daily-margin.sh` | 22:10 一–五 | daily-margin(日K+融資券保底→分數→績效→export→deploy) |
 | `data-backfill.sh` | 01:10 每日 | data-backfill task=deep(深歷史增量) |

@@ -6,8 +6,9 @@
 CRON_TZ=Asia/Taipei
 
 # 每日輪(週一–五)
-10 14 * * 1-5  /home/huang/trever-radar/vps/scripts/daily-market.sh   >> /home/huang/radar-cron.log 2>&1
-10 16 * * 1-5  /home/huang/trever-radar/vps/scripts/daily-insti.sh    >> /home/huang/radar-cron.log 2>&1
+10 14 * * 1-5  /home/huang/trever-radar/vps/scripts/daily-market.sh      >> /home/huang/radar-cron.log 2>&1
+0  15 * * 1-5  /home/huang/trever-radar/vps/scripts/daily-tpex-quotes.sh >> /home/huang/radar-cron.log 2>&1
+10 16 * * 1-5  /home/huang/trever-radar/vps/scripts/daily-insti.sh       >> /home/huang/radar-cron.log 2>&1
 40 17 * * 1-5  /home/huang/trever-radar/vps/scripts/daily-branches.sh >> /home/huang/radar-cron.log 2>&1
 0  21 * * 1-5  /home/huang/trever-radar/vps/scripts/daily-branches.sh >> /home/huang/radar-cron.log 2>&1
 10 22 * * 1-5  /home/huang/trever-radar/vps/scripts/daily-margin.sh   >> /home/huang/radar-cron.log 2>&1

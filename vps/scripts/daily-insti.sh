@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# 16:10 台北(週一–五)— 上櫃日K 補抓 + 法人買賣超 + 權證主檔。
-# 上櫃 dailyQuotes 14:10 常尚未出表;權證主檔偶發 timeout 不得擋 export。
+# 16:10 台北(週一–五)— 法人買賣超 + 權證主檔;上櫃日K 保底再抓(主輪在 15:00)。
+# 權證主檔偶發 timeout 不得擋 export。
 source "$(dirname "$0")/lib.sh"
 
 acquire_db_lock
 sync_code
 
-# 14:10 上櫃 dailyQuotes 常尚未出表(empty);16:10 再抓日K,並重算缺日的指標。
+# 15:00 主抓上櫃日K;此處再抓一次當保底(empty 無害)。
 radar import-daily --datasets quotes
 radar aggregate-warrants --date "$(taipei_date +%Y%m%d)"
 radar compute-indicators --all --days 5

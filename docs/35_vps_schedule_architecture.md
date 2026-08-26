@@ -44,12 +44,13 @@ flowchart TB
   tdcc -->|weekly_ok_or_fail| ntfy
 ```
 
-### Layer 1 — 日更真相（已上線，時刻不動）
+### Layer 1 — 日更真相（已上線）
 
 | 時間 | 腳本 | 含算分／統計 |
 |---|---|---|
 | 14:10 | `daily-market.sh` | indicators → **scores**；（週一）themes／geo。上櫃 quotes 此時常 empty |
-| 16:10 | `daily-insti.sh` | **上櫃日K 補抓** → indicators → insti → **scores**（權證主檔失敗不擋） |
+| 15:00 | `daily-tpex-quotes.sh` | **上櫃日K 主補抓** → indicators → **scores** → export（crontab 掛載待人工） |
+| 16:10 | `daily-insti.sh` | quotes 保底 → indicators → insti → **scores**（權證主檔失敗不擋） |
 | 17:40／21:00 | `daily-branches.sh` | 再補 quotes → indicators → 全股票分點 `--top 0` → **branch-stats** → **scores** → **performance** |
 | 22:10 | `daily-margin.sh` | 再補 quotes + margin → **scores** → **performance** |
 
@@ -93,6 +94,7 @@ flowchart LR
     m09[09:00_mid]
     m12[12:00_mid]
     d1410[14:10_market]
+    d1500[15:00_tpex]
     d1610[16:10_insti]
     d1740[17:40_branches]
   end
@@ -104,6 +106,7 @@ flowchart LR
   end
   bf[bf_supervisor_jobs]
   bf -.->|pause_in_quiet_windows| d1410
+  bf -.->|pause| d1500
   bf -.->|pause| d1740
   bf -.->|pause| m20
 ```

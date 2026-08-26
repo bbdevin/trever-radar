@@ -1,7 +1,6 @@
 - **Done（2026-08-26）**:
-  - 根因確認：上櫃 dailyQuotes 14:10 常尚未出表（抓太早），且無後續補抓 → 08-24/25 只進半套、多檔看起來停在 08-21
-  - 已補齊 08-24／25／26 上櫃日K；16:10／17:40／22:10 改再抓 quotes
+  - 上櫃晚公布：保留 14:10 上市閃電；新增 `daily-tpex-quotes.sh` @ 15:00（crontab.example；**VPS 掛載待人工**）
 - **Next**:
-  1. 等 gap export 完成後手動補跑今日 17:40 daily-branches（剛補洞時可能錯過 cron）
+  1. VPS `crontab -e` 加：`0 15 * * 1-5  .../daily-tpex-quotes.sh >> ~/radar-cron.log`
   2. 掛 crontab 董監月槽（16 日 07:00）
 - **Branch**: `main`
