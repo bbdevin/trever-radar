@@ -431,12 +431,22 @@ def backfill_branches(top: int = 300, days: int = 60, sleep_s: float = 1.2,
         trade_dates = [r[0] for r in conn.execute(text(
             "SELECT DISTINCT date FROM daily_prices ORDER BY date DESC LIMIT :n"),
             {"n": days})]
-        targets = [r[0] for r in conn.execute(text(
-            "SELECT p.stock_id FROM daily_prices p "
-            "JOIN stocks s ON s.id = p.stock_id AND s.type = 'stock' "
-            "WHERE p.date = (SELECT MAX(date) FROM daily_prices) "
-            "AND p.turnover IS NOT NULL ORDER BY p.turnover DESC LIMIT :n"),
-            {"n": top})]
+        latest = conn.execute(text(
+            "SELECT MAX(date) FROM daily_prices")).scalar()
+        if top <= 0:
+            # 與 import-branch-trades 一致:0 = 全部當日有報價的 stock(不含 ETF)
+            targets = [r[0] for r in conn.execute(text(
+                "SELECT p.stock_id FROM daily_prices p "
+                "JOIN stocks s ON s.id = p.stock_id AND s.type = 'stock' AND s.is_active = 1 "
+                "WHERE p.date = :d AND p.close IS NOT NULL "
+                "ORDER BY p.stock_id"), {"d": latest})]
+        else:
+            targets = [r[0] for r in conn.execute(text(
+                "SELECT p.stock_id FROM daily_prices p "
+                "JOIN stocks s ON s.id = p.stock_id AND s.type = 'stock' "
+                "WHERE p.date = :d AND p.turnover IS NOT NULL "
+                "ORDER BY p.turnover DESC LIMIT :n"),
+                {"d": latest, "n": top})]
 
     fetched = skipped_dates = failed = 0
     stopped = None
