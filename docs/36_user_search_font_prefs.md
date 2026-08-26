@@ -34,6 +34,7 @@
 - [x] FontScaleToggle
 - [x] SearchBox 歷史
 - [x] **人工**：Supabase 執行 `user_ui_prefs.sql`（2026-08-26 使用者完成）
+- [x] **修復**：選股後 `await pushSearch` 再導頁（避免請求被取消）；補 `GRANT`（見 `user_ui_prefs_grants.sql`）
 
 ## 5. 驗收
 

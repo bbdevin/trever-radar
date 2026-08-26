@@ -68,3 +68,7 @@ drop policy if exists "search_history_delete_own" on public.search_history;
 create policy "search_history_delete_own" on public.search_history
   for delete to authenticated
   using (auth.uid() = user_id);
+
+-- PostgREST 需明確授權(與 app_profiles 相同慣例)
+grant select, insert, update, delete on public.user_ui_prefs to authenticated;
+grant select, insert, update, delete on public.search_history to authenticated;

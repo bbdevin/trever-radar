@@ -161,8 +161,8 @@ export function UserPrefsProvider({ children }: { children: ReactNode }) {
         { user_id: session.user.id, stock_id: id, searched_at: now },
         { onConflict: "user_id,stock_id" },
       );
-      if (error && !/does not exist|schema cache/i.test(error.message)) {
-        console.warn("search_history upsert", error.message);
+      if (error) {
+        console.warn("search_history upsert", error.message, error);
         return;
       }
       // 修剪超過 20 筆

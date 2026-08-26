@@ -59,8 +59,13 @@ export default function SearchBox() {
     return [...byId, ...byName].slice(0, 12);
   }, [index, q]);
 
-  const go = (id: string) => {
-    void pushSearch(id);
+  const go = async (id: string) => {
+    // 必須等寫入完成再換頁,否則 hard navigate 會取消 upsert,歷史永遠空白
+    try {
+      await pushSearch(id);
+    } catch {
+      /* 仍導向個股 */
+    }
     setOpen(false);
     setQ("");
     window.location.href = `/stock?id=${id}`;
@@ -119,7 +124,9 @@ export default function SearchBox() {
                       <CommandItem
                         key={h.stock_id}
                         value={`hist-${h.stock_id}`}
-                        onSelect={() => go(h.stock_id)}
+                        onSelect={() => {
+                          void go(h.stock_id);
+                        }}
                         className="min-h-11 cursor-pointer"
                       >
                         <span className="min-w-[52px] font-mono font-bold">{h.stock_id}</span>
@@ -138,7 +145,7 @@ export default function SearchBox() {
             {!showHistory && index && results.length === 0 && <CommandEmpty>找不到「{q}」</CommandEmpty>}
             {!showHistory &&
               results.map((r) => (
-                <CommandItem key={r[0]} value={r[0]} onSelect={() => go(r[0])} className="min-h-11 cursor-pointer">
+                <CommandItem key={r[0]} value={r[0]} onSelect={() => void go(r[0])} className="min-h-11 cursor-pointer">
                   <span className="min-w-[52px] font-mono font-bold">{r[0]}</span>
                   <span className="font-semibold">{r[1]}</span>
                   <span className="ml-auto text-xs text-muted-foreground">
