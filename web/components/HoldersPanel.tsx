@@ -202,41 +202,47 @@ export default function HoldersPanel({ data }: { data: StockJson }) {
         </div>
       </div>
 
-      <div className="overflow-x-auto rounded-[var(--r-md)] border border-border">
-        <table className="w-full min-w-[520px] border-collapse text-[12.5px]">
-          <thead className="sticky top-0 z-[1] border-b border-border bg-secondary/80 text-muted-foreground backdrop-blur-sm">
+      <div className="min-w-0 overflow-hidden rounded-[var(--r-md)] border border-border">
+        <table className="w-full table-fixed border-collapse text-[11.5px] sm:text-[12.5px]">
+          <thead className="border-b border-border bg-secondary/80 text-muted-foreground">
             <tr>
-              <th scope="col" className="whitespace-nowrap px-2.5 py-2.5 text-left font-medium">
+              <th
+                scope="col"
+                className="w-[22%] px-1.5 py-2 text-left font-medium sm:w-[18%] sm:px-2"
+              >
                 日期
               </th>
               {mode === "pct" ? (
                 <>
-                  <th scope="col" className="whitespace-nowrap px-2.5 py-2.5 text-right font-medium">
-                    大戶持股
-                    <span className="block text-[10px] font-normal opacity-80">(%)</span>
+                  <th
+                    scope="col"
+                    className="w-[39%] px-1.5 py-2 text-right font-medium sm:w-[41%] sm:px-2"
+                    title="大戶持股％與較上週增減"
+                  >
+                    大戶<span className="font-normal opacity-70">%</span>
                   </th>
-                  <th scope="col" className="whitespace-nowrap px-2.5 py-2.5 text-right font-medium">
-                    大戶增減
-                    <span className="block text-[10px] font-normal opacity-80">(%)</span>
-                  </th>
-                  <th scope="col" className="whitespace-nowrap px-2.5 py-2.5 text-right font-medium">
-                    散戶持股
-                    <span className="block text-[10px] font-normal opacity-80">(%)</span>
-                  </th>
-                  <th scope="col" className="whitespace-nowrap px-2.5 py-2.5 text-right font-medium">
-                    內部人持股
-                    <span className="block text-[10px] font-normal opacity-80">(%)</span>
+                  <th
+                    scope="col"
+                    className="w-[39%] px-1.5 py-2 text-right font-medium sm:w-[41%] sm:px-2"
+                    title="散戶持股％（未滿 400 張）"
+                  >
+                    散戶<span className="font-normal opacity-70">%</span>
                   </th>
                 </>
               ) : (
                 <>
-                  <th scope="col" className="whitespace-nowrap px-2.5 py-2.5 text-right font-medium">
+                  <th
+                    scope="col"
+                    className="w-[39%] px-1.5 py-2 text-right font-medium sm:w-[41%] sm:px-2"
+                    title="大戶人數與較上週增減"
+                  >
                     大戶人數
                   </th>
-                  <th scope="col" className="whitespace-nowrap px-2.5 py-2.5 text-right font-medium">
-                    人數增減
-                  </th>
-                  <th scope="col" className="whitespace-nowrap px-2.5 py-2.5 text-right font-medium">
+                  <th
+                    scope="col"
+                    className="w-[39%] px-1.5 py-2 text-right font-medium sm:w-[41%] sm:px-2"
+                    title="散戶人數（未滿 400 張）"
+                  >
                     散戶人數
                   </th>
                 </>
@@ -251,20 +257,32 @@ export default function HoldersPanel({ data }: { data: StockJson }) {
                     key={r.t}
                     className="border-b border-border/60 transition-colors duration-150 last:border-0 hover:bg-secondary/40"
                   >
-                    <td className="num whitespace-nowrap px-2.5 py-2 text-left text-foreground">{fmtMD(r.t)}</td>
-                    <td className={cn("num whitespace-nowrap px-2.5 py-2 text-right", trendClass(r.holdersDelta))}>
-                      {r.holders != null ? r.holders.toLocaleString("zh-TW") : "—"}
-                    </td>
-                    <td className={cn("num whitespace-nowrap px-2.5 py-2 text-right", trendClass(r.holdersDelta))}>
-                      {r.holdersDelta == null
-                        ? "—"
-                        : r.holdersDelta > 0
-                          ? `+${r.holdersDelta.toLocaleString("zh-TW")}`
-                          : r.holdersDelta.toLocaleString("zh-TW")}
+                    <td className="num px-1.5 py-1.5 text-left text-foreground sm:px-2">{fmtMD(r.t)}</td>
+                    <td className="px-1.5 py-1.5 text-right sm:px-2">
+                      <div className={cn("num leading-tight", trendClass(r.holdersDelta))}>
+                        {r.holders != null ? r.holders.toLocaleString("zh-TW") : "—"}
+                      </div>
+                      <div
+                        className={cn(
+                          "num text-[10px] leading-tight sm:text-[11px]",
+                          r.holdersDelta == null ? "text-muted-foreground" : trendClass(r.holdersDelta),
+                        )}
+                        aria-label={
+                          r.holdersDelta == null
+                            ? "無上週對照"
+                            : `較上週 ${r.holdersDelta > 0 ? "+" : ""}${r.holdersDelta}`
+                        }
+                      >
+                        {r.holdersDelta == null
+                          ? "—"
+                          : r.holdersDelta > 0
+                            ? `+${r.holdersDelta.toLocaleString("zh-TW")}`
+                            : r.holdersDelta.toLocaleString("zh-TW")}
+                      </div>
                     </td>
                     <td
                       className={cn(
-                        "num whitespace-nowrap px-2.5 py-2 text-right",
+                        "num px-1.5 py-1.5 text-right sm:px-2",
                         r.retailHolders == null
                           ? "text-muted-foreground"
                           : trendClass(r.retailHoldersDelta),
@@ -281,26 +299,30 @@ export default function HoldersPanel({ data }: { data: StockJson }) {
                   key={r.t}
                   className="border-b border-border/60 transition-colors duration-150 last:border-0 hover:bg-secondary/40"
                 >
-                  <td className="num whitespace-nowrap px-2.5 py-2 text-left text-foreground">{fmtMD(r.t)}</td>
-                  <td className={cn("num whitespace-nowrap px-2.5 py-2 text-right", trendClass(r.majorDelta))}>
-                    {fmtNum(r.major)}
-                  </td>
-                  <td className={cn("num whitespace-nowrap px-2.5 py-2 text-right", trendClass(r.majorDelta))}>
-                    {fmtSigned(r.majorDelta)}
+                  <td className="num px-1.5 py-1.5 text-left text-foreground sm:px-2">{fmtMD(r.t)}</td>
+                  <td className="px-1.5 py-1.5 text-right sm:px-2">
+                    <div className={cn("num leading-tight", trendClass(r.majorDelta))}>
+                      {fmtNum(r.major)}
+                    </div>
+                    <div
+                      className={cn(
+                        "num text-[10px] leading-tight sm:text-[11px]",
+                        r.majorDelta == null ? "text-muted-foreground" : trendClass(r.majorDelta),
+                      )}
+                      aria-label={
+                        r.majorDelta == null ? "無上週對照" : `較上週 ${fmtSigned(r.majorDelta)} 百分點`
+                      }
+                    >
+                      {fmtSigned(r.majorDelta)}
+                    </div>
                   </td>
                   <td
                     className={cn(
-                      "num whitespace-nowrap px-2.5 py-2 text-right",
+                      "num px-1.5 py-1.5 text-right leading-tight sm:px-2",
                       r.retail == null ? "text-muted-foreground" : trendClass(r.retailDelta),
                     )}
                   >
                     {fmtNum(r.retail)}
-                  </td>
-                  <td
-                    className="num whitespace-nowrap px-2.5 py-2 text-right text-muted-foreground"
-                    title="內部人持股尚未接入"
-                  >
-                    —
                   </td>
                 </tr>
               );
@@ -318,7 +340,7 @@ export default function HoldersPanel({ data }: { data: StockJson }) {
         </button>
       )}
       <p className="text-[11px] text-muted-foreground">
-        紅＝較上週增加、綠＝減少（台股慣例）。散戶＝未滿 400 張；內部人尚未接入。
+        大戶欄第二行＝較上週增減（紅增綠減）。散戶＝未滿 400 張；內部人尚未接入。
       </p>
     </div>
   );
