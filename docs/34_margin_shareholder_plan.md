@@ -1,6 +1,6 @@
 # 資券／大戶散戶／使用率排行
 
-> 狀態：**Phase A0–A3 已實作（2026-08-25）**；Phase B/C 待確認。每次只開一個 Phase。
+> 狀態：**Phase A0–A4 程式已實作**；**Phase B1/B2 程式已落地（2026-08-26）**；Phase C 待確認。VPS 掛 cron／首次 `import-tdcc` 須人工。
 > 對齊：`docs/20`（不進綜合分、不新增第 14 策略）、`docs/03`（官方免費優先）、`docs/25`（個股 tab IA）
 
 ## 1. 背景
@@ -410,9 +410,9 @@ flowchart LR
 - [x] **A3 UI 跟進** — 首頁資券 tab／定義文／去重複 summary_text／漏檔修復（2026-08-25）
 - [x] **Phase A4** — 程式：`backfill-margin`、`display_window`、export `margin_meta`、MarginPanel（2026-08-25）
 - [ ] **Phase A4 VPS** — `backfill-margin.sh` 排程執行中（週日 02:30 + 首跑 23:15）
-- [ ] **Phase B** — TDCC 大戶（**使用者 2026-08-26 要求納入排程**；週更、全股票；待開實作）
-- [ ] **Phase B1** — TDCC 週更入庫
-- [ ] **Phase B2** — 大戶 UI（門檻 + 雙模式 + 顯示窗）
+- [x] **Phase B1** — TDCC 週更入庫（`import-tdcc`、`shareholding_dispersion`、`weekly-tdcc.sh`；2026-08-26）
+- [x] **Phase B2** — 大戶 UI（個股 tab「大戶」＋門檻／雙模式；2026-08-26）
+- [ ] **Phase B VPS** — 首次手動 `import-tdcc` + 掛週六 06:30 cron（待人工）
 - [ ] **Phase C** — 當沖／借券（後續另確認）
 - [x] **每日分點全股票** — `import-branch-trades --top 0`（不含 ETF；2026-08-26）
 

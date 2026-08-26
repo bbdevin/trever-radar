@@ -132,6 +132,48 @@ SURGE_MIN_RATIO = 1.5
 MIN_WARRANT_TURNOVER = 20_000_000
 
 
+def _holders_history_payload(conn, sid: str, d: str) -> tuple[list[dict], dict]:
+    """Weekly 大戶門檻序列 + display meta (docs/34 B1/B2)."""
+    from ..compute.shareholding import aggregate_all_thresholds
+
+    today = date.fromisoformat(d)
+    display_from, display_to = display_window_bounds(today)
+    raw = conn.execute(text("""
+        SELECT as_of, tier, holders, shares, pct
+        FROM shareholding_dispersion
+        WHERE stock_id = :s AND as_of >= :from_d AND as_of <= :to_d
+        ORDER BY as_of ASC, tier ASC
+    """), {"s": sid, "from_d": display_from, "to_d": display_to}).fetchall()
+    db_earliest = conn.execute(text(
+        "SELECT MIN(as_of) FROM shareholding_dispersion WHERE stock_id = :s"
+    ), {"s": sid}).scalar()
+    stock_latest = conn.execute(text(
+        "SELECT MAX(as_of) FROM shareholding_dispersion WHERE stock_id = :s"
+    ), {"s": sid}).scalar()
+    eff_to = display_to
+    if stock_latest and stock_latest < eff_to:
+        eff_to = stock_latest
+    meta = {
+        "display_from": display_from,
+        "display_to": eff_to,
+        "db_earliest": db_earliest,
+        "window_label": window_label(display_from, eff_to, today),
+        "source": "tdcc",
+        "note": "週資料、級距為集保分級彙總，≠分點主力",
+    }
+    if not raw:
+        return [], meta
+    by_asof: dict[str, list] = {}
+    for as_of, tier, holders, shares, pct in raw:
+        by_asof.setdefault(as_of, []).append((tier, holders, shares, pct))
+    out = []
+    for as_of in sorted(by_asof.keys()):
+        thresholds = aggregate_all_thresholds(by_asof[as_of])
+        out.append({"t": as_of, "thresholds": thresholds})
+    out.reverse()  # 新→舊,對齊 margin_history
+    return out, meta
+
+
 def _margin_history_payload(conn, sid: str, d: str) -> tuple[list[dict], dict]:
     today = date.fromisoformat(d)
     display_from, display_to = display_window_bounds(today)
@@ -879,6 +921,7 @@ def export_json(out_dir: Path | None = None) -> dict:
                 for dt, branches in sorted(history_by_date.items(), reverse=True)[:480]
             ]
             margin_hist, margin_meta = _margin_history_payload(conn, sid, d)
+            holders_hist, holders_meta = _holders_history_payload(conn, sid, d)
             payload = {
                 "id": sid, "name": s["name"], "market": s["market"],
                 "candles": [
@@ -922,6 +965,8 @@ def export_json(out_dir: Path | None = None) -> dict:
                 ],
                 "margin_history": margin_hist,
                 "margin_meta": margin_meta,
+                "holders_history": holders_hist,
+                "holders_meta": holders_meta,
             }
             (stock_dir / f"{sid}.json").write_text(
                 json.dumps(payload, ensure_ascii=False), encoding="utf-8")

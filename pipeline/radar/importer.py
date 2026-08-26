@@ -732,3 +732,35 @@ def import_descriptions(limit: int | None = None) -> dict:
 
     print(f"Descriptions: {done} updated, {failed} failed.")
     return {"done": done, "failed": failed}
+
+
+def import_tdcc_shareholding() -> dict:
+    """Fetch latest TDCC 集保戶股權分散 CSV → shareholding_dispersion (docs/34 B1)."""
+    from .providers.tdcc_shareholding import fetch_tdcc_shareholding
+
+    init_db()
+    rows = fetch_tdcc_shareholding()
+    payload = [
+        {
+            "stock_id": r.stock_id,
+            "as_of": r.as_of,
+            "tier": r.tier,
+            "holders": r.holders,
+            "shares": r.shares,
+            "pct": r.pct,
+        }
+        for r in rows
+    ]
+    as_of = payload[0]["as_of"] if payload else None
+    stocks = len({r["stock_id"] for r in payload})
+    with get_engine().begin() as conn:
+        n = upsert(conn, schema.shareholding_dispersion, payload, chunk=2000)
+        _log(
+            conn,
+            "tdcc",
+            "holders",
+            (as_of or "00000000").replace("-", ""),
+            n,
+            "ok",
+        )
+    return {"rows": n, "stocks": stocks, "as_of": as_of}

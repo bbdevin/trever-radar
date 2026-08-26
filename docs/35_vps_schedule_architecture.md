@@ -1,6 +1,6 @@
 # VPS 排程／回補／大戶 — 四層架構（規劃定案）
 
-> 狀態：**架構定案 2026-08-26**（程式：回補管家＋TDCC Phase B **尚未實作**）  
+> 狀態：**架構定案 2026-08-26**；**程式已落地**：`bf-supervisor`、`safe-stats＋scores`、TDCC B1/B2＋週六 06:30（VPS crontab 掛載仍須人工確認）  
 > 對齊：`docs/08` §0（時刻表）、`docs/33`（mid／stats）、`docs/34`（資券／大戶）、`docs/31`（單一寫者）  
 > 來源：使用者確認之全盤盤點——日更與算分全留、歷史回補全自動跑到完＋ntfy、大戶納入週末槽。
 
@@ -122,10 +122,10 @@ flowchart LR
 
 | 項目 | 現況 | 目標 |
 |---|---|---|
-| 歷史 bf | 雙寫易 locked；Exit 後不重啟 | supervisor 單寫者＋自啟＋完成 ntfy |
-| 23:30 | 僅 stats＋export | ＋`compute-scores` |
-| 大戶 | 無管線 | Phase B1＋B2（`docs/34`）＋週六 06:30 |
-| 安靜窗 | 多檔複製 | `lib.sh` 一處 |
+| 歷史 bf | `bf-supervisor.sh` 單寫者＋自啟＋完成 ntfy（repo 已落地） | VPS 掛 crontab／清舊雙容器後驗證 |
+| 23:30 | `safe-branch-stats`：**stats → scores → export** | 已對齊目標 |
+| 大戶 | B1 入庫＋B2 UI＋`weekly-tdcc.sh` @ 週六 06:30 | VPS 首次手動跑＋掛 cron |
+| 安靜窗 | `lib.sh` `in_radar_quiet_window` 一處 | 已對齊 |
 
 **不刪**：日更輪次、mid×4、算分、備份、盤中。大戶**不進**綜合分、**不能**日更。
 

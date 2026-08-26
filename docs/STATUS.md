@@ -110,6 +110,7 @@
 
 ## 最近完成
 
+- 2026-08-26 **docs/35 S2 程式落地**：`bf-supervisor`（單寫者／自啟／ntfy）、`safe-branch-stats`＋scores、安靜窗收進 `lib.sh`；**TDCC B1/B2**（`import-tdcc`、個股「大戶」tab、`weekly-tdcc.sh` @ 週六 06:30）。**VPS crontab 掛載待人工確認**。Reviewer：APPROVE_WITH_FIXES 已跟進（guard 認 margin/tdcc flag、重啟上限、ERR ntfy）。
 - 2026-08-26 **修字級／深淺色選單無反應**：頭像選單改原生 button；`userPrefs` 只依 `userId` 重拉並擋住進行中 refresh 蓋寫本機切換。
 - 2026-08-26 **搜尋歷史＋文字縮放**：每位登入使用者搜尋紀錄（可清除）與 Header「A」三档字級綁帳號（`docs/36`）。**Supabase `user_ui_prefs.sql` 已執行**。
 - 2026-08-26 **VPS 四層排程架構定案（文件）**：[`docs/35_vps_schedule_architecture.md`](35_vps_schedule_architecture.md)——日更真相／歷史加深（含 bf-supervisor 目標）／發布／大戶週六 06:30；已同步 `08`§0、`33` S2、`34` §4.4。**程式尚未實作**。

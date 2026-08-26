@@ -20,7 +20,7 @@
 | `docs/02_mvp_scope.md` | ⚠️ **登入段過時** | 寫「登入(Laravel Breeze)」,實際是 Cloudflare Access / Supabase Google OAuth(見 `12`、`14`§4)。其餘範圍界定仍適用。 |
 | `docs/11_ai_dev_workflow.md` | ❌ **superseded** | 全文 PHP 內容(`Modules/Scoring/*.php`、`php artisan`、pint/phpstan/phpunit、trunk-based+PR)為舊方案且**從未被實際執行**(實際是直接 push `main`)。已改寫為指向本檔與 `docs/17`/`docs/18`,技術棧對照改為 Python。 |
 | `docs/08_scheduler_jobs.md` §0 | ✅ **current(2026-08-26 補 mid/stats/大戶槽)** | VPS cron 總表;四層架構圖見 `docs/35` |
-| `docs/35_vps_schedule_architecture.md` | 📝 **架構定案,管家／TDCC 程式未實作(2026-08-26)** | 日更／歷史回補自啟／mid／大戶週槽四層 mermaid;動排程或回補生命週期時必讀 |
+| `docs/35_vps_schedule_architecture.md` | ✅ **S2 程式已落地(2026-08-26)；VPS crontab 掛載待人工** | 日更／歷史回補自啟／mid／大戶週槽四層;動排程或回補生命週期時必讀 |
 | `docs/33_mid_backfill_publish_plan.md` | ✅ S1/S1.1 已實作;📝 S2 指向 `35` | mid＋safe-stats;S2=supervisor／scores／大戶總圖 |
 | `docs/34_margin_shareholder_plan.md` | ✅ A0–A4 程式;📝 Phase B 待做 | 資券／大戶;大戶週六 06:30 槽已寫入 §4.4 |
 | `docs/36_user_search_font_prefs.md` | ✅ **已上線(2026-08-26)** | 搜尋歷史＋字級綁帳號；SQL 已執行 |

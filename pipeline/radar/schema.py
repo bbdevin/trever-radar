@@ -284,3 +284,16 @@ broker_branch_geo = Table(
     Column("kind", Text, nullable=False),         # branch / hq / foreign
     Column("updated_at", Text, nullable=False),
 )
+
+# docs/34 B1:集保戶股權分散(TDCC 週更)
+shareholding_dispersion = Table(
+    "shareholding_dispersion",
+    metadata,
+    Column("stock_id", Text, primary_key=True),
+    Column("as_of", Text, primary_key=True),      # YYYY-MM-DD 週結算日
+    Column("tier", Integer, primary_key=True),    # 1–15(合計列不入庫)
+    Column("holders", Integer),
+    Column("shares", Integer),
+    Column("pct", Float),                         # 占集保庫存％
+    Index("ix_shareholding_dispersion_as_of", "as_of"),
+)

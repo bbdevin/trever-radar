@@ -7,37 +7,10 @@ source "$(dirname "$0")/lib.sh"
 
 DONE_FLAG="${MARGIN_BF_DONE:-$HOME/margin-backfill.done}"
 DAYS="${MARGIN_BF_DAYS:-240}"
-CONTAINERS="radar-bf-branches radar-bf-warrant"
 FLAG="/tmp/radar-margin-backfill.flag"
 
 trap - ERR
 trap 'rm -f "$FLAG" 2>/dev/null || true' EXIT
-
-in_daily_window() {
-  local dow hhmm
-  dow=$(TZ=Asia/Taipei date +%u)
-  hhmm=$((10#$(TZ=Asia/Taipei date +%H%M)))
-  if [ "$dow" -eq 6 ]; then
-    { [ "$hhmm" -ge 450 ] && [ "$hhmm" -le 630 ]; } && return 0
-    return 1
-  fi
-  if [ "$dow" -eq 7 ]; then return 1; fi
-  { [ "$hhmm" -ge 1405 ] && [ "$hhmm" -le 1500 ]; } && return 0
-  { [ "$hhmm" -ge 1605 ] && [ "$hhmm" -le 1650 ]; } && return 0
-  { [ "$hhmm" -ge 1735 ] && [ "$hhmm" -le 1930 ]; } && return 0
-  { [ "$hhmm" -ge 2055 ] && [ "$hhmm" -le 2200 ]; } && return 0
-  { [ "$hhmm" -ge 2205 ] && [ "$hhmm" -le 2250 ]; } && return 0
-  { [ "$hhmm" -ge 55 ] && [ "$hhmm" -le 230 ]; } && return 0
-  return 1
-}
-
-bf_running() {
-  local c
-  for c in $CONTAINERS; do
-    docker inspect -f '{{.State.Running}}' "$c" 2>/dev/null | grep -q true && return 0
-  done
-  return 1
-}
 
 echo "=== backfill-margin start $(taipei_date -Is) ==="
 
@@ -46,9 +19,11 @@ if [ "${FORCE:-0}" != "1" ] && [ -f "$DONE_FLAG" ]; then
   exit 0
 fi
 
-if in_daily_window; then
-  echo "inside daily cron window — skip"
-  notify "margin backfill skipped: daily window" default
+# 週日 02:30 槽本身就在 quiet 窗內定義,允許本腳本跑;僅擋平日 daily 窗
+dow=$(TZ=Asia/Taipei date +%u)
+if [ "$dow" -ne 7 ] && in_radar_quiet_window; then
+  echo "inside quiet window — skip"
+  notify "margin backfill skipped: quiet window" default
   exit 0
 fi
 
@@ -60,9 +35,9 @@ fi
 
 touch "$FLAG"
 PAUSED=0
-if bf_running; then
+if bf_container_running; then
   echo "pause bf containers"
-  for c in $CONTAINERS; do docker pause "$c" 2>/dev/null || true; done
+  pause_bf_containers
   PAUSED=1
 fi
 
@@ -78,8 +53,10 @@ date -Iseconds > "$DONE_FLAG"
 echo "marked done: $DONE_FLAG"
 
 if [ "$PAUSED" -eq 1 ]; then
-  for c in $CONTAINERS; do docker unpause "$c" 2>/dev/null || true; done
+  echo "unpause bf"
+  unpause_bf_containers
 fi
 
-notify "margin backfill ${DAYS}d + export done" default
+rm -f "$FLAG"
+notify "margin backfill ok (${DAYS}d)" default
 echo "=== backfill-margin done $(taipei_date -Is) ==="

@@ -11,43 +11,11 @@ FLAG="${MID_PUBLISH_FLAG:-/tmp/radar-mid-publish.flag}"
 STATE_FILE="${MID_PUBLISH_STATE:-$HOME/mid-publish.state}"
 MIN_FREE_GB="${MIN_FREE_GB:-4}"
 MIN_MEM_MB="${MIN_MEM_MB:-900}"
-CONTAINERS="radar-bf-branches radar-bf-warrant"
+CONTAINERS="${BF_CONTAINERS:-radar-bf-branches radar-bf-warrant}"
 
 # 本腳本的「跳過」不應觸發 ERR→ntfy High
 trap - ERR
-trap 'rm -f "$FLAG" 2>/dev/null || true' EXIT
-
-in_daily_window() {
-  local dow hhmm
-  dow=$(TZ=Asia/Taipei date +%u)
-  hhmm=$((10#$(TZ=Asia/Taipei date +%H%M)))
-  if [ "$dow" -eq 6 ]; then
-    { [ "$hhmm" -ge 55 ] && [ "$hhmm" -le 230 ]; } && return 0
-    { [ "$hhmm" -ge 450 ] && [ "$hhmm" -le 630 ]; } && return 0
-    return 1
-  fi
-  if [ "$dow" -eq 7 ]; then
-    { [ "$hhmm" -ge 55 ] && [ "$hhmm" -le 230 ]; } && return 0
-    return 1
-  fi
-  { [ "$hhmm" -ge 1405 ] && [ "$hhmm" -le 1500 ]; } && return 0
-  { [ "$hhmm" -ge 1605 ] && [ "$hhmm" -le 1650 ]; } && return 0
-  { [ "$hhmm" -ge 1735 ] && [ "$hhmm" -le 1930 ]; } && return 0
-  { [ "$hhmm" -ge 2055 ] && [ "$hhmm" -le 2200 ]; } && return 0
-  { [ "$hhmm" -ge 2205 ] && [ "$hhmm" -le 2250 ]; } && return 0
-  { [ "$hhmm" -ge 55 ] && [ "$hhmm" -le 230 ]; } && return 0
-  return 1
-}
-
-bf_running() {
-  local c
-  for c in $CONTAINERS; do
-    if docker inspect -f '{{.State.Running}}' "$c" 2>/dev/null | grep -q true; then
-      return 0
-    fi
-  done
-  return 1
-}
+trap 'rm -f "$FLAG" 2>/dev/null || true; unpause_bf_containers' EXIT
 
 free_gb() {
   df -PB1 "$REPO" | awk 'NR==2 {printf "%.1f", $4/1024/1024/1024}'
@@ -59,14 +27,14 @@ mem_available_mb() {
 
 echo "=== mid-backfill-publish start $(taipei_date -Is) ==="
 
-if ! bf_running; then
+if ! bf_container_running; then
   echo "no radar-bf-* containers — noop"
   exit 0
 fi
 
-if in_daily_window; then
-  echo "inside daily cron window — skip (protect daily-*)"
-  notify "mid-publish skipped: daily cron window" default
+if in_radar_quiet_window; then
+  echo "inside quiet window — skip (protect daily-*/weekend)"
+  notify "mid-publish skipped: quiet window" default
   exit 0
 fi
 
@@ -89,7 +57,7 @@ trap 'rm -f "$FLAG" 2>/dev/null || true' EXIT
 
 touch "$FLAG"
 echo "pause backfill containers"
-for c in $CONTAINERS; do docker pause "$c" 2>/dev/null || true; done
+pause_bf_containers
 # 等既有寫入沉澱
 sleep 3
 
@@ -142,11 +110,16 @@ deploy_data
 
 rm -f "$FLAG"
 echo "unpause backfill"
-for c in $CONTAINERS; do docker unpause "$c" 2>/dev/null || true; done
+unpause_bf_containers
 
 # 確保 guard 活著
 if ! pgrep -f 'vps/scripts/bf-cron-guard.sh' >/dev/null 2>&1; then
   nohup bash "$REPO/vps/scripts/bf-cron-guard.sh" >> "${BF_GUARD_LOG:-$HOME/bf-cron-guard.log}" 2>&1 &
+fi
+
+# 確保 supervisor 活著(docs/35)
+if ! pgrep -f 'vps/scripts/bf-supervisor.sh' >/dev/null 2>&1; then
+  nohup bash "$REPO/vps/scripts/bf-supervisor.sh" >> "${BF_SUPERVISOR_LOG:-$HOME/bf-supervisor.log}" 2>&1 &
 fi
 
 notify "mid-publish ok (stats=$STATS_NOTE) site refreshed; backfill resumed" default

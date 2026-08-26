@@ -111,6 +111,15 @@ def cmd_backfill_warrant_branches(args):
     backfill_warrant_branches(args.top, args.days, args.sleep, args.max_minutes)
 
 
+def cmd_import_tdcc(args):
+    from .importer import import_tdcc_shareholding
+
+    info = import_tdcc_shareholding()
+    print(
+        f"tdcc holders: as_of={info['as_of']} stocks={info['stocks']} rows={info['rows']}"
+    )
+
+
 def cmd_compute_scores(args):
     from .compute.scores import compute_scores
     info = compute_scores(args.date)
@@ -315,6 +324,12 @@ def main(argv=None):
     bwb.add_argument("--sleep", type=float, default=1.2)
     bwb.add_argument("--max-minutes", type=int, default=None, help="stop cleanly after N minutes")
     bwb.set_defaults(fn=cmd_backfill_warrant_branches)
+
+    tdcc = sub.add_parser(
+        "import-tdcc",
+        help="TDCC weekly shareholding dispersion (docs/34 B1)",
+    )
+    tdcc.set_defaults(fn=cmd_import_tdcc)
 
     sc = sub.add_parser("compute-scores", help="V1 composite daily scores (docs/04)")
     sc.add_argument("--date", default=None, help="YYYYMMDD; default latest trading day")

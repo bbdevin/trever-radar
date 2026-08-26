@@ -113,6 +113,28 @@ export interface StockJson {
   /** 資券日統計(張);新→舊。含融資成本估算(docs/34) */
   margin_history?: MarginHistoryPoint[];
   margin_meta?: MarginMeta;
+  /** TDCC 大戶週序列(docs/34 B1/B2);新→舊 */
+  holders_history?: HoldersHistoryPoint[];
+  holders_meta?: HoldersMeta;
+}
+
+export interface HoldersThresholdCell {
+  holders: number;
+  shares_pct: number;
+}
+
+export interface HoldersHistoryPoint {
+  t: string;
+  thresholds: Record<string, HoldersThresholdCell>;
+}
+
+export interface HoldersMeta {
+  display_from: string;
+  display_to: string;
+  db_earliest: string | null;
+  window_label?: string;
+  source?: string;
+  note?: string;
 }
 
 export interface MarginHistoryPoint {

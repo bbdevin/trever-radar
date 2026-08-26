@@ -28,12 +28,19 @@ CRON_TZ=Asia/Taipei
 @reboot        /home/huang/trever-radar/vps/scripts/bf-cron-guard.sh >> /home/huang/bf-cron-guard.log 2>&1
 */5 * * * *    pgrep -f 'vps/scripts/bf-cron-guard.sh' >/dev/null || /home/huang/trever-radar/vps/scripts/bf-cron-guard.sh >> /home/huang/bf-cron-guard.log 2>&1
 
+# 歷史回補管家(docs/35):單寫者＋Exit 自啟＋完成 ntfy;與 guard 並存
+@reboot        /home/huang/trever-radar/vps/scripts/bf-supervisor.sh >> /home/huang/bf-supervisor.log 2>&1
+*/10 * * * *   pgrep -f 'vps/scripts/bf-supervisor.sh' >/dev/null || /home/huang/trever-radar/vps/scripts/bf-supervisor.sh >> /home/huang/bf-supervisor.log 2>&1
+
 # 回補中途動態上線(docs/33):03/09/12/20 — 一律只 export(預設略過 stats,避免 1.7G RAM OOM)
-# 腳本內再次檢查 daily 窗與 radar-db.lock;無 bf 容器則 noop
+# 腳本內再次檢查 quiet 窗與 radar-db.lock;無 bf 容器則 noop
 0 3,9,12,20 * * *  /home/huang/trever-radar/vps/scripts/mid-backfill-publish.sh >> /home/huang/radar-cron.log 2>&1
 
-# 分點排行專用(docs/33 S1.1):每日 23:30 — pause bf → stats → export(記憶體不足則跳過)
+# 分點排行＋分數(docs/33 S2 / docs/35):每日 23:30 — pause bf → stats → scores → export
 30 23 * * *    /home/huang/trever-radar/vps/scripts/safe-branch-stats.sh >> /home/huang/radar-cron.log 2>&1
 
 # 資券 240 日回補(docs/34 A4):週日 02:30 — 一次性(DONE flag);避開 daily 窗
 30 2 * * 0     /home/huang/trever-radar/vps/scripts/backfill-margin.sh >> /home/huang/radar-cron.log 2>&1
+
+# TDCC 大戶週更(docs/34 B1 / docs/35):週六 06:30(備份 05:00 之後)
+30 6 * * 6     /home/huang/trever-radar/vps/scripts/weekly-tdcc.sh >> /home/huang/radar-cron.log 2>&1

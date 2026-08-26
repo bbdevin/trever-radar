@@ -78,3 +78,55 @@ deploy_data() {
 }
 
 taipei_date() { TZ=Asia/Taipei date "$@"; }
+
+# 安靜窗(docs/35):daily-* / deep / 週六備份+TDCC / mid 期間不應開新 bf 寫者。
+# 回傳 0 = 在窗內(應 pause / 勿啟動回補)。
+# 單一真相:bf-cron-guard / mid-publish / safe-stats / margin-bf / bf-supervisor 共用。
+in_radar_quiet_window() {
+  local dow hhmm
+  dow=$(TZ=Asia/Taipei date +%u)
+  hhmm=$((10#$(TZ=Asia/Taipei date +%H%M)))
+  # 週六:01:10 deep;05:00 backup → 06:30 TDCC(涵蓋至 07:30)
+  if [ "$dow" -eq 6 ]; then
+    { [ "$hhmm" -ge 55 ] && [ "$hhmm" -le 230 ]; } && return 0
+    { [ "$hhmm" -ge 450 ] && [ "$hhmm" -le 730 ]; } && return 0
+    return 1
+  fi
+  # 週日:01:10 deep;02:30 margin-bf
+  if [ "$dow" -eq 7 ]; then
+    { [ "$hhmm" -ge 55 ] && [ "$hhmm" -le 400 ]; } && return 0
+    return 1
+  fi
+  # 平日:14:10 market / 16:10 insti / 17:40+21:00 branches / 22:10 margin / 01:10 deep
+  # + mid 03/09/12/20 附近短窗由 mid flag 另擋;此處對齊 daily 與 deep
+  { [ "$hhmm" -ge 1405 ] && [ "$hhmm" -le 1500 ]; } && return 0
+  { [ "$hhmm" -ge 1605 ] && [ "$hhmm" -le 1650 ]; } && return 0
+  { [ "$hhmm" -ge 1735 ] && [ "$hhmm" -le 1930 ]; } && return 0
+  { [ "$hhmm" -ge 2055 ] && [ "$hhmm" -le 2200 ]; } && return 0
+  { [ "$hhmm" -ge 2205 ] && [ "$hhmm" -le 2250 ]; } && return 0
+  { [ "$hhmm" -ge 55 ] && [ "$hhmm" -le 230 ]; } && return 0
+  return 1
+}
+
+# bf 具名容器(歷史回補;不拿 flock)
+BF_CONTAINERS="${BF_CONTAINERS:-radar-bf-branches radar-bf-warrant}"
+
+bf_container_running() {
+  local c
+  for c in $BF_CONTAINERS; do
+    if docker inspect -f '{{.State.Running}}' "$c" 2>/dev/null | grep -q true; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+pause_bf_containers() {
+  local c
+  for c in $BF_CONTAINERS; do docker pause "$c" 2>/dev/null || true; done
+}
+
+unpause_bf_containers() {
+  local c
+  for c in $BF_CONTAINERS; do docker unpause "$c" 2>/dev/null || true; done
+}
