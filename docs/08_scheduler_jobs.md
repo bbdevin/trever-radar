@@ -15,11 +15,12 @@
 | 平日 22:10 | VPS `vps/scripts/daily-margin.sh` | 融資券保底輪:只補 margin(不含分點爬蟲)+ 重算分數,因 TWSE MI_MARGN 公布時間可能晚於 21:00 → export-json → deploy |
 | 每天 01:10 | VPS `vps/scripts/data-backfill.sh` | 深歷史增量(已拉深自動跳過 → 日常近零請求,只補新上市/缺漏) |
 | 每天 03/09/12/20:00 | VPS `mid-backfill-publish.sh` | 回補中途上線:pause bf → 預設只 export → deploy(docs/33) |
-| 每天 23:30 | VPS `safe-branch-stats.sh` | pause bf → compute-branch-stats → export(目標另加 scores,見 docs/35) |
+| 每天 23:30 | VPS `safe-branch-stats.sh` | pause bf → compute-branch-stats → **compute-scores** → export |
 | 週六 05:00 | VPS `vps/scripts/weekly-backup.sh` | 備份:`wal_checkpoint(TRUNCATE)` → `integrity_check`(必須 `ok`)→ gzip → `rclone` 上傳 Google Drive(唯一雲端備份;retention 近 4 份+每月 1 份) |
-| 週六 06:30 | VPS `weekly-tdcc.sh`(**規劃**) | TDCC 大戶全市場週更 → export → deploy(docs/34 Phase B;docs/35) |
+| 週六 06:30 | VPS `weekly-tdcc.sh` | TDCC 大戶全市場週更 → export → deploy(docs/34 B1;VPS 掛 cron 待人工) |
 | 週日 02:30 | VPS `backfill-margin.sh` | 資券約 240 日回補(done flag 則跳過;docs/34 A4) |
-| @reboot + */5 | `bf-cron-guard.sh`(目標改 `bf-supervisor`) | 日更／mid 窗 pause 歷史 bf;目標:掛掉自啟、單寫者(docs/35) |
+| @reboot + */5 | `bf-cron-guard.sh` | 安靜窗／mid／margin／tdcc flag → pause 歷史 bf |
+| @reboot + */10 | `bf-supervisor.sh` | 歷史 bf 單寫者自啟(branches→warrant)＋完成 ntfy |
 | 平日 08:50–13:35 | 盤中訊號雷達 worker(docker+cron,同一台 VPS,docs/24 Part A) | 讀 `https://radar.techtrever.com/data/radar.json` 判定 I-1~I-4 訊號,寫 Supabase,首頁盤中面板即時顯示;13:35 自動收工 |
 | push `main` | GitHub Actions `deploy.yml` | checkout → npm build → wrangler pages deploy(**只管程式碼/前端,不碰資料**) |
 
