@@ -273,8 +273,8 @@ export default function HoldersPanel({ data }: { data: StockJson }) {
             </span>
           </div>
 
-          <div className="relative h-24 overflow-hidden rounded-[var(--r-md)] border border-border bg-card px-2 py-2">
-            <div className="flex h-full items-end gap-px">
+          <div className="rounded-[var(--r-md)] border border-border bg-card px-2 pt-2 pb-1.5">
+            <div className="flex h-20 items-end gap-px sm:h-24">
               {chartRows.map((r) => {
                 const h = r.value == null ? 0 : Math.max(4, ((r.value - minV) / span) * 100);
                 return (
@@ -284,6 +284,23 @@ export default function HoldersPanel({ data }: { data: StockJson }) {
                     className="min-w-0 flex-1 rounded-t-sm bg-primary/70 transition-[height] duration-200"
                     style={{ height: `${h}%` }}
                   />
+                );
+              })}
+            </div>
+            <div className="mt-1 flex gap-px" aria-hidden>
+              {chartRows.map((r, i) => {
+                const n = chartRows.length;
+                const step = n <= 12 ? 1 : n <= 24 ? 2 : Math.ceil(n / 10);
+                const show =
+                  i === 0 || i === n - 1 || i % step === 0;
+                return (
+                  <div
+                    key={`lbl-${r.t}`}
+                    className="num min-w-0 flex-1 truncate text-center text-[8px] leading-tight text-muted-foreground sm:text-[9px]"
+                    title={fmtMD(r.t)}
+                  >
+                    {show ? fmtMD(r.t) : "\u00a0"}
+                  </div>
                 );
               })}
             </div>

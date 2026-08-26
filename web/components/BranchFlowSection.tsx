@@ -27,6 +27,13 @@ function fmtMD(isoDate: string): string {
   return `${Number(m[2])}/${Number(m[3])}`;
 }
 
+/** YYYY-MM-DD → YYYY/MM/DD */
+function fmtYMD(isoDate: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(isoDate);
+  if (!m) return isoDate;
+  return `${m[1]}/${m[2]}/${m[3]}`;
+}
+
 /**
  * 籌碼日報：時間範圍(1-240日+自訂)+ N 日淨流/家數摘要 + 買超/賣超分頁列表。
  * IA-5：買超|賣超在所有斷點都是分頁，不再雙欄並排。點列開下鑽(onOpenBranch)。
@@ -236,11 +243,11 @@ const BranchFlowSection = forwardRef<
       <span
         className="inline-flex shrink-0 items-center gap-1 rounded-md border border-border bg-muted/40 px-2 py-1 text-[11.5px] font-medium text-foreground"
         title={`此檔分點進出歷史：${branchDepth.oldest} ～ ${branchDepth.newest}，共 ${branchDepth.days} 個交易日。每檔回補進度不同，最早日以本檔為準。`}
-        aria-label={`此檔分點資料涵蓋 ${fmtMD(branchDepth.oldest)} 至 ${fmtMD(branchDepth.newest)}，共 ${branchDepth.days} 交易日`}
+        aria-label={`此檔分點資料涵蓋 ${fmtYMD(branchDepth.oldest)} 至 ${fmtYMD(branchDepth.newest)}，共 ${branchDepth.days} 交易日`}
       >
         <span className="text-muted-foreground">此檔</span>
         <span className="num font-bold">
-          {fmtMD(branchDepth.oldest)}–{fmtMD(branchDepth.newest)}
+          {fmtYMD(branchDepth.oldest)}–{fmtYMD(branchDepth.newest)}
         </span>
         <span className="text-muted-foreground">（{branchDepth.days} 日）</span>
       </span>
