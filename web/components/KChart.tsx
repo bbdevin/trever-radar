@@ -443,9 +443,12 @@ export default function KChart({
           {TF_DEFS.map((t) => (
             <button
               key={t.key}
+              type="button"
               className={cn(
-                "min-h-9 rounded-md px-3 py-1 text-xs font-semibold text-muted-foreground",
-                settings.tf === t.key && "bg-muted text-foreground shadow-[inset_0_0_0_1px_var(--border-strong)]",
+                "min-h-9 cursor-pointer rounded-md px-3 py-1 text-xs font-semibold transition-colors duration-200",
+                settings.tf === t.key
+                  ? "bg-[color:var(--accent-2)] text-white shadow-sm"
+                  : "text-muted-foreground hover:bg-secondary/80 hover:text-foreground",
               )}
               onClick={() => setSettings((s) => ({ ...s, tf: t.key }))}
             >
@@ -456,12 +459,17 @@ export default function KChart({
         <span className="h-[18px] w-px bg-[color:var(--line)]" />
         {/* 副圖切換 MACD/KD/RSI */}
         <span className="inline-flex gap-0.5 rounded-lg border border-border bg-card p-0.5">
-          {(["macd", "kd", "rsi"] as SubKey[]).map((k) => (
+          {(["macd", "kd", "rsi"] as SubKey[]).map((k) => {
+            const subActive = settings.sub === k && (!isMobile || mobilePaneKey === "sub");
+            return (
             <button
               key={k}
+              type="button"
               className={cn(
-                "min-h-9 rounded-md px-3 py-1 text-xs font-semibold text-muted-foreground",
-                settings.sub === k && (!isMobile || mobilePaneKey === "sub") && "bg-muted text-foreground shadow-[inset_0_0_0_1px_var(--border-strong)]",
+                "min-h-9 cursor-pointer rounded-md px-3 py-1 text-xs font-semibold transition-colors duration-200",
+                subActive
+                  ? "bg-[color:var(--warn)] text-white shadow-sm dark:text-[#141412]"
+                  : "text-muted-foreground hover:bg-secondary/80 hover:text-foreground",
               )}
               onClick={() => {
                 setSettings((s) => ({ ...s, sub: k }));
@@ -470,7 +478,8 @@ export default function KChart({
             >
               {k.toUpperCase()}
             </button>
-          ))}
+            );
+          })}
         </span>
         {/* 手機版：主力 / 分點切換（桌機用均線列的 checkbox） */}
         {isMobile && !!mainForce?.length && (
