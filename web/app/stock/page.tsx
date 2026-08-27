@@ -26,7 +26,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import WatchlistButton from "@/components/WatchlistButton";
 import { dataFetch } from "@/lib/dataFetch";
 import { OFFLINE_DATA_COPY, isBrowserOffline } from "@/lib/pwa";
-import type { Buyback, CompanyProfile, CompanyTheme, RecentThemeHeat, StockJson } from "@/lib/types";
+import type { Buyback, CompanyTheme, RecentThemeHeat, StockJson } from "@/lib/types";
 import { MARKET_LABEL, chgClass, fmtE8, fmtPct, fmtX } from "@/lib/format";
 import { signInWithGoogle, useSession } from "@/lib/useSession";
 import { cn, pillTabClass } from "@/lib/utils";
@@ -53,7 +53,7 @@ function StockView() {
   const [data, setData] = useState<StockJson | null>(null);
   const [error, setError] = useState(false);
   const [range, setRange] = useState<(typeof RANGES)[number]["key"]>("6m");
-  const [view, setView] = useState<"chart" | "chips" | "insti" | "margin" | "holders" | "tech" | "warrant">("chart");
+  const [view, setView] = useState<"chart" | "chips" | "insti" | "margin" | "holders" | "basic" | "tech" | "warrant">("chart");
   const [drillBranch, setDrillBranch] = useState<string | null>(null);
 
   useEffect(() => {
@@ -77,6 +77,9 @@ function StockView() {
     }
     if (tabParam === "holders") {
       setView("holders");
+    }
+    if (tabParam === "basic") {
+      setView("basic");
     }
   }, [data, tabParam]);
 
@@ -125,6 +128,7 @@ function StockView() {
   const chg = prev ? Math.round(((last.c - prev.c) / prev.c) * 10000) / 100 : null;
   const cls = chgClass(chg);
   const branchScore = data.scores?.branch ?? null;
+  const activeThemes = currentActiveThemes(data.recent_theme_heat, last.t);
 
   return (
     <div className="min-w-0 max-w-full overflow-x-hidden">
@@ -138,32 +142,25 @@ function StockView() {
             雷達
           </a>
           <div className="min-w-0 flex-1">
-            <div className="truncate text-[19px] font-extrabold" title={data.name}>{data.name}</div>
-            <div className="truncate text-[13px] text-muted-foreground">
-              {data.id} · {MARKET_LABEL[data.market] ?? data.market}{data.industry ? ` · ${data.industry}` : ""}
+            <h1 className="truncate text-[19px] font-extrabold" title={data.name}>{data.name}</h1>
+            <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-[13px] text-muted-foreground">
+              <span className="shrink-0">{data.id} · {MARKET_LABEL[data.market] ?? data.market}{data.industry ? ` · ${data.industry}` : ""}</span>
+              {activeThemes.length > 0 && (
+                <span className="flex min-w-0 flex-wrap items-center gap-1 text-[11px]" aria-label="活躍題材">
+                  <span className="shrink-0 text-[color:var(--warn)]">活躍題材</span>
+                  {activeThemes.slice(0, 2).map((theme) => (
+                    <span key={theme.id} className="max-w-[10rem] truncate rounded-full border border-[color:var(--warn)]/35 bg-[color:var(--warn)]/8 px-1.5 py-0.5 text-[color:var(--ink-2)]" title={`${theme.name}（資料日 ${theme.heat_date}）`}>
+                      {theme.name}
+                    </span>
+                  ))}
+                  {activeThemes.length > 2 && (
+                    <span className="rounded-full bg-[color:var(--warn)]/12 px-1.5 py-0.5 font-semibold text-[color:var(--warn)]">
+                      +{activeThemes.length - 2}
+                    </span>
+                  )}
+                </span>
+              )}
             </div>
-            <CompanyInfo profile={data.company_profile} />
-            <BuybackInfo buyback={data.buyback} />
-            <ThemeInfo
-              companyThemes={data.company_themes}
-              recentThemeHeat={data.recent_theme_heat}
-              quoteDate={last.t}
-            />
-            {!!data.company_groups?.length && (
-              <div className="mt-1 flex flex-wrap gap-1.5">
-                {data.company_groups.map((group) => (
-                  <a
-                    key={group.id}
-                    href={`/group?id=${encodeURIComponent(group.id)}`}
-                    className="inline-flex min-h-11 items-center gap-1 rounded-full border border-[color:var(--accent-2)]/40 px-2.5 text-[11px] font-semibold text-[color:var(--accent-2)] transition-colors duration-200 hover:bg-[color:var(--accent-2)]/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                    title={`查看${group.name}成員股`}
-                  >
-                    <Building2 size={14} aria-hidden="true" />
-                    {group.name}
-                  </a>
-                ))}
-              </div>
-            )}
           </div>
           <WatchlistButton stockId={data.id} size={20} />
         </div>
@@ -201,6 +198,7 @@ function StockView() {
               { key: "insti" as const, label: "三大法人" },
               { key: "margin" as const, label: "資券" },
               { key: "holders" as const, label: "大戶" },
+              { key: "basic" as const, label: "基本資料" },
               { key: "tech" as const, label: "技術" },
               { key: "warrant" as const, label: "權證" },
             ] as const
@@ -210,7 +208,7 @@ function StockView() {
               type="button"
               role="tab"
               aria-selected={view === t.key}
-              className={pillTabClass(view === t.key)}
+              className={cn(pillTabClass(view === t.key), "min-h-11 touch-manipulation")}
               onClick={() => setView(t.key)}
             >
               {t.label}
@@ -247,6 +245,7 @@ function StockView() {
       {view === "insti" && <InstiPanel data={data} candles={cs} />}
       {view === "margin" && <MarginPanel data={data} candles={cs} />}
       {view === "holders" && <HoldersPanel data={data} />}
+      {view === "basic" && <BasicInfoPanel data={data} quoteDate={last.t} />}
       {view === "tech" && <TechnicalPanel data={data} />}
       {view === "warrant" && <WarrantPanel data={data} />}
 
@@ -266,58 +265,6 @@ function StockView() {
   );
 }
 
-function CompanyInfo({ profile }: { profile?: CompanyProfile | null }) {
-  const [expanded, setExpanded] = useState(false);
-
-  return (
-    <div className="mt-1.5 min-w-0 text-[11.5px] text-muted-foreground">
-      <div className="flex min-w-0 items-center gap-1.5">
-        <MapPin size={14} className="shrink-0 text-[color:var(--ink-2)]" aria-hidden="true" />
-        <span className="truncate" title={profile?.address ?? undefined}>
-          {profile?.address ?? "公司地址：資料未提供"}
-        </span>
-        <button
-          type="button"
-          className="ml-auto inline-flex min-h-11 shrink-0 items-center rounded-full px-2 text-[11px] font-semibold text-primary transition-colors duration-200 hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          aria-expanded={expanded}
-          aria-label={expanded ? "收合完整公司資訊" : "展開完整公司資訊"}
-          onClick={() => setExpanded((value) => !value)}
-        >
-          {expanded ? "收合" : "展開"}
-          {expanded ? <ChevronUp size={14} aria-hidden="true" /> : <ChevronDown size={14} aria-hidden="true" />}
-        </button>
-      </div>
-      <div className="flex min-w-0 items-center gap-1.5">
-        <Phone size={14} className="shrink-0 text-[color:var(--ink-2)]" aria-hidden="true" />
-        <span className="truncate" title={profile?.transfer_agent_address ?? undefined}>
-          股務：{profile?.transfer_agent ?? "資料未提供"}{profile?.transfer_agent_phone ? ` ${profile.transfer_agent_phone}` : ""}{profile?.transfer_agent_address ? ` · ${profile.transfer_agent_address}` : ""}
-        </span>
-      </div>
-      <div className="pl-[20px] text-[11px]">
-        資料日：{profile?.source_updated_at ?? "資料未提供"}{profile?.source ? " · 官方來源" : " · 官方來源未提供"}
-      </div>
-      {expanded && (
-        <div className="mt-1.5 grid gap-1.5 rounded-[var(--r-sm)] border border-[color:var(--line)] bg-secondary/50 p-2.5 text-[11.5px] text-[color:var(--ink-2)]">
-          <span className="break-words">地址：{profile?.address ?? "資料未提供"}</span>
-          <span className="flex min-w-0 items-start gap-1.5 break-words">
-            <Phone size={14} className="mt-px shrink-0" aria-hidden="true" />
-            股務代理：{profile?.transfer_agent ?? "資料未提供"}
-            {profile?.transfer_agent_phone ? `（${profile.transfer_agent_phone}）` : ""}
-            {profile?.transfer_agent_address ? `；${profile.transfer_agent_address}` : ""}
-          </span>
-          <span>產業代碼：{profile?.industry_code ?? "資料未提供"}</span>
-          <span>
-            官方資料日：{profile?.source_updated_at ?? "資料未提供"}
-            {profile?.source ? (
-              <> · <a className="inline-flex min-h-11 items-center px-1 font-semibold text-primary underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" href={profile.source} target="_blank" rel="noreferrer">來源</a></>
-            ) : " · 官方來源未提供"}
-          </span>
-        </div>
-      )}
-    </div>
-  );
-}
-
 function buybackStatusLabel(status: Buyback["status"]) {
   return status === "in_progress" ? "進行中" : "狀態未提供";
 }
@@ -326,35 +273,11 @@ function buybackValue(value: number | null | undefined) {
   return value == null ? "資料未提供" : value.toLocaleString("zh-TW");
 }
 
-function BuybackInfo({ buyback }: { buyback?: Buyback | null }) {
-  // Older snapshots have no property; the absence is not evidence that no plan exists.
-  if (!buyback) return null;
-  const period = buyback.start_date && buyback.end_date
-    ? `${buyback.start_date} 至 ${buyback.end_date}`
-    : "期間資料未提供";
-  const priceRange = buyback.price_min != null || buyback.price_max != null
-    ? `${buyback.price_min ?? "資料未提供"}～${buyback.price_max ?? "資料未提供"} 元/股`
-    : "資料未提供";
-
-  return (
-    <section className="mt-2 min-w-0 rounded-[var(--r-sm)] border border-[color:var(--warn)]/35 bg-[color:var(--warn)]/8 px-2.5 py-2 text-[11px] text-[color:var(--ink-2)]" aria-label="庫藏股買回期間">
-      <div className="flex min-w-0 items-start gap-1.5">
-        <ShieldCheck size={14} className="mt-px shrink-0 text-[color:var(--warn)]" aria-hidden="true" />
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
-            <span className="font-semibold text-foreground">庫藏股買回期間</span>
-            <span className="font-medium text-[color:var(--warn)]">{buybackStatusLabel(buyback.status)}（MOPS {buyback.completed_flag ?? "狀態未提供"}）</span>
-          </div>
-          <div className="mt-1 grid gap-0.5 leading-5">
-            <span>期間：{period}</span>
-            <span>預定／已執行：{buybackValue(buyback.planned_shares)}／{buybackValue(buyback.executed_shares)} 股</span>
-            <span>價格區間：{priceRange}</span>
-            <span className="break-words">目的：{buyback.purpose ?? "資料未提供"}</span>
-            <span>來源：官方 MOPS t35sc09 · 出表日 {buyback.report_date ?? "資料未提供"}</span>
-          </div>
-        </div>
-      </div>
-    </section>
+function currentActiveThemes(recentThemeHeat: RecentThemeHeat[] | undefined, quoteDate: string) {
+  // The compact identity label must be stricter than a classification: an old,
+  // ineligible, or unknown snapshot is never described as currently active.
+  return (recentThemeHeat ?? []).filter(
+    (theme) => theme.eligible && theme.status === "active" && theme.heat_date === quoteDate,
   );
 }
 
@@ -365,58 +288,123 @@ function themeStatusLabel(status: CompanyTheme["status"]) {
   return "狀態未提供";
 }
 
-function ThemeInfo({
-  companyThemes,
-  recentThemeHeat,
-  quoteDate,
-}: {
-  companyThemes?: CompanyTheme[];
-  recentThemeHeat?: RecentThemeHeat[];
-  quoteDate: string;
-}) {
-  const classifications = companyThemes ?? [];
-  // Trust the explicit eligibility flag only in addition to the visible dates:
-  // an old or mismatched snapshot must never be presented as "近期可能相關題材".
-  const recent = (recentThemeHeat ?? []).filter(
-    (theme) => theme.eligible && theme.status === "active" && theme.heat_date === quoteDate,
-  );
-  const relatedButNotCurrent = (recentThemeHeat ?? []).filter((theme) => !recent.includes(theme));
+function BasicInfoPanel({ data, quoteDate }: { data: StockJson; quoteDate: string }) {
+  const profile = data.company_profile;
+  const buyback = data.buyback;
+  const classifications = data.company_themes ?? [];
+  const recent = currentActiveThemes(data.recent_theme_heat, quoteDate);
+  const relatedButNotCurrent = (data.recent_theme_heat ?? []).filter((theme) => !recent.includes(theme));
+  const period = buyback?.start_date && buyback.end_date
+    ? `${buyback.start_date} 至 ${buyback.end_date}`
+    : "期間資料未提供";
+  const priceRange = buyback?.price_min != null || buyback?.price_max != null
+    ? `${buyback?.price_min ?? "資料未提供"}～${buyback?.price_max ?? "資料未提供"} 元/股`
+    : "資料未提供";
 
   return (
-    <section className="mt-2 min-w-0 rounded-[var(--r-sm)] border border-border bg-secondary/35 px-2.5 py-2 text-[11px] text-[color:var(--ink-2)]" aria-label="公司題材與近期熱度">
-      <div className="flex min-w-0 items-start gap-1.5">
-        <Tags size={14} className="mt-px shrink-0 text-[color:var(--ink-2)]" aria-hidden="true" />
-        <div className="min-w-0">
-          <span className="font-semibold text-foreground">公司題材</span>
-          {classifications.length ? (
-            <span className="ml-1.5 inline-flex flex-wrap gap-1 align-middle">
-              {classifications.map((theme) => (
-                <span key={theme.id} className="inline-flex items-center gap-1 rounded-full border border-border px-1.5 py-0.5">
-                  <span>{theme.name}</span>
-                  <span className={theme.status === "active" ? "text-[color:var(--accent-2)]" : "text-muted-foreground"}>
-                    {themeStatusLabel(theme.status)}
-                  </span>
-                </span>
-              ))}
-            </span>
-          ) : (
-            <span className="ml-1.5 text-muted-foreground">分類資料未提供；狀態未提供</span>
-          )}
+    <section role="tabpanel" aria-label="基本資料" className="mt-3.5 min-w-0 overflow-hidden rounded-[var(--r-lg)] border border-border bg-card shadow-[var(--shadow-card)]">
+      <section className="min-w-0 p-3.5" aria-labelledby="company-info-heading">
+        <div className="mb-3 flex items-center gap-2">
+          <Building2 size={17} className="text-[color:var(--accent-2)]" aria-hidden="true" />
+          <h2 id="company-info-heading" className="text-sm font-bold">公司資料</h2>
         </div>
-      </div>
-      {recent.length > 0 ? (
-        <div className="mt-1.5 flex min-w-0 items-start gap-1.5">
-          <Flame size={14} className="mt-px shrink-0 text-[color:var(--warn)]" aria-hidden="true" />
+        <dl className="grid gap-3 text-sm sm:grid-cols-2">
           <div className="min-w-0">
-            <span className="font-semibold text-foreground">近期可能相關題材</span>
-            <span className="ml-1.5">{recent.map((theme) => `${theme.name}（量能 ${theme.vs20 == null ? "資料不足" : `${theme.vs20}×`}、資料日 ${theme.heat_date}）`).join("、")}</span>
+            <dt className="flex items-center gap-1.5 text-xs text-muted-foreground"><MapPin size={14} aria-hidden="true" /> 公司地址</dt>
+            <dd className="mt-1 break-words text-[color:var(--ink-2)]">{profile?.address ?? "資料未提供"}</dd>
           </div>
+          <div className="min-w-0">
+            <dt className="flex items-center gap-1.5 text-xs text-muted-foreground"><Phone size={14} aria-hidden="true" /> 股務代理</dt>
+            <dd className="mt-1 break-words text-[color:var(--ink-2)]">
+              {profile?.transfer_agent ?? "資料未提供"}
+              {profile?.transfer_agent_phone ? `（${profile.transfer_agent_phone}）` : ""}
+              {profile?.transfer_agent_address ? `；${profile.transfer_agent_address}` : ""}
+            </dd>
+          </div>
+          <div className="min-w-0">
+            <dt className="text-xs text-muted-foreground">產業代碼</dt>
+            <dd className="mt-1 text-[color:var(--ink-2)]">{profile?.industry_code ?? "資料未提供"}</dd>
+          </div>
+          <div className="min-w-0">
+            <dt className="text-xs text-muted-foreground">官方資料日</dt>
+            <dd className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[color:var(--ink-2)]">
+              <span>{profile?.source_updated_at ?? "資料未提供"}</span>
+              {profile?.source ? (
+                <a className="inline-flex min-h-11 items-center font-semibold text-primary underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" href={profile.source} target="_blank" rel="noreferrer">官方來源</a>
+              ) : <span className="text-muted-foreground">官方來源未提供</span>}
+            </dd>
+          </div>
+        </dl>
+        {!!data.company_groups?.length && (
+          <div className="mt-3 border-t border-[color:var(--line)] pt-3">
+            <p className="text-xs text-muted-foreground">集團</p>
+            <div className="mt-1.5 flex flex-wrap gap-2">
+              {data.company_groups.map((group) => (
+                <a key={group.id} href={`/group?id=${encodeURIComponent(group.id)}`} className="inline-flex min-h-11 items-center gap-1 rounded-full border border-[color:var(--accent-2)]/40 px-2.5 text-xs font-semibold text-[color:var(--accent-2)] transition-colors duration-200 hover:bg-[color:var(--accent-2)]/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" title={`查看${group.name}成員股`}>
+                  <Building2 size={14} aria-hidden="true" /> {group.name}
+                </a>
+              ))}
+            </div>
+          </div>
+        )}
+      </section>
+
+      <section className="min-w-0 border-t border-[color:var(--line)] p-3.5" aria-labelledby="theme-info-heading">
+        <div className="mb-3 flex items-center gap-2">
+          <Tags size={17} className="text-[color:var(--accent-2)]" aria-hidden="true" />
+          <h2 id="theme-info-heading" className="text-sm font-bold">題材</h2>
         </div>
-      ) : relatedButNotCurrent.length > 0 ? (
-        <p className="mt-1.5 pl-5.5 text-muted-foreground">
-          題材熱度資料未與本檔報價日一致或分類已非有效，僅保留分類參考，不標示近期關聯。
-        </p>
-      ) : null}
+        {classifications.length ? (
+          <div className="divide-y divide-[color:var(--line)]">
+            {classifications.map((theme) => (
+              <div key={theme.id} className="min-w-0 py-3 first:pt-0 last:pb-0">
+                <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-sm">
+                  <span className="font-semibold text-foreground">{theme.name}</span>
+                  <span className={theme.status === "active" ? "text-[color:var(--accent-2)]" : "text-muted-foreground"}>{themeStatusLabel(theme.status)}</span>
+                </div>
+                <dl className="mt-2 grid gap-2 text-xs text-muted-foreground sm:grid-cols-3">
+                  <div className="min-w-0">
+                    <dt>分類日</dt>
+                    <dd className="mt-0.5 break-words text-[color:var(--ink-2)]">{theme.data_date ?? "資料未提供"}</dd>
+                  </div>
+                  <div className="min-w-0">
+                    <dt>來源更新</dt>
+                    <dd className="mt-0.5 break-words text-[color:var(--ink-2)]">{theme.source_updated_at ?? "資料未提供"}</dd>
+                  </div>
+                  <div className="min-w-0">
+                    <dt>來源</dt>
+                    <dd className="mt-0.5 min-w-0">
+                      {theme.source ? (
+                        <a className="inline-flex min-h-11 max-w-full items-center font-semibold text-primary underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" href={theme.source} target="_blank" rel="noreferrer" aria-label={`查看 ${theme.name} 題材來源：${theme.source}`} title={theme.source}>
+                          查看來源
+                        </a>
+                      ) : <span className="text-[color:var(--ink-2)]">資料未提供</span>}
+                    </dd>
+                  </div>
+                </dl>
+              </div>
+            ))}
+          </div>
+        ) : <p className="text-sm text-muted-foreground">分類資料未提供；狀態未提供。分類日、來源更新與來源：資料未提供。</p>}
+        {recent.length > 0 ? (
+          <div className="mt-3 flex min-w-0 items-start gap-2 rounded-[var(--r-sm)] bg-[color:var(--warn)]/8 p-2.5 text-sm text-[color:var(--ink-2)]">
+            <Flame size={16} className="mt-0.5 shrink-0 text-[color:var(--warn)]" aria-hidden="true" />
+            <div className="min-w-0"><span className="font-semibold text-foreground">近期可能相關題材</span><span className="ml-1.5">{recent.map((theme) => `${theme.name}（量能 ${theme.vs20 == null ? "資料不足" : `${theme.vs20}×`}、資料日 ${theme.heat_date}）`).join("、")}</span></div>
+          </div>
+        ) : relatedButNotCurrent.length > 0 ? (
+          <p className="mt-3 text-sm text-muted-foreground">題材熱度資料未與本檔報價日一致或分類已非有效，僅保留分類參考，不標示近期關聯。</p>
+        ) : <p className="mt-3 text-sm text-muted-foreground">尚無可核驗的當日有效題材熱度；不代表沒有題材。</p>}
+      </section>
+
+      <section className="min-w-0 border-t border-[color:var(--line)] p-3.5" aria-labelledby="buyback-info-heading">
+        <div className="mb-3 flex items-center gap-2"><ShieldCheck size={17} className="text-[color:var(--warn)]" aria-hidden="true" /><h2 id="buyback-info-heading" className="text-sm font-bold">庫藏股</h2></div>
+        {buyback ? (
+          <div className="grid gap-1.5 text-sm text-[color:var(--ink-2)]">
+            <p><span className="font-semibold text-foreground">庫藏股買回期間</span> <span className="text-[color:var(--warn)]">{buybackStatusLabel(buyback.status)}（MOPS {buyback.completed_flag ?? "狀態未提供"}）</span></p>
+            <p>期間：{period}</p><p>預定／已執行：{buybackValue(buyback.planned_shares)}／{buybackValue(buyback.executed_shares)} 股</p><p>價格區間：{priceRange}</p><p className="break-words">目的：{buyback.purpose ?? "資料未提供"}</p><p>來源：官方 MOPS t35sc09 · 出表日 {buyback.report_date ?? "資料未提供"}</p>
+          </div>
+        ) : <p className="text-sm text-muted-foreground">本次資料未提供庫藏股欄位；舊版資料缺此欄位不表示沒有買回計畫。</p>}
+      </section>
     </section>
   );
 }

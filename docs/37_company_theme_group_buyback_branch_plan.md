@@ -9,10 +9,10 @@
 |---|---|---|
 | A1 | Armed／Triggered／Extended／Faded 匯出契約補強：state ID 可由 `radar.stocks` 解析；stale warrant 不作今日 state source；缺 1 日或 5 日漲跌時 fail closed | **程式與測試完成**；未正式 DB 回算 |
 | A2 | 對齊策略、首頁狀態、綜合分、strategy metadata 與績效勝率的定義 | **程式／契約與測試完成（2026-08-27）**；已對齊綜合榜同分排序，不調整 `final` 權重、分點績效排行 V2、schema 或正式回算 |
-| B | 個股名稱下方增加公司地址與股務代理；以官方來源與 additive export contract 為準 | **程式／fixture／UI／typecheck／正式 build 完成（2026-08-27）**；正式 VPS `import-geo`／`export-json` 未執行 |
-| C | 題材資料分為公司題材分類、近期熱度、有效／停用／過時狀態，顯示「近期可能相關題材」而非無證據的因果宣稱 | **程式／fixture／UI／typecheck／正式 build 完成（2026-08-27）**；正式 VPS import/export 未執行，不改綜合分 |
-| D | 集團名稱可點入 `/group?id=`，顯示版本化的集團成員股票 | **程式／fixture／UI／typecheck／正式 build 完成（2026-08-27）**；正式 VPS export 未執行 |
-| E1 | 庫藏股官方 MOPS `t35sc09` 與 **KB1 事實標籤** | **程式／fixture／point-in-time export／個股 UI 完成（2026-08-27）**；未正式 VPS/DB import/export、未排程 |
+| B | 個股「基本資料」的公司資料 section：地址、股務代理與官方來源；以 additive export contract 為準 | **程式／fixture／UI／typecheck／正式 build 完成（2026-08-27）**；正式 VPS `import-geo`／`export-json` 未執行 |
+| C | 個股「基本資料」的題材 section：公司分類、近期熱度、有效／停用／過時狀態，顯示「近期可能相關題材」而非無證據的因果宣稱 | **程式／fixture／UI／typecheck／正式 build 完成（2026-08-27）**；正式 VPS import/export 未執行，不改綜合分 |
+| D | 基本資料的集團連結可點入 `/group?id=`，顯示版本化的集團成員股票 | **程式／fixture／UI／typecheck／正式 build 完成（2026-08-27）**；正式 VPS export 未執行 |
+| E1 | 個股「基本資料」的庫藏股 section：官方 MOPS `t35sc09` 與 **KB1 事實標籤** | **程式／fixture／point-in-time export／個股 UI 完成（2026-08-27）**；未正式 VPS/DB import/export、未排程 |
 | E2 | `branch × stock` point-in-time 的**獨立**買／賣 episode 分位、後續表現與覆蓋率描述 | **唯讀 shadow CLI／JSON contract 與測試完成（2026-08-27）**；buy→sell 配對規則／coverage 尚未定義，未跑正式 DB、未接 UI、未定門檻，schema／歷史回算仍須人工確認 |
 
 ### 明確排除
@@ -155,6 +155,7 @@ A2 是語意決策關卡，不是單純修 UI。Executor 先產出對照表與�
 ## 8. UI／UX 共通驗收（沿用 `ui-ux-pro-max` 規範）
 
 - 不新增平行一級路由：公司資料、題材、集團、庫藏股先掛個股樞紐；集團只有必要的 `/group?id=` 鑽取。
+- **2026-08-27 IA-5c 已實作**：公司資料、題材、庫藏股合併為個股「基本資料」一級 tab（置於技術左側），面板連續呈現三 section、不做內部分頁；名稱區只顯示最多兩個、當日 `eligible + active` 的活躍題材，`+N` 表示其餘同樣合格項目。題材每筆在連續列中可見 name/status、`data_date`、`source_updated_at` 與 `source`（缺值誠實顯示）；stale／retired／unknown、日期不一致或未驗證熱度不得在名稱區稱為活躍，仍在面板如實揭露。
 - 沿用既有深色預設、台股紅漲綠跌、現有 semantic tokens、Manrope／數字欄、Lucide icon、響應式卡片與 accessible tooltip；不得以顏色作唯一狀態訊息。
 - 每一個統計徽章都有資料日、來源／freshness 與可展開的人話理由；空狀態要解釋「資料不足」而不是暗示不存在。
 - UI 只呈現已驗證的事實／shadow 標籤；「推測」「可能相關」「樣本不足」必須是可見文案。

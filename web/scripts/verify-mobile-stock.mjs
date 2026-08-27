@@ -12,6 +12,9 @@ function assert(cond, msg) {
 }
 
 const iPhone = devices["iPhone 13"];
+const viewportLabel = iPhone.viewport
+  ? `${iPhone.viewport.width}×${iPhone.viewport.height}`
+  : "iPhone 13 預設 viewport";
 
 const browser = await chromium.launch({ headless: true });
 const context = await browser.newContext({ ...iPhone });
@@ -42,9 +45,20 @@ try {
   assert(await sellTab.getAttribute("aria-selected") === "true", "切到賣方分頁失敗");
   await buyTab.click();
 
-  // 4) 法人 / 技術 tab 存在
+  // 4) 法人 / 基本資料 / 技術 tab 存在；基本資料是公司、題材、庫藏股的單一連續面板
   await page.getByRole("tab", { name: "法人" }).click();
   await page.getByText("法人分").first().waitFor({ state: "visible", timeout: 5000 });
+  await page.getByRole("tab", { name: "基本資料" }).click();
+  const basicPanel = page.getByRole("tabpanel", { name: "基本資料" });
+  await basicPanel.getByRole("heading", { name: "公司資料" }).waitFor({ state: "visible", timeout: 5000 });
+  assert(await basicPanel.getByRole("heading", { name: "題材" }).isVisible(), "基本資料缺少題材 section");
+  assert(await basicPanel.getByRole("heading", { name: "庫藏股" }).isVisible(), "基本資料缺少庫藏股 section");
+  await basicPanel.getByText("分類日").first().waitFor({ state: "visible", timeout: 5000 });
+  assert(await basicPanel.getByText("來源更新").first().isVisible(), "題材 section 缺少來源更新欄位");
+  const infoTabs = await page.getByRole("tab").allTextContents();
+  assert(!infoTabs.includes("公司資料") && !infoTabs.includes("題材") && !infoTabs.includes("庫藏股"), "基本資料不應有公司／題材／庫藏股內部分頁");
+  const basicOverflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1);
+  assert(!basicOverflow, "基本資料分頁造成頁面橫向溢出");
   await page.getByRole("tab", { name: "技術" }).click();
   await page.getByText("技術分").first().waitFor({ state: "visible", timeout: 5000 });
   await chipsTab.click();
@@ -60,10 +74,10 @@ try {
   await backBtn.click();
   await backBtn.waitFor({ state: "hidden", timeout: 5000 });
 
-  console.log("✓ 手機 viewport 375×812 驗收通過");
+  console.log(`✓ 手機 viewport ${viewportLabel} 驗收通過`);
   console.log("  - 無頁面橫向溢出");
   console.log("  - 籌碼日報買方/賣方對半切可切");
-  console.log("  - 法人 / 技術獨立 tab");
+  console.log("  - 法人 / 基本資料 / 技術獨立 tab；題材列含分類日與來源更新");
   console.log("  - 點分點進入下鑽並可返回");
 } catch (e) {
   failures.push(`執行錯誤: ${e.message}`);
