@@ -124,6 +124,31 @@ export interface CompanyGroup {
   members: CompanyGroupMember[];
 }
 
+/** Additive company classification; `status` is null for legacy DB exports. */
+export interface CompanyTheme {
+  id: string;
+  name: string;
+  source: string | null;
+  source_updated_at: string | null;
+  data_date: string | null;
+  status: "active" | "stale" | "retired" | null;
+}
+
+/** Current-market heat joined to a company classification; never a causal claim. */
+export interface RecentThemeHeat {
+  id: string;
+  name: string;
+  status: "active" | "stale" | "retired" | null;
+  data_date: string | null;
+  heat_date: string | null;
+  vs20: number | null;
+  avg_chg: number | null;
+  turnover: number;
+  up: number;
+  down: number;
+  eligible: boolean;
+}
+
 export interface CompanyGroupsJson {
   version: number;
   data_date: string;
@@ -141,6 +166,10 @@ export interface StockJson {
   company_profile?: CompanyProfile | null;
   /** Additive, source-controlled group memberships; legacy JSON intentionally omits it. */
   company_groups?: CompanyGroupMembership[];
+  /** Additive company classifications; absent from JSON snapshots exported before docs/37 C. */
+  company_themes?: CompanyTheme[];
+  /** Additive current heat candidates; absence is not evidence of no related theme. */
+  recent_theme_heat?: RecentThemeHeat[];
   candles: Candle[];
   scores: ScoreBreakdown | null;
   reasons: string[];

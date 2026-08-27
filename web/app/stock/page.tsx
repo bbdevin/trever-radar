@@ -11,7 +11,7 @@ import {
   useReactTable,
   type SortingState,
 } from "@tanstack/react-table";
-import { Building2, ChevronDown, ChevronUp, MapPin, Phone } from "lucide-react";
+import { Building2, ChevronDown, ChevronUp, Flame, MapPin, Phone, Tags } from "lucide-react";
 import { IconArrowLeft } from "@/components/Icons";
 import KChart from "@/components/KChart";
 import BranchFlowSection from "@/components/BranchFlowSection";
@@ -26,7 +26,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import WatchlistButton from "@/components/WatchlistButton";
 import { dataFetch } from "@/lib/dataFetch";
 import { OFFLINE_DATA_COPY, isBrowserOffline } from "@/lib/pwa";
-import type { CompanyProfile, StockJson } from "@/lib/types";
+import type { CompanyProfile, CompanyTheme, RecentThemeHeat, StockJson } from "@/lib/types";
 import { MARKET_LABEL, chgClass, fmtE8, fmtPct, fmtX } from "@/lib/format";
 import { signInWithGoogle, useSession } from "@/lib/useSession";
 import { cn, pillTabClass } from "@/lib/utils";
@@ -143,6 +143,11 @@ function StockView() {
               {data.id} · {MARKET_LABEL[data.market] ?? data.market}{data.industry ? ` · ${data.industry}` : ""}
             </div>
             <CompanyInfo profile={data.company_profile} />
+            <ThemeInfo
+              companyThemes={data.company_themes}
+              recentThemeHeat={data.recent_theme_heat}
+              quoteDate={last.t}
+            />
             {!!data.company_groups?.length && (
               <div className="mt-1 flex flex-wrap gap-1.5">
                 {data.company_groups.map((group) => (
@@ -309,6 +314,69 @@ function CompanyInfo({ profile }: { profile?: CompanyProfile | null }) {
         </div>
       )}
     </div>
+  );
+}
+
+function themeStatusLabel(status: CompanyTheme["status"]) {
+  if (status === "active") return "有效";
+  if (status === "stale") return "過時";
+  if (status === "retired") return "停用";
+  return "狀態未提供";
+}
+
+function ThemeInfo({
+  companyThemes,
+  recentThemeHeat,
+  quoteDate,
+}: {
+  companyThemes?: CompanyTheme[];
+  recentThemeHeat?: RecentThemeHeat[];
+  quoteDate: string;
+}) {
+  const classifications = companyThemes ?? [];
+  // Trust the explicit eligibility flag only in addition to the visible dates:
+  // an old or mismatched snapshot must never be presented as "近期可能相關題材".
+  const recent = (recentThemeHeat ?? []).filter(
+    (theme) => theme.eligible && theme.status === "active" && theme.heat_date === quoteDate,
+  );
+  const relatedButNotCurrent = (recentThemeHeat ?? []).filter((theme) => !recent.includes(theme));
+
+  return (
+    <section className="mt-2 min-w-0 rounded-[var(--r-sm)] border border-border bg-secondary/35 px-2.5 py-2 text-[11px] text-[color:var(--ink-2)]" aria-label="公司題材與近期熱度">
+      <div className="flex min-w-0 items-start gap-1.5">
+        <Tags size={14} className="mt-px shrink-0 text-[color:var(--ink-2)]" aria-hidden="true" />
+        <div className="min-w-0">
+          <span className="font-semibold text-foreground">公司題材</span>
+          {classifications.length ? (
+            <span className="ml-1.5 inline-flex flex-wrap gap-1 align-middle">
+              {classifications.map((theme) => (
+                <span key={theme.id} className="inline-flex items-center gap-1 rounded-full border border-border px-1.5 py-0.5">
+                  <span>{theme.name}</span>
+                  <span className={theme.status === "active" ? "text-[color:var(--accent-2)]" : "text-muted-foreground"}>
+                    {themeStatusLabel(theme.status)}
+                  </span>
+                </span>
+              ))}
+            </span>
+          ) : (
+            <span className="ml-1.5 text-muted-foreground">分類資料未提供；狀態未提供</span>
+          )}
+        </div>
+      </div>
+      {recent.length > 0 ? (
+        <div className="mt-1.5 flex min-w-0 items-start gap-1.5">
+          <Flame size={14} className="mt-px shrink-0 text-[color:var(--warn)]" aria-hidden="true" />
+          <div className="min-w-0">
+            <span className="font-semibold text-foreground">近期可能相關題材</span>
+            <span className="ml-1.5">{recent.map((theme) => `${theme.name}（量能 ${theme.vs20 == null ? "資料不足" : `${theme.vs20}×`}、資料日 ${theme.heat_date}）`).join("、")}</span>
+          </div>
+        </div>
+      ) : relatedButNotCurrent.length > 0 ? (
+        <p className="mt-1.5 pl-5.5 text-muted-foreground">
+          題材熱度資料未與本檔報價日一致或分類已非有效，僅保留分類參考，不標示近期關聯。
+        </p>
+      ) : null}
+    </section>
   );
 }
 

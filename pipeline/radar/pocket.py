@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from sqlalchemy import text
 
 from .geo import classify_broker_kind, normalize_branch_name
+from .theme_lifecycle import eligible_for_hot_theme
 
 DUAL_NORTH = frozenset({"台北市", "新北市"})
 GEO_WINDOW = 20
@@ -237,11 +238,15 @@ def hot_theme_trigger(
     }
 
 
-def hot_theme_names(themes: list[dict]) -> list[str]:
+def hot_theme_names(themes: list[dict], quote_date: str | None = None) -> list[str]:
     """資金流入榜:vs20≥1.15,依 vs20 取前 HOT_THEME_TOP。"""
     ranked = [
         t for t in themes
         if t.get("vs20") is not None and t["vs20"] >= HOT_THEME_VS20
+        and eligible_for_hot_theme(
+            status=t.get("status"), data_date=t.get("data_date"),
+            heat_date=t.get("heat_date"), quote_date=quote_date or "",
+        )
     ]
     ranked.sort(key=lambda t: (t.get("vs20") or 0, t.get("turnover") or 0), reverse=True)
     return [t["name"] for t in ranked[:HOT_THEME_TOP] if t.get("name")]
@@ -378,7 +383,9 @@ def tag_stock(
     )
     if key:
         tags.append(key)
-    theme = hot_theme_trigger(stock.get("themes") or [], hot_names)
+    # Export provides `_active_themes` even when it is an empty list. That makes
+    # legacy/unknown, stale, and retired classifications fail closed for H1.
+    theme = hot_theme_trigger(stock.get("_active_themes", stock.get("themes") or []), hot_names)
     if theme:
         tags.append(theme)
 
@@ -404,7 +411,8 @@ def apply_pocket(
     window5 = list(reversed(trading_dates_desc[:KEY_WINDOW]))
     ids = [s["id"] for s in all_stocks]
     ctx = load_pocket_context(conn, window20, ids)
-    hot = hot_theme_names(themes)
+    quote_date = trading_dates_desc[0] if trading_dates_desc else None
+    hot = hot_theme_names(themes, quote_date)
     for s in all_stocks:
         tag_stock(s["id"], s, ctx, window20, window5, hot, conc_ids)
     pocket = [

@@ -16,6 +16,7 @@ from .. import config
 from ..db import get_engine, init_db
 from .spark_day import attach_spark_day
 from ..pocket import apply_pocket
+from ..theme_lifecycle import ACTIVE, displayed_status, eligible_for_hot_theme
 from ..company_groups import is_effective, load_company_groups, validate_company_groups
 from ..compute.strategy_performance import (
     compute_strategy_performance_from_events,
@@ -869,9 +870,9 @@ def export_json(out_dir: Path | None = None) -> dict:
 
         total_today = sum(g["turnover"] for g in sector_today.values()) or 1
 
-        def group_payload(name, g, prior_avg):
+        def group_payload(name, g, prior_avg, lifecycle=None):
             top = sorted(g["stocks"], key=lambda s: s["turnover"] or 0, reverse=True)[:8]
-            return {
+            payload = {
                 "name": name,
                 "turnover": g["turnover"],
                 "share": round(g["turnover"] / total_today * 100, 1),
@@ -881,26 +882,60 @@ def export_json(out_dir: Path | None = None) -> dict:
                 "top": [{"id": s["id"], "name": s["name"], "chg_pct": s["chg_pct"],
                          "turnover": s["turnover"]} for s in top],
             }
+            if lifecycle is not None:
+                payload.update(lifecycle)
+            return payload
 
         sectors = [group_payload(ind, g, prior.get(ind)) for ind, g in sector_today.items()]
         sectors.sort(key=lambda x: x["turnover"], reverse=True)
 
         # ── 題材/概念股資金流(富邦概念股分類;成分重疊,share 僅供相對比較) ──
         by_id = {s["id"]: s for s in all_stocks}
-        # Initialize themes array for all stocks
+        # Keep `themes` for existing radar consumers. New lifecycle fields are
+        # additive and expose per-stock classification detail separately.
         for s in all_stocks:
             s["themes"] = []
+            # Internal-only H1 input; remove it before serialising radar.stocks.
+            s["_active_themes"] = []
             
         theme_groups: dict[str, dict] = {}
-        for name, sid in conn.execute(text(
-                "SELECT t.name, st.stock_id FROM stock_themes st "
-                "JOIN themes t ON t.id = st.theme_id")):
+        company_themes_by_stock: dict[str, list[dict]] = {}
+        for row in conn.execute(text("""
+                SELECT t.id, t.name, t.source, t.source_updated_at, t.data_date,
+                       t.status, t.updated_at, st.stock_id
+                FROM stock_themes st JOIN themes t ON t.id = st.theme_id
+        """)).mappings():
+            name, sid = row["name"], row["stock_id"]
+            status = displayed_status(
+                row["status"], row["data_date"], row["source_updated_at"], d,
+            )
+            membership = {
+                "id": row["id"], "name": name, "source": row["source"],
+                "source_updated_at": row["source_updated_at"], "data_date": row["data_date"],
+                "status": status,
+            }
+            company_themes_by_stock.setdefault(sid, []).append(membership)
             s = by_id.get(sid)
             if s is None:
                 continue
-            s["themes"].append(name) # Attach theme name to the stock
+            # Future source rows are retained in company_themes for audit, but
+            # cannot contribute to this quote-date snapshot in any aggregation.
+            try:
+                is_future = bool(membership["data_date"]) and date.fromisoformat(membership["data_date"]) > date.fromisoformat(d)
+            except ValueError:
+                is_future = True
+            if is_future:
+                continue
+            if name not in s["themes"]:
+                s["themes"].append(name) # Attach current/past theme name once.
+            if status == ACTIVE and membership["data_date"] and name not in s["_active_themes"]:
+                s["_active_themes"].append(name)
             g = theme_groups.setdefault(name, {"turnover": 0, "up": 0, "down": 0,
-                                               "chgs": [], "stocks": []})
+                                               "chgs": [], "stocks": [], "stock_ids": set(), "memberships": []})
+            g["memberships"].append(membership)
+            if sid in g["stock_ids"]:
+                continue
+            g["stock_ids"].add(sid)
             g["turnover"] += s["turnover"] or 0
             if s["chg_pct"] is not None:
                 g["chgs"].append(s["chg_pct"])
@@ -910,29 +945,102 @@ def export_json(out_dir: Path | None = None) -> dict:
                     g["down"] += 1
             g["stocks"].append(s)
         theme_prior = {r[0]: r[1] for r in conn.execute(text("""
-            SELECT t.name, SUM(p.turnover) * 1.0 / COUNT(DISTINCT p.date)
-            FROM daily_prices p
-            JOIN stock_themes st ON st.stock_id = p.stock_id
-            JOIN themes t ON t.id = st.theme_id
-            WHERE p.date >= :d20 AND p.date < :d
-            GROUP BY t.name
+            SELECT name, SUM(turnover) * 1.0 / COUNT(DISTINCT date)
+            FROM (
+                SELECT t.name, p.stock_id, p.date, MAX(p.turnover) AS turnover
+                FROM daily_prices p
+                JOIN stock_themes st ON st.stock_id = p.stock_id
+                JOIN themes t ON t.id = st.theme_id
+                WHERE p.date >= :d20 AND p.date < :d
+                  AND (t.data_date IS NULL OR t.data_date <= :d)
+                GROUP BY t.name, p.stock_id, p.date
+            )
+            GROUP BY name
         """), {"d": d, "d20": base20[-1] if base20 else d})}
-        themes = [group_payload(name, g, theme_prior.get(name))
+        def _theme_lifecycle(g):
+            statuses = {m["status"] for m in g["memberships"]}
+            if statuses == {ACTIVE}:
+                status = ACTIVE
+            elif "stale" in statuses:
+                status = "stale"
+            elif statuses == {"retired"}:
+                status = "retired"
+            else:
+                status = None
+            # Display names can theoretically share more than one source ID.
+            # Use the oldest metadata, never the newest, to avoid false freshness.
+            dates = [m["data_date"] for m in g["memberships"] if m["data_date"]]
+            source_dates = [m["source_updated_at"] for m in g["memberships"] if m["source_updated_at"]]
+            sources = sorted({m["source"] for m in g["memberships"] if m["source"]})
+            return {
+                "status": status,
+                "source": sources[0] if len(sources) == 1 else None,
+                "source_updated_at": min(source_dates) if source_dates else None,
+                "data_date": min(dates) if dates else None,
+                "heat_date": d,
+            }
+
+        themes = [group_payload(name, g, theme_prior.get(name), _theme_lifecycle(g))
                   for name, g in theme_groups.items()
                   if len(g["stocks"]) >= 3 and g["turnover"] >= 5e8]
         themes.sort(key=lambda x: x["turnover"], reverse=True)
+        theme_source_rows = list(conn.execute(text(
+            "SELECT status, data_date, source_updated_at FROM themes"
+        )).mappings())
+        theme_source_statuses = [displayed_status(
+            row["status"], row["data_date"], row["source_updated_at"], d,
+        ) for row in theme_source_rows]
+        theme_data_dates = [
+            row["data_date"] for row in theme_source_rows
+            if row["data_date"] and row["data_date"] <= d
+        ]
+        freshness["themes"] = {
+            "date": max(theme_data_dates) if theme_data_dates else None,
+            "stale": not bool(theme_source_rows) or any(status != ACTIVE for status in theme_source_statuses),
+        }
+
+        # Company classification and market heat are intentionally separate. A
+        # stale/unknown classification stays visible, but cannot be H1 eligible.
+        heat_by_name = {theme["name"]: theme for theme in themes}
+        recent_theme_heat_by_stock: dict[str, list[dict]] = {}
+        for sid, memberships in company_themes_by_stock.items():
+            related = []
+            for membership in memberships:
+                heat = heat_by_name.get(membership["name"])
+                if heat is None:
+                    continue
+                related.append({
+                    "id": membership["id"], "name": membership["name"],
+                    "status": membership["status"], "data_date": membership["data_date"],
+                    "heat_date": heat["heat_date"], "vs20": heat["vs20"],
+                    "avg_chg": heat["avg_chg"], "turnover": heat["turnover"],
+                    "up": heat["up"], "down": heat["down"],
+                    "eligible": eligible_for_hot_theme(
+                        status=membership["status"], data_date=membership["data_date"],
+                        heat_date=heat["heat_date"], quote_date=d,
+                    ),
+                })
+            if related:
+                recent_theme_heat_by_stock[sid] = sorted(
+                    related, key=lambda item: (not item["eligible"], -(item["vs20"] or -1), item["name"]),
+                )
 
         # ── 產業下鑽子題材:每個產業內成分股的題材分解(sectors[].subs) ──
         # 口徑同題材聚合,但 group by (industry, theme);篩選:產業內成分 ≥2 檔、
         # 排除與產業同名題材;依 turnover 取前 10,每題材帶產業內金額前 5 成分股。
         sub_prior = {(r[0], r[1]): r[2] for r in conn.execute(text("""
-            SELECT s.industry, t.name, SUM(p.turnover) * 1.0 / COUNT(DISTINCT p.date)
-            FROM daily_prices p
-            JOIN stocks s ON s.id = p.stock_id AND s.type = 'stock'
-            JOIN stock_themes st ON st.stock_id = p.stock_id
-            JOIN themes t ON t.id = st.theme_id
-            WHERE p.date >= :d20 AND p.date < :d AND s.industry IS NOT NULL
-            GROUP BY s.industry, t.name
+            SELECT industry, name, SUM(turnover) * 1.0 / COUNT(DISTINCT date)
+            FROM (
+                SELECT s.industry, t.name, p.stock_id, p.date, MAX(p.turnover) AS turnover
+                FROM daily_prices p
+                JOIN stocks s ON s.id = p.stock_id AND s.type = 'stock'
+                JOIN stock_themes st ON st.stock_id = p.stock_id
+                JOIN themes t ON t.id = st.theme_id
+                WHERE p.date >= :d20 AND p.date < :d AND s.industry IS NOT NULL
+                  AND (t.data_date IS NULL OR t.data_date <= :d)
+                GROUP BY s.industry, t.name, p.stock_id, p.date
+            )
+            GROUP BY industry, name
         """), {"d": d, "d20": base20[-1] if base20 else d})}
         for sec in sectors:
             ind = sec["name"]
@@ -942,7 +1050,10 @@ def export_json(out_dir: Path | None = None) -> dict:
                     if tname == ind:
                         continue
                     g = sub_groups.setdefault(tname, {"turnover": 0, "up": 0, "down": 0,
-                                                      "chgs": [], "stocks": []})
+                                                      "chgs": [], "stocks": [], "stock_ids": set()})
+                    if s["id"] in g["stock_ids"]:
+                        continue
+                    g["stock_ids"].add(s["id"])
                     g["turnover"] += s["turnover"] or 0
                     if s["chg_pct"] is not None:
                         g["chgs"].append(s["chg_pct"])
@@ -993,6 +1104,8 @@ def export_json(out_dir: Path | None = None) -> dict:
             conn, all_stocks, dates, themes,
             {r["id"] for r in concentration},
         )
+        for stock in all_stocks:
+            stock.pop("_active_themes", None)
         for sid in pocket_ids:
             s = by_id.get(sid)
             if s is None:
@@ -1053,7 +1166,7 @@ def export_json(out_dir: Path | None = None) -> dict:
             )
         # Stale warning
         stale_labels = [
-            {"insti": "法人", "margin": "融資券", "warrant": "權證", "branch": "分點"}.get(k, k)
+            {"insti": "法人", "margin": "融資券", "warrant": "權證", "branch": "分點", "themes": "題材分類"}.get(k, k)
             for k, v in (freshness or {}).items()
             if k != "quotes" and (v.get("stale") if isinstance(v, dict) else False)
         ]
@@ -1242,6 +1355,8 @@ def export_json(out_dir: Path | None = None) -> dict:
                 "industry": s.get("industry"),
                 "company_profile": company_profiles.get(sid),
                 "company_groups": groups_by_stock.get(sid, []),
+                "company_themes": company_themes_by_stock.get(sid, []),
+                "recent_theme_heat": recent_theme_heat_by_stock.get(sid, []),
                 "candles": [
                     {"t": c[0], "o": c[1], "h": c[2], "l": c[3], "c": c[4],
                      "v": (c[5] or 0) // 1000, "amt": c[6], "af": c[7] or 1.0}

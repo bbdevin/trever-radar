@@ -146,6 +146,10 @@ themes = Table(
     Column("id", Text, primary_key=True),          # 來源分類代碼,例 C023322
     Column("name", Text, nullable=False),          # 例:矽晶圓
     Column("source", Text, nullable=False, server_default="fubon"),
+    # lifecycle v1: keep updated_at for legacy readers; new fields are additive.
+    Column("source_updated_at", Text),
+    Column("data_date", Text),
+    Column("status", Text),                 # active / stale / retired; NULL = legacy unknown
     Column("updated_at", Text),
 )
 

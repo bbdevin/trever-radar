@@ -646,12 +646,31 @@ def import_themes(limit: int | None = None) -> dict:
     engine = get_engine()
     now = datetime.now(ZoneInfo(config.TZ)).isoformat(timespec="seconds")
     today = datetime.now(ZoneInfo(config.TZ)).strftime("%Y%m%d")
+    data_date = iso(today)
 
-    theme_list = fubon.fetch_theme_list()
-    if limit:
+    def _mark_stale(reason: str) -> dict:
+        # 保留既有分類；不以抓取異常推斷 retired。
+        with engine.begin() as conn:
+            conn.execute(text("""
+                UPDATE themes SET status = 'stale'
+                WHERE source = 'fubon' AND (status IS NULL OR status != 'retired')
+            """))
+            _log(conn, "fubon", "themes", today, 0, "error", error=reason[:500])
+        return {"themes": 0, "links": 0, "failed": 1, "status": "stale"}
+
+    try:
+        theme_list = fubon.fetch_theme_list()
+    except Exception as e:  # noqa: BLE001 - stale data is safer than deleting classifications
+        print(f"themes list FAILED: {str(e)[:80]}", flush=True)
+        return _mark_stale(str(e))
+    if limit is not None:
         theme_list = theme_list[:limit]
+    if not theme_list:
+        print("themes: empty list; preserving prior classifications as stale", flush=True)
+        return _mark_stale("theme list empty")
 
-    done = failed = links = 0
+    done = failed = links = empty = 0
+    staged: list[tuple[str, str, list[str]]] = []
     for code, name in theme_list:
         try:
             members = fubon.fetch_theme_members(code)
@@ -660,23 +679,53 @@ def import_themes(limit: int | None = None) -> dict:
             print(f"theme {code} {name} FAILED: {str(e)[:80]}", flush=True)
             continue
         if not members:
+            empty += 1
+            print(f"theme {code} {name} EMPTY", flush=True)
             continue
-        with engine.begin() as conn:
-            upsert(conn, schema.themes, [{
-                "id": code, "name": name, "source": "fubon", "updated_at": now}])
-            conn.execute(text("DELETE FROM stock_themes WHERE theme_id = :t"), {"t": code})
-            upsert(conn, schema.stock_themes,
-                   [{"theme_id": code, "stock_id": sid} for sid in members])
+        staged.append((code, name, members))
         done += 1
         links += len(members)
         if done % 25 == 0:
             print(f"themes {done}/{len(theme_list)} ...", flush=True)
-    with engine.begin() as conn:
-        _log(conn, "fubon", "themes", today, links,
-             "ok" if failed == 0 else "error",
-             error=None if failed == 0 else f"{failed} themes failed")
-    print(f"themes: {done} groups, {links} memberships, {failed} failed", flush=True)
-    return {"themes": done, "links": links, "failed": failed}
+
+    # 只有全來源、全題材成功才把任何分類設為 active；partial/empty/--limit
+    # 皆保留舊資料並 stale，避免把暫缺誤解為 retired 或新鮮完整資料。
+    complete = limit is None and failed == 0 and empty == 0 and len(staged) == len(theme_list)
+    if complete:
+        with engine.begin() as conn:
+            # A fetched listing has no authority to reverse an explicit retired
+            # lifecycle decision. Preserve both the row and its old memberships.
+            retired_ids = {
+                row[0] for row in conn.execute(text("""
+                    SELECT id FROM themes WHERE source = 'fubon' AND status = 'retired'
+                """))
+            }
+            # A full list confirms only the returned IDs. Older IDs remain
+            # auditable but lose active status; absence is still not retirement.
+            conn.execute(text("""
+                UPDATE themes SET status = 'stale'
+                WHERE source = 'fubon' AND (status IS NULL OR status != 'retired')
+            """))
+            for code, name, members in staged:
+                if code in retired_ids:
+                    continue
+                upsert(conn, schema.themes, [{
+                    "id": code, "name": name, "source": "fubon",
+                    "source_updated_at": now, "data_date": data_date,
+                    "status": "active", "updated_at": now,
+                }])
+                conn.execute(text("DELETE FROM stock_themes WHERE theme_id = :t"), {"t": code})
+                upsert(conn, schema.stock_themes,
+                       [{"theme_id": code, "stock_id": sid} for sid in members])
+            _log(conn, "fubon", "themes", today, links, "ok")
+        print(f"themes: {done} groups, {links} memberships, complete", flush=True)
+        return {"themes": done, "links": links, "failed": 0, "status": "active"}
+
+    reason = f"partial themes: failed={failed}, empty={empty}, limit={limit}"
+    result = _mark_stale(reason)
+    result.update({"themes": done, "links": links, "failed": failed, "empty": empty})
+    print(f"themes: {done} groups staged, {links} memberships; {reason}; prior data kept", flush=True)
+    return result
 
 
 def import_daily(date: str, datasets: list[str] | None = None) -> list[dict]:

@@ -224,10 +224,11 @@ class KeyThemePocketTests(unittest.TestCase):
 
     def test_hot_theme_top10(self):
         themes = [
-            {"name": f"T{i}", "vs20": 2.0 - i * 0.05, "turnover": 1e9}
+            {"name": f"T{i}", "vs20": 2.0 - i * 0.05, "turnover": 1e9,
+             "status": "active", "data_date": "2026-07-20", "heat_date": "2026-07-20"}
             for i in range(12)
         ]
-        names = hot_theme_names(themes)
+        names = hot_theme_names(themes, "2026-07-20")
         self.assertEqual(len(names), 10)
         self.assertEqual(names[0], "T0")
         self.assertNotIn("T10", names)  # 第 11 名 vs20=1.5 仍 ≥1.15 但排外
@@ -236,8 +237,9 @@ class KeyThemePocketTests(unittest.TestCase):
         self.assertIsNone(hot_theme_trigger(["T10"], names))
 
     def test_hot_theme_vs20_floor(self):
-        themes = [{"name": "冷", "vs20": 1.10, "turnover": 9e9}]
-        self.assertEqual(hot_theme_names(themes), [])
+        themes = [{"name": "冷", "vs20": 1.10, "turnover": 9e9,
+                   "status": "active", "data_date": "2026-07-20", "heat_date": "2026-07-20"}]
+        self.assertEqual(hot_theme_names(themes, "2026-07-20"), [])
 
     def test_pocket_score_decoupled(self):
         self.assertEqual(pocket_score(set()), 0)

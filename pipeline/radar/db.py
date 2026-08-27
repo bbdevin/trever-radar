@@ -57,6 +57,16 @@ def _migrate_sqlite(conn):
     if "description" not in stock_cols:
         conn.exec_driver_sql("ALTER TABLE stocks ADD COLUMN description TEXT")
 
+    theme_cols = {r[1] for r in conn.exec_driver_sql("PRAGMA table_info(themes)").fetchall()}
+    theme_additions = {
+        "source_updated_at": "TEXT",
+        "data_date": "TEXT",
+        "status": "TEXT",
+    }
+    for name, sql_type in theme_additions.items():
+        if name not in theme_cols:
+            conn.exec_driver_sql(f"ALTER TABLE themes ADD COLUMN {name} {sql_type}")
+
     profile_cols = {r[1] for r in conn.exec_driver_sql("PRAGMA table_info(company_profiles)").fetchall()}
     profile_additions = {
         "industry_code": "TEXT",
