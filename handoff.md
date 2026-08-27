@@ -28,5 +28,6 @@
   3. `crontab.example` 一律 `bash …`；margin **22:40**
   4. `daily-branches` 移除 margin；`daily-margin` 落後 warn
   5. git 全部 scripts → 100755
-- **Next**: VPS pull + 安裝 crontab + 手動跑 daily-margin 補 08-26
+- **Next**: 今晚 22:40 觀察 margin 是否自動成功；確認站上 freshness.margin = 08-26
 - **Files That Should Not Be Modified**: workflows/secrets；adj_factor；WAL checkpoint
+- **Catchup**: 2026-08-26 margin 已手動 import（twse 1291 / tpex 920）+ export/deploy 成功
