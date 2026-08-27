@@ -210,7 +210,7 @@ sqlite3 radar.db "PRAGMA integrity_check;"        # ok 才能用
 | `weekly-backup.sh` | 週六 05:00 | (新)checkpoint→integrity_check→gzip→Drive+retention |
 
 共用機制(`lib.sh`):
-- **flock 互斥**:`/tmp/radar-db.lock`,搶不到=跳過本輪+ntfy 通知(防上一輪超時堆疊)。長期歷史回補容器不拿這把鎖(docs/31 §2)。**2026-08-20**:分點/權證分點兩筆回補還在跑時不要手動 `import-geo`(會搶 `radar.db` 寫鎖);等回補結束或下週一 14:10 自動跑。詳 `docs/27`。
+- **flock 互斥**:`/tmp/radar-db.lock`,搶不到=跳過本輪+ntfy 通知(防上一輪超時堆疊)。長期歷史回補容器不拿這把鎖(docs/31 §2)。**2026-08-27 16:58** 已透過受控 pause→備份 `/home/huang/geo-before-import-20260827-1658.sql.gz`→`import-geo` 完成 1,985 筆／股務代理 1,985／1,985／3376 驗證→`export-json` 2,410 檔並完成 data Worker deploy（version `b377bc68-3c19-42eb-86f5-4e3c20d977d4`），其後回補已 resume。該次未跑 `import-themes`／`import-buybacks`，故未更新題材／庫藏股官方來源資料。回補活躍時仍不得自行手動寫 `radar.db` 或執行 import；須依既有受控程序。詳 `docs/27`。
 - **2026-08-24 回補中途動態上線(S1)**:`mid-backfill-publish.sh` + `bf-cron-guard.sh`;crontab `03/09/12/20` mid 只 export。
 - **2026-08-25 S1.1**:mid 預設略過 stats(防 OOM);`safe-branch-stats.sh` @ 23:30 專跑排行;stats 程式改增量累加。詳 `docs/33`。
 - **2026-08-21 回補與 cron 並行**:歷史回補用具名容器 `radar-bf-branches` / `radar-bf-warrant`(勿用 `manual-catchup.sh` 包長跑——它會握 flock)。另跑 `bf-cron-guard`(已收進 `vps/scripts/`)。

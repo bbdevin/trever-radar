@@ -1,18 +1,18 @@
 # 37 公司資訊／題材／集團／庫藏股／關鍵分點整體規劃
 
 > 版本：2026-08-27（S4 V2／Armed A1 後續）
-> 本文件把本輪 Confirmed Scope 與實作狀態永久化，供下一個 Executor／Reviewer 接續。A／B／C／D／E1 的程式契約已完成；**B／C／D／E1 尚未在正式 VPS 執行 import/export**，E2 仍停在唯讀 shadow，且本文件不授權正式資料回算、VPS migration 或部署。
+> 本文件把本輪 Confirmed Scope 與實作狀態永久化，供下一個 Executor／Reviewer 接續。A／B／C／D／E1 的程式契約已完成；**2026-08-27 16:58 的正式 VPS `export-json`／data Worker deploy 已完成，B／D geo 資料已受控匯入；C 題材 `import-themes` 與 E1 庫藏股 `import-buybacks` 尚未執行，故該次 export 未更新 C／E1 官方來源資料**。E2 仍停在唯讀 shadow，且本文件不授權正式資料回算、VPS migration 或程式碼部署。
 
 ## 0. Confirmed Scope 與現況
 
 | 工作包 | 本輪決定 | 狀態／門檻 |
 |---|---|---|
 | A1 | Armed／Triggered／Extended／Faded 匯出契約補強：state ID 可由 `radar.stocks` 解析；stale warrant 不作今日 state source；缺 1 日或 5 日漲跌時 fail closed | **程式與測試完成**；未正式 DB 回算 |
-| A2 | 對齊策略、首頁狀態、綜合分、strategy metadata 與績效勝率的定義 | **程式／契約與測試完成（2026-08-27）**；已對齊綜合榜同分排序，不調整 `final` 權重、分點績效排行 V2、schema 或正式回算 |
-| B | 個股「基本資料」的公司資料 section：地址、股務代理與官方來源；以 additive export contract 為準 | **程式／fixture／UI／typecheck／正式 build 完成（2026-08-27）**；正式 VPS `import-geo`／`export-json` 未執行 |
-| C | 個股「基本資料」的題材 section：公司分類、近期熱度、有效／停用／過時狀態，顯示「近期可能相關題材」而非無證據的因果宣稱 | **程式／fixture／UI／typecheck／正式 build 完成（2026-08-27）**；正式 VPS import/export 未執行，不改綜合分 |
-| D | 基本資料的集團連結可點入 `/group?id=`，顯示版本化的集團成員股票 | **程式／fixture／UI／typecheck／正式 build 完成（2026-08-27）**；正式 VPS export 未執行 |
-| E1 | 個股「基本資料」的庫藏股 section：官方 MOPS `t35sc09` 與 **KB1 事實標籤** | **程式／fixture／point-in-time export／個股 UI 完成（2026-08-27）**；未正式 VPS/DB import/export、未排程 |
+| A2 | 對齊策略、首頁狀態、綜合分、strategy metadata 與績效勝率的定義 | **程式／契約與測試完成（2026-08-27；JSON export targeted pytest 9 passed）**；lifecycle v2 將 S2／S5 恢復為 Shadow，仍不調整 `final` 權重、分點績效排行 V2、schema 或正式回算 |
+| B | 個股「基本資料」的公司資料 section：地址、股務代理與官方來源；以 additive export contract 為準 | **程式／fixture／UI／typecheck／正式 geo 發布完成（2026-08-27 16:58）**；`import-geo` 1,985 筆、股務代理 1,985／1,985、3376 驗證、`export-json` 2,410 檔與 Worker version `b377bc68-3c19-42eb-86f5-4e3c20d977d4`；不涉及 themes／buybacks／正式重算 |
+| C | 個股「基本資料」的題材 section：公司分類、近期熱度、有效／停用／過時狀態，顯示「近期可能相關題材」而非無證據的因果宣稱 | **程式／fixture／UI／typecheck／正式 build 完成（2026-08-27）**；`import-themes` 未執行；16:58 `export-json` 已發布既有快照、未更新題材官方來源資料，不改綜合分 |
+| D | 基本資料的集團連結可點入 `/group?id=`，顯示版本化的集團成員股票 | **程式／fixture／UI／typecheck／正式 build 完成（2026-08-27）**；16:58 正式 VPS `export-json` 2,410 檔已完成 |
+| E1 | 個股「基本資料」的庫藏股 section：官方 MOPS `t35sc09` 與 **KB1 事實標籤** | **程式／fixture／point-in-time export／個股 UI 完成（2026-08-27）**；`import-buybacks` 未執行；16:58 `export-json` 已發布既有快照、未更新庫藏股官方來源資料，未排程 |
 | E2 | `branch × stock` point-in-time 的**獨立**買／賣 episode 分位、後續表現與覆蓋率描述 | **唯讀 shadow CLI／JSON contract 與測試完成（2026-08-27）**；buy→sell 配對規則／coverage 尚未定義，未跑正式 DB、未接 UI、未定門檻，schema／歷史回算仍須人工確認 |
 
 ### 明確排除
@@ -55,7 +55,7 @@ A2 是語意決策關卡，不是單純修 UI。Executor 先產出對照表與�
 - **綜合榜**：唯一來源是 `daily_scores.final`；只列 `final >= 65`（最多 40 筆 JSON 顯示窗），不足 15 筆保持實際數量。沒有「低分保底」或隱藏補位，也不改 `final` 權重與風險扣分。
 - **S12**：`buy_concentration >= 15%`、有正的 `concentration_avg20` 且達其 `1.5×`，並維持原有 1／5 日漲幅限制。基期缺值或 `<=0` 不能證明躍升，一律 fail closed；只影響未來計算，未作正式 DB 回算。
 - **首頁狀態**：Quiet = `state=null`；Armed／Triggered／Extended／Faded 仍完全由 `derive_radar_state` 的同日、缺 1／5 日報價 fail-closed 契約決定。策略（含 S4 V2 phase）不會成為 state 來源，沒有改動狀態門檻或優先序。
-- **策略生命週期**：`strategy_meta[code]` 必含 `status / effective_date / rationale / decision_ref / version`。現行 S2、S5 = Retired；其餘 = Shadow；無 Active。Retired 不進主策略選擇器，僅在明確「歷史資料」展開區可讀；`strategies` 與 historical reason code 維持相容。缺少這個 additive metadata 的舊 JSON 必須顯示原本所有策略。
+- **策略生命週期**：`strategy_meta[code]` 必含 `status / effective_date / rationale / decision_ref / version`。lifecycle v2（effective 2026-08-27）依使用者恢復觀察決策，S2、S5 = Shadow；其餘 = Shadow；無 Active／Retired。Shadow 回主要策略選擇器，但不代表有效或改變任一策略公式、權重、`final`、selector cap 或 historical reason code。缺少這個 additive metadata 的舊 JSON 必須顯示原本所有策略。
 - **勝率**：策略 win = 已去重、已成熟 signal episode 的指定 horizon 還原報酬 `>0`；分點 win = branch×stock 進場事件、次一有效交易日還原開盤 entry、第五根有效交易日還原收盤報酬 `>0`。兩者均不是對外預測承諾；分點 `events_count / matured_samples` 與排行 V2 仍是另案 shadow／人工確認項。
 
 ## 3. B：公司地址與股務代理（個股詳細頁）
@@ -74,7 +74,7 @@ A2 是語意決策關卡，不是單純修 UI。Executor 先產出對照表與�
 
 ### 本輪實作紀錄（2026-08-27）
 
-- `company_profiles` 採 additive 欄位：`industry_code`、`transfer_agent`、`transfer_agent_phone`、`transfer_agent_address`、`source`、`source_updated_at`；`init_db()` 對既有 SQLite 只補欄、不刪資料。**沒有對正式 VPS DB 執行此程式。**
+- `company_profiles` 採 additive 欄位：`industry_code`、`transfer_agent`、`transfer_agent_phone`、`transfer_agent_address`、`source`、`source_updated_at`；`init_db()` 對既有 SQLite 只補欄、不刪資料。**2026-08-27 16:58 已在正式 VPS 完成一次受控 `import-geo`／`export-json`：公司資料 1,985、股務代理 1,985／1,985，3376 驗證通過，export 2,410 檔，Worker version `b377bc68-3c19-42eb-86f5-4e3c20d977d4`；回補 pause 後已 resume，前備份為 `/home/huang/geo-before-import-20260827-1658.sql.gz`。**
 - TWSE/TPEx provider 只解析已驗證官方欄位；空字串轉 `null`、產業碼維持字串前導 0、民國 `1150826` 正規化為 `2026-08-26`。
 - 個股 JSON 增加可選 `industry` 與 `company_profile`；舊 snapshot 缺欄位時 UI 顯示「資料未提供」，不將缺值視為 0 或不存在。
 
@@ -112,7 +112,7 @@ A2 是語意決策關卡，不是單純修 UI。Executor 先產出對照表與�
 
 - mapping 固定為 repo 內 `pipeline/radar/data/company_groups.json`（version 1），不建 DB table、不寫入分數或主導航。
 - 只加入華新麗華集團官方頁可核驗 seed：anchor `1605`，成員 `2344`／`2492`／`5469`／`6116`；來源為 `https://www.walsin.com/about-us/who-we-are/subsidiaries-affiliates/`，`source_updated_at` 與 effective dates 為 `null`，`observed_at=2026-08-27`。未加入佳邦等未充分驗證項目。
-- exporter 產出 additive `groups.json` 與每檔 `company_groups`；成員摘要直接由 `stocks + daily_prices` 的最新可用報價建立，非 radar pool。mapping validator 覆蓋未知股票、null 日期與無效有效期間；正式 VPS export 尚未執行。
+- exporter 產出 additive `groups.json` 與每檔 `company_groups`；成員摘要直接由 `stocks + daily_prices` 的最新可用報價建立，非 radar pool。mapping validator 覆蓋未知股票、null 日期與無效有效期間；上述 2026-08-27 16:58 受控 `export-json` 已發布 2,410 檔，未改資料語意。
 
 ## 6. E1：庫藏股（只做可證實的 KB1）
 
@@ -120,7 +120,7 @@ A2 是語意決策關卡，不是單純修 UI。Executor 先產出對照表與�
 2. ✅ `buybacks` 是 additive table；保留同股多計畫的 deterministic `plan_id`、原始 MOPS flag、null、單位、來源、`report_date`／`source_updated_at`／`imported_at`。MOPS 無 `announce_date`，contract 不得冒充有該資料。HTML 多表、重複表頭、20 欄漂移、非官方 redirect、缺出表日／有效表、網路錯誤全部 fail closed。
 3. ✅ `KB1_BUYBACK_WINDOW` 只表示 `N` 且 `start_date ≤ as_of ≤ end_date`（inclusive）的買回期間；`Y`＋合法期間=completed、`N` 且逾期=expired，其他=unknown。它只加既有 BUYBACK family 的 15 分口袋排序，不寫 `daily_scores.final` 或任何分項／H1。
 4. ✅ Export 的可選 `buyback` 只含資料日當下 active plan，且 `report_date` 與 `source_updated_at` 都不得晚於 export data date；缺欄位／舊 JSON 保持 null/不存在。個股頁顯示「庫藏股買回期間」事實：狀態、期間、預定／已執行股數（股）、價區（元/股）、目的、MOPS／出表日；不顯示或推測執行分點。
-5. ✅ offline fixture tests 覆蓋 redirect 200/406/缺 URL/network、多表／重複表頭／安全 HTML／欄漂移、ROC／null／數值、Y/N 狀態邊界、atomic zero-write、future leak、多計畫 KB1、舊 JSON fallback 與 runtime code 無 KB2。**沒有執行正式 VPS/DB import、export 或排程。**
+5. ✅ offline fixture tests 覆蓋 redirect 200/406/缺 URL/network、多表／重複表頭／安全 HTML／欄漂移、ROC／null／數值、Y/N 狀態邊界、atomic zero-write、future leak、多計畫 KB1、舊 JSON fallback 與 runtime code 無 KB2。**`import-buybacks` 與排程尚未執行；16:58 的正式 `export-json` 已發布既有快照，但未更新庫藏股官方來源資料。**
 6. KB2 永不加入實作 backlog；任何 future agent 若看到舊文件的 KB2，必須以本文件與 `docs/27` 的不實作決議為準。
 
 ## 7. E2：關鍵分點與地緣券商完整化（shadow、非獲利歸因）
@@ -163,18 +163,18 @@ A2 是語意決策關卡，不是單純修 UI。Executor 先產出對照表與�
 ## 9. 執行順序與人類確認點
 
 1. **已完成**：A1 程式／測試與契約驗收；保留正式 DB 未回算狀態。
-2. **已完成**：A2 策略／首頁／勝率對照、綜合榜嚴格門檻與同分排序、S12 基期 fail-closed、strategy lifecycle v1；未作正式 DB 回算。
-3. **已完成**：B（官方公司欄位／additive import-export／個股 UI）、C（題材 lifecycle／H1 fail-closed／個股 UI）與 D（版本化華新麗華 mapping／groups export／鑽取 UI）程式、fixture、typecheck 與正式 build。**未執行正式 VPS import/export 或正式 DB 寫入**。
-4. **已完成 E1 code contract**：官方 MOPS t35sc09、KB1、additive schema／manual CLI／point-in-time export／個股 UI、fixture tests；**正式 VPS/DB import/export 與排程仍須人類另案確認**，KB2 維持不實作。
+2. **已完成**：A2 策略／首頁／勝率對照、綜合榜嚴格門檻與同分排序、S12 基期 fail-closed、strategy lifecycle v2（S2／S5 Shadow）；未作正式 DB 回算。
+3. **已完成**：B（官方公司欄位／additive import-export／個股 UI）、C（題材 lifecycle／H1 fail-closed／個股 UI）與 D（版本化華新麗華 mapping／groups export／鑽取 UI）程式、fixture、typecheck 與正式 build。**B/D 已於 2026-08-27 16:58 受控完成 `import-geo`／`export-json`／data Worker deploy；`import-themes`、`import-buybacks` 與正式重算仍未執行，因此該次 export 未更新 C／E1 官方來源資料**。
+4. **已完成 E1 code contract**：官方 MOPS t35sc09、KB1、additive schema／manual CLI／point-in-time export／個股 UI、fixture tests；**`import-buybacks` 與排程仍須人類另案確認；16:58 已有既有快照的 `export-json`／data Worker deploy，但未更新 E1 官方來源資料**，KB2 維持不實作。
 5. **已完成 E2 shadow contract**：獨立 buy／sell point-in-time JSON 統計與覆蓋率報告；buy→sell 配對規則／coverage 未定義。未跑正式 DB、未接 UI、未定門檻。人類確認後才可進 schema／歷史回算；地緣既有 tag 可與 E2 分開驗證，不等待「全市場」才做資料品質報告。
 6. 每一個實作包完成後更新 `handoff.md`、`docs/STATUS.md` 與本文件／對應規格，跑相關 tests、lint、typecheck，再依專案規則 commit／push；正式 DB／VPS／migration 另取人類明確確認。
 
 ## 10. 交接驗收清單
 
-- [x] A2 程式契約／對照表與測試完成（2026-08-27）；正式 DB 回算、排行 V2／schema 與任何新門檻仍須另取人類確認。
-- [x] B 官方地址與股務代理欄位、來源、空值語意與 additive contract（2026-08-27；typecheck／正式 build 通過；正式 VPS import/export 未執行）。
-- [x] C 題材分類與近期熱度分層，過時題材可見且不進分數（2026-08-27；targeted／完整 pytest、typecheck、正式 build 通過；正式 VPS import/export 未執行）。
-- [x] D 集團 mapping 有版本、來源與 `/group?id=` static export contract（2026-08-27；typecheck／正式 build 通過；正式 VPS export 未執行）。
-- [x] E1 只輸出可核驗 KB1；KB2 未出現在 runtime code、schema、export、UI（2026-08-27；正式 VPS 未執行）。
+- [x] A2 程式契約／對照表與測試完成（2026-08-27；lifecycle v2：S2／S5 Shadow）；正式 DB 回算、排行 V2／schema 與任何新門檻仍須另取人類確認。
+- [x] B 官方地址與股務代理欄位、來源、空值語意與 additive contract（2026-08-27；typecheck／正式 build 通過；16:58 正式 VPS `import-geo` 1,985、股務代理 1,985／1,985、3376 驗證及 `export-json` 2,410 檔已完成；themes／buybacks 未執行）。
+- [x] C 題材分類與近期熱度分層，過時題材可見且不進分數（2026-08-27；targeted／完整 pytest、typecheck、正式 build 通過；`import-themes` 未執行，16:58 `export-json` 已發布既有快照但未更新題材官方來源資料）。
+- [x] D 集團 mapping 有版本、來源與 `/group?id=` static export contract（2026-08-27；typecheck／正式 build 通過；16:58 正式 VPS `export-json` 2,410 檔已完成）。
+- [x] E1 只輸出可核驗 KB1；KB2 未出現在 runtime code、schema、export、UI（2026-08-27；`import-buybacks` 未執行，16:58 `export-json` 已發布既有快照但未更新庫藏股官方來源資料）。
 - [x] E2 唯讀 shadow CLI／JSON contract 通過 point-in-time／future-leak／成熟樣本檢查，且文件明確沒有交易獲利歸因（2026-08-27；獨立 buy／sell，尚無 buy→sell 配對；未跑正式 DB／VPS、未接 UI、未定門檻）。
 - [ ] 所有正式回算、schema migration、VPS 寫入與部署均有獨立人工確認紀錄。

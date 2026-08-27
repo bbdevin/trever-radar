@@ -28,17 +28,17 @@ from ..compute.display_window import display_window_bounds, window_label
 # A2 strategy lifecycle export contract.  This is source-controlled metadata,
 # not a database migration and does not alter any score, selector data, or
 # historical reason code.  A new lifecycle decision must increment `version`.
-_STRATEGY_LIFECYCLE_VERSION = 1
-_STRATEGY_LIFECYCLE_EFFECTIVE_DATE = "2026-08-19"
+_STRATEGY_LIFECYCLE_VERSION = 2
+_STRATEGY_LIFECYCLE_EFFECTIVE_DATE = "2026-08-27"
 _STRATEGY_LIFECYCLE_DECISION_REF = "docs/20 §4.2; docs/37 §2"
 _STRATEGY_LIFECYCLE: dict[str, dict[str, str | int]] = {
     "S1_REBOUND": {"status": "shadow", "rationale": "仍累積成熟樣本，尚未宣稱有效。"},
-    "S2_BREAKOUT20": {"status": "retired", "rationale": "Phase 3 檢視後退出主要策略選擇器；保留歷史訊號與相容榜單。"},
+    "S2_BREAKOUT20": {"status": "shadow", "rationale": "依使用者 2026-08-27 恢復觀察決策，改為 Shadow；持續累積樣本，不宣稱有效。"},
     "S3_MA_CONVERGE_BREAKOUT": {"status": "shadow", "rationale": "仍累積成熟樣本，尚未宣稱有效。"},
     "S4_VOLATILITY_CONTRACTION": {"status": "shadow", "rationale": "S4 legacy 凍結，僅保留歷史比較；V2 phase 另行累積證據。"},
     "S4_COMPRESSION_SETUP_V2": {"status": "shadow", "rationale": "V2 壓縮蓄勢剛導入，尚未完成正式回算與成熟樣本檢視。"},
     "S4_COMPRESSION_BREAKOUT_V2": {"status": "shadow", "rationale": "V2 壓縮突破剛導入，尚未完成正式回算與成熟樣本檢視。"},
-    "S5_PULLBACK_SUPPORT": {"status": "retired", "rationale": "Phase 3 檢視後退出主要策略選擇器；保留歷史訊號與相容榜單。"},
+    "S5_PULLBACK_SUPPORT": {"status": "shadow", "rationale": "依使用者 2026-08-27 恢復觀察決策，改為 Shadow；持續累積樣本，不宣稱有效。"},
     "S6_HIGH_BASE_BREAKOUT": {"status": "shadow", "rationale": "仍累積成熟樣本，尚未宣稱有效。"},
     "S7_MACD_ZERO_CROSS": {"status": "shadow", "rationale": "仍累積成熟樣本，尚未宣稱有效。"},
     "S8_GAP_BREAKOUT": {"status": "shadow", "rationale": "仍累積成熟樣本，尚未宣稱有效。"},

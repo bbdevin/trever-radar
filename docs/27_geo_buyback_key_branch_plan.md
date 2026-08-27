@@ -54,7 +54,7 @@
 | G0 PoC | 三個資料端點實測(欄位/頻率/授權)、分點名稱↔官方分公司**匹配率報告**、雙北噪音統計 | 無,**隨時可做** | 半天 |
 | G1 資料層 | ✅ **完成 2026-08-20**:`company_profiles` + `broker_branch_geo` + `import-geo`(週一 14:10);庫藏股無 OpenAPI,**buybacks 延後**不阻塞 GEO | G0 | 1 天 |
 | G2 地緣+關鍵+題材演算法 | ✅ **完成 2026-08-20**:`pipeline/radar/pocket.py` 純函式 + export `pocket_tags`/`lists.pocket`(不進 `daily_scores.final`);G4 才做首頁 tab | G1;**地緣涵蓋度依賴每日分點池廣度**(500 檔池偏熱門股;docs/26 WP-M2 全市場池後中小型股地緣才完整——先做可用,標注涵蓋限制) | 1.5 天 |
-| G3a 庫藏股來源與 KB1 | ✅ 2026-08-27：官方 MOPS `ajax_t35sc09` redirect→ephemeral `mopsov` HTML；加性 schema／atomic import／point-in-time export／KB1／個股事實區與 fixture tests。**未正式 VPS/DB import、export 或排程** | 只接受 1–366 日 bounded date range；任一市場／欄位／出表日失敗零資料寫入 | code 完成 |
+| G3a 庫藏股來源與 KB1 | ✅ 2026-08-27：官方 MOPS `ajax_t35sc09` redirect→ephemeral `mopsov` HTML；加性 schema／atomic import／point-in-time export／KB1／個股事實區與 fixture tests。**`import-buybacks` 與排程未執行；16:58 `export-json`／data Worker deploy 已發布既有快照，未更新庫藏股官方來源資料** | 只接受 1–366 日 bounded date range；任一市場／欄位／出表日失敗零資料寫入 | code 完成 |
 | G3b KB2 | `KB2_BUYBACK_BRANCH`（疑似執行分點） | **不實作**；不得新增 code/schema/export/UI | — |
 | G3c 關鍵分點 E2 | `branch × stock` point-in-time **獨立** buy／sell episode 分位與 buy 後價格描述；不做交易獲利歸因，buy→sell 配對另案 | ✅ **唯讀 shadow CLI／JSON contract 完成（2026-08-27）**；buy→sell 配對規則／coverage 未定；未跑正式 DB、未接 UI、未定門檻；schema／歷史回算仍待人工確認，見 `docs/37` §7 | shadow contract 完成 |
 | G4 口袋名單 UI | ✅ **完成 2026-08-20**:首頁「口袋」tab + StockCard/個股頁 badges + `/branch` 關鍵分點徽章;零新色票。GEO 資料仍等回補結束後 `import-geo` | G2(G3 可後補) | 1.5 天 |
@@ -111,7 +111,7 @@
 - 單位固定：股數=股、金額=元、價格=元/股、百分比=百分點。計畫 ID 以 market、公司、董事會日、期間、預定股數、價格與目的做 deterministic SHA-256，可保留同股多次計畫。
 - `python -m radar import-buybacks --as-of YYYY-MM-DD --days 365` 是**人工手動 CLI**，`--days` 限 1–366（實際相差最多 365 日）；上市、上櫃都成功且有效後才在同一 transaction upsert。任一市場失敗只寫 `import_logs` error，既有 `buybacks` 零變動。
 - 個股 JSON 僅輸出 export 資料日當下 active plan，且 `report_date` 與 `source_updated_at` 都必須不晚於資料日；舊 DB／舊 JSON 缺 `buyback` 安全 fallback。個股頁只呈現狀態、期間、預定／已執行股數、價區、目的、MOPS／出表日，不稱「執行分點」。
-- **未執行正式 VPS import/export、未排程、未改 workflow/secrets。**
+- **`import-buybacks` 未執行、未排程、未改 workflow/secrets；16:58 `export-json`／data Worker deploy 已發布既有快照，未更新庫藏股官方來源資料。**
 
 ## VPS 待辦:import-geo 等回補結束(2026-08-20 使用者確認)
 

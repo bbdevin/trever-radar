@@ -315,6 +315,13 @@ class S4PhaseJsonExportTests(unittest.TestCase):
             self.assertTrue(meta["rationale"])
             self.assertTrue(meta["decision_ref"])
             self.assertGreaterEqual(meta["version"], 1)
+        # Lifecycle v2 restores S2/S5 to the principal selector as Shadow.
+        # This is metadata-only: no strategy formula or score contract changes.
+        self.assertEqual(radar["strategy_meta"]["S2_BREAKOUT20"]["status"], "shadow")
+        self.assertEqual(radar["strategy_meta"]["S5_PULLBACK_SUPPORT"]["status"], "shadow")
+        self.assertEqual(radar["strategy_meta"]["S2_BREAKOUT20"]["effective_date"], "2026-08-27")
+        self.assertEqual(radar["strategy_meta"]["S5_PULLBACK_SUPPORT"]["version"], 2)
+        self.assertFalse(any(meta["status"] == "retired" for meta in radar["strategy_meta"].values()))
         signals = {s["id"]: s.get("strategy_signals") for s in radar["stocks"]}
         self.assertEqual(signals["2000"][0]["phase"], "breakout")
         self.assertEqual(signals["1002"][0]["phase"], "setup")
