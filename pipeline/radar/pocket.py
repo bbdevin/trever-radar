@@ -272,6 +272,41 @@ def pocket_qualifies(families: set[str]) -> bool:
     return len(families) >= 2
 
 
+def buyback_status(buyback: dict, as_of: str) -> str:
+    """Return the fact status under the supplied point-in-time date.
+
+    Completion wins only when MOPS reports Y *and* its period is parseable;
+    all other incomplete inputs stay unknown rather than being guessed.
+    """
+    start, end = buyback.get("start_date"), buyback.get("end_date")
+    flag = (buyback.get("completed_flag") or "").strip().upper()
+    if not start or not end or start > end:
+        return "unknown"
+    if flag == "Y":
+        return "completed"
+    if flag == "N":
+        if start <= as_of <= end:
+            return "in_progress"
+        if as_of > end:
+            return "expired"
+    return "unknown"
+
+
+def buyback_window_trigger(buybacks: list[dict], as_of: str) -> dict | None:
+    """KB1 is only the inclusive, verifiable MOPS buyback window fact."""
+    active = [row for row in buybacks if buyback_status(row, as_of) == "in_progress"]
+    if not active:
+        return None
+    active.sort(key=lambda row: (row.get("end_date") or "", row.get("start_date") or ""), reverse=True)
+    first = active[0]
+    suffix = f"（另有 {len(active) - 1} 項進行中計畫）" if len(active) > 1 else ""
+    return {
+        "code": "KB1_BUYBACK_WINDOW",
+        "family": "BUYBACK",
+        "text": f"庫藏股買回期間：{first['start_date']} 至 {first['end_date']}{suffix}",
+    }
+
+
 @dataclass
 class PocketContext:
     companies: dict[str, dict] = field(default_factory=dict)
@@ -279,12 +314,15 @@ class PocketContext:
     key_keys: set[str] = field(default_factory=set)
     trades: dict[str, list] = field(default_factory=dict)
     volumes: dict[str, dict] = field(default_factory=dict)
+    buybacks: dict[str, list] = field(default_factory=dict)
 
 
 def load_pocket_context(conn, window_dates: list[str], stock_ids: list[str]) -> PocketContext:
     ctx = PocketContext()
     if not window_dates or not stock_ids:
         return ctx
+    as_of = window_dates[-1]
+    wanted_ids = set(stock_ids)
     ctx.companies = {
         r[0]: {"city": r[1], "district": r[2]}
         for r in conn.execute(text(
@@ -311,6 +349,17 @@ def load_pocket_context(conn, window_dates: list[str], stock_ids: list[str]) -> 
         "AND COALESCE(is_daytrade, 0) = 0"
     ), {"mn": RANK_SCORE_MIN})]
     ctx.key_keys = {normalize_branch_name(n) for n in tracked + ranked if n}
+
+    # Point-in-time guard: plans published after the quote date cannot create a
+    # historical KB1.  Null source dates are not treated as fresh.
+    for row in conn.execute(text("""
+        SELECT stock_id, start_date, end_date, completed_flag, report_date, source_updated_at
+        FROM buybacks
+        WHERE report_date IS NOT NULL AND report_date <= :as_of
+          AND source_updated_at IS NOT NULL AND source_updated_at <= :as_of
+    """), {"as_of": as_of}).mappings():
+        if row["stock_id"] in wanted_ids:
+            ctx.buybacks.setdefault(row["stock_id"], []).append(dict(row))
 
     lo, hi = window_dates[0], window_dates[-1]
     want = set(stock_ids)
@@ -388,6 +437,9 @@ def tag_stock(
     theme = hot_theme_trigger(stock.get("_active_themes", stock.get("themes") or []), hot_names)
     if theme:
         tags.append(theme)
+    buyback = buyback_window_trigger(ctx.buybacks.get(sid, []), window20[-1]) if window20 else None
+    if buyback:
+        tags.append(buyback)
 
     families = {t["family"] for t in tags}
     if stock.get("state") in ("armed", "triggered"):

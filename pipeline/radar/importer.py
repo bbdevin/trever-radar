@@ -1,6 +1,6 @@
 """Daily import orchestration: fetch → DTO → upsert, with import_logs bookkeeping."""
 import time
-from datetime import datetime
+from datetime import date as date_cls, datetime
 from zoneinfo import ZoneInfo
 
 from . import config, schema
@@ -726,6 +726,69 @@ def import_themes(limit: int | None = None) -> dict:
     result.update({"themes": done, "links": links, "failed": failed, "empty": empty})
     print(f"themes: {done} groups staged, {links} memberships; {reason}; prior data kept", flush=True)
     return result
+
+
+BUYBACK_MAX_DAYS = 365
+
+
+def _validate_buyback_range(date_from: str, as_of: str) -> tuple[str, str]:
+    """Return ISO dates after rejecting unbounded, reversed, or oversized spans."""
+    try:
+        start = date_cls.fromisoformat(date_from)
+        end = date_cls.fromisoformat(as_of)
+    except ValueError as exc:
+        raise ValueError("buyback dates must be ISO YYYY-MM-DD") from exc
+    if start > end:
+        raise ValueError("buyback date_from must not be after as_of")
+    if (end - start).days > BUYBACK_MAX_DAYS:
+        raise ValueError(f"buyback range must not exceed {BUYBACK_MAX_DAYS} days")
+    return start.isoformat(), end.isoformat()
+
+
+def _buyback_row_dict(row, imported_at: str) -> dict:
+    return {
+        "plan_id": row.plan_id,
+        "stock_id": row.stock_id, "name": row.name, "market": row.market,
+        "board_date": row.board_date, "purpose": row.purpose,
+        "total_amount_limit": row.total_amount_limit, "planned_shares": row.planned_shares,
+        "price_min": row.price_min, "price_max": row.price_max,
+        "start_date": row.start_date, "end_date": row.end_date,
+        "completed_flag": row.completed_flag, "executed_shares": row.executed_shares,
+        "transferred_shares": row.transferred_shares, "execution_pct": row.execution_pct,
+        "executed_amount": row.executed_amount, "avg_price": row.avg_price,
+        "share_ratio_pct": row.share_ratio_pct, "incomplete_reason": row.incomplete_reason,
+        "report_date": row.report_date, "source_updated_at": row.source_updated_at,
+        "source": "mops_t35sc09", "imported_at": imported_at,
+    }
+
+
+def import_buybacks(date_from: str, as_of: str) -> dict:
+    """Atomically import official MOPS plans after *both* markets validate.
+
+    The MOPS page is an ephemeral HTML result.  A request, redirect, parser, or
+    table-layout failure in either market leaves ``buybacks`` untouched; only an
+    ``import_logs`` error record is written for auditability.
+    """
+    from .providers import mops
+
+    date_from, as_of = _validate_buyback_range(date_from, as_of)
+    init_db()
+    try:
+        staged_twse = mops.fetch_buybacks(date_from, as_of, "twse")
+        staged_tpex = mops.fetch_buybacks(date_from, as_of, "tpex")
+        if not staged_twse or not staged_tpex:
+            raise RuntimeError("MOPS returned no valid buyback rows for one market")
+    except Exception as exc:  # fail closed: fetching occurs before the data transaction
+        with get_engine().begin() as conn:
+            _log(conn, "mops", "buybacks", as_of.replace("-", ""), 0, "error", error=str(exc)[:500])
+        raise RuntimeError(f"buyback import failed without writes: {exc}") from exc
+
+    now = datetime.now(ZoneInfo(config.TZ)).isoformat(timespec="seconds")
+    rows = [_buyback_row_dict(row, now) for row in staged_twse + staged_tpex]
+    with get_engine().begin() as conn:
+        written = upsert(conn, schema.buybacks, rows)
+        _log(conn, "mops", "buybacks", as_of.replace("-", ""), written, "ok")
+    return {"date_from": date_from, "as_of": as_of, "rows": written}
 
 
 def import_daily(date: str, datasets: list[str] | None = None) -> list[dict]:

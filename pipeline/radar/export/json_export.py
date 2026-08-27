@@ -15,7 +15,7 @@ from sqlalchemy import bindparam, text
 from .. import config
 from ..db import get_engine, init_db
 from .spark_day import attach_spark_day
-from ..pocket import apply_pocket
+from ..pocket import apply_pocket, buyback_status
 from ..theme_lifecycle import ACTIVE, displayed_status, eligible_for_hot_theme
 from ..company_groups import is_effective, load_company_groups, validate_company_groups
 from ..compute.strategy_performance import (
@@ -48,6 +48,45 @@ _STRATEGY_LIFECYCLE: dict[str, dict[str, str | int]] = {
     "S12_BRANCH_ACCUMULATION": {"status": "shadow", "rationale": "仍累積成熟樣本，尚未宣稱有效。"},
     "S13_SHORT_SQUEEZE": {"status": "shadow", "rationale": "仍累積成熟樣本，尚未宣稱有效。"},
 }
+
+
+def _active_buybacks_by_stock(conn, as_of: str) -> dict[str, dict]:
+    """Return one current MOPS plan per issuer without allowing future reports."""
+    candidates: dict[str, list[dict]] = {}
+    for row in conn.execute(text("""
+        SELECT plan_id, stock_id, name, market, board_date, purpose,
+               total_amount_limit, planned_shares, price_min, price_max,
+               start_date, end_date, completed_flag, executed_shares,
+               transferred_shares, execution_pct, executed_amount, avg_price,
+               share_ratio_pct, incomplete_reason, report_date, source_updated_at, source
+        FROM buybacks
+        WHERE report_date IS NOT NULL AND report_date <= :as_of
+          AND source_updated_at IS NOT NULL AND source_updated_at <= :as_of
+    """), {"as_of": as_of}).mappings():
+        value = dict(row)
+        if buyback_status(value, as_of) == "in_progress":
+            candidates.setdefault(value["stock_id"], []).append(value)
+    active: dict[str, dict] = {}
+    for stock_id, plans in candidates.items():
+        # Newest official report first; the stable id removes database row-order ambiguity.
+        plans.sort(key=lambda plan: (
+            plan.get("source_updated_at") or "", plan.get("report_date") or "", plan["plan_id"]
+        ), reverse=True)
+        plan = plans[0]
+        active[stock_id] = {
+            "plan_id": plan["plan_id"], "stock_id": plan["stock_id"], "name": plan["name"],
+            "market": plan["market"], "board_date": plan["board_date"], "purpose": plan["purpose"],
+            "total_amount_limit": plan["total_amount_limit"], "planned_shares": plan["planned_shares"],
+            "price_min": plan["price_min"], "price_max": plan["price_max"],
+            "start_date": plan["start_date"], "end_date": plan["end_date"],
+            "completed_flag": plan["completed_flag"], "status": "in_progress",
+            "executed_shares": plan["executed_shares"], "transferred_shares": plan["transferred_shares"],
+            "execution_pct": plan["execution_pct"], "executed_amount": plan["executed_amount"],
+            "avg_price": plan["avg_price"], "share_ratio_pct": plan["share_ratio_pct"],
+            "incomplete_reason": plan["incomplete_reason"], "report_date": plan["report_date"],
+            "source_updated_at": plan["source_updated_at"], "source": plan["source"],
+        }
+    return active
 
 
 def _company_group_payloads(conn, as_of: str) -> tuple[list[dict], dict[str, list[dict]]]:
@@ -1264,6 +1303,7 @@ def export_json(out_dir: Path | None = None) -> dict:
             FROM company_profiles
         """)).mappings()
         company_profiles = {row["stock_id"]: dict(row) for row in profile_rows}
+        active_buybacks = _active_buybacks_by_stock(conn, d)
         # 榜單優先(全歷史),其餘依代號排序,穩定輸出
         export_ids = list(dict.fromkeys(
             list(union.keys()) + sorted(stock_meta.keys())
@@ -1354,6 +1394,7 @@ def export_json(out_dir: Path | None = None) -> dict:
                 "id": sid, "name": s["name"], "market": s["market"],
                 "industry": s.get("industry"),
                 "company_profile": company_profiles.get(sid),
+                "buyback": active_buybacks.get(sid),
                 "company_groups": groups_by_stock.get(sid, []),
                 "company_themes": company_themes_by_stock.get(sid, []),
                 "recent_theme_heat": recent_theme_heat_by_stock.get(sid, []),

@@ -264,7 +264,7 @@ branch_rankings = Table(
     Column("source", Text)
 )
 
-# docs/27 G1:公司與券商分點地址(口袋名單前置)。庫藏股無穩定 OpenAPI,本包不建 buybacks。
+# docs/27 G1:公司與券商分點地址(口袋名單前置)。
 company_profiles = Table(
     "company_profiles",
     metadata,
@@ -281,6 +281,38 @@ company_profiles = Table(
     Column("source", Text),
     Column("source_updated_at", Text),
     Column("updated_at", Text, nullable=False),
+)
+
+# docs/37 E1: MOPS t35sc09 官方庫藏股事實。金額=元、股數=股、價格=元/股、百分比=百分點。
+# plan_id is deterministic so one issuer can retain multiple historical plans.
+buybacks = Table(
+    "buybacks",
+    metadata,
+    Column("plan_id", Text, primary_key=True),
+    Column("stock_id", Text, nullable=False),
+    Column("name", Text, nullable=False),
+    Column("market", Text, nullable=False),       # twse / tpex
+    Column("board_date", Text),
+    Column("purpose", Text),
+    Column("total_amount_limit", Integer),
+    Column("planned_shares", Integer),
+    Column("price_min", Float),
+    Column("price_max", Float),
+    Column("start_date", Text),
+    Column("end_date", Text),
+    Column("completed_flag", Text),                # preserve MOPS Y/N/raw value
+    Column("executed_shares", Integer),
+    Column("transferred_shares", Integer),
+    Column("execution_pct", Float),
+    Column("executed_amount", Integer),
+    Column("avg_price", Float),
+    Column("share_ratio_pct", Float),
+    Column("incomplete_reason", Text),
+    Column("report_date", Text),
+    Column("source_updated_at", Text),
+    Column("source", Text, nullable=False),
+    Column("imported_at", Text, nullable=False),
+    Index("ix_buybacks_stock_report", "stock_id", "report_date"),
 )
 
 broker_branch_geo = Table(

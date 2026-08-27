@@ -11,7 +11,7 @@ import {
   useReactTable,
   type SortingState,
 } from "@tanstack/react-table";
-import { Building2, ChevronDown, ChevronUp, Flame, MapPin, Phone, Tags } from "lucide-react";
+import { Building2, ChevronDown, ChevronUp, Flame, MapPin, Phone, ShieldCheck, Tags } from "lucide-react";
 import { IconArrowLeft } from "@/components/Icons";
 import KChart from "@/components/KChart";
 import BranchFlowSection from "@/components/BranchFlowSection";
@@ -26,7 +26,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import WatchlistButton from "@/components/WatchlistButton";
 import { dataFetch } from "@/lib/dataFetch";
 import { OFFLINE_DATA_COPY, isBrowserOffline } from "@/lib/pwa";
-import type { CompanyProfile, CompanyTheme, RecentThemeHeat, StockJson } from "@/lib/types";
+import type { Buyback, CompanyProfile, CompanyTheme, RecentThemeHeat, StockJson } from "@/lib/types";
 import { MARKET_LABEL, chgClass, fmtE8, fmtPct, fmtX } from "@/lib/format";
 import { signInWithGoogle, useSession } from "@/lib/useSession";
 import { cn, pillTabClass } from "@/lib/utils";
@@ -143,6 +143,7 @@ function StockView() {
               {data.id} · {MARKET_LABEL[data.market] ?? data.market}{data.industry ? ` · ${data.industry}` : ""}
             </div>
             <CompanyInfo profile={data.company_profile} />
+            <BuybackInfo buyback={data.buyback} />
             <ThemeInfo
               companyThemes={data.company_themes}
               recentThemeHeat={data.recent_theme_heat}
@@ -314,6 +315,46 @@ function CompanyInfo({ profile }: { profile?: CompanyProfile | null }) {
         </div>
       )}
     </div>
+  );
+}
+
+function buybackStatusLabel(status: Buyback["status"]) {
+  return status === "in_progress" ? "進行中" : "狀態未提供";
+}
+
+function buybackValue(value: number | null | undefined) {
+  return value == null ? "資料未提供" : value.toLocaleString("zh-TW");
+}
+
+function BuybackInfo({ buyback }: { buyback?: Buyback | null }) {
+  // Older snapshots have no property; the absence is not evidence that no plan exists.
+  if (!buyback) return null;
+  const period = buyback.start_date && buyback.end_date
+    ? `${buyback.start_date} 至 ${buyback.end_date}`
+    : "期間資料未提供";
+  const priceRange = buyback.price_min != null || buyback.price_max != null
+    ? `${buyback.price_min ?? "資料未提供"}～${buyback.price_max ?? "資料未提供"} 元/股`
+    : "資料未提供";
+
+  return (
+    <section className="mt-2 min-w-0 rounded-[var(--r-sm)] border border-[color:var(--warn)]/35 bg-[color:var(--warn)]/8 px-2.5 py-2 text-[11px] text-[color:var(--ink-2)]" aria-label="庫藏股買回期間">
+      <div className="flex min-w-0 items-start gap-1.5">
+        <ShieldCheck size={14} className="mt-px shrink-0 text-[color:var(--warn)]" aria-hidden="true" />
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
+            <span className="font-semibold text-foreground">庫藏股買回期間</span>
+            <span className="font-medium text-[color:var(--warn)]">{buybackStatusLabel(buyback.status)}（MOPS {buyback.completed_flag ?? "狀態未提供"}）</span>
+          </div>
+          <div className="mt-1 grid gap-0.5 leading-5">
+            <span>期間：{period}</span>
+            <span>預定／已執行：{buybackValue(buyback.planned_shares)}／{buybackValue(buyback.executed_shares)} 股</span>
+            <span>價格區間：{priceRange}</span>
+            <span className="break-words">目的：{buyback.purpose ?? "資料未提供"}</span>
+            <span>來源：官方 MOPS t35sc09 · 出表日 {buyback.report_date ?? "資料未提供"}</span>
+          </div>
+        </div>
+      </div>
+    </section>
   );
 }
 

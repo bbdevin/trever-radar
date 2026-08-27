@@ -1,6 +1,6 @@
 import argparse
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import text
@@ -88,6 +88,15 @@ def cmd_compute_indicators(args):
 def cmd_import_themes(args):
     from .importer import import_themes
     import_themes(args.limit)
+
+
+def cmd_import_buybacks(args):
+    from .importer import import_buybacks
+
+    as_of = args.as_of
+    date_from = (datetime.fromisoformat(as_of).date() - timedelta(days=args.days - 1)).isoformat()
+    info = import_buybacks(date_from, as_of)
+    print(f"buybacks: {info['rows']} plans ({info['date_from']} to {info['as_of']})")
 
 
 def cmd_seed_branches(_args):
@@ -337,6 +346,14 @@ def main(argv=None):
     th = sub.add_parser("import-themes", help="concept-stock groups (fubon public page)")
     th.add_argument("--limit", type=int, default=None, help="only first N groups (testing)")
     th.set_defaults(fn=cmd_import_themes)
+
+    buybacks = sub.add_parser(
+        "import-buybacks",
+        help="official MOPS t35sc09 buyback plans (manual only; no scheduler)",
+    )
+    buybacks.add_argument("--as-of", default=datetime.now(ZoneInfo(config.TZ)).date().isoformat(), help="YYYY-MM-DD")
+    buybacks.add_argument("--days", type=int, default=365, help="inclusive lookback, 1..366")
+    buybacks.set_defaults(fn=cmd_import_buybacks)
 
     desc = sub.add_parser("import-descriptions", help="Pull company profiles from Fubon")
     desc.add_argument("--limit", type=int, default=None)

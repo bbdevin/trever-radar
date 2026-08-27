@@ -8,7 +8,6 @@ const META: Record<string, { label: string; icon: typeof Star }> = {
   K1_KEY_BUY: { label: "關鍵分點", icon: Star },
   H1_HOT_THEME: { label: "題材熱門", icon: Flame },
   KB1_BUYBACK_WINDOW: { label: "庫藏股", icon: Shield },
-  KB2_BUYBACK_BRANCH: { label: "疑似庫藏分點", icon: Shield },
 };
 
 /** docs/27 G4:口袋 reason badges。卡片最多 4 個 +N;個股頁傳 compact=false 顯示人話全文。 */

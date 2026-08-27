@@ -11,7 +11,7 @@
 |---|---|---|---|
 | 公司地址(縣市/行政區) | TWSE OpenAPI `t187ap03_L` 上市基本資料 + TPEx 對應(上櫃) | 週 | `company_profiles(stock_id, address, city, district)` |
 | 券商分公司地址 | TWSE/證期局公開「證券商總、分公司基本資料」(含代號、名稱、地址) | 月 | `broker_branch_geo(broker_id, branch_name, city, district, address)` |
-| 庫藏股買回公告/執行 | 公開資訊觀測站庫藏股資料(公告、買回區間、預定/已執行張數) | 日 | `buybacks(stock_id, announce_date, start, end, planned_lots, executed_lots, status)` |
+| 庫藏股買回公告/執行 | MOPS `t35sc09` 官方 redirect→舊站 HTML（出表日） | 手動、未排程 | `buybacks(plan_id, stock_id, board_date, start_date, end_date, planned_shares, executed_shares, …)` |
 
 **關鍵匹配問題(G0 驗收重點)**:我方 `branch_trades` 有 `broker_id`(BHID)與 `branch_name`(如「凱基-三多」)——與官方分公司資料的代號/名稱做映射,回報**匹配率**;匹配不到的分點列清單人工補對照。
 
@@ -25,7 +25,7 @@
 - **強度**:weak/strong 依(家數 × 佔比)分兩級;badge 帶「N 家地緣分點/佔量 x%」人話理由。
 
 ### KB_BUYBACK 庫藏股(只保留可核驗事實)
-- `KB1_BUYBACK_WINDOW`(**事實**):股票處於公告買回區間內——直接可靠。
+- `KB1_BUYBACK_WINDOW`(**事實**):只在 MOPS `completed_flag=N` 且 `start_date ≤ as_of ≤ end_date`（含邊界）標示「庫藏股買回期間」。`Y`＋合法期間=completed、逾期 N=expired，其餘=unknown；不以公告日或分點資料推測。
 - `KB2_BUYBACK_BRANCH`：**不實作／從 backlog 移除**。公開分點資料不足以證實「某分點就是公司庫藏股執行分點」，不得以淨買超反推成 UI 事實或疑似執行分點；最新 E1/E2 分期見 `docs/37`。
 
 ### K1_KEY_BUY 關鍵分點同買
@@ -45,7 +45,7 @@
 - 首頁狀態池群新增「**口袋名單**」tab(與 Armed/Triggered 並列):卡片 = 既有 StockCard + **reason badges 列**(地緣buy 藍綠系?——用既有 token 決定;關鍵分點=星;庫藏股=盾;題材=火;最多顯示 4 個 +N);排序 pocket_score。
 - 個股頁「訊號摘要」區(F3 已建)併入這些 tag 的人話理由。
 - /branch 分點追蹤視角:分點列若屬「關鍵分點」或「地緣分點(對某股)」補小徽章。
-- 誠實限制常標:分點≠單一人;地緣為統計推測;KB2 為疑似。
+- 誠實限制常標:分點≠單一人;地緣為統計推測;**KB2 已作廢且不顯示**。
 
 ## 4. 工作包
 
@@ -54,7 +54,7 @@
 | G0 PoC | 三個資料端點實測(欄位/頻率/授權)、分點名稱↔官方分公司**匹配率報告**、雙北噪音統計 | 無,**隨時可做** | 半天 |
 | G1 資料層 | ✅ **完成 2026-08-20**:`company_profiles` + `broker_branch_geo` + `import-geo`(週一 14:10);庫藏股無 OpenAPI,**buybacks 延後**不阻塞 GEO | G0 | 1 天 |
 | G2 地緣+關鍵+題材演算法 | ✅ **完成 2026-08-20**:`pipeline/radar/pocket.py` 純函式 + export `pocket_tags`/`lists.pocket`(不進 `daily_scores.final`);G4 才做首頁 tab | G1;**地緣涵蓋度依賴每日分點池廣度**(500 檔池偏熱門股;docs/26 WP-M2 全市場池後中小型股地緣才完整——先做可用,標注涵蓋限制) | 1.5 天 |
-| G3a 庫藏股來源與 KB1 | 官方來源 PoC、欄位／資料日／匹配率報告；只做 `KB1_BUYBACK_WINDOW` 事實契約與測試 | G0/G1；**待人類確認來源穩定性** | 規劃中 |
+| G3a 庫藏股來源與 KB1 | ✅ 2026-08-27：官方 MOPS `ajax_t35sc09` redirect→ephemeral `mopsov` HTML；加性 schema／atomic import／point-in-time export／KB1／個股事實區與 fixture tests。**未正式 VPS/DB import、export 或排程** | 只接受 1–366 日 bounded date range；任一市場／欄位／出表日失敗零資料寫入 | code 完成 |
 | G3b KB2 | `KB2_BUYBACK_BRANCH`（疑似執行分點） | **不實作**；不得新增 code/schema/export/UI | — |
 | G3c 關鍵分點 E2 | `branch × stock` point-in-time **獨立** buy／sell episode 分位與 buy 後價格描述；不做交易獲利歸因，buy→sell 配對另案 | ✅ **唯讀 shadow CLI／JSON contract 完成（2026-08-27）**；buy→sell 配對規則／coverage 未定；未跑正式 DB、未接 UI、未定門檻；schema／歷史回算仍待人工確認，見 `docs/37` §7 | shadow contract 完成 |
 | G4 口袋名單 UI | ✅ **完成 2026-08-20**:首頁「口袋」tab + StockCard/個股頁 badges + `/branch` 關鍵分點徽章;零新色票。GEO 資料仍等回補結束後 `import-geo` | G2(G3 可後補) | 1.5 天 |
@@ -103,6 +103,15 @@
 - badges 走既有 `ReasonPill` token:`G1`/`G2`/`K1`=籌碼青+圖釘/星,`H1`=權證琥珀+火。卡片最多 4 個 +N;個股頁 F3 顯示人話全文。
 - `/branch` 排行卡:`rank_score ≥ 70` 或 `source=manual` 標「關鍵」。**未做**「地緣分點對某股」徽章(排行 JSON 沒有個股對照,避免另開 export)。
 - 空榜教育文案用 `pocket_note`;誠實限制:統計推測、分點≠單一人、目前僅每日評分池。
+
+## G3a E1 實作備註(2026-08-27)
+
+- 官方請求契約：POST `https://mops.twse.com.tw/mops/api/redirectToOld`，`apiName=ajax_t35sc09`，參數 `TYPEK=sii|otc`、ROC `d1/d2`、`RD=1`、`encodeURIComponent=1`、`step=1`、`firstin=1`、`off=1`；redirect 與短效 HTML GET 都帶 browser User-Agent、`Referer=https://mops.twse.com.tw/mops/web/t35sc09`。只允許官方 HTTPS `mops.twse.com.tw`／`mopsov.twse.com.tw` redirect URL。406、缺 URL、網路／JSON、非官方 URL、無有效表、欄數漂移或無法取出 `出表日`（也相容 `出表日期`）均 fail closed。
+- HTML 只用 Python stdlib `html.parser`；多個 `hasBorder` table／重複表頭會去重，但任一可識別資料列欄數漂移即拒絕。正式 20 欄固定為序號、代號、名稱、董事會日、目的、金額上限、預定股數、價格下／上限、起／訖日、完成 flag、KB1 link（忽略）、已執行／取消或轉讓股數、執行率、執行金額、均價、已發行股數占比、未完成原因。民國日期轉 ISO；空白／nbsp／`--` 不補 0。MOPS 沒有 `announce_date`，程式與 JSON 不捏造該欄位。
+- 單位固定：股數=股、金額=元、價格=元/股、百分比=百分點。計畫 ID 以 market、公司、董事會日、期間、預定股數、價格與目的做 deterministic SHA-256，可保留同股多次計畫。
+- `python -m radar import-buybacks --as-of YYYY-MM-DD --days 365` 是**人工手動 CLI**，`--days` 限 1–366（實際相差最多 365 日）；上市、上櫃都成功且有效後才在同一 transaction upsert。任一市場失敗只寫 `import_logs` error，既有 `buybacks` 零變動。
+- 個股 JSON 僅輸出 export 資料日當下 active plan，且 `report_date` 與 `source_updated_at` 都必須不晚於資料日；舊 DB／舊 JSON 缺 `buyback` 安全 fallback。個股頁只呈現狀態、期間、預定／已執行股數、價區、目的、MOPS／出表日，不稱「執行分點」。
+- **未執行正式 VPS import/export、未排程、未改 workflow/secrets。**
 
 ## VPS 待辦:import-geo 等回補結束(2026-08-20 使用者確認)
 

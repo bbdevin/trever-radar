@@ -93,6 +93,34 @@ export interface CompanyProfile {
   updated_at: string;
 }
 
+/** Official MOPS t35sc09 fact.  It is present only for a plan active on the export date. */
+export interface Buyback {
+  plan_id: string;
+  stock_id: string;
+  name: string;
+  market: "twse" | "tpex";
+  board_date: string | null;
+  purpose: string | null;
+  total_amount_limit: number | null;
+  planned_shares: number | null; // 股
+  price_min: number | null; // 元/股
+  price_max: number | null; // 元/股
+  start_date: string | null;
+  end_date: string | null;
+  completed_flag: string | null;
+  status: "in_progress";
+  executed_shares: number | null; // 股
+  transferred_shares: number | null; // 股
+  execution_pct: number | null; // 百分點
+  executed_amount: number | null; // 元
+  avg_price: number | null; // 元/股
+  share_ratio_pct: number | null; // 百分點
+  incomplete_reason: string | null;
+  report_date: string | null;
+  source_updated_at: string | null;
+  source: string;
+}
+
 /** Versioned repo mapping membership; does not imply a score or recommendation. */
 export interface CompanyGroupMembership {
   id: string;
@@ -164,6 +192,8 @@ export interface StockJson {
   industry?: string | null;
   /** Additive official company profile; legacy JSON intentionally omits it. */
   company_profile?: CompanyProfile | null;
+  /** Additive official MOPS fact; legacy snapshots intentionally omit it. */
+  buyback?: Buyback | null;
   /** Additive, source-controlled group memberships; legacy JSON intentionally omits it. */
   company_groups?: CompanyGroupMembership[];
   /** Additive company classifications; absent from JSON snapshots exported before docs/37 C. */

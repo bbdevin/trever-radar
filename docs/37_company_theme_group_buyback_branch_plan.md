@@ -1,7 +1,7 @@
 # 37 公司資訊／題材／集團／庫藏股／關鍵分點整體規劃
 
 > 版本：2026-08-27（S4 V2／Armed A1 後續）
-> 本文件把本輪 Confirmed Scope 與實作狀態永久化，供下一個 Executor／Reviewer 接續。A／B／C／D 的程式契約已完成；**C 尚未在正式 VPS 執行 import/export**，E 仍為規劃，且本文件不授權正式資料回算、VPS migration 或部署。
+> 本文件把本輪 Confirmed Scope 與實作狀態永久化，供下一個 Executor／Reviewer 接續。A／B／C／D／E1 的程式契約已完成；**B／C／D／E1 尚未在正式 VPS 執行 import/export**，E2 仍停在唯讀 shadow，且本文件不授權正式資料回算、VPS migration 或部署。
 
 ## 0. Confirmed Scope 與現況
 
@@ -12,7 +12,7 @@
 | B | 個股名稱下方增加公司地址與股務代理；以官方來源與 additive export contract 為準 | **程式／fixture／UI／typecheck／正式 build 完成（2026-08-27）**；正式 VPS `import-geo`／`export-json` 未執行 |
 | C | 題材資料分為公司題材分類、近期熱度、有效／停用／過時狀態，顯示「近期可能相關題材」而非無證據的因果宣稱 | **程式／fixture／UI／typecheck／正式 build 完成（2026-08-27）**；正式 VPS import/export 未執行，不改綜合分 |
 | D | 集團名稱可點入 `/group?id=`，顯示版本化的集團成員股票 | **程式／fixture／UI／typecheck／正式 build 完成（2026-08-27）**；正式 VPS export 未執行 |
-| E1 | 庫藏股官方來源 PoC 與 **KB1 事實標籤** | 規劃中；來源穩定性需驗證 |
+| E1 | 庫藏股官方 MOPS `t35sc09` 與 **KB1 事實標籤** | **程式／fixture／point-in-time export／個股 UI 完成（2026-08-27）**；未正式 VPS/DB import/export、未排程 |
 | E2 | `branch × stock` point-in-time 的**獨立**買／賣 episode 分位、後續表現與覆蓋率描述 | **唯讀 shadow CLI／JSON contract 與測試完成（2026-08-27）**；buy→sell 配對規則／coverage 尚未定義，未跑正式 DB、未接 UI、未定門檻，schema／歷史回算仍須人工確認 |
 
 ### 明確排除
@@ -116,11 +116,12 @@ A2 是語意決策關卡，不是單純修 UI。Executor 先產出對照表與�
 
 ## 6. E1：庫藏股（只做可證實的 KB1）
 
-1. 先 PoC 公開資訊觀測站或可核驗官方資料：公告日、買回期間、預定張數、已執行張數、狀態、來源 URL／資料日與代號匹配率。
-2. `KB1_BUYBACK_WINDOW` 只表示「公告買回區間內」這個可核驗事實；所有未能取得官方執行明細的欄位為 null。
-3. Export 以 `buyback.status / start / end / planned_lots / executed_lots / source / source_updated_at` 為可選契約；UI 用「庫藏股公告／買回期間」呈現，不能顯示執行分點。
-4. 來源不穩定、需要 CAPTCHA／登入或無法回溯資料日，就停在 PoC，不因想要完整化而使用非官方推測。
-5. KB2 永不加入實作 backlog；任何 future agent 若看到舊文件的 KB2，必須以本文件與 `docs/27` 的不實作決議為準。
+1. ✅ 官方契約已驗證並以 fixture 固化：POST MOPS `redirectToOld` (`apiName=ajax_t35sc09`; `TYPEK=sii|otc`、ROC `d1/d2`、`RD=1`、`encodeURIComponent=1`、`step=1`、`firstin=1`、`off=1`)；成功後立即 GET 短效官方 `mopsov` URL。range 必須有開始／結束日、不反轉，最多相差 365 日（CLI `--days` 1–366）。
+2. ✅ `buybacks` 是 additive table；保留同股多計畫的 deterministic `plan_id`、原始 MOPS flag、null、單位、來源、`report_date`／`source_updated_at`／`imported_at`。MOPS 無 `announce_date`，contract 不得冒充有該資料。HTML 多表、重複表頭、20 欄漂移、非官方 redirect、缺出表日／有效表、網路錯誤全部 fail closed。
+3. ✅ `KB1_BUYBACK_WINDOW` 只表示 `N` 且 `start_date ≤ as_of ≤ end_date`（inclusive）的買回期間；`Y`＋合法期間=completed、`N` 且逾期=expired，其他=unknown。它只加既有 BUYBACK family 的 15 分口袋排序，不寫 `daily_scores.final` 或任何分項／H1。
+4. ✅ Export 的可選 `buyback` 只含資料日當下 active plan，且 `report_date` 與 `source_updated_at` 都不得晚於 export data date；缺欄位／舊 JSON 保持 null/不存在。個股頁顯示「庫藏股買回期間」事實：狀態、期間、預定／已執行股數（股）、價區（元/股）、目的、MOPS／出表日；不顯示或推測執行分點。
+5. ✅ offline fixture tests 覆蓋 redirect 200/406/缺 URL/network、多表／重複表頭／安全 HTML／欄漂移、ROC／null／數值、Y/N 狀態邊界、atomic zero-write、future leak、多計畫 KB1、舊 JSON fallback 與 runtime code 無 KB2。**沒有執行正式 VPS/DB import、export 或排程。**
+6. KB2 永不加入實作 backlog；任何 future agent 若看到舊文件的 KB2，必須以本文件與 `docs/27` 的不實作決議為準。
 
 ## 7. E2：關鍵分點與地緣券商完整化（shadow、非獲利歸因）
 
@@ -163,7 +164,7 @@ A2 是語意決策關卡，不是單純修 UI。Executor 先產出對照表與�
 1. **已完成**：A1 程式／測試與契約驗收；保留正式 DB 未回算狀態。
 2. **已完成**：A2 策略／首頁／勝率對照、綜合榜嚴格門檻與同分排序、S12 基期 fail-closed、strategy lifecycle v1；未作正式 DB 回算。
 3. **已完成**：B（官方公司欄位／additive import-export／個股 UI）、C（題材 lifecycle／H1 fail-closed／個股 UI）與 D（版本化華新麗華 mapping／groups export／鑽取 UI）程式、fixture、typecheck 與正式 build。**未執行正式 VPS import/export 或正式 DB 寫入**。
-4. **E1**：庫藏股來源穩定性 PoC → KB1 contract → code／schema proposal；KB2 維持不實作。
+4. **已完成 E1 code contract**：官方 MOPS t35sc09、KB1、additive schema／manual CLI／point-in-time export／個股 UI、fixture tests；**正式 VPS/DB import/export 與排程仍須人類另案確認**，KB2 維持不實作。
 5. **已完成 E2 shadow contract**：獨立 buy／sell point-in-time JSON 統計與覆蓋率報告；buy→sell 配對規則／coverage 未定義。未跑正式 DB、未接 UI、未定門檻。人類確認後才可進 schema／歷史回算；地緣既有 tag 可與 E2 分開驗證，不等待「全市場」才做資料品質報告。
 6. 每一個實作包完成後更新 `handoff.md`、`docs/STATUS.md` 與本文件／對應規格，跑相關 tests、lint、typecheck，再依專案規則 commit／push；正式 DB／VPS／migration 另取人類明確確認。
 
@@ -173,6 +174,6 @@ A2 是語意決策關卡，不是單純修 UI。Executor 先產出對照表與�
 - [x] B 官方地址與股務代理欄位、來源、空值語意與 additive contract（2026-08-27；typecheck／正式 build 通過；正式 VPS import/export 未執行）。
 - [x] C 題材分類與近期熱度分層，過時題材可見且不進分數（2026-08-27；targeted／完整 pytest、typecheck、正式 build 通過；正式 VPS import/export 未執行）。
 - [x] D 集團 mapping 有版本、來源與 `/group?id=` static export contract（2026-08-27；typecheck／正式 build 通過；正式 VPS export 未執行）。
-- [ ] E1 只輸出可核驗 KB1；KB2 未出現在 code、schema、export、UI。
+- [x] E1 只輸出可核驗 KB1；KB2 未出現在 runtime code、schema、export、UI（2026-08-27；正式 VPS 未執行）。
 - [x] E2 唯讀 shadow CLI／JSON contract 通過 point-in-time／future-leak／成熟樣本檢查，且文件明確沒有交易獲利歸因（2026-08-27；獨立 buy／sell，尚無 buy→sell 配對；未跑正式 DB／VPS、未接 UI、未定門檻）。
 - [ ] 所有正式回算、schema migration、VPS 寫入與部署均有獨立人工確認紀錄。
