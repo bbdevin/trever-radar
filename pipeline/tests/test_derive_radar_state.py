@@ -109,6 +109,25 @@ class DeriveRadarStateTests(unittest.TestCase):
             )
         )
 
+    def test_missing_price_changes_fail_closed_before_t2_risk_or_stop(self):
+        for c_pct, c5_pct in ((None, 5.0), (2.0, None), (None, None)):
+            with self.subTest(c_pct=c_pct, c5_pct=c5_pct):
+                self.assertIsNone(
+                    derive_radar_state(
+                        sources=["branch"],
+                        c_pct=c_pct,
+                        c5_pct=c5_pct,
+                        technical={
+                            "reasons": [{"code": "T2_20D_HIGH"}],
+                            "risks": [{"code": "R_RSI_OVERHEAT"}],
+                        },
+                        score_risks=[{"code": "R_HOT5", "text": "過熱"}],
+                        close=89.0,
+                        stop_price=90.0,
+                        score_final=70,
+                    )
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -47,8 +47,8 @@ _STRATEGY_STATUS: dict[str, str] = {
 def derive_radar_state(
     *,
     sources: list[str],
-    c_pct: float,
-    c5_pct: float,
+    c_pct: float | None,
+    c5_pct: float | None,
     technical: dict | None,
     score_risks: list,
     close: float | None,
@@ -56,6 +56,9 @@ def derive_radar_state(
     score_final: float | None,
 ) -> str | None:
     """Quiet→Armed→Triggered→Extended→Faded（docs/22）。同日近似，無跨日 armed_days。"""
+    # 不完整報價不可被 0% 取代；否則 T2、風險與失效價都可能產生假 state。
+    if c_pct is None or c5_pct is None:
+        return None
     touched_stop = (
         stop_price is not None
         and close is not None
@@ -464,11 +467,29 @@ def export_json(out_dir: Path | None = None) -> dict:
         m_date = latest("daily_margins")
         w_date = latest("warrant_stock_daily")
         b_date = latest("branch_trades")
+        # A warrant batch can be current for some underlyings while others
+        # retain an older latest row. Do not label that mixed state as fresh.
+        w_stale_stock_count = conn.execute(text("""
+            SELECT COUNT(*) FROM (
+                SELECT p.stock_id, MAX(w.date) AS latest_date
+                FROM daily_prices p
+                JOIN stocks s ON s.id = p.stock_id AND s.type = 'stock'
+                JOIN warrant_stock_daily w ON w.stock_id = p.stock_id AND w.date <= :d
+                WHERE p.date = :d AND p.close IS NOT NULL
+                GROUP BY p.stock_id
+            ) WHERE latest_date < :d
+        """), {"d": d}).scalar() or 0
+        w_partial_stale = w_date == d and w_stale_stock_count > 0
         freshness = {
             "quotes": {"date": d, "stale": False},
             "insti": {"date": i_date, "stale": i_date != d},
             "margin": {"date": m_date, "stale": m_date != d},
-            "warrant": {"date": w_date, "stale": w_date != d},
+            "warrant": {
+                "date": w_date,
+                "stale": w_date != d or w_partial_stale,
+                "partial_stale": w_partial_stale,
+                "stale_stock_count": w_stale_stock_count,
+            },
             "branch": {"date": b_date, "stale": b_date != d},
         }
 
@@ -477,7 +498,7 @@ def export_json(out_dir: Path | None = None) -> dict:
                    p.volume, p.transactions, pp.close AS prev_close,
                    i.foreign_net, i.trust_net, m.margin_balance, m.margin_prev,
                    a.avg_vol20,
-                   w.call_turnover, w.call_volume, w.call_count,
+                   w.date AS warrant_date, w.call_turnover, w.call_volume, w.call_count,
                    w.put_turnover, w.put_volume, w.put_count,
                    wa.avg_call_turnover,
                    ti.tech_score, ti.ma20, ti.ma60, ti.rsi14, ti.volume_ratio AS tech_volume_ratio,
@@ -491,7 +512,12 @@ def export_json(out_dir: Path | None = None) -> dict:
             LEFT JOIN daily_prices p5 ON p5.stock_id = p.stock_id AND p5.date = :d5
             LEFT JOIN daily_institutional i ON i.stock_id = p.stock_id AND i.date = :i_date
             LEFT JOIN daily_margins m ON m.stock_id = p.stock_id AND m.date = :m_date
-            LEFT JOIN warrant_stock_daily w ON w.stock_id = p.stock_id AND w.date = :w_date
+            LEFT JOIN warrant_stock_daily w ON w.stock_id = p.stock_id
+                AND w.date = (
+                    SELECT MAX(w_latest.date)
+                    FROM warrant_stock_daily w_latest
+                    WHERE w_latest.stock_id = p.stock_id AND w_latest.date <= :d
+                )
             LEFT JOIN indicators_daily ti ON ti.stock_id = p.stock_id AND ti.date = :d
             LEFT JOIN daily_scores ds ON ds.stock_id = p.stock_id AND ds.date = :d
             LEFT JOIN (
@@ -506,13 +532,13 @@ def export_json(out_dir: Path | None = None) -> dict:
             ) wa ON wa.stock_id = p.stock_id
             WHERE p.date = :d AND p.close IS NOT NULL
         """), {"d": d, "prev": prev, "d5": d5, "d20": base20[-1] if base20 else d,
-               "i_date": i_date, "m_date": m_date, "w_date": w_date}).fetchall()
+               "i_date": i_date, "m_date": m_date}).fetchall()
 
         all_stocks = []
         for r in rows:
             (sid, name, market, industry, description, close, turnover, volume, tx,
              prev_close, f_net, t_net, mb, mp, avg_vol20,
-             call_turnover, call_volume, call_count,
+             warrant_date, call_turnover, call_volume, call_count,
              put_turnover, put_volume, put_count, avg_call_turnover,
              tech_score, tech_ma20, tech_ma60, tech_rsi14, tech_volume_ratio,
              tech_reasons, tech_risks,
@@ -554,14 +580,14 @@ def export_json(out_dir: Path | None = None) -> dict:
                     "risks": json.loads(tech_risks or "[]"),
                 }
             # Armed / Triggered / Extended / Faded (docs/22)
-            c_pct = chg_pct or 0
-            c5_pct = chg5_pct or 0
             raw_rs = json.loads(score_reasons or "[]")
             raw_risks = json.loads(score_risks or "[]")
             strategy_signals = _strategy_signals_from_reasons(raw_rs)
             has_branch = any(r.get("code") == "S12_BRANCH_ACCUMULATION" for r in raw_rs) and (turnover or 0) >= MIN_TURNOVER
             has_warrant = False
-            if warrant and warrant.get("call_turnover_ratio") is not None:
+            # Stale warrant data remains displayable/rankable, but cannot claim
+            # to be a today source or produce a state from an older session.
+            if warrant_date == d and warrant and warrant.get("call_turnover_ratio") is not None:
                 if warrant["call_turnover_ratio"] >= 1.5 and warrant["call_turnover"] >= MIN_WARRANT_TURNOVER:
                     has_warrant = True
 
@@ -573,8 +599,8 @@ def export_json(out_dir: Path | None = None) -> dict:
 
             state = derive_radar_state(
                 sources=sources,
-                c_pct=c_pct,
-                c5_pct=c5_pct,
+                c_pct=chg_pct,
+                c5_pct=chg5_pct,
                 technical=technical,
                 score_risks=raw_risks,
                 close=close,
@@ -710,6 +736,12 @@ def export_json(out_dir: Path | None = None) -> dict:
         # union selector's own top-40 cap is filled by another phase.
         for phase_stocks in s4_phases.values():
             for s in phase_stocks[:40]:
+                union[s["id"]] = s
+        # Every state list is an ID lookup into radar.stocks. State-only rows
+        # must therefore retain their payload even when no legacy list selects
+        # them (without changing any legacy list threshold or ordering).
+        for s in all_stocks:
+            if s["state"] is not None:
                 union[s["id"]] = s
         for s in union.values():
             s["spark"] = [row[0] for row in conn.execute(text(

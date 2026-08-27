@@ -322,5 +322,141 @@ class S4PhaseJsonExportTests(unittest.TestCase):
         self.assertEqual(radar["lists"]["triggered"], [])
 
 
+class ArmedStateExportContractTests(unittest.TestCase):
+    """A1: state lookup completeness and stale-warrant source boundaries."""
+
+    DATES = ("2026-08-03", "2026-08-04", "2026-08-05", "2026-08-06", "2026-08-07", "2026-08-10")
+    D = DATES[-1]
+
+    def setUp(self):
+        self._tmp = TemporaryDirectory()
+        tmp = Path(self._tmp.name)
+        self._old_url, self._old_dir = config.DB_URL, config.DATA_DIR
+        config.DATA_DIR = tmp
+        config.DB_URL = "sqlite:///" + (tmp / "t.db").as_posix()
+        db._engine = None
+        db.init_db()
+        self._seed()
+
+    def tearDown(self):
+        if db._engine is not None:
+            db._engine.dispose()
+        db._engine = None
+        config.DB_URL, config.DATA_DIR = self._old_url, self._old_dir
+        self._tmp.cleanup()
+
+    def _seed(self):
+        # Keep 56 higher-ranked S12 rows ahead of state_only in all legacy
+        # selectors (including the S12 top-40), so its presence proves the
+        # state-union lookup rather than an incidental legacy selector.
+        high_ids = [f"h{i:02}" for i in range(41)]
+        low_ids = [f"l{i:02}" for i in range(15)]
+        ids = high_ids + low_ids + ["state_only", "current_only", "stale_only", "branch_stale"]
+        s12 = json.dumps([{"code": "S12_BRANCH_ACCUMULATION", "text": "branch"}])
+        with db.get_engine().begin() as conn:
+            conn.execute(schema.stocks.insert(), [
+                {"id": sid, "name": sid, "market": "twse", "type": "stock", "is_active": 1}
+                for sid in ids
+            ])
+            price_rows = []
+            for sid in ids:
+                if sid in high_ids:
+                    today_close, turnover = 103.0, 200_000_000
+                elif sid in low_ids:
+                    today_close, turnover = 100.5, 200_000_000
+                else:
+                    today_close, turnover = 101.0, 100_000_000
+                price_rows.extend({
+                    "stock_id": sid, "date": dt,
+                    "close": today_close if dt == self.D else 100.0,
+                    "volume": 1000, "turnover": turnover,
+                } for dt in self.DATES)
+            conn.execute(schema.daily_prices.insert(), price_rows)
+            conn.execute(schema.daily_scores.insert(), [
+                {"stock_id": sid, "date": self.D, "final": 70, "reasons": s12, "risks": "[]"}
+                for sid in high_ids + low_ids
+            ] + [
+                {"stock_id": "state_only", "date": self.D, "final": 0, "reasons": s12, "risks": "[]"},
+                {"stock_id": "branch_stale", "date": self.D, "final": 0, "reasons": s12, "risks": "[]"},
+            ])
+
+    def _export(self):
+        out = Path(self._tmp.name) / "out"
+        export_json(out)
+        return json.loads((out / "radar.json").read_text(encoding="utf-8"))
+
+    def _replace_warrants(self, rows):
+        with db.get_engine().begin() as conn:
+            conn.execute(schema.warrant_stock_daily.delete())
+            conn.execute(schema.warrant_stock_daily.insert(), rows)
+
+    def test_state_only_ids_resolve_with_existing_payload_contract(self):
+        radar = self._export()
+        legacy_ids = set().union(*(radar["lists"][key] for key in (
+            "score", "hot", "surge", "strong", "weak", "warrant", "pocket",
+        )))
+        self.assertNotIn("state_only", legacy_ids)
+        self.assertNotIn("state_only", radar["strategies"]["S12_BRANCH_ACCUMULATION"])
+        stocks = {s["id"]: s for s in radar["stocks"]}
+        state_ids = set().union(*(radar["lists"][key] for key in ("armed", "triggered", "extended", "faded")))
+        self.assertTrue(state_ids.issubset(stocks))
+        self.assertEqual(stocks["state_only"]["state"], "armed")
+        self.assertEqual(stocks["state_only"]["sources"], ["branch"])
+        self.assertIn("spark", stocks["state_only"])
+
+    def test_current_warrant_remains_a_today_source_and_ranked(self):
+        self._replace_warrants([
+            {"stock_id": "current_only", "date": "2026-08-07", "call_turnover": 10_000_000},
+            {"stock_id": "current_only", "date": self.D, "call_turnover": 20_000_000},
+        ])
+        radar = self._export()
+        current = next(s for s in radar["stocks"] if s["id"] == "current_only")
+        self.assertFalse(radar["freshness"]["warrant"]["stale"])
+        self.assertEqual(current["sources"], ["warrant"])
+        self.assertEqual(current["state"], "armed")
+        self.assertIn("current_only", radar["lists"]["warrant"])
+
+    def test_stale_warrant_keeps_payload_and_rank_but_not_today_source(self):
+        self._replace_warrants([
+            {"stock_id": "stale_only", "date": "2026-08-08", "call_turnover": 20_000_000},
+            {"stock_id": "stale_only", "date": "2026-08-07", "call_turnover": 10_000_000},
+            {"stock_id": "branch_stale", "date": "2026-08-08", "call_turnover": 20_000_000},
+            {"stock_id": "branch_stale", "date": "2026-08-07", "call_turnover": 10_000_000},
+        ])
+        radar = self._export()
+        stocks = {s["id"]: s for s in radar["stocks"]}
+        stale = stocks["stale_only"]
+        branch_stale = stocks["branch_stale"]
+        self.assertTrue(radar["freshness"]["warrant"]["stale"])
+        self.assertIsNotNone(stale["warrant"])
+        self.assertIn("stale_only", radar["lists"]["warrant"])
+        self.assertEqual(stale["sources"], [])
+        self.assertIsNone(stale["state"])
+        self.assertEqual(branch_stale["sources"], ["branch"])
+        self.assertEqual(branch_stale["state"], "armed")
+
+    def test_mixed_warrant_dates_keep_per_stock_stale_payload_honest(self):
+        self._replace_warrants([
+            {"stock_id": "current_only", "date": "2026-08-07", "call_turnover": 10_000_000},
+            {"stock_id": "current_only", "date": self.D, "call_turnover": 20_000_000},
+            {"stock_id": "stale_only", "date": "2026-08-08", "call_turnover": 20_000_000},
+            {"stock_id": "stale_only", "date": "2026-08-07", "call_turnover": 10_000_000},
+        ])
+        radar = self._export()
+        stocks = {s["id"]: s for s in radar["stocks"]}
+        current = stocks["current_only"]
+        stale = stocks["stale_only"]
+        self.assertEqual(radar["freshness"]["warrant"]["date"], self.D)
+        self.assertTrue(radar["freshness"]["warrant"]["stale"])
+        self.assertTrue(radar["freshness"]["warrant"]["partial_stale"])
+        self.assertEqual(radar["freshness"]["warrant"]["stale_stock_count"], 1)
+        self.assertEqual(current["sources"], ["warrant"])
+        self.assertEqual(current["state"], "armed")
+        self.assertIsNotNone(stale["warrant"])
+        self.assertIn("stale_only", radar["lists"]["warrant"])
+        self.assertEqual(stale["sources"], [])
+        self.assertIsNone(stale["state"])
+
+
 if __name__ == "__main__":
     unittest.main()

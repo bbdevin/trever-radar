@@ -93,6 +93,7 @@ Armed 之後出現帶量突破 / 創 N 日新高(重用 T2),或當日強勢且�
 - `radar.json` → `lists.armed` / `lists.triggered` / `lists.extended` / `lists.faded`
 - 每檔:`state`(`armed`|`triggered`|`extended`|`faded`|null)、`sources[]`、既有 scores / warrant / watch·stop
 - 重用:`daily_scores.reasons`(S12 等)、權證彙總倍數、T2、`stop_price`、risks
+- **完整性／時效契約（A1 補強，2026-08-27）**：`lists.armed`／`triggered`／`extended`／`faded` 的每一個 ID 都必須存在於 `radar.stocks`（並保留既有 `spark` 等 payload）；不改既有榜單門檻或排序。`warrant_stock_daily` 逐檔取不晚於 quotes 日的最新列；非當日列仍可保留 warrant payload、權證榜排序與 freshness stale 標示，但不得成為當日 `sources` 或單獨產生 state；當日 branch 來源仍可獨立成立。全域 warrant freshness 保留既有 `date`／`stale`，若最新全域日期雖為今日但仍有逐檔舊列，`stale=true` 並 additive 輸出 `partial_stale`／`stale_stock_count`。任一 `chg_pct` 或 `chg5_pct` 缺值時 state 一律 fail closed（含 T2、risk、stop／faded），不以 0 代替。
 
 禁止:為 Armed 新建會膨脹 DB 的歷史大表;禁止未授權改 workflow / 正式 DB。
 

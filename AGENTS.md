@@ -24,6 +24,7 @@
 | `docs/33_mid_backfill_publish_plan.md` | ✅ S1/S1.1 已實作;📝 S2 指向 `35` | mid＋safe-stats;S2=supervisor／scores／大戶總圖 |
 | `docs/34_margin_shareholder_plan.md` | ✅ A0–A4 程式;📝 Phase B 待做 | 資券／大戶;大戶週六 06:30 槽已寫入 §4.4 |
 | `docs/36_user_search_font_prefs.md` | ✅ **已上線(2026-08-26)** | 搜尋歷史＋字級綁帳號；SQL 已執行 |
+| `docs/37_company_theme_group_buyback_branch_plan.md` | ✅ **current(2026-08-27)** | S4 V2／Armed A1 後續總規劃；A2 待人類確認，B/C/D/E 分期；KB2 不實作，E2 不做交易獲利歸因 |
 | `docs/sql/README.md` | ✅ **current(2026-08-26)** | Supabase 手跑 SQL 命名：`YYYYMMDDHHMMSS_描述.sql`；不適用 VPS SQLite |
 | `docs/08_scheduler_jobs.md` §1 | 🗑️ **已刪除(2026-07-09)** | 原 Laravel job chain 格式舊排程稿,與 §0 矛盾且從未實作,已刪除。§2(盤中管線)/§3(每週每月)為 V2 尚未實作的設計參考,保留。 |
 | `docs/00_blueprint.md` | ⚠️ **表格欄位過時** | 頂部有 2026-07-06 修訂註記,但「架構」欄仍寫 Laravel/PG16/VM,讀表格本身會誤導。 |

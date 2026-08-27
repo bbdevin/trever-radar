@@ -84,7 +84,7 @@
 6. ~~R2 R0-R2(`docs/21`)~~ **2026-07-15 作廢**:R2 啟用需綁信用卡,不採用;快照職責改 Google Drive、還原演練併入 `docs/31` WP-B4。
 7. **B 方案 Phase 4—排程簡化**(`docs/20`):📝 **2026-08-20 提案稿已改寫**（對齊 VPS cron + Worker 資料層;建議 14:10/22:10 兩次資料 deploy,中間輪只寫 DB）。**cron/script 未改**,待使用者確認目標態或變體 B 後另開實作。不得未確認就改 `vps/scripts` 或 workflow。
   5b. **首頁掃讀體驗+個股頁資訊架構統一**(docs/28,2026-07-12 規劃定案):WP-H2 語意色彩層次(已完成 2026-07-12)→ **WP-H4 個股頁分點統一(2026-07-12 完成,commit 83649ae)**→ **WP-H1 題材分組(2026-08-20 完成)**:綜合/市場掃描可切「分數|題材」,一檔只歸當日最熱題材、sticky header;桌機與分數榜同 2/3/4 欄且預設全開,手機前 3 組展開→ **WP-H3 卡片走勢改當日分時(2026-08-20 完成)**:Fugle 1 分 K → `spark_day`/`spark_open`,缺資料標「30日」→ **WP-H5 手機版(2026-07-12 完成)**。**docs/28 已全部完成**。
-6a. **地緣券商+庫藏股分點+關鍵分點同買 → 口袋名單**(`docs/27`):~~G0~~ / ~~G1~~ / ~~G2~~ / ~~**G4 口袋 UI 2026-08-20 完成**~~(首頁「口袋」tab + badges + 個股頁摘要 + `/branch` 關鍵徽章)。**剩餘 G3 庫藏股**(無 OpenAPI,可繼續延後)。**`import-geo` 等兩筆回補結束再跑**(或下週一 14:10);回補進行中不要手動寫 DB。地緣涵蓋度在 7a 全市場每日池後才完整。
+6a. **地緣券商+庫藏股分點+關鍵分點同買 → 口袋名單**(`docs/27`、總規劃見 `docs/37`):~~G0~~ / ~~G1~~ / ~~G2~~ / ~~**G4 口袋 UI 2026-08-20 完成**~~(首頁「口袋」tab + badges + 個股頁摘要 + `/branch` 關鍵徽章)。**G3 改分期**：G3a 只做庫藏股官方來源 PoC 與可核驗 KB1；G3b **KB2 不實作**；G3c 為需人工確認的 branch×stock point-in-time shadow 統計。**`import-geo` 等兩筆回補結束再跑**(或下週一 14:10);回補進行中不要手動寫 DB。地緣涵蓋度在 7a 全市場每日池後才完整。
 7a. **全市場擴容**(`docs/26`,2026-07-12 使用者定案「有幾檔抓幾檔」):~~WP-M1 個股 JSON 池全市場~~ **✅ 2026-08-25**(`export-json` 全 active stock/etf 每日更新,不綁評分池) → ~~WP-M3 branch_hist.db 拆分~~(**2026-07-15 因 B 案取消**,見 docs/31 §9)→ WP-M2 一輪制與 WP-M4 全市場 march-back 併入 `docs/31` WP-B6,於 cutover 後執行。
 8. ~~deep-backfill --all~~ **執行狀態需另行查證**:完成與否不得只信本檔舊紀錄;若需 `task=adjust` 或 VPS 回灌,先依 `vps_backfill_plan.md` 與高風險流程確認。
 9. **分點排行資料累積**:可信度排行榜已完成,統計效力需 2–3 個月。地緣/關鍵分點人工名單、五年分點擴容、LINE Bot 依 B 方案延後;~~V2 盤中延後~~ 盤中已依 `docs/24` 重新規劃排入(見 4a)。
@@ -110,6 +110,8 @@
 
 ## 最近完成
 
+- 2026-08-27 **S4 V2／Armed A1 後續整體規劃落檔**：新增 `docs/37_company_theme_group_buyback_branch_plan.md`，永久記錄 Confirmed Scope A1（程式／測試完成）、A2（策略／首頁狀態／策略與分點勝率口徑對照，待人類確認）以及 B 公司地址／股務代理、C 題材 freshness、D 集團 mapping、E1 庫藏股 KB1、E2 關鍵分點與地緣 point-in-time shadow 的分期、契約、UI、測試與風險。**KB2 庫藏股執行分點不實作，E2 不做交易獲利歸因**；規劃本身未授權 schema／排程／正式資料異動或回算。
+- 2026-08-27 **Armed A1 匯出契約補強（程式／測試完成，未正式 DB 回算）**：state list IDs 保證可由 `radar.stocks` 解析；stale warrant 保留 payload／freshness／權證榜但不再作今日 state source；任一 1 日或 5 日漲幅缺值時 state fail closed（含 T2、風險、失效價）。未改榜單門檻或排序、分數／schema／正式資料。
 - 2026-08-27 **S4 V2 兩階段（程式／測試完成，未正式資料回算或上線）**：舊 `S4_VOLATILITY_CONTRACTION` 凍結為 legacy；新增 `S4_COMPRESSION_SETUP_V2`（adjusted OHLC 的壓縮蓄勢）與 `S4_COMPRESSION_BREAKOUT_V2`（前 1–5 日 setup 後的首次帶量突破）。兩者只作 strategy tag／S4 內排序，不改 `tech_score`、`final`、全域 Armed/Triggered 或 schema。`strategies.S4_VOLATILITY_CONTRACTION` 保留三者聯集；新增 additive `strategy_phases` 與每股 `strategy_signals`，首頁標示「壓縮蓄勢／壓縮突破」（突破優先）並各自讀其 strategy_meta（legacy 亦獨立）。setup 連續日依完整 `daily_prices` 交易日曆按 episode 去重；程式碼驗收完成；正式資料尚未重算，需另次人工確認。
 - 2026-08-27 **勝率統計唯讀稽核**：盤點策略／分點事件、成熟樣本、entry／forward／win、export／UI 與文件定義；未改排名、未改 schema，未執行正式 DB 回算。
 - 2026-08-27 **Codex Multi-Agent V2 執行偏好**：Sol high 負責整體架構／複雜判斷／跨模組決策；Terra high 負責一般功能實作、跨端整合與驗收；Luna 負責搜尋分析、簡單修改、測試／lint／typecheck、文件與重複性工作，最終 Code Review 固定 high。此為目前預設偏好，不取代 Cursor Grok/Auto 常駐流程與角色模型中立原則，使用者可當次覆寫。
