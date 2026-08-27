@@ -39,6 +39,12 @@ def import_geo() -> dict:
             "city": city,
             "district": district,
             "market": r["market"],
+            "industry_code": r.get("industry_code"),
+            "transfer_agent": r.get("transfer_agent"),
+            "transfer_agent_phone": r.get("transfer_agent_phone"),
+            "transfer_agent_address": r.get("transfer_agent_address"),
+            "source": r.get("source"),
+            "source_updated_at": r.get("source_updated_at"),
             "updated_at": stamp,
         })
 

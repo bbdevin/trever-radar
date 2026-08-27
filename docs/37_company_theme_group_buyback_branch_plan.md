@@ -1,7 +1,7 @@
 # 37 公司資訊／題材／集團／庫藏股／關鍵分點整體規劃
 
 > 版本：2026-08-27（S4 V2／Armed A1 後續）
-> 本文件把本輪 Confirmed Scope 草稿永久化，供下一個 Executor／Reviewer 接續。它是規劃與驗收邊界，不代表 B/C/D/E 已實作，也不授權正式資料回算、schema migration 或部署。
+> 本文件把本輪 Confirmed Scope 與實作狀態永久化，供下一個 Executor／Reviewer 接續。A／B／D 的程式契約已完成；C／E 仍為規劃，且本文件不授權正式資料回算、VPS migration 或部署。
 
 ## 0. Confirmed Scope 與現況
 
@@ -9,9 +9,9 @@
 |---|---|---|
 | A1 | Armed／Triggered／Extended／Faded 匯出契約補強：state ID 可由 `radar.stocks` 解析；stale warrant 不作今日 state source；缺 1 日或 5 日漲跌時 fail closed | **程式與測試完成**；未正式 DB 回算 |
 | A2 | 對齊策略、首頁狀態、綜合分、strategy metadata 與績效勝率的定義 | **程式／契約與測試完成（2026-08-27）**；已對齊綜合榜同分排序，不調整 `final` 權重、分點績效排行 V2、schema 或正式回算 |
-| B | 個股名稱下方增加公司地址與股務代理；以官方來源與 additive export contract 為準 | 規劃中；schema／匯入／UI 另案 |
+| B | 個股名稱下方增加公司地址與股務代理；以官方來源與 additive export contract 為準 | **程式／fixture／UI／typecheck／正式 build 完成（2026-08-27）**；正式 VPS `import-geo`／`export-json` 未執行 |
 | C | 題材資料分為公司題材分類、近期熱度、有效／停用／過時狀態，顯示「近期可能相關題材」而非無證據的因果宣稱 | 規劃中；不改綜合分 |
-| D | 集團名稱可點入 `/group?id=`，顯示版本化的集團成員股票 | 規劃中；先做來源與 mapping PoC |
+| D | 集團名稱可點入 `/group?id=`，顯示版本化的集團成員股票 | **程式／fixture／UI／typecheck／正式 build 完成（2026-08-27）**；正式 VPS export 未執行 |
 | E1 | 庫藏股官方來源 PoC 與 **KB1 事實標籤** | 規劃中；來源穩定性需驗證 |
 | E2 | `branch × stock` point-in-time 統計，建立可驗證的關鍵分點（低買、高賣／後續表現）描述 | 高風險規劃；需人工確認 schema／歷史回算 |
 
@@ -72,6 +72,12 @@ A2 是語意決策關卡，不是單純修 UI。Executor 先產出對照表與�
 - 桌機與手機都維持單行截斷＋展開完整地址；不新增色票，沿用現有 token、icon、tooltip 與深色／淺色對比規則。
 - 測試官方欄位 mapping、上市／上櫃、缺值、舊 JSON 相容、XSS／長地址截斷；前端加 static export／typecheck。
 
+### 本輪實作紀錄（2026-08-27）
+
+- `company_profiles` 採 additive 欄位：`industry_code`、`transfer_agent`、`transfer_agent_phone`、`transfer_agent_address`、`source`、`source_updated_at`；`init_db()` 對既有 SQLite 只補欄、不刪資料。**沒有對正式 VPS DB 執行此程式。**
+- TWSE/TPEx provider 只解析已驗證官方欄位；空字串轉 `null`、產業碼維持字串前導 0、民國 `1150826` 正規化為 `2026-08-26`。
+- 個股 JSON 增加可選 `industry` 與 `company_profile`；舊 snapshot 缺欄位時 UI 顯示「資料未提供」，不將缺值視為 0 或不存在。
+
 ## 4. C：題材完整化
 
 ### 定義
@@ -93,6 +99,12 @@ A2 是語意決策關卡，不是單純修 UI。Executor 先產出對照表與�
 - 建議以版本化 `company_groups`（或等價 additive JSON）承載成員，不把集團名稱硬編碼在前端；歷史日期要能避免把今日成員回寫到過去。
 - 個股頁的集團 badge／連結導向 `/group?id=<group_id>`；集團頁只列當前有效成員、代號／名稱／今日摘要與資料日，成員仍可回個股頁。
 - 先做 mapping fixture、無成員／一股多組／失效成員、路由 query 與 static export 測試；來源不穩定時只上線明確人工維護的 seed，不開放無證據的自動推斷。
+
+### 本輪實作紀錄（2026-08-27）
+
+- mapping 固定為 repo 內 `pipeline/radar/data/company_groups.json`（version 1），不建 DB table、不寫入分數或主導航。
+- 只加入華新麗華集團官方頁可核驗 seed：anchor `1605`，成員 `2344`／`2492`／`5469`／`6116`；來源為 `https://www.walsin.com/about-us/who-we-are/subsidiaries-affiliates/`，`source_updated_at` 與 effective dates 為 `null`，`observed_at=2026-08-27`。未加入佳邦等未充分驗證項目。
+- exporter 產出 additive `groups.json` 與每檔 `company_groups`；成員摘要直接由 `stocks + daily_prices` 的最新可用報價建立，非 radar pool。mapping validator 覆蓋未知股票、null 日期與無效有效期間；正式 VPS export 尚未執行。
 
 ## 6. E1：庫藏股（只做可證實的 KB1）
 
@@ -132,7 +144,7 @@ A2 是語意決策關卡，不是單純修 UI。Executor 先產出對照表與�
 
 1. **已完成**：A1 程式／測試與契約驗收；保留正式 DB 未回算狀態。
 2. **已完成**：A2 策略／首頁／勝率對照、綜合榜嚴格門檻與同分排序、S12 基期 fail-closed、strategy lifecycle v1；未作正式 DB 回算。
-3. **進行中**：B（官方欄位）、C（題材 freshness）、D（集團 mapping）已完成只讀調查，依確認契約進入程式／fixture 實作。
+3. **已完成**：B（官方公司欄位／additive import-export／個股 UI）與 D（版本化華新麗華 mapping／groups export／鑽取 UI）程式、fixture、typecheck；清除失敗的本機 `.next` 快取後，`npm run build` 已完整通過（12/12 static pages、2/2 export）。**未執行正式 VPS import/export 或正式 DB 寫入**。C 仍待做。
 4. **E1**：庫藏股來源穩定性 PoC → KB1 contract → code／schema proposal；KB2 維持不實作。
 5. **E2**：point-in-time shadow 統計與覆蓋率報告；人類確認後才進 schema／歷史回算。地緣既有 tag 可與 E2 分開驗證，不等待「全市場」才做資料品質報告。
 6. 每一個實作包完成後更新 `handoff.md`、`docs/STATUS.md` 與本文件／對應規格，跑相關 tests、lint、typecheck，再依專案規則 commit／push；正式 DB／VPS／migration 另取人類明確確認。
@@ -140,9 +152,9 @@ A2 是語意決策關卡，不是單純修 UI。Executor 先產出對照表與�
 ## 10. 交接驗收清單
 
 - [x] A2 程式契約／對照表與測試完成（2026-08-27）；正式 DB 回算、排行 V2／schema 與任何新門檻仍須另取人類確認。
-- [ ] B 官方地址與股務代理欄位、來源、空值語意與 additive contract 定案。
+- [x] B 官方地址與股務代理欄位、來源、空值語意與 additive contract（2026-08-27；typecheck／正式 build 通過；正式 VPS import/export 未執行）。
 - [ ] C 題材分類與近期熱度分層，過時題材可見且不進分數。
-- [ ] D 集團 mapping 有版本、來源與 `/group?id=` static export contract。
+- [x] D 集團 mapping 有版本、來源與 `/group?id=` static export contract（2026-08-27；typecheck／正式 build 通過；正式 VPS export 未執行）。
 - [ ] E1 只輸出可核驗 KB1；KB2 未出現在 code、schema、export、UI。
 - [ ] E2 通過 point-in-time／future-leak／成熟樣本檢查，且文件明確沒有交易獲利歸因。
 - [ ] 所有正式回算、schema migration、VPS 寫入與部署均有獨立人工確認紀錄。

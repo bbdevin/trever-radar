@@ -16,6 +16,7 @@ from .. import config
 from ..db import get_engine, init_db
 from .spark_day import attach_spark_day
 from ..pocket import apply_pocket
+from ..company_groups import is_effective, load_company_groups, validate_company_groups
 from ..compute.strategy_performance import (
     compute_strategy_performance_from_events,
     fetch_strategy_events,
@@ -46,6 +47,82 @@ _STRATEGY_LIFECYCLE: dict[str, dict[str, str | int]] = {
     "S12_BRANCH_ACCUMULATION": {"status": "shadow", "rationale": "仍累積成熟樣本，尚未宣稱有效。"},
     "S13_SHORT_SQUEEZE": {"status": "shadow", "rationale": "仍累積成熟樣本，尚未宣稱有效。"},
 }
+
+
+def _company_group_payloads(conn, as_of: str) -> tuple[list[dict], dict[str, list[dict]]]:
+    """Build group pages from the versioned mapping, never from the radar pool."""
+    mappings = load_company_groups()
+    known_ids = set(conn.execute(text("SELECT id FROM stocks")).scalars())
+    # Unit fixtures intentionally contain only a few stocks. Keep structural
+    # validation there while omitting a production mapping with no local stock.
+    validate_company_groups(mappings, known_ids, allow_missing_stocks=True)
+    # Never publish a partial group just because a fixture/development DB has
+    # only some of its members. A group appears only when every mapped member
+    # exists in the stock master; individual members can still have no quote.
+    group_stock_ids: dict[str, set[str]] = {}
+    for mapping in mappings:
+        group_stock_ids.setdefault(mapping["group_id"], set()).add(mapping["stock_id"])
+    complete_groups = {
+        group_id for group_id, stock_ids in group_stock_ids.items()
+        if stock_ids.issubset(known_ids)
+    }
+    active = [m for m in mappings if m["group_id"] in complete_groups and is_effective(m, as_of)]
+    active_ids = {m["stock_id"] for m in active}
+    summaries: dict[str, dict] = {}
+    if active_ids:
+        rows = conn.execute(text("""
+            SELECT s.id, s.name, s.market, s.industry,
+                   p.date, p.close, p.turnover,
+                   prev.close AS prev_close
+            FROM stocks s
+            LEFT JOIN daily_prices p ON p.stock_id = s.id AND p.date = (
+                SELECT MAX(lp.date) FROM daily_prices lp
+                WHERE lp.stock_id = s.id AND lp.date <= :as_of AND lp.close IS NOT NULL
+            )
+            LEFT JOIN daily_prices prev ON prev.stock_id = s.id AND prev.date = (
+                SELECT MAX(pp.date) FROM daily_prices pp
+                WHERE pp.stock_id = s.id AND pp.date < p.date AND pp.close IS NOT NULL
+            )
+            WHERE s.id IN :stock_ids
+            ORDER BY s.id
+        """).bindparams(bindparam("stock_ids", expanding=True)), {
+            "as_of": as_of, "stock_ids": sorted(active_ids),
+        }).mappings()
+        for r in rows:
+            close, prev_close = r["close"], r["prev_close"]
+            summaries[r["id"]] = {
+                "id": r["id"], "name": r["name"], "market": r["market"],
+                "industry": r["industry"], "quote_date": r["date"],
+                "close": close, "turnover": r["turnover"],
+                "chg_pct": round((close - prev_close) / prev_close * 100, 2)
+                if close is not None and prev_close not in (None, 0) else None,
+            }
+
+    group_defs: dict[str, dict] = {}
+    by_stock: dict[str, list[dict]] = {}
+    for mapping in active:
+        group = group_defs.setdefault(mapping["group_id"], {
+            "id": mapping["group_id"], "name": mapping["group_name"],
+            "source": mapping["source"], "source_updated_at": mapping["source_updated_at"],
+            "observed_at": mapping["observed_at"], "members": [],
+        })
+        summary = summaries.get(mapping["stock_id"], {
+            "id": mapping["stock_id"], "name": None, "market": None, "industry": None,
+            "quote_date": None, "close": None, "turnover": None, "chg_pct": None,
+        })
+        group["members"].append({
+            **summary,
+            "effective_from": mapping["effective_from"], "effective_to": mapping["effective_to"],
+        })
+        by_stock.setdefault(mapping["stock_id"], []).append({
+            "id": mapping["group_id"], "name": mapping["group_name"],
+            "source": mapping["source"], "source_updated_at": mapping["source_updated_at"],
+            "observed_at": mapping["observed_at"],
+        })
+    groups = sorted(group_defs.values(), key=lambda group: group["name"])
+    for group in groups:
+        group["members"].sort(key=lambda member: member["id"])
+    return groups, by_stock
 
 
 def derive_radar_state(
@@ -1048,6 +1125,7 @@ def export_json(out_dir: Path | None = None) -> dict:
     stock_dir.mkdir(exist_ok=True)
     by_id_all = {s["id"]: s for s in all_stocks}
     with engine.connect() as conn:
+        groups, groups_by_stock = _company_group_payloads(conn, d)
         # 權證分點(當日,權證代號=6碼)→ {權證id: 前8大進出}
         wb: dict[str, list] = {}
         for r in conn.execute(text(
@@ -1066,6 +1144,13 @@ def export_json(out_dir: Path | None = None) -> dict:
             "            AND p.close IS NOT NULL)"
         )).fetchall()
         stock_meta = {r[0]: r for r in meta_rows}
+        profile_rows = conn.execute(text("""
+            SELECT stock_id, address, city, district, market, industry_code,
+                   transfer_agent, transfer_agent_phone, transfer_agent_address,
+                   source, source_updated_at, updated_at
+            FROM company_profiles
+        """)).mappings()
+        company_profiles = {row["stock_id"]: dict(row) for row in profile_rows}
         # 榜單優先(全歷史),其餘依代號排序,穩定輸出
         export_ids = list(dict.fromkeys(
             list(union.keys()) + sorted(stock_meta.keys())
@@ -1154,6 +1239,9 @@ def export_json(out_dir: Path | None = None) -> dict:
             directors_latest = _directors_latest_payload(conn, sid)
             payload = {
                 "id": sid, "name": s["name"], "market": s["market"],
+                "industry": s.get("industry"),
+                "company_profile": company_profiles.get(sid),
+                "company_groups": groups_by_stock.get(sid, []),
                 "candles": [
                     {"t": c[0], "o": c[1], "h": c[2], "l": c[3], "c": c[4],
                      "v": (c[5] or 0) // 1000, "amt": c[6], "af": c[7] or 1.0}
@@ -1202,6 +1290,10 @@ def export_json(out_dir: Path | None = None) -> dict:
             }
             (stock_dir / f"{sid}.json").write_text(
                 json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+    (out / "groups.json").write_text(json.dumps({
+        "version": 1, "data_date": d, "generated_at": now, "groups": groups,
+    }, ensure_ascii=False), encoding="utf-8")
                 
     # ── Export Branches ──
     _export_branches(out, engine, d)

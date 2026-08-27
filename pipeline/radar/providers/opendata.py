@@ -1,4 +1,5 @@
-"""TWSE/TPEx OpenAPI — 公司住址與券商分公司(docs/27 G1)。"""
+"""TWSE/TPEx OpenAPI — 公司基本資料與券商分公司(docs/27 G1 / docs/37 B)。"""
+from datetime import date
 from ..http import get_json
 
 TWSE_COMPANY = "https://openapi.twse.com.tw/v1/opendata/t187ap03_L"
@@ -15,30 +16,71 @@ def _cell(row: dict, *keys: str) -> str:
     return ""
 
 
+def _source_date(value: str) -> str | None:
+    """Normalize official Gregorian or ROC YYYYMMDD dates without guessing."""
+    value = value.strip()
+    if not value:
+        return None
+    digits = "".join(c for c in value if c.isdigit())
+    if len(digits) == 7:  # ROC YYYMMDD, e.g. 1150826
+        year = int(digits[:3]) + 1911
+        month = int(digits[3:5])
+        day = int(digits[5:7])
+    elif len(digits) == 8:
+        year = int(digits[:4])
+        month = int(digits[4:6])
+        day = int(digits[6:8])
+        if year < 1911:
+            year += 1911
+    else:
+        return None
+    try:
+        return date(year, month, day).isoformat()
+    except ValueError:
+        return None
+
+
+def _company_row(row: dict, *, market: str, source: str, keys: dict[str, tuple[str, ...]]) -> dict | None:
+    sid = _cell(row, *keys["stock_id"])
+    if not sid:
+        return None
+    return {
+        "stock_id": sid,
+        "address": _cell(row, *keys["address"]) or None,
+        # Keep this as text: official codes can have meaningful leading zeros.
+        "industry_code": _cell(row, *keys["industry_code"]) or None,
+        "transfer_agent": _cell(row, *keys["transfer_agent"]) or None,
+        "transfer_agent_phone": _cell(row, *keys["transfer_agent_phone"]) or None,
+        "transfer_agent_address": _cell(row, *keys["transfer_agent_address"]) or None,
+        "market": market,
+        "source": source,
+        "source_updated_at": _source_date(_cell(row, *keys["source_updated_at"])),
+    }
+
+
 def fetch_listed_companies() -> list[dict]:
     rows = get_json(TWSE_COMPANY)
     if not isinstance(rows, list) or not rows:
         raise RuntimeError("twse t187ap03_L: unexpected payload")
-    out = []
-    for r in rows:
-        sid = _cell(r, "公司代號", "Code")
-        addr = _cell(r, "住址", "地址", "Address")
-        if sid:
-            out.append({"stock_id": sid, "address": addr or None, "market": "twse"})
-    return out
+    keys = {
+        "stock_id": ("公司代號",), "address": ("住址",), "industry_code": ("產業別",),
+        "transfer_agent": ("股票過戶機構",), "transfer_agent_phone": ("過戶電話",),
+        "transfer_agent_address": ("過戶地址",), "source_updated_at": ("出表日期",),
+    }
+    return [item for r in rows if (item := _company_row(r, market="twse", source=TWSE_COMPANY, keys=keys))]
 
 
 def fetch_otc_companies() -> list[dict]:
     rows = get_json(TPEX_COMPANY)
     if not isinstance(rows, list) or not rows:
         raise RuntimeError("tpex t187ap03_O: unexpected payload")
-    out = []
-    for r in rows:
-        sid = _cell(r, "公司代號", "SecuritiesCompanyCode", "Code")
-        addr = _cell(r, "Address", "住址", "地址")
-        if sid:
-            out.append({"stock_id": sid, "address": addr or None, "market": "tpex"})
-    return out
+    keys = {
+        "stock_id": ("SecuritiesCompanyCode",), "address": ("Address",),
+        "industry_code": ("SecuritiesIndustryCode",), "transfer_agent": ("StockTransferAgent",),
+        "transfer_agent_phone": ("StockTransferAgentTelephone",),
+        "transfer_agent_address": ("StockTransferAgentAddress",), "source_updated_at": ("Date",),
+    }
+    return [item for r in rows if (item := _company_row(r, market="tpex", source=TPEX_COMPANY, keys=keys))]
 
 
 def fetch_broker_branches() -> list[dict]:

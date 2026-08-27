@@ -77,10 +77,70 @@ export interface PocketTag {
   themes?: string[];
 }
 
+/** Official company basic data; absent on JSON snapshots exported before docs/37 B. */
+export interface CompanyProfile {
+  stock_id: string;
+  address: string | null;
+  city: string | null;
+  district: string | null;
+  market: "twse" | "tpex";
+  industry_code: string | null;
+  transfer_agent: string | null;
+  transfer_agent_phone: string | null;
+  transfer_agent_address: string | null;
+  source: string | null;
+  source_updated_at: string | null;
+  updated_at: string;
+}
+
+/** Versioned repo mapping membership; does not imply a score or recommendation. */
+export interface CompanyGroupMembership {
+  id: string;
+  name: string;
+  source: string;
+  source_updated_at: string | null;
+  observed_at: string;
+}
+
+export interface CompanyGroupMember {
+  id: string;
+  name: string | null;
+  market: "twse" | "tpex" | null;
+  industry: string | null;
+  quote_date: string | null;
+  close: number | null;
+  turnover: number | null;
+  chg_pct: number | null;
+  effective_from: string | null;
+  effective_to: string | null;
+}
+
+export interface CompanyGroup {
+  id: string;
+  name: string;
+  source: string;
+  source_updated_at: string | null;
+  observed_at: string;
+  members: CompanyGroupMember[];
+}
+
+export interface CompanyGroupsJson {
+  version: number;
+  data_date: string;
+  generated_at: string;
+  groups: CompanyGroup[];
+}
+
 export interface StockJson {
   id: string;
   name: string;
   market: "twse" | "tpex";
+  /** Existing stock master industry label; may be absent from legacy JSON. */
+  industry?: string | null;
+  /** Additive official company profile; legacy JSON intentionally omits it. */
+  company_profile?: CompanyProfile | null;
+  /** Additive, source-controlled group memberships; legacy JSON intentionally omits it. */
+  company_groups?: CompanyGroupMembership[];
   candles: Candle[];
   scores: ScoreBreakdown | null;
   reasons: string[];

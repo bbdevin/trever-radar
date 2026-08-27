@@ -1,5 +1,6 @@
 """docs/27 G1:地址抽取與分點名稱正規化(不發網路)。"""
 import unittest
+import sqlite3
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
@@ -9,6 +10,7 @@ import radar.db as db
 from radar.geo import classify_broker_kind, normalize_branch_name, parse_city_district
 from radar.import_geo import import_geo
 from radar.schema import broker_branch_geo, company_profiles
+from radar.providers import opendata
 
 
 class ParseAddressTests(unittest.TestCase):
@@ -47,6 +49,38 @@ class NameTests(unittest.TestCase):
         self.assertEqual(classify_broker_kind("玉山-左營", is_hq=True), "hq")
 
 
+class OfficialCompanyProviderTests(unittest.TestCase):
+    def test_listed_company_maps_official_fields_and_roc_date(self):
+        rows = [{
+            "公司代號": "1605", "住址": " 台北市中山區 ", "產業別": "01",
+            "股票過戶機構": "華南永昌", "過戶電話": "02-1234", "過戶地址": "台北市信義區",
+            "出表日期": "1150826",
+        }]
+        with patch("radar.providers.opendata.get_json", return_value=rows):
+            result = opendata.fetch_listed_companies()
+        self.assertEqual(result, [{
+            "stock_id": "1605", "address": "台北市中山區", "industry_code": "01",
+            "transfer_agent": "華南永昌", "transfer_agent_phone": "02-1234",
+            "transfer_agent_address": "台北市信義區", "market": "twse",
+            "source": opendata.TWSE_COMPANY, "source_updated_at": "2026-08-26",
+        }])
+
+    def test_otc_company_maps_exact_english_fields_and_empty_to_none(self):
+        rows = [{
+            "SecuritiesCompanyCode": "5469", "Address": "高雄市前鎮區",
+            "SecuritiesIndustryCode": " 09 ", "StockTransferAgent": "",
+            "StockTransferAgentTelephone": " ", "StockTransferAgentAddress": None, "Date": "20260826",
+        }]
+        with patch("radar.providers.opendata.get_json", return_value=rows):
+            result = opendata.fetch_otc_companies()
+        self.assertEqual(result[0]["stock_id"], "5469")
+        self.assertEqual(result[0]["industry_code"], "09")
+        self.assertIsNone(result[0]["transfer_agent"])
+        self.assertIsNone(result[0]["transfer_agent_phone"])
+        self.assertIsNone(result[0]["transfer_agent_address"])
+        self.assertEqual(result[0]["source_updated_at"], "2026-08-26")
+
+
 class ImportGeoTests(unittest.TestCase):
     def setUp(self):
         self._tmp = TemporaryDirectory()
@@ -65,7 +99,10 @@ class ImportGeoTests(unittest.TestCase):
         self._tmp.cleanup()
 
     def test_import_writes_profiles_and_exclude_set(self):
-        listed = [{"stock_id": "2330", "address": "新竹科學園區力行六路8號", "market": "twse"}]
+        listed = [{"stock_id": "2330", "address": "新竹科學園區力行六路8號", "market": "twse",
+                   "industry_code": "24", "transfer_agent": "測試股務", "transfer_agent_phone": "02-123",
+                   "transfer_agent_address": "台北市", "source": "https://official.example/twse",
+                   "source_updated_at": "2026-08-26"}]
         otc = [{"stock_id": "3105", "address": "高雄市左營區", "market": "tpex"}]
         hqs = [{"broker_id": "9200", "branch_name": "凱基", "address": "台北市"}]
         branches = [
@@ -87,6 +124,9 @@ class ImportGeoTests(unittest.TestCase):
             ).mappings().one()
             self.assertEqual(c2330["city"], "新竹市")
             self.assertIsNone(c2330["district"])
+            self.assertEqual(c2330["industry_code"], "24")
+            self.assertEqual(c2330["transfer_agent"], "測試股務")
+            self.assertEqual(c2330["source_updated_at"], "2026-08-26")
             c3105 = conn.execute(
                 company_profiles.select().where(company_profiles.c.stock_id == "3105")
             ).mappings().one()
@@ -102,6 +142,44 @@ class ImportGeoTests(unittest.TestCase):
                 broker_branch_geo.select().where(broker_branch_geo.c.name_key == "凱基")
             ).mappings().one()
             self.assertEqual(kgi["kind"], "hq")
+
+
+class CompanyProfileMigrationTests(unittest.TestCase):
+    def test_existing_sqlite_profile_table_gets_additive_columns(self):
+        with TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "legacy.db"
+            raw = sqlite3.connect(db_path)
+            raw.execute("""CREATE TABLE company_profiles (
+                stock_id TEXT PRIMARY KEY, address TEXT, city TEXT, district TEXT,
+                market TEXT NOT NULL, updated_at TEXT NOT NULL
+            )""")
+            raw.execute(
+                "INSERT INTO company_profiles VALUES (?, ?, ?, ?, ?, ?)",
+                ("1605", "既有地址", "台北市", None, "twse", "2026-08-01T00:00:00"),
+            )
+            raw.commit()
+            raw.close()
+            old_url, old_dir = config.DB_URL, config.DATA_DIR
+            try:
+                config.DATA_DIR = Path(tmp)
+                config.DB_URL = "sqlite:///" + db_path.as_posix()
+                db._engine = None
+                db.init_db()
+                with db.get_engine().connect() as conn:
+                    cols = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(company_profiles)")}
+                    existing = conn.exec_driver_sql(
+                        "SELECT stock_id, address, city, market, updated_at FROM company_profiles"
+                    ).one()
+                self.assertTrue({
+                    "industry_code", "transfer_agent", "transfer_agent_phone",
+                    "transfer_agent_address", "source", "source_updated_at",
+                }.issubset(cols))
+                self.assertEqual(existing, ("1605", "既有地址", "台北市", "twse", "2026-08-01T00:00:00"))
+            finally:
+                if db._engine is not None:
+                    db._engine.dispose()
+                db._engine = None
+                config.DB_URL, config.DATA_DIR = old_url, old_dir
 
 
 if __name__ == "__main__":

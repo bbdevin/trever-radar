@@ -269,6 +269,13 @@ company_profiles = Table(
     Column("city", Text),
     Column("district", Text),
     Column("market", Text, nullable=False),
+    # 官方公司基本資料的 additive 欄位；地緣邏輯仍只使用 address/city/district。
+    Column("industry_code", Text),
+    Column("transfer_agent", Text),
+    Column("transfer_agent_phone", Text),
+    Column("transfer_agent_address", Text),
+    Column("source", Text),
+    Column("source_updated_at", Text),
     Column("updated_at", Text, nullable=False),
 )
 

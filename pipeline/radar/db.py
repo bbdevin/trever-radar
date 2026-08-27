@@ -57,6 +57,19 @@ def _migrate_sqlite(conn):
     if "description" not in stock_cols:
         conn.exec_driver_sql("ALTER TABLE stocks ADD COLUMN description TEXT")
 
+    profile_cols = {r[1] for r in conn.exec_driver_sql("PRAGMA table_info(company_profiles)").fetchall()}
+    profile_additions = {
+        "industry_code": "TEXT",
+        "transfer_agent": "TEXT",
+        "transfer_agent_phone": "TEXT",
+        "transfer_agent_address": "TEXT",
+        "source": "TEXT",
+        "source_updated_at": "TEXT",
+    }
+    for name, sql_type in profile_additions.items():
+        if name not in profile_cols:
+            conn.exec_driver_sql(f"ALTER TABLE company_profiles ADD COLUMN {name} {sql_type}")
+
     margin_cols = {r[1] for r in conn.exec_driver_sql("PRAGMA table_info(daily_margins)").fetchall()}
     margin_additions = {
         "margin_buy": "INTEGER",

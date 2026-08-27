@@ -1,0 +1,55 @@
+{
+  "version": 1,
+  "mappings": [
+    {
+      "group_id": "walsin",
+      "group_name": "華新麗華集團",
+      "stock_id": "1605",
+      "effective_from": null,
+      "effective_to": null,
+      "source": "https://www.walsin.com/about-us/who-we-are/subsidiaries-affiliates/",
+      "source_updated_at": null,
+      "observed_at": "2026-08-27"
+    },
+    {
+      "group_id": "walsin",
+      "group_name": "華新麗華集團",
+      "stock_id": "2344",
+      "effective_from": null,
+      "effective_to": null,
+      "source": "https://www.walsin.com/about-us/who-we-are/subsidiaries-affiliates/",
+      "source_updated_at": null,
+      "observed_at": "2026-08-27"
+    },
+    {
+      "group_id": "walsin",
+      "group_name": "華新麗華集團",
+      "stock_id": "2492",
+      "effective_from": null,
+      "effective_to": null,
+      "source": "https://www.walsin.com/about-us/who-we-are/subsidiaries-affiliates/",
+      "source_updated_at": null,
+      "observed_at": "2026-08-27"
+    },
+    {
+      "group_id": "walsin",
+      "group_name": "華新麗華集團",
+      "stock_id": "5469",
+      "effective_from": null,
+      "effective_to": null,
+      "source": "https://www.walsin.com/about-us/who-we-are/subsidiaries-affiliates/",
+      "source_updated_at": null,
+      "observed_at": "2026-08-27"
+    },
+    {
+      "group_id": "walsin",
+      "group_name": "華新麗華集團",
+      "stock_id": "6116",
+      "effective_from": null,
+      "effective_to": null,
+      "source": "https://www.walsin.com/about-us/who-we-are/subsidiaries-affiliates/",
+      "source_updated_at": null,
+      "observed_at": "2026-08-27"
+    }
+  ]
+}

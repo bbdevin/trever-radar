@@ -11,7 +11,7 @@ import {
   useReactTable,
   type SortingState,
 } from "@tanstack/react-table";
-import { ChevronDown, ChevronUp } from "lucide-react";
+import { Building2, ChevronDown, ChevronUp, MapPin, Phone } from "lucide-react";
 import { IconArrowLeft } from "@/components/Icons";
 import KChart from "@/components/KChart";
 import BranchFlowSection from "@/components/BranchFlowSection";
@@ -26,7 +26,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import WatchlistButton from "@/components/WatchlistButton";
 import { dataFetch } from "@/lib/dataFetch";
 import { OFFLINE_DATA_COPY, isBrowserOffline } from "@/lib/pwa";
-import type { StockJson } from "@/lib/types";
+import type { CompanyProfile, StockJson } from "@/lib/types";
 import { MARKET_LABEL, chgClass, fmtE8, fmtPct, fmtX } from "@/lib/format";
 import { signInWithGoogle, useSession } from "@/lib/useSession";
 import { cn, pillTabClass } from "@/lib/utils";
@@ -140,8 +140,24 @@ function StockView() {
           <div className="min-w-0 flex-1">
             <div className="truncate text-[19px] font-extrabold" title={data.name}>{data.name}</div>
             <div className="truncate text-[13px] text-muted-foreground">
-              {data.id} · {MARKET_LABEL[data.market] ?? data.market}
+              {data.id} · {MARKET_LABEL[data.market] ?? data.market}{data.industry ? ` · ${data.industry}` : ""}
             </div>
+            <CompanyInfo profile={data.company_profile} />
+            {!!data.company_groups?.length && (
+              <div className="mt-1 flex flex-wrap gap-1.5">
+                {data.company_groups.map((group) => (
+                  <a
+                    key={group.id}
+                    href={`/group?id=${encodeURIComponent(group.id)}`}
+                    className="inline-flex min-h-11 items-center gap-1 rounded-full border border-[color:var(--accent-2)]/40 px-2.5 text-[11px] font-semibold text-[color:var(--accent-2)] transition-colors duration-200 hover:bg-[color:var(--accent-2)]/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    title={`查看${group.name}成員股`}
+                  >
+                    <Building2 size={14} aria-hidden="true" />
+                    {group.name}
+                  </a>
+                ))}
+              </div>
+            )}
           </div>
           <WatchlistButton stockId={data.id} size={20} />
         </div>
@@ -238,6 +254,58 @@ function StockView() {
             branchHistory={data.branch_history}
             onBack={() => setDrillBranch(null)}
           />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CompanyInfo({ profile }: { profile?: CompanyProfile | null }) {
+  const [expanded, setExpanded] = useState(false);
+
+  return (
+    <div className="mt-1.5 min-w-0 text-[11.5px] text-muted-foreground">
+      <div className="flex min-w-0 items-center gap-1.5">
+        <MapPin size={14} className="shrink-0 text-[color:var(--ink-2)]" aria-hidden="true" />
+        <span className="truncate" title={profile?.address ?? undefined}>
+          {profile?.address ?? "公司地址：資料未提供"}
+        </span>
+        <button
+          type="button"
+          className="ml-auto inline-flex min-h-11 shrink-0 items-center rounded-full px-2 text-[11px] font-semibold text-primary transition-colors duration-200 hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          aria-expanded={expanded}
+          aria-label={expanded ? "收合完整公司資訊" : "展開完整公司資訊"}
+          onClick={() => setExpanded((value) => !value)}
+        >
+          {expanded ? "收合" : "展開"}
+          {expanded ? <ChevronUp size={14} aria-hidden="true" /> : <ChevronDown size={14} aria-hidden="true" />}
+        </button>
+      </div>
+      <div className="flex min-w-0 items-center gap-1.5">
+        <Phone size={14} className="shrink-0 text-[color:var(--ink-2)]" aria-hidden="true" />
+        <span className="truncate" title={profile?.transfer_agent_address ?? undefined}>
+          股務：{profile?.transfer_agent ?? "資料未提供"}{profile?.transfer_agent_phone ? ` ${profile.transfer_agent_phone}` : ""}{profile?.transfer_agent_address ? ` · ${profile.transfer_agent_address}` : ""}
+        </span>
+      </div>
+      <div className="pl-[20px] text-[11px]">
+        資料日：{profile?.source_updated_at ?? "資料未提供"}{profile?.source ? " · 官方來源" : " · 官方來源未提供"}
+      </div>
+      {expanded && (
+        <div className="mt-1.5 grid gap-1.5 rounded-[var(--r-sm)] border border-[color:var(--line)] bg-secondary/50 p-2.5 text-[11.5px] text-[color:var(--ink-2)]">
+          <span className="break-words">地址：{profile?.address ?? "資料未提供"}</span>
+          <span className="flex min-w-0 items-start gap-1.5 break-words">
+            <Phone size={14} className="mt-px shrink-0" aria-hidden="true" />
+            股務代理：{profile?.transfer_agent ?? "資料未提供"}
+            {profile?.transfer_agent_phone ? `（${profile.transfer_agent_phone}）` : ""}
+            {profile?.transfer_agent_address ? `；${profile.transfer_agent_address}` : ""}
+          </span>
+          <span>產業代碼：{profile?.industry_code ?? "資料未提供"}</span>
+          <span>
+            官方資料日：{profile?.source_updated_at ?? "資料未提供"}
+            {profile?.source ? (
+              <> · <a className="inline-flex min-h-11 items-center px-1 font-semibold text-primary underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" href={profile.source} target="_blank" rel="noreferrer">來源</a></>
+            ) : " · 官方來源未提供"}
+          </span>
         </div>
       )}
     </div>

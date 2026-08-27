@@ -192,6 +192,7 @@ def test_process_trade_parses_raw_json_string_message(monkeypatch):
     """2026-07-16 回歸:SDK 的 on("message") 回呼給的是原始 JSON 字串,不是已解析
     的 dict——舊碼直接 message.get(...) 會對字串炸 AttributeError,需先 json.loads。
     """
+    monkeypatch.setattr(worker, "in_continuous_trading", lambda _now: True)
     monkeypatch.setattr(worker, "push_signal", lambda *a, **k: None)
     worker.armed_stocks["2330"] = {
         "name": "台積電", "watch_price": 99999, "adv20": 0,
@@ -224,6 +225,7 @@ def test_process_trade_delivers_signal_without_a_running_event_loop(monkeypatch)
     supabase client 是否真的被呼叫、sent_signals 是否真的被寫入——舊碼在這裡兩者
     皆不會發生,新碼(同步呼叫)兩者都會發生。
     """
+    monkeypatch.setattr(worker, "in_continuous_trading", lambda _now: True)
     mock_supabase = MagicMock()
     monkeypatch.setattr(worker, "supabase", mock_supabase)
     worker.armed_stocks["2330"] = {
