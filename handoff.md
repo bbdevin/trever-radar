@@ -8,6 +8,7 @@ S4 V2 已完成程式碼驗收：`S4_COMPRESSION_SETUP_V2` →
 `S4_COMPRESSION_BREAKOUT_V2`，legacy S4 凍結；首頁 phase 各自顯示 setup/breakout/legacy strategy_meta，
 episode 去重依完整 `daily_prices` 交易日曆。正式 DB 尚未回算，需另次人工確認；依本輪 Workflow D 提交並 push main。
 不可改 schema/workflow/VPS/adj_factor。
+Codex Multi-Agent V2 執行偏好：Sol high 做整體架構／複雜跨模組決策，Terra high 做一般實作／整合／驗收，Luna 做搜尋分析／簡單修改／測試／文件，最終 Code Review 固定 high；Luna 能做不用 Terra、Terra 能做不用 Sol，獨立工作平行、dependency 依序，spawn 明確 model override。此偏好不取代 Cursor Grok/Auto 流程或角色模型中立原則，可由使用者當次覆寫。
 ```
 
 - **Done**: S4 V2 兩階段、S4 phase JSON／首頁標示；Terra Review = **APPROVE**，root pytest **92+52**、`npx tsc` 與 `npm run build` 成功；正式 DB 尚未回算，需另次人工確認。未記 commit hash。

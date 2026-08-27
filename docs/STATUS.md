@@ -112,6 +112,7 @@
 
 - 2026-08-27 **S4 V2 兩階段（程式／測試完成，未正式資料回算或上線）**：舊 `S4_VOLATILITY_CONTRACTION` 凍結為 legacy；新增 `S4_COMPRESSION_SETUP_V2`（adjusted OHLC 的壓縮蓄勢）與 `S4_COMPRESSION_BREAKOUT_V2`（前 1–5 日 setup 後的首次帶量突破）。兩者只作 strategy tag／S4 內排序，不改 `tech_score`、`final`、全域 Armed/Triggered 或 schema。`strategies.S4_VOLATILITY_CONTRACTION` 保留三者聯集；新增 additive `strategy_phases` 與每股 `strategy_signals`，首頁標示「壓縮蓄勢／壓縮突破」（突破優先）並各自讀其 strategy_meta（legacy 亦獨立）。setup 連續日依完整 `daily_prices` 交易日曆按 episode 去重；程式碼驗收完成；正式資料尚未重算，需另次人工確認。
 - 2026-08-27 **勝率統計唯讀稽核**：盤點策略／分點事件、成熟樣本、entry／forward／win、export／UI 與文件定義；未改排名、未改 schema，未執行正式 DB 回算。
+- 2026-08-27 **Codex Multi-Agent V2 執行偏好**：Sol high 負責整體架構／複雜判斷／跨模組決策；Terra high 負責一般功能實作、跨端整合與驗收；Luna 負責搜尋分析、簡單修改、測試／lint／typecheck、文件與重複性工作，最終 Code Review 固定 high。此為目前預設偏好，不取代 Cursor Grok/Auto 常駐流程與角色模型中立原則，使用者可當次覆寫。
 - 2026-08-27 **融資主輪改 21:20**：TWSE ~21:00 產製,不必等到 22:40;分點第二輪改 **22:00** 避 lock。
 - 2026-08-27 **融資未更新修復**：根因＝`git pull` 後腳本丟 +x → 22:10 `daily-margin` **Permission denied**（21:00 branches 同掛）；另 17:40 抓 MI_MARGN 過早必 empty。已：`sync_code` 強制 `chmod +x`、crontab 改 `bash` 呼叫、branches 不再抓 margin、腳本 git mode 100755。
 - 2026-08-26 **交接**：`handoff.md` 已寫完整 Handoff＋下一對話可貼提示詞；本機／VPS 皆在 `a81860c`。

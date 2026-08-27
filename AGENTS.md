@@ -125,6 +125,18 @@
 - 不做 TWSE bsr CAPTCHA 破解(已定案取捨)。
 - 不做自動下單(已定案取捨,見 `docs/10` §3)。
 
+## Codex Multi-Agent V2 執行偏好（2026-08-27 使用者定案）
+
+這是本專案目前的 Codex 預設執行偏好，不取代既有 Cursor Grok/Auto 常駐流程，也不推翻上方的角色模型中立原則；使用者可在當次任務覆寫。
+
+| Codex 模型 | 預設偏好職責 |
+|---|---|
+| GPT-5.6 Sol high | 整體架構、複雜判斷、跨模組決策 |
+| GPT-5.6 Terra high | 一般功能實作、Frontend/Backend/API/Database/Refactor、較複雜測試修正、整合與驗收 |
+| GPT-5.6 Luna | 搜尋／分析／找檔、簡單修改、測試、lint/typecheck、文件與重複性工作；最終 Code Review 固定 high，其他任務依複雜度調整 |
+
+偏好原則：Luna 能做的不用 Terra，Terra 能做的不用 Sol；獨立工作可平行，具 dependency 的工作依序執行；spawn 時明確設定 model override。
+
 ## Agent Roles
 
 角色由**本次任務指定,不由模型品牌永久決定**。GPT、Claude、Gemini、Grok、Codex 或其他高階模型,能力足夠時都可擔任 Planner、Executor 或 Reviewer。
