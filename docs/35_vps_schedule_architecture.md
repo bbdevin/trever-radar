@@ -1,6 +1,6 @@
 # VPS 排程／回補／大戶 — 四層架構（規劃定案）
 
-> 狀態：**架構定案 2026-08-26**；**程式已落地**：`bf-supervisor`、`safe-stats＋scores`、TDCC B1/B2＋週六 06:30（VPS crontab 掛載仍須人工確認）  
+> 狀態：**架構定案 2026-08-26，正式機唯讀核對 2026-08-27**；`bf-supervisor`、`safe-stats＋scores`、TDCC B1/B2＋週六 06:30 與董監每月槽均已掛正式 crontab。
 > 對齊：`docs/08` §0（時刻表）、`docs/33`（mid／stats）、`docs/34`（資券／大戶）、`docs/31`（單一寫者）  
 > 來源：使用者確認之全盤盤點——日更與算分全留、歷史回補全自動跑到完＋ntfy、大戶納入週末槽。
 
@@ -64,7 +64,7 @@ flowchart TB
 | FinMind 深歷史 | 每天 01:10 | 已深則近零 |
 | 分點／權證歷史 | 長跑容器＋**bf-supervisor** | **預設自動跑到完**；掛掉自啟；**同時只一個寫者**；完成 **ntfy** |
 | 資券 240 日 | 週日 02:30 | done flag 則跳過 |
-| **TDCC 大戶** | **週六 06:30**（規劃） | 全市場 CSV；不進綜合分；顯示窗見 `docs/34` |
+| **TDCC 大戶** | **週六 06:30**（已掛） | 全市場 CSV；不進綜合分；顯示窗見 `docs/34` |
 
 ### Layer 3 — 上線發布
 
@@ -101,8 +101,8 @@ flowchart LR
   end
   subgraph eve [晚間]
     m20[20:00_mid]
-    d2100[21:00_branches]
-    d2210[22:10_margin]
+    d2120[21:20_margin]
+    d2200[22:00_branches]
     s2330[23:30_stats_scores]
   end
   bf[bf_supervisor_jobs]
@@ -116,7 +116,7 @@ flowchart LR
 
 ```text
 週六 05:00  weekly-backup
-週六 06:30  weekly-tdcc（大戶，規劃）→ export/deploy
+週六 06:30  weekly-tdcc（大戶，正式 cron 已掛）→ export/deploy
 週日 02:30  backfill-margin（若尚未 done）
 ```
 
@@ -126,10 +126,10 @@ flowchart LR
 
 | 項目 | 現況 | 目標 |
 |---|---|---|
-| 歷史 bf | `bf-supervisor.sh` 單寫者＋自啟＋完成 ntfy（repo 已落地） | VPS 掛 crontab／清舊雙容器後驗證 |
+| 歷史 bf | `bf-supervisor.sh` 單寫者＋自啟＋完成 ntfy；正式 cron 已掛，權證完成、分點進行中（2026-08-27） | 等分點完成旗標與 ntfy |
 | 23:30 | `safe-branch-stats`：**stats → scores → export** | 已對齊目標 |
-| 大戶 | B1 入庫＋B2 UI＋`weekly-tdcc.sh` @ 週六 06:30 | VPS 首次手動跑＋掛 cron |
-| 安靜窗 | `lib.sh` `in_radar_quiet_window` 一處 | 已對齊 |
+| 大戶 | B1 入庫＋B2 UI＋`weekly-tdcc.sh` @ 週六 06:30；正式 cron 已掛，2026-08-26 實跑成功 | 觀察下一個週六例行輪 |
+| 安靜窗 | `lib.sh` 已是 14:05–15:45；但 2026-08-27 核對時 guard/supervisor 為更新前啟動的舊常駐程序，當日 15:16 已提前 unpause | 安全時點重啟常駐程序後再驗證 15:45 生效 |
 
 **不刪**：日更輪次、mid×4、算分、備份、盤中。大戶**不進**綜合分、**不能**日更。
 

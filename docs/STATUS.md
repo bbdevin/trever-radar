@@ -123,7 +123,7 @@
 - 2026-08-27 **融資主輪改 21:20**：TWSE ~21:00 產製,不必等到 22:40;分點第二輪改 **22:00** 避 lock。
 - 2026-08-27 **融資未更新修復**：根因＝`git pull` 後腳本丟 +x → 22:10 `daily-margin` **Permission denied**（21:00 branches 同掛）；另 17:40 抓 MI_MARGN 過早必 empty。已：`sync_code` 強制 `chmod +x`、crontab 改 `bash` 呼叫、branches 不再抓 margin、腳本 git mode 100755。
 - 2026-08-26 **交接**：`handoff.md` 已寫完整 Handoff＋下一對話可貼提示詞；本機／VPS 皆在 `a81860c`。
-- 2026-08-26 **Phase D1/D2 董監＋內部人％**：`import-directors`（TWSE/TPEx OpenAPI）、`director_holdings`、HoldersPanel「董監持股」分頁；週表 `insider_pct` ffill。VPS 月槽見 `monthly-directors.sh`（crontab.example；**正式 crontab 仍未掛**）。
+- 2026-08-26 **Phase D1/D2 董監＋內部人％**：`import-directors`（TWSE/TPEx OpenAPI）、`director_holdings`、HoldersPanel「董監持股」分頁；週表 `insider_pct` ffill。VPS `monthly-directors.sh` 已掛正式 crontab（每月 16 日 07:00；2026-08-27 唯讀核對，尚未到下一次例行首跑）。
 - 2026-08-26 **內部人％公式修正**：姓名去重＋（目前持股＋關係人合計）÷集保；對齊籌碼／元大（2476≈12.09；舊式~10.48）。
 - 2026-08-26 **ntfy 改繁中成功摘要**：日更結束發「三大法人 · 成功」「分點籌碼 · 成功」等；失敗／略過／注意同標題格式（VPS 已 pull）。
 - 2026-08-26 **上櫃 15:00 主補抓槽**：新增 `daily-tpex-quotes.sh`（quotes→指標→分數→export）；**VPS crontab 已掛**平日 15:00；安靜窗 14:05–15:45。14:10 上市閃電不變；16:10／17:40／22:10 仍保底再抓。
@@ -134,6 +134,7 @@
 - 2026-08-26 **大戶表 UI**：個股 tab 表改為日期｜大戶持股｜增減｜散戶｜內部人；紅漲綠跌＋+/-（`HoldersPanel`）；export 補 `retail_pct`（下次 export 後散戶有值；內部人暫 —）。
 - 2026-08-26 **`docs/sql` migration 命名統一**：`YYYYMMDDHHMMSS_描述.sql`；見 `docs/sql/README.md`。既有 7 檔已改名並更新 STATUS／36／21／worker 引用。
 - 2026-08-26 **docs/35 S2 程式落地＋VPS 已掛**：`bf-supervisor`（單寫者／自啟／ntfy）、`safe-branch-stats`＋scores、安靜窗收進 `lib.sh`；**TDCC B1/B2**（`import-tdcc`、個股「大戶」tab、`weekly-tdcc.sh` @ 週六 06:30）。**VPS**：crontab 已掛 supervisor／tdcc；`BF_ORDER=warrant,branches`（先權證）；`disk-cleanup.sh` 每日 07:40（首跑 +2G free）。`backfill-branches top=0` 已修（`7b2c003`）。
+- 2026-08-27 **正式 VPS 唯讀稽核**：repo tracked files 乾淨但停在 `f237204`（遠端 `main=94be3d6`，E1 尚未 pull）；正式 crontab 已含 TDCC 週六 06:30 與董監每月 16 日 07:00。權證、資券、TDCC archive done flag 已存在；分點回補容器仍在跑。`radar.db` 約 4.3G、WAL 約 91M，磁碟餘 7.9G（71%）；因有活躍寫者未跑 integrity check。14:10 TPEx empty、15:00 補抓 10,629 筆成功，15:05 scores 751 檔／24 檔達 65，export/deploy 成功。檔案安靜窗已是 14:05–15:45，但 guard/supervisor 是更新前啟動的舊程序，當日 15:16 提前 unpause；需在安全時點重啟後驗證，**本次未操作服務、DB 或 deploy**。
 - 2026-08-26 **修字級／深淺色選單無反應**：頭像選單改原生 button；`userPrefs` 只依 `userId` 重拉並擋住進行中 refresh 蓋寫本機切換。
 - 2026-08-26 **搜尋歷史＋文字縮放**：每位登入使用者搜尋紀錄（可清除）與 Header「A」三档字級綁帳號（`docs/36`）。**Supabase `20260826114421_create_user_ui_prefs.sql` 已執行**。
 - 2026-08-26 **VPS 四層排程架構定案（文件）**：[`docs/35_vps_schedule_architecture.md`](35_vps_schedule_architecture.md)——日更真相／歷史加深（含 bf-supervisor 目標）／發布／大戶週六 06:30；已同步 `08`§0、`33` S2、`34` §4.4。**程式尚未實作**。

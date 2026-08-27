@@ -4,7 +4,7 @@
 
 > **架構變更(2026-07-18 WP-B3 cutover)**:`radar.db` 常駐 VPS,VPS 為唯一寫者。VPS cron(`vps/scripts/`,見 `vps/crontab.example` 樣板實體在 `vps/scripts/crontab.example`)跑完每輪管線後直接 `export-json` + `cd cloudflare-data-worker && npx wrangler deploy`,把 JSON 當 Cloudflare Worker 靜態資產上傳,`radar.techtrever.com/data/*` 即傳即生效(不經 GitHub、不經 Pages build)。GitHub Actions 只剩 push `main` 觸發的 `deploy.yml`(純 code build+deploy,不碰資料)。詳細規劃見 `docs/31` §2/§3,實際指令序見 `vps/README.md` §9。
 >
-> **四層總圖（日更／歷史回補／發布／大戶）**:見 [`docs/35_vps_schedule_architecture.md`](35_vps_schedule_architecture.md)（2026-08-26；S2 程式已入 repo，VPS crontab 掛載待人工）。
+> **四層總圖（日更／歷史回補／發布／大戶）**:見 [`docs/35_vps_schedule_architecture.md`](35_vps_schedule_architecture.md)（2026-08-27 唯讀核對：S2、TDCC 06:30、董監每月 16 日 07:00 均已掛正式 crontab）。
 
 | 台北時間 | 執行者(VPS cron script / GitHub Actions) | 內容 |
 |---|---|---|
@@ -18,8 +18,9 @@
 | 每天 03/09/12/20:00 | VPS `mid-backfill-publish.sh` | 回補中途上線:pause bf → 預設只 export → deploy(docs/33) |
 | 每天 23:30 | VPS `safe-branch-stats.sh` | pause bf → compute-branch-stats → **compute-scores** → export |
 | 週六 05:00 | VPS `vps/scripts/weekly-backup.sh` | 備份:`wal_checkpoint(TRUNCATE)` → `integrity_check`(必須 `ok`)→ gzip → `rclone` 上傳 Google Drive(唯一雲端備份;retention 近 4 份+每月 1 份) |
-| 週六 06:30 | VPS `weekly-tdcc.sh` | TDCC 大戶全市場週更 → export → deploy(docs/34 B1;VPS 掛 cron 待人工) |
+| 週六 06:30 | VPS `weekly-tdcc.sh` | TDCC 大戶全市場週更 → export → deploy（docs/34 B1；正式 cron 已掛） |
 | 週日 02:30 | VPS `backfill-margin.sh` | 資券約 240 日回補(done flag 則跳過;docs/34 A4) |
+| 每月 16 日 07:00 | VPS `monthly-directors.sh` | 董監持股月更 → export → deploy（正式 cron 已掛；2026-08-27 核對時尚未到下一次排程首跑） |
 | @reboot + */5 | `bf-cron-guard.sh` | 安靜窗／mid／margin／tdcc flag → pause 歷史 bf |
 | @reboot + */10 | `bf-supervisor.sh` | 歷史 bf 單寫者自啟(branches→warrant)＋完成 ntfy |
 | 平日 08:50–13:35 | 盤中訊號雷達 worker(docker+cron,同一台 VPS,docs/24 Part A) | 讀 `https://radar.techtrever.com/data/radar.json` 判定 I-1~I-4 訊號,寫 Supabase,首頁盤中面板即時顯示;13:35 自動收工 |
