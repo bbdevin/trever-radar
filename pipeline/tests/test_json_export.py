@@ -307,6 +307,14 @@ class S4PhaseJsonExportTests(unittest.TestCase):
             "S4_COMPRESSION_SETUP_V2",
             "S4_COMPRESSION_BREAKOUT_V2",
         }.issubset(radar["strategy_meta"]))
+        # A2 lifecycle metadata is a versioned, additive contract.  It must
+        # not rely on a DB migration or a particular performance result.
+        for meta in radar["strategy_meta"].values():
+            self.assertIn(meta["status"], {"active", "shadow", "retired"})
+            self.assertRegex(meta["effective_date"], r"^\d{4}-\d{2}-\d{2}$")
+            self.assertTrue(meta["rationale"])
+            self.assertTrue(meta["decision_ref"])
+            self.assertGreaterEqual(meta["version"], 1)
         signals = {s["id"]: s.get("strategy_signals") for s in radar["stocks"]}
         self.assertEqual(signals["2000"][0]["phase"], "breakout")
         self.assertEqual(signals["1002"][0]["phase"], "setup")

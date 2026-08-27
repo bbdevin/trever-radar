@@ -128,8 +128,15 @@ Supabase Auth / watchlist 保留作跨裝置個人化,不再擴張假性會員�
 - **Active**:成熟樣本與績效報告完成後,由使用者明確核准顯示。
 - **Retired**:績效不佳、失效或與其他策略高度重複;停止主介面顯示,歷史 code 保留。
 
-本計畫開始時,S1-S13 預設視為 **Shadow**。不得由 Executor 自訂勝率門檻後自行
+**現行決議（2026-08-19 Phase 3 報告後）**：S2、S5 = **Retired**；其餘 S1–S13
+及 S4 V2 phase = **Shadow**；沒有 Active。Retired 停止出現在主要策略選擇器，但 frozen
+reason code、`strategies` JSON key 與歷史績效都必須保留。不得由 Executor 自訂勝率門檻後自行
 升級;先交付樣本數、5/10/20 日勝率、平均/中位報酬與時間區段穩定性,再由使用者選擇。
+
+**A2 lifecycle contract（2026-08-27）**：`radar.strategy_meta[code]` 以 additive、版本化欄位
+輸出 `status / effective_date / rationale / decision_ref / version` 加既有績效欄位；這是 repo 內
+可審查的顯示治理資料，不寫 DB、不改分數或既有 selector。舊 JSON 缺 lifecycle metadata 時，前端
+必須保留所有既有 selector，不能把缺值誤判為 Retired。
 
 ## 5. 分階段執行清單
 

@@ -133,6 +133,15 @@ const STRATEGY_BY_KEY: Record<string, (typeof STRATEGIES)[number]> = Object.from
   STRATEGIES.map((s) => [s.key, s]),
 );
 
+/**
+ * Older deployed radar.json snapshots have no lifecycle metadata. Treat them
+ * as fully selectable so a partial data rollout never hides a valid legacy
+ * strategy merely because the new optional contract is absent.
+ */
+function isRetiredStrategy(meta: StrategyMeta | undefined) {
+  return meta?.status === "retired";
+}
+
 const THEME_SORT_TABS = new Set<TabKey>(["score", "scan", "pocket"]);
 const LS_LIST_SORT = "trever.home.listSort.v1";
 type ListSort = "score" | "theme";
@@ -205,7 +214,9 @@ function RadarView() {
     if (!radar || strategyDefaulted.current) return;
     strategyDefaulted.current = true;
     const chips = STRATEGY_GROUPS[0].codes;
-    const firstWithCount = chips.find((c) => (radar.strategies?.[c]?.length ?? 0) > 0);
+    const firstWithCount = chips.find((c) =>
+      !isRetiredStrategy(radar.strategy_meta?.[c]) && (radar.strategies?.[c]?.length ?? 0) > 0,
+    );
     if (firstWithCount) setStrategy(firstWithCount);
   }, [radar]);
 
@@ -277,6 +288,21 @@ function RadarView() {
   const stale = Object.entries(radar.freshness ?? {})
     .filter(([k, v]) => k !== "quotes" && v.stale && v.date)
     .map(([k, v]) => ({ label: FRESH_LABEL[k] ?? k, date: v.date! }));
+  // Retired codes remain in radar.strategies for historic links and old JSON
+  // consumers. With lifecycle metadata present, keep them out of the primary
+  // selector and expose them only in the explicit historical disclosure.
+  const hasLifecycleContract = radar.strategy_meta != null;
+  const primaryStrategyGroups = STRATEGY_GROUPS
+    .map((group) => ({
+      ...group,
+      codes: hasLifecycleContract
+        ? group.codes.filter((code) => !isRetiredStrategy(radar.strategy_meta?.[code]))
+        : group.codes,
+    }))
+    .filter((group) => group.codes.length > 0);
+  const retiredStrategies = hasLifecycleContract
+    ? STRATEGIES.filter((strategyItem) => isRetiredStrategy(radar.strategy_meta?.[strategyItem.key]))
+    : [];
 
   return (
     <>
@@ -404,7 +430,7 @@ function RadarView() {
       {tab === "mark" && (
         <div className="mb-4">
           <div className="flex flex-col gap-1.5">
-            {STRATEGY_GROUPS.map((g) => {
+            {primaryStrategyGroups.map((g) => {
               // 選中策略若落在本組,強制展開——選中態不能被藏住。
               const isOpen = expandedGroups.has(g.key) || g.codes.includes(strategy);
               const groupCount = g.codes.reduce((sum, c) => sum + (radar.strategies?.[c]?.length ?? 0), 0);
@@ -434,21 +460,18 @@ function RadarView() {
                         const st = STRATEGY_BY_KEY[code];
                         if (!st) return null;
                         const meta: StrategyMeta | undefined = radar.strategy_meta?.[code];
-                        const isRetired = meta?.status === "retired";
                         const isActive = strategy === code;
                         const insufficientSamples = meta ? !meta.sufficient_samples : false;
                         return (
                           <button
                             key={code}
                             onClick={() => setStrategy(code)}
-                            title={isRetired ? "此策略在目前有限樣本下未顯示正向預測力，降級觀察中；樣本不足，非永久淘汰" : st.label}
+                            title={meta?.rationale ?? st.label}
                             className={cn(
-                              "cursor-pointer rounded-md px-2.5 py-1 text-[12.5px] font-medium transition-colors duration-200",
+                              "min-h-11 cursor-pointer rounded-md px-2.5 py-1 text-[12.5px] font-medium transition-colors duration-200",
                               isActive
                                 ? "bg-primary text-primary-foreground shadow-sm"
-                                : isRetired
-                                  ? "bg-muted/50 text-muted-foreground/50 hover:bg-muted/60"
-                                  : "bg-muted text-muted-foreground hover:bg-muted/80",
+                                : "bg-muted text-muted-foreground hover:bg-muted/80",
                             )}
                           >
                             {st.label}
@@ -460,12 +483,7 @@ function RadarView() {
                             >
                               {radar.strategies?.[code]?.length ?? 0}
                             </span>
-                            {isRetired && !isActive && (
-                              <span className="ml-1 rounded bg-muted px-1 py-0.5 text-[9.5px] font-semibold text-muted-foreground/60 no-underline">
-                                {"樣本不足"}
-                              </span>
-                            )}
-                            {!isRetired && insufficientSamples && !isActive && (
+                            {insufficientSamples && !isActive && (
                               <span className="ml-1 rounded bg-muted px-1 py-0.5 text-[9.5px] font-normal text-muted-foreground/60 no-underline">
                                 {"Shadow"}
                               </span>
@@ -478,6 +496,42 @@ function RadarView() {
                 </div>
               );
             })}
+            {retiredStrategies.length > 0 && (
+              <details className="mt-2 rounded-md border border-border bg-muted/20 px-2.5 py-1.5">
+                <summary className="flex min-h-11 cursor-pointer items-center gap-2 text-[12.5px] font-medium text-muted-foreground transition-colors duration-200 hover:text-foreground">
+                  <span>{"已退役策略（歷史資料）"}</span>
+                  <span className="num rounded bg-muted px-1.5 py-0.5 text-[10.5px]">{retiredStrategies.length}</span>
+                </summary>
+                <p className="pb-2 text-[11px] leading-relaxed text-muted-foreground">
+                  {"不列入主要選擇器；仍保留歷史訊號與相容 JSON，供回顧，不代表有效預測。"}
+                </p>
+                <div className="flex flex-wrap gap-2 pb-1">
+                  {retiredStrategies.map((strategyItem) => {
+                    const meta = radar.strategy_meta?.[strategyItem.key];
+                    const isActive = strategy === strategyItem.key;
+                    return (
+                      <button
+                        key={strategyItem.key}
+                        type="button"
+                        onClick={() => setStrategy(strategyItem.key)}
+                        title={meta?.rationale ?? strategyItem.desc}
+                        className={cn(
+                          "min-h-11 cursor-pointer rounded-md border px-2.5 py-1 text-[12.5px] font-medium transition-colors duration-200",
+                          isActive
+                            ? "border-primary bg-primary text-primary-foreground"
+                            : "border-border bg-card text-muted-foreground hover:bg-secondary hover:text-foreground",
+                        )}
+                      >
+                        {strategyItem.label}
+                        <span className="ml-1.5 rounded bg-muted px-1 py-0.5 text-[9.5px] text-muted-foreground">
+                          {"已退役"}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </details>
+            )}
           </div>
           <div className="mt-2.5 flex items-start gap-2 rounded-md border border-border bg-muted/30 px-3 py-2 text-[12.5px] text-muted-foreground">
             <IconStar size={14} className="mt-[2px] shrink-0 opacity-70" />
@@ -525,7 +579,7 @@ function RadarView() {
                   <span className="mt-0.5 text-[11px] text-muted-foreground/70">
                     {isRetired && (
                       <span className="mr-1.5 rounded bg-muted px-1 py-0.5 text-[9.5px] font-semibold text-muted-foreground/60">
-                        {"樣本不足·降級觀察"}
+                        {"已退役·僅供歷史觀察"}
                       </span>
                     )}
                     {!isRetired && !meta.sufficient_samples && (
@@ -536,6 +590,7 @@ function RadarView() {
                     {hasSamples
                       ? `20日勝率 ${h20.win_rate != null ? h20.win_rate.toFixed(1) + "%" : "—"} ／樣本 ${h20.samples} 筆`
                       : "20日樣本尚不足，績效待觀察"}
+                    {meta.rationale && `；${meta.rationale}`}
                   </span>
                 );
               })()}

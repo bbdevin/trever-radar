@@ -137,15 +137,18 @@ class S11InstiBreakoutTests(unittest.TestCase):
 
 
 class S12BranchAccumulationTests(unittest.TestCase):
-    """S12: buy_conc>=0.15 且(conc_avg20 為 None 或 buy_conc>=avg*1.5)且 chg5<5 且 chg<3。"""
+    """S12: buy_conc>=0.15 且 buy_conc>=conc_avg20*1.5 且 chg5<5 且 chg<3。"""
 
-    def test_positive_avg_none(self):
-        self.assertTrue(s12_branch_accumulation(0.15, None, 0, 0))
+    def test_missing_avg_fails_closed(self):
+        self.assertFalse(s12_branch_accumulation(0.15, None, 0, 0))
+
+    def test_zero_avg_fails_closed(self):
+        self.assertFalse(s12_branch_accumulation(0.15, 0, 0, 0))
 
     def test_boundary_buy_conc_exactly_0_15(self):
         # buy_conc>=0.15:0.15 觸發(正邊界),0.149 不觸發
-        self.assertTrue(s12_branch_accumulation(0.15, None, 0, 0))
-        self.assertFalse(s12_branch_accumulation(0.149, None, 0, 0))
+        self.assertTrue(s12_branch_accumulation(0.15, 0.0625, 0, 0))
+        self.assertFalse(s12_branch_accumulation(0.149, 0.0625, 0, 0))
 
     def test_boundary_conc_avg20_multiple_exactly_equal(self):
         # buy_conc >= avg*1.5:恰等觸發,avg 略高使門檻超過 buy_conc 則不觸發。
@@ -155,14 +158,15 @@ class S12BranchAccumulationTests(unittest.TestCase):
 
     def test_boundary_chg_and_chg5(self):
         # chg<3:3 不觸發;chg5<5:5 不觸發
-        self.assertFalse(s12_branch_accumulation(0.15, None, 0, 3))
-        self.assertFalse(s12_branch_accumulation(0.15, None, 5, 0))
+        self.assertFalse(s12_branch_accumulation(0.15, 0.0625, 0, 3))
+        self.assertFalse(s12_branch_accumulation(0.15, 0.0625, 5, 0))
 
     def test_none_semantics(self):
-        # buy_conc 為 None → False;chg / chg5 為 None → False(明確 is not None 判定)
+        # buy_conc / conc_avg20 / chg / chg5 任一缺值 → False。
         self.assertFalse(s12_branch_accumulation(None, None, 0, 0))
-        self.assertFalse(s12_branch_accumulation(0.15, None, None, 0))
-        self.assertFalse(s12_branch_accumulation(0.15, None, 0, None))
+        self.assertFalse(s12_branch_accumulation(0.15, None, 0, 0))
+        self.assertFalse(s12_branch_accumulation(0.15, 0.0625, None, 0))
+        self.assertFalse(s12_branch_accumulation(0.15, 0.0625, 0, None))
 
 
 class S13ShortSqueezeTests(unittest.TestCase):

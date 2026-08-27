@@ -8,7 +8,7 @@
 | 工作包 | 本輪決定 | 狀態／門檻 |
 |---|---|---|
 | A1 | Armed／Triggered／Extended／Faded 匯出契約補強：state ID 可由 `radar.stocks` 解析；stale warrant 不作今日 state source；缺 1 日或 5 日漲跌時 fail closed | **程式與測試完成**；未正式 DB 回算 |
-| A2 | 對齊策略、首頁狀態、綜合分、strategy metadata 與績效勝率的定義 | **待人類確認**；不得趁此調整門檻或重算 |
+| A2 | 對齊策略、首頁狀態、綜合分、strategy metadata 與績效勝率的定義 | **程式／契約與測試完成（2026-08-27）**；已對齊綜合榜同分排序，不調整 `final` 權重、分點績效排行 V2、schema 或正式回算 |
 | B | 個股名稱下方增加公司地址與股務代理；以官方來源與 additive export contract 為準 | 規劃中；schema／匯入／UI 另案 |
 | C | 題材資料分為公司題材分類、近期熱度、有效／停用／過時狀態，顯示「近期可能相關題材」而非無證據的因果宣稱 | 規劃中；不改綜合分 |
 | D | 集團名稱可點入 `/group?id=`，顯示版本化的集團成員股票 | 規劃中；先做來源與 mapping PoC |
@@ -44,11 +44,19 @@ A2 是語意決策關卡，不是單純修 UI。Executor 先產出對照表與�
 | 策略績效 | signal 日期、episode 去重、entry、forward horizon、成熟樣本與 win 的口徑 | 以完整交易日曆及 point-in-time fixture 重播，不使用未來資料 |
 | 分點績效 | branch event、次日開盤 entry、5 日結果、成熟樣本與隔日沖標記的差異 | 明確分離 `events_count`／`matured_samples`，先 shadow diff |
 
-### 2.2 勝率初始語意（待 A2 確認，不在本輪改）
+### 2.2 勝率單一定義（A2，2026-08-27；不改統計公式）
 
 - 策略勝率：每一個已去重且已成熟的 signal episode，以次一交易日可得的還原開盤作 entry；在指定 horizon 的還原收盤報酬 `> 0` 才算 win。未成熟事件進 events count，不進勝率分母。
 - 分點勝率：每個分點×個股的進場事件，以次一交易日開盤作 entry，第 5 個有效交易日的還原收盤報酬 `> 0` 算 win；前 15 大分點裁剪與樣本不足必須在 UI 誠實標註。
 - 這些是目前程式／文件的稽核基準，不是對外保證的「預測勝率」。若要採用成熟樣本門檻、隔日沖最低樣本或排行 V2，必須另開人工確認並更新 schema／回算計畫。
+
+### 2.3 A2 本輪落地契約（2026-08-27）
+
+- **綜合榜**：唯一來源是 `daily_scores.final`；只列 `final >= 65`（最多 40 筆 JSON 顯示窗），不足 15 筆保持實際數量。沒有「低分保底」或隱藏補位，也不改 `final` 權重與風險扣分。
+- **S12**：`buy_concentration >= 15%`、有正的 `concentration_avg20` 且達其 `1.5×`，並維持原有 1／5 日漲幅限制。基期缺值或 `<=0` 不能證明躍升，一律 fail closed；只影響未來計算，未作正式 DB 回算。
+- **首頁狀態**：Quiet = `state=null`；Armed／Triggered／Extended／Faded 仍完全由 `derive_radar_state` 的同日、缺 1／5 日報價 fail-closed 契約決定。策略（含 S4 V2 phase）不會成為 state 來源，沒有改動狀態門檻或優先序。
+- **策略生命週期**：`strategy_meta[code]` 必含 `status / effective_date / rationale / decision_ref / version`。現行 S2、S5 = Retired；其餘 = Shadow；無 Active。Retired 不進主策略選擇器，僅在明確「歷史資料」展開區可讀；`strategies` 與 historical reason code 維持相容。缺少這個 additive metadata 的舊 JSON 必須顯示原本所有策略。
+- **勝率**：策略 win = 已去重、已成熟 signal episode 的指定 horizon 還原報酬 `>0`；分點 win = branch×stock 進場事件、次一有效交易日還原開盤 entry、第五根有效交易日還原收盤報酬 `>0`。兩者均不是對外預測承諾；分點 `events_count / matured_samples` 與排行 V2 仍是另案 shadow／人工確認項。
 
 ## 3. B：公司地址與股務代理（個股詳細頁）
 
@@ -123,15 +131,15 @@ A2 是語意決策關卡，不是單純修 UI。Executor 先產出對照表與�
 ## 9. 執行順序與人類確認點
 
 1. **已完成**：A1 程式／測試與契約驗收；保留正式 DB 未回算狀態。
-2. **先決策**：A2 產出策略／首頁／勝率對照與人類確認紀錄；不在沒有確認時改分數或排行。
-3. **低風險 PoC**：B（官方欄位）、C（題材 freshness）、D（集團 mapping）只讀調查與 fixture；再由人類選定來源與欄位。
+2. **已完成**：A2 策略／首頁／勝率對照、綜合榜嚴格門檻與同分排序、S12 基期 fail-closed、strategy lifecycle v1；未作正式 DB 回算。
+3. **進行中**：B（官方欄位）、C（題材 freshness）、D（集團 mapping）已完成只讀調查，依確認契約進入程式／fixture 實作。
 4. **E1**：庫藏股來源穩定性 PoC → KB1 contract → code／schema proposal；KB2 維持不實作。
 5. **E2**：point-in-time shadow 統計與覆蓋率報告；人類確認後才進 schema／歷史回算。地緣既有 tag 可與 E2 分開驗證，不等待「全市場」才做資料品質報告。
 6. 每一個實作包完成後更新 `handoff.md`、`docs/STATUS.md` 與本文件／對應規格，跑相關 tests、lint、typecheck，再依專案規則 commit／push；正式 DB／VPS／migration 另取人類明確確認。
 
 ## 10. 交接驗收清單
 
-- [ ] A2 對照表經人類確認，策略／狀態／勝率口徑一致。
+- [x] A2 程式契約／對照表與測試完成（2026-08-27）；正式 DB 回算、排行 V2／schema 與任何新門檻仍須另取人類確認。
 - [ ] B 官方地址與股務代理欄位、來源、空值語意與 additive contract 定案。
 - [ ] C 題材分類與近期熱度分層，過時題材可見且不進分數。
 - [ ] D 集團 mapping 有版本、來源與 `/group?id=` static export contract。

@@ -395,10 +395,11 @@ def s11_insti_breakout(f_streak3, t_streak3, t_score, chg) -> bool:
 
 def s12_branch_accumulation(buy_conc, conc_avg20, chg5, chg) -> bool:
     """S12 主力分點集中但股價尚未大漲。逐字搬自 compute_scores。
-    None 語意:buy_conc 用 `is not None` 明確判定;conc_avg20 為 None 視為通過
-    倍數門檻;chg5 / chg 用 `is not None` 明確判定(0 為有效值)。"""
+    缺少 20 日集中度基期時無法證明「躍升」，故 fail closed；不得把 None
+    當成通過。chg5 / chg 以 `is not None` 判定，0 為有效值。"""
     if not (buy_conc is not None and buy_conc >= 0.15
-            and (conc_avg20 is None or buy_conc >= conc_avg20 * 1.5)):
+            and conc_avg20 is not None and conc_avg20 > 0
+            and buy_conc >= conc_avg20 * 1.5):
         return False
     return chg5 is not None and chg5 < 5 and chg is not None and chg < 3
 

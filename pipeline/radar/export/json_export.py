@@ -23,24 +23,28 @@ from ..compute.strategy_performance import (
 from ..compute.margin_cost import build_margin_cost_series
 from ..compute.display_window import display_window_bounds, window_label
 
-# 使用者確認的策略生命週期狀態(2026-08-19 Phase 3 報告後定案)
-# Active: 無;Shadow: 其餘;Retired: 停止主介面宣稱有效
-_STRATEGY_STATUS: dict[str, str] = {
-    "S1_REBOUND": "shadow",
-    "S2_BREAKOUT20": "retired",
-    "S3_MA_CONVERGE_BREAKOUT": "shadow",
-    "S4_VOLATILITY_CONTRACTION": "shadow",
-    "S4_COMPRESSION_SETUP_V2": "shadow",
-    "S4_COMPRESSION_BREAKOUT_V2": "shadow",
-    "S5_PULLBACK_SUPPORT": "retired",
-    "S6_HIGH_BASE_BREAKOUT": "shadow",
-    "S7_MACD_ZERO_CROSS": "shadow",
-    "S8_GAP_BREAKOUT": "shadow",
-    "S9_MA5_TREND": "shadow",
-    "S10_BOTTOM_MACD": "shadow",
-    "S11_INSTI_BREAKOUT": "shadow",
-    "S12_BRANCH_ACCUMULATION": "shadow",
-    "S13_SHORT_SQUEEZE": "shadow",
+# A2 strategy lifecycle export contract.  This is source-controlled metadata,
+# not a database migration and does not alter any score, selector data, or
+# historical reason code.  A new lifecycle decision must increment `version`.
+_STRATEGY_LIFECYCLE_VERSION = 1
+_STRATEGY_LIFECYCLE_EFFECTIVE_DATE = "2026-08-19"
+_STRATEGY_LIFECYCLE_DECISION_REF = "docs/20 §4.2; docs/37 §2"
+_STRATEGY_LIFECYCLE: dict[str, dict[str, str | int]] = {
+    "S1_REBOUND": {"status": "shadow", "rationale": "仍累積成熟樣本，尚未宣稱有效。"},
+    "S2_BREAKOUT20": {"status": "retired", "rationale": "Phase 3 檢視後退出主要策略選擇器；保留歷史訊號與相容榜單。"},
+    "S3_MA_CONVERGE_BREAKOUT": {"status": "shadow", "rationale": "仍累積成熟樣本，尚未宣稱有效。"},
+    "S4_VOLATILITY_CONTRACTION": {"status": "shadow", "rationale": "S4 legacy 凍結，僅保留歷史比較；V2 phase 另行累積證據。"},
+    "S4_COMPRESSION_SETUP_V2": {"status": "shadow", "rationale": "V2 壓縮蓄勢剛導入，尚未完成正式回算與成熟樣本檢視。"},
+    "S4_COMPRESSION_BREAKOUT_V2": {"status": "shadow", "rationale": "V2 壓縮突破剛導入，尚未完成正式回算與成熟樣本檢視。"},
+    "S5_PULLBACK_SUPPORT": {"status": "retired", "rationale": "Phase 3 檢視後退出主要策略選擇器；保留歷史訊號與相容榜單。"},
+    "S6_HIGH_BASE_BREAKOUT": {"status": "shadow", "rationale": "仍累積成熟樣本，尚未宣稱有效。"},
+    "S7_MACD_ZERO_CROSS": {"status": "shadow", "rationale": "仍累積成熟樣本，尚未宣稱有效。"},
+    "S8_GAP_BREAKOUT": {"status": "shadow", "rationale": "仍累積成熟樣本，尚未宣稱有效。"},
+    "S9_MA5_TREND": {"status": "shadow", "rationale": "仍累積成熟樣本，尚未宣稱有效。"},
+    "S10_BOTTOM_MACD": {"status": "shadow", "rationale": "仍累積成熟樣本，尚未宣稱有效。"},
+    "S11_INSTI_BREAKOUT": {"status": "shadow", "rationale": "仍累積成熟樣本，尚未宣稱有效。"},
+    "S12_BRANCH_ACCUMULATION": {"status": "shadow", "rationale": "仍累積成熟樣本，尚未宣稱有效。"},
+    "S13_SHORT_SQUEEZE": {"status": "shadow", "rationale": "仍累積成熟樣本，尚未宣稱有效。"},
 }
 
 
@@ -146,8 +150,12 @@ def _s4_phase_lists(all_stocks: list[dict]) -> dict[str, list[dict]]:
 def _build_strategy_meta() -> dict[str, dict]:
     """Build strategy_meta block for radar.json (read-only, no DB writes).
 
-    Returns a dict keyed by S code, each with:
+    Returns a dict keyed by S code.  Lifecycle fields are versioned:
       status: 'active' | 'shadow' | 'retired'
+      effective_date: ISO date on which this status began
+      rationale: human-readable decision reason
+      decision_ref: source-controlled decision reference
+      version: lifecycle contract version
       label: str
       h5/h10/h20: {samples, win_rate, avg_ret, median_ret}
       sufficient_samples: bool  (h20.samples >= _MIN_SAMPLES_20D)
@@ -159,13 +167,16 @@ def _build_strategy_meta() -> dict[str, dict]:
         perf = {}
 
     out: dict[str, dict] = {}
-    for code, status in _STRATEGY_STATUS.items():
+    for code, lifecycle in _STRATEGY_LIFECYCLE.items():
         p = perf.get(code, {})
         h20 = p.get("per_horizon", {}).get("h20", {})
         h10 = p.get("per_horizon", {}).get("h10", {})
         h5 = p.get("per_horizon", {}).get("h5", {})
         out[code] = {
-            "status": status,
+            **lifecycle,
+            "effective_date": _STRATEGY_LIFECYCLE_EFFECTIVE_DATE,
+            "decision_ref": _STRATEGY_LIFECYCLE_DECISION_REF,
+            "version": _STRATEGY_LIFECYCLE_VERSION,
             "label": p.get("label", code),
             "h5": h5,
             "h10": h10,
@@ -638,12 +649,16 @@ def export_json(out_dir: Path | None = None) -> dict:
                 "risks": [x["text"] for x in raw_risks[:3]],
             })
 
-        # ── 榜單(動態,依今日行情,保底15檔,上限40檔) ──
+        # ── 榜單(動態,依今日行情;綜合榜嚴格 final>=65,上限40檔) ──
         score_all = sorted(
             [s for s in all_stocks if s["scores"]],
-            key=lambda s: (s["scores"]["final"], s["turnover"] or 0), reverse=True)
+            key=lambda s: (
+                s["scores"]["final"],
+                s["scores"]["branch"] if s["scores"]["branch"] is not None else float("-inf"),
+                s["turnover"] or 0,
+            ),
+            reverse=True)
         score = [s for s in score_all if s["scores"]["final"] >= 65]
-        if len(score) < 15: score = score_all[:15]
         score = score[:40]
 
         hot_all = sorted(

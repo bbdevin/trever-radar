@@ -110,7 +110,8 @@
 
 ## 最近完成
 
-- 2026-08-27 **S4 V2／Armed A1 後續整體規劃落檔**：新增 `docs/37_company_theme_group_buyback_branch_plan.md`，永久記錄 Confirmed Scope A1（程式／測試完成）、A2（策略／首頁狀態／策略與分點勝率口徑對照，待人類確認）以及 B 公司地址／股務代理、C 題材 freshness、D 集團 mapping、E1 庫藏股 KB1、E2 關鍵分點與地緣 point-in-time shadow 的分期、契約、UI、測試與風險。**KB2 庫藏股執行分點不實作，E2 不做交易獲利歸因**；規劃本身未授權 schema／排程／正式資料異動或回算。
+- 2026-08-27 **A2 策略／首頁／勝率定義契約（程式／測試完成，未正式 DB 回算）**：首頁綜合榜改為嚴格 `daily_scores.final >=65`（不足 15 檔不再低分保底），同分依 `branch_score`（null 最低）再依成交額排序；S12 在缺 `concentration_avg20` 或基期 `<=0` 時 fail closed。`strategy_meta` 升為版本化 additive lifecycle contract（`status/effective_date/rationale/decision_ref/version`）；S2、S5 Retired 預設不進主要策略選擇器但仍可從「歷史資料」讀取，舊 JSON 缺 metadata 時前端完整 fallback。未改 `final` 權重、狀態門檻、分點績效排行 V2、schema、workflow、VPS 或正式資料。
+- 2026-08-27 **S4 V2／Armed A1 後續整體規劃落檔**：新增 `docs/37_company_theme_group_buyback_branch_plan.md`，永久記錄 Confirmed Scope A1（程式／測試完成）、A2（策略／首頁狀態／策略與分點勝率口徑對照，後續已完成 code-level contract）以及 B 公司地址／股務代理、C 題材 freshness、D 集團 mapping、E1 庫藏股 KB1、E2 關鍵分點與地緣 point-in-time shadow 的分期、契約、UI、測試與風險。**KB2 庫藏股執行分點不實作，E2 不做交易獲利歸因**；規劃本身未授權 schema／排程／正式資料異動或回算。
 - 2026-08-27 **Armed A1 匯出契約補強（程式／測試完成，未正式 DB 回算）**：state list IDs 保證可由 `radar.stocks` 解析；stale warrant 保留 payload／freshness／權證榜但不再作今日 state source；任一 1 日或 5 日漲幅缺值時 state fail closed（含 T2、風險、失效價）。未改榜單門檻或排序、分數／schema／正式資料。
 - 2026-08-27 **S4 V2 兩階段（程式／測試完成，未正式資料回算或上線）**：舊 `S4_VOLATILITY_CONTRACTION` 凍結為 legacy；新增 `S4_COMPRESSION_SETUP_V2`（adjusted OHLC 的壓縮蓄勢）與 `S4_COMPRESSION_BREAKOUT_V2`（前 1–5 日 setup 後的首次帶量突破）。兩者只作 strategy tag／S4 內排序，不改 `tech_score`、`final`、全域 Armed/Triggered 或 schema。`strategies.S4_VOLATILITY_CONTRACTION` 保留三者聯集；新增 additive `strategy_phases` 與每股 `strategy_signals`，首頁標示「壓縮蓄勢／壓縮突破」（突破優先）並各自讀其 strategy_meta（legacy 亦獨立）。setup 連續日依完整 `daily_prices` 交易日曆按 episode 去重；程式碼驗收完成；正式資料尚未重算，需另次人工確認。
 - 2026-08-27 **勝率統計唯讀稽核**：盤點策略／分點事件、成熟樣本、entry／forward／win、export／UI 與文件定義；未改排名、未改 schema，未執行正式 DB 回算。

@@ -303,6 +303,11 @@ export interface StrategyPerfHorizon {
 
 export interface StrategyMeta {
   status: "active" | "shadow" | "retired";
+  /** Additive lifecycle contract. Absent on older radar.json snapshots. */
+  effective_date?: string;
+  rationale?: string;
+  decision_ref?: string;
+  version?: number;
   label: string;
   h5: StrategyPerfHorizon;
   h10: StrategyPerfHorizon;
