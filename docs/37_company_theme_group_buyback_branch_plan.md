@@ -13,7 +13,7 @@
 | C | 題材資料分為公司題材分類、近期熱度、有效／停用／過時狀態，顯示「近期可能相關題材」而非無證據的因果宣稱 | **程式／fixture／UI／typecheck／正式 build 完成（2026-08-27）**；正式 VPS import/export 未執行，不改綜合分 |
 | D | 集團名稱可點入 `/group?id=`，顯示版本化的集團成員股票 | **程式／fixture／UI／typecheck／正式 build 完成（2026-08-27）**；正式 VPS export 未執行 |
 | E1 | 庫藏股官方來源 PoC 與 **KB1 事實標籤** | 規劃中；來源穩定性需驗證 |
-| E2 | `branch × stock` point-in-time 統計，建立可驗證的關鍵分點（低買、高賣／後續表現）描述 | 高風險規劃；需人工確認 schema／歷史回算 |
+| E2 | `branch × stock` point-in-time 的**獨立**買／賣 episode 分位、後續表現與覆蓋率描述 | **唯讀 shadow CLI／JSON contract 與測試完成（2026-08-27）**；buy→sell 配對規則／coverage 尚未定義，未跑正式 DB、未接 UI、未定門檻，schema／歷史回算仍須人工確認 |
 
 ### 明確排除
 
@@ -126,8 +126,8 @@ A2 是語意決策關卡，不是單純修 UI。Executor 先產出對照表與�
 
 ### 關鍵分點定義
 
-- 種子來源可包含 `tracked_branches` 與已累積的 branch ranking，但「常低買高賣」必須由 point-in-time 事件驗證：買入事件的價格分位偏低，且在預先固定的後續窗出現可觀察賣出／價格結果。
-- 統計至少分離：事件數、成熟事件數、低買比例、後續正報酬比例、賣出配對覆蓋率、資料涵蓋率；樣本不足顯示 unknown／insufficient，不補成 0。
+- 種子來源可包含 `tracked_branches` 與已累積的 branch ranking。現行 E2 shadow 只驗證獨立 buy／sell episode 的 point-in-time 分位與 buy 後價格觀察；不可據此推定「常低買高賣」。
+- 統計至少分離：獨立買／賣事件數、成熟買事件數、低買比例、後續正報酬比例、獨立賣 episode 覆蓋率、資料涵蓋率；樣本不足顯示 unknown／insufficient，不補成 0。buy→sell 配對規則與配對 coverage 留待另次確認。
 - 不把分點視為單一人或單一帳戶，不計算「分點實際交易獲利」。`fwd_return` 是事件後價格結果，不是 branch P&L。
 
 ### 地緣券商
@@ -140,6 +140,16 @@ A2 是語意決策關卡，不是單純修 UI。Executor 先產出對照表與�
 - 每個 as-of 日只能使用該日以前可取得的 branch、價格、地理 mapping 與 ranking；mapping 後來修正不能回寫歷史事件。
 - 先做 shadow export／diff 報告，觀察排行漂移、樣本成熟度與缺資料比例；人類確認後才可設計 schema migration、全歷史回算與 VPS 正式資料更新。
 - 測試 future-leak、交易日缺口、未成熟事件、分點缺列、地緣地址 null、跨券商同名與前 15 大截斷。
+
+### E2 shadow 實作紀錄（2026-08-27）
+
+- 新增唯讀 CLI：`python -m radar branch-point-in-time-report --as-of YYYY-MM-DD --from YYYY-MM-DD --to YYYY-MM-DD --out PATH`。它只接受既存的實體 SQLite DB，以專用 `mode=ro` engine 的 `SELECT` 讀 `branch_trades`、`daily_prices`、`tracked_branches` 與歷史 `branch_rankings`；DB 不存在立即失敗，`--out` 等於 DB 路徑也立即拒絕。不呼叫建表／migration、不寫 DB、不改正式排行、分數或 UI。
+- universe = as-of 前可用的 manual tracked branches + 在 as-of 或更早 ranking snapshot 可辨識的候選；JSON 明列來源數、觀測到的 branch×stock／trade rows、缺 `pct` 列與「每日前 15 大裁剪，缺列不等於沒有賣出」限制。
+- buy = `net_lots > 0 && pct >= 1%`；sell = `net_lots < 0 && abs(pct) >= 1%`。同一 branch×stock×方向只在**市場交易日曆**相鄰時合併 episode。事件價為當日可得的未還原收盤；20 日分位只使用事件日與之前 19 個市場交易日，缺值／短窗／零區間一律 `unknown`。
+- 後續表現僅為描述性觀察：次一市場日 open 到第 5 個市場日 close 的百分比；成熟窗或價格不完整時為 `unknown`，不補 0。報表明列成熟樣本分母、positive rate 與平均值，且不稱為交易獲利或勝率。
+- buy 與 sell episode 是**獨立**統計；本 shadow 不做 buy→sell 配對，也不輸出配對 coverage。配對資格、時間窗、缺列處理與 coverage 定義均 deferred，須另次人工確認。
+- CLI report 的固定排序 JSON 含 metadata、定義、coverage、branch×stock rows、買／賣 episodes、known／unknown、low-buy／high-sell rates、成熟 fwd5 統計及全部可稽核 episode samples。`evidence` 僅表示同一列兩側都有至少一筆已知分位樣本，絕非統計充分性、產品上線或排行門檻。
+- fixture tests 覆蓋市場日 episode merge（含全列 close null 日）、過去窗不偷看未來、未成熟／缺價格／缺 `pct` unknown、`abs(pct)` 賣超、candidate universe／timestamp coverage、固定輸出、實體 DB 不存在／DML 拒絕／out=DB 拒絕與 read-only contract。**未對正式 DB／VPS 執行本報表。**
 
 ## 8. UI／UX 共通驗收（沿用 `ui-ux-pro-max` 規範）
 
@@ -154,7 +164,7 @@ A2 是語意決策關卡，不是單純修 UI。Executor 先產出對照表與�
 2. **已完成**：A2 策略／首頁／勝率對照、綜合榜嚴格門檻與同分排序、S12 基期 fail-closed、strategy lifecycle v1；未作正式 DB 回算。
 3. **已完成**：B（官方公司欄位／additive import-export／個股 UI）、C（題材 lifecycle／H1 fail-closed／個股 UI）與 D（版本化華新麗華 mapping／groups export／鑽取 UI）程式、fixture、typecheck 與正式 build。**未執行正式 VPS import/export 或正式 DB 寫入**。
 4. **E1**：庫藏股來源穩定性 PoC → KB1 contract → code／schema proposal；KB2 維持不實作。
-5. **E2**：point-in-time shadow 統計與覆蓋率報告；人類確認後才進 schema／歷史回算。地緣既有 tag 可與 E2 分開驗證，不等待「全市場」才做資料品質報告。
+5. **已完成 E2 shadow contract**：獨立 buy／sell point-in-time JSON 統計與覆蓋率報告；buy→sell 配對規則／coverage 未定義。未跑正式 DB、未接 UI、未定門檻。人類確認後才可進 schema／歷史回算；地緣既有 tag 可與 E2 分開驗證，不等待「全市場」才做資料品質報告。
 6. 每一個實作包完成後更新 `handoff.md`、`docs/STATUS.md` 與本文件／對應規格，跑相關 tests、lint、typecheck，再依專案規則 commit／push；正式 DB／VPS／migration 另取人類明確確認。
 
 ## 10. 交接驗收清單
@@ -164,5 +174,5 @@ A2 是語意決策關卡，不是單純修 UI。Executor 先產出對照表與�
 - [x] C 題材分類與近期熱度分層，過時題材可見且不進分數（2026-08-27；targeted／完整 pytest、typecheck、正式 build 通過；正式 VPS import/export 未執行）。
 - [x] D 集團 mapping 有版本、來源與 `/group?id=` static export contract（2026-08-27；typecheck／正式 build 通過；正式 VPS export 未執行）。
 - [ ] E1 只輸出可核驗 KB1；KB2 未出現在 code、schema、export、UI。
-- [ ] E2 通過 point-in-time／future-leak／成熟樣本檢查，且文件明確沒有交易獲利歸因。
+- [x] E2 唯讀 shadow CLI／JSON contract 通過 point-in-time／future-leak／成熟樣本檢查，且文件明確沒有交易獲利歸因（2026-08-27；獨立 buy／sell，尚無 buy→sell 配對；未跑正式 DB／VPS、未接 UI、未定門檻）。
 - [ ] 所有正式回算、schema migration、VPS 寫入與部署均有獨立人工確認紀錄。

@@ -195,6 +195,22 @@ def cmd_compute_branch_stats(args):
     compute_all()
 
 
+def cmd_branch_point_in_time_report(args):
+    from .compute.branch_point_in_time_report import write_branch_point_in_time_report
+
+    report = write_branch_point_in_time_report(
+        as_of=args.as_of,
+        date_from=args.date_from,
+        date_to=args.date_to,
+        out=args.out,
+    )
+    print(
+        "branch-point-in-time-report "
+        f"rows={len(report['branch_stock_rows'])} "
+        f"episodes={len(report['episode_samples'])} -> {args.out}"
+    )
+
+
 def cmd_import_geo(_args):
     from .import_geo import import_geo
     import_geo()
@@ -430,6 +446,16 @@ def main(argv=None):
     bs = sub.add_parser("compute-branch-stats",
                         help="compute stats for tracked branches")
     bs.set_defaults(fn=cmd_compute_branch_stats)
+
+    bpit = sub.add_parser(
+        "branch-point-in-time-report",
+        help="read-only E2 branch × stock point-in-time shadow JSON report",
+    )
+    bpit.add_argument("--as-of", required=True, help="YYYY-MM-DD inclusive knowledge cutoff")
+    bpit.add_argument("--from", dest="date_from", required=True, help="YYYY-MM-DD inclusive event start")
+    bpit.add_argument("--to", dest="date_to", required=True, help="YYYY-MM-DD inclusive event end; must be <= as-of")
+    bpit.add_argument("--out", required=True, help="JSON output path")
+    bpit.set_defaults(fn=cmd_branch_point_in_time_report)
 
     exp = sub.add_parser("export-json", help="write web/public/data/*.json for the frontend")
     exp.add_argument("--out", default=None, help="output dir (default web/public/data)")

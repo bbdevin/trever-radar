@@ -56,7 +56,7 @@
 | G2 地緣+關鍵+題材演算法 | ✅ **完成 2026-08-20**:`pipeline/radar/pocket.py` 純函式 + export `pocket_tags`/`lists.pocket`(不進 `daily_scores.final`);G4 才做首頁 tab | G1;**地緣涵蓋度依賴每日分點池廣度**(500 檔池偏熱門股;docs/26 WP-M2 全市場池後中小型股地緣才完整——先做可用,標注涵蓋限制) | 1.5 天 |
 | G3a 庫藏股來源與 KB1 | 官方來源 PoC、欄位／資料日／匹配率報告；只做 `KB1_BUYBACK_WINDOW` 事實契約與測試 | G0/G1；**待人類確認來源穩定性** | 規劃中 |
 | G3b KB2 | `KB2_BUYBACK_BRANCH`（疑似執行分點） | **不實作**；不得新增 code/schema/export/UI | — |
-| G3c 關鍵分點 E2 | `branch × stock` point-in-time 低買／後續賣出描述統計；不做交易獲利歸因 | **待人工確認 schema／歷史回算**，見 `docs/37` §7 | 規劃中 |
+| G3c 關鍵分點 E2 | `branch × stock` point-in-time **獨立** buy／sell episode 分位與 buy 後價格描述；不做交易獲利歸因，buy→sell 配對另案 | ✅ **唯讀 shadow CLI／JSON contract 完成（2026-08-27）**；buy→sell 配對規則／coverage 未定；未跑正式 DB、未接 UI、未定門檻；schema／歷史回算仍待人工確認，見 `docs/37` §7 | shadow contract 完成 |
 | G4 口袋名單 UI | ✅ **完成 2026-08-20**:首頁「口袋」tab + StockCard/個股頁 badges + `/branch` 關鍵分點徽章;零新色票。GEO 資料仍等回補結束後 `import-geo` | G2(G3 可後補) | 1.5 天 |
 
 ## 5. 優先序建議
