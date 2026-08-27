@@ -12,6 +12,10 @@
 >
 > 既有 Python + SQLite + 靜態 JSON + Next.js 架構不翻案。不新增策略 code、不抬綜合分。
 
+> **S4 V2 邊界（2026-08-27）**：壓縮蓄勢／壓縮突破是既有 S4 策略家族的 phase tag，
+> 不可視為 Armed/Triggered 來源；不得寫入 `lists.armed`、`lists.triggered` 或改動
+> `derive_radar_state`。其 phase lists 僅存在於 `strategy_phases` additive JSON 契約。
+
 ## 1. 為什麼要做
 
 現行中心是綜合分與多榜競賽(綜合/熱門/爆量/強勢/權證/13 策略)。

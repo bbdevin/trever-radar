@@ -109,7 +109,7 @@ const STRATEGIES = [
   { key: "S1_REBOUND", label: "漲停二次發動", desc: "雙軌條件：嚴謹版為近 20 日曾漲停、MACD 零軸上黃金交叉、5 日內爆量（2 倍）；相似（放寬）版為近 20 日曾大漲 7%、MACD 任意金叉、5 日內量增 1.5 倍。榜內嚴謹版優先排前" },
   { key: "S2_BREAKOUT20", label: "20日爆量突破", desc: "創 20 日新高，當日爆量且收紅 K，中長期均線多頭排列" },
   { key: "S3_MA_CONVERGE_BREAKOUT", label: "均線糾結突破", desc: "5/10/20 日均線距離極近，當日帶量長紅突破糾結區" },
-  { key: "S4_VOLATILITY_CONTRACTION", label: "波動收斂突破", desc: "近 10 日布林通道極度壓縮（帶寬 < 8%），當日帶量突破上軌" },
+  { key: "S4_VOLATILITY_CONTRACTION", label: "波動收斂突破", desc: "兩階段觀察：先找壓縮蓄勢，再確認帶量壓縮突破；突破優先排序，兩者皆不計入綜合分" },
   { key: "S5_PULLBACK_SUPPORT", label: "強勢量縮回踩", desc: "近期創高後回檔，量縮至極致並於 10 日或 20 日均線獲得支撐收紅" },
   { key: "S6_HIGH_BASE_BREAKOUT", label: "高檔平台突破", desc: "在 60 日高點附近高姿勢橫盤整理，當日帶量突破平台上緣" },
   { key: "S7_MACD_ZERO_CROSS", label: "MACD零軸金叉", desc: "MACD 於零軸之上發生黃金交叉，且當日帶量收紅" },
@@ -483,7 +483,39 @@ function RadarView() {
             <IconStar size={14} className="mt-[2px] shrink-0 opacity-70" />
             <div className="flex flex-col gap-1">
               <span>{STRATEGIES.find((s) => s.key === strategy)?.desc}</span>
+              {strategy === "S4_VOLATILITY_CONTRACTION" && radar.strategy_phases?.S4_VOLATILITY_CONTRACTION && (
+                <span className="text-[11px] text-muted-foreground/70">
+                  {(() => {
+                    const phases = radar.strategy_phases.S4_VOLATILITY_CONTRACTION;
+                    return `壓縮突破 ${phases.breakout?.length ?? 0} 檔 · 壓縮蓄勢 ${phases.setup?.length ?? 0} 檔 · 舊版 ${phases.legacy?.length ?? 0} 檔`;
+                  })()}
+                </span>
+              )}
               {(() => {
+                const s4Phases = radar.strategy_phases?.S4_VOLATILITY_CONTRACTION;
+                if (strategy === "S4_VOLATILITY_CONTRACTION" && s4Phases) {
+                  const phaseRows = [
+                    { key: "S4_COMPRESSION_BREAKOUT_V2", label: "壓縮突破" },
+                    { key: "S4_COMPRESSION_SETUP_V2", label: "壓縮蓄勢" },
+                    { key: "S4_VOLATILITY_CONTRACTION", label: "舊版" },
+                  ];
+                  return (
+                    <div className="mt-0.5 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-muted-foreground/70">
+                      {phaseRows.map((phase) => {
+                        const phaseMeta = radar.strategy_meta?.[phase.key];
+                        const h20 = phaseMeta?.h20;
+                        const samples = h20?.samples ?? 0;
+                        return (
+                          <span key={phase.key}>
+                            {phase.label}：{samples > 0 && h20
+                              ? `20日勝率 ${h20.win_rate != null ? h20.win_rate.toFixed(1) + "%" : "—"}／樣本 ${samples}`
+                              : "20日樣本尚不足"}
+                          </span>
+                        );
+                      })}
+                    </div>
+                  );
+                }
                 const meta = radar.strategy_meta?.[strategy];
                 if (!meta) return null;
                 const h20 = meta.h20;

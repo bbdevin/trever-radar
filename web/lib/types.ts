@@ -282,6 +282,12 @@ export interface RadarStock {
   sources?: ("branch" | "warrant")[];
   reasons: string[];
   raw_reasons?: ReasonItem[];
+  /** Additive S4 two-phase details; absent in legacy JSON. */
+  strategy_signals?: {
+    strategy: "S4_VOLATILITY_CONTRACTION";
+    phase: "legacy" | "setup" | "breakout";
+    quality_rank?: number | null;
+  }[];
   pocket_tags?: PocketTag[];
   pocket_score?: number;
   pocket_families?: string[];
@@ -317,6 +323,8 @@ export interface RadarJson {
   lists: Record<ListKey, string[]>;
   pocket_note?: string;
   strategies?: Record<string, string[]>;
+  /** Additive S4 phase lists. Existing clients may continue using strategies.S4. */
+  strategy_phases?: Record<string, Partial<Record<"legacy" | "setup" | "breakout", string[]>>>;
   strategy_meta?: Record<string, StrategyMeta>;
   stocks: RadarStock[];
 }

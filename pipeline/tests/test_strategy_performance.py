@@ -1,14 +1,104 @@
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
+import radar.config as config
+import radar.db as db
+from radar import schema
 from radar.compute.strategy_performance import (
     compute_strategy_performance_from_events,
+    dedupe_setup_episodes,
     extract_strategy_codes,
+    fetch_strategy_events,
     summarize_fwd_values,
     StrategyEvent,
 )
 
 
 class StrategyPerformanceUnitTests(unittest.TestCase):
+    def test_s4_setup_episode_dedupes_consecutive_trading_days(self):
+        events = [
+            StrategyEvent(date="2026-01-02", fwd_5d=1, fwd_10d=1, fwd_20d=1, stock_id="A"),
+            StrategyEvent(date="2026-01-05", fwd_5d=2, fwd_10d=2, fwd_20d=2, stock_id="A"),
+            StrategyEvent(date="2026-01-06", fwd_5d=3, fwd_10d=3, fwd_20d=3, stock_id="A"),
+            StrategyEvent(date="2026-01-06", fwd_5d=4, fwd_10d=4, fwd_20d=4, stock_id="B"),
+        ]
+        kept = dedupe_setup_episodes(
+            events, trading_dates=["2026-01-02", "2026-01-05", "2026-01-06"],
+        )
+        self.assertEqual([(e.stock_id, e.date) for e in kept], [("A", "2026-01-02"), ("B", "2026-01-06")])
+
+    def test_s4_setup_episode_uses_complete_calendar_not_event_dates(self):
+        # 01-05 is a trading day but has no daily_scores/fwd event. The two
+        # S4 setup rows are therefore separate episodes, not consecutive.
+        events = [
+            StrategyEvent(date="2026-01-02", fwd_5d=1, fwd_10d=1, fwd_20d=1, stock_id="A"),
+            StrategyEvent(date="2026-01-06", fwd_5d=2, fwd_10d=2, fwd_20d=2, stock_id="A"),
+        ]
+        kept = dedupe_setup_episodes(
+            events, trading_dates=["2026-01-02", "2026-01-05", "2026-01-06"],
+        )
+        self.assertEqual([e.date for e in kept], ["2026-01-02", "2026-01-06"])
+
+    def test_fetch_s4_setup_episode_uses_daily_price_calendar(self):
+        with TemporaryDirectory() as tmp_name:
+            tmp = Path(tmp_name)
+            old_url, old_dir = config.DB_URL, config.DATA_DIR
+            try:
+                config.DB_URL, config.DATA_DIR = "sqlite:///" + (tmp / "t.db").as_posix(), tmp
+                db._engine = None
+                db.init_db()
+                with db.get_engine().begin() as conn:
+                    conn.execute(schema.daily_prices.insert(), [
+                        {"stock_id": "A", "date": date, "close": 100, "adj_factor": 1.0}
+                        for date in ("2026-01-02", "2026-01-05", "2026-01-06")
+                    ])
+                    conn.execute(schema.daily_scores.insert(), [
+                        {"stock_id": "A", "date": date, "final": 70, "fwd_5d": 1.0,
+                         "reasons": '[{"code":"S4_COMPRESSION_SETUP_V2"}]'}
+                        for date in ("2026-01-02", "2026-01-06")
+                    ])
+                events = fetch_strategy_events(min_date="2026-01-02")["S4_COMPRESSION_SETUP_V2"]
+                self.assertEqual([event.date for event in events], ["2026-01-02", "2026-01-06"])
+            finally:
+                if db._engine is not None:
+                    db._engine.dispose()
+                db._engine = None
+                config.DB_URL, config.DATA_DIR = old_url, old_dir
+
+    def test_fetch_s4_setup_warms_up_left_boundary_then_crops_window(self):
+        with TemporaryDirectory() as tmp_name:
+            tmp = Path(tmp_name)
+            old_url, old_dir = config.DB_URL, config.DATA_DIR
+            try:
+                config.DB_URL, config.DATA_DIR = "sqlite:///" + (tmp / "t.db").as_posix(), tmp
+                db._engine = None
+                db.init_db()
+                with db.get_engine().begin() as conn:
+                    # 01-01 → 01-02 is one continuous setup episode. 01-05
+                    # breaks it; 01-06 begins a new episode.
+                    conn.execute(schema.daily_prices.insert(), [
+                        {"stock_id": "A", "date": date, "close": 100, "adj_factor": 1.0}
+                        for date in ("2026-01-01", "2026-01-02", "2026-01-05", "2026-01-06")
+                    ])
+                    conn.execute(schema.daily_scores.insert(), [
+                        {"stock_id": "A", "date": "2026-01-01", "final": 70, "fwd_5d": None,
+                         "reasons": '[{"code":"S4_COMPRESSION_SETUP_V2"}]'},
+                        {"stock_id": "A", "date": "2026-01-02", "final": 70, "fwd_5d": 1.0,
+                         "reasons": '[{"code":"S4_COMPRESSION_SETUP_V2"}]'},
+                        {"stock_id": "A", "date": "2026-01-06", "final": 70, "fwd_5d": 2.0,
+                         "reasons": '[{"code":"S4_COMPRESSION_SETUP_V2"}]'},
+                    ])
+                events = fetch_strategy_events(min_date="2026-01-02")["S4_COMPRESSION_SETUP_V2"]
+                # The 01-02 row is continuation-only and is excluded after
+                # warm-up; 01-06 is the first row of a fresh in-window episode.
+                self.assertEqual([event.date for event in events], ["2026-01-06"])
+            finally:
+                if db._engine is not None:
+                    db._engine.dispose()
+                db._engine = None
+                config.DB_URL, config.DATA_DIR = old_url, old_dir
+
     def test_extract_strategy_codes_alias(self):
         items = [
             {"code": "S1_REBOUND_RELAXED", "points": 15},
@@ -57,4 +147,3 @@ class StrategyPerformanceUnitTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

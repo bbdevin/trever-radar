@@ -41,6 +41,7 @@ export default function StockCard({ s, index = 99 }: { s: RadarStock; index?: nu
   const status = cardStatus(s);
   const day = (s.spark_day?.length ?? 0) >= 2 && s.spark_open != null;
   const src = sourceSuffix(s);
+  const s4Phase = s.strategy_signals?.find((signal) => signal.strategy === "S4_VOLATILITY_CONTRACTION")?.phase;
   return (
     <a
       href={`/stock?id=${s.id}`}
@@ -73,6 +74,16 @@ export default function StockCard({ s, index = 99 }: { s: RadarStock; index?: nu
             {s.state === "faded" && (
               <span className="inline-flex items-center gap-0.5 rounded bg-muted px-1.5 py-0.5 text-[10px] font-bold text-muted-foreground">
                 <Ban className="h-3 w-3" /> Faded
+              </span>
+            )}
+            {s4Phase === "breakout" && (
+              <span className="inline-flex rounded bg-primary/12 px-1.5 py-0.5 text-[10px] font-bold text-primary">
+                S4 壓縮突破
+              </span>
+            )}
+            {s4Phase === "setup" && (
+              <span className="inline-flex rounded bg-muted px-1.5 py-0.5 text-[10px] font-bold text-muted-foreground">
+                S4 壓縮蓄勢
               </span>
             )}
           </div>

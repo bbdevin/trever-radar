@@ -1,7 +1,9 @@
 import json
+import math
 import unittest
 
-from radar.compute.indicators import compute_series, score_technical
+from radar.compute.indicators import _s4_context, _s4_setup_snapshot, compute_series, score_technical
+from radar.compute.scores import combine
 
 
 def row(i, close, volume=1000):
@@ -36,6 +38,23 @@ def tech_kwargs(**overrides):
     )
     base.update(overrides)
     return base
+
+
+def s4_v2_data(*, breakout=False):
+    """Synthetic adjusted OHLCV with a valid S4 V2 setup at the penultimate bar."""
+    n = 151 if breakout else 150
+    closes = []
+    for j in range(n):
+        amp = 3.0 if j < 120 else max(0.18, 1.2 - (j - 120) * 0.035)
+        closes.append(100 + amp * math.sin(j * 1.7))
+    highs, lows, volumes = [105.0] * n, [99.0] * n, [1000.0] * n
+    # setup day: prior 4-day volume is 50% of normal; with today's 1.0x
+    # volume, the required five-day (including today) ratio still contracts.
+    for j in range(145, 149):
+        volumes[j] = 500.0
+    if breakout:
+        closes[-1], highs[-1], lows[-1], volumes[-1] = 106.0, 106.5, 100.0, 1800.0
+    return closes, highs, lows, volumes
 
 
 class IndicatorTests(unittest.TestCase):
@@ -141,6 +160,132 @@ class TestTechnicalBaseScore(unittest.TestCase):
         self.assertEqual(score, 0)  # S1 的 20 分不應加到 tech_score
 
 
+class S4V2Tests(unittest.TestCase):
+    def _kwargs(self, *, breakout=False):
+        closes, highs, lows, volumes = s4_v2_data(breakout=breakout)
+        ctx = _s4_context(closes, highs, lows, volumes)
+        i = len(closes) - 1
+        return tech_kwargs(
+            idx=i, open_=closes[i], high=highs[i], low=lows[i], close=closes[i],
+            opens=closes[:], closes=closes, highs=highs, lows=lows, volumes=volumes,
+            ma5=ctx["ma5"][i], ma10=ctx["ma10"][i], ma20=ctx["ma20"][i],
+            ma60=_s4_context(closes, highs, lows, volumes)["ma20"][i],
+            std20=ctx["std20"][i], volume_ratio=None,
+            macd=1.0, prev_macd=0.9, macd_hist=0.2 if breakout else -0.1,
+            prev_macd_hist=0.1 if breakout else -0.2,
+            _s4_context=ctx,
+        )
+
+    @staticmethod
+    def _codes(reasons):
+        return {r["code"]: r for r in reasons}
+
+    def test_setup_hard_gates_and_strategy_score_is_zero(self):
+        score, reasons, _ = score_technical(**self._kwargs())
+        codes = self._codes(reasons)
+        self.assertIn("S4_COMPRESSION_SETUP_V2", codes)
+        self.assertEqual(codes["S4_COMPRESSION_SETUP_V2"]["points"], 0)
+        # Suppressing only S4's volume gate cannot change tech_score.
+        blocked = self._kwargs()
+        blocked["_s4_context"]["volumes"][-1] = 0.0
+        blocked_score, blocked_reasons, _ = score_technical(**blocked)
+        self.assertNotIn("S4_COMPRESSION_SETUP_V2", self._codes(blocked_reasons))
+        self.assertEqual(score, blocked_score)
+        self.assertEqual(
+            combine(50, 50, score, 50, None),
+            combine(50, 50, blocked_score, 50, None),
+        )
+
+    def test_setup_equal_bbw_12pct_is_allowed(self):
+        kw = self._kwargs()
+        ctx = kw["_s4_context"]
+        ctx["bbw"][:-6] = [0.12] * (len(ctx["bbw"]) - 6)
+        ctx["bbw"][-6:] = [0.14, 0.135, 0.13, 0.125, 0.122, 0.12]
+        ctx["bbw"][-1] = 0.12
+        self.assertIsNotNone(_s4_setup_snapshot(ctx, len(ctx["closes"]) - 1))
+
+    def test_setup_volume_contraction_uses_five_days_including_today(self):
+        kw = self._kwargs()
+        ctx = kw["_s4_context"]
+        # denominator: (16×1000 + 4×700)/20 = 940
+        # numerator: (4×700 + 490)/5 = 658; 658/940 = exactly 0.70.
+        ctx["volumes"][-5:-1] = [700.0] * 4
+        ctx["volumes"][-1] = 490.0
+        self.assertIsNotNone(_s4_setup_snapshot(ctx, len(ctx["closes"]) - 1))
+        ctx["volumes"][-1] = 491.0
+        self.assertIsNone(_s4_setup_snapshot(ctx, len(ctx["closes"]) - 1))
+
+    def test_setup_rejects_insufficient_or_bad_data(self):
+        closes, highs, lows, volumes = s4_v2_data()
+        self.assertIsNone(_s4_setup_snapshot(_s4_context(closes[:79], highs[:79], lows[:79], volumes[:79]), 78))
+
+        for field, replacement in (("volume", 0.0), ("volume", None), ("ma20", None)):
+            with self.subTest(field=field, replacement=replacement):
+                kw = self._kwargs()
+                ctx = kw["_s4_context"]
+                if field == "volume":
+                    ctx["volumes"][-1] = replacement
+                else:
+                    ctx["ma20"][-1] = replacement
+                self.assertIsNone(_s4_setup_snapshot(ctx, len(ctx["closes"]) - 1))
+
+    def test_setup_rejects_ma20_downturn(self):
+        kw = self._kwargs()
+        ctx = kw["_s4_context"]
+        ctx["ma20"][-1] = ctx["ma20"][-6] * 0.994
+        self.assertIsNone(_s4_setup_snapshot(ctx, len(ctx["closes"]) - 1))
+
+    def test_breakout_requires_prior_setup_and_first_breakout_conditions(self):
+        score, reasons, _ = score_technical(**self._kwargs(breakout=True))
+        self.assertIn("S4_COMPRESSION_BREAKOUT_V2", self._codes(reasons))
+
+        for field, replacement in (("volume", 1000.0), ("close", 104.0), ("macd_hist", 0.05)):
+            with self.subTest(field=field, replacement=replacement):
+                kw = self._kwargs(breakout=True)
+                if field == "volume":
+                    kw["_s4_context"]["volumes"][-1] = replacement
+                elif field == "close":
+                    kw["close"] = replacement
+                    kw["_s4_context"]["closes"][-1] = replacement
+                else:
+                    kw["macd_hist"] = replacement
+                    kw["prev_macd_hist"] = 0.1
+                _, changed, _ = score_technical(**kw)
+                self.assertNotIn("S4_COMPRESSION_BREAKOUT_V2", self._codes(changed))
+
+    def test_breakout_does_not_repeat_when_platform_is_lifted_next_day(self):
+        closes, highs, lows, volumes = s4_v2_data(breakout=True)
+        # Day i is a valid first breakout. On i+1 a higher platform could
+        # otherwise make `prev_close < today_threshold` true again.
+        closes.append(107.0)
+        highs.append(107.5)
+        lows.append(100.0)
+        volumes.append(1800.0)
+        ctx = _s4_context(closes, highs, lows, volumes)
+        i = len(closes) - 1
+        kw = tech_kwargs(
+            idx=i, open_=106.0, high=highs[i], low=lows[i], close=closes[i],
+            opens=closes[:], closes=closes, highs=highs, lows=lows, volumes=volumes,
+            ma5=ctx["ma5"][i], ma10=ctx["ma10"][i], ma20=ctx["ma20"][i], ma60=ctx["ma20"][i],
+            std20=ctx["std20"][i], macd=1.2, prev_macd=1.0,
+            macd_hist=0.3, prev_macd_hist=0.2, _s4_context=ctx,
+        )
+        _, reasons, _ = score_technical(**kw)
+        self.assertNotIn("S4_COMPRESSION_BREAKOUT_V2", self._codes(reasons))
+
+    def test_adjustment_scale_does_not_change_s4_signal(self):
+        closes, highs, lows, volumes = s4_v2_data()
+        rows = [
+            {"stock_id": "T", "date": f"2026-01-{j + 1:03d}", "open": c, "high": highs[j], "low": lows[j], "close": c, "adj_factor": 1.0, "volume": volumes[j]}
+            for j, c in enumerate(closes)
+        ]
+        scaled = [{**r, "open": r["open"] * 2, "high": r["high"] * 2, "low": r["low"] * 2, "close": r["close"] * 2, "adj_factor": 0.5} for r in rows]
+        base_codes = {r["code"] for r in json.loads(compute_series(rows)[-1]["reasons"])}
+        scaled_codes = {r["code"] for r in json.loads(compute_series(scaled)[-1]["reasons"])}
+        self.assertEqual(base_codes, scaled_codes)
+        self.assertIn("S4_COMPRESSION_SETUP_V2", base_codes)
+
+
 def s6_kwargs(**over):
     """S6 需要 60 根以上序列(_val(closes,30) 要有值)。
     平台前有一段拉升(80→100),近 15 日高檔盤整(100)。"""
@@ -237,15 +382,14 @@ class S2_to_S10_BoundaryTests(unittest.TestCase):
             macd_hist=1, prev_macd_hist=0.1, rsi14=60))
         self.assertNotIn("S3_MA_CONVERGE_BREAKOUT", self._codes(reasons))
 
-    # --- S4:波動收斂後突破 ---
-    def test_s4_volatility_contraction_positive(self):
+    # --- S4: legacy code is frozen; V2 has dedicated setup/breakout codes ---
+    def test_s4_legacy_code_is_not_reemitted(self):
         _, reasons, _ = score_technical(**tech_kwargs(
             close=120, open_=100, high=121, low=99,
             volume_ratio=2.5, adv20=2000, std20=1, ma20=100))
-        self.assertIn("S4_VOLATILITY_CONTRACTION", self._codes(reasons))
+        self.assertNotIn("S4_VOLATILITY_CONTRACTION", self._codes(reasons))
 
-    def test_s4_boundary_bollinger_width_exactly_0_15(self):
-        # std20*4/ma20 = 0.15(條件 <0.15)→ 不觸發
+    def test_s4_legacy_boundary_does_not_create_v2_or_legacy(self):
         _, reasons, _ = score_technical(**tech_kwargs(
             close=120, open_=100, high=121, low=99,
             volume_ratio=2.5, adv20=2000, std20=3.75, ma20=100))

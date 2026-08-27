@@ -36,6 +36,8 @@ STRATEGIES: list[dict[str, str]] = [
     {"key": "S2_BREAKOUT20", "label": "20日爆量突破"},
     {"key": "S3_MA_CONVERGE_BREAKOUT", "label": "均線糾結突破"},
     {"key": "S4_VOLATILITY_CONTRACTION", "label": "波動收斂突破"},
+    {"key": "S4_COMPRESSION_SETUP_V2", "label": "S4 壓縮蓄勢 V2"},
+    {"key": "S4_COMPRESSION_BREAKOUT_V2", "label": "S4 壓縮突破 V2"},
     {"key": "S5_PULLBACK_SUPPORT", "label": "強勢量縮回踩"},
     {"key": "S6_HIGH_BASE_BREAKOUT", "label": "高檔平台突破"},
     {"key": "S7_MACD_ZERO_CROSS", "label": "MACD零軸金叉"},
@@ -85,6 +87,32 @@ class StrategyEvent:
     fwd_5d: float | None
     fwd_10d: float | None
     fwd_20d: float | None
+    stock_id: str = ""
+
+
+def dedupe_setup_episodes(
+    events: list[StrategyEvent], *, trading_dates: list[str],
+) -> list[StrategyEvent]:
+    """Keep the first event of each consecutive per-stock setup episode.
+
+    S4 setup may validly remain true on consecutive trading days.  Its
+    performance sample is an episode, not one sample per day.  The caller
+    supplies the market's trading-date order so weekend/holiday gaps do not
+    accidentally create new episodes.
+    """
+    date_index = {d: n for n, d in enumerate(sorted(set(trading_dates)))}
+    out: list[StrategyEvent] = []
+    by_stock: dict[str, list[StrategyEvent]] = {}
+    for event in events:
+        by_stock.setdefault(event.stock_id, []).append(event)
+    for stock_events in by_stock.values():
+        previous_index: int | None = None
+        for event in sorted(stock_events, key=lambda e: e.date):
+            current_index = date_index.get(event.date)
+            if current_index is None or previous_index is None or current_index != previous_index + 1:
+                out.append(event)
+            previous_index = current_index
+    return sorted(out, key=lambda e: (e.date, e.stock_id))
 
 
 def summarize_fwd_values(values: list[float]) -> dict[str, float | int | None]:
@@ -179,6 +207,16 @@ def fetch_strategy_events(
                 return {}
             min_date = min(dates)
 
+        requested_min_date = min_date
+        # One prior actual trading day is enough to tell whether a setup on
+        # the report boundary continues an earlier episode. A NULL-only price
+        # date is not a trading bar for this purpose.
+        warmup_date = conn.execute(text("""
+            SELECT MAX(date) FROM daily_prices
+            WHERE date < :min_date AND close IS NOT NULL
+        """), {"min_date": requested_min_date}).scalar()
+        query_start = warmup_date or requested_min_date
+
         rows = conn.execute(text(
             """
             SELECT
@@ -192,13 +230,28 @@ def fetch_strategy_events(
             FROM daily_scores ds
             LEFT JOIN indicators_daily ti
               ON ti.stock_id = ds.stock_id AND ti.date = ds.date
-            WHERE ds.date >= :min_date
-              AND (ds.fwd_5d IS NOT NULL OR ds.fwd_10d IS NOT NULL OR ds.fwd_20d IS NOT NULL)
+            WHERE ds.date >= :query_start
+              AND (
+                ds.fwd_5d IS NOT NULL OR ds.fwd_10d IS NOT NULL OR ds.fwd_20d IS NOT NULL
+                OR ds.date = :warmup_date
+              )
             ORDER BY ds.date DESC, ds.stock_id
             """
-        ), {"min_date": min_date}).fetchall()
+        ), {"query_start": query_start, "warmup_date": warmup_date}).fetchall()
 
     events_by_code: dict[str, list[StrategyEvent]] = {}
+    event_dates = [r[1] for r in rows]
+    # Episode continuity must follow the complete price calendar, not merely
+    # dates that happen to have matured fwd returns/daily_scores rows.
+    if event_dates:
+        with engine.connect() as conn:
+            trading_dates = [r[0] for r in conn.execute(text("""
+                SELECT DISTINCT date FROM daily_prices
+                WHERE date >= :start AND date <= :end AND close IS NOT NULL
+                ORDER BY date
+            """), {"start": min(event_dates), "end": max(event_dates)}).fetchall()]
+    else:
+        trading_dates = []
     for r in rows:
         _sid, date, fwd5, fwd10, fwd20, ds_reasons, ti_reasons = r
         ds_items = _parse_reasons(ds_reasons)
@@ -210,9 +263,21 @@ def fetch_strategy_events(
         if not codes:
             continue
 
-        ev = StrategyEvent(date=date, fwd_5d=fwd5, fwd_10d=fwd10, fwd_20d=fwd20)
+        ev = StrategyEvent(
+            date=date, fwd_5d=fwd5, fwd_10d=fwd10, fwd_20d=fwd20, stock_id=_sid,
+        )
         for c in codes:
             events_by_code.setdefault(c, []).append(ev)
+
+    if "S4_COMPRESSION_SETUP_V2" in events_by_code:
+        events_by_code["S4_COMPRESSION_SETUP_V2"] = dedupe_setup_episodes(
+            events_by_code["S4_COMPRESSION_SETUP_V2"], trading_dates=trading_dates,
+        )
+
+    # Warm-up events only establish continuity; no strategy's performance
+    # window may expand to include a pre-min_date row.
+    for code, events in events_by_code.items():
+        events_by_code[code] = [event for event in events if event.date >= requested_min_date]
 
     return events_by_code
 
@@ -326,4 +391,3 @@ def _cli_float_or_none(v: str | None) -> float | None:
     if v == "":
         return None
     return float(v)
-

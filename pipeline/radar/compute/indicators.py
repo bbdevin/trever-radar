@@ -68,6 +68,160 @@ def _rsi14(closes: list[float | None]) -> list[float | None]:
     return out
 
 
+def _s4_context(
+    closes: list[float | None],
+    highs: list[float | None],
+    lows: list[float | None],
+    volumes: list[int | float | None],
+) -> dict:
+    """Point-in-time inputs for the S4 V2 two-phase strategy.
+
+    S4 is deliberately a strategy tag, not an input to tech_score.  Keeping
+    its rolling values in one context also makes the historical setup lookup
+    used by the breakout phase deterministic and free of future bars.
+    """
+    n = len(closes)
+    ma5 = [_sma(closes, 5, j) for j in range(n)]
+    ma10 = [_sma(closes, 10, j) for j in range(n)]
+    ma20 = [_sma(closes, 20, j) for j in range(n)]
+    std20 = [_stddev(closes, 20, j) for j in range(n)]
+    bbw = [
+        None if ma20[j] in (None, 0) or std20[j] is None else 4 * std20[j] / ma20[j]
+        for j in range(n)
+    ]
+    return {
+        "closes": closes,
+        "highs": highs,
+        "lows": lows,
+        "volumes": volumes,
+        "ma5": ma5,
+        "ma10": ma10,
+        "ma20": ma20,
+        "std20": std20,
+        "bbw": bbw,
+        "rsi": _rsi14(closes),
+    }
+
+
+def _s4_breakout_threshold(ctx: dict, i: int) -> float | None:
+    """The prior-day-known S4 threshold: max(previous upper BB, 20d platform)."""
+    if i < 20:
+        return None
+    ma_prev = ctx["ma20"][i - 1]
+    std_prev = ctx["std20"][i - 1]
+    platform = ctx["highs"][i - 20:i]
+    if ma_prev is None or std_prev is None or any(v is None for v in platform):
+        return None
+    return max(ma_prev + 2 * std_prev, max(platform))
+
+
+def _s4_realized_vol(closes: list[float | None], end: int) -> float | None:
+    """Ten one-day adjusted-close returns ending at ``end`` (population stdev)."""
+    if end < 10:
+        return None
+    xs = closes[end - 10:end + 1]
+    if any(v is None or v == 0 for v in xs):
+        return None
+    returns = [xs[j] / xs[j - 1] - 1 for j in range(1, len(xs))]
+    avg = sum(returns) / len(returns)
+    return (sum((v - avg) ** 2 for v in returns) / len(returns)) ** 0.5
+
+
+def _s4_setup_snapshot(ctx: dict, i: int, *, macd: float | None = None,
+                       prev_macd: float | None = None,
+                       macd_hist: float | None = None,
+                       prev_macd_hist: float | None = None) -> dict | None:
+    """Return setup quality/priority at ``i`` or None; never reads future bars."""
+    closes, lows, volumes = ctx["closes"], ctx["lows"], ctx["volumes"]
+    bbw, ma5, ma10, ma20, std20, rsi = (
+        ctx["bbw"], ctx["ma5"], ctx["ma10"], ctx["ma20"], ctx["std20"], ctx["rsi"]
+    )
+    if i < 80 or closes[i] is None or volumes[i] in (None, 0):
+        return None
+
+    current_bbw = bbw[i]
+    history = [v for v in bbw[max(0, i - 120):i] if v is not None]
+    recent_bbw = bbw[i - 5:i + 1]
+    if current_bbw is None or len(history) < 60 or any(v is None for v in recent_bbw):
+        return None
+    p20 = sorted(history)[max(0, -(-len(history) // 5) - 1)]  # nearest-rank p20
+    narrowing = sum(1 for a, b in zip(recent_bbw, recent_bbw[1:]) if b < a)
+    if not (current_bbw <= 0.12 and current_bbw <= p20 and narrowing >= 3 and current_bbw <= recent_bbw[0] * 0.90):
+        return None
+
+    prior_volumes = volumes[i - 20:i]
+    # The setup's five-day contraction window includes today; its 20-day
+    # denominator remains strictly prior bars to preserve point-in-time use.
+    recent_volumes = volumes[i - 4:i + 1]
+    if (len(prior_volumes) != 20 or len(recent_volumes) != 5
+            or any(v is None or v <= 0 for v in prior_volumes + recent_volumes)):
+        return None
+    avg20 = sum(prior_volumes) / 20
+    avg5 = sum(recent_volumes) / 5
+    volume_ratio = volumes[i] / avg20
+    if avg5 / avg20 > 0.70 or volume_ratio >= 1.5:
+        return None
+
+    if ma20[i] is None or ma20[i - 5] in (None, 0) or ma20[i] / ma20[i - 5] - 1 < -0.005:
+        return None
+    threshold = _s4_breakout_threshold(ctx, i)
+    if threshold is None or closes[i] >= threshold * 1.002:
+        return None
+
+    # Four quality checks. Missing inputs fail that item rather than creating
+    # a permissive signal; at least two are required.
+    quality = 0
+    bb_positions = []
+    for j in range(i - 6, i + 1):
+        if closes[j] is None or ma20[j] is None or std20[j] in (None, 0):
+            bb_positions = []
+            break
+        bb_positions.append((closes[j] - (ma20[j] - 2 * std20[j])) / (4 * std20[j]))
+    if len(bb_positions) == 7 and sum(0.35 <= p <= 0.65 for p in bb_positions) >= 5:
+        quality += 1
+
+    spreads: list[float] = []
+    for j in range(i - 5, i + 1):
+        mas = (ma5[j], ma10[j], ma20[j])
+        if any(v is None or v <= 0 for v in mas):
+            spreads = []
+            break
+        spreads.append(max(mas) / min(mas) - 1)
+    if (len(spreads) == 6 and spreads[-1] <= 0.025 and spreads[-1] < spreads[0]
+            and sum(1 for a, b in zip(spreads, spreads[1:]) if b < a) >= 3):
+        quality += 1
+
+    recent_lows, older_lows = lows[i - 4:i + 1], lows[i - 9:i - 4]
+    if (len(recent_lows) == len(older_lows) == 5 and
+            all(v is not None for v in recent_lows + older_lows) and
+            min(recent_lows) >= min(older_lows) * 0.995):
+        quality += 1
+
+    rv10, rv10_prev = _s4_realized_vol(closes, i), _s4_realized_vol(closes, i - 5)
+    if rv10 is not None and rv10_prev is not None and rv10 <= rv10_prev:
+        quality += 1
+    if quality < 2:
+        return None
+
+    # These soft priorities never become a score. They only rank otherwise
+    # valid S4 setups in the strategy list.
+    priority = 0
+    upper = ma20[i] + 2 * std20[i] if ma20[i] is not None and std20[i] is not None else None
+    if upper and closes[i] >= upper * 0.97:
+        priority += 1
+    if recent_lows and older_lows and all(v is not None for v in recent_lows + older_lows) and min(recent_lows) >= min(older_lows):
+        priority += 1
+    if macd_hist is not None and prev_macd_hist is not None and macd_hist < 0 and macd_hist > prev_macd_hist:
+        priority += 1
+    if macd is not None and prev_macd is not None and macd > prev_macd:
+        priority += 1
+    if rsi[i] is not None and rsi[i - 1] is not None and 45 <= rsi[i] <= 65 and rsi[i] > rsi[i - 1]:
+        priority += 1
+    if 1.0 <= volume_ratio < 1.5:
+        priority += 1
+    return {"quality": quality, "priority": priority, "rank": quality * 10 + priority}
+
+
 def compute_series(price_rows: Iterable[dict]) -> list[dict]:
     """Compute indicator rows for one stock.
 
@@ -81,11 +235,12 @@ def compute_series(price_rows: Iterable[dict]) -> list[dict]:
     lows = [_adj(r.get("low"), r.get("adj_factor")) for r in rows]
     volumes = [r.get("volume") for r in rows]
     rsi = _rsi14(closes)
+    s4_ctx = _s4_context(closes, highs, lows, volumes)
 
     out = []
     ema12 = ema26 = signal = None
     k_prev = d_prev = 50.0
-    prev_macd_hist = prev_k = prev_d = None
+    prev_macd = prev_macd_hist = prev_k = prev_d = None
     for i, r in enumerate(rows):
         close = closes[i]
         high = highs[i]
@@ -187,6 +342,8 @@ def compute_series(price_rows: Iterable[dict]) -> list[dict]:
             is_surge_7pct_20d=is_surge_7pct_20d,
             has_volume_surge_1_5x_5d=has_volume_surge_1_5x_5d,
             is_macd_golden_cross_any=is_macd_golden_cross_any,
+            prev_macd=prev_macd,
+            _s4_context=s4_ctx,
         )
 
         out.append({
@@ -212,6 +369,7 @@ def compute_series(price_rows: Iterable[dict]) -> list[dict]:
             "risks": json.dumps(risks, ensure_ascii=False),
         })
         prev_macd_hist = macd_hist
+        prev_macd = macd
         prev_k = k9
         prev_d = d9
         k_prev = k9
@@ -344,15 +502,57 @@ def score_technical(**x) -> tuple[int, list[dict], list[dict]]:
                         if rsi14 and rsi14 > 50:
                             add_strategy(20, "S3_MA_CONVERGE_BREAKOUT", "均線糾結突破(均線收斂後帶量發動)")
 
-    # S4: 波動收斂後突破
-    # 10日振幅縮小; 5日均量低於20日均量70%; 布林寬度近60日低檔; 突破20日高; 量>2倍; 收盤近最高
-    if is_high20 and vol_ratio > 2.0 and high and open_ and close >= high * 0.985:
-        # Check volume contraction before breakout (avg of previous 5 days)
-        prev_5_vols = [v for v in volumes[max(0, i-6):i-1] if v is not None]
-        if len(prev_5_vols) == 5 and (sum(prev_5_vols)/5) < adv20 * 0.8:
-            # check bollinger width (approximation)
-            if std20 and ma20 and (std20 * 4 / ma20) < 0.15:
-                add_strategy(20, "S4_VOLATILITY_CONTRACTION", "波動收斂後突破(量縮整理後爆量創高)")
+    # S4 V2: 壓縮蓄勢 → 壓縮突破。舊 S4 code 已凍結，不能再以新
+    # 邏輯回寫，避免混淆舊版與 V2 的策略績效。此段所有價格都是
+    # compute_series 已套 adj_factor 的 OHLC，量則保留原始成交量。
+    s4_ctx = x.get("_s4_context") or _s4_context(closes, highs, lows, volumes)
+    setup = _s4_setup_snapshot(
+        s4_ctx, i,
+        macd=macd, prev_macd=x.get("prev_macd"),
+        macd_hist=x.get("macd_hist"), prev_macd_hist=x.get("prev_macd_hist"),
+    )
+    if setup:
+        add_strategy(
+            0,
+            "S4_COMPRESSION_SETUP_V2",
+            f"壓縮蓄勢（品質 {setup['quality']}/4，排序 {setup['priority']}）",
+            setup["rank"],
+        )
+
+    # Breakout must be preceded by a point-in-time setup in the prior 1–5
+    # trading bars. To prevent a new platform high from allowing the same
+    # move to re-trigger tomorrow, test yesterday's close against yesterday's
+    # own known threshold, not today's dynamically lifted threshold.
+    prior_setups = [
+        _s4_setup_snapshot(s4_ctx, j)
+        for j in range(max(0, i - 5), i)
+    ]
+    threshold = _s4_breakout_threshold(s4_ctx, i)
+    previous_threshold = _s4_breakout_threshold(s4_ctx, i - 1)
+    prev_macd = x.get("prev_macd")
+    prev_close_s4 = _val(closes, 1)
+    current_vol_ratio = None
+    if i >= 20:
+        prior_vols = volumes[i - 20:i]
+        if all(v is not None and v > 0 for v in prior_vols) and volumes[i] not in (None, 0):
+            current_vol_ratio = volumes[i] / (sum(prior_vols) / 20)
+    close_location = None
+    if high is not None and low is not None and high > low:
+        close_location = (close - low) / (high - low)
+    if (any(prior_setups) and threshold is not None and previous_threshold is not None and prev_close_s4 is not None
+            and close >= threshold * 1.002 and prev_close_s4 < previous_threshold * 1.002
+            and current_vol_ratio is not None and current_vol_ratio >= 1.5
+            and close_location is not None and close_location >= 0.8
+            and x.get("macd_hist") is not None and x.get("prev_macd_hist") is not None
+            and macd is not None and prev_macd is not None
+            and x["macd_hist"] > x["prev_macd_hist"] and macd > prev_macd):
+        best_setup = max((s for s in prior_setups if s), key=lambda s: s["rank"])
+        add_strategy(
+            0,
+            "S4_COMPRESSION_BREAKOUT_V2",
+            f"壓縮突破（前 1–5 日蓄勢，品質 {best_setup['quality']}/4）",
+            100 + best_setup["rank"],
+        )
 
     # S5: 強勢股量縮回踩
     # 20日內漲幅>15% (close / close[i-20]); 5>10>20; ma20向上; 回踩10或20日線(最低價接近); 量縮; 當日收紅; 站回5日線或破昨高

@@ -245,6 +245,82 @@ class TrackedBranchHistoryExportTests(unittest.TestCase):
         # 2454 於 as_of(07-10)close 為 NULL → 回退取最近有值日 07-09 的 1200.0
         self.assertEqual(fp["stocks"]["2454"], {"name": "聯發科", "close": 1200.0})
 
+class S4PhaseJsonExportTests(unittest.TestCase):
+    """S4 V2 is additive: keep the legacy selector and expose phase detail."""
+
+    def setUp(self):
+        self._tmp = TemporaryDirectory()
+        tmp = Path(self._tmp.name)
+        self._old_url, self._old_dir = config.DB_URL, config.DATA_DIR
+        config.DATA_DIR = tmp
+        config.DB_URL = "sqlite:///" + (tmp / "t.db").as_posix()
+        db._engine = None
+        db.init_db()
+        reasons = {
+            "1001": [{"code": "S4_VOLATILITY_CONTRACTION", "text": "legacy"}],
+            "1002": [{"code": "S4_COMPRESSION_SETUP_V2", "text": "setup", "value": 24}],
+        }
+        reasons.update({
+            str(2000 + i): [{"code": "S4_COMPRESSION_BREAKOUT_V2", "text": "breakout", "value": 136}]
+            for i in range(42)
+        })
+        with db.get_engine().begin() as conn:
+            conn.execute(schema.stocks.insert(), [
+                {"id": sid, "name": sid, "market": "twse", "type": "stock", "is_active": 1}
+                for sid in reasons
+            ])
+            conn.execute(schema.daily_prices.insert(), [
+                {"stock_id": sid, "date": date, "open": 100, "high": 101, "low": 99,
+                 "close": 100 if date.endswith("01") else 101, "volume": 1000,
+                 # Legacy/setup must not enter score, hot, surge, strong, or
+                 # weak lists; their later presence in radar.stocks proves
+                 # the phase-union lookup loop, not an incidental list union.
+                 "turnover": 0 if sid in {"1001", "1002"} else 100_000_000}
+                for sid in reasons for date in ("2026-08-01", "2026-08-04")
+            ])
+            conn.execute(schema.daily_scores.insert(), [
+                {"stock_id": sid, "date": "2026-08-04",
+                 "final": 0 if sid in {"1001", "1002"} else 70,
+                 "reasons": json.dumps(rs), "risks": "[]"}
+                for sid, rs in reasons.items()
+            ])
+
+    def tearDown(self):
+        if db._engine is not None:
+            db._engine.dispose()
+        db._engine = None
+        config.DB_URL, config.DATA_DIR = self._old_url, self._old_dir
+        self._tmp.cleanup()
+
+    def test_s4_union_phase_and_old_json_contract(self):
+        out = Path(self._tmp.name) / "out"
+        export_json(out)
+        radar = json.loads((out / "radar.json").read_text(encoding="utf-8"))
+        # The existing union selector remains capped at 40 breakout rows.
+        self.assertEqual(len(radar["strategies"]["S4_VOLATILITY_CONTRACTION"]), 40)
+        phases = radar["strategy_phases"]["S4_VOLATILITY_CONTRACTION"]
+        self.assertEqual(len(phases["breakout"]), 40)
+        self.assertEqual(phases["setup"], ["1002"])
+        self.assertEqual(phases["legacy"], ["1001"])
+        self.assertTrue({
+            "S4_VOLATILITY_CONTRACTION",
+            "S4_COMPRESSION_SETUP_V2",
+            "S4_COMPRESSION_BREAKOUT_V2",
+        }.issubset(radar["strategy_meta"]))
+        signals = {s["id"]: s.get("strategy_signals") for s in radar["stocks"]}
+        self.assertEqual(signals["2000"][0]["phase"], "breakout")
+        self.assertEqual(signals["1002"][0]["phase"], "setup")
+        non_strategy_ids = set().union(*radar["lists"].values())
+        self.assertTrue({"1001", "1002"}.isdisjoint(non_strategy_ids))
+        self.assertTrue({"1001", "1002"}.isdisjoint(radar["strategies"]["S4_VOLATILITY_CONTRACTION"]))
+        # Even when the selector cap is entirely breakout, every emitted
+        # phase ID resolves through radar.stocks for the frontend lookup.
+        # In particular, 1001/1002 can only have arrived via phase union.
+        self.assertTrue(set(phases["breakout"] + phases["setup"] + phases["legacy"]).issubset(signals))
+        # No S4-only item is promoted into the global Armed/Triggered lists.
+        self.assertEqual(radar["lists"]["armed"], [])
+        self.assertEqual(radar["lists"]["triggered"], [])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -109,6 +109,12 @@ Supabase Auth / watchlist 保留作跨裝置個人化,不再擴張假性會員�
 | 類別 | 初始包含 | 說明 |
 |---|---|---|
 | 突破發動 | S2 / S3 / S4 / S6 / S7 / S8 | 條件高度相近,UI 先分群,績效足夠後再判斷是否合併或淘汰 |
+
+> **S4 V2（2026-08-27，程式與測試完成、未宣稱正式資料回算）**：同一 S4 家族改為
+> `S4_COMPRESSION_SETUP_V2`（壓縮蓄勢）→ `S4_COMPRESSION_BREAKOUT_V2`（壓縮突破），
+> `S4_VOLATILITY_CONTRACTION` 凍結為 legacy。三者績效分開；setup 連續日依完整 `daily_prices`
+> 交易日曆按 episode 去重（不從成熟 fwd/daily_scores 日期推估）；績效視窗左界用前一有收盤交易日 warm-up 後才裁回。
+> 對外 `strategies.S4_VOLATILITY_CONTRACTION` 仍為三者聯集，phase 只提供排序與標示，不改分數或 Armed 語意。
 | 趨勢續強/回踩 | S1 / S5 / S9 | 已有強勢背景後再次發動或回踩 |
 | 低檔反轉 | S10 | 與突破型態不同,獨立觀察 |
 | 籌碼事件 | S11 / S12 / S13 | 法人、分點集中、融券回補 |
@@ -196,6 +202,8 @@ Supabase Auth / watchlist 保留作跨裝置個人化,不再擴張假性會員�
 3. 首頁策略 UI 先按四類分群,顯示 Shadow/Active 狀態與樣本不足提示（下一步接 UI；需要同步新增 JSON/型別）。
 4. 不以「出現檔數」代替績效;不隱藏失敗樣本。
 5. 使用者看過報告後才決定 Active / Retired 清單。
+
+> **2026-08-27 勝率統計唯讀稽核摘要**：策略事件定義為 D 日收盤訊號，D 後第一根有效的還原開盤進場；`fwdN` 是第 N 根有效還原收盤，`win` 嚴格採報酬 `> 0`。統計只涵蓋 `daily_scores` 評分池及近 180 個成熟評分日，不代表全市場；一般策略每日觸發各算樣本，S4 setup 連續日依 episode 去重。已知債務為 NULL K 線壓縮 horizon 與評分池 selection bias，另案處理。
 
 ### Phase 4:排程與部署簡化(獨立高風險任務)— **提案稿(2026-08-20 改寫,尚未執行)**
 

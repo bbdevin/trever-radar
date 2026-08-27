@@ -30,6 +30,8 @@ _STRATEGY_STATUS: dict[str, str] = {
     "S2_BREAKOUT20": "retired",
     "S3_MA_CONVERGE_BREAKOUT": "shadow",
     "S4_VOLATILITY_CONTRACTION": "shadow",
+    "S4_COMPRESSION_SETUP_V2": "shadow",
+    "S4_COMPRESSION_BREAKOUT_V2": "shadow",
     "S5_PULLBACK_SUPPORT": "retired",
     "S6_HIGH_BASE_BREAKOUT": "shadow",
     "S7_MACD_ZERO_CROSS": "shadow",
@@ -96,6 +98,46 @@ MIN_TURNOVER = 100_000_000
 
 # 樣本門檻:20 日成熟樣本數達此值才視為「有足夠證據」
 _MIN_SAMPLES_20D = 30
+
+_S4_PHASE_BY_CODE = {
+    "S4_VOLATILITY_CONTRACTION": "legacy",
+    "S4_COMPRESSION_SETUP_V2": "setup",
+    "S4_COMPRESSION_BREAKOUT_V2": "breakout",
+}
+
+
+def _strategy_signals_from_reasons(reasons: list[dict]) -> list[dict]:
+    """Additive per-stock phase contract; old JSON readers can ignore it."""
+    signals = []
+    for reason in reasons:
+        phase = _S4_PHASE_BY_CODE.get(reason.get("code"))
+        if phase:
+            signals.append({
+                "strategy": "S4_VOLATILITY_CONTRACTION",
+                "phase": phase,
+                "quality_rank": reason.get("value"),
+            })
+    return signals
+
+
+def _s4_phase_lists(all_stocks: list[dict]) -> dict[str, list[dict]]:
+    """Phase lists are global strategy data only; they are not Armed lists."""
+    phases = {"breakout": [], "setup": [], "legacy": []}
+    for stock in all_stocks:
+        for signal in stock.get("strategy_signals", []):
+            phase = signal.get("phase")
+            if phase in phases:
+                phases[phase].append(stock)
+                break
+    for phase, stocks in phases.items():
+        stocks.sort(
+            key=lambda s: (
+                next((x.get("quality_rank") or 0 for x in s.get("strategy_signals", []) if x.get("phase") == phase), 0),
+                s.get("turnover") or 0,
+            ),
+            reverse=True,
+        )
+    return phases
 
 
 def _build_strategy_meta() -> dict[str, dict]:
@@ -516,6 +558,7 @@ def export_json(out_dir: Path | None = None) -> dict:
             c5_pct = chg5_pct or 0
             raw_rs = json.loads(score_reasons or "[]")
             raw_risks = json.loads(score_risks or "[]")
+            strategy_signals = _strategy_signals_from_reasons(raw_rs)
             has_branch = any(r.get("code") == "S12_BRANCH_ACCUMULATION" for r in raw_rs) and (turnover or 0) >= MIN_TURNOVER
             has_warrant = False
             if warrant and warrant.get("call_turnover_ratio") is not None:
@@ -565,6 +608,7 @@ def export_json(out_dir: Path | None = None) -> dict:
                 "sources": sources,
                 "reasons": [x["text"] for x in raw_rs[:4]],
                 "raw_reasons": raw_rs,
+                "strategy_signals": strategy_signals,
                 "risks": [x["text"] for x in raw_risks[:3]],
             })
 
@@ -618,8 +662,13 @@ def export_json(out_dir: Path | None = None) -> dict:
             "S10_BOTTOM_MACD", "S11_INSTI_BREAKOUT", "S12_BRANCH_ACCUMULATION",
             "S13_SHORT_SQUEEZE"
         ]
-        # S1 為雙軌:放寬版 S1_REBOUND_RELAXED 併入 S1_REBOUND 榜(對外仍只有一個鍵)
-        STRATEGY_CODE_ALIASES = {"S1_REBOUND_RELAXED": "S1_REBOUND"}
+        # S1 為雙軌; S4 V2 為 setup/breakout 雙階段。兩者都維持既有
+        # 對外 selector key，細節另由 strategy_phases additive 提供。
+        STRATEGY_CODE_ALIASES = {
+            "S1_REBOUND_RELAXED": "S1_REBOUND",
+            "S4_COMPRESSION_SETUP_V2": "S4_VOLATILITY_CONTRACTION",
+            "S4_COMPRESSION_BREAKOUT_V2": "S4_VOLATILITY_CONTRACTION",
+        }
         strategies_lists = {code: [] for code in STRATEGY_CODES}
         for s in all_stocks:
             for r in s.get("raw_reasons", []):
@@ -632,9 +681,20 @@ def export_json(out_dir: Path | None = None) -> dict:
             return max((r.get("points") or 0) for r in s.get("raw_reasons", [])
                        if r.get("code") in ("S1_REBOUND", "S1_REBOUND_RELAXED"))
 
+        s4_phases = _s4_phase_lists(all_stocks)
+
         for code in strategies_lists:
             if code == "S1_REBOUND":
                 key = lambda x: (_s1_points(x), x["turnover"] or 0)
+            elif code == "S4_VOLATILITY_CONTRACTION":
+                # Breakout → setup → frozen legacy; within a phase use S4's
+                # own quality rank, never a global score.
+                phase_order = {"breakout": 3, "setup": 2, "legacy": 1}
+                key = lambda x: (
+                    max((phase_order.get(sig.get("phase"), 0) for sig in x.get("strategy_signals", [])), default=0),
+                    max((sig.get("quality_rank") or 0 for sig in x.get("strategy_signals", [])), default=0),
+                    x["turnover"] or 0,
+                )
             else:
                 key = lambda x: x["turnover"] or 0
             strategies_lists[code] = sorted(strategies_lists[code], key=key, reverse=True)[:40]
@@ -644,6 +704,12 @@ def export_json(out_dir: Path | None = None) -> dict:
             union[s["id"]] = s
         for st_list in strategies_lists.values():
             for s in st_list:
+                union[s["id"]] = s
+        # strategy_phases is an additive lookup contract. Every emitted phase
+        # ID must have its stock payload in radar.stocks even when the S4
+        # union selector's own top-40 cap is filled by another phase.
+        for phase_stocks in s4_phases.values():
+            for s in phase_stocks[:40]:
                 union[s["id"]] = s
         for s in union.values():
             s["spark"] = [row[0] for row in conn.execute(text(
@@ -899,6 +965,12 @@ def export_json(out_dir: Path | None = None) -> dict:
             "pocket": pocket_ids,
         },
         "strategies": {code: [s["id"] for s in st_list] for code, st_list in strategies_lists.items()},
+        "strategy_phases": {
+            "S4_VOLATILITY_CONTRACTION": {
+                phase: [s["id"] for s in stocks[:40]]
+                for phase, stocks in s4_phases.items()
+            },
+        },
         "strategy_meta": _build_strategy_meta(),
         "stocks": list(union.values()),
     }
@@ -963,6 +1035,7 @@ def export_json(out_dir: Path | None = None) -> dict:
                     "industry": m[3], "description": m[4],
                     "warrant": None, "technical": None, "scores": None,
                     "reasons": [], "raw_reasons": [],
+                    "strategy_signals": [],
                     "pocket_tags": [], "pocket_score": 0, "risks": [],
                 }
             if sid in union:
@@ -1043,6 +1116,7 @@ def export_json(out_dir: Path | None = None) -> dict:
                 "scores": s["scores"],
                 "reasons": s.get("reasons", []),
                 "raw_reasons": s.get("raw_reasons", []),
+                "strategy_signals": s.get("strategy_signals", []),
                 "pocket_tags": s.get("pocket_tags", []),
                 "pocket_score": s.get("pocket_score") or 0,
                 "risks": s.get("risks", []),
