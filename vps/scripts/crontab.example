@@ -11,9 +11,9 @@ CRON_TZ=Asia/Taipei
 0  15 * * 1-5  bash /home/huang/trever-radar/vps/scripts/daily-tpex-quotes.sh >> /home/huang/radar-cron.log 2>&1
 10 16 * * 1-5  bash /home/huang/trever-radar/vps/scripts/daily-insti.sh       >> /home/huang/radar-cron.log 2>&1
 40 17 * * 1-5  bash /home/huang/trever-radar/vps/scripts/daily-branches.sh    >> /home/huang/radar-cron.log 2>&1
-0  21 * * 1-5  bash /home/huang/trever-radar/vps/scripts/daily-branches.sh    >> /home/huang/radar-cron.log 2>&1
-# 融資主輪 22:40(TWSE ~21:00 產製;勿再塞進 17:40)
-40 22 * * 1-5  bash /home/huang/trever-radar/vps/scripts/daily-margin.sh      >> /home/huang/radar-cron.log 2>&1
+# 融資主輪 21:20(TWSE ~21:00 產製;留約 20 分緩衝)。分點第二輪改 22:00,避免搶 lock。
+20 21 * * 1-5  bash /home/huang/trever-radar/vps/scripts/daily-margin.sh      >> /home/huang/radar-cron.log 2>&1
+0  22 * * 1-5  bash /home/huang/trever-radar/vps/scripts/daily-branches.sh    >> /home/huang/radar-cron.log 2>&1
 
 # 深歷史增量(每日;已拉深自動跳過,近零請求)
 10 1 * * *     bash /home/huang/trever-radar/vps/scripts/data-backfill.sh  >> /home/huang/radar-cron.log 2>&1

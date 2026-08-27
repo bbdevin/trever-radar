@@ -12,8 +12,8 @@
 | 平日 15:00 | VPS `vps/scripts/daily-tpex-quotes.sh` | **上櫃日K 主補抓**(約 14:57 起才有完整表)+ 權證彙總 + 指標增量 + 分數 → export-json → deploy |
 | 平日 16:10 | VPS `vps/scripts/daily-insti.sh` | 法人買賣超(16:00 公布)+ 權證主檔(失敗不擋後續)+ **上櫃日K 保底再抓** → 指標增量 → 重算分數 → export-json → deploy |
 | 平日 17:40 | VPS `vps/scripts/daily-branches.sh` | **再補日K** + 法人補抓 + 指標增量 + **分點全股票 `--top 0`(不含 ETF)+熱門上市權證** + 分點統計 + 分數 + 績效回填 → export-json → prune → deploy(**不含融資**:MI_MARGN 約 21:00 才產製,17:40 必空) |
-| 平日 21:00 | VPS `vps/scripts/daily-branches.sh`(第二輪,同一支 script) | 同上,補晚公布/前段失敗(全部冪等) → export-json → deploy |
-| 平日 22:40 | VPS `vps/scripts/daily-margin.sh` | **融資券主輪**:再補日K + margin → 分數 → 績效 → export → deploy。TWSE 約 21:00 產製;若資券日仍落後價格日則 ntfy warn。cron 一律 `bash script.sh`(防 pull 後丟 +x) |
+| 平日 21:20 | VPS `vps/scripts/daily-margin.sh` | **融資券主輪**(TWSE ~21:00 產製,約 20 分緩衝):再補日K + margin → 分數 → 績效 → export → deploy;若仍落後價格日則對齊再抓 + ntfy warn |
+| 平日 22:00 | VPS `vps/scripts/daily-branches.sh`(第二輪) | 同上分點補抓(冪等);刻意排在資券之後,避免搶 lock |
 | 每天 01:10 | VPS `vps/scripts/data-backfill.sh` | 深歷史增量(已拉深自動跳過 → 日常近零請求,只補新上市/缺漏) |
 | 每天 03/09/12/20:00 | VPS `mid-backfill-publish.sh` | 回補中途上線:pause bf → 預設只 export → deploy(docs/33) |
 | 每天 23:30 | VPS `safe-branch-stats.sh` | pause bf → compute-branch-stats → **compute-scores** → export |
