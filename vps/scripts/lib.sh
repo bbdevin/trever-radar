@@ -88,6 +88,9 @@ sync_code() {
     git checkout -- vps/scripts/ || true
     git pull --ff-only
   fi
+  # Windows 提交常把 mode 存成 100644;pull 後 cron 直呼會 Permission denied。
+  # 每次開輪強制 +x,不依賴 git filemode。
+  chmod +x "$REPO"/vps/scripts/*.sh 2>/dev/null || true
   docker build -q -t radar-pipeline pipeline >/dev/null
 }
 
@@ -138,13 +141,13 @@ in_radar_quiet_window() {
     { [ "$hhmm" -ge 55 ] && [ "$hhmm" -le 400 ]; } && return 0
     return 1
   fi
-  # 平日:14:10 market / 15:00 tpex quotes / 16:10 insti / 17:40+21:00 branches / 22:10 margin / 01:10 deep
+  # 平日:14:10 market / 15:00 tpex / 16:10 insti / 17:40+21:00 branches / 22:40 margin / 01:10 deep
   # + mid 03/09/12/20 附近短窗由 mid flag 另擋;此處對齊 daily 與 deep
   { [ "$hhmm" -ge 1405 ] && [ "$hhmm" -le 1545 ]; } && return 0
   { [ "$hhmm" -ge 1605 ] && [ "$hhmm" -le 1650 ]; } && return 0
   { [ "$hhmm" -ge 1735 ] && [ "$hhmm" -le 1930 ]; } && return 0
   { [ "$hhmm" -ge 2055 ] && [ "$hhmm" -le 2200 ]; } && return 0
-  { [ "$hhmm" -ge 2205 ] && [ "$hhmm" -le 2250 ]; } && return 0
+  { [ "$hhmm" -ge 2235 ] && [ "$hhmm" -le 2320 ]; } && return 0
   { [ "$hhmm" -ge 55 ] && [ "$hhmm" -le 230 ]; } && return 0
   return 1
 }

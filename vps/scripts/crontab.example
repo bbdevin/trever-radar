@@ -6,18 +6,20 @@
 CRON_TZ=Asia/Taipei
 
 # 每日輪(週一–五)
-10 14 * * 1-5  /home/huang/trever-radar/vps/scripts/daily-market.sh      >> /home/huang/radar-cron.log 2>&1
-0  15 * * 1-5  /home/huang/trever-radar/vps/scripts/daily-tpex-quotes.sh >> /home/huang/radar-cron.log 2>&1
-10 16 * * 1-5  /home/huang/trever-radar/vps/scripts/daily-insti.sh       >> /home/huang/radar-cron.log 2>&1
-40 17 * * 1-5  /home/huang/trever-radar/vps/scripts/daily-branches.sh >> /home/huang/radar-cron.log 2>&1
-0  21 * * 1-5  /home/huang/trever-radar/vps/scripts/daily-branches.sh >> /home/huang/radar-cron.log 2>&1
-10 22 * * 1-5  /home/huang/trever-radar/vps/scripts/daily-margin.sh   >> /home/huang/radar-cron.log 2>&1
+# 一律 bash 呼叫:避免 git pull 後腳本失去 +x → cron Permission denied(2026-08-26 事故)。
+10 14 * * 1-5  bash /home/huang/trever-radar/vps/scripts/daily-market.sh      >> /home/huang/radar-cron.log 2>&1
+0  15 * * 1-5  bash /home/huang/trever-radar/vps/scripts/daily-tpex-quotes.sh >> /home/huang/radar-cron.log 2>&1
+10 16 * * 1-5  bash /home/huang/trever-radar/vps/scripts/daily-insti.sh       >> /home/huang/radar-cron.log 2>&1
+40 17 * * 1-5  bash /home/huang/trever-radar/vps/scripts/daily-branches.sh    >> /home/huang/radar-cron.log 2>&1
+0  21 * * 1-5  bash /home/huang/trever-radar/vps/scripts/daily-branches.sh    >> /home/huang/radar-cron.log 2>&1
+# 融資主輪 22:40(TWSE ~21:00 產製;勿再塞進 17:40)
+40 22 * * 1-5  bash /home/huang/trever-radar/vps/scripts/daily-margin.sh      >> /home/huang/radar-cron.log 2>&1
 
 # 深歷史增量(每日;已拉深自動跳過,近零請求)
-10 1 * * *     /home/huang/trever-radar/vps/scripts/data-backfill.sh  >> /home/huang/radar-cron.log 2>&1
+10 1 * * *     bash /home/huang/trever-radar/vps/scripts/data-backfill.sh  >> /home/huang/radar-cron.log 2>&1
 
 # 週備份(週六;checkpoint + integrity_check + gzip + Google Drive)
-0 5 * * 6      /home/huang/trever-radar/vps/scripts/weekly-backup.sh  >> /home/huang/radar-cron.log 2>&1
+0 5 * * 6      bash /home/huang/trever-radar/vps/scripts/weekly-backup.sh  >> /home/huang/radar-cron.log 2>&1
 
 # 盤中訊號雷達 worker(docs/24 Part A;08:50 啟動、13:35 自動收工)
 # 一次性前置:docker build -t radar-worker pipeline/intraday;
@@ -26,29 +28,29 @@ CRON_TZ=Asia/Taipei
 50 8 * * 1-5   docker run --rm --name radar-worker --env-file /home/huang/trever-radar/pipeline/intraday/.env radar-worker >> /home/huang/radar-worker.log 2>&1
 
 # 回補容器保護(docs/33):單實例 flock;@reboot + 每 5 分保活
-@reboot        /home/huang/trever-radar/vps/scripts/bf-cron-guard.sh >> /home/huang/bf-cron-guard.log 2>&1
-*/5 * * * *    pgrep -f 'vps/scripts/bf-cron-guard.sh' >/dev/null || /home/huang/trever-radar/vps/scripts/bf-cron-guard.sh >> /home/huang/bf-cron-guard.log 2>&1
+@reboot        bash /home/huang/trever-radar/vps/scripts/bf-cron-guard.sh >> /home/huang/bf-cron-guard.log 2>&1
+*/5 * * * *    pgrep -f 'vps/scripts/bf-cron-guard.sh' >/dev/null || bash /home/huang/trever-radar/vps/scripts/bf-cron-guard.sh >> /home/huang/bf-cron-guard.log 2>&1
 
 # 歷史回補管家(docs/35):單寫者＋Exit 自啟＋完成 ntfy;與 guard 並存
 # 目前 VPS 優先權證:環境 BF_ORDER=warrant,branches(見 ~/bf-supervisor.env 或 crontab)
-@reboot        /home/huang/trever-radar/vps/scripts/bf-supervisor.sh >> /home/huang/bf-supervisor.log 2>&1
-*/10 * * * *   pgrep -f 'vps/scripts/bf-supervisor.sh' >/dev/null || /home/huang/trever-radar/vps/scripts/bf-supervisor.sh >> /home/huang/bf-supervisor.log 2>&1
+@reboot        bash /home/huang/trever-radar/vps/scripts/bf-supervisor.sh >> /home/huang/bf-supervisor.log 2>&1
+*/10 * * * *   pgrep -f 'vps/scripts/bf-supervisor.sh' >/dev/null || bash /home/huang/trever-radar/vps/scripts/bf-supervisor.sh >> /home/huang/bf-supervisor.log 2>&1
 
 # 回補中途動態上線(docs/33):03/09/12/20 — 一律只 export(預設略過 stats,避免 1.7G RAM OOM)
 # 腳本內再次檢查 quiet 窗與 radar-db.lock;無 bf 容器則 noop
-0 3,9,12,20 * * *  /home/huang/trever-radar/vps/scripts/mid-backfill-publish.sh >> /home/huang/radar-cron.log 2>&1
+0 3,9,12,20 * * *  bash /home/huang/trever-radar/vps/scripts/mid-backfill-publish.sh >> /home/huang/radar-cron.log 2>&1
 
 # 分點排行＋分數(docs/33 S2 / docs/35):每日 23:30 — pause bf → stats → scores → export
-30 23 * * *    /home/huang/trever-radar/vps/scripts/safe-branch-stats.sh >> /home/huang/radar-cron.log 2>&1
+30 23 * * *    bash /home/huang/trever-radar/vps/scripts/safe-branch-stats.sh >> /home/huang/radar-cron.log 2>&1
 
 # 資券 240 日回補(docs/34 A4):週日 02:30 — 一次性(DONE flag);避開 daily 窗
-30 2 * * 0     /home/huang/trever-radar/vps/scripts/backfill-margin.sh >> /home/huang/radar-cron.log 2>&1
+30 2 * * 0     bash /home/huang/trever-radar/vps/scripts/backfill-margin.sh >> /home/huang/radar-cron.log 2>&1
 
 # TDCC 大戶週更(docs/34 B1 / docs/35):週六 06:30(備份 05:00 之後)
-30 6 * * 6     /home/huang/trever-radar/vps/scripts/weekly-tdcc.sh >> /home/huang/radar-cron.log 2>&1
+30 6 * * 6     bash /home/huang/trever-radar/vps/scripts/weekly-tdcc.sh >> /home/huang/radar-cron.log 2>&1
 
 # 董監持股月更(docs/34 §4.6):每月 16 日 07:00(申報截止後)
-0 7 16 * *     /home/huang/trever-radar/vps/scripts/monthly-directors.sh >> /home/huang/radar-cron.log 2>&1
+0 7 16 * *     bash /home/huang/trever-radar/vps/scripts/monthly-directors.sh >> /home/huang/radar-cron.log 2>&1
 
 # 磁碟清理(不動 radar.db):docker dangling + log trim + npm cache;低於 4G 則 ntfy
-40 7 * * *     /home/huang/trever-radar/vps/scripts/disk-cleanup.sh >> /home/huang/disk-cleanup.log 2>&1
+40 7 * * *     bash /home/huang/trever-radar/vps/scripts/disk-cleanup.sh >> /home/huang/disk-cleanup.log 2>&1

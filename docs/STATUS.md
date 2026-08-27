@@ -110,6 +110,7 @@
 
 ## 最近完成
 
+- 2026-08-27 **融資未更新修復**：根因＝`git pull` 後腳本丟 +x → 22:10 `daily-margin` **Permission denied**（21:00 branches 同掛）；另 17:40 抓 MI_MARGN 過早必 empty。已：`sync_code` 強制 `chmod +x`、crontab 改 `bash` 呼叫、margin 主輪改 **22:40**、branches 不再抓 margin、腳本 git mode 100755。
 - 2026-08-26 **交接**：`handoff.md` 已寫完整 Handoff＋下一對話可貼提示詞；本機／VPS 皆在 `a81860c`。
 - 2026-08-26 **Phase D1/D2 董監＋內部人％**：`import-directors`（TWSE/TPEx OpenAPI）、`director_holdings`、HoldersPanel「董監持股」分頁；週表 `insider_pct` ffill。VPS 月槽見 `monthly-directors.sh`（crontab.example；**正式 crontab 仍未掛**）。
 - 2026-08-26 **內部人％公式修正**：姓名去重＋（目前持股＋關係人合計）÷集保；對齊籌碼／元大（2476≈12.09；舊式~10.48）。

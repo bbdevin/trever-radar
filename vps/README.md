@@ -204,8 +204,8 @@ sqlite3 radar.db "PRAGMA integrity_check;"        # ok 才能用
 | `daily-market.sh` | 14:10 一–五 | daily-market(quotes→權證彙總→指標→分數→週一題材→export→deploy;上櫃常 empty) |
 | `daily-tpex-quotes.sh` | 15:00 一–五 | 上櫃日K 主補抓→權證彙總→指標→分數→export→deploy |
 | `daily-insti.sh` | 16:10 一–五 | daily-insti(quotes 保底→指標→法人→權證主檔(失敗不擋)→分數→export→deploy) |
-| `daily-branches.sh` | 17:40 + 21:00 一–五 | daily-branches(quotes/margin/insti 補抓→指標→分點爬蟲→分點統計→分數→績效→export→prune→deploy) |
-| `daily-margin.sh` | 22:10 一–五 | daily-margin(日K+融資券保底→分數→績效→export→deploy) |
+| `daily-branches.sh` | 17:40 + 21:00 一–五 | daily-branches(quotes/insti 補抓→指標→分點爬蟲→分點統計→分數→績效→export→prune→deploy;**不含融資**) |
+| `daily-margin.sh` | 22:40 一–五 | daily-margin(日K+融資券主輪→分數→績效→export→deploy;落後則 ntfy warn) |
 | `data-backfill.sh` | 01:10 每日 | data-backfill task=deep(深歷史增量) |
 | `weekly-backup.sh` | 週六 05:00 | (新)checkpoint→integrity_check→gzip→Drive+retention |
 
