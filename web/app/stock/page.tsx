@@ -449,7 +449,7 @@ function BasicInfoPanel({ data, quoteDate }: { data: StockJson; quoteDate: strin
 function StockDecisionHeader({
   data,
   close,
-  defaultCollapsed = false,
+  defaultCollapsed = true,
 }: {
   data: StockJson;
   close: number;

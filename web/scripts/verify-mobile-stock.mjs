@@ -37,10 +37,11 @@ try {
   const chartTabBox = await page.getByTestId("stock-tab-chart").boundingBox();
   assert(decisionBox && marketBox && overviewBox && chartTabBox && decisionBox.y < marketBox.y && marketBox.y < overviewBox.y && overviewBox.y < chartTabBox.y, "首屏順序不是 Decision → 行情摘要 → 概況 → tabs");
   assert(await page.getByTestId("stock-market-summary").locator("dl").count() === 1, "行情摘要應為單一卡片 dl");
+  assert(await page.getByTestId("stock-decision").getByRole("button").getAttribute("aria-expanded") === "false", "Decision Header 初始應收合以保留首屏空間");
   await page.getByTestId("stock-decision").getByRole("button").click();
-  assert(await page.getByTestId("stock-decision").getByRole("button").getAttribute("aria-expanded") === "false", "Decision Header 無法收合");
+  assert(await page.getByTestId("stock-decision").getByRole("button").getAttribute("aria-expanded") === "true", "Decision Header 無法展開");
+  await page.getByTestId("stock-decision").getByRole("button").click();
   assert(await page.getByTestId("stock-primary-judgment").isVisible(), "收合後首要判讀不應消失");
-  await page.getByTestId("stock-decision").getByRole("button").click();
 
   // 2) 一級分頁存在
   const chipsTab = page.getByRole("tab", { name: "籌碼日報" });
