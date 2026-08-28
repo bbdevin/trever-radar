@@ -29,8 +29,15 @@ try {
   assert(nameBox && priceBox && Math.abs(nameBox.y - priceBox.y) < 20, "股票名稱與股價／漲跌未在同一主列");
   assert(nameBox && priceBox && nameBox.x + nameBox.width <= priceBox.x + 1, "股票名稱與報價區互相重疊");
   assert(nameBox && priceBox && priceBox.x - (nameBox.x + nameBox.width) <= 12, "短名稱與報價未緊鄰");
+  const nameSize = await page.getByTestId("stock-name").evaluate((element) => ({ scrollWidth: element.scrollWidth, clientWidth: element.clientWidth }));
+  assert(nameSize.scrollWidth <= nameSize.clientWidth + 1, "fixture 股票名稱不應被裁切");
   const primaryRowOverflow = await page.getByTestId("stock-primary-row").evaluate((row) => row.scrollWidth > row.clientWidth + 1);
   assert(!primaryRowOverflow, "股票名稱／報價主列發生水平溢位");
+  const metadataStyle = await page.getByTestId("stock-metadata").evaluate((element) => {
+    const style = getComputedStyle(element);
+    return { whiteSpace: style.whiteSpace, textOverflow: style.textOverflow, overflow: style.overflow, scrollHeight: element.scrollHeight, clientHeight: element.clientHeight };
+  });
+  assert(metadataStyle.whiteSpace !== "nowrap" && metadataStyle.textOverflow !== "ellipsis" && metadataStyle.overflow !== "hidden" && metadataStyle.scrollHeight <= metadataStyle.clientHeight + 1, "股票 metadata 不應 truncate 或被裁切");
   assert(await page.getByTestId("stock-primary-judgment").isVisible(), "Decision Header 缺少首要判讀");
   const judgmentStyle = await page.getByTestId("stock-primary-judgment").evaluate((element) => {
     const style = getComputedStyle(element);

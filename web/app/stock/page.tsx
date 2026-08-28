@@ -158,7 +158,7 @@ function StockView() {
       <div data-testid="stock-context-grid" className="mb-2.5 grid min-w-0 grid-cols-[minmax(0,1.2fr)_minmax(8.25rem,0.8fr)] items-start gap-2.5 sm:grid-cols-[minmax(0,1fr)_minmax(14rem,0.72fr)]">
         <div className="min-w-0">
           <header data-testid="stock-header" className="pb-2.5">
-            <div data-testid="stock-primary-row" className="flex min-w-0 items-center gap-2">
+            <div data-testid="stock-primary-row" className="flex min-w-0 items-center gap-1">
               <h1 data-testid="stock-name" className="min-w-0 truncate text-[26px] font-extrabold leading-tight tracking-[-0.02em]" title={data.name}>{data.name}</h1>
               <div data-testid="stock-price" className="flex shrink-0 items-center gap-1.5 whitespace-nowrap">
                 <span className={cn("num text-[27px] font-extrabold leading-none tracking-[-0.03em] sm:text-[30px]", CHG_TEXT[cls])}>
@@ -171,7 +171,7 @@ function StockView() {
             </div>
             <div className="mt-1 flex min-w-0 items-center gap-1.5">
               <a href="/" className="-ml-1 inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors duration-200 hover:bg-secondary hover:text-foreground" aria-label="返回雷達"><IconArrowLeft size={17} /></a>
-              <p className="min-w-0 flex-1 truncate text-[13px] text-muted-foreground">{data.id} · {MARKET_LABEL[data.market] ?? data.market}{data.industry ? ` · ${data.industry}` : ""}</p>
+              <p data-testid="stock-metadata" className="min-w-0 flex-1 break-words whitespace-normal text-[13px] leading-5 text-muted-foreground">{data.id} · {MARKET_LABEL[data.market] ?? data.market}{data.industry ? ` · ${data.industry}` : ""}</p>
               <WatchlistButton stockId={data.id} size={20} />
             </div>
             {activeThemes.length > 0 && (
