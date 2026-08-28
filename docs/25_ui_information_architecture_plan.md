@@ -440,5 +440,6 @@ K線
 ### 15.1 2026-08-28 個股首屏校正（同一 IA-5c 範圍）
 
 - 手機 375px 的名稱與報價／漲跌必須同行；身份列（代號／市場／產業）與最多兩個加 `+N` 的嚴格活躍題材置於下方。active tab 只可調整 tablist 的水平 `scrollLeft`，不得用 `scrollIntoView` 讓初次載入垂直離開頁首。
-- 首屏 DOM 與視覺順序固定為 header → Decision Header（預設收合；分數與首要判讀仍可見，可再展開完整證據）→ 單一卡片行情摘要 `dl` → 單列公司概況（點入基本資料）→ 八個一級 tabs。不可回到六個獨立行情小卡或概況 2×2 grid。
-- `verify-mobile-stock.mjs` 檢查同列、首屏順序、Decision 收合契約、單一 `dl`、概況跳轉、tab／基本資料和無橫向溢位；實際視覺 QA 另列於 `design-qa.md`，未完成前不得宣稱比對通過。
+- 首屏 DOM 與視覺順序固定為 header → 左右並列的 Decision Header（預設收合；分數與首要判讀仍可見，可再展開完整證據）＋行情摘要 `dl` → 八個一級 tabs。行情列固定為資料日、量、額、昨收、開盤、最高、最低；刪除重複 compact 公司概況，完整資料由「基本資料」tab 承接。
+- 基本資料的題材 section 把多題材整併為 compact chips／rows；status、分類日、來源更新日、來源連結只在有真值時渲染，缺值不得逐筆顯示「資料未提供／狀態未提供」。有來源的題材名稱本身為 44px 可稽核連結。
+- `verify-mobile-stock.mjs` 檢查同列、左右欄、Decision 收合契約、單一 `dl`、概況列不存在、tab／基本資料、題材缺值收斂及無橫向溢位；實際視覺 QA 另列於 `design-qa.md`，未完成前不得宣稱比對通過。

@@ -10,6 +10,7 @@
 
 ## 2026-08-28 個股資訊補強與權證更新修正
 
+- [ ] **個股頁 browser annotation 收斂（待正式站 QA）**：行情摘要改到首屏右側，與預設收合 Decision Header 左右並列；刪除重複 compact 公司概況；基本資料題材改為 compact 集中 chips／rows，只顯示有真值的 status／日期／來源。程式與 verifier 已完成，尚未部署／重拍正式站深淺色證據。
 - [x] **個股手機首屏 UI 校正（正式站已驗收）**：名稱與報價／漲跌同行；產業下方只顯示嚴格當日有效的活躍題材 2+N；Decision Header 預設收合但分數與首要判讀常駐；行情為一張低邊框 `dl`；公司概況為單列並可切基本資料；八個一級 tab 只做水平 active 捲入。正式 QA 抓到並修正初次載入被 `scrollIntoView` 垂直捲 189px 的 regression；深淺色、無水平 overflow、Decision 展開／收合、概況跳轉與 BasicInfo 三 section 均已在正式站驗收，證據見 `design-qa.md`。未改資料/API/export/globals/KChart。
 - [x] 個股名稱／報價區補開高低收、量額與行情資料日；新增可切入既有「基本資料」tab 的 compact 公司概況（地區／題材數／集團），完整股務代理資訊不塞入首屏。基本資料仍是「技術」左側的一級 tab，完整地址、代理電話／地址、官方來源、題材 lifecycle 與庫藏股事實均保留，未改回 bottom sheet 或內部分頁。
 - [x] 個股權證分點與全市場探索拆成雙層資料契約：既有 `warrant_branches.json` 維持 `>=500 萬`；新增 `branches/warrant-stock-details/index.json` 與 `{stock_id}.json` 分片供個股顯示 `>=100 萬`，100–499 萬標「觀察」、500 萬以上標「大額」。W5 500 萬、首頁／Armed 2,000 萬及 `/branch` 契約均未改；個股權證摘要新增資料日與裁剪限制說明。

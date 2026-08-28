@@ -138,10 +138,6 @@ function StockView() {
   const cls = chgClass(chg);
   const branchScore = data.scores?.branch ?? null;
   const activeThemes = currentActiveThemes(data.recent_theme_heat, last.t);
-  const profile = data.company_profile;
-  const groupSummary = data.company_groups
-    ? (data.company_groups.map((group) => group.name).join("、") || "無集團")
-    : "集團資料未提供";
 
   return (
     <div className="min-w-0 max-w-full overflow-x-hidden">
@@ -186,39 +182,28 @@ function StockView() {
         )}
       </header>
 
-      {/* IA-2 + F3: Decision Header stays before evidence and remains collapsible. */}
-      <StockDecisionHeader data={data} close={last.c} />
-      <section data-testid="stock-market-summary" className="mb-2.5 min-w-0 rounded-[var(--r-md)] border border-border bg-card px-3 py-2.5" aria-label={`行情摘要，資料日 ${last.t}`}>
-        <dl className="grid grid-cols-3 gap-x-3 gap-y-2 sm:grid-cols-6">
+      {/* IA-2 + F3: the default-collapsed decision and quote evidence share the first screen. */}
+      <div className="mb-2.5 grid min-w-0 grid-cols-[minmax(0,1.2fr)_minmax(8.25rem,0.8fr)] items-start gap-2.5 sm:grid-cols-[minmax(0,1fr)_minmax(14rem,0.72fr)]">
+        <StockDecisionHeader data={data} close={last.c} className="mb-0" />
+        <section data-testid="stock-market-summary" className="min-w-0 rounded-[var(--r-md)] border border-border bg-card px-2.5 py-2.5" aria-label={`行情摘要，資料日 ${last.t}`}>
+          <p className="mb-1.5 text-[10.5px] text-muted-foreground">行情 {last.t}</p>
+          <dl className="grid gap-y-1 text-[11px]">
           {[
-            ["開", last.o.toLocaleString("zh-TW")],
-            ["高", last.h.toLocaleString("zh-TW")],
-            ["低", last.l.toLocaleString("zh-TW")],
-            ["收", last.c.toLocaleString("zh-TW")],
             ["量", `${last.v.toLocaleString("zh-TW")} 張`],
             ["額", fmtE8(last.amt)],
+            ["昨收", prev?.c.toLocaleString("zh-TW") ?? "—"],
+            ["開盤", last.o.toLocaleString("zh-TW")],
+            ["最高", last.h.toLocaleString("zh-TW")],
+            ["最低", last.l.toLocaleString("zh-TW")],
           ].map(([label, value]) => (
-            <div key={label} className="min-w-0">
-              <dt className="text-[10.5px] text-muted-foreground">{label}</dt>
-              <dd className="num mt-0.5 truncate text-[13px] font-bold text-[color:var(--ink-2)]" title={value}>{value}</dd>
+            <div key={label} className="flex min-w-0 items-baseline justify-between gap-2">
+              <dt className="shrink-0 text-muted-foreground">{label}</dt>
+              <dd className="num truncate text-right font-bold text-[color:var(--ink-2)]" title={value}>{value}</dd>
             </div>
           ))}
-        </dl>
-        <p className="mt-2 border-t border-[color:var(--line)] pt-2 text-[11px] text-muted-foreground">行情資料日 {last.t} · 共 {cs.length.toLocaleString("zh-TW")} 個交易日（自 {cs[0].t}）</p>
-      </section>
-      <button
-        data-testid="stock-overview"
-        type="button"
-        onClick={() => setView("basic")}
-        className="mb-2.5 flex min-h-11 w-full min-w-0 items-center gap-2 overflow-hidden rounded-[var(--r-md)] border border-border bg-card px-3 text-left text-[12px] transition-colors duration-200 hover:bg-secondary"
-        aria-label="查看完整公司基本資料"
-      >
-        <span className="inline-flex shrink-0 items-center gap-1.5 font-semibold text-[color:var(--accent-2)]"><MapPin size={15} aria-hidden="true" /> 概況</span>
-        <span className="truncate font-medium text-[color:var(--ink-2)]" title={`${profile?.city ?? "地區資料未提供"} · 題材 ${data.company_themes?.length ?? "資料未提供"} · ${groupSummary}`}>
-          {profile?.city ?? "地區資料未提供"} · 題材 {data.company_themes?.length ?? "資料未提供"} · {groupSummary}
-        </span>
-        <ChevronDown size={16} className="ml-auto shrink-0 -rotate-90 text-muted-foreground" aria-hidden="true" />
-      </button>
+          </dl>
+        </section>
+      </div>
       <div className="sticky top-0 z-20 -mx-1 mb-2.5 flex min-w-0 flex-col gap-2 bg-background/95 px-1 py-1.5 backdrop-blur-sm md:static md:mx-0 md:bg-transparent md:px-0 md:py-0 md:backdrop-blur-none md:flex-row md:flex-wrap md:items-center md:gap-2.5">
         <div
           role="tablist"
@@ -391,37 +376,29 @@ function BasicInfoPanel({ data, quoteDate }: { data: StockJson; quoteDate: strin
           <h2 id="theme-info-heading" className="text-sm font-bold">題材</h2>
         </div>
         {classifications.length ? (
-          <div className="divide-y divide-[color:var(--line)]">
+          <div className="flex min-w-0 flex-wrap gap-2">
             {classifications.map((theme) => (
-              <div key={theme.id} className="min-w-0 py-3 first:pt-0 last:pb-0">
-                <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-sm">
-                  <span className="font-semibold text-foreground">{theme.name}</span>
-                  <span className={theme.status === "active" ? "text-[color:var(--accent-2)]" : "text-muted-foreground"}>{themeStatusLabel(theme.status)}</span>
+              <div key={theme.id} className="min-w-0 rounded-[var(--r-sm)] border border-[color:var(--line)] bg-secondary/35 px-2.5 py-2 text-xs">
+                <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+                  {theme.source ? (
+                    <a className="inline-flex min-h-11 max-w-full items-center font-semibold text-primary underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" href={theme.source} target="_blank" rel="noreferrer" aria-label={`查看 ${theme.name} 題材來源：${theme.source}`} title={`${theme.name} 題材來源：${theme.source}`}>
+                      {theme.name}
+                    </a>
+                  ) : <span className="font-semibold text-foreground">{theme.name}</span>}
+                  {theme.status && (
+                    <span className={theme.status === "active" ? "text-[color:var(--accent-2)]" : "text-muted-foreground"}>{themeStatusLabel(theme.status)}</span>
+                  )}
                 </div>
-                <dl className="mt-2 grid gap-2 text-xs text-muted-foreground sm:grid-cols-3">
-                  <div className="min-w-0">
-                    <dt>分類日</dt>
-                    <dd className="mt-0.5 break-words text-[color:var(--ink-2)]">{theme.data_date ?? "資料未提供"}</dd>
-                  </div>
-                  <div className="min-w-0">
-                    <dt>來源更新</dt>
-                    <dd className="mt-0.5 break-words text-[color:var(--ink-2)]">{theme.source_updated_at ?? "資料未提供"}</dd>
-                  </div>
-                  <div className="min-w-0">
-                    <dt>來源</dt>
-                    <dd className="mt-0.5 min-w-0">
-                      {theme.source ? (
-                        <a className="inline-flex min-h-11 max-w-full items-center font-semibold text-primary underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" href={theme.source} target="_blank" rel="noreferrer" aria-label={`查看 ${theme.name} 題材來源：${theme.source}`} title={theme.source}>
-                          查看來源
-                        </a>
-                      ) : <span className="text-[color:var(--ink-2)]">資料未提供</span>}
-                    </dd>
-                  </div>
-                </dl>
+                {(theme.data_date || theme.source_updated_at) && (
+                  <p className="mt-0.5 flex flex-wrap gap-x-2 text-[10.5px] text-muted-foreground">
+                    {theme.data_date && <span title="分類日">分類 {theme.data_date}</span>}
+                    {theme.source_updated_at && <span title="來源更新日">更新 {theme.source_updated_at}</span>}
+                  </p>
+                )}
               </div>
             ))}
           </div>
-        ) : <p className="text-sm text-muted-foreground">分類資料未提供；狀態未提供。分類日、來源更新與來源：資料未提供。</p>}
+        ) : <p className="text-sm text-muted-foreground">尚無題材分類資料。</p>}
         {recent.length > 0 ? (
           <div className="mt-3 flex min-w-0 items-start gap-2 rounded-[var(--r-sm)] bg-[color:var(--warn)]/8 p-2.5 text-sm text-[color:var(--ink-2)]">
             <Flame size={16} className="mt-0.5 shrink-0 text-[color:var(--warn)]" aria-hidden="true" />
@@ -450,10 +427,12 @@ function StockDecisionHeader({
   data,
   close,
   defaultCollapsed = true,
+  className,
 }: {
   data: StockJson;
   close: number;
   defaultCollapsed?: boolean;
+  className?: string;
 }) {
   const scores = data.scores;
   // 個股頁詳情區不設家族數上限;帶 code 的 raw_reasons 用來判語意家族色,缺時退回純文字(中性)。
@@ -475,7 +454,7 @@ function StockDecisionHeader({
   if (!scores && !reasons.length && !risks.length && !(data.pocket_tags?.length)) return null;
 
   return (
-    <div data-testid="stock-decision" className="mb-2.5 min-w-0 overflow-hidden rounded-[var(--r-lg)] border border-border bg-card shadow-[var(--shadow-card)]">
+    <div data-testid="stock-decision" className={cn("mb-2.5 min-w-0 overflow-hidden rounded-[var(--r-lg)] border border-border bg-card shadow-[var(--shadow-card)]", className)}>
       <button
         type="button"
         className="flex w-full min-w-0 items-center gap-3 px-3.5 py-3 text-left transition-colors duration-200 hover:bg-secondary/60"

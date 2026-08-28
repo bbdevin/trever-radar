@@ -22,7 +22,7 @@ const page = await context.newPage();
 try {
   await page.goto(`${BASE}/stock?id=2330`, { waitUntil: "networkidle", timeout: 30000 });
 
-  // 1) 手機首屏資訊順序：名稱與報價同行，Decision 首要判讀、行情摘要、概況、tabs 依序可達。
+  // 1) 手機首屏：名稱與報價同行，預設收合的 Decision 與行情摘要並列，後方直接是 tabs。
   const nameBox = await page.getByTestId("stock-name").boundingBox();
   const priceBox = await page.getByTestId("stock-price").boundingBox();
   assert(await page.evaluate(() => window.scrollY <= 1), "初次載入被 active tab 自動垂直捲離頁首");
@@ -33,10 +33,13 @@ try {
   assert(await page.getByTestId("stock-primary-judgment").isVisible(), "Decision Header 缺少首要判讀");
   const decisionBox = await page.getByTestId("stock-decision").boundingBox();
   const marketBox = await page.getByTestId("stock-market-summary").boundingBox();
-  const overviewBox = await page.getByTestId("stock-overview").boundingBox();
   const chartTabBox = await page.getByTestId("stock-tab-chart").boundingBox();
-  assert(decisionBox && marketBox && overviewBox && chartTabBox && decisionBox.y < marketBox.y && marketBox.y < overviewBox.y && overviewBox.y < chartTabBox.y, "首屏順序不是 Decision → 行情摘要 → 概況 → tabs");
+  assert(decisionBox && marketBox && chartTabBox && Math.abs(decisionBox.y - marketBox.y) < 20 && decisionBox.x < marketBox.x && marketBox.y < chartTabBox.y, "Decision 與行情摘要未在首屏左右兩欄，或 tabs 順序錯誤");
   assert(await page.getByTestId("stock-market-summary").locator("dl").count() === 1, "行情摘要應為單一卡片 dl");
+  for (const label of ["量", "額", "昨收", "開盤", "最高", "最低"]) {
+    assert(await page.getByTestId("stock-market-summary").getByText(label, { exact: true }).isVisible(), `行情摘要缺少 ${label}`);
+  }
+  assert(await page.getByTestId("stock-overview").count() === 0, "不得保留重複的概況列");
   assert(await page.getByTestId("stock-decision").getByRole("button").getAttribute("aria-expanded") === "false", "Decision Header 初始應收合以保留首屏空間");
   await page.getByTestId("stock-decision").getByRole("button").click();
   assert(await page.getByTestId("stock-decision").getByRole("button").getAttribute("aria-expanded") === "true", "Decision Header 無法展開");
@@ -65,18 +68,22 @@ try {
   assert(await sellTab.getAttribute("aria-selected") === "true", "切到賣方分頁失敗");
   await buyTab.click();
 
-  // 5) 法人 / 基本資料 / 技術 tab 存在；概況可點入基本資料；基本資料是公司、題材、庫藏股的單一連續面板
+  // 5) 法人 / 基本資料 / 技術 tab 存在；基本資料是公司、題材、庫藏股的單一連續面板。
   await page.getByRole("tab", { name: "法人" }).click();
   await page.getByText("法人分").first().waitFor({ state: "visible", timeout: 5000 });
-  await page.getByTestId("stock-overview").click();
-  assert(await page.getByRole("tab", { name: "基本資料" }).getAttribute("aria-selected") === "true", "點概況未切至基本資料");
   await page.getByRole("tab", { name: "基本資料" }).click();
   const basicPanel = page.getByRole("tabpanel", { name: "基本資料" });
   await basicPanel.getByRole("heading", { name: "公司資料" }).waitFor({ state: "visible", timeout: 5000 });
   assert(await basicPanel.getByRole("heading", { name: "題材" }).isVisible(), "基本資料缺少題材 section");
   assert(await basicPanel.getByRole("heading", { name: "庫藏股" }).isVisible(), "基本資料缺少庫藏股 section");
-  await basicPanel.getByText("分類日").first().waitFor({ state: "visible", timeout: 5000 });
-  assert(await basicPanel.getByText("來源更新").first().isVisible(), "題材 section 缺少來源更新欄位");
+  const themeSection = basicPanel.locator('section[aria-labelledby="theme-info-heading"]');
+  const themeCopy = await themeSection.textContent();
+  assert(!themeCopy?.includes("狀態未提供") && !themeCopy?.includes("分類日、來源更新與來源：資料未提供"), "題材 section 不應以缺值文案重複占版");
+  const themeLinks = themeSection.getByRole("link");
+  if (await themeLinks.count()) {
+    const sourceLinkBox = await themeLinks.first().boundingBox();
+    assert(sourceLinkBox && sourceLinkBox.height >= 44, "有來源的題材名稱連結未達 44px touch target");
+  }
   const infoTabs = await page.getByRole("tab").allTextContents();
   assert(!infoTabs.includes("公司資料") && !infoTabs.includes("題材") && !infoTabs.includes("庫藏股"), "基本資料不應有公司／題材／庫藏股內部分頁");
   const basicOverflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1);

@@ -2,6 +2,8 @@
 
 ## 2026-08-28 最新交接
 
+- **個股頁三個 browser annotation 已 code-ready、待正式站 QA**：行情摘要依原圖移到首屏右側，與預設收合 Decision Header 左右並列（資料日、量、額、昨收、開盤、最高、最低）；重複 compact 概況列已移除；基本資料題材改為集中 chips／rows，只在有真值時顯示 status／分類日／來源更新／來源，來源直接綁題材名稱且保留 44px touch target。`verify-mobile-stock.mjs` 已同步左右欄、無概況列與題材缺值收斂契約。未改資料/API/export/globals/KChart/pipeline/schema/workflow；尚未 commit/push，`design-qa.md` 目前應視為 pending。
+
 - **個股首屏 UI 已部署並完成正式站 QA（HEAD `55beda9`）**：名稱與報價／漲跌同行；產業下的活躍題材為嚴格 `eligible + active + heat_date=quote_date` 的 2+N 琥珀 chips；Decision Header 預設收合但分數／首要判讀常駐；其後為單一卡片行情 `dl`、單列可點基本資料概況與固定八 tab。`BasicInfoPanel` 的公司資料／題材／庫藏股連續三 section 及地址／股務／來源／題材／庫藏股／集團資訊均保留。正式 QA 抓到 `scrollIntoView` 讓初始頁面垂直偏移 189px，已改為只調 tablist 水平 `scrollLeft`；複驗 `scrollY=0`、無水平 overflow、Decision 可展開／收合、概況實際觸控後選中基本資料且三 heading 可見。深／淺色與基本資料圖證據在 `design-qa.md`；使用者深色偏好已恢復。未改 API／JSON／pipeline／schema／workflow／globals／KChart。
 
 - 權證分點已完成安全 code-ready，**未碰正式 VPS／DB／cron／deploy**：新 `import-warrant-branch-trades --market all` 將 TWSE＋TPEx 當日有量有額的認購／認售、且標的是 active 普通股的權證合併抓取；ETF／指數、牛熊、未映射／inactive 標的排除。`--top` 是 cap，超出 fail closed、不偷裁；state JSON 原子記錄 ok／empty／error／pending，error 可 retry。既有 `backfill-warrant-branches` 可明確加 `--market all` 使用同一標的口徑；為相容正式 supervisor／舊手動指令，其預設仍是上市 Top 200，單一市場的 `--top` 仍為排序裁剪。
