@@ -10,9 +10,9 @@
 
 ## 2026-08-28 個股資訊補強與權證更新修正
 
-- [ ] **個股頁 browser annotation 收斂（待正式站 QA）**：行情摘要改到首屏右側，與預設收合 Decision Header 左右並列；刪除重複 compact 公司概況；基本資料題材改為 compact 集中 chips／rows，只顯示有真值的 status／日期／來源。程式與 verifier 已完成，尚未部署／重拍正式站深淺色證據。
-- [x] **個股手機首屏 UI 校正（正式站已驗收）**：名稱與報價／漲跌同行；產業下方只顯示嚴格當日有效的活躍題材 2+N；Decision Header 預設收合但分數與首要判讀常駐；行情為一張低邊框 `dl`；公司概況為單列並可切基本資料；八個一級 tab 只做水平 active 捲入。正式 QA 抓到並修正初次載入被 `scrollIntoView` 垂直捲 189px 的 regression；深淺色、無水平 overflow、Decision 展開／收合、概況跳轉與 BasicInfo 三 section 均已在正式站驗收，證據見 `design-qa.md`。未改資料/API/export/globals/KChart。
-- [x] 個股名稱／報價區補開高低收、量額與行情資料日；新增可切入既有「基本資料」tab 的 compact 公司概況（地區／題材數／集團），完整股務代理資訊不塞入首屏。基本資料仍是「技術」左側的一級 tab，完整地址、代理電話／地址、官方來源、題材 lifecycle 與庫藏股事實均保留，未改回 bottom sheet 或內部分頁。
+- [x] **個股頁 browser annotation 收斂（正式站已驗收，HEAD `c26ea04`）**：行情摘要改到首屏右側，與預設收合 Decision Header 左右並列；刪除重複 compact 公司概況；基本資料題材改為 compact 集中 chips／rows，只顯示有真值的 status／日期，來源只有有效絕對 HTTP(S) 才可點，`fubon` 等識別字不生成壞連結。390×844、844×390、Decision 展開／收合、Basic tab、無水平 overflow 與正式 deploy 均已驗收；證據見根目錄 `design-qa.md`。
+- [x] **個股手機首屏 UI 校正（`55beda9` 歷史基準，版面已由上列 `c26ea04` 取代）**：名稱與報價／漲跌同行、活躍題材嚴格 2+N、Decision 預設收合、八個一級 tab 水平捲入與 `scrollY=0` regression 修正仍有效；當時的下方行情卡與 compact 概況列已在最新 annotation 收斂中改為右側行情並移除，勿依舊截圖恢復。
+- [x] 個股名稱／報價區保留開高低收、量額與行情資料日；行情目前位於 Decision 右側。完整公司地址、代理電話／地址、官方來源、題材 lifecycle 與庫藏股事實仍在「基本資料」一級 tab（技術左側）；首屏 compact 公司概況因資訊重複已移除，未改回 bottom sheet 或內部分頁。
 - [x] 個股權證分點與全市場探索拆成雙層資料契約：既有 `warrant_branches.json` 維持 `>=500 萬`；新增 `branches/warrant-stock-details/index.json` 與 `{stock_id}.json` 分片供個股顯示 `>=100 萬`，100–499 萬標「觀察」、500 萬以上標「大額」。W5 500 萬、首頁／Armed 2,000 萬及 `/branch` 契約均未改；個股權證摘要新增資料日與裁剪限制說明。
 - [x] `daily-insti.sh` 修正為權證主檔先於當日彙總；主檔失敗仍沿用既有 mapping 彙總，不阻擋法人／日K 上線。16:10 crontab 時間不變、未新增獨立腳本或 cron。
 - [x] 驗證：完整 pipeline pytest **263 passed、58 subtests passed**；Terra 初版 `npm run build` 通過；分片版由主協調重跑 build 時停滯中止，未宣稱通過；分片版 `npx tsc --noEmit` 與 targeted pytest 通過。手機 verifier 因 repo 未安裝 `playwright` 無法執行，未假冒通過；正式 `import-themes`／`import-buybacks`、正式 DB 寫入與資料 deploy 未執行。
