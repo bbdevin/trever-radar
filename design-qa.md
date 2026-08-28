@@ -1,30 +1,37 @@
-# 個股頁 browser annotation — Design QA（2026-08-28）
+# 個股頁身份列與行情摘要 — Design QA（2026-08-28）
 
 ## 狀態：正式站通過
 
-- 視覺真相：`C:\Users\user\.codex\generated_images\01a03d9a-24c3-79a3-9c9c-fdb3ce75cba6\exec-731ce944-fae2-471d-bab4-ed6d2e2f0a94.png`（853×1844）。
-- 本輪正式站畫面：`C:\Users\user\.codex\generated_images\01a03d9a-24c3-79a3-9c9c-fdb3ce75cba6\stock-ui-c26ea04-top-clean.png`（1280×820 Codex 視窗擷取；內含正式站 responsive viewport）。
-- 前輪同頁深／淺色與基本資料基準：`stock-ui-55beda9-dark-top.png`、`stock-ui-55beda9-light-top.png`、`stock-ui-55beda9-basic.png`（均 390×844）。
-- 正式站：`https://radar.techtrever.com/stock?id=3376`，程式 commit `c26ea04`；DOM／互動驗收以 390×844（實際 client width 375px）執行，另驗 844×390 landscape。
-- 正規化：參考圖為 853×1844 高密度設計稿；實作以 390×844 CSS viewport 判讀，不把 Codex／瀏覽器 chrome、捲軸保留的 15px 或擷取縮放當成版面差異。
+- 視覺真相：`C:\Users\user\.codex\generated_images\01a03d9a-24c3-79a3-9c9c-fdb3ce75cba6\exec-731ce944-fae2-471d-bab4-ed6d2e2f0a94.png`（853×1844）；本輪另以使用者 browser annotation 明確覆寫身份列為「第一列代號＋名稱、第二列現價＋漲跌點數（漲跌幅），自選星號與第一列同高」。
+- 第一輪正式站畫面：`C:\Users\user\.codex\generated_images\01a03d9a-24c3-79a3-9c9c-fdb3ce75cba6\stock-ui-53b24f4-dark-top.png`（375×812）。
+- 最終正式站深色畫面：`C:\Users\user\.codex\generated_images\01a03d9a-24c3-79a3-9c9c-fdb3ce75cba6\stock-ui-f323f95-dark-top.png`（375×812）。
+- 最終正式站淺色畫面：`C:\Users\user\.codex\generated_images\01a03d9a-24c3-79a3-9c9c-fdb3ce75cba6\stock-ui-f323f95-light-top-clean.png`（375×812）。
+- 正式站：`https://radar.techtrever.com/stock?id=3376`，程式 commit `f323f95`；browser viewport 390×844，瀏覽器捲軸後實際內容 `clientWidth=375`，擷取為 375×812；深／淺色、Decision 展開／收合均實測。
+- 正規化：參考圖為高密度設計稿，實作以相同首屏內容區與 375px CSS 寬度判讀；不把瀏覽器 chrome、15px 捲軸或來源圖高度差當成版面差異。
 
 ## Findings
 
-- 無 P0／P1／P2。使用者標註的行情摘要已位於預設收合 Decision Header 右側；兩者 `y=141.64`，左右 `x=14 / 226.19`。行情含資料日、量、額、昨收、開盤、最高、最低。
-- 重複 compact 公司概況列已移除，正式 DOM `stock-overview=0`；基本資料仍由 44px 一級 tab 直接進入。
-- 題材已集中成 compact chips／rows。3376 顯示「電子零件元件、模具沖壓、樞紐」，不再逐筆顯示「資料未提供／狀態未提供／分類日／來源更新」。
-- 題材來源只有有效絕對 `http://`／`https://` URL 才可點；`fubon` 這類來源識別字改為純文字，不生成壞相對連結。合法來源仍保留 44px touch target、focus ring、aria-label 與 title。
-- 390×844 DOM 為 `innerWidth=390 / clientWidth=375 / scrollWidth=375`，無水平 overflow；844×390 landscape 為 `clientWidth=829 / scrollWidth=829`，左右欄仍同高起點且無 overflow。
-- Decision 展開後右側行情 `x=226.19` 不位移，再次收合正常；基本資料 tab `aria-selected=true`，公司資料／題材／庫藏股三個 heading 仍在。
-- 字型、字級、色彩、圓角、邊框、Lucide icon 與紅漲綠跌沿用既有 tokens；本輪沒有新增圖片資產。深／淺色基準已於前輪正式站驗收，本輪只調版面與來源 URL guard，未改 theme token。
-- 參考圖與本輪正式站畫面已在同一視覺輸入比較；使用者要求移除的概況列屬刻意覆寫，其餘首屏層級、左右行情與資訊密度沒有可執行的 P0／P1／P2 差異。重要細節另以 DOM 量測，不需額外 focused crop。
+- 無待處理 P0／P1／P2。最終身份列第一列為 `3376 新日興`，第二列為 `217▲7(+3.33%)`，第三列保留 `上市 · 電子工業`；44×44 自選星號與第一列 `y=59` 同高。身份欄已置於 44px 返回鍵右側，不再貼齊頁面左緣。
+- 最終報價列 `clientWidth=106 / scrollWidth=106`，名稱列 `96 / 96`、市場產業列 `106 / 106`，沒有截斷或水平溢位。漲跌同時使用 `▲／▼／—` 與紅／綠／中性色，不以顏色作唯一訊號。
+- 行情摘要固定在首屏右側，`x=226.19 / y=73 / width=134.81`，與身份區同一垂直帶；資料日、量、額、昨收、開盤、最高、最低均保留。開高低以方向 glyph 加語意色呈現，資訊層級在深／淺色皆清楚。
+- Decision Header 左側完整顯示 `認購權證成交3,005萬,為20日均值4.9倍`，`clientHeight=scrollHeight=80`；展開後右側行情仍維持 `x=226.19 / y=73`，不位移、不裁字。
+- 整頁 `innerWidth=390 / clientWidth=375 / scrollWidth=375`，無頁面水平 overflow；既有八個一級 tabs、基本資料、題材與權證內容未因首屏調整回歸。
+- 字型與字級沿用既有字體與 type scale；間距遵循既有 4/8px rhythm；圓角、邊框、表面色與紅漲綠跌皆使用既有 tokens。沒有新增圖片資產，品牌圖示與 Lucide icon 未被替換。
+- 參考圖、第一輪與最終正式站畫面已放在同一比較輸入檢視。首屏文字與對齊可直接辨識，並以 DOM 尺寸補足精確驗證，因此不需要額外 focused crop。
+
+## 比較歷程
+
+1. `53b24f4`：首輪把 Decision 與行情左右並列，但短名稱顯示為 `新日…`，屬 P2 身份辨識退化；`987ebeb` 改為完整名稱。
+2. `9698def`：依最新 annotation 改為兩列身份資訊與同列星號，但全形括號令 375px 內容寬下的報價列 `scrollWidth > clientWidth`，屬 P2 responsive overflow。
+3. `f323f95`：改用半形括號並收斂數字列間距，保留現價與漲跌的視覺層級；最終 `stock-price` 為 `106 / 106`，P2 已解除。
 
 ## 驗證
 
 - `npx tsc --noEmit`：通過。
-- `git diff --check`：通過（僅 Windows CRLF normalization warning）。
-- GitHub Actions `deploy`：commit `40001fd` 與 `c26ea04` 的 Next build／Cloudflare Pages deploy 均通過。
-- Terra High：實作與 URL guard 修正；Luna High：兩次唯讀 review 均 APPROVE、無 blocker。
-- 獨立 `verify-mobile-stock.mjs` 未直接執行：專案 `web` 未安裝獨立 Playwright；已用使用者選定的已登入 in-app browser 執行等價正式站 DOM／點擊／responsive 驗收。verifier 已覆蓋左右欄、行情欄位、無概況列、題材缺值與絕對 HTTP(S) 來源契約。
+- `git diff --check`：通過。
+- GitHub Actions `deploy`：commit `f323f95` 的 Next build／Cloudflare Pages deploy 通過（run `33151643889`）。
+- 正式站互動：Decision 展開／收合、深／淺色、390×844 responsive、頁面水平 overflow 均通過。
+- Terra High：實作與 responsive 修正；Luna High：唯讀 review APPROVE、無 blocker。
+- 獨立 `verify-mobile-stock.mjs` 未直接執行：專案 `web` 未安裝獨立 Playwright；已使用使用者選定的已登入 in-app browser 執行等價正式站 DOM／互動／responsive 驗收。verifier 契約已同步最新兩列格式與 overflow 檢查。
 
 final result: passed

@@ -2,9 +2,9 @@
 
 ## 2026-08-28 最新交接
 
-- **個股頁三個 browser annotation 已部署並完成正式站 QA（HEAD `c26ea04`）**：行情摘要依原圖移到首屏右側，與預設收合 Decision Header 左右並列（資料日、量、額、昨收、開盤、最高、最低）；重複 compact 概況列已移除；基本資料題材改為集中 chips／rows，只在有真值時顯示 status／分類日／來源更新。題材來源只有有效絕對 HTTP(S) 才綁題材名稱並保留 44px touch target，`fubon` 等識別字不生成假連結。390×844（client 375）、844×390、Decision 展開／收合、Basic tab 與無水平 overflow 已在已登入正式站驗收；參考圖與正式畫面同輸入比較無 P0／P1／P2，詳見 `design-qa.md`。`npx tsc --noEmit`、`git diff --check`、兩次 deploy 通過；Terra High 實作、Luna High 最終唯讀 review APPROVE。未改資料/API/export/globals/KChart/pipeline/schema/workflow。
+- **個股頁最新 browser annotation 已部署並完成正式站 QA（HEAD `f323f95`）**：身份區第一列固定「代號＋完整名稱」（3376 新日興），第二列為「現價＋漲跌點數（漲跌幅）」、第三列市場／產業；44px 自選星號與第一列同高，身份內容在返回鍵右側。行情摘要固定首屏右側，開高低用方向 glyph＋紅／綠／中性色；Decision 首要判讀完整換行且展開不推移行情。重複 compact 概況列維持移除，基本資料題材 compact 與絕對 HTTP(S) URL guard 均保留。390×844（client 375）、深／淺色、Decision 展開／收合與無水平 overflow 已在已登入正式站驗收；參考圖、第一輪與最終畫面同輸入比較無待處理 P0／P1／P2，詳見 `design-qa.md`。`npx tsc --noEmit`、`git diff --check`、deploy 通過；Terra High 實作、Luna High 最終唯讀 review APPROVE。未改資料/API/export/globals/KChart/pipeline/schema/workflow。
 
-- **`55beda9` 個股首屏 UI 為歷史基準，版面已由上列 `c26ea04` 取代**：名稱與報價同行、嚴格當日活躍題材 2+N、Decision 預設收合、八個一級 tab、只調水平 `scrollLeft` 與 `scrollY=0` 修正仍有效；當時的下方行情卡與 compact 概況列已改為右側行情並移除。`BasicInfoPanel` 的公司資料／題材／庫藏股三 section 及地址／股務／來源／庫藏股／集團資訊均保留；勿依舊截圖恢復被移除的概況列。
+- **`55beda9`／`c26ea04` 個股首屏 UI 僅為歷史基準，版面已由上列 `f323f95` 取代**：舊「名稱與報價同行」格式不再適用；目前是代號＋名稱、現價＋漲跌點數（漲跌幅）、市場＋產業三層。嚴格當日活躍題材 2+N、Decision 預設收合、八個一級 tab、只調水平 `scrollLeft` 與 `scrollY=0` 修正仍有效。`BasicInfoPanel` 的公司資料／題材／庫藏股三 section 及地址／股務／來源／庫藏股／集團資訊均保留；勿依舊截圖恢復被移除的概況列。
 
 - 權證分點已完成安全 code-ready，**未碰正式 VPS／DB／cron／deploy**：新 `import-warrant-branch-trades --market all` 將 TWSE＋TPEx 當日有量有額的認購／認售、且標的是 active 普通股的權證合併抓取；ETF／指數、牛熊、未映射／inactive 標的排除。`--top` 是 cap，超出 fail closed、不偷裁；state JSON 原子記錄 ok／empty／error／pending，error 可 retry。既有 `backfill-warrant-branches` 可明確加 `--market all` 使用同一標的口徑；為相容正式 supervisor／舊手動指令，其預設仍是上市 Top 200，單一市場的 `--top` 仍為排序裁剪。
 - `daily-branches.sh` 已明列 legacy `--warrants 200`；因全市場獨立輪尚未啟用，17:40／22:00 暫時保留上市 Top 200，避免過渡期資料斷層，正式切換時才改 `0`。新增未排程 `daily-warrant-branches-poc.sh`（20GB free-space、DB/source lock、owned-only BF pause/resume、hard timeout、未完整不發布）。唯讀 VPS 實數：TWSE 16,225 + TPEx 3,856 = 20,081，sleep=1.0 約 6–8h；DB 約 4.7GB／free 7.6GB < 20GB，故未啟用任何正式 cron、未寫正式資料，下一步必先容量／1日、5日與三日 benchmark，並獲人工批准。
