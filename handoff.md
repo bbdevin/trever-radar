@@ -1,4 +1,12 @@
-# Handoff — 2026-08-27（E1 KB1 code 完成；正式 VPS 回補生命週期已驗證）
+# Handoff — 2026-08-28（個股資訊補強；權證 detail／日更順序已修）
+
+## 2026-08-28 最新交接
+
+- 個股 UI 已補開高低收、量額／資料日與 compact 公司概況；點概況切至既有「基本資料」一級 tab。完整公司地址、股務代理電話／地址、官方來源、題材 lifecycle／來源與庫藏股 MOPS 事實仍保留；活躍題材仍須 `eligible + active + heat_date=quote_date`，沒有放寬。
+- 個股權證分點不再被全市場 500 萬門檻清空：export 保留 `branches/warrant_branches.json`（全市場 `>=500萬`），另產出 `branches/warrant-stock-details/index.json` 與 `{stock_id}.json` 分片（個股 `>=100萬`）；100–499 萬只標「觀察」，500 萬以上「大額」。個股 code deploy 早於下一次資料 export 時會誠實 fallback 舊 500 萬檔。W5、首頁／Armed 2,000 萬與 `/branch` 均未改。
+- `vps/scripts/daily-insti.sh` 已改成 quotes→insti→best-effort 權證主檔→當日權證彙總→indicators→scores→export/deploy；修正原本 master 在 aggregate 後執行造成當輪新權證 mapping 未反映。正式 crontab 仍是 16:10，沒有新增腳本／cron。
+- 新測試 `pipeline/tests/test_warrant_branch_export.py` 覆蓋 2M detail-only、6M 兩檔皆有、<1M 皆無，以及五個 timeframe 與排序。完整 pipeline pytest `263 passed, 58 subtests passed`；TypeScript 通過；Terra 回報 Next build 通過。主協調重跑 Next build 在 Windows 長時間無新輸出後中止，不重複宣稱第二次成功；repo 未安裝 `playwright`，手機 verifier 已嘗試但無法執行，未做 QA bypass。
+- **尚未執行正式資料寫入**：`import-themes`、`import-buybacks`、DB migration／全市場回算均未跑；也未手動改正式 crontab。push main 後 Pages 先部署 code，個股權證會 fallback；VPS 下一輪拉碼並 `export-json` 後才會產出 100 萬 index 與 per-stock shards。
 
 ## 下一對話可貼上
 

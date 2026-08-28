@@ -303,6 +303,11 @@ def _build_strategy_meta() -> dict[str, dict]:
     return out          # 榜單門檻:成交金額 1 億
 SURGE_MIN_RATIO = 1.5
 MIN_WARRANT_TURNOVER = 20_000_000
+# `warrant_branches.json` is the established full-market exploration contract.
+# Detail shards are deliberately separate so stock pages can show useful
+# 100–499 萬 observations without widening the exploration result set.
+WARRANT_BRANCH_MARKET_MIN_AMOUNT = 5_000_000
+WARRANT_BRANCH_DETAIL_MIN_AMOUNT = 1_000_000
 
 
 def _directors_latest_payload(conn, sid: str) -> dict | None:
@@ -1565,10 +1570,13 @@ def _export_warrant_branches(out: Path, engine, date: str, base20: list[str]):
             GROUP BY b.branch_name, w.stock_id, s.name, b.stock_id, w.name, w.kind
         """), {"d1": d1, "d2": d2, "d5": d5, "d30": d30, "d120": d120}).fetchall()
 
-        # Group by timeframe for frontend
+        # Keep the full-market contract strict.  Individual stock detail is
+        # sharded so a 100 萬 threshold never makes every mobile client fetch
+        # an oversized whole-market payload.
         results = {
             "1d": [], "2d": [], "5d": [], "30d": [], "120d": []
         }
+        detail_by_stock: dict[str, dict[str, list[dict]]] = {}
         
         grouped = {}
         for r in rows:
@@ -1581,7 +1589,7 @@ def _export_warrant_branches(out: Path, engine, date: str, base20: list[str]):
         for (branch_name, underlying_id, underlying_name), warrants in grouped.items():
             for tf in ["1d", "2d", "5d", "30d", "120d"]:
                 total_amt = sum(w[f"net_amt_{tf}"] for w in warrants)
-                if abs(total_amt) >= 5000000:
+                if abs(total_amt) >= WARRANT_BRANCH_DETAIL_MIN_AMOUNT:
                     breakdown = []
                     for w in warrants:
                         w_amt = w[f"net_amt_{tf}"]
@@ -1595,13 +1603,18 @@ def _export_warrant_branches(out: Path, engine, date: str, base20: list[str]):
                             })
                     breakdown.sort(key=lambda x: -abs(x["net_amount"]))
                     
-                    results[tf].append({
+                    item = {
                         "branch_name": branch_name,
                         "underlying_id": underlying_id,
                         "underlying_name": underlying_name,
                         "net_amount": int(total_amt),
                         "breakdown": breakdown
-                    })
+                    }
+                    detail_by_stock.setdefault(
+                        underlying_id, {key: [] for key in results}
+                    )[tf].append(item)
+                    if abs(total_amt) >= WARRANT_BRANCH_MARKET_MIN_AMOUNT:
+                        results[tf].append(item)
                 
         # Sort each list by absolute net amount
         for k in results:
@@ -1609,6 +1622,29 @@ def _export_warrant_branches(out: Path, engine, date: str, base20: list[str]):
 
         (branches_dir / "warrant_branches.json").write_text(
             json.dumps(results, ensure_ascii=False), encoding="utf-8")
+        detail_dir = branches_dir / "warrant-stock-details"
+        detail_dir.mkdir(exist_ok=True)
+        # Remove stale per-stock shards before writing the current index. The
+        # index is also the client-side source of truth, so an old shard can
+        # never be fetched merely because it remains on a static host.
+        for stale in detail_dir.glob("*.json"):
+            stale.unlink()
+        for stock_id, timeframes in detail_by_stock.items():
+            for values in timeframes.values():
+                values.sort(key=lambda x: -abs(x["net_amount"]))
+            (detail_dir / f"{stock_id}.json").write_text(json.dumps({
+                "version": 1,
+                "threshold": WARRANT_BRANCH_DETAIL_MIN_AMOUNT,
+                "data_date": d1,
+                "stock_id": stock_id,
+                "timeframes": timeframes,
+            }, ensure_ascii=False), encoding="utf-8")
+        (detail_dir / "index.json").write_text(json.dumps({
+            "version": 1,
+            "threshold": WARRANT_BRANCH_DETAIL_MIN_AMOUNT,
+            "data_date": d1,
+            "stocks": sorted(detail_by_stock),
+        }, ensure_ascii=False), encoding="utf-8")
 
 
 # 追蹤分點近 N 日明細:每個 tracked branch 一檔精簡 [date, stock_id, net_lots, pct] 列表,

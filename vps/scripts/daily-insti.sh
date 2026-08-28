@@ -8,13 +8,14 @@ sync_code
 
 # 15:00 主抓上櫃日K;此處再抓一次當保底(empty 無害)。
 radar import-daily --datasets quotes
-radar aggregate-warrants --date "$(taipei_date +%Y%m%d)"
-radar compute-indicators --all --days 5
 radar import-daily --datasets insti
-# 權證主檔偶發 timeout 不得擋法人/日K 上線
+# 權證主檔偶發 timeout 不得擋法人/日K 上線。無論成功與否都在
+# 其後彙總：成功時採新主檔；失敗時沿用既有主檔。
 if ! radar import-warrant-master; then
   notify_warn "權證主檔暫時抓不到，已略過；三大法人與日K仍會上線"
 fi
+radar aggregate-warrants --date "$(taipei_date +%Y%m%d)"
+radar compute-indicators --all --days 5
 radar compute-scores
 radar export-json
 deploy_data

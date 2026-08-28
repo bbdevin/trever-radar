@@ -129,6 +129,13 @@ function StockView() {
   const cls = chgClass(chg);
   const branchScore = data.scores?.branch ?? null;
   const activeThemes = currentActiveThemes(data.recent_theme_heat, last.t);
+  const profile = data.company_profile;
+  const companyOverview = [
+    { label: "地區", value: profile?.city ?? "資料未提供", icon: MapPin },
+    { label: "股務", value: profile?.transfer_agent ?? "資料未提供", icon: Phone },
+    { label: "題材", value: data.company_themes ? `${data.company_themes.length} 項` : "資料未提供", icon: Tags },
+    { label: "集團", value: data.company_groups ? (data.company_groups.map((group) => group.name).join("、") || "未提供") : "資料未提供", icon: Building2 },
+  ];
 
   return (
     <div className="min-w-0 max-w-full overflow-x-hidden">
@@ -173,14 +180,37 @@ function StockView() {
           </span>
         </div>
       </div>
-      <div className="mb-2.5 flex flex-col gap-1 text-xs text-muted-foreground sm:flex-row sm:flex-wrap sm:gap-3.5">
-        <span className="min-w-0 break-words">
-          {last.t} {" · "} {"量"} <span className="num text-[color:var(--ink-2)]">{last.v.toLocaleString("zh-TW")}</span> {"張"} {" · "} {"額"}{" "}
-          <span className="num text-[color:var(--ink-2)]">{fmtE8(last.amt)}</span>
-        </span>
-        <span className="min-w-0 break-words">
-          {"資料"} <span className="num text-[color:var(--ink-2)]">{cs.length.toLocaleString("zh-TW")}</span> {"個交易日(自"} {cs[0].t})
-        </span>
+      <div className="mb-2.5 grid min-w-0 gap-2.5 lg:grid-cols-[minmax(0,1fr)_minmax(17rem,0.9fr)]">
+        <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3 xl:grid-cols-6" aria-label={`行情摘要，資料日 ${last.t}`}>
+          {[
+            ["開", last.o.toLocaleString("zh-TW")],
+            ["高", last.h.toLocaleString("zh-TW")],
+            ["低", last.l.toLocaleString("zh-TW")],
+            ["收", last.c.toLocaleString("zh-TW")],
+            ["量", `${last.v.toLocaleString("zh-TW")} 張`],
+            ["額", fmtE8(last.amt)],
+          ].map(([label, value]) => (
+            <div key={label} className="flex min-w-0 items-baseline justify-between gap-1 rounded-[var(--r-sm)] border border-border bg-secondary px-2 py-1.5 text-[11px]">
+              <span className="text-muted-foreground">{label}</span>
+              <span className="num truncate font-semibold text-[color:var(--ink-2)]" title={value}>{value}</span>
+            </div>
+          ))}
+        </div>
+        <button
+          type="button"
+          onClick={() => setView("basic")}
+          className="grid min-h-11 min-w-0 grid-cols-2 gap-x-2 gap-y-1 rounded-[var(--r-sm)] border border-border bg-card px-2.5 py-2 text-left transition-colors duration-200 hover:bg-secondary sm:grid-cols-4 lg:grid-cols-2 xl:grid-cols-4"
+          aria-label="查看完整公司基本資料"
+        >
+          {companyOverview.map(({ label, value, icon: Icon }) => (
+            <span key={label} className="flex min-w-0 items-center gap-1.5 text-[11px]">
+              <Icon size={13} className="shrink-0 text-[color:var(--accent-2)]" aria-hidden="true" />
+              <span className="shrink-0 text-muted-foreground">{label}</span>
+              <span className="truncate font-semibold text-[color:var(--ink-2)]" title={value}>{value}</span>
+            </span>
+          ))}
+        </button>
+        <p className="text-[11px] text-muted-foreground lg:col-span-2">行情資料日 {last.t} · 共 {cs.length.toLocaleString("zh-TW")} 個交易日（自 {cs[0].t}）</p>
       </div>
 
       {/* IA-2 + F3: Decision Header — why this stock appears, risks, key prices */}
@@ -308,26 +338,26 @@ function BasicInfoPanel({ data, quoteDate }: { data: StockJson; quoteDate: strin
           <Building2 size={17} className="text-[color:var(--accent-2)]" aria-hidden="true" />
           <h2 id="company-info-heading" className="text-sm font-bold">公司資料</h2>
         </div>
-        <dl className="grid gap-3 text-sm sm:grid-cols-2">
-          <div className="min-w-0">
+        <dl className="grid gap-2.5 text-sm sm:grid-cols-2">
+          <div className="min-w-0 rounded-[var(--r-sm)] border border-[color:var(--line)] bg-secondary/35 p-3">
             <dt className="flex items-center gap-1.5 text-xs text-muted-foreground"><MapPin size={14} aria-hidden="true" /> 公司地址</dt>
-            <dd className="mt-1 break-words text-[color:var(--ink-2)]">{profile?.address ?? "資料未提供"}</dd>
+            <dd className="mt-1.5 break-words font-medium text-[color:var(--ink-2)]">{profile?.address ?? "資料未提供"}</dd>
           </div>
-          <div className="min-w-0">
+          <div className="min-w-0 rounded-[var(--r-sm)] border border-[color:var(--line)] bg-secondary/35 p-3">
             <dt className="flex items-center gap-1.5 text-xs text-muted-foreground"><Phone size={14} aria-hidden="true" /> 股務代理</dt>
-            <dd className="mt-1 break-words text-[color:var(--ink-2)]">
+            <dd className="mt-1.5 break-words font-medium text-[color:var(--ink-2)]">
               {profile?.transfer_agent ?? "資料未提供"}
               {profile?.transfer_agent_phone ? `（${profile.transfer_agent_phone}）` : ""}
               {profile?.transfer_agent_address ? `；${profile.transfer_agent_address}` : ""}
             </dd>
           </div>
-          <div className="min-w-0">
-            <dt className="text-xs text-muted-foreground">產業代碼</dt>
-            <dd className="mt-1 text-[color:var(--ink-2)]">{profile?.industry_code ?? "資料未提供"}</dd>
+          <div className="min-w-0 rounded-[var(--r-sm)] border border-[color:var(--line)] bg-secondary/35 p-3">
+            <dt className="flex items-center gap-1.5 text-xs text-muted-foreground"><Building2 size={14} aria-hidden="true" /> 產業代碼</dt>
+            <dd className="mt-1.5 font-medium text-[color:var(--ink-2)]">{profile?.industry_code ?? "資料未提供"}</dd>
           </div>
-          <div className="min-w-0">
-            <dt className="text-xs text-muted-foreground">官方資料日</dt>
-            <dd className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[color:var(--ink-2)]">
+          <div className="min-w-0 rounded-[var(--r-sm)] border border-[color:var(--line)] bg-secondary/35 p-3">
+            <dt className="flex items-center gap-1.5 text-xs text-muted-foreground"><ShieldCheck size={14} aria-hidden="true" /> 官方資料日與來源</dt>
+            <dd className="mt-1.5 flex flex-wrap items-center gap-x-1.5 gap-y-1 font-medium text-[color:var(--ink-2)]">
               <span>{profile?.source_updated_at ?? "資料未提供"}</span>
               {profile?.source ? (
                 <a className="inline-flex min-h-11 items-center font-semibold text-primary underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" href={profile.source} target="_blank" rel="noreferrer">官方來源</a>
@@ -604,6 +634,9 @@ function WarrantPanel({ data }: { data: StockJson }) {
   const [sorting, setSorting] = useState<SortingState>([]);
   const [expanded, setExpanded] = useState({});
   const maxTurnover = Math.max(1, ...data.warrant_history.map((p) => Math.max(p.call_turnover, p.put_turnover)));
+  // History is ordered old→new by the export contract, so its final point is
+  // the only safe per-stock data date for this summary.
+  const warrantDataDate = data.warrant_history[data.warrant_history.length - 1]?.t;
 
   const columns = useMemo<ColumnDef<StockJson["active_warrants"][number]>[]>(
     () => [
@@ -659,7 +692,7 @@ function WarrantPanel({ data }: { data: StockJson }) {
     return (
       <div className="grid gap-3">
         <WarrantBranchPanel stockId={data.id} />
-        <div className="py-[46px] text-center text-sm text-muted-foreground">目前沒有可彙總的權證成交資料</div>
+        <div className="py-[46px] text-center text-sm text-muted-foreground">目前沒有可彙總的權證成交資料；權證資料日未提供不代表整批資料未更新。</div>
       </div>
     );
   }
@@ -668,6 +701,12 @@ function WarrantPanel({ data }: { data: StockJson }) {
     <div className="grid gap-3">
       <WarrantBranchPanel stockId={data.id} />
       <div className="grid gap-3 rounded-[var(--r-lg)] border border-border bg-card p-3.5 shadow-[var(--shadow-card)]">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+        <h3 className="text-sm font-bold text-foreground">權證成交摘要</h3>
+        <span className="text-[11.5px] text-muted-foreground">
+          權證資料日 {warrantDataDate ?? "未提供（舊版資料）"}
+        </span>
+      </div>
       <div className="grid grid-cols-2 gap-2.5 md:grid-cols-4">
         <div className="flex flex-col gap-0.5 rounded-[var(--r-sm)] border border-border bg-secondary p-2.5">
           <span className="text-[11px] text-muted-foreground">認購成交</span>

@@ -61,6 +61,12 @@ try {
   assert(!basicOverflow, "基本資料分頁造成頁面橫向溢出");
   await page.getByRole("tab", { name: "技術" }).click();
   await page.getByText("技術分").first().waitFor({ state: "visible", timeout: 5000 });
+  await page.getByRole("tab", { name: "權證" }).click();
+  await page.getByRole("heading", { name: "權證分點動向" }).waitFor({ state: "visible", timeout: 5000 });
+  assert(await page.getByText(/熱門上市權證/).first().isVisible(), "權證分點沒有揭露熱門上市權證與前15大分點的裁剪限制");
+  assert(await page.getByText(/權證資料日/).first().isVisible(), "權證摘要沒有標示資料日或舊版資料 fallback");
+  const warrantOverflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1);
+  assert(!warrantOverflow, "權證分頁造成頁面橫向溢出");
   await chipsTab.click();
   await page.waitForSelector("#branch", { timeout: 5000 });
 
@@ -77,7 +83,7 @@ try {
   console.log(`✓ 手機 viewport ${viewportLabel} 驗收通過`);
   console.log("  - 無頁面橫向溢出");
   console.log("  - 籌碼日報買方/賣方對半切可切");
-  console.log("  - 法人 / 基本資料 / 技術獨立 tab；題材列含分類日與來源更新");
+  console.log("  - 法人 / 基本資料 / 技術 / 權證獨立 tab；權證資料日與來源裁剪限制可見");
   console.log("  - 點分點進入下鑽並可返回");
 } catch (e) {
   failures.push(`執行錯誤: ${e.message}`);

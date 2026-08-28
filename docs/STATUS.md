@@ -2,6 +2,13 @@
 
 > 單一進度真相。每完成一個里程碑就更新本檔。規格細節看各編號文件,別寫在這裡。
 
+## 2026-08-28 個股資訊補強與權證更新修正
+
+- [x] 個股名稱／報價區補開高低收、量額與行情資料日；新增可切入既有「基本資料」tab 的 compact 公司概況（地區／股務代理／題材數／集團）。基本資料仍是「技術」左側的一級 tab，完整地址、代理電話／地址、官方來源、題材 lifecycle 與庫藏股事實均保留，未改回 bottom sheet 或內部分頁。
+- [x] 個股權證分點與全市場探索拆成雙層資料契約：既有 `warrant_branches.json` 維持 `>=500 萬`；新增 `branches/warrant-stock-details/index.json` 與 `{stock_id}.json` 分片供個股顯示 `>=100 萬`，100–499 萬標「觀察」、500 萬以上標「大額」。W5 500 萬、首頁／Armed 2,000 萬及 `/branch` 契約均未改；個股權證摘要新增資料日與裁剪限制說明。
+- [x] `daily-insti.sh` 修正為權證主檔先於當日彙總；主檔失敗仍沿用既有 mapping 彙總，不阻擋法人／日K 上線。16:10 crontab 時間不變、未新增獨立腳本或 cron。
+- [x] 驗證：完整 pipeline pytest **263 passed、58 subtests passed**；Terra 初版 `npm run build` 通過；分片版由主協調重跑 build 時停滯中止，未宣稱通過；分片版 `npx tsc --noEmit` 與 targeted pytest 通過。手機 verifier 因 repo 未安裝 `playwright` 無法執行，未假冒通過；正式 `import-themes`／`import-buybacks`、正式 DB 寫入與資料 deploy 未執行。
+
 ## 2026-08-27 個股基本資料 UI 整併
 
 - [x] 個股頁新增「基本資料」一級 tab，順序在「技術」左側；公司資料／題材／庫藏股為同一連續三 section 面板，集團鑽取、官方來源日、MOPS 事實與舊 JSON safe fallback 均保留。
@@ -162,7 +169,7 @@
 - 2026-08-25 **資券 Phase A 實作**:`docs/34` A0–A3——`daily_margins` 買進/賣出/現償、融資成本估算、`margin_history` export、`/margin` 排行、個股資券 tab；VPS 已 mid-publish。
 - 2026-08-25 **S1.1 OOM 修復**:夜間含 stats 兩次被 OOM;改 mid 預設略過 stats、新增 `safe-branch-stats.sh`@23:30、`compute_branch_stats` 增量累加降記憶體。詳 `docs/33`。
 - 2026-08-24 **回補中途動態上線規劃**:`docs/33_mid_backfill_publish_plan.md`——長回補期間定時 pause→stats→export/deploy→resume，不必等全部跑完才更新網站。
-- 2026-08-21 **個股權證分頁＝權證分點動向**：與 `/branch` 同源 `warrant_branches.json`；顯示分點買超／賣超（萬）、展開標示哪幾檔權證；區間 pills；門檻 ≥500 萬。
+- 2026-08-21 **個股權證分頁＝權證分點動向**：原與 `/branch` 同源 `warrant_branches.json`、門檻 ≥500 萬；2026-08-28 已由上方雙 JSON 契約取代，個股 detail 降至 100 萬、全市場仍維持 500 萬。
 - 2026-08-21 **VPS 先上線再回補**:回補 pause 期間跑完 `import-geo` + `compute-branch-stats` + export/deploy(不握長 flock);正式 `data_date=2026-08-21`、`branch_rankings` as_of=08-20、pocket 有資料。16:10 `daily-insti` 正常搶鎖。歷史回補容器仍由 `bf-cron-guard` 在 cron 窗 pause。
 - 2026-08-21 **VPS 恢復歷史回補**:重開 `radar-bf-branches`(`--top 2500 --days 730`)與 `radar-bf-warrant`(`--top 6000 --days 130`),**不拿** `/tmp/radar-db.lock`;`~/bf-cron-guard.sh` 在 daily-* 窗或 flock 被佔時 `docker pause`,避免再擋今日排程。進度:`docker logs -f radar-bf-*`;跑完再 stats/export/`import-geo`。
 - 2026-08-25 **籌碼日報深度顯示**：個股「分點進出」依**該檔** `branch_history` 顯示涵蓋區間；超過回補天數的 120/240/2年等選項 disabled，並自動降到可用深度。

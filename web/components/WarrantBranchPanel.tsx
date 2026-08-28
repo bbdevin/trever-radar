@@ -21,6 +21,21 @@ export type WarrantBranchRow = {
   breakdown?: WarrantBreakdown[];
 };
 
+type WarrantBranchDetailIndex = {
+  version: number;
+  threshold: number;
+  data_date: string;
+  stocks: string[];
+};
+
+type WarrantBranchDetailShard = {
+  version: number;
+  threshold: number;
+  data_date: string;
+  stock_id: string;
+  timeframes: Record<string, WarrantBranchRow[]>;
+};
+
 type Timeframe = "1d" | "2d" | "5d" | "30d" | "120d";
 
 const TIMEFRAMES: { key: Timeframe; label: string }[] = [
@@ -30,6 +45,11 @@ const TIMEFRAMES: { key: Timeframe; label: string }[] = [
   { key: "30d", label: "30日" },
   { key: "120d", label: "120日" },
 ];
+
+const DETAIL_MIN_AMOUNT = 1_000_000;
+const LARGE_AMOUNT = 5_000_000;
+const DETAIL_CONTRACT_VERSION = 1;
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 function fmtWan(amt: number, digits = 0): string {
   return (Math.abs(amt) / 10000).toLocaleString("zh-TW", { maximumFractionDigits: digits });
@@ -41,13 +61,54 @@ export default function WarrantBranchPanel({ stockId }: { stockId: string }) {
   const [tf, setTf] = useState<Timeframe>("1d");
   const [expanded, setExpanded] = useState<string | null>(null);
   const [error, setError] = useState(false);
+  const [usingMarketFallback, setUsingMarketFallback] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
-    dataFetch("/data/branches/warrant_branches.json")
-      .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
-      .then((json: Record<string, WarrantBranchRow[]>) => {
-        if (!cancelled) setByTf(json);
+    setByTf(null);
+    setError(false);
+    setUsingMarketFallback(false);
+    dataFetch("/data/branches/warrant-stock-details/index.json")
+      .then(async (indexResponse) => {
+        // A code deploy can precede the next VPS export. Only a missing index
+        // may use the established strict payload; other errors stay visible.
+        if (indexResponse.status === 404) {
+          const legacyResponse = await dataFetch("/data/branches/warrant_branches.json");
+          if (!legacyResponse.ok) throw legacyResponse.status;
+          return { rows: await legacyResponse.json() as Record<string, WarrantBranchRow[]>, fallback: true };
+        }
+        if (!indexResponse.ok) throw indexResponse.status;
+        const index = await indexResponse.json() as WarrantBranchDetailIndex;
+        if (
+          index.version !== DETAIL_CONTRACT_VERSION
+          || index.threshold !== DETAIL_MIN_AMOUNT
+          || !ISO_DATE.test(index.data_date)
+          || !Array.isArray(index.stocks)
+          || !index.stocks.every((id) => typeof id === "string")
+        ) throw new Error("權證分點索引格式錯誤");
+        // The index is authoritative: never read an old shard for a stock
+        // absent from the current snapshot.
+        if (!index.stocks.includes(stockId)) {
+          return { rows: {} as Record<string, WarrantBranchRow[]>, fallback: false };
+        }
+        const shardResponse = await dataFetch(`/data/branches/warrant-stock-details/${encodeURIComponent(stockId)}.json`);
+        if (!shardResponse.ok) throw shardResponse.status;
+        const shard = await shardResponse.json() as WarrantBranchDetailShard;
+        if (
+          shard.version !== index.version
+          || shard.threshold !== index.threshold
+          || shard.data_date !== index.data_date
+          || shard.stock_id !== stockId
+          || !shard.timeframes
+          || !TIMEFRAMES.every((timeframe) => Array.isArray(shard.timeframes[timeframe.key]))
+        ) throw new Error("權證分點明細格式錯誤");
+        return { rows: shard.timeframes, fallback: false };
+      })
+      .then(({ rows, fallback }) => {
+        if (!cancelled) {
+          setUsingMarketFallback(fallback);
+          setByTf(rows);
+        }
       })
       .catch(() => {
         if (!cancelled) setError(true);
@@ -55,7 +116,7 @@ export default function WarrantBranchPanel({ stockId }: { stockId: string }) {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [stockId]);
 
   const rows = useMemo(() => {
     if (!byTf) return null;
@@ -88,8 +149,9 @@ export default function WarrantBranchPanel({ stockId }: { stockId: string }) {
         <div>
           <h3 className="text-sm font-bold text-foreground">權證分點動向</h3>
           <p className="mt-0.5 text-[11.5px] text-muted-foreground">
-            哪個分點在這檔標的的權證上買／賣超（估金額）；點列展開看是哪幾檔權證。門檻同分點頁：區間淨額 ≥ 500 萬。
+            熱門上市權證的估計淨買／賣超；每檔權證僅保留前 15 大分點。區間淨額 ≥ {(usingMarketFallback ? LARGE_AMOUNT : DETAIL_MIN_AMOUNT) / 10000} 萬才顯示，點列可看權證明細。
           </p>
+          {usingMarketFallback && <p className="mt-1 text-[11px] text-muted-foreground">100 萬明細快照尚未發布，暫以原全市場 500 萬門檻顯示。</p>}
         </div>
         {(buyN > 0 || sellN > 0) && (
           <span className="text-[11.5px] text-muted-foreground">
@@ -115,7 +177,7 @@ export default function WarrantBranchPanel({ stockId }: { stockId: string }) {
 
       {rows.length === 0 ? (
         <p className="py-4 text-center text-[13px] text-muted-foreground">
-          此區間沒有淨買賣超達 500 萬的權證分點。可能尚未抓到熱門權證分點，或大戶尚未達門檻。
+          此區間沒有淨買賣超達 {(usingMarketFallback ? LARGE_AMOUNT : DETAIL_MIN_AMOUNT) / 10000} 萬的權證分點。資料只涵蓋熱門上市權證與每檔前 15 大分點，沒有資料不代表沒有交易。
         </p>
       ) : (
         <ul className="flex flex-col gap-1.5">
@@ -123,6 +185,7 @@ export default function WarrantBranchPanel({ stockId }: { stockId: string }) {
             const isOpen = expanded === b.branch_name;
             const hasBd = (b.breakdown?.length ?? 0) > 0;
             const isBuy = b.net_amount > 0;
+            const isLarge = Math.abs(b.net_amount) >= LARGE_AMOUNT;
             return (
               <li
                 key={b.branch_name}
@@ -145,7 +208,7 @@ export default function WarrantBranchPanel({ stockId }: { stockId: string }) {
                         isBuy ? "bg-up/10 text-up" : "bg-down/10 text-down",
                       )}
                     >
-                      {isBuy ? "買超" : "賣超"}
+                      {isBuy ? "買超" : "賣超"}・{isLarge ? "大額" : "觀察"}
                     </span>
                   </div>
                   <span className={cn("num shrink-0 text-[14.5px] font-bold", isBuy ? "text-up" : "text-down")}>
