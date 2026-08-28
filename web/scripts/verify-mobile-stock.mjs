@@ -22,27 +22,38 @@ const page = await context.newPage();
 try {
   await page.goto(`${BASE}/stock?id=2330`, { waitUntil: "networkidle", timeout: 30000 });
 
-  // 1) 手機首屏：名稱與報價同行，預設收合的 Decision 與行情摘要並列，後方直接是 tabs。
+  // 1) 手機首屏：名稱／報價同行，左欄 header + Decision，右欄行情對齊名稱列。
   const nameBox = await page.getByTestId("stock-name").boundingBox();
   const priceBox = await page.getByTestId("stock-price").boundingBox();
   assert(await page.evaluate(() => window.scrollY <= 1), "初次載入被 active tab 自動垂直捲離頁首");
   assert(nameBox && priceBox && Math.abs(nameBox.y - priceBox.y) < 20, "股票名稱與股價／漲跌未在同一主列");
   assert(nameBox && priceBox && nameBox.x + nameBox.width <= priceBox.x + 1, "股票名稱與報價區互相重疊");
+  assert(nameBox && priceBox && priceBox.x - (nameBox.x + nameBox.width) <= 12, "短名稱與報價未緊鄰");
   const primaryRowOverflow = await page.getByTestId("stock-primary-row").evaluate((row) => row.scrollWidth > row.clientWidth + 1);
   assert(!primaryRowOverflow, "股票名稱／報價主列發生水平溢位");
   assert(await page.getByTestId("stock-primary-judgment").isVisible(), "Decision Header 缺少首要判讀");
-  const decisionBox = await page.getByTestId("stock-decision").boundingBox();
+  const judgmentStyle = await page.getByTestId("stock-primary-judgment").evaluate((element) => {
+    const style = getComputedStyle(element);
+    return { whiteSpace: style.whiteSpace, textOverflow: style.textOverflow, scrollHeight: element.scrollHeight, clientHeight: element.clientHeight };
+  });
+  assert(judgmentStyle.whiteSpace !== "nowrap" && judgmentStyle.textOverflow !== "ellipsis" && judgmentStyle.scrollHeight <= judgmentStyle.clientHeight + 1, "收合態首要判讀不應 nowrap、ellipsis 或被裁切");
   const marketBox = await page.getByTestId("stock-market-summary").boundingBox();
   const chartTabBox = await page.getByTestId("stock-tab-chart").boundingBox();
-  assert(decisionBox && marketBox && chartTabBox && Math.abs(decisionBox.y - marketBox.y) < 20 && decisionBox.x < marketBox.x && marketBox.y < chartTabBox.y, "Decision 與行情摘要未在首屏左右兩欄，或 tabs 順序錯誤");
+  assert(nameBox && marketBox && chartTabBox && Math.abs(nameBox.y - marketBox.y) < 20 && nameBox.x < marketBox.x && marketBox.y < chartTabBox.y, "行情摘要未對齊名稱列、位於右欄，或 tabs 順序錯誤");
   assert(await page.getByTestId("stock-market-summary").locator("dl").count() === 1, "行情摘要應為單一卡片 dl");
   for (const label of ["量", "額", "昨收", "開盤", "最高", "最低"]) {
     assert(await page.getByTestId("stock-market-summary").getByText(label, { exact: true }).isVisible(), `行情摘要缺少 ${label}`);
+  }
+  for (const key of ["open", "high", "low"]) {
+    const ohlc = await page.getByTestId(`stock-market-${key}`).textContent();
+    assert(Boolean(ohlc && /[▲▼—]/.test(ohlc)), `行情摘要 ${key} 缺少相對昨收的語意 glyph`);
   }
   assert(await page.getByTestId("stock-overview").count() === 0, "不得保留重複的概況列");
   assert(await page.getByTestId("stock-decision").getByRole("button").getAttribute("aria-expanded") === "false", "Decision Header 初始應收合以保留首屏空間");
   await page.getByTestId("stock-decision").getByRole("button").click();
   assert(await page.getByTestId("stock-decision").getByRole("button").getAttribute("aria-expanded") === "true", "Decision Header 無法展開");
+  const expandedMarketBox = await page.getByTestId("stock-market-summary").boundingBox();
+  assert(marketBox && expandedMarketBox && Math.abs(marketBox.x - expandedMarketBox.x) < 1 && Math.abs(marketBox.y - expandedMarketBox.y) < 1, "Decision 展開不應推移右欄行情卡");
   await page.getByTestId("stock-decision").getByRole("button").click();
   assert(await page.getByTestId("stock-primary-judgment").isVisible(), "收合後首要判讀不應消失");
 

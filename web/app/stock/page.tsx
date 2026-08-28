@@ -138,69 +138,67 @@ function StockView() {
   const cls = chgClass(chg);
   const branchScore = data.scores?.branch ?? null;
   const activeThemes = currentActiveThemes(data.recent_theme_heat, last.t);
+  const quoteTone = (price: number) => {
+    if (prev == null) return { glyph: "—", className: "text-foreground" };
+    if (price > prev.c) return { glyph: "▲", className: "text-up" };
+    if (price < prev.c) return { glyph: "▼", className: "text-down" };
+    return { glyph: "—", className: "text-foreground" };
+  };
+  const marketRows: Array<{ key: string; label: string; value: string; className: string; glyph?: string }> = [
+    { key: "volume", label: "量", value: `${last.v.toLocaleString("zh-TW")} 張`, className: "text-foreground" },
+    { key: "amount", label: "額", value: fmtE8(last.amt), className: "text-foreground" },
+    { key: "previous", label: "昨收", value: prev?.c.toLocaleString("zh-TW") ?? "—", className: "text-foreground" },
+    { key: "open", label: "開盤", value: last.o.toLocaleString("zh-TW"), ...quoteTone(last.o) },
+    { key: "high", label: "最高", value: last.h.toLocaleString("zh-TW"), ...quoteTone(last.h) },
+    { key: "low", label: "最低", value: last.l.toLocaleString("zh-TW"), ...quoteTone(last.l) },
+  ];
 
   return (
     <div className="min-w-0 max-w-full overflow-x-hidden">
-      <header data-testid="stock-header" className="py-3.5 pb-2.5">
-        <div data-testid="stock-primary-row" className="flex min-w-0 items-center gap-1.5 sm:gap-2">
-          <a
-            href="/"
-            className="-ml-2 inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center gap-1 rounded-full text-[13px] text-muted-foreground transition-colors duration-200 hover:bg-secondary hover:text-foreground sm:px-2.5"
-            aria-label="返回雷達"
-          >
-            <IconArrowLeft size={17} />
-            <span className="hidden sm:inline">雷達</span>
-          </a>
-          <div className="min-w-0 flex-1 pt-0.5">
-            <h1 data-testid="stock-name" className="truncate text-[26px] font-extrabold leading-tight tracking-[-0.02em]" title={data.name}>{data.name}</h1>
-            <p className="mt-1 truncate text-[13px] text-muted-foreground">{data.id} · {MARKET_LABEL[data.market] ?? data.market}{data.industry ? ` · ${data.industry}` : ""}</p>
-          </div>
-          <div data-testid="stock-price" className="flex shrink-0 items-center gap-1.5 whitespace-nowrap">
-            <span className={cn("num text-[27px] font-extrabold leading-none tracking-[-0.03em] sm:text-[30px]", CHG_TEXT[cls])}>
-              {last.c.toLocaleString("zh-TW")}
-            </span>
-            <span data-testid="stock-change" className={cn("num inline-block rounded-full px-2 py-1 text-[12px] font-bold", CHG_BADGE[cls])}>
-              {fmtPct(chg)}
-            </span>
-            <WatchlistButton stockId={data.id} size={20} />
-          </div>
-        </div>
-        {activeThemes.length > 0 && (
-          <div className="mt-2 flex min-w-0 flex-wrap items-center gap-1.5 text-[11px]" aria-label="活躍題材">
-            <span className="shrink-0 text-[color:var(--warn)]">活躍題材</span>
-            {activeThemes.slice(0, 2).map((theme) => (
-              <span key={theme.id} className="max-w-[10rem] truncate rounded-full border border-[color:var(--warn)]/35 bg-[color:var(--warn)]/8 px-1.5 py-0.5 text-[color:var(--ink-2)]" title={`${theme.name}（資料日 ${theme.heat_date}）`}>
-                {theme.name}
-              </span>
-            ))}
-            {activeThemes.length > 2 && (
-              <span className="rounded-full bg-[color:var(--warn)]/12 px-1.5 py-0.5 font-semibold text-[color:var(--warn)]">
-                +{activeThemes.length - 2}
-              </span>
-            )}
-          </div>
-        )}
-      </header>
-
-      {/* IA-2 + F3: the default-collapsed decision and quote evidence share the first screen. */}
-      <div className="mb-2.5 grid min-w-0 grid-cols-[minmax(0,1.2fr)_minmax(8.25rem,0.8fr)] items-start gap-2.5 sm:grid-cols-[minmax(0,1fr)_minmax(14rem,0.72fr)]">
-        <StockDecisionHeader data={data} close={last.c} className="mb-0" />
-        <section data-testid="stock-market-summary" className="min-w-0 rounded-[var(--r-md)] border border-border bg-card px-2.5 py-2.5" aria-label={`行情摘要，資料日 ${last.t}`}>
-          <p className="mb-1.5 text-[10.5px] text-muted-foreground">行情 {last.t}</p>
-          <dl className="grid gap-y-1 text-[11px]">
-          {[
-            ["量", `${last.v.toLocaleString("zh-TW")} 張`],
-            ["額", fmtE8(last.amt)],
-            ["昨收", prev?.c.toLocaleString("zh-TW") ?? "—"],
-            ["開盤", last.o.toLocaleString("zh-TW")],
-            ["最高", last.h.toLocaleString("zh-TW")],
-            ["最低", last.l.toLocaleString("zh-TW")],
-          ].map(([label, value]) => (
-            <div key={label} className="flex min-w-0 items-baseline justify-between gap-2">
-              <dt className="shrink-0 text-muted-foreground">{label}</dt>
-              <dd className="num truncate text-right font-bold text-[color:var(--ink-2)]" title={value}>{value}</dd>
+      <div data-testid="stock-context-grid" className="mb-2.5 grid min-w-0 grid-cols-[minmax(0,1.2fr)_minmax(8.25rem,0.8fr)] items-start gap-2.5 sm:grid-cols-[minmax(0,1fr)_minmax(14rem,0.72fr)]">
+        <div className="min-w-0">
+          <header data-testid="stock-header" className="pb-2.5">
+            <div data-testid="stock-primary-row" className="flex min-w-0 items-center gap-2">
+              <h1 data-testid="stock-name" className="min-w-0 truncate text-[26px] font-extrabold leading-tight tracking-[-0.02em]" title={data.name}>{data.name}</h1>
+              <div data-testid="stock-price" className="flex shrink-0 items-center gap-1.5 whitespace-nowrap">
+                <span className={cn("num text-[27px] font-extrabold leading-none tracking-[-0.03em] sm:text-[30px]", CHG_TEXT[cls])}>
+                  {last.c.toLocaleString("zh-TW")}
+                </span>
+                <span data-testid="stock-change" className={cn("num inline-block rounded-full px-2 py-1 text-[12px] font-bold", CHG_BADGE[cls])}>
+                  {fmtPct(chg)}
+                </span>
+              </div>
             </div>
-          ))}
+            <div className="mt-1 flex min-w-0 items-center gap-1.5">
+              <a href="/" className="-ml-1 inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors duration-200 hover:bg-secondary hover:text-foreground" aria-label="返回雷達"><IconArrowLeft size={17} /></a>
+              <p className="min-w-0 flex-1 truncate text-[13px] text-muted-foreground">{data.id} · {MARKET_LABEL[data.market] ?? data.market}{data.industry ? ` · ${data.industry}` : ""}</p>
+              <WatchlistButton stockId={data.id} size={20} />
+            </div>
+            {activeThemes.length > 0 && (
+              <div className="mt-1 flex min-w-0 flex-wrap items-center gap-1.5 text-[11px]" aria-label="活躍題材">
+                <span className="shrink-0 text-[color:var(--warn)]">活躍題材</span>
+                {activeThemes.slice(0, 2).map((theme) => (
+                  <span key={theme.id} className="max-w-[10rem] truncate rounded-full border border-[color:var(--warn)]/35 bg-[color:var(--warn)]/8 px-1.5 py-0.5 text-[color:var(--ink-2)]" title={`${theme.name}（資料日 ${theme.heat_date}）`}>
+                    {theme.name}
+                  </span>
+                ))}
+                {activeThemes.length > 2 && <span className="rounded-full bg-[color:var(--warn)]/12 px-1.5 py-0.5 font-semibold text-[color:var(--warn)]">+{activeThemes.length - 2}</span>}
+              </div>
+            )}
+          </header>
+          <StockDecisionHeader data={data} close={last.c} className="mb-0" />
+        </div>
+        <section data-testid="stock-market-summary" className="mt-3.5 min-w-0 rounded-[var(--r-md)] border border-border bg-card px-2.5 py-2.5" aria-label={`行情摘要，資料日 ${last.t}`}>
+          <p className="mb-2 text-[11.5px] font-medium text-muted-foreground">行情 {last.t}</p>
+          <dl className="grid gap-y-1.5 text-[12px]">
+            {marketRows.map(({ key, label, value, className, glyph }) => (
+              <div key={key} data-testid={`stock-market-${key}`} className="flex min-w-0 items-baseline justify-between gap-2">
+                <dt className="shrink-0 text-muted-foreground">{label}</dt>
+                <dd className={cn("num truncate text-right font-bold", className)} title={value}>
+                  {glyph && <span aria-hidden="true">{glyph} </span>}{value}
+                </dd>
+              </div>
+            ))}
           </dl>
         </section>
       </div>
@@ -471,7 +469,7 @@ function StockDecisionHeader({
     <div data-testid="stock-decision" className={cn("mb-2.5 min-w-0 overflow-hidden rounded-[var(--r-lg)] border border-border bg-card shadow-[var(--shadow-card)]", className)}>
       <button
         type="button"
-        className="flex w-full min-w-0 items-center gap-3 px-3.5 py-3 text-left transition-colors duration-200 hover:bg-secondary/60"
+        className="flex w-full min-w-0 items-start gap-3 px-3.5 py-3 text-left transition-colors duration-200 hover:bg-secondary/60"
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
       >
@@ -481,11 +479,11 @@ function StockDecisionHeader({
           </span>
         )}
         <span className="min-w-0 flex-1">
-          <span className="flex min-w-0 items-center gap-1.5 text-[11.5px] text-muted-foreground">
+          <span className="flex min-w-0 flex-wrap items-center gap-1.5 text-[11.5px] text-muted-foreground">
             綜合評分
-            {sourceLabel && <span className="rounded-md bg-[color:var(--ink-2)]/10 px-1.5 py-0.5 text-[10.5px] font-bold text-[color:var(--ink-2)]">{sourceLabel}</span>}
+            {sourceLabel && <span className="shrink-0 rounded-md bg-[color:var(--ink-2)]/10 px-1.5 py-0.5 text-[10.5px] font-bold text-[color:var(--ink-2)]">{sourceLabel}</span>}
           </span>
-          <span data-testid="stock-primary-judgment" className="mt-1 block truncate text-[14px] font-semibold text-foreground" title={primaryJudgment}>{primaryJudgment}</span>
+          <span data-testid="stock-primary-judgment" className="mt-1 block break-words whitespace-normal text-[14px] font-semibold leading-5 text-foreground">{primaryJudgment}</span>
         </span>
         <span className="ml-auto flex shrink-0 items-center gap-2 text-[11.5px]">
           {watchPrice != null && (
