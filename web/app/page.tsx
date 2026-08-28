@@ -41,6 +41,12 @@ const TABS: { key: TabKey; label: string; hint: string; icon: any }[] = [
     icon: IconRadar,
   },
   {
+    key: "mark",
+    label: "策略",
+    hint: "進階規則選股（技術／籌碼等策略標籤）。需登入；績效標籤僅供觀察。",
+    icon: IconStar,
+  },
+  {
     key: "armed",
     label: "未發動",
     hint: "分點或權證籌碼已異常進駐，但股價尚未明顯表態。適合盤中盯「何時發動」，不是已經大漲的名單。",
@@ -51,6 +57,18 @@ const TABS: { key: TabKey; label: string; hint: string; icon: any }[] = [
     label: "已發動",
     hint: "籌碼進駐且今日放量突破或創高——價格已開始反應訊號，偏「確認發動」而非提前埋伏。",
     icon: Zap,
+  },
+  {
+    key: "margin",
+    label: "資券",
+    hint: "全市場融資使用率（餘額÷限額）排行。越高＝融資額度越緊；≥60% 視為過熱風險觀察，不進綜合分。",
+    icon: Percent,
+  },
+  {
+    key: "scan",
+    label: "市場掃描",
+    hint: "依量價特徵掃描：熱門、爆量、強勢、弱勢——偏市場廣度，不依綜合分。",
+    icon: IconZap,
   },
   {
     key: "extended",
@@ -69,24 +87,6 @@ const TABS: { key: TabKey; label: string; hint: string; icon: any }[] = [
     label: "口袋",
     hint: "地緣／關鍵分點／熱門題材等理由疊加（≥2）的觀察池；不進綜合分，只做排序與提醒。",
     icon: Briefcase,
-  },
-  {
-    key: "margin",
-    label: "資券",
-    hint: "全市場融資使用率（餘額÷限額）排行。越高＝融資額度越緊；≥60% 視為過熱風險觀察，不進綜合分。",
-    icon: Percent,
-  },
-  {
-    key: "scan",
-    label: "市場掃描",
-    hint: "依量價特徵掃描：熱門、爆量、強勢、弱勢——偏市場廣度，不依綜合分。",
-    icon: IconZap,
-  },
-  {
-    key: "mark",
-    label: "策略",
-    hint: "進階規則選股（技術／籌碼等策略標籤）。需登入；績效標籤僅供觀察。",
-    icon: IconStar,
   },
   {
     key: "warrant",
