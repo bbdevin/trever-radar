@@ -47,12 +47,20 @@ try {
     return { copy: element.textContent, whiteSpace: style.whiteSpace, textOverflow: style.textOverflow, overflow: style.overflow, scrollHeight: element.scrollHeight, clientHeight: element.clientHeight };
   });
   assert(!metadataStyle.copy?.includes("2330") && metadataStyle.whiteSpace !== "nowrap" && metadataStyle.textOverflow !== "ellipsis" && metadataStyle.overflow !== "hidden" && metadataStyle.scrollHeight <= metadataStyle.clientHeight + 1, "股票 metadata 應完整呈現市場／產業且不含代號");
+  assert(await page.getByTestId("stock-market-label").isVisible(), "上市／上櫃標籤應清楚可見");
+  const marketLabelColor = await page.getByTestId("stock-market-label").evaluate((element) => getComputedStyle(element).color);
+  const industrySpan = page.getByTestId("stock-metadata").locator("span.text-muted-foreground");
+  if (await industrySpan.count()) {
+    const industryColor = await industrySpan.first().evaluate((element) => getComputedStyle(element).color);
+    assert(marketLabelColor !== industryColor, "上市／上櫃標籤應與產業灰字區分");
+  }
   assert(await page.getByTestId("stock-price").isVisible(), "股價應顯示於名稱下方");
   const priceBox = await page.getByTestId("stock-price").boundingBox();
   const nameBox = await page.getByTestId("stock-name").boundingBox();
   assert(priceBox && nameBox && priceBox.y >= nameBox.y + nameBox.height - 2, "股價列應在名稱下方");
   assert(await page.getByTestId("stock-decision").isVisible(), "評分區塊應固定顯示");
   assert(await page.getByTestId("stock-decision").getByRole("button").count() === 0, "評分區塊不應再有展開收合按鈕");
+  assert(await page.getByTestId("stock-decision").getByTestId("stock-price-targets").count() === 0, "觀察／失效應移出左側評分區");
   for (const testId of ["stock-header", "stock-context-grid"]) {
     const hasOverflow = await page.getByTestId(testId).evaluate((element) => element.scrollWidth > element.clientWidth + 1);
     assert(!hasOverflow, `${testId} 發生水平溢位`);
@@ -68,10 +76,12 @@ try {
   for (const label of ["量", "額", "昨收", "開盤", "最高", "最低"]) {
     assert(await page.getByTestId("stock-market-summary").getByText(label, { exact: true }).isVisible(), `行情摘要缺少 ${label}`);
   }
-  for (const key of ["open", "high", "low"]) {
+  for (const key of ["high", "low"]) {
     const ohlc = await page.getByTestId(`stock-market-${key}`).textContent();
-    assert(Boolean(ohlc && /[▲▼—]/.test(ohlc)), `行情摘要 ${key} 缺少相對昨收的語意 glyph`);
+    assert(Boolean(ohlc && /[▲▼]/.test(ohlc)), `行情摘要 ${key} 缺少相對昨收的語意 glyph`);
   }
+  const openOhlc = (await page.getByTestId("stock-market-open").textContent())?.trim() ?? "";
+  assert(!openOhlc.startsWith("—"), "開盤價持平昨收時不應顯示 — 前綴");
 
   // 2) 一級分頁存在
   const chipsTab = page.getByRole("tab", { name: "籌碼日報" });

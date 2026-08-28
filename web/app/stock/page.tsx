@@ -143,11 +143,14 @@ function StockView() {
     ? "—(—)"
     : `${priceDelta > 0 ? "▲" : priceDelta < 0 ? "▼" : "—"}${Math.abs(priceDelta).toLocaleString("zh-TW", { maximumFractionDigits: 2 })}(${priceDelta > 0 ? "+" : priceDelta < 0 ? "-" : ""}${Math.abs(chg ?? 0).toFixed(2)}%)`;
   const quoteTone = (price: number) => {
-    if (prev == null) return { glyph: "—", className: "text-foreground" };
+    if (prev == null) return { glyph: undefined as string | undefined, className: "text-foreground" };
     if (price > prev.c) return { glyph: "▲", className: "text-up" };
     if (price < prev.c) return { glyph: "▼", className: "text-down" };
-    return { glyph: "—", className: "text-foreground" };
+    return { glyph: undefined, className: "text-foreground" };
   };
+  const watchPrice = data.scores?.watch_price;
+  const stopPrice = data.scores?.stop_price;
+  const marketLabel = MARKET_LABEL[data.market] ?? data.market;
   const marketRows: Array<{ key: string; label: string; value: string; className: string; glyph?: string }> = [
     { key: "volume", label: "量", value: `${last.v.toLocaleString("zh-TW")} 張`, className: "text-foreground" },
     { key: "amount", label: "額", value: fmtE8(last.amt), className: "text-foreground" },
@@ -164,18 +167,21 @@ function StockView() {
           <header data-testid="stock-header" className="shrink-0 pb-1.5">
             <div className="grid min-w-0 grid-cols-[2.75rem_minmax(0,1fr)] items-start gap-1">
               <a href="/" className="inline-flex size-11 items-center justify-center rounded-full text-muted-foreground transition-colors duration-200 hover:bg-secondary hover:text-foreground" aria-label="返回雷達"><IconArrowLeft size={17} /></a>
-              <div className="min-w-0">
+              <div className="min-w-0 pt-1.5">
                 <div data-testid="stock-primary-row" className="min-w-0">
-                  <h1 data-testid="stock-identity-line" aria-label={`${data.id} ${data.name}`} className="flex min-w-0 flex-wrap items-baseline gap-2 font-extrabold leading-tight tracking-[-0.02em]">
+                  <h1 data-testid="stock-identity-line" aria-label={`${data.id} ${data.name}`} className="flex min-w-0 flex-wrap items-baseline gap-2.5 font-extrabold leading-tight tracking-[-0.02em]">
                     <span className="num shrink-0 text-[14px] text-muted-foreground">{data.id}</span>
                     <span data-testid="stock-name" className="min-w-0 break-words text-[21px] text-foreground">{data.name}</span>
                   </h1>
-                  <div data-testid="stock-price" className="mt-0.5 flex min-w-0 items-center gap-1.5 whitespace-nowrap">
+                  <div data-testid="stock-price" className="mt-1 flex min-w-0 items-center gap-1.5 whitespace-nowrap">
                     <span className={cn("num shrink-0 text-[18px] font-extrabold leading-none tracking-[-0.03em]", CHG_TEXT[cls])}>{last.c.toLocaleString("zh-TW")}</span>
                     <span data-testid="stock-change" className={cn("num rounded-full px-1 py-px text-[11px] font-bold leading-tight", CHG_BADGE[cls])}>{priceChangeCopy}</span>
                   </div>
                 </div>
-                <p data-testid="stock-metadata" className="mt-1 min-w-0 break-words whitespace-normal text-[13px] leading-5 text-muted-foreground">{MARKET_LABEL[data.market] ?? data.market}{data.industry ? ` · ${data.industry}` : ""}</p>
+                <p data-testid="stock-metadata" className="mt-1.5 min-w-0 break-words whitespace-normal text-[13px] leading-5">
+                  <span data-testid="stock-market-label" className="font-semibold text-[color:var(--accent-2)]">{marketLabel}</span>
+                  {data.industry ? <span className="text-muted-foreground"> · {data.industry}</span> : null}
+                </p>
               </div>
             </div>
             {activeThemes.length > 0 && (
@@ -190,24 +196,27 @@ function StockView() {
               </div>
             )}
           </header>
-          <StockDecisionHeader data={data} close={last.c} className="mt-auto mb-0 min-h-0 flex-1" />
+          <StockDecisionHeader data={data} className="mt-auto mb-0 min-h-0 flex-1" />
         </div>
-        <section data-testid="stock-market-summary" className="flex min-h-full min-w-0 flex-col justify-between px-0.5" aria-label={`行情摘要，資料日 ${last.t}`}>
+        <section data-testid="stock-market-summary" className="flex min-h-full min-w-0 flex-col px-0.5" aria-label={`行情摘要，資料日 ${last.t}`}>
           <div data-testid="stock-watchlist" className="inline-flex size-11 shrink-0 items-center justify-center self-end">
             <WatchlistButton stockId={data.id} size={20} />
           </div>
-          <div className="min-w-0">
-          <p className="mb-2 text-[11.5px] font-medium text-muted-foreground">行情 {last.t}</p>
-          <dl className="grid gap-y-1.5 text-[12px]">
-            {marketRows.map(({ key, label, value, className, glyph }) => (
-              <div key={key} data-testid={`stock-market-${key}`} className="flex min-w-0 items-baseline justify-between gap-2">
-                <dt className="shrink-0 text-muted-foreground">{label}</dt>
-                <dd className={cn("num truncate text-right font-bold", className)} title={value}>
-                  {glyph && <span aria-hidden="true">{glyph} </span>}{value}
-                </dd>
-              </div>
-            ))}
-          </dl>
+          <div className="mt-auto flex min-h-0 flex-1 flex-col justify-end gap-2">
+            <div className="min-w-0">
+              <p className="mb-2 text-[11.5px] font-medium text-muted-foreground">行情 {last.t}</p>
+              <dl className="grid gap-y-1.5 text-[12px]">
+                {marketRows.map(({ key, label, value, className, glyph }) => (
+                  <div key={key} data-testid={`stock-market-${key}`} className="flex min-w-0 items-baseline justify-between gap-2">
+                    <dt className="shrink-0 text-muted-foreground">{label}</dt>
+                    <dd className={cn("num truncate text-right font-bold", className)} title={value}>
+                      {glyph ? <span aria-hidden="true">{glyph} </span> : null}{value}
+                    </dd>
+                  </div>
+                ))}
+              </dl>
+            </div>
+            <StockPriceTargets close={last.c} watchPrice={watchPrice} stopPrice={stopPrice} />
           </div>
         </section>
       </div>
@@ -443,58 +452,72 @@ function BasicInfoPanel({ data, quoteDate }: { data: StockJson; quoteDate: strin
   );
 }
 
-/** IA-2 + F3: Decision Header — 固定展開，理由 pills 與觀察/失效價一次呈現 */
+/** 觀察／失效價 — 置於右欄行情摘要下方 */
+function StockPriceTargets({
+  close,
+  watchPrice,
+  stopPrice,
+  className,
+}: {
+  close: number;
+  watchPrice?: number | null;
+  stopPrice?: number | null;
+  className?: string;
+}) {
+  const distPct = (price: number, target: number) =>
+    ((price - target) / Math.abs(target)) * 100;
+
+  if (watchPrice == null && stopPrice == null) return null;
+
+  return (
+    <div data-testid="stock-price-targets" className={cn("flex min-w-0 flex-col gap-1", className)}>
+      {watchPrice != null && (
+        <div className="flex min-w-0 items-baseline justify-between gap-2 text-[11px]">
+          <span className="shrink-0 text-[color:var(--accent-2)]">觀察</span>
+          <span className="num min-w-0 truncate text-right font-bold text-[color:var(--accent-2)]">
+            {watchPrice.toFixed(2)}
+            <span className="ml-1 font-medium text-muted-foreground">
+              ({distPct(close, watchPrice) > 0 ? "+" : ""}{distPct(close, watchPrice).toFixed(1)}%)
+            </span>
+          </span>
+        </div>
+      )}
+      {stopPrice != null && (
+        <div className="flex min-w-0 items-baseline justify-between gap-2 text-[11px]">
+          <span className={cn("shrink-0", distPct(close, stopPrice) < 5 ? "text-destructive" : "text-up")}>失效</span>
+          <span className={cn(
+            "num min-w-0 truncate text-right font-bold",
+            distPct(close, stopPrice) < 5 ? "text-destructive" : "text-up",
+          )}>
+            {stopPrice.toFixed(2)}
+            <span className={cn("ml-1 font-medium text-muted-foreground", distPct(close, stopPrice) < 5 && "text-destructive/80")}>
+              ({distPct(close, stopPrice) > 0 ? "+" : ""}{distPct(close, stopPrice).toFixed(1)}%)
+            </span>
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** IA-2 + F3: Decision Header — 固定展開，僅分數與理由 pills */
 function StockDecisionHeader({
   data,
-  close,
   className,
 }: {
   data: StockJson;
-  close: number;
   className?: string;
 }) {
   const scores = data.scores;
   const reasons = (data.raw_reasons?.length ? data.raw_reasons : (data.reasons ?? []).map((text) => ({ text, code: undefined }))).slice(0, 3);
   const risks = (data.risks ?? []).slice(0, 2);
-  const watchPrice = scores?.watch_price;
-  const stopPrice = scores?.stop_price;
-
-  const distPct = (price: number, target: number) =>
-    ((price - target) / Math.abs(target)) * 100;
 
   const hasBranch = (scores?.branch ?? 0) > 0;
   const hasWarrant = (scores?.warrant ?? 0) > 0;
   const sourceLabel = hasBranch && hasWarrant ? "分點+權證" : hasBranch ? "分點" : hasWarrant ? "權證" : null;
   const hasPills = reasons.length > 0 || risks.length > 0 || (data.pocket_tags?.length ?? 0) > 0;
-  const hasPriceTargets = watchPrice != null || stopPrice != null;
 
   if (!scores && !reasons.length && !risks.length && !(data.pocket_tags?.length)) return null;
-
-  const priceTargetRow = hasPriceTargets ? (
-    <div className="flex min-w-0 flex-wrap gap-1 text-[10.5px]">
-      {watchPrice != null && (
-        <span className="inline-flex items-center gap-0.5 rounded border border-[color:var(--line)] px-1.5 py-px text-[color:var(--accent-2)]">
-          <span>觀察</span>
-          <span className="num font-bold">{watchPrice.toFixed(2)}</span>
-          <span className="text-muted-foreground">
-            ({distPct(close, watchPrice) > 0 ? "+" : ""}{distPct(close, watchPrice).toFixed(1)}%)
-          </span>
-        </span>
-      )}
-      {stopPrice != null && (
-        <span className={cn(
-          "inline-flex items-center gap-0.5 rounded border px-1.5 py-px",
-          distPct(close, stopPrice) < 5 ? "border-destructive/40 text-destructive" : "border-[color:var(--line)] text-up",
-        )}>
-          <span>失效</span>
-          <span className="num font-bold">{stopPrice.toFixed(2)}</span>
-          <span className={cn("text-muted-foreground", distPct(close, stopPrice) < 5 && "text-destructive")}>
-            ({distPct(close, stopPrice) > 0 ? "+" : ""}{distPct(close, stopPrice).toFixed(1)}%)
-          </span>
-        </span>
-      )}
-    </div>
-  ) : null;
 
   return (
     <div data-testid="stock-decision" className={cn("flex min-h-0 flex-col overflow-hidden rounded-[var(--r-md)] border border-border bg-card shadow-[var(--shadow-card)]", className)}>
@@ -509,20 +532,17 @@ function StockDecisionHeader({
           {sourceLabel && <span className="shrink-0 rounded bg-[color:var(--ink-2)]/10 px-1 py-px text-[10px] font-bold text-[color:var(--ink-2)]">{sourceLabel}</span>}
         </span>
       </div>
-      {(hasPriceTargets || hasPills) && (
-        <div className="flex min-h-0 flex-1 flex-col gap-1.5 border-t border-[color:var(--line)] px-2.5 py-2">
-          {priceTargetRow}
-          {hasPills && (
-            <div className="flex min-h-0 flex-1 flex-wrap content-start gap-1 overflow-y-auto [scrollbar-width:thin]">
-              {reasons.map((r, i) => (
-                <ReasonPill key={`reason-${i}`} code={r.code} text={r.text} />
-              ))}
-              <PocketBadges tags={data.pocket_tags} compact />
-              {risks.map((r, i) => (
-                <ReasonPill key={`risk-${i}`} text={r} risk />
-              ))}
-            </div>
-          )}
+      {hasPills && (
+        <div className="flex min-h-0 flex-1 flex-col border-t border-[color:var(--line)] px-2.5 py-2">
+          <div className="flex min-h-0 flex-1 flex-wrap content-start gap-1 overflow-y-auto [scrollbar-width:thin]">
+            {reasons.map((r, i) => (
+              <ReasonPill key={`reason-${i}`} code={r.code} text={r.text} />
+            ))}
+            <PocketBadges tags={data.pocket_tags} compact />
+            {risks.map((r, i) => (
+              <ReasonPill key={`risk-${i}`} text={r} risk />
+            ))}
+          </div>
         </div>
       )}
     </div>
