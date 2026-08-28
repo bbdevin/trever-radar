@@ -2,7 +2,7 @@
 
 ## 2026-08-28 最新交接
 
-- **個股首屏 UI 已調整，仍待最終部署後截圖**：375px 名稱與報價／漲跌同行；產業下的活躍題材為嚴格 `eligible + active + heat_date=quote_date` 的 2+N 琥珀 chips。順序改為 header → 預設收合但分數／首要判讀不消失的 Decision Header → 單一卡片行情 `dl` → 單列可點「基本資料」概況 → 固定八 tab。`BasicInfoPanel` 的公司資料／題材／庫藏股連續三 section 與所有地址／股務／來源／題材／庫藏股／集團資訊保持。正式站 DOM QA 曾抓到 `scrollIntoView` 讓初始頁面垂直偏移 189px，已改為只調 tablist 的水平 `scrollLeft`；`verify-mobile-stock.mjs` 已固定 375×812 並加初始頁首、同列、重疊／溢位、順序、收合與跳轉檢查。工作站缺獨立 Playwright；內建瀏覽器後續已成功取得 390×844 深色首屏與基本資料截圖，需在本次預設收合修正部署後重拍最終證據。未改 API／JSON／pipeline／schema／workflow／globals／KChart。
+- **個股首屏 UI 已部署並完成正式站 QA（HEAD `55beda9`）**：名稱與報價／漲跌同行；產業下的活躍題材為嚴格 `eligible + active + heat_date=quote_date` 的 2+N 琥珀 chips；Decision Header 預設收合但分數／首要判讀常駐；其後為單一卡片行情 `dl`、單列可點基本資料概況與固定八 tab。`BasicInfoPanel` 的公司資料／題材／庫藏股連續三 section 及地址／股務／來源／題材／庫藏股／集團資訊均保留。正式 QA 抓到 `scrollIntoView` 讓初始頁面垂直偏移 189px，已改為只調 tablist 水平 `scrollLeft`；複驗 `scrollY=0`、無水平 overflow、Decision 可展開／收合、概況實際觸控後選中基本資料且三 heading 可見。深／淺色與基本資料圖證據在 `design-qa.md`；使用者深色偏好已恢復。未改 API／JSON／pipeline／schema／workflow／globals／KChart。
 
 - 權證分點已完成安全 code-ready，**未碰正式 VPS／DB／cron／deploy**：新 `import-warrant-branch-trades --market all` 將 TWSE＋TPEx 當日有量有額的認購／認售、且標的是 active 普通股的權證合併抓取；ETF／指數、牛熊、未映射／inactive 標的排除。`--top` 是 cap，超出 fail closed、不偷裁；state JSON 原子記錄 ok／empty／error／pending，error 可 retry。既有 `backfill-warrant-branches` 可明確加 `--market all` 使用同一標的口徑；為相容正式 supervisor／舊手動指令，其預設仍是上市 Top 200，單一市場的 `--top` 仍為排序裁剪。
 - `daily-branches.sh` 已明列 legacy `--warrants 200`；因全市場獨立輪尚未啟用，17:40／22:00 暫時保留上市 Top 200，避免過渡期資料斷層，正式切換時才改 `0`。新增未排程 `daily-warrant-branches-poc.sh`（20GB free-space、DB/source lock、owned-only BF pause/resume、hard timeout、未完整不發布）。唯讀 VPS 實數：TWSE 16,225 + TPEx 3,856 = 20,081，sleep=1.0 約 6–8h；DB 約 4.7GB／free 7.6GB < 20GB，故未啟用任何正式 cron、未寫正式資料，下一步必先容量／1日、5日與三日 benchmark，並獲人工批准。
@@ -29,7 +29,7 @@ Codex Multi-Agent V2 執行偏好：Sol high 做整體架構／複雜跨模組�
 
 - **Done**: S4 V2 兩階段、S4 phase JSON／首頁標示；Armed A1 匯出契約；A2 綜合榜、S12 fail-closed 與 versioned strategy lifecycle contract；lifecycle v2 已依使用者決策將 S2/S5 恢復為 Shadow（JSON export targeted pytest **9 passed**）；docs/37 B+C+D 公司資訊、題材 freshness 與集團鑽取；E1 MOPS KB1 code／fixture／個股 UI；E2 唯讀 shadow contract。E1＋既有 pocket／JSON export pytest **45 passed、3 subtests passed**；完整 pipeline pytest **262 passed、58 subtests passed**；`npx tsc --noEmit` 與乾淨快取 `npm run build`（12/12 static pages、2/2 export）通過。repo 沒有 `npm run typecheck` script，勿把該指令記為驗收結果。目前工作站 `pipeline/.venv` 已依既有 `requirements.txt` 安裝 `supabase 2.31.0`；非阻塞環境債仍是 Node 20 未來不受 `@supabase/supabase-js` 支援。**16:58 正式 geo import/export 與 data Worker deploy 已完成；`import-themes`／`import-buybacks`、正式 DB 回算及 E1/E2 官方來源資料更新均未跑。**
 
-- **本輪個股 UI**：已完成「基本資料」tab 整併、題材列的分類日／來源更新／來源可稽核顯示，以及名稱區活躍題材嚴格顯示；題材 URL 以「查看來源」呈現，保留 href、完整 title 與 aria-label。`verify-mobile-stock.mjs` 會在 basic panel scope 驗證「分類日」「來源更新」，不假設 fixture 有來源連結，並從 Playwright `iPhone 13` device descriptor 動態輸出 viewport，不硬寫尺寸。工作站未安裝獨立 `playwright` 套件，但已用 Codex 內建瀏覽器在 390×838 實際驗證 tab 互動、三 section、無頁面橫向溢位與乾淨 console，視覺比對見根目錄 `design-qa.md`。Terra 回報的 `npm run build` 通過；主協調重跑時 Next build 長時間無輸出，未另列第二次成功。未改 API／JSON／pipeline／schema／評分／VPS／workflow，勿把這個 UI 調整視為正式資料 import/export 授權。
+- **2026-08-27 個股 UI（legacy QA 紀錄）**：當時已完成「基本資料」tab 整併、題材列的分類日／來源更新／來源可稽核顯示，以及名稱區活躍題材嚴格顯示；題材 URL 以「查看來源」呈現，保留 href、完整 title 與 aria-label。當時 verifier 使用 iPhone 13 descriptor／390×838；**目前已由 2026-08-28 最新交接取代，verifier 固定 375×812**。工作站仍未安裝獨立 `playwright`；最新正式站視覺與互動證據以本檔頂部及根目錄 `design-qa.md` 為準。未改 API／JSON／pipeline／schema／評分／VPS／workflow，勿把 UI 調整視為正式資料 import/export 授權。
 
 ## 勝率稽核後續（2026-08-27，唯讀）
 
