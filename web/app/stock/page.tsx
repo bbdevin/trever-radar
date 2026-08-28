@@ -302,6 +302,17 @@ function currentActiveThemes(recentThemeHeat: RecentThemeHeat[] | undefined, quo
   );
 }
 
+function absoluteHttpUrl(source: string | null) {
+  const trimmed = source?.trim();
+  if (!trimmed || !/^https?:\/\//i.test(trimmed)) return null;
+  try {
+    new URL(trimmed);
+    return trimmed;
+  } catch {
+    return null;
+  }
+}
+
 function themeStatusLabel(status: CompanyTheme["status"]) {
   if (status === "active") return "有效";
   if (status === "stale") return "過時";
@@ -377,26 +388,29 @@ function BasicInfoPanel({ data, quoteDate }: { data: StockJson; quoteDate: strin
         </div>
         {classifications.length ? (
           <div className="flex min-w-0 flex-wrap gap-2">
-            {classifications.map((theme) => (
-              <div key={theme.id} className="min-w-0 rounded-[var(--r-sm)] border border-[color:var(--line)] bg-secondary/35 px-2.5 py-2 text-xs">
-                <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-                  {theme.source ? (
-                    <a className="inline-flex min-h-11 max-w-full items-center font-semibold text-primary underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" href={theme.source} target="_blank" rel="noreferrer" aria-label={`查看 ${theme.name} 題材來源：${theme.source}`} title={`${theme.name} 題材來源：${theme.source}`}>
-                      {theme.name}
-                    </a>
-                  ) : <span className="font-semibold text-foreground">{theme.name}</span>}
-                  {theme.status && (
-                    <span className={theme.status === "active" ? "text-[color:var(--accent-2)]" : "text-muted-foreground"}>{themeStatusLabel(theme.status)}</span>
+            {classifications.map((theme) => {
+              const sourceUrl = absoluteHttpUrl(theme.source);
+              return (
+                <div key={theme.id} className="min-w-0 rounded-[var(--r-sm)] border border-[color:var(--line)] bg-secondary/35 px-2.5 py-2 text-xs">
+                  <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+                    {sourceUrl ? (
+                      <a className="inline-flex min-h-11 max-w-full items-center font-semibold text-primary underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" href={sourceUrl} target="_blank" rel="noreferrer" aria-label={`查看 ${theme.name} 題材來源：${sourceUrl}`} title={`${theme.name} 題材來源：${sourceUrl}`}>
+                        {theme.name}
+                      </a>
+                    ) : <span className="font-semibold text-foreground">{theme.name}</span>}
+                    {theme.status && (
+                      <span className={theme.status === "active" ? "text-[color:var(--accent-2)]" : "text-muted-foreground"}>{themeStatusLabel(theme.status)}</span>
+                    )}
+                  </div>
+                  {(theme.data_date || theme.source_updated_at) && (
+                    <p className="mt-0.5 flex flex-wrap gap-x-2 text-[10.5px] text-muted-foreground">
+                      {theme.data_date && <span title="分類日">分類 {theme.data_date}</span>}
+                      {theme.source_updated_at && <span title="來源更新日">更新 {theme.source_updated_at}</span>}
+                    </p>
                   )}
                 </div>
-                {(theme.data_date || theme.source_updated_at) && (
-                  <p className="mt-0.5 flex flex-wrap gap-x-2 text-[10.5px] text-muted-foreground">
-                    {theme.data_date && <span title="分類日">分類 {theme.data_date}</span>}
-                    {theme.source_updated_at && <span title="來源更新日">更新 {theme.source_updated_at}</span>}
-                  </p>
-                )}
-              </div>
-            ))}
+              );
+            })}
           </div>
         ) : <p className="text-sm text-muted-foreground">尚無題材分類資料。</p>}
         {recent.length > 0 ? (

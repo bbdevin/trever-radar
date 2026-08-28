@@ -80,7 +80,12 @@ try {
   const themeCopy = await themeSection.textContent();
   assert(!themeCopy?.includes("狀態未提供") && !themeCopy?.includes("分類日、來源更新與來源：資料未提供"), "題材 section 不應以缺值文案重複占版");
   const themeLinks = themeSection.getByRole("link");
-  if (await themeLinks.count()) {
+  const themeLinkCount = await themeLinks.count();
+  for (let i = 0; i < themeLinkCount; i += 1) {
+    const href = await themeLinks.nth(i).getAttribute("href");
+    assert(Boolean(href && /^https?:\/\//i.test(href)), "題材來源連結必須是絕對 http/https URL");
+  }
+  if (themeLinkCount) {
     const sourceLinkBox = await themeLinks.first().boundingBox();
     assert(sourceLinkBox && sourceLinkBox.height >= 44, "有來源的題材名稱連結未達 44px touch target");
   }
