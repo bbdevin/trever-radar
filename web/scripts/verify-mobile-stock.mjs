@@ -26,11 +26,11 @@ try {
   const identity = page.getByTestId("stock-identity-line");
   const primaryRow = page.getByTestId("stock-primary-row");
   const primaryRowBox = await primaryRow.boundingBox();
-  const watchlistButton = page.getByTestId("stock-watchlist").getByRole("button");
-  const watchlistBox = await watchlistButton.boundingBox();
+  const watchlistBox = await page.getByTestId("stock-watchlist").boundingBox();
   assert(await page.evaluate(() => window.scrollY <= 1), "初次載入被 active tab 自動垂直捲離頁首");
-  assert((await identity.textContent())?.trim() === "2330 台積電", "identity 第一列應精確呈現代號加名稱");
-  assert(primaryRowBox && watchlistBox && Math.abs(primaryRowBox.y - watchlistBox.y) < 1 && watchlistBox.height >= 44, "收藏按鈕必須與 identity 第一列同列且達 44px target");
+  assert((await identity.getAttribute("aria-label"))?.trim() === "2330 台積電", "identity 應以 aria-label 呈現代號加名稱");
+  assert(primaryRowBox && watchlistBox && watchlistBox.height >= 44, "收藏按鈕須達 44px touch target");
+  assert(primaryRowBox && watchlistBox && watchlistBox.y <= primaryRowBox.y + 4 && watchlistBox.x > primaryRowBox.x, "收藏按鈕應位於右上方");
   const nameSize = await page.getByTestId("stock-name").evaluate((element) => ({ scrollWidth: element.scrollWidth, clientWidth: element.clientWidth }));
   assert(nameSize.scrollWidth <= nameSize.clientWidth + 1, "fixture 股票名稱不應被裁切");
   const primaryRowOverflow = await primaryRow.evaluate((row) => row.scrollWidth > row.clientWidth + 1);
@@ -56,7 +56,7 @@ try {
   assert(judgmentStyle.whiteSpace !== "nowrap" && judgmentStyle.textOverflow !== "ellipsis" && judgmentStyle.scrollHeight <= judgmentStyle.clientHeight + 1, "收合態首要判讀不應 nowrap、ellipsis 或被裁切");
   const marketBox = await page.getByTestId("stock-market-summary").boundingBox();
   const chartTabBox = await page.getByTestId("stock-tab-chart").boundingBox();
-  assert(primaryRowBox && marketBox && chartTabBox && Math.abs(primaryRowBox.y - marketBox.y) < 20 && primaryRowBox.x < marketBox.x && marketBox.y < chartTabBox.y, "行情摘要未對齊名稱列、位於右欄，或 tabs 順序錯誤");
+  assert(primaryRowBox && marketBox && chartTabBox && watchlistBox && watchlistBox.y <= primaryRowBox.y + 4 && primaryRowBox.x < marketBox.x && marketBox.y < chartTabBox.y, "行情摘要未對齊右欄、收藏未在右上，或 tabs 順序錯誤");
   assert(await page.getByTestId("stock-market-summary").locator("dl").count() === 1, "行情摘要應為單一卡片 dl");
   for (const label of ["量", "額", "昨收", "開盤", "最高", "最低"]) {
     assert(await page.getByTestId("stock-market-summary").getByText(label, { exact: true }).isVisible(), `行情摘要缺少 ${label}`);

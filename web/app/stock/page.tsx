@@ -159,15 +159,15 @@ function StockView() {
 
   return (
     <div className="min-w-0 max-w-full overflow-x-hidden">
-      <div data-testid="stock-context-grid" className="mb-2.5 grid min-w-0 grid-cols-[minmax(0,1.2fr)_minmax(8.25rem,0.8fr)] items-start gap-2.5 sm:grid-cols-[minmax(0,1fr)_minmax(14rem,0.72fr)]">
-        <div className="min-w-0">
+      <div data-testid="stock-context-grid" className="mb-2.5 grid min-w-0 grid-cols-[minmax(0,1.2fr)_minmax(8.25rem,0.8fr)] items-stretch gap-2.5 sm:grid-cols-[minmax(0,1fr)_minmax(14rem,0.72fr)]">
+        <div className="flex min-h-full min-w-0 flex-col">
           <header data-testid="stock-header" className="pb-2.5">
-            <div className="grid min-w-0 grid-cols-[2.75rem_minmax(0,1fr)_2.75rem] items-start gap-1">
+            <div className="grid min-w-0 grid-cols-[2.75rem_minmax(0,1fr)] items-start gap-1">
               <a href="/" className="inline-flex size-11 items-center justify-center rounded-full text-muted-foreground transition-colors duration-200 hover:bg-secondary hover:text-foreground" aria-label="返回雷達"><IconArrowLeft size={17} /></a>
               <div className="min-w-0">
                 <div data-testid="stock-primary-row" className="flex min-h-11 min-w-0 items-center">
-                  <h1 data-testid="stock-identity-line" className="flex min-w-0 items-baseline whitespace-nowrap font-extrabold leading-tight tracking-[-0.02em]">
-                    <span className="num shrink-0 text-[14px] text-muted-foreground">{data.id}{" "}</span>
+                  <h1 data-testid="stock-identity-line" aria-label={`${data.id} ${data.name}`} className="flex min-w-0 items-baseline gap-2 whitespace-nowrap font-extrabold leading-tight tracking-[-0.02em]">
+                    <span className="num shrink-0 text-[14px] text-muted-foreground">{data.id}</span>
                     <span data-testid="stock-name" className="min-w-0 flex-1 truncate text-[21px] text-foreground" title={data.name}>{data.name}</span>
                   </h1>
                 </div>
@@ -177,7 +177,6 @@ function StockView() {
                 </div>
                 <p data-testid="stock-metadata" className="mt-1 min-w-0 break-words whitespace-normal text-[13px] leading-5 text-muted-foreground">{MARKET_LABEL[data.market] ?? data.market}{data.industry ? ` · ${data.industry}` : ""}</p>
               </div>
-              <div data-testid="stock-watchlist" className="inline-flex size-11 items-center justify-center [&_[role=button]]:size-11"><WatchlistButton stockId={data.id} size={20} /></div>
             </div>
             {activeThemes.length > 0 && (
               <div className="mt-1 flex min-w-0 flex-wrap items-center gap-1.5 text-[11px]" aria-label="活躍題材">
@@ -191,9 +190,13 @@ function StockView() {
               </div>
             )}
           </header>
-          <StockDecisionHeader data={data} close={last.c} className="mb-0" />
+          <StockDecisionHeader data={data} close={last.c} className="mt-auto mb-0" />
         </div>
-        <section data-testid="stock-market-summary" className="mt-3.5 min-w-0 rounded-[var(--r-md)] border border-border bg-card px-2.5 py-2.5" aria-label={`行情摘要，資料日 ${last.t}`}>
+        <section data-testid="stock-market-summary" className="flex min-h-full min-w-0 flex-col justify-between px-0.5" aria-label={`行情摘要，資料日 ${last.t}`}>
+          <div data-testid="stock-watchlist" className="inline-flex size-11 shrink-0 items-center justify-center self-end">
+            <WatchlistButton stockId={data.id} size={20} />
+          </div>
+          <div className="min-w-0">
           <p className="mb-2 text-[11.5px] font-medium text-muted-foreground">行情 {last.t}</p>
           <dl className="grid gap-y-1.5 text-[12px]">
             {marketRows.map(({ key, label, value, className, glyph }) => (
@@ -205,6 +208,7 @@ function StockView() {
               </div>
             ))}
           </dl>
+          </div>
         </section>
       </div>
       <div className="sticky top-0 z-20 -mx-1 mb-2.5 flex min-w-0 flex-col gap-2 bg-background/95 px-1 py-1.5 backdrop-blur-sm md:static md:mx-0 md:bg-transparent md:px-0 md:py-0 md:backdrop-blur-none md:flex-row md:flex-wrap md:items-center md:gap-2.5">
