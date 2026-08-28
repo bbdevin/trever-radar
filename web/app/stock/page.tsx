@@ -140,8 +140,8 @@ function StockView() {
   const activeThemes = currentActiveThemes(data.recent_theme_heat, last.t);
   const priceDelta = prev == null ? null : Math.round((last.c - prev.c) * 100) / 100;
   const priceChangeCopy = priceDelta == null
-    ? "—（—）"
-    : `${priceDelta > 0 ? "▲" : priceDelta < 0 ? "▼" : "—"}${Math.abs(priceDelta).toLocaleString("zh-TW", { maximumFractionDigits: 2 })}（${priceDelta > 0 ? "+" : priceDelta < 0 ? "-" : ""}${Math.abs(chg ?? 0).toFixed(2)}%）`;
+    ? "—(—)"
+    : `${priceDelta > 0 ? "▲" : priceDelta < 0 ? "▼" : "—"}${Math.abs(priceDelta).toLocaleString("zh-TW", { maximumFractionDigits: 2 })}(${priceDelta > 0 ? "+" : priceDelta < 0 ? "-" : ""}${Math.abs(chg ?? 0).toFixed(2)}%)`;
   const quoteTone = (price: number) => {
     if (prev == null) return { glyph: "—", className: "text-foreground" };
     if (price > prev.c) return { glyph: "▲", className: "text-up" };
@@ -171,9 +171,9 @@ function StockView() {
                     <span data-testid="stock-name" className="min-w-0 flex-1 truncate text-[21px] text-foreground" title={data.name}>{data.name}</span>
                   </h1>
                 </div>
-                <div data-testid="stock-price" className="flex min-w-0 items-center gap-1 whitespace-nowrap">
+                <div data-testid="stock-price" className="flex min-w-0 items-center gap-0.5 whitespace-nowrap">
                   <span className={cn("num shrink-0 text-[18px] font-extrabold leading-none tracking-[-0.03em]", CHG_TEXT[cls])}>{last.c.toLocaleString("zh-TW")}</span>
-                  <span data-testid="stock-change" className={cn("num min-w-0 rounded-full px-1 py-0.5 text-[11px] font-bold", CHG_BADGE[cls])}>{priceChangeCopy}</span>
+                  <span data-testid="stock-change" className={cn("num min-w-0 rounded-full px-0.5 py-0.5 text-[11px] font-bold", CHG_BADGE[cls])}>{priceChangeCopy}</span>
                 </div>
                 <p data-testid="stock-metadata" className="mt-1 min-w-0 break-words whitespace-normal text-[13px] leading-5 text-muted-foreground">{MARKET_LABEL[data.market] ?? data.market}{data.industry ? ` · ${data.industry}` : ""}</p>
               </div>

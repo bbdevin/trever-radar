@@ -36,7 +36,7 @@ try {
   const primaryRowOverflow = await primaryRow.evaluate((row) => row.scrollWidth > row.clientWidth + 1);
   assert(!primaryRowOverflow, "股票名稱／報價主列發生水平溢位");
   const priceCopy = (await page.getByTestId("stock-price").textContent())?.trim() ?? "";
-  assert(/^[\d,.]+[▲▼—]/.test(priceCopy) && /（(?:[+-]?\d+(?:\.\d+)?%|—)）$/.test(priceCopy), "報價列必須含絕對漲跌 glyph 與括號百分比");
+  assert(/^[\d,.]+[▲▼—]/.test(priceCopy) && /\((?:[+-]?\d+(?:\.\d+)?%|—)\)$/.test(priceCopy) && !/[（）]/.test(priceCopy), "報價列必須含絕對漲跌 glyph 與半形括號百分比");
   const priceOverflow = await page.getByTestId("stock-price").evaluate((element) => element.scrollWidth > element.clientWidth + 1);
   assert(!priceOverflow, "報價數字不得在 375px 溢位或換行");
   const metadataStyle = await page.getByTestId("stock-metadata").evaluate((element) => {
