@@ -25,6 +25,7 @@ try {
   // 1) 手機首屏資訊順序：名稱與報價同行，Decision 首要判讀、行情摘要、概況、tabs 依序可達。
   const nameBox = await page.getByTestId("stock-name").boundingBox();
   const priceBox = await page.getByTestId("stock-price").boundingBox();
+  assert(await page.evaluate(() => window.scrollY <= 1), "初次載入被 active tab 自動垂直捲離頁首");
   assert(nameBox && priceBox && Math.abs(nameBox.y - priceBox.y) < 20, "股票名稱與股價／漲跌未在同一主列");
   assert(nameBox && priceBox && nameBox.x + nameBox.width <= priceBox.x + 1, "股票名稱與報價區互相重疊");
   const primaryRowOverflow = await page.getByTestId("stock-primary-row").evaluate((row) => row.scrollWidth > row.clientWidth + 1);

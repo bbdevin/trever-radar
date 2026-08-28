@@ -85,7 +85,11 @@ function StockView() {
   }, [data, tabParam]);
 
   useEffect(() => {
-    activeTabRef.current?.scrollIntoView({ behavior: "auto", block: "nearest", inline: "center" });
+    const tab = activeTabRef.current;
+    const tabList = tab?.parentElement;
+    if (!tab || !tabList) return;
+    const left = tab.offsetLeft - (tabList.clientWidth - tab.offsetWidth) / 2;
+    tabList.scrollTo({ left: Math.max(0, left), behavior: "auto" });
   }, [view]);
 
   const visibleDays = useMemo(() => {
