@@ -22,22 +22,32 @@ const page = await context.newPage();
 try {
   await page.goto(`${BASE}/stock?id=2330`, { waitUntil: "networkidle", timeout: 30000 });
 
-  // 1) 手機首屏：名稱／報價同行，左欄 header + Decision，右欄行情對齊名稱列。
-  const nameBox = await page.getByTestId("stock-name").boundingBox();
-  const priceBox = await page.getByTestId("stock-price").boundingBox();
+  // 1) 手機首屏：返回／identity／收藏三欄；報價與 metadata 置於 identity 下方。
+  const identity = page.getByTestId("stock-identity-line");
+  const primaryRow = page.getByTestId("stock-primary-row");
+  const primaryRowBox = await primaryRow.boundingBox();
+  const watchlistButton = page.getByTestId("stock-watchlist").getByRole("button");
+  const watchlistBox = await watchlistButton.boundingBox();
   assert(await page.evaluate(() => window.scrollY <= 1), "初次載入被 active tab 自動垂直捲離頁首");
-  assert(nameBox && priceBox && Math.abs(nameBox.y - priceBox.y) < 20, "股票名稱與股價／漲跌未在同一主列");
-  assert(nameBox && priceBox && nameBox.x + nameBox.width <= priceBox.x + 1, "股票名稱與報價區互相重疊");
-  assert(nameBox && priceBox && priceBox.x - (nameBox.x + nameBox.width) <= 12, "短名稱與報價未緊鄰");
+  assert((await identity.textContent())?.trim() === "2330 台積電", "identity 第一列應精確呈現代號加名稱");
+  assert(primaryRowBox && watchlistBox && Math.abs(primaryRowBox.y - watchlistBox.y) < 1 && watchlistBox.height >= 44, "收藏按鈕必須與 identity 第一列同列且達 44px target");
   const nameSize = await page.getByTestId("stock-name").evaluate((element) => ({ scrollWidth: element.scrollWidth, clientWidth: element.clientWidth }));
   assert(nameSize.scrollWidth <= nameSize.clientWidth + 1, "fixture 股票名稱不應被裁切");
-  const primaryRowOverflow = await page.getByTestId("stock-primary-row").evaluate((row) => row.scrollWidth > row.clientWidth + 1);
+  const primaryRowOverflow = await primaryRow.evaluate((row) => row.scrollWidth > row.clientWidth + 1);
   assert(!primaryRowOverflow, "股票名稱／報價主列發生水平溢位");
+  const priceCopy = (await page.getByTestId("stock-price").textContent())?.trim() ?? "";
+  assert(/^[\d,.]+[▲▼—]/.test(priceCopy) && /（(?:[+-]?\d+(?:\.\d+)?%|—)）$/.test(priceCopy), "報價列必須含絕對漲跌 glyph 與括號百分比");
+  const priceOverflow = await page.getByTestId("stock-price").evaluate((element) => element.scrollWidth > element.clientWidth + 1);
+  assert(!priceOverflow, "報價數字不得在 375px 溢位或換行");
   const metadataStyle = await page.getByTestId("stock-metadata").evaluate((element) => {
     const style = getComputedStyle(element);
-    return { whiteSpace: style.whiteSpace, textOverflow: style.textOverflow, overflow: style.overflow, scrollHeight: element.scrollHeight, clientHeight: element.clientHeight };
+    return { copy: element.textContent, whiteSpace: style.whiteSpace, textOverflow: style.textOverflow, overflow: style.overflow, scrollHeight: element.scrollHeight, clientHeight: element.clientHeight };
   });
-  assert(metadataStyle.whiteSpace !== "nowrap" && metadataStyle.textOverflow !== "ellipsis" && metadataStyle.overflow !== "hidden" && metadataStyle.scrollHeight <= metadataStyle.clientHeight + 1, "股票 metadata 不應 truncate 或被裁切");
+  assert(!metadataStyle.copy?.includes("2330") && metadataStyle.whiteSpace !== "nowrap" && metadataStyle.textOverflow !== "ellipsis" && metadataStyle.overflow !== "hidden" && metadataStyle.scrollHeight <= metadataStyle.clientHeight + 1, "股票 metadata 應完整呈現市場／產業且不含代號");
+  for (const testId of ["stock-header", "stock-context-grid"]) {
+    const hasOverflow = await page.getByTestId(testId).evaluate((element) => element.scrollWidth > element.clientWidth + 1);
+    assert(!hasOverflow, `${testId} 發生水平溢位`);
+  }
   assert(await page.getByTestId("stock-primary-judgment").isVisible(), "Decision Header 缺少首要判讀");
   const judgmentStyle = await page.getByTestId("stock-primary-judgment").evaluate((element) => {
     const style = getComputedStyle(element);
@@ -46,7 +56,7 @@ try {
   assert(judgmentStyle.whiteSpace !== "nowrap" && judgmentStyle.textOverflow !== "ellipsis" && judgmentStyle.scrollHeight <= judgmentStyle.clientHeight + 1, "收合態首要判讀不應 nowrap、ellipsis 或被裁切");
   const marketBox = await page.getByTestId("stock-market-summary").boundingBox();
   const chartTabBox = await page.getByTestId("stock-tab-chart").boundingBox();
-  assert(nameBox && marketBox && chartTabBox && Math.abs(nameBox.y - marketBox.y) < 20 && nameBox.x < marketBox.x && marketBox.y < chartTabBox.y, "行情摘要未對齊名稱列、位於右欄，或 tabs 順序錯誤");
+  assert(primaryRowBox && marketBox && chartTabBox && Math.abs(primaryRowBox.y - marketBox.y) < 20 && primaryRowBox.x < marketBox.x && marketBox.y < chartTabBox.y, "行情摘要未對齊名稱列、位於右欄，或 tabs 順序錯誤");
   assert(await page.getByTestId("stock-market-summary").locator("dl").count() === 1, "行情摘要應為單一卡片 dl");
   for (const label of ["量", "額", "昨收", "開盤", "最高", "最低"]) {
     assert(await page.getByTestId("stock-market-summary").getByText(label, { exact: true }).isVisible(), `行情摘要缺少 ${label}`);
