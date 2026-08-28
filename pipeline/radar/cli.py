@@ -107,7 +107,23 @@ def cmd_seed_branches(_args):
 def cmd_import_branch_trades(args):
     from .importer import import_branch_trades
     ids = args.ids.split(",") if args.ids else None
-    import_branch_trades(args.date, args.top, ids, sleep_s=args.sleep)
+    import_branch_trades(args.date, args.top, ids, warrants=args.warrants, sleep_s=args.sleep)
+
+
+def cmd_import_warrant_branch_trades(args):
+    from .importer import import_warrant_branch_trades
+
+    info = import_warrant_branch_trades(
+        date=args.date,
+        market=args.market,
+        top=args.top,
+        sleep_s=args.sleep,
+        max_minutes=args.max_minutes,
+        state_file=args.state_file,
+        dry_run=args.dry_run,
+    )
+    if not args.dry_run and not info["complete"]:
+        raise SystemExit("warrant branch collection incomplete; state retained for retry")
 
 
 def cmd_backfill_branches(args):
@@ -117,7 +133,11 @@ def cmd_backfill_branches(args):
 
 def cmd_backfill_warrant_branches(args):
     from .importer import backfill_warrant_branches
-    backfill_warrant_branches(args.top, args.days, args.sleep, args.max_minutes)
+    info = backfill_warrant_branches(
+        args.top, args.days, args.sleep, args.max_minutes, args.market
+    )
+    if info["stopped"]:
+        raise SystemExit(f"warrant branch backfill incomplete: {info['stopped']}")
 
 
 def cmd_import_tdcc(args):
@@ -369,8 +389,27 @@ def main(argv=None):
     bt.add_argument("--top", type=int, default=80,
                     help="score-pool size; 0 = all type=stock with quotes that day (no ETF)")
     bt.add_argument("--ids", default=None, help="comma list overrides pool")
+    bt.add_argument("--warrants", type=int, default=200,
+                    help="legacy bundled warrant pool; 0 disables it (use import-warrant-branch-trades for full market)")
     bt.add_argument("--sleep", type=float, default=1.2, help="overall request interval")
     bt.set_defaults(fn=cmd_import_branch_trades)
+
+    wbt = sub.add_parser(
+        "import-warrant-branch-trades",
+        help="fetch one day's full eligible TWSE/TPEx warrant branch pool (resumable)",
+    )
+    wbt.add_argument("--date", default=None, help="YYYYMMDD; default latest warrant_daily date")
+    wbt.add_argument("--market", choices=("twse", "tpex", "all"), default="all")
+    wbt.add_argument("--top", type=int, default=25_000,
+                     help="hard safety cap; excess targets fail closed, never truncate")
+    wbt.add_argument("--sleep", type=float, default=1.0, help="overall request interval")
+    wbt.add_argument("--max-minutes", type=int, default=None,
+                     help="stop incomplete with nonzero exit; state file makes next run resume")
+    wbt.add_argument("--state-file", default=None,
+                     help="atomic JSON resume file (default data/warrant-branch-state-YYYY-MM-DD.json)")
+    wbt.add_argument("--dry-run", action="store_true",
+                     help="report exact target counts only; do not fetch or write")
+    wbt.set_defaults(fn=cmd_import_warrant_branch_trades)
 
     bb = sub.add_parser("backfill-branches",
                         help="march-back branch history (resumable, mirror-rotated)")
@@ -382,7 +421,9 @@ def main(argv=None):
 
     bwb = sub.add_parser("backfill-warrant-branches",
                          help="march-back warrant branch history (resumable)")
-    bwb.add_argument("--top", type=int, default=200, help="top warrants by latest turnover")
+    bwb.add_argument("--market", choices=("twse", "tpex", "all"), default="twse")
+    bwb.add_argument("--top", type=int, default=200,
+                     help="single-market top-N; with --market all, a fail-closed per-day safety cap")
     bwb.add_argument("--days", type=int, default=120, help="trading days depth (half year)")
     bwb.add_argument("--sleep", type=float, default=1.2)
     bwb.add_argument("--max-minutes", type=int, default=None, help="stop cleanly after N minutes")

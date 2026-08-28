@@ -76,6 +76,16 @@ acquire_db_lock() {
   fi
 }
 
+# MoneyDJ/Fubon mirrors are a shared external source, independent of SQLite's
+# writer lock.  General-stock and warrant jobs must never interleave requests.
+acquire_branch_source_lock() {
+  exec 8>/tmp/radar-branch-source.lock
+  if ! flock -n 8; then
+    notify_skip "分點來源鎖占用，本輪略過（避免與權證／股票分點交錯抓取）"
+    exit 0
+  fi
+}
+
 # 開輪先拉 code(策略邏輯在程式碼裡,舊碼算出舊 reasons——既有教訓);
 # 映像重 build 靠 docker layer cache,requirements.txt 沒變時近零成本。
 # core.filemode=false:VPS 上 chmod +x script 不會被 git 當成「本地修改」擋 pull
@@ -110,6 +120,21 @@ radar() {
     -v "$REPO/data":/app/data \
     -v "$REPO/web/public/data":/app/web/public/data \
     radar-pipeline python -m radar "$@"
+}
+
+# GNU timeout cannot execute the shell function above.  Wrap the real Docker
+# invocation so the hard limit is applied to the actual collection container.
+radar_timeout() {
+  local hard_timeout_seconds="$1"
+  shift
+  timeout --signal=TERM --kill-after=30s "${hard_timeout_seconds}s" \
+    docker run --rm \
+      -e RADAR_FINMIND_TOKEN="${RADAR_FINMIND_TOKEN:-}" \
+      -e FUGLE_API_KEY="${FUGLE_API_KEY:-}" \
+      -v "$REPO/pipeline":/app/pipeline \
+      -v "$REPO/data":/app/data \
+      -v "$REPO/web/public/data":/app/web/public/data \
+      radar-pipeline python -m radar "$@"
 }
 
 # JSON 上線:wrangler 讀 vps/.env 的 CLOUDFLARE_API_TOKEN/ACCOUNT_ID(已 set -a 載入),
@@ -172,4 +197,25 @@ pause_bf_containers() {
 unpause_bf_containers() {
   local c
   for c in $BF_CONTAINERS; do docker unpause "$c" 2>/dev/null || true; done
+}
+
+# Only resume containers this script actually paused.  This preserves a quiet
+# window/manual pause and avoids accidentally unpausing another operator's bf.
+BF_PAUSED_BY_US=""
+pause_bf_for_exclusive_writer() {
+  local c running paused
+  for c in $BF_CONTAINERS; do
+    running=$(docker inspect -f '{{.State.Running}}' "$c" 2>/dev/null || true)
+    paused=$(docker inspect -f '{{.State.Paused}}' "$c" 2>/dev/null || true)
+    if [ "$running" = "true" ] && [ "$paused" != "true" ]; then
+      docker pause "$c" >/dev/null
+      BF_PAUSED_BY_US="$BF_PAUSED_BY_US $c"
+    fi
+  done
+}
+
+resume_bf_paused_by_us() {
+  local c
+  for c in $BF_PAUSED_BY_US; do docker unpause "$c" 2>/dev/null || true; done
+  BF_PAUSED_BY_US=""
 }

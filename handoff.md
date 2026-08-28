@@ -1,6 +1,10 @@
-# Handoff — 2026-08-28（個股資訊補強；權證 detail／日更順序已修）
+# Handoff — 2026-08-28（個股資訊補強；權證全市場分點 code-ready）
 
 ## 2026-08-28 最新交接
+
+- 權證分點已完成安全 code-ready，**未碰正式 VPS／DB／cron／deploy**：新 `import-warrant-branch-trades --market all` 將 TWSE＋TPEx 當日有量有額的認購／認售、且標的是 active 普通股的權證合併抓取；ETF／指數、牛熊、未映射／inactive 標的排除。`--top` 是 cap，超出 fail closed、不偷裁；state JSON 原子記錄 ok／empty／error／pending，error 可 retry。既有 `backfill-warrant-branches` 可明確加 `--market all` 使用同一標的口徑；為相容正式 supervisor／舊手動指令，其預設仍是上市 Top 200，單一市場的 `--top` 仍為排序裁剪。
+- `daily-branches.sh` 已明列 legacy `--warrants 200`；因全市場獨立輪尚未啟用，17:40／22:00 暫時保留上市 Top 200，避免過渡期資料斷層，正式切換時才改 `0`。新增未排程 `daily-warrant-branches-poc.sh`（20GB free-space、DB/source lock、owned-only BF pause/resume、hard timeout、未完整不發布）。唯讀 VPS 實數：TWSE 16,225 + TPEx 3,856 = 20,081，sleep=1.0 約 6–8h；DB 約 4.7GB／free 7.6GB < 20GB，故未啟用任何正式 cron、未寫正式資料，下一步必先容量／1日、5日與三日 benchmark，並獲人工批准。
+- 本輪驗證：targeted pytest **12 passed**；完整 pipeline pytest **273 passed、58 subtests passed**；`compileall` 與 `git diff --check` 通過；PoC script 與 `lib.sh` 已透過 SSH stdin 交由 VPS `bash -n -s` 唯讀解析，兩者 exit 0（未 pull、未寫 DB、未動 cron）。
 
 - 個股 UI 已補開高低收、量額／資料日與 compact 公司概況；點概況切至既有「基本資料」一級 tab。完整公司地址、股務代理電話／地址、官方來源、題材 lifecycle／來源與庫藏股 MOPS 事實仍保留；活躍題材仍須 `eligible + active + heat_date=quote_date`，沒有放寬。
 - 個股權證分點不再被全市場 500 萬門檻清空：export 保留 `branches/warrant_branches.json`（全市場 `>=500萬`），另產出 `branches/warrant-stock-details/index.json` 與 `{stock_id}.json` 分片（個股 `>=100萬`）；100–499 萬只標「觀察」，500 萬以上「大額」。個股 code deploy 早於下一次資料 export 時會誠實 fallback 舊 500 萬檔。W5、首頁／Armed 2,000 萬與 `/branch` 均未改。

@@ -36,6 +36,9 @@ class BackfillWarrantBranchesDateScopedTests(unittest.TestCase):
     def _seed(self):
         eng = db.get_engine()
         with eng.begin() as conn:
+            conn.execute(schema.stocks.insert(), [
+                {"id": "2330", "name": "ordinary", "market": "twse", "type": "stock", "is_active": 1},
+            ])
             conn.execute(schema.daily_prices.insert(), [
                 {"stock_id": "2330", "date": OLD, "close": 100, "volume": 1, "turnover": 1},
                 {"stock_id": "2330", "date": NEW, "close": 100, "volume": 1, "turnover": 1},
@@ -43,8 +46,8 @@ class BackfillWarrantBranchesDateScopedTests(unittest.TestCase):
             # WA:只在 OLD 有交易(半年前發行、NEW 之前已下市) — 舊版全域清單抓不到它
             # WB:只在 NEW 有交易(NEW 才發行,OLD 那天根本不存在) — 舊版會誤用它去查 OLD
             conn.execute(schema.warrants.insert(), [
-                {"id": "WA", "name": "warrant-old", "market": "twse", "kind": "call"},
-                {"id": "WB", "name": "warrant-new", "market": "twse", "kind": "call"},
+                {"id": "WA", "name": "warrant-old", "market": "twse", "kind": "call", "stock_id": "2330"},
+                {"id": "WB", "name": "warrant-new", "market": "twse", "kind": "call", "stock_id": "2330"},
             ])
             conn.execute(schema.warrant_daily.insert(), [
                 {"warrant_id": "WA", "date": OLD, "close": 1, "volume": 1, "turnover": 1000},
@@ -72,6 +75,60 @@ class BackfillWarrantBranchesDateScopedTests(unittest.TestCase):
         self.assertIn("WB", fetched_ids, "NEW 日期應抓到當天真正在市的 WB")
         self.assertEqual(result["fetched"], 2)
         self.assertIsNone(result["stopped"])
+
+    def test_legacy_default_keeps_twse_top_n_limit(self):
+        with db.get_engine().begin() as conn:
+            conn.execute(schema.warrants.insert(), {
+                "id": "WC", "name": "warrant-higher-turnover", "market": "twse",
+                "kind": "put", "stock_id": "2330",
+            })
+            conn.execute(schema.warrant_daily.insert(), {
+                "warrant_id": "WC", "date": NEW, "close": 1,
+                "volume": 1, "turnover": 2000,
+            })
+
+        calls = []
+
+        def fake_fetch(stock_id, date, throttle=None):
+            calls.append(stock_id)
+            return []
+
+        with patch("radar.providers.fubon.fetch_branch_trades", side_effect=fake_fetch):
+            result = backfill_warrant_branches(top=1, days=1, sleep_s=0)
+
+        self.assertEqual(calls, ["WC"])
+        self.assertEqual(result["fetched"], 1)
+
+    def test_explicit_all_market_uses_top_as_fail_closed_cap(self):
+        with db.get_engine().begin() as conn:
+            conn.execute(schema.warrants.insert(), {
+                "id": "WC", "name": "warrant-higher-turnover", "market": "twse",
+                "kind": "put", "stock_id": "2330",
+            })
+            conn.execute(schema.warrant_daily.insert(), {
+                "warrant_id": "WC", "date": NEW, "close": 1,
+                "volume": 1, "turnover": 2000,
+            })
+
+        with self.assertRaisesRegex(RuntimeError, "refuse to silently truncate"):
+            backfill_warrant_branches(top=1, days=1, sleep_s=0, market="all")
+
+    def test_timeout_is_failure_and_import_log_is_error(self):
+        with patch("radar.importer.time.monotonic", side_effect=[0.0, 61.0]), \
+             patch("radar.providers.fubon.fetch_branch_trades") as fetch:
+            result = backfill_warrant_branches(
+                top=200, days=1, sleep_s=0, max_minutes=1
+            )
+
+        self.assertIsNotNone(result["stopped"])
+        fetch.assert_not_called()
+        with db.get_engine().connect() as conn:
+            row = conn.exec_driver_sql(
+                "SELECT status, error FROM import_logs "
+                "WHERE dataset='warrant_branch_hist' ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+        self.assertEqual(row[0], "error")
+        self.assertIn("time budget reached", row[1])
 
 
 if __name__ == "__main__":

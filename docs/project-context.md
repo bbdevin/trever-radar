@@ -72,7 +72,7 @@
 2. Laravel/PostgreSQL/VM 方案廢止,改 Python+SQLite+靜態 JSON(理由見 12 §3)。
 3. V1 不做盤中;V2 盤中 worker 常駐雲端伺服器仍不做,但 2026-07-12 改定案跑在使用者 VPS(docker+cron,非本機、非常駐服務,平日 08:50 啟動 13:35 自動收工),取代原「使用者本機」規劃(docs/24、`docs/vps_backfill_plan.md` Step 5)。
 4. W 底/頸線型態辨識不做,用「N 日新高/箱型上緣突破」替代。
-5. 權證分點僅抓上市權證熱門標的龍頭權證;上櫃權證無免費來源,不硬做。
+5. 權證分點來源為富邦／MoneyDJ `zco` 五鏡像，實測可抓上市與上櫃；全市場日抓程式已具備但**正式 cron／正式 DB 寫入未啟用**，須先通過容量與 runtime PoC（`docs/30`）。
 6. 前端無伺服器程式碼;登入 = 站內 Google OAuth + `app_profiles` 核准,資料門鎖 = `/data` Worker 驗 JWT(2026-08-20 WP-B7 完成,Cloudflare Access 已關;歷史設定見 `docs/21` §4 A3)。
 7. SQLite 為唯一真相;JSON 是產出物,可隨時重建。
 8. 首頁「綜合」榜使用 `daily_scores.final`;分點分/權證分/技術分/法人融資分已接入,題材分暫為 NULL 並自動重分配權重。

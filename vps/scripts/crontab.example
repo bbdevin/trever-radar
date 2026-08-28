@@ -15,6 +15,12 @@ CRON_TZ=Asia/Taipei
 20 21 * * 1-5  bash /home/huang/trever-radar/vps/scripts/daily-margin.sh      >> /home/huang/radar-cron.log 2>&1
 0  22 * * 1-5  bash /home/huang/trever-radar/vps/scripts/daily-branches.sh    >> /home/huang/radar-cron.log 2>&1
 
+# Disabled candidate — all-market TWSE+TPEx warrant branches need 6–8h at
+# sleep=1.0; VPS free space was only 7.6GB on 2026-08-28 (<20GB gate).
+# Enable only after 1/5-day + 3-trading-day PoC, capacity approval, and a
+# separately approved slot.  This PoC script never exports or deploys data.
+# 0 0 * * 2-6  bash /home/huang/trever-radar/vps/scripts/daily-warrant-branches-poc.sh >> /home/huang/radar-cron.log 2>&1
+
 # 深歷史增量(每日;已拉深自動跳過,近零請求)
 10 1 * * *     bash /home/huang/trever-radar/vps/scripts/data-backfill.sh  >> /home/huang/radar-cron.log 2>&1
 

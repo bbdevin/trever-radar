@@ -2,6 +2,12 @@
 
 > 單一進度真相。每完成一個里程碑就更新本檔。規格細節看各編號文件,別寫在這裡。
 
+## 2026-08-28 權證分點全市場 code-ready（未啟用）
+
+- 富邦／MoneyDJ `zco` 五鏡像可抓上市與上櫃權證，舊「上櫃無免費來源」說法已更正。`import-warrant-branch-trades --market all` 已以當日有量有額、認購／認售、普通股活躍標的組成合併池，ETF／指數排除；atomic state 會區分 ok／empty／error／pending，錯誤可續跑，cap 超限 fail closed。
+- `daily-branches.sh` 已把 legacy 權證數明列為 `--warrants 200`；全市場獨立輪未啟用前保留 17:40／22:00 上市 Top 200，避免權證分點資料斷層，正式切換時才同輪改為 `0`。新增 `daily-warrant-branches-poc.sh` 但未加正式 cron。2026-08-27 VPS 合格目標 20,081（TWSE 16,225 + TPEx 3,856），sleep=1.0 估 6–8h，DB 約 4.7GB／free 7.6GB < 20GB gate，因此**未 SSH 寫正式 DB、未跑 PoC、未 deploy**；需容量、1／5 日與三交易日 benchmark 人工確認後才可啟用。
+- 驗證：權證 targeted pytest **12 passed**；完整 pipeline pytest **273 passed、58 subtests passed**；`compileall`、`git diff --check` 通過；另把 PoC script 與 `lib.sh` 經 SSH stdin 交由 VPS `bash -n -s` 唯讀解析，兩者 exit 0（未 pull、未寫 DB、未動 cron）。
+
 ## 2026-08-28 個股資訊補強與權證更新修正
 
 - [x] 個股名稱／報價區補開高低收、量額與行情資料日；新增可切入既有「基本資料」tab 的 compact 公司概況（地區／股務代理／題材數／集團）。基本資料仍是「技術」左側的一級 tab，完整地址、代理電話／地址、官方來源、題材 lifecycle 與庫藏股事實均保留，未改回 bottom sheet 或內部分頁。

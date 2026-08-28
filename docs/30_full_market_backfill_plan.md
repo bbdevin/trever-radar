@@ -1,7 +1,7 @@
 # 30 WP-B6：全市場股票兩年＋上市／上櫃活躍權證合併半年回補
 
-> **狀態（2026-07-19）：範圍已確認，本次只完成規劃；程式與 VPS 腳本尚未依本版改完。**
-> 現有 `vps/scripts/wp-b6-backfill.sh` 仍只檢查／抓取上市權證，**在完成本文件 §8 的實作與驗收前不得正式開跑**。
+> **狀態（2026-08-28）：全市場日抓 importer／CLI、atomic resume state、disabled PoC script 與測試已 code-ready；正式 PoC、歷史回補、cron、正式 DB 寫入及 deploy 均未執行。**
+> VPS 唯讀實數：2026-08-27 當日 eligible TWSE 16,225 + TPEx 3,856 = 20,081；sleep=1.0 理論 5h35、實測估 6–8h；DB 約 4.7GB、free 7.6GB，低於本文件 20GB 閘門。因此不得正式開跑或加 active cron。
 > 正式執行仍須由使用者親自在 VPS 啟動；agent 不得自行部署、改 cron 或寫入正式 DB。
 
 ## 1. Confirmed Scope
@@ -292,20 +292,13 @@ Phase 2 必須具備：
 - 抽已發行滿 30／60／120 日權證驗歷史可用深度。
 - 通過條件：有效交易日樣本成功率、鏡像一致率與解析正確率均記錄落檔；失敗樣本須分類為未發行／零成交／來源缺資料／解析異常，不能籠統吞掉。
 
-### 8.2 WP-B6-I：Importer／CLI
+### 8.2 WP-B6-I：Importer／CLI（2026-08-28 code-ready，未對正式 DB 執行）
 
 預計修改：
 
-- `pipeline/radar/importer.py`
-  - 權證目標改 `market IN ('twse','tpex')`。
-  - 加活躍成交條件。
-  - 確保 `LIMIT` 前先合併市場。
-- `pipeline/radar/cli.py`
-  - 增加 `--market twse|tpex|all`，WP-B6 固定用 `all`。
-- `pipeline/tests/test_backfill_warrant_branches.py`
-  - 同一天上市＋上櫃都被選入。
-  - 零成交排除。
-  - 歷史逐日清單、斷點續傳、上限防截斷回歸測試。
+- `pipeline/radar/importer.py`：`import-warrant-branch-trades` 的目標嚴格為當日、`volume>0`、`turnover>0`、認購／認售、上市＋上櫃合併、且 `warrants.stock_id → stocks(type=stock,is_active=1)`；ETF／指數／牛熊與未映射標的排除。
+- `pipeline/radar/cli.py`：`--market twse|tpex|all`（預設 `all`）、`--top` 為 safety cap；目標數超過 cap 立即 fail closed，不以 SQL LIMIT 偷裁尾端。`--max-minutes` 非完整即 nonzero，state file 保留後續 retry。
+- `pipeline/tests/test_warrant_branch_import.py`：覆蓋上市＋上櫃同池、ETF／零成交排除、market filter、cap fail、ok/empty skip 與 error retry、CLI wiring；既有歷史逐日測試同步普通股標的條件。
 - `pipeline/radar/export/json_export.py` 與 `pipeline/tests/test_json_export.py`
   - 單日型使用當日正向 `net_amount ≥ 200 萬`；連買型使用連續正買超交易日 `streak_net_amount ≥ 200 萬`，不可改用買進總額或任意 120 日累計。
   - 測試同日買 250 萬／賣 240 萬（買超 10 萬）不列入。
@@ -320,15 +313,9 @@ Phase 2 必須具備：
   - 同一既有權證分點區新增「今日權證大戶／連買剛達標／持續觀察」，不另拆上市／上櫃頁。
   - 顯示觸發類型、連買天數、構成權證、估算剩餘張數、權證成本、標的進場均價、現價差與狀態警語。
 
-### 8.3 WP-B6-S：VPS 控制腳本
+### 8.3 WP-B6-S：VPS 控制腳本（2026-08-28 disabled candidate）
 
-預計修改 `vps/scripts/wp-b6-backfill.sh`：
-
-- `WARRANT_TOP` 由 `20000` 提高為 `30000`。
-- preflight 改查上市＋上櫃合計 120 日覆蓋與單日峰值。
-- phase／marker／ntfy 全部改成 all-markets 單一版本。
-- 加 PoC 外推容量、磁碟低水位與市場別計數。
-- 最終仍先 `integrity_check` 再 deploy。
+新增 `vps/scripts/daily-warrant-branches-poc.sh`，預設保持未排程：20GB free-space preflight、`/tmp/radar-db.lock`＋MoneyDJ source lock、僅恢復本次實際 pause 的 BF 容器、GNU hard timeout、atomic state file；不完整／error／timeout 一律 nonzero。PoC 即使完整成功也固定**不 export/deploy**；正式發布須等容量／runtime 驗收後另建經批准的 production script。`crontab.example` 僅放註解候選行與禁用原因。
 
 ### 8.4 WP-B6-D：文件同步
 

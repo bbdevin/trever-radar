@@ -11,7 +11,7 @@
 | 平日 14:10 | VPS `vps/scripts/daily-market.sh` | 日K+權證成交(14:00 公布)→ 當日權證彙總 → 指標增量(--days 5)→ 綜合分 →(週一)概念股更新 + **import-geo**(公司/分點地址,docs/27 G1) → export-json(**含 Fugle 當日 1 分 K spark_day**,約 +3–4 分鐘;同日後續輪走 `data/spark_day.json` 快取)→ `wrangler deploy`。**上櫃 dailyQuotes 14:10 常尚未出表**(empty,上市通常已好) |
 | 平日 15:00 | VPS `vps/scripts/daily-tpex-quotes.sh` | **上櫃日K 主補抓**(約 14:57 起才有完整表)+ 權證彙總 + 指標增量 + 分數 → export-json → deploy |
 | 平日 16:10 | VPS `vps/scripts/daily-insti.sh` | **上櫃日K 保底再抓** → 法人買賣超(16:00 公布) → 權證主檔(失敗不擋後續) → **當日權證重新彙總**（成功用新主檔；失敗沿用既有主檔）→ 指標增量 → 重算分數 → export-json → deploy。2026-08-28 修正原本「先彙總、後更新主檔」造成新權證未進當輪摘要的時序問題；時間仍為 16:10，不新增獨立 cron。 |
-| 平日 17:40 | VPS `vps/scripts/daily-branches.sh` | **再補日K** + 法人補抓 + 指標增量 + **分點全股票 `--top 0`(不含 ETF)+熱門上市權證** + 分點統計 + 分數 + 績效回填 → export-json → prune → deploy(**不含融資**:MI_MARGN 約 21:00 才產製,17:40 必空) |
+| 平日 17:40 | VPS `vps/scripts/daily-branches.sh` | **再補日K** + 法人補抓 + 指標增量 + **分點全股票 `--top 0`（不含 ETF）＋既有上市 Top 200 權證** + 分點統計 + 分數 + 績效回填 → export-json → prune → deploy。全市場獨立輪尚未啟用，先保留 Top 200 避免資料斷層；正式切換時才同輪改 `--warrants 0`。(**不含融資**:MI_MARGN 約 21:00 才產製,17:40 必空) |
 | 平日 21:20 | VPS `vps/scripts/daily-margin.sh` | **融資券主輪**(TWSE ~21:00 產製,約 20 分緩衝):再補日K + margin → 分數 → 績效 → export → deploy;若仍落後價格日則對齊再抓 + ntfy warn |
 | 平日 22:00 | VPS `vps/scripts/daily-branches.sh`(第二輪) | 同上分點補抓(冪等);刻意排在資券之後,避免搶 lock |
 | 每天 01:10 | VPS `vps/scripts/data-backfill.sh` | 深歷史增量(已拉深自動跳過 → 日常近零請求,只補新上市/缺漏) |
@@ -28,6 +28,7 @@
 
 - **共用機制**(`vps/scripts/lib.sh`):`flock -n /tmp/radar-db.lock` 互斥(搶不到=跳過本輪+ntfy 通知)、開輪先 `git pull --ff-only`+docker build(layer cache)、**失敗 ntfy High／日更成功繁中摘要**、非交易日靠 `NoDataError` 安全空跑。
 - **DB 續存**:VPS `data/radar.db` 為唯一常駐主本,無 Actions cache/release 續存鏈(已隨 WP-B3 退役)。
+- **權證全市場輪（2026-08-28 code-ready、未啟用）**:`daily-warrant-branches-poc.sh` 與 `import-warrant-branch-trades --market all` 將上市＋上櫃、當日有量有額、普通股標的的認購／認售合併成單一池；`--top` 是 fail-closed 安全上限而非截斷。VPS 實測可用空間 7.6GB，低於 20GB 閘門，且 sleep=1.0 約需 6–8 小時；正式 crontab 保持未加，未寫正式 DB、未 deploy。見 `docs/30`。
 - **舊 GitHub Actions 資料 workflow 已無觸發**:`daily-market/daily-insti/daily-branches/daily-margin/data-backfill.yml` 檔案仍在 repo(Cloudflare Worker trigger 的 cron 已清空,回滾窗保留),預定 ~2026-08-01 回滾窗結束後依 `docs/31` §9 刪除。
 - 本機開發:同一套 CLI,`python -m radar export-json` 後前端讀 `web/public/data/*.json`;本機 DB 僅開發用,**正式真相在 VPS**。
 

@@ -1,6 +1,10 @@
 """Daily import orchestration: fetch → DTO → upsert, with import_logs bookkeeping."""
+import hashlib
+import json
+import os
 import time
 from datetime import date as date_cls, datetime
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from . import config, schema
@@ -489,9 +493,213 @@ def backfill_branches(top: int = 300, days: int = 60, sleep_s: float = 1.2,
           f"{len(trade_dates)}, failed={failed}, stopped={stopped}", flush=True)
     return {"fetched": fetched, "failed": failed, "stopped": stopped}
 
-def backfill_warrant_branches(top: int = 200, days: int = 120, sleep_s: float = 1.2,
-                              max_minutes: int | None = None) -> dict:
-    """權證分點歷史 march-back:由最近交易日往回補 `days` 個交易日的前 `top` 大權證分點。"""
+WARRANT_BRANCH_DEFAULT_CAP = 25_000
+
+
+def _warrant_branch_targets(conn, date: str, market: str, cap: int,
+                            *, fail_on_cap: bool = True) -> list[str]:
+    """Return eligible warrant targets using explicit full/legacy semantics.
+
+    For the new all-market path, ``cap`` is deliberately a circuit breaker and
+    never a SQL ``LIMIT``.  Legacy single-market historical jobs retain their
+    long-standing top-N behavior so existing supervisor calls remain safe.
+    """
+    from sqlalchemy import text
+
+    if market not in {"twse", "tpex", "all"}:
+        raise ValueError("market must be one of: twse, tpex, all")
+    if cap <= 0:
+        raise ValueError("warrant branch cap (--top) must be positive")
+    markets = ("twse", "tpex") if market == "all" else (market,)
+    market_where = "w.market IN (" + ",".join(f":market{i}" for i in range(len(markets))) + ")"
+    params = {"date": date, "cap": cap}
+    params.update({f"market{i}": value for i, value in enumerate(markets)})
+    where = """
+        d.date = :date
+        AND COALESCE(d.volume, 0) > 0
+        AND COALESCE(d.turnover, 0) > 0
+        AND w.kind IN ('call', 'put')
+        AND s.type = 'stock' AND s.is_active = 1
+    """ + f" AND {market_where}"
+    if fail_on_cap:
+        count = conn.execute(text(f"""
+            SELECT COUNT(*)
+            FROM warrant_daily d
+            JOIN warrants w ON w.id = d.warrant_id
+            JOIN stocks s ON s.id = w.stock_id
+            WHERE {where}
+        """), params).scalar_one()
+        if count > cap:
+            raise RuntimeError(
+                f"warrant branch target count {count} exceeds safety cap {cap}; "
+                "refuse to silently truncate the full-market pool"
+            )
+    limit = "" if fail_on_cap else " LIMIT :cap"
+    return [r[0] for r in conn.execute(text(f"""
+        SELECT d.warrant_id
+        FROM warrant_daily d
+        JOIN warrants w ON w.id = d.warrant_id
+        JOIN stocks s ON s.id = w.stock_id
+        WHERE {where}
+        ORDER BY d.turnover DESC, d.warrant_id{limit}
+    """), params)]
+
+
+def _warrant_target_counts(conn, date: str, market: str) -> dict[str, int]:
+    """Read-only market split for logs/reports; uses the exact target predicate."""
+    counts = {"twse": 0, "tpex": 0}
+    for one_market in counts:
+        if market in ("all", one_market):
+            counts[one_market] = len(_warrant_branch_targets(conn, date, one_market, 10**9))
+    return counts
+
+
+def _atomic_json_write(path: Path, payload: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(payload, ensure_ascii=False, sort_keys=True), encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def _load_warrant_branch_state(path: Path, *, date: str, market: str,
+                               target_hash: str, targets: list[str]) -> dict:
+    try:
+        state = json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        state = {}
+    # A state file may never be reused across a different day or target pool.
+    # Resetting is safer than treating unknown old successes as current data.
+    if (state.get("version") != 1 or state.get("date") != date
+            or state.get("market") != market or state.get("target_hash") != target_hash):
+        state = {
+            "version": 1, "date": date, "market": market,
+            "target_hash": target_hash, "target_count": len(targets), "results": {},
+        }
+    state["updated_at"] = datetime.now(ZoneInfo(config.TZ)).isoformat(timespec="seconds")
+    return state
+
+
+def import_warrant_branch_trades(date: str | None = None, market: str = "all",
+                                 top: int = WARRANT_BRANCH_DEFAULT_CAP,
+                                 sleep_s: float = 1.0, max_minutes: int | None = None,
+                                 state_file: str | Path | None = None,
+                                 dry_run: bool = False) -> dict:
+    """Fetch one day's complete eligible TWSE/TPEx warrant branch pool.
+
+    The local JSON state file is intentionally outside SQLite: it gives
+    per-warrant ``ok``/``empty``/``error``/``pending`` resume semantics without
+    a production schema migration.  Only ok/empty are skipped on retry.
+    """
+    from sqlalchemy import text
+    from .providers import fubon
+
+    if max_minutes is not None and max_minutes <= 0:
+        raise ValueError("max_minutes must be positive when provided")
+    if dry_run:
+        # A report must not create the DB, run additive migrations, switch WAL,
+        # or update file metadata.  Reuse the project's physical SQLite mode=ro
+        # connection and fail if the configured DB does not already exist.
+        from .compute.branch_point_in_time_report import get_read_only_engine
+        engine = get_read_only_engine()
+    else:
+        init_db()
+        engine = get_engine()
+    if date is None:
+        with engine.connect() as conn:
+            date = conn.execute(text("SELECT MAX(date) FROM warrant_daily")).scalar()
+            if date is None:
+                raise RuntimeError("no warrant_daily date available")
+            date = date.replace("-", "")
+    iso_d = iso(date)
+    try:
+        with engine.connect() as conn:
+            targets = _warrant_branch_targets(conn, iso_d, market, top)
+            market_counts = _warrant_target_counts(conn, iso_d, market)
+    finally:
+        if dry_run:
+            engine.dispose()
+    target_hash = hashlib.sha256(
+        json.dumps({"date": iso_d, "market": market, "targets": sorted(targets)}, sort_keys=True).encode()
+    ).hexdigest()
+    state_path = (Path(state_file) if state_file else
+                  Path(config.DATA_DIR) / f"warrant-branch-state-{iso_d}.json")
+    state = _load_warrant_branch_state(
+        state_path, date=iso_d, market=market, target_hash=target_hash, targets=targets
+    )
+    if dry_run:
+        print(f"warrant branch report {iso_d}: twse={market_counts['twse']} "
+              f"tpex={market_counts['tpex']} total={len(targets)} cap={top}", flush=True)
+        return {"date": iso_d, "targets": len(targets), "market_counts": market_counts,
+                "complete": False, "dry_run": True, "state_file": str(state_path)}
+
+    _atomic_json_write(state_path, state)
+    deadline = time.monotonic() + max_minutes * 60 if max_minutes else None
+    done = empty = failed = skipped = written = 0
+    stopped = None
+    since_checkpoint = 0
+    checkpoint_every = 25
+    for sid in targets:
+        previous = state["results"].get(sid, {}).get("status")
+        if previous in {"ok", "empty"}:
+            skipped += 1
+            continue
+        if deadline and time.monotonic() >= deadline:
+            stopped = f"time budget reached after {done + empty + failed + skipped}/{len(targets)} targets"
+            break
+        state["results"][sid] = {"status": "pending"}
+        try:
+            rows = fubon.fetch_branch_trades(sid, date, throttle=sleep_s)
+            with engine.begin() as conn:
+                rows_written = upsert_branch_trades(conn, rows)
+            state["results"][sid] = {"status": "ok", "rows": rows_written}
+            done += 1
+            written += rows_written
+        except NoDataError as exc:
+            state["results"][sid] = {"status": "empty", "error": str(exc)[:200]}
+            empty += 1
+        except Exception as exc:  # retry on the next invocation
+            state["results"][sid] = {"status": "error", "error": str(exc)[:200]}
+            failed += 1
+            print(f"warrant branch {sid} FAILED: {str(exc)[:100]}", flush=True)
+            # Persist real source failures immediately.  Normal responses are
+            # checkpointed in batches, avoiding O(n²) JSON rewrite I/O.
+            _atomic_json_write(state_path, state)
+            since_checkpoint = 0
+            continue
+        since_checkpoint += 1
+        if since_checkpoint >= checkpoint_every:
+            _atomic_json_write(state_path, state)
+            since_checkpoint = 0
+
+    # Covers a short final batch and max-minutes exit; a crash can only redo a
+    # bounded batch of successful requests.
+    _atomic_json_write(state_path, state)
+    statuses = [state["results"].get(sid, {}).get("status") for sid in targets]
+    complete = bool(targets) and all(status in {"ok", "empty"} for status in statuses)
+    # An empty-but-valid pool is complete too; distinguish it from a time limit.
+    if not targets and stopped is None:
+        complete = True
+    with engine.begin() as conn:
+        log_status = "ok" if complete and targets else ("empty" if complete else "error")
+        _log(conn, "fubon", "warrant_branch", date, written, log_status,
+             error=stopped or (f"{failed} warrants failed" if failed else None))
+    print(f"warrant branches {iso_d}: twse={market_counts['twse']} tpex={market_counts['tpex']} "
+          f"ok={done} empty={empty} retry={failed} skipped={skipped} rows={written} "
+          f"complete={complete}", flush=True)
+    return {"date": iso_d, "targets": len(targets), "market_counts": market_counts,
+            "done": done, "empty": empty, "failed": failed, "skipped": skipped,
+            "rows": written, "stopped": stopped, "complete": complete,
+            "state_file": str(state_path)}
+
+
+def backfill_warrant_branches(top: int = 200, days: int = 120,
+                              sleep_s: float = 1.2, max_minutes: int | None = None,
+                              market: str = "twse") -> dict:
+    """March back date-scoped warrant pools, newest date first.
+
+    The legacy default remains TWSE top-N.  Explicit ``market='all'`` switches
+    ``top`` to a fail-closed safety cap and never truncates either market.
+    """
     import time as time_mod
     from sqlalchemy import text
     from .providers import fubon
@@ -512,13 +720,9 @@ def backfill_warrant_branches(top: int = 200, days: int = 120, sleep_s: float = 
         with engine.connect() as conn:
             # 每個歷史日期各自撈當天真正有交易的權證(而非用「最新」清單往回查——
             # 權證壽命短,半年前的權證早已下市不在今天清單,今天的權證半年前也還沒發行)。
-            targets = [r[0] for r in conn.execute(text(
-                "SELECT d.warrant_id FROM warrant_daily d "
-                "JOIN warrants w ON w.id = d.warrant_id "
-                "WHERE d.date = :d "
-                "AND w.market = 'twse' AND w.kind IN ('call','put') "
-                "ORDER BY d.turnover DESC LIMIT :n"),
-                {"d": d_iso, "n": top})]
+            targets = _warrant_branch_targets(
+                conn, d_iso, market, top, fail_on_cap=(market == "all")
+            )
             have = {r[0] for r in conn.execute(text(
                 "SELECT DISTINCT stock_id FROM branch_trades WHERE date = :d"),
                 {"d": d_iso})}
@@ -550,7 +754,7 @@ def backfill_warrant_branches(top: int = 200, days: int = 120, sleep_s: float = 
     with engine.begin() as conn:
         _log(conn, "fubon", "warrant_branch_hist",
              datetime.now(ZoneInfo(config.TZ)).strftime("%Y%m%d"),
-             fetched, "ok" if not stopped else "empty", error=stopped)
+             fetched, "ok" if not stopped else "error", error=stopped)
     print(f"backfill-warrant-branches: fetched={fetched}, complete_dates={skipped_dates}/"
           f"{len(trade_dates)}, failed={failed}, stopped={stopped}", flush=True)
     return {"fetched": fetched, "failed": failed, "stopped": stopped}
@@ -565,7 +769,8 @@ def import_branch_trades(date: str | None = None, top: int = 80,
     - ``ids`` 指定清單時只用該清單
     - ``top <= 0``: **全部**當日有報價的 ``type=stock``(不含 ETF)
     - 否則: 當日 daily_scores 前 top 檔;無分數則退回成交金額前 top(僅 stock)
-    另抓當日成交金額前 ``warrants`` 大的上市權證(權證分點;上櫃權證該頁無資料)。
+    另保留當日成交金額前 ``warrants`` 大的上市權證作過渡池；上市＋上櫃
+    全市場權證由可續跑的 ``import_warrant_branch_trades`` 獨立處理。
     """
     from sqlalchemy import text
 

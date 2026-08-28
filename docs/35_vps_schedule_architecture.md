@@ -51,7 +51,7 @@ flowchart TB
 | 14:10 | `daily-market.sh` | indicators → **scores**；（週一）themes／geo。上櫃 quotes 此時常 empty |
 | 15:00 | `daily-tpex-quotes.sh` | **上櫃日K 主補抓** → indicators → **scores** → export |
 | 16:10 | `daily-insti.sh` | quotes 保底 → insti → 權證主檔（失敗不擋）→ **權證當日彙總** → indicators → **scores**；主檔成功即採新 mapping，失敗則沿用舊 mapping 完成彙總 |
-| 17:40 | `daily-branches.sh` | 再補 quotes＋insti → indicators → 全股票分點 `--top 0` → **branch-stats** → **scores** → **performance**（**不含 margin**） |
+| 17:40 | `daily-branches.sh` | 再補 quotes＋insti → indicators → 全股票分點 `--top 0`（不含 ETF）＋既有上市 Top 200 權證 → **branch-stats** → **scores** → **performance**（**不含 margin**）；全市場獨立輪正式啟用時才切 `--warrants 0` |
 | 21:20 | `daily-margin.sh` | 再補 quotes + **margin 主輪** → **scores** → **performance**（TWSE ~21:00 產製＋約 20 分緩衝） |
 | 22:00 | `daily-branches.sh` | 分點第二輪（排在資券後,避 lock） |
 
@@ -126,7 +126,7 @@ flowchart LR
 
 | 項目 | 現況 | 目標 |
 |---|---|---|
-| 歷史 bf | `bf-supervisor.sh` 單寫者＋自啟＋完成 ntfy；正式 cron 已掛，權證完成、分點進行中（2026-08-27） | 等分點完成旗標與 ntfy |
+| 歷史 bf | `bf-supervisor.sh` 單寫者＋自啟＋完成 ntfy；既有 legacy 權證回補已完成、分點進行中（2026-08-27） | 全市場上市＋上櫃權證新輪僅 code-ready：先過 20GB／1日、5日與三交易日 runtime PoC，才可另提正式啟用 |
 | 23:30 | `safe-branch-stats`：**stats → scores → export** | 已對齊目標 |
 | 大戶 | B1 入庫＋B2 UI＋`weekly-tdcc.sh` @ 週六 06:30；正式 cron 已掛，2026-08-26 實跑成功 | 觀察下一個週六例行輪 |
 | 安靜窗 | `lib.sh` 已是 14:05–15:45；但 2026-08-27 核對時 guard/supervisor 為更新前啟動的舊常駐程序，當日 15:16 已提前 unpause | 安全時點重啟常駐程序後再驗證 15:45 生效 |
