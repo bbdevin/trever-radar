@@ -12,31 +12,49 @@ function assert(cond, msg) {
 }
 
 const iPhone = devices["iPhone 13"];
-const viewportLabel = iPhone.viewport
-  ? `${iPhone.viewport.width}×${iPhone.viewport.height}`
-  : "iPhone 13 預設 viewport";
+const mobileViewport = { width: 375, height: 812 };
+const viewportLabel = `${mobileViewport.width}×${mobileViewport.height}`;
 
 const browser = await chromium.launch({ headless: true });
-const context = await browser.newContext({ ...iPhone });
+const context = await browser.newContext({ ...iPhone, viewport: mobileViewport });
 const page = await context.newPage();
 
 try {
   await page.goto(`${BASE}/stock?id=2330`, { waitUntil: "networkidle", timeout: 30000 });
 
-  // 1) 一級分頁存在
+  // 1) 手機首屏資訊順序：名稱與報價同行，Decision 首要判讀、行情摘要、概況、tabs 依序可達。
+  const nameBox = await page.getByTestId("stock-name").boundingBox();
+  const priceBox = await page.getByTestId("stock-price").boundingBox();
+  assert(nameBox && priceBox && Math.abs(nameBox.y - priceBox.y) < 20, "股票名稱與股價／漲跌未在同一主列");
+  assert(nameBox && priceBox && nameBox.x + nameBox.width <= priceBox.x + 1, "股票名稱與報價區互相重疊");
+  const primaryRowOverflow = await page.getByTestId("stock-primary-row").evaluate((row) => row.scrollWidth > row.clientWidth + 1);
+  assert(!primaryRowOverflow, "股票名稱／報價主列發生水平溢位");
+  assert(await page.getByTestId("stock-primary-judgment").isVisible(), "Decision Header 缺少首要判讀");
+  const decisionBox = await page.getByTestId("stock-decision").boundingBox();
+  const marketBox = await page.getByTestId("stock-market-summary").boundingBox();
+  const overviewBox = await page.getByTestId("stock-overview").boundingBox();
+  const chartTabBox = await page.getByTestId("stock-tab-chart").boundingBox();
+  assert(decisionBox && marketBox && overviewBox && chartTabBox && decisionBox.y < marketBox.y && marketBox.y < overviewBox.y && overviewBox.y < chartTabBox.y, "首屏順序不是 Decision → 行情摘要 → 概況 → tabs");
+  assert(await page.getByTestId("stock-market-summary").locator("dl").count() === 1, "行情摘要應為單一卡片 dl");
+  await page.getByTestId("stock-decision").getByRole("button").click();
+  assert(await page.getByTestId("stock-decision").getByRole("button").getAttribute("aria-expanded") === "false", "Decision Header 無法收合");
+  assert(await page.getByTestId("stock-primary-judgment").isVisible(), "收合後首要判讀不應消失");
+  await page.getByTestId("stock-decision").getByRole("button").click();
+
+  // 2) 一級分頁存在
   const chipsTab = page.getByRole("tab", { name: "籌碼日報" });
   await chipsTab.waitFor({ state: "visible", timeout: 15000 });
   await chipsTab.click();
   await page.waitForSelector("#branch", { timeout: 10000 });
 
-  // 2) 頁面無橫向溢出
+  // 3) 頁面無橫向溢出
   const overflow = await page.evaluate(() => {
     const doc = document.documentElement;
     return doc.scrollWidth > doc.clientWidth + 1;
   });
   assert(!overflow, `頁面橫向溢出：scrollWidth > clientWidth (${await page.evaluate(() => [document.documentElement.scrollWidth, document.documentElement.clientWidth])})`);
 
-  // 3) 買超/賣超對半切分頁
+  // 4) 買超/賣超對半切分頁
   const buyTab = page.getByRole("tab", { name: /買方/ });
   const sellTab = page.getByRole("tab", { name: /賣方/ });
   await buyTab.waitFor({ state: "visible" });
@@ -45,9 +63,11 @@ try {
   assert(await sellTab.getAttribute("aria-selected") === "true", "切到賣方分頁失敗");
   await buyTab.click();
 
-  // 4) 法人 / 基本資料 / 技術 tab 存在；基本資料是公司、題材、庫藏股的單一連續面板
+  // 5) 法人 / 基本資料 / 技術 tab 存在；概況可點入基本資料；基本資料是公司、題材、庫藏股的單一連續面板
   await page.getByRole("tab", { name: "法人" }).click();
   await page.getByText("法人分").first().waitFor({ state: "visible", timeout: 5000 });
+  await page.getByTestId("stock-overview").click();
+  assert(await page.getByRole("tab", { name: "基本資料" }).getAttribute("aria-selected") === "true", "點概況未切至基本資料");
   await page.getByRole("tab", { name: "基本資料" }).click();
   const basicPanel = page.getByRole("tabpanel", { name: "基本資料" });
   await basicPanel.getByRole("heading", { name: "公司資料" }).waitFor({ state: "visible", timeout: 5000 });
@@ -70,7 +90,7 @@ try {
   await chipsTab.click();
   await page.waitForSelector("#branch", { timeout: 5000 });
 
-  // 5) 點第一個分點 → 下鑽覆層（K 線 + 進出表）
+  // 6) 點第一個分點 → 下鑽覆層（K 線 + 進出表）
   const firstBranch = page.locator("#branch button").filter({ hasText: /張$/ }).first();
   await firstBranch.click();
   const backBtn = page.getByRole("button", { name: "返回籌碼日報" });

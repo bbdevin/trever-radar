@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, Suspense, useEffect, useMemo, useState } from "react";
+import { Fragment, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import {
   type ColumnDef,
@@ -55,6 +55,7 @@ function StockView() {
   const [range, setRange] = useState<(typeof RANGES)[number]["key"]>("6m");
   const [view, setView] = useState<"chart" | "chips" | "insti" | "margin" | "holders" | "basic" | "tech" | "warrant">("chart");
   const [drillBranch, setDrillBranch] = useState<string | null>(null);
+  const activeTabRef = useRef<HTMLButtonElement | null>(null);
 
   useEffect(() => {
     if (!id) return;
@@ -82,6 +83,10 @@ function StockView() {
       setView("basic");
     }
   }, [data, tabParam]);
+
+  useEffect(() => {
+    activeTabRef.current?.scrollIntoView({ behavior: "auto", block: "nearest", inline: "center" });
+  }, [view]);
 
   const visibleDays = useMemo(() => {
     const days = RANGES.find((r) => r.key === range)?.days ?? Infinity;
@@ -130,58 +135,57 @@ function StockView() {
   const branchScore = data.scores?.branch ?? null;
   const activeThemes = currentActiveThemes(data.recent_theme_heat, last.t);
   const profile = data.company_profile;
-  const companyOverview = [
-    { label: "地區", value: profile?.city ?? "資料未提供", icon: MapPin },
-    { label: "股務", value: profile?.transfer_agent ?? "資料未提供", icon: Phone },
-    { label: "題材", value: data.company_themes ? `${data.company_themes.length} 項` : "資料未提供", icon: Tags },
-    { label: "集團", value: data.company_groups ? (data.company_groups.map((group) => group.name).join("、") || "未提供") : "資料未提供", icon: Building2 },
-  ];
+  const groupSummary = data.company_groups
+    ? (data.company_groups.map((group) => group.name).join("、") || "無集團")
+    : "集團資料未提供";
 
   return (
     <div className="min-w-0 max-w-full overflow-x-hidden">
-      <div className="flex flex-col gap-2 py-4 pb-2.5 md:flex-row md:flex-wrap md:items-center md:gap-2.5">
-        <div className="flex min-w-0 items-center gap-2">
+      <header data-testid="stock-header" className="py-3.5 pb-2.5">
+        <div data-testid="stock-primary-row" className="flex min-w-0 items-center gap-1.5 sm:gap-2">
           <a
             href="/"
-            className="-ml-2.5 inline-flex min-h-11 shrink-0 items-center gap-1 rounded-full px-2.5 text-[13px] text-muted-foreground hover:bg-secondary hover:text-foreground"
+            className="-ml-2 inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center gap-1 rounded-full text-[13px] text-muted-foreground transition-colors duration-200 hover:bg-secondary hover:text-foreground sm:px-2.5"
+            aria-label="返回雷達"
           >
-            <IconArrowLeft size={16} />
-            雷達
+            <IconArrowLeft size={17} />
+            <span className="hidden sm:inline">雷達</span>
           </a>
-          <div className="min-w-0 flex-1">
-            <h1 className="truncate text-[19px] font-extrabold" title={data.name}>{data.name}</h1>
-            <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-[13px] text-muted-foreground">
-              <span className="shrink-0">{data.id} · {MARKET_LABEL[data.market] ?? data.market}{data.industry ? ` · ${data.industry}` : ""}</span>
-              {activeThemes.length > 0 && (
-                <span className="flex min-w-0 flex-wrap items-center gap-1 text-[11px]" aria-label="活躍題材">
-                  <span className="shrink-0 text-[color:var(--warn)]">活躍題材</span>
-                  {activeThemes.slice(0, 2).map((theme) => (
-                    <span key={theme.id} className="max-w-[10rem] truncate rounded-full border border-[color:var(--warn)]/35 bg-[color:var(--warn)]/8 px-1.5 py-0.5 text-[color:var(--ink-2)]" title={`${theme.name}（資料日 ${theme.heat_date}）`}>
-                      {theme.name}
-                    </span>
-                  ))}
-                  {activeThemes.length > 2 && (
-                    <span className="rounded-full bg-[color:var(--warn)]/12 px-1.5 py-0.5 font-semibold text-[color:var(--warn)]">
-                      +{activeThemes.length - 2}
-                    </span>
-                  )}
-                </span>
-              )}
-            </div>
+          <div className="min-w-0 flex-1 pt-0.5">
+            <h1 data-testid="stock-name" className="truncate text-[26px] font-extrabold leading-tight tracking-[-0.02em]" title={data.name}>{data.name}</h1>
+            <p className="mt-1 truncate text-[13px] text-muted-foreground">{data.id} · {MARKET_LABEL[data.market] ?? data.market}{data.industry ? ` · ${data.industry}` : ""}</p>
           </div>
-          <WatchlistButton stockId={data.id} size={20} />
+          <div data-testid="stock-price" className="flex shrink-0 items-center gap-1.5 whitespace-nowrap">
+            <span className={cn("num text-[27px] font-extrabold leading-none tracking-[-0.03em] sm:text-[30px]", CHG_TEXT[cls])}>
+              {last.c.toLocaleString("zh-TW")}
+            </span>
+            <span data-testid="stock-change" className={cn("num inline-block rounded-full px-2 py-1 text-[12px] font-bold", CHG_BADGE[cls])}>
+              {fmtPct(chg)}
+            </span>
+            <WatchlistButton stockId={data.id} size={20} />
+          </div>
         </div>
-        <div className="flex shrink-0 items-center gap-2 md:ml-auto">
-          <span className={cn("num text-2xl font-extrabold tracking-[-0.3px]", CHG_TEXT[cls])}>
-            {last.c.toLocaleString("zh-TW")}
-          </span>
-          <span className={cn("num inline-block rounded-full px-2 py-px text-[12.5px] font-bold", CHG_BADGE[cls])}>
-            {fmtPct(chg)}
-          </span>
-        </div>
-      </div>
-      <div className="mb-2.5 grid min-w-0 gap-2.5 lg:grid-cols-[minmax(0,1fr)_minmax(17rem,0.9fr)]">
-        <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3 xl:grid-cols-6" aria-label={`行情摘要，資料日 ${last.t}`}>
+        {activeThemes.length > 0 && (
+          <div className="mt-2 flex min-w-0 flex-wrap items-center gap-1.5 text-[11px]" aria-label="活躍題材">
+            <span className="shrink-0 text-[color:var(--warn)]">活躍題材</span>
+            {activeThemes.slice(0, 2).map((theme) => (
+              <span key={theme.id} className="max-w-[10rem] truncate rounded-full border border-[color:var(--warn)]/35 bg-[color:var(--warn)]/8 px-1.5 py-0.5 text-[color:var(--ink-2)]" title={`${theme.name}（資料日 ${theme.heat_date}）`}>
+                {theme.name}
+              </span>
+            ))}
+            {activeThemes.length > 2 && (
+              <span className="rounded-full bg-[color:var(--warn)]/12 px-1.5 py-0.5 font-semibold text-[color:var(--warn)]">
+                +{activeThemes.length - 2}
+              </span>
+            )}
+          </div>
+        )}
+      </header>
+
+      {/* IA-2 + F3: Decision Header stays before evidence and remains collapsible. */}
+      <StockDecisionHeader data={data} close={last.c} />
+      <section data-testid="stock-market-summary" className="mb-2.5 min-w-0 rounded-[var(--r-md)] border border-border bg-card px-3 py-2.5" aria-label={`行情摘要，資料日 ${last.t}`}>
+        <dl className="grid grid-cols-3 gap-x-3 gap-y-2 sm:grid-cols-6">
           {[
             ["開", last.o.toLocaleString("zh-TW")],
             ["高", last.h.toLocaleString("zh-TW")],
@@ -190,31 +194,27 @@ function StockView() {
             ["量", `${last.v.toLocaleString("zh-TW")} 張`],
             ["額", fmtE8(last.amt)],
           ].map(([label, value]) => (
-            <div key={label} className="flex min-w-0 items-baseline justify-between gap-1 rounded-[var(--r-sm)] border border-border bg-secondary px-2 py-1.5 text-[11px]">
-              <span className="text-muted-foreground">{label}</span>
-              <span className="num truncate font-semibold text-[color:var(--ink-2)]" title={value}>{value}</span>
+            <div key={label} className="min-w-0">
+              <dt className="text-[10.5px] text-muted-foreground">{label}</dt>
+              <dd className="num mt-0.5 truncate text-[13px] font-bold text-[color:var(--ink-2)]" title={value}>{value}</dd>
             </div>
           ))}
-        </div>
-        <button
-          type="button"
-          onClick={() => setView("basic")}
-          className="grid min-h-11 min-w-0 grid-cols-2 gap-x-2 gap-y-1 rounded-[var(--r-sm)] border border-border bg-card px-2.5 py-2 text-left transition-colors duration-200 hover:bg-secondary sm:grid-cols-4 lg:grid-cols-2 xl:grid-cols-4"
-          aria-label="查看完整公司基本資料"
-        >
-          {companyOverview.map(({ label, value, icon: Icon }) => (
-            <span key={label} className="flex min-w-0 items-center gap-1.5 text-[11px]">
-              <Icon size={13} className="shrink-0 text-[color:var(--accent-2)]" aria-hidden="true" />
-              <span className="shrink-0 text-muted-foreground">{label}</span>
-              <span className="truncate font-semibold text-[color:var(--ink-2)]" title={value}>{value}</span>
-            </span>
-          ))}
-        </button>
-        <p className="text-[11px] text-muted-foreground lg:col-span-2">行情資料日 {last.t} · 共 {cs.length.toLocaleString("zh-TW")} 個交易日（自 {cs[0].t}）</p>
-      </div>
-
-      {/* IA-2 + F3: Decision Header — why this stock appears, risks, key prices */}
-      <StockDecisionHeader key={view} data={data} close={last.c} defaultCollapsed={view === "chart"} />
+        </dl>
+        <p className="mt-2 border-t border-[color:var(--line)] pt-2 text-[11px] text-muted-foreground">行情資料日 {last.t} · 共 {cs.length.toLocaleString("zh-TW")} 個交易日（自 {cs[0].t}）</p>
+      </section>
+      <button
+        data-testid="stock-overview"
+        type="button"
+        onClick={() => setView("basic")}
+        className="mb-2.5 flex min-h-11 w-full min-w-0 items-center gap-2 overflow-hidden rounded-[var(--r-md)] border border-border bg-card px-3 text-left text-[12px] transition-colors duration-200 hover:bg-secondary"
+        aria-label="查看完整公司基本資料"
+      >
+        <span className="inline-flex shrink-0 items-center gap-1.5 font-semibold text-[color:var(--accent-2)]"><MapPin size={15} aria-hidden="true" /> 概況</span>
+        <span className="truncate font-medium text-[color:var(--ink-2)]" title={`${profile?.city ?? "地區資料未提供"} · 題材 ${data.company_themes?.length ?? "資料未提供"} · ${groupSummary}`}>
+          {profile?.city ?? "地區資料未提供"} · 題材 {data.company_themes?.length ?? "資料未提供"} · {groupSummary}
+        </span>
+        <ChevronDown size={16} className="ml-auto shrink-0 -rotate-90 text-muted-foreground" aria-hidden="true" />
+      </button>
       <div className="sticky top-0 z-20 -mx-1 mb-2.5 flex min-w-0 flex-col gap-2 bg-background/95 px-1 py-1.5 backdrop-blur-sm md:static md:mx-0 md:bg-transparent md:px-0 md:py-0 md:backdrop-blur-none md:flex-row md:flex-wrap md:items-center md:gap-2.5">
         <div
           role="tablist"
@@ -235,6 +235,8 @@ function StockView() {
           ).map((t) => (
           <button
               key={t.key}
+              ref={view === t.key ? activeTabRef : undefined}
+              data-testid={`stock-tab-${t.key}`}
               type="button"
               role="tab"
               aria-selected={view === t.key}
@@ -464,38 +466,40 @@ function StockDecisionHeader({
   const hasBranch = (scores?.branch ?? 0) > 0;
   const hasWarrant = (scores?.warrant ?? 0) > 0;
   const sourceLabel = hasBranch && hasWarrant ? "分點+權證" : hasBranch ? "分點" : hasWarrant ? "權證" : null;
+  const primaryJudgment = reasons[0]?.text ?? (risks[0] ? `注意：${risks[0]}` : "尚無可顯示的判讀理由");
 
   if (!scores && !reasons.length && !risks.length && !(data.pocket_tags?.length)) return null;
 
   return (
-    <div className="mb-3 min-w-0 rounded-[var(--r-lg)] border border-border bg-card shadow-[var(--shadow-card)]">
+    <div data-testid="stock-decision" className="mb-2.5 min-w-0 overflow-hidden rounded-[var(--r-lg)] border border-border bg-card shadow-[var(--shadow-card)]">
       <button
         type="button"
-        className="flex w-full min-w-0 items-center gap-2 px-3.5 py-2.5 text-left"
+        className="flex w-full min-w-0 items-center gap-3 px-3.5 py-3 text-left transition-colors duration-200 hover:bg-secondary/60"
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
       >
         {scores && (
-          <span className={cn("num text-[22px] font-extrabold leading-none sm:text-[28px]", scores.final >= 65 ? "text-warn" : "text-[color:var(--ink-2)]")}>
+          <span className={cn("num min-w-14 shrink-0 text-center text-[34px] font-extrabold leading-none sm:min-w-16 sm:text-[38px]", scores.final >= 65 ? "text-warn" : "text-[color:var(--ink-2)]")}>
             {scores.final}
           </span>
         )}
-        <span className="text-[11.5px] text-muted-foreground">綜合評分</span>
-        {sourceLabel && (
-          <span className="rounded-md bg-[color:var(--ink-2)]/10 px-2 py-0.5 text-[10.5px] font-bold text-[color:var(--ink-2)]">
-            {sourceLabel}
+        <span className="min-w-0 flex-1">
+          <span className="flex min-w-0 items-center gap-1.5 text-[11.5px] text-muted-foreground">
+            綜合評分
+            {sourceLabel && <span className="rounded-md bg-[color:var(--ink-2)]/10 px-1.5 py-0.5 text-[10.5px] font-bold text-[color:var(--ink-2)]">{sourceLabel}</span>}
           </span>
-        )}
-        <div className="ml-auto flex shrink-0 items-center gap-2 text-[11.5px]">
+          <span data-testid="stock-primary-judgment" className="mt-1 block truncate text-[14px] font-semibold text-foreground" title={primaryJudgment}>{primaryJudgment}</span>
+        </span>
+        <span className="ml-auto flex shrink-0 items-center gap-2 text-[11.5px]">
           {watchPrice != null && (
-            <span className="hidden items-center gap-1 rounded-md border border-[color:var(--line)] px-2 py-0.5 text-[color:var(--accent-2)] sm:inline-flex">
+            <span className="hidden items-center gap-1 rounded-md border border-[color:var(--line)] px-2 py-0.5 text-[color:var(--accent-2)] md:inline-flex">
               <span>觀察</span>
               <span className="num font-bold">{watchPrice.toFixed(2)}</span>
             </span>
           )}
           {stopPrice != null && (
             <span className={cn(
-              "hidden items-center gap-1 rounded-md border px-2 py-0.5 sm:inline-flex",
+              "hidden items-center gap-1 rounded-md border px-2 py-0.5 md:inline-flex",
               distPct(close, stopPrice) < 5 ? "border-destructive/40 text-destructive" : "border-[color:var(--line)] text-up",
             )}>
               <span>失效</span>
@@ -503,12 +507,12 @@ function StockDecisionHeader({
             </span>
           )}
           {open ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
-        </div>
+        </span>
       </button>
 
       {open && (
         <div className="border-t border-[color:var(--line)] px-3.5 py-3">
-          <div className="mb-2.5 flex min-w-0 flex-wrap gap-2 text-[11.5px] sm:hidden">
+          <div className="mb-2.5 flex min-w-0 flex-wrap gap-2 text-[11.5px] md:hidden">
             {watchPrice != null && (
               <span className="flex items-center gap-1 rounded-md border border-[color:var(--line)] px-2 py-0.5 text-[color:var(--accent-2)]">
                 <span>觀察</span>
@@ -543,7 +547,7 @@ function StockDecisionHeader({
             </div>
           )}
           {(watchPrice != null || stopPrice != null) && (
-            <div className="mt-2.5 hidden min-w-0 flex-wrap gap-2 text-[11.5px] sm:flex">
+            <div className="mt-2.5 hidden min-w-0 flex-wrap gap-2 text-[11.5px] md:flex">
               {watchPrice != null && (
                 <span className="flex items-center gap-1 rounded-md border border-[color:var(--line)] px-2 py-0.5 text-[color:var(--accent-2)]">
                   <span>觀察</span>
