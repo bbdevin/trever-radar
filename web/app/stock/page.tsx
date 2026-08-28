@@ -161,19 +161,19 @@ function StockView() {
     <div className="min-w-0 max-w-full overflow-x-hidden">
       <div data-testid="stock-context-grid" className="mb-2.5 grid min-w-0 grid-cols-[minmax(0,1.2fr)_minmax(8.25rem,0.8fr)] items-stretch gap-2.5 sm:grid-cols-[minmax(0,1fr)_minmax(14rem,0.72fr)]">
         <div className="flex min-h-full min-w-0 flex-col">
-          <header data-testid="stock-header" className="pb-2.5">
+          <header data-testid="stock-header" className="shrink-0 pb-1.5">
             <div className="grid min-w-0 grid-cols-[2.75rem_minmax(0,1fr)] items-start gap-1">
               <a href="/" className="inline-flex size-11 items-center justify-center rounded-full text-muted-foreground transition-colors duration-200 hover:bg-secondary hover:text-foreground" aria-label="返回雷達"><IconArrowLeft size={17} /></a>
               <div className="min-w-0">
                 <div data-testid="stock-primary-row" className="flex min-h-11 min-w-0 items-center">
-                  <h1 data-testid="stock-identity-line" aria-label={`${data.id} ${data.name}`} className="flex min-w-0 items-baseline gap-2 whitespace-nowrap font-extrabold leading-tight tracking-[-0.02em]">
+                  <h1 data-testid="stock-identity-line" aria-label={`${data.id} ${data.name}`} className="flex min-w-0 flex-1 items-baseline gap-2 whitespace-nowrap font-extrabold leading-tight tracking-[-0.02em]">
                     <span className="num shrink-0 text-[14px] text-muted-foreground">{data.id}</span>
-                    <span data-testid="stock-name" className="min-w-0 flex-1 truncate text-[21px] text-foreground" title={data.name}>{data.name}</span>
+                    <span data-testid="stock-name" className="min-w-0 max-w-[38%] truncate text-[21px] text-foreground sm:max-w-[46%]" title={data.name}>{data.name}</span>
+                    <span data-testid="stock-price" className="ml-0.5 flex shrink-0 items-center gap-1.5 whitespace-nowrap">
+                      <span className={cn("num text-[15px] font-extrabold leading-none tracking-[-0.03em] sm:text-[16px]", CHG_TEXT[cls])}>{last.c.toLocaleString("zh-TW")}</span>
+                      <span data-testid="stock-change" className={cn("num rounded-full px-1 py-px text-[10px] font-bold leading-tight sm:text-[11px]", CHG_BADGE[cls])}>{priceChangeCopy}</span>
+                    </span>
                   </h1>
-                </div>
-                <div data-testid="stock-price" className="flex min-w-0 items-center gap-0.5 whitespace-nowrap">
-                  <span className={cn("num shrink-0 text-[18px] font-extrabold leading-none tracking-[-0.03em]", CHG_TEXT[cls])}>{last.c.toLocaleString("zh-TW")}</span>
-                  <span data-testid="stock-change" className={cn("num min-w-0 rounded-full px-0.5 py-0.5 text-[11px] font-bold", CHG_BADGE[cls])}>{priceChangeCopy}</span>
                 </div>
                 <p data-testid="stock-metadata" className="mt-1 min-w-0 break-words whitespace-normal text-[13px] leading-5 text-muted-foreground">{MARKET_LABEL[data.market] ?? data.market}{data.industry ? ` · ${data.industry}` : ""}</p>
               </div>
@@ -190,7 +190,7 @@ function StockView() {
               </div>
             )}
           </header>
-          <StockDecisionHeader data={data} close={last.c} className="mt-auto mb-0" />
+          <StockDecisionHeader data={data} close={last.c} defaultCollapsed={false} className="mt-auto mb-0 min-h-0 flex-1" />
         </div>
         <section data-testid="stock-market-summary" className="flex min-h-full min-w-0 flex-col justify-between px-0.5" aria-label={`行情摘要，資料日 ${last.t}`}>
           <div data-testid="stock-watchlist" className="inline-flex size-11 shrink-0 items-center justify-center self-end">
@@ -443,11 +443,11 @@ function BasicInfoPanel({ data, quoteDate }: { data: StockJson; quoteDate: strin
   );
 }
 
-/** IA-2 + F3: Decision Header — shown before chart to answer "why is this here + when to exit" */
+/** IA-2 + F3: Decision Header — 預設展開、緊湊、展開時不重複首要判讀與觀察/失效價 */
 function StockDecisionHeader({
   data,
   close,
-  defaultCollapsed = true,
+  defaultCollapsed = false,
   className,
 }: {
   data: StockJson;
@@ -456,7 +456,6 @@ function StockDecisionHeader({
   className?: string;
 }) {
   const scores = data.scores;
-  // 個股頁詳情區不設家族數上限;帶 code 的 raw_reasons 用來判語意家族色,缺時退回純文字(中性)。
   const reasons = (data.raw_reasons?.length ? data.raw_reasons : (data.reasons ?? []).map((text) => ({ text, code: undefined }))).slice(0, 3);
   const risks = (data.risks ?? []).slice(0, 2);
   const watchPrice = scores?.watch_price;
@@ -466,113 +465,79 @@ function StockDecisionHeader({
   const distPct = (price: number, target: number) =>
     ((price - target) / Math.abs(target)) * 100;
 
-  // Source badge: branch / warrant / both
   const hasBranch = (scores?.branch ?? 0) > 0;
   const hasWarrant = (scores?.warrant ?? 0) > 0;
   const sourceLabel = hasBranch && hasWarrant ? "分點+權證" : hasBranch ? "分點" : hasWarrant ? "權證" : null;
   const primaryJudgment = reasons[0]?.text ?? (risks[0] ? `注意：${risks[0]}` : "尚無可顯示的判讀理由");
+  const hasPills = reasons.length > 0 || risks.length > 0 || (data.pocket_tags?.length ?? 0) > 0;
+  const hasPriceTargets = watchPrice != null || stopPrice != null;
 
   if (!scores && !reasons.length && !risks.length && !(data.pocket_tags?.length)) return null;
 
+  const priceTargetRow = hasPriceTargets ? (
+    <div className="flex min-w-0 flex-wrap gap-1 text-[10.5px]">
+      {watchPrice != null && (
+        <span className="inline-flex items-center gap-0.5 rounded border border-[color:var(--line)] px-1.5 py-px text-[color:var(--accent-2)]">
+          <span>觀察</span>
+          <span className="num font-bold">{watchPrice.toFixed(2)}</span>
+          <span className="text-muted-foreground">
+            ({distPct(close, watchPrice) > 0 ? "+" : ""}{distPct(close, watchPrice).toFixed(1)}%)
+          </span>
+        </span>
+      )}
+      {stopPrice != null && (
+        <span className={cn(
+          "inline-flex items-center gap-0.5 rounded border px-1.5 py-px",
+          distPct(close, stopPrice) < 5 ? "border-destructive/40 text-destructive" : "border-[color:var(--line)] text-up",
+        )}>
+          <span>失效</span>
+          <span className="num font-bold">{stopPrice.toFixed(2)}</span>
+          <span className={cn("text-muted-foreground", distPct(close, stopPrice) < 5 && "text-destructive")}>
+            ({distPct(close, stopPrice) > 0 ? "+" : ""}{distPct(close, stopPrice).toFixed(1)}%)
+          </span>
+        </span>
+      )}
+    </div>
+  ) : null;
+
   return (
-    <div data-testid="stock-decision" className={cn("mb-2.5 min-w-0 overflow-hidden rounded-[var(--r-lg)] border border-border bg-card shadow-[var(--shadow-card)]", className)}>
+    <div data-testid="stock-decision" className={cn("flex min-h-0 flex-col overflow-hidden rounded-[var(--r-md)] border border-border bg-card shadow-[var(--shadow-card)]", className)}>
       <button
         type="button"
-        className="flex w-full min-w-0 items-start gap-3 px-3.5 py-3 text-left transition-colors duration-200 hover:bg-secondary/60"
+        className="flex w-full shrink-0 items-center gap-2 px-2.5 py-2 text-left transition-colors duration-200 hover:bg-secondary/60"
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
       >
         {scores && (
-          <span className={cn("num min-w-14 shrink-0 text-center text-[34px] font-extrabold leading-none sm:min-w-16 sm:text-[38px]", scores.final >= 65 ? "text-warn" : "text-[color:var(--ink-2)]")}>
+          <span className={cn("num w-10 shrink-0 text-center text-[26px] font-extrabold leading-none sm:w-11 sm:text-[28px]", scores.final >= 65 ? "text-warn" : "text-[color:var(--ink-2)]")}>
             {scores.final}
           </span>
         )}
         <span className="min-w-0 flex-1">
-          <span className="flex min-w-0 flex-wrap items-center gap-1.5 text-[11.5px] text-muted-foreground">
+          <span className="flex min-w-0 flex-wrap items-center gap-1 text-[10.5px] text-muted-foreground">
             綜合評分
-            {sourceLabel && <span className="shrink-0 rounded-md bg-[color:var(--ink-2)]/10 px-1.5 py-0.5 text-[10.5px] font-bold text-[color:var(--ink-2)]">{sourceLabel}</span>}
+            {sourceLabel && <span className="shrink-0 rounded bg-[color:var(--ink-2)]/10 px-1 py-px text-[10px] font-bold text-[color:var(--ink-2)]">{sourceLabel}</span>}
           </span>
-          <span data-testid="stock-primary-judgment" className="mt-1 block break-words whitespace-normal text-[14px] font-semibold leading-5 text-foreground">{primaryJudgment}</span>
-        </span>
-        <span className="ml-auto flex shrink-0 items-center gap-2 text-[11.5px]">
-          {watchPrice != null && (
-            <span className="hidden items-center gap-1 rounded-md border border-[color:var(--line)] px-2 py-0.5 text-[color:var(--accent-2)] md:inline-flex">
-              <span>觀察</span>
-              <span className="num font-bold">{watchPrice.toFixed(2)}</span>
-            </span>
+          {!open && (
+            <span data-testid="stock-primary-judgment" className="mt-0.5 line-clamp-2 text-[12px] font-semibold leading-4 text-foreground">{primaryJudgment}</span>
           )}
-          {stopPrice != null && (
-            <span className={cn(
-              "hidden items-center gap-1 rounded-md border px-2 py-0.5 md:inline-flex",
-              distPct(close, stopPrice) < 5 ? "border-destructive/40 text-destructive" : "border-[color:var(--line)] text-up",
-            )}>
-              <span>失效</span>
-              <span className="num font-bold">{stopPrice.toFixed(2)}</span>
-            </span>
-          )}
-          {open ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
         </span>
+        {!open && priceTargetRow && <span className="hidden shrink-0 sm:block">{priceTargetRow}</span>}
+        {open ? <ChevronUp className="h-3.5 w-3.5 shrink-0 text-muted-foreground" /> : <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />}
       </button>
 
       {open && (
-        <div className="border-t border-[color:var(--line)] px-3.5 py-3">
-          <div className="mb-2.5 flex min-w-0 flex-wrap gap-2 text-[11.5px] md:hidden">
-            {watchPrice != null && (
-              <span className="flex items-center gap-1 rounded-md border border-[color:var(--line)] px-2 py-0.5 text-[color:var(--accent-2)]">
-                <span>觀察</span>
-                <span className="num font-bold">{watchPrice.toFixed(2)}</span>
-                <span className="text-muted-foreground">
-                  ({distPct(close, watchPrice) > 0 ? "+" : ""}{distPct(close, watchPrice).toFixed(1)}%)
-                </span>
-              </span>
-            )}
-            {stopPrice != null && (
-              <span className={cn(
-                "flex items-center gap-1 rounded-md border px-2 py-0.5",
-                distPct(close, stopPrice) < 5 ? "border-destructive/40 text-destructive" : "border-[color:var(--line)] text-up",
-              )}>
-                <span>失效</span>
-                <span className="num font-bold">{stopPrice.toFixed(2)}</span>
-                <span className={cn("text-muted-foreground", distPct(close, stopPrice) < 5 && "text-destructive")}>
-                  ({distPct(close, stopPrice) > 0 ? "+" : ""}{distPct(close, stopPrice).toFixed(1)}%)
-                </span>
-              </span>
-            )}
-          </div>
-          {(reasons.length > 0 || risks.length > 0 || (data.pocket_tags?.length ?? 0) > 0) && (
-            <div className="flex flex-wrap gap-1.5">
+        <div className="flex min-h-0 flex-1 flex-col gap-1.5 border-t border-[color:var(--line)] px-2.5 py-2">
+          {priceTargetRow}
+          {hasPills && (
+            <div className="flex min-h-0 flex-1 flex-wrap content-start gap-1 overflow-y-auto [scrollbar-width:thin]">
               {reasons.map((r, i) => (
                 <ReasonPill key={`reason-${i}`} code={r.code} text={r.text} />
               ))}
-              <PocketBadges tags={data.pocket_tags} compact={false} />
+              <PocketBadges tags={data.pocket_tags} compact />
               {risks.map((r, i) => (
                 <ReasonPill key={`risk-${i}`} text={r} risk />
               ))}
-            </div>
-          )}
-          {(watchPrice != null || stopPrice != null) && (
-            <div className="mt-2.5 hidden min-w-0 flex-wrap gap-2 text-[11.5px] md:flex">
-              {watchPrice != null && (
-                <span className="flex items-center gap-1 rounded-md border border-[color:var(--line)] px-2 py-0.5 text-[color:var(--accent-2)]">
-                  <span>觀察</span>
-                  <span className="num font-bold">{watchPrice.toFixed(2)}</span>
-                  <span className="text-muted-foreground">
-                    ({distPct(close, watchPrice) > 0 ? "+" : ""}{distPct(close, watchPrice).toFixed(1)}%)
-                  </span>
-                </span>
-              )}
-              {stopPrice != null && (
-                <span className={cn(
-                  "flex items-center gap-1 rounded-md border px-2 py-0.5",
-                  distPct(close, stopPrice) < 5 ? "border-destructive/40 text-destructive" : "border-[color:var(--line)] text-up",
-                )}>
-                  <span>失效</span>
-                  <span className="num font-bold">{stopPrice.toFixed(2)}</span>
-                  <span className={cn("text-muted-foreground", distPct(close, stopPrice) < 5 && "text-destructive")}>
-                    ({distPct(close, stopPrice) > 0 ? "+" : ""}{distPct(close, stopPrice).toFixed(1)}%)
-                  </span>
-                </span>
-              )}
             </div>
           )}
         </div>
