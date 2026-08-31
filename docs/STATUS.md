@@ -2,6 +2,12 @@
 
 > 單一進度真相。每完成一個里程碑就更新本檔。規格細節看各編號文件,別寫在這裡。
 
+## 2026-08-31 分點明細正式發布與上櫃日 K 鎖事件
+
+- [x] 使用者授權後，以不刪未追蹤檔、不重啟回補、不改 cron、不寫 `radar.db` 的受控方式，確認遠端 diff 不與未追蹤檔衝突，再將 VPS `main` 由 `ef4c50c` fast-forward 至 `591c09e`；既有 `cloudflare-data-worker/package-lock.json`、`data/`、`radar-quick-catchup.sh`、`run-backfill.sh` 均保留。重建 `radar-pipeline` 後只執行唯讀 `export-json` 與 data Worker deploy，Worker version=`ca3eff26-680c-4e14-81ca-d3accde31a21`。
+- [x] 正式輸出 `branches/track` 共 **138** 個可下鑽分點；`華南永昌-大安` 為 candidate，shard `211de88ea0827fd0.json`，**4,824 rows**、實際日期 2026-05-04～2026-08-28。已登入正式站實測可點開，顯示「分點資料日 2026-08-28」「可用交易日數 83」及近 20 日買／賣超表格，不再進入無紀錄空頁。
+- [x] 15:00「上櫃日 K · 略過」已定位：14:10 `daily-market.sh` 因週一題材／公司資料流程一路執行至 15:11，仍持有 `/tmp/radar-db.lock`；15:00 `daily-tpex-quotes.sh` 依 `flock -n` 契約約 6 秒安全退出。15:43 後 `fuser` 無持有者，留下的 0-byte lock path 不是 stale lock，不可刪除。16:10 `daily-insti.sh` 再抓時 `dailyQuotes` 三次 HTTP 520，16:11 提前結束；16:13 VPS 直接探測 `dailyQuotes` 與公司 OpenAPI 已恢復 HTTP 200，判定為短暫上游／CDN 異常而非永久封鎖。DB 2026-08-31 仍僅有 TWSE，TPEx 最新為 2026-08-28（1,013 rows）；下一既有保底為 17:40。**本輪未補跑 DB、未調 cron**。
+
 ## 2026-08-31 個股／首頁 UI 最終正式站 QA（HEAD `8603f3a`）
 
 - [x] `052e0e0`…`8603f3a` 五個 commits 已部署，`8603f3a` deploy 成功。它們**覆寫**本檔與舊 handoff 中所有 `f323f95`「Decision 預設收合／可展開收合」和舊 4／7 homepage tabs 的敘述：Decision 現為固定完整顯示、無收合 button、四 pills 可見；觀察／失效價屬右側行情摘要下方，不在 Decision。
@@ -29,11 +35,11 @@
 - [x] 驗證：exporter targeted **11 passed**；完整 pipeline pytest **290 passed、58 subtests passed**；`web npx tsc --noEmit` 與 `git diff --check` 通過。未跑正式 VPS／DB／export，未改 cron／workflow。
 - [x] VPS 唯讀：分點回補仍單實例，最後完成 `2025-05-09`、`fetched=118,264`、至少 `320/490` 日期；DB `5,324,414,976` bytes、WAL `115,298,232` bytes、可用約 7.0GB（75% 使用）。近期未見 import error；最新成功 backup／`integrity_check` 無現有證據可確認，8/22 log 有 Drive quota 403，主機未見 `.db.gz`。dirty tree 仍會阻擋 pull。**未重啟、未改 cron、未執行正式 DB。**
 
-## 2026-08-31 分點排行 bounded detail union（code／測試完成，未同步正式資料）
+## 2026-08-31 分點排行 bounded detail union（已正式發布）
 
 - [x] `branches/track` detail set 改為全部 tracked 分點聯集最新 ranking snapshot 的非隔日沖 Top100（`rank_score DESC, samples DESC`）；同名以 tracked source 優先，ranking-only 保留 candidate／auto。三層 hard cap 為 Top100、最多 200 branches、每 shard 最多 20,000 rows；tracked 自身超過 200 即 fail closed，ranking 只填剩餘額度。query 只讀 bounded names，嚴格限制 `date >= 120日窗 AND date <= export date`；不改 rankings、stats、score、schema 或 tracked seed。
 - [x] shard `as_of`／index `first_date`／additive `last_date` 均為實際 row 日期；tracked 無 rows 仍有 null shard。`/branch` 僅在 index ready 且命中時開明細；loading／index error／shard fetch-or-contract error／valid empty 皆分開呈現，候選、資料日、可用交易日數與每日前15大裁剪限制可見。舊 index/shard 保持可讀。
-- [x] 唯讀 evidence：正式站 ranking 831、舊 history index 47；`華南永昌-大安` 排名第8、VPS 近120日依現行口徑 4,887 rows，原為 candidate 未 tracked。聯集估 138 分點／599,525 rows／約22.9 MiB，僅為當次估算；實際受 Top100／200 branches／20k rows-shard 三層 hard cap 約束。**程式完成但正式 VPS 未同步、未 export/deploy data；未改 DB／cron／workflow。**
+- [x] 發布前 evidence：正式站 ranking 831、舊 history index 47；`華南永昌-大安` 排名第8、VPS 近120日依舊口徑估 4,887 rows，原為 candidate 未 tracked。2026-08-31 受控發布後正式 index 為 138 分點；該分點實際 shard 為 4,824 rows／83 交易日／2026-05-04～2026-08-28。Worker version=`ca3eff26-680c-4e14-81ca-d3accde31a21`，已登入正式站下鑽驗收通過；未改 DB／cron／workflow。
 - [x] 驗證：exporter targeted **16 passed**；完整 pipeline pytest **295 passed、58 subtests passed**；`web npx tsc --noEmit`、`git diff --check` 通過。`npm run build` 已啟動 Next 15.5.20，但長時間無後續 stdout（Node 持續有 CPU）後依協調指示中止，故 **build 未完成，未宣稱通過**；現有 node verifier 僅驗個股 mobile，與本次 `/branch` 契約不適用。
 
 ## 2026-08-31 VPS 唯讀稽核（12:16–12:26 +08）

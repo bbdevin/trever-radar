@@ -7,6 +7,8 @@
 > **四層總圖（日更／歷史回補／發布／大戶）**:見 [`docs/35_vps_schedule_architecture.md`](35_vps_schedule_architecture.md)（2026-08-27 唯讀核對：S2、TDCC 06:30、董監每月 16 日 07:00 均已掛正式 crontab）。
 >
 > **2026-08-31 12:16–12:26 +08 唯讀稽核**：SSH alias 為 `trever-vps`（`trever_vps` 無法解析）；本機與 VPS `main` 皆為 `8603f3a`。正式 crontab 已見平日 14:10／15:00／16:10／17:40／21:20／22:00、01:10、mid 03／09／12／20、23:30、TDCC 週六 06:30、董監每月 16 日 07:00；`radar-bf-branches` 與 `radar-worker` 各有一個 guard/supervisor。VPS 有未追蹤 `data/`、`package-lock.json`、`radar-quick-catchup.sh`、`run-backfill.sh`，歷史上曾使 `git pull` 失敗，**不得刪除或自行 pull**。本段是快照，不授權重啟、清理、DB 寫入或 cron 變更；細節與待驗項見 `docs/35`、`vps/README.md`。
+>
+> **2026-08-31 上櫃鎖／520 事件**：14:10 `daily-market.sh` 因週一題材／公司資料流程跑到 15:11，15:00 `daily-tpex-quotes.sh` 搶不到 `/tmp/radar-db.lock`，依設計安全略過並送 ntfy；15:43 後已無 holder，lock 檔本身不是 stale lock，勿刪。16:10 `daily-insti.sh` 再抓 `dailyQuotes` 時三次 HTTP 520 並提前結束；16:13 VPS 直接探測 `dailyQuotes` 與公司 OpenAPI 均已恢復 200，屬短暫上游／CDN 異常。2026-08-31 TPEx 日 K 當時仍未落 DB，下一自動補抓為 17:40。未獲人工確認前不調正式 cron、不手動補跑 DB。
 
 | 台北時間 | 執行者(VPS cron script / GitHub Actions) | 內容 |
 |---|---|---|
