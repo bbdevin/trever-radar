@@ -2,6 +2,7 @@
 import hashlib
 import json
 import os
+import tempfile
 import time
 from datetime import date as date_cls, datetime
 from pathlib import Path
@@ -555,10 +556,33 @@ def _warrant_target_counts(conn, date: str, market: str) -> dict[str, int]:
 
 
 def _atomic_json_write(path: Path, payload: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps(payload, ensure_ascii=False, sort_keys=True), encoding="utf-8")
-    os.replace(tmp, path)
+    """Atomically save warrant state without ever following a stale ``.tmp``.
+
+    The random ``mkstemp`` path is created with exclusive creation in the
+    destination directory, so its inode cannot have been pre-planted as a
+    hardlink or symlink.  Re-check the final path before creating that temp
+    and again immediately before replacement to fail closed on a path swap.
+    """
+    state_path = _safe_warrant_branch_state_path(path)
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=f".{state_path.name}.", suffix=".tmp", dir=state_path.parent,
+    )
+    tmp_path = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, ensure_ascii=False, sort_keys=True)
+            handle.flush()
+            os.fsync(handle.fileno())
+        _safe_warrant_branch_state_path(state_path)
+        os.replace(tmp_path, state_path)
+    finally:
+        # os.replace has moved it on success; on failure remove only our
+        # exclusive, random temp path, never a caller-supplied ``<state>.tmp``.
+        try:
+            tmp_path.unlink()
+        except FileNotFoundError:
+            pass
 
 
 def _load_warrant_branch_state(path: Path, *, date: str, market: str,
@@ -579,6 +603,24 @@ def _load_warrant_branch_state(path: Path, *, date: str, market: str,
     return state
 
 
+def _safe_warrant_branch_state_path(path: str | Path) -> Path:
+    """Reject a state file that could overwrite the configured SQLite DB."""
+    from .compute.read_only_sqlite import safe_report_output_path
+
+    return safe_report_output_path(
+        path, report_name="warrant branch state", path_option="--state-file",
+    )
+
+
+def _backfill_warrant_branch_state_path(
+    base: str | Path, *, date: str, market: str,
+) -> Path:
+    """Derive one bounded state file per date/market from a CLI base path."""
+    base_path = Path(base)
+    suffix = base_path.suffix or ".json"
+    return base_path.with_name(f"{base_path.stem}-{date}-{market}{suffix}")
+
+
 def import_warrant_branch_trades(date: str | None = None, market: str = "all",
                                  top: int = WARRANT_BRANCH_DEFAULT_CAP,
                                  sleep_s: float = 1.0, max_minutes: int | None = None,
@@ -595,6 +637,11 @@ def import_warrant_branch_trades(date: str | None = None, market: str = "all",
 
     if max_minutes is not None and max_minutes <= 0:
         raise ValueError("max_minutes must be positive when provided")
+    # Explicit caller paths are validated before any init_db/get_engine path:
+    # a typo or alias must never trigger a DB creation/migration first.
+    explicit_state_path = (
+        _safe_warrant_branch_state_path(state_file) if state_file is not None else None
+    )
     if dry_run:
         # A report must not create the DB, run additive migrations, switch WAL,
         # or update file metadata.  Reuse the project's physical SQLite mode=ro
@@ -604,14 +651,16 @@ def import_warrant_branch_trades(date: str | None = None, market: str = "all",
     else:
         init_db()
         engine = get_engine()
-    if date is None:
-        with engine.connect() as conn:
-            date = conn.execute(text("SELECT MAX(date) FROM warrant_daily")).scalar()
-            if date is None:
-                raise RuntimeError("no warrant_daily date available")
-            date = date.replace("-", "")
-    iso_d = iso(date)
     try:
+        # Keep every dry-run read after engine creation inside this finally:
+        # date=None resolution can fail before the target-pool query runs.
+        if date is None:
+            with engine.connect() as conn:
+                date = conn.execute(text("SELECT MAX(date) FROM warrant_daily")).scalar()
+                if date is None:
+                    raise RuntimeError("no warrant_daily date available")
+                date = date.replace("-", "")
+        iso_d = iso(date)
         with engine.connect() as conn:
             targets = _warrant_branch_targets(conn, iso_d, market, top)
             market_counts = _warrant_target_counts(conn, iso_d, market)
@@ -621,8 +670,9 @@ def import_warrant_branch_trades(date: str | None = None, market: str = "all",
     target_hash = hashlib.sha256(
         json.dumps({"date": iso_d, "market": market, "targets": sorted(targets)}, sort_keys=True).encode()
     ).hexdigest()
-    state_path = (Path(state_file) if state_file else
+    state_path = (explicit_state_path if explicit_state_path is not None else
                   Path(config.DATA_DIR) / f"warrant-branch-state-{iso_d}.json")
+    state_path = _safe_warrant_branch_state_path(state_path)
     state = _load_warrant_branch_state(
         state_path, date=iso_d, market=market, target_hash=target_hash, targets=targets
     )
@@ -692,9 +742,9 @@ def import_warrant_branch_trades(date: str | None = None, market: str = "all",
             "state_file": str(state_path)}
 
 
-def backfill_warrant_branches(top: int = 200, days: int = 120,
-                              sleep_s: float = 1.2, max_minutes: int | None = None,
-                              market: str = "twse") -> dict:
+def _backfill_warrant_branches_legacy(top: int = 200, days: int = 120,
+                                      sleep_s: float = 1.2, max_minutes: int | None = None,
+                                      market: str = "twse") -> dict:
     """March back date-scoped warrant pools, newest date first.
 
     The legacy default remains TWSE top-N.  Explicit ``market='all'`` switches
@@ -758,6 +808,131 @@ def backfill_warrant_branches(top: int = 200, days: int = 120,
     print(f"backfill-warrant-branches: fetched={fetched}, complete_dates={skipped_dates}/"
           f"{len(trade_dates)}, failed={failed}, stopped={stopped}", flush=True)
     return {"fetched": fetched, "failed": failed, "stopped": stopped}
+
+
+def _backfill_warrant_branches_with_state(
+    top: int, days: int, sleep_s: float, max_minutes: int | None,
+    market: str, state_file: str | Path,
+) -> dict:
+    """Resume each historical warrant pool from its own bounded state file."""
+    import time as time_mod
+    from sqlalchemy import text
+    from .providers import fubon
+
+    state_base = _safe_warrant_branch_state_path(state_file)
+    init_db()
+    engine = get_engine()
+    deadline = time_mod.monotonic() + max_minutes * 60 if max_minutes else None
+    with engine.connect() as conn:
+        trade_dates = [r[0] for r in conn.execute(text(
+            "SELECT DISTINCT date FROM daily_prices ORDER BY date DESC LIMIT :n"),
+            {"n": days})]
+
+    fetched = failed = completed_dates = 0
+    stopped = None
+    state_files: list[str] = []
+    for d_iso in trade_dates:
+        date = d_iso.replace("-", "")
+        with engine.connect() as conn:
+            targets = _warrant_branch_targets(
+                conn, d_iso, market, top, fail_on_cap=(market == "all")
+            )
+            have = {r[0] for r in conn.execute(text(
+                "SELECT DISTINCT stock_id FROM branch_trades WHERE date = :d"),
+                {"d": d_iso})}
+        target_hash = hashlib.sha256(json.dumps(
+            {"date": d_iso, "market": market, "targets": sorted(targets)}, sort_keys=True,
+        ).encode()).hexdigest()
+        state_path = _safe_warrant_branch_state_path(
+            _backfill_warrant_branch_state_path(
+                state_base, date=d_iso, market=market,
+            )
+        )
+        state_files.append(str(state_path))
+        state = _load_warrant_branch_state(
+            state_path, date=d_iso, market=market,
+            target_hash=target_hash, targets=targets,
+        )
+        pending: list[str] = []
+        for sid in targets:
+            if sid in have:
+                state["results"][sid] = {"status": "ok", "source": "existing_db"}
+                continue
+            if state["results"].get(sid, {}).get("status") not in {"ok", "empty"}:
+                pending.append(sid)
+        _atomic_json_write(state_path, state)
+
+        since_checkpoint = 0
+        for sid in pending:
+            if deadline and time_mod.monotonic() > deadline:
+                stopped = f"time budget reached at {d_iso}"
+                break
+            state["results"][sid] = {"status": "pending"}
+            try:
+                rows = fubon.fetch_branch_trades(sid, date, throttle=sleep_s)
+                with engine.begin() as conn:
+                    rows_written = upsert_branch_trades(conn, rows)
+                state["results"][sid] = {"status": "ok", "rows": rows_written}
+                fetched += 1
+            except NoDataError as exc:
+                state["results"][sid] = {"status": "empty", "error": str(exc)[:200]}
+            except Exception as exc:  # retry this target on the next invocation
+                state["results"][sid] = {"status": "error", "error": str(exc)[:200]}
+                failed += 1
+                _atomic_json_write(state_path, state)
+                since_checkpoint = 0
+                if failed > 30:
+                    stopped = f"too many failures at {d_iso}: {str(exc)[:80]}"
+                    break
+                continue
+            since_checkpoint += 1
+            if since_checkpoint >= 25:
+                _atomic_json_write(state_path, state)
+                since_checkpoint = 0
+
+        _atomic_json_write(state_path, state)
+        statuses = [state["results"].get(sid, {}).get("status") for sid in targets]
+        if not targets or all(status in {"ok", "empty"} for status in statuses):
+            completed_dates += 1
+        print(f"backfill-warrant-branches {d_iso}: targets={len(targets)} "
+              f"pending={len(pending)} total fetched={fetched}", flush=True)
+        if stopped:
+            break
+
+    if stopped is None and completed_dates != len(trade_dates):
+        stopped = (
+            f"resume required: {len(trade_dates) - completed_dates} date(s) "
+            "remain incomplete"
+        )
+    with engine.begin() as conn:
+        _log(conn, "fubon", "warrant_branch_hist",
+             datetime.now(ZoneInfo(config.TZ)).strftime("%Y%m%d"),
+             fetched, "ok" if not stopped else "error", error=stopped)
+    print(f"backfill-warrant-branches: fetched={fetched}, complete_dates={completed_dates}/"
+          f"{len(trade_dates)}, failed={failed}, stopped={stopped}", flush=True)
+    return {
+        "fetched": fetched, "failed": failed, "stopped": stopped,
+        "state_files": state_files,
+    }
+
+
+def backfill_warrant_branches(top: int = 200, days: int = 120,
+                              sleep_s: float = 1.2, max_minutes: int | None = None,
+                              market: str = "twse",
+                              state_file: str | Path | None = None) -> dict:
+    """March back date-scoped warrant pools, newest date first.
+
+    Without ``state_file`` this preserves the legacy top-N behavior exactly.
+    When supplied, the path is a base: each date/market gets its own atomic
+    ``<stem>-YYYY-MM-DD-<market>.json`` state, avoiding a giant history file.
+    """
+    if state_file is None:
+        return _backfill_warrant_branches_legacy(
+            top, days, sleep_s, max_minutes, market,
+        )
+    return _backfill_warrant_branches_with_state(
+        top, days, sleep_s, max_minutes, market, state_file,
+    )
 
 
 def import_branch_trades(date: str | None = None, top: int = 80,

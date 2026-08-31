@@ -134,7 +134,8 @@ def cmd_backfill_branches(args):
 def cmd_backfill_warrant_branches(args):
     from .importer import backfill_warrant_branches
     info = backfill_warrant_branches(
-        args.top, args.days, args.sleep, args.max_minutes, args.market
+        args.top, args.days, args.sleep, args.max_minutes, args.market,
+        state_file=args.state_file,
     )
     if info["stopped"]:
         raise SystemExit(f"warrant branch backfill incomplete: {info['stopped']}")
@@ -427,6 +428,8 @@ def main(argv=None):
     bwb.add_argument("--days", type=int, default=120, help="trading days depth (half year)")
     bwb.add_argument("--sleep", type=float, default=1.2)
     bwb.add_argument("--max-minutes", type=int, default=None, help="stop cleanly after N minutes")
+    bwb.add_argument("--state-file", default=None,
+                     help="optional base path; writes one atomic state per date+market beside it")
     bwb.set_defaults(fn=cmd_backfill_warrant_branches)
 
     tdcc = sub.add_parser(

@@ -1,9 +1,10 @@
 """All-market warrant-branch pool, safety cap, resume state, and CLI wiring."""
 import json
+import os
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import radar.cli as cli
 import radar.config as config
@@ -84,6 +85,124 @@ class WarrantBranchImportTests(unittest.TestCase):
         self.assertFalse(self.state.exists(), "dry-run must not create resume state")
         self.assertEqual(db_path.stat().st_mtime_ns, before_mtime)
 
+    def test_dry_run_disposes_read_only_engine_when_latest_date_is_missing(self):
+        engine = MagicMock()
+        conn = engine.connect.return_value.__enter__.return_value
+        conn.execute.return_value.scalar.return_value = None
+        with patch(
+            "radar.compute.branch_point_in_time_report.get_read_only_engine",
+            return_value=engine,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "no warrant_daily date"):
+                import_warrant_branch_trades(
+                    date=None, market="all", top=10, state_file=self.state, dry_run=True,
+                )
+        engine.dispose.assert_called_once_with()
+        engine.connect.return_value.__exit__.assert_called_once()
+
+    def test_dry_run_disposes_read_only_engine_when_target_read_raises(self):
+        engine = MagicMock()
+        conn = engine.connect.return_value.__enter__.return_value
+        conn.execute.side_effect = RuntimeError("read failed")
+        with patch(
+            "radar.compute.branch_point_in_time_report.get_read_only_engine",
+            return_value=engine,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "read failed"):
+                import_warrant_branch_trades(
+                    date="20260828", market="all", top=10, state_file=self.state, dry_run=True,
+                )
+        engine.dispose.assert_called_once_with()
+        engine.connect.return_value.__exit__.assert_called_once()
+
+    def test_custom_state_rejects_database_sidecars_and_database_alias(self):
+        db_path = Path(config.DB_URL.removeprefix("sqlite:///"))
+        for protected in (db_path, *(db_path.with_name(f"{db_path.name}{suffix}") for suffix in ("-wal", "-shm", "-journal"))):
+            with self.assertRaisesRegex(ValueError, "--state-file"):
+                import_warrant_branch_trades(
+                    "20260828", market="all", top=10, state_file=protected, dry_run=True,
+                )
+
+        alias = Path(self.tmp.name) / "database-hardlink.json"
+        os.link(db_path, alias)
+        with self.assertRaisesRegex(ValueError, "alias"):
+            import_warrant_branch_trades(
+                "20260828", market="all", top=10, state_file=alias, dry_run=True,
+            )
+
+        symlink = Path(self.tmp.name) / "database-symlink.json"
+        try:
+            os.symlink(db_path, symlink)
+        except OSError:
+            pass  # Windows may not grant this test process symlink privilege.
+        else:
+            with self.assertRaisesRegex(ValueError, "database"):
+                import_warrant_branch_trades(
+                    "20260828", market="all", top=10, state_file=symlink, dry_run=True,
+                )
+
+        # Existing WAL sidecars are protected by inode too, not just by their
+        # literal names.  init_db keeps this test database in active WAL mode.
+        wal_path = db_path.with_name(f"{db_path.name}-wal")
+        self.assertTrue(wal_path.is_file())
+        wal_alias = Path(self.tmp.name) / "wal-hardlink.json"
+        os.link(wal_path, wal_alias)
+        with self.assertRaisesRegex(ValueError, "sidecar"):
+            import_warrant_branch_trades(
+                "20260828", market="all", top=10, state_file=wal_alias, dry_run=True,
+            )
+
+    def test_explicit_invalid_state_is_rejected_before_init_db(self):
+        db_path = Path(config.DB_URL.removeprefix("sqlite:///"))
+        before = db_path.read_bytes()
+        alias = Path(self.tmp.name) / "database-init-hardlink.json"
+        os.link(db_path, alias)
+        for protected in (db_path, db_path.with_name(f"{db_path.name}-wal"), alias):
+            with patch("radar.importer.init_db", side_effect=AssertionError("must not initialise")):
+                with self.assertRaisesRegex(ValueError, "--state-file"):
+                    import_warrant_branch_trades(
+                        "20260828", market="all", top=10, state_file=protected,
+                    )
+            self.assertEqual(db_path.read_bytes(), before)
+
+    def test_atomic_state_ignores_malicious_legacy_temp_files(self):
+        db_path = Path(config.DB_URL.removeprefix("sqlite:///"))
+        wal_path = db_path.with_name(f"{db_path.name}-wal")
+        self.assertTrue(wal_path.is_file(), "fixture must exercise active WAL")
+        before_db, before_wal = db_path.read_bytes(), wal_path.read_bytes()
+
+        hardlink_state = Path(self.tmp.name) / "hardlink-state.json"
+        hardlink_tmp = hardlink_state.with_name(f"{hardlink_state.name}.tmp")
+        os.link(db_path, hardlink_tmp)
+        symlink_state = Path(self.tmp.name) / "symlink-state.json"
+        symlink_tmp = symlink_state.with_name(f"{symlink_state.name}.tmp")
+        try:
+            os.symlink(wal_path, symlink_tmp)
+        except OSError:
+            symlink_state = None  # Symlink permission is platform-dependent.
+
+        with patch("radar.importer.init_db", return_value=None), \
+             patch("radar.importer._log"), \
+             patch("radar.providers.fubon.fetch_branch_trades", side_effect=NoDataError("valid empty")):
+            hardlink_info = import_warrant_branch_trades(
+                "20260828", market="all", top=10, sleep_s=0, state_file=hardlink_state,
+            )
+            if symlink_state is not None:
+                symlink_info = import_warrant_branch_trades(
+                    "20260828", market="all", top=10, sleep_s=0, state_file=symlink_state,
+                )
+
+        self.assertTrue(hardlink_info["complete"])
+        self.assertTrue(json.loads(hardlink_state.read_text(encoding="utf-8"))["results"])
+        self.assertTrue(os.path.samefile(hardlink_tmp, db_path), "old fixed temp is untouched")
+        self.assertFalse(list(hardlink_state.parent.glob(f".{hardlink_state.name}.*.tmp")))
+        if symlink_state is not None:
+            self.assertTrue(symlink_info["complete"])
+            self.assertTrue(os.path.samefile(symlink_tmp, wal_path), "old fixed temp is untouched")
+            self.assertFalse(list(symlink_state.parent.glob(f".{symlink_state.name}.*.tmp")))
+        self.assertEqual(db_path.read_bytes(), before_db)
+        self.assertEqual(wal_path.read_bytes(), before_wal)
+
     def test_timeout_is_logged_as_error_not_empty(self):
         with patch("radar.importer.time.monotonic", side_effect=[0.0, 61.0]), \
              patch("radar.providers.fubon.fetch_branch_trades") as fetch:
@@ -152,8 +271,9 @@ class WarrantBranchImportTests(unittest.TestCase):
 
         with patch("radar.importer.backfill_warrant_branches",
                    return_value={"stopped": None}) as backfill:
-            cli.main(["backfill-warrant-branches", "--market", "tpex", "--top", "99"])
+            cli.main(["backfill-warrant-branches", "--market", "tpex", "--top", "99", "--state-file", "resume.json"])
         self.assertEqual(backfill.call_args.args[-1], "tpex")
+        self.assertEqual(backfill.call_args.kwargs["state_file"], "resume.json")
 
         with patch("radar.importer.backfill_warrant_branches",
                    return_value={"stopped": None}) as legacy_backfill:

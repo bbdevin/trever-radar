@@ -84,7 +84,9 @@ def get_read_only_sqlite_engine(
     return engine
 
 
-def safe_report_output_path(out: str | Path, *, report_name: str) -> Path:
+def safe_report_output_path(
+    out: str | Path, *, report_name: str, path_option: str = "--out",
+) -> Path:
     """Resolve output and refuse the DB, its aliases, or SQLite sidecars.
 
     A pre-existing hardlink can name the same inode without resolving to the
@@ -101,7 +103,7 @@ def safe_report_output_path(out: str | Path, *, report_name: str) -> Path:
     )
     if resolved == db_path or resolved in sidecars:
         raise ValueError(
-            f"{report_name} --out must not be the configured SQLite database or its sidecar"
+            f"{report_name} {path_option} must not be the configured SQLite database or its sidecar"
         )
     if candidate.exists():
         protected = (db_path, *(path for path in sidecars if path.exists()))
@@ -109,10 +111,10 @@ def safe_report_output_path(out: str | Path, *, report_name: str) -> Path:
             try:
                 aliases_protected = os.path.samefile(candidate, protected_path)
             except OSError as exc:
-                raise ValueError(f"{report_name} cannot safely verify --out path") from exc
+                raise ValueError(f"{report_name} cannot safely verify {path_option} path") from exc
             if aliases_protected:
                 kind = "database" if protected_path == db_path else "sidecar"
                 raise ValueError(
-                    f"{report_name} --out must not alias the configured SQLite {kind}"
+                    f"{report_name} {path_option} must not alias the configured SQLite {kind}"
                 )
     return out_path

@@ -62,12 +62,14 @@ export default function WarrantBranchPanel({ stockId }: { stockId: string }) {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [error, setError] = useState(false);
   const [usingMarketFallback, setUsingMarketFallback] = useState(false);
+  const [dataDate, setDataDate] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     setByTf(null);
     setError(false);
     setUsingMarketFallback(false);
+    setDataDate(null);
     dataFetch("/data/branches/warrant-stock-details/index.json")
       .then(async (indexResponse) => {
         // A code deploy can precede the next VPS export. Only a missing index
@@ -75,7 +77,11 @@ export default function WarrantBranchPanel({ stockId }: { stockId: string }) {
         if (indexResponse.status === 404) {
           const legacyResponse = await dataFetch("/data/branches/warrant_branches.json");
           if (!legacyResponse.ok) throw legacyResponse.status;
-          return { rows: await legacyResponse.json() as Record<string, WarrantBranchRow[]>, fallback: true };
+          return {
+            rows: await legacyResponse.json() as Record<string, WarrantBranchRow[]>,
+            fallback: true,
+            dataDate: null,
+          };
         }
         if (!indexResponse.ok) throw indexResponse.status;
         const index = await indexResponse.json() as WarrantBranchDetailIndex;
@@ -89,7 +95,7 @@ export default function WarrantBranchPanel({ stockId }: { stockId: string }) {
         // The index is authoritative: never read an old shard for a stock
         // absent from the current snapshot.
         if (!index.stocks.includes(stockId)) {
-          return { rows: {} as Record<string, WarrantBranchRow[]>, fallback: false };
+          return { rows: {} as Record<string, WarrantBranchRow[]>, fallback: false, dataDate: index.data_date };
         }
         const shardResponse = await dataFetch(`/data/branches/warrant-stock-details/${encodeURIComponent(stockId)}.json`);
         if (!shardResponse.ok) throw shardResponse.status;
@@ -102,11 +108,12 @@ export default function WarrantBranchPanel({ stockId }: { stockId: string }) {
           || !shard.timeframes
           || !TIMEFRAMES.every((timeframe) => Array.isArray(shard.timeframes[timeframe.key]))
         ) throw new Error("權證分點明細格式錯誤");
-        return { rows: shard.timeframes, fallback: false };
+        return { rows: shard.timeframes, fallback: false, dataDate: index.data_date };
       })
-      .then(({ rows, fallback }) => {
+      .then(({ rows, fallback, dataDate: nextDataDate }) => {
         if (!cancelled) {
           setUsingMarketFallback(fallback);
+          setDataDate(nextDataDate);
           setByTf(rows);
         }
       })
@@ -149,9 +156,10 @@ export default function WarrantBranchPanel({ stockId }: { stockId: string }) {
         <div>
           <h3 className="text-sm font-bold text-foreground">權證分點動向</h3>
           <p className="mt-0.5 text-[11.5px] text-muted-foreground">
-            熱門上市權證的估計淨買／賣超；每檔權證僅保留前 15 大分點。區間淨額 ≥ {(usingMarketFallback ? LARGE_AMOUNT : DETAIL_MIN_AMOUNT) / 10000} 萬才顯示，點列可看權證明細。
+            已匯入且符合條件的權證之估計淨買／賣超；涵蓋依已匯入池，每檔權證僅保留前 15 大分點。區間淨額 ≥ {(usingMarketFallback ? LARGE_AMOUNT : DETAIL_MIN_AMOUNT) / 10000} 萬才顯示，點列可看權證明細。
           </p>
-          {usingMarketFallback && <p className="mt-1 text-[11px] text-muted-foreground">100 萬明細快照尚未發布，暫以原全市場 500 萬門檻顯示。</p>}
+          {dataDate && <p className="mt-1 text-[11px] text-muted-foreground">資料日 {dataDate}</p>}
+          {usingMarketFallback && <p className="mt-1 text-[11px] text-muted-foreground">100 萬明細快照尚未發布，暫以既有 500 萬門檻快照顯示；舊快照未提供資料日。</p>}
         </div>
         {(buyN > 0 || sellN > 0) && (
           <span className="text-[11.5px] text-muted-foreground">
@@ -177,7 +185,7 @@ export default function WarrantBranchPanel({ stockId }: { stockId: string }) {
 
       {rows.length === 0 ? (
         <p className="py-4 text-center text-[13px] text-muted-foreground">
-          此區間沒有淨買賣超達 {(usingMarketFallback ? LARGE_AMOUNT : DETAIL_MIN_AMOUNT) / 10000} 萬的權證分點。資料只涵蓋熱門上市權證與每檔前 15 大分點，沒有資料不代表沒有交易。
+          此區間沒有淨買賣超達 {(usingMarketFallback ? LARGE_AMOUNT : DETAIL_MIN_AMOUNT) / 10000} 萬的權證分點。涵蓋依已匯入且符合條件的權證池，每檔僅前 15 大分點；沒有資料不代表沒有交易。
         </p>
       ) : (
         <ul className="flex flex-col gap-1.5">

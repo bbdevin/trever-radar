@@ -16,6 +16,13 @@
 - [x] active-WAL fixture 證明可讀到未 checkpoint 的最新策略列；SQL 為 SELECT、無 DB DDL/DML／DB 或 sidecar 檔案建立／migration，DB、WAL 與 journal 內容不變。SQLite 為正確併發 WAL 讀取，可能更新 `-shm` 的 reader-lock/read-mark 協調 metadata；這不是 DB／WAL 內容寫入，且測試確認 SHM 未刪除或截斷。
 - [x] 完整 pipeline pytest **278 passed、58 subtests**；Luna High 最終 review **APPROVE**。**未跑正式 VPS 報表、未讀寫正式 DB、未改 cron／workflow。**
 
+## 2026-08-31 F-STATE 權證分點 state 安全續跑（code／測試完成，未啟用正式輪）
+
+- [x] `backfill-warrant-branches` 新增可選 `--state-file BASE`：未給參數時 legacy 行為不變；給定時 BASE 僅為命名種子，每個 `(date, market)` 各有 atomic `stem-YYYY-MM-DD-market.json`，不會反覆改寫全市場×120 日的巨型 JSON。state 以 date＋market＋target hash 分 scope；`ok`／合法 `empty` 跳過，`error`／`pending` 重試，目標池變動只失效對應日期；既有 DB rows 視為 `ok`。
+- [x] state mode 只要任一日期未完整即 fail closed：回傳 `resume required`、寫 error import log，CLI nonzero；全部完成才寫 ok。daily import 與 backfill 的明確 state path 均在任何 `init_db`／`get_engine` 前拒絕 configured DB、精確 `-wal/-shm/-journal`、以及 symlink／hardlink alias；write 以同目錄獨占 temp、flush/fsync/replace，並在建立與替換前重驗最終路徑，舊惡意 `<state>.tmp` 不會被使用。
+- [x] 個股權證分點面板使用 `index.data_date` 顯示資料日；文案改為「已匯入且符合條件的權證／涵蓋依已匯入池」。舊 500 萬 fallback 不宣稱資料日或全市場涵蓋；100／500 萬門檻、前 15 大限制與既有資料契約未改。
+- [x] 完整 pipeline pytest **288 passed、58 subtests**，`npx tsc --noEmit`、`git diff --check` 通過；Luna High 最終 review **APPROVE**。**未跑正式 VPS PoC／DB／export，未改 cron／workflow；VPS free 7GB <20GB gate，禁止自行啟用全市場權證輪。**
+
 ## 2026-08-31 VPS 唯讀稽核（12:16–12:26 +08）
 
 - [x] 本機與 VPS `main` 均為 `8603f3a`；可用 alias 為 `trever-vps`（`trever_vps` 無法解析）。正式 crontab 已核對 14:10／15:00／16:10／17:40／21:20／22:00、01:10、03／09／12／20、23:30、TDCC 週六 06:30、董事每月 16 日 07:00。

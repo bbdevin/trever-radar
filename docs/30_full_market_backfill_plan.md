@@ -1,7 +1,7 @@
 # 30 WP-B6：全市場股票兩年＋上市／上櫃活躍權證合併半年回補
 
-> **狀態（2026-08-28）：全市場日抓 importer／CLI、atomic resume state、disabled PoC script 與測試已 code-ready；正式 PoC、歷史回補、cron、正式 DB 寫入及 deploy 均未執行。**
-> VPS 唯讀實數：2026-08-27 當日 eligible TWSE 16,225 + TPEx 3,856 = 20,081；sleep=1.0 理論 5h35、實測估 6–8h；DB 約 4.7GB、free 7.6GB，低於本文件 20GB 閘門。因此不得正式開跑或加 active cron。
+> **狀態（2026-08-31）：全市場日抓 importer／CLI、atomic resume state、disabled PoC script 與測試已 code-ready；`backfill-warrant-branches --market all` 已實作，且可選 `--state-file BASE` 以每日期＋市場分檔續跑。正式 PoC、歷史回補、cron、正式 DB 寫入及 export/deploy 均未執行。**
+> VPS 唯讀實數：2026-08-27 當日 eligible TWSE 16,225 + TPEx 3,856 = 20,081；sleep=1.0 理論 5h35、實測估 6–8h；2026-08-31 DB 5.32GB、free 7.0GB，低於本文件 20GB 閘門。因此不得正式開跑或加 active cron。
 > 正式執行仍須由使用者親自在 VPS 啟動；agent 不得自行部署、改 cron 或寫入正式 DB。
 
 ## 1. Confirmed Scope
@@ -18,11 +18,13 @@
 - 每個歷史交易日當天全部有成交的上市＋上櫃認購／認售權證。
 - 最近 120 個交易日（約半年）。
 - **不拆上市／上櫃 phase、不設兩份 marker、不做兩條排程、不分兩套前端結果。**
-- 規劃中的單一指令（CLI 尚待實作 `--market all`）：
+- 已實作、但尚未在正式 VPS 執行的單一指令：
 
 ```bash
 backfill-warrant-branches --market all --top 30000 --days 120 --sleep 1.2
 ```
+
+- 可選 `--state-file /safe/path/resume.json` 時，該 BASE 不直接承載結果；每個 `(date, market)` 寫獨立 atomic `resume-YYYY-MM-DD-all.json`。未提供則保留 legacy 回補行為。`ok`／合法 `empty` 可跳過、`error`／`pending` 可重試；只要有未完整日期即 nonzero，不能把可續跑的失敗誤報為成功。
 
 - 單一目標查詢口徑：
 
@@ -292,12 +294,12 @@ Phase 2 必須具備：
 - 抽已發行滿 30／60／120 日權證驗歷史可用深度。
 - 通過條件：有效交易日樣本成功率、鏡像一致率與解析正確率均記錄落檔；失敗樣本須分類為未發行／零成交／來源缺資料／解析異常，不能籠統吞掉。
 
-### 8.2 WP-B6-I：Importer／CLI（2026-08-28 code-ready，未對正式 DB 執行）
+### 8.2 WP-B6-I：Importer／CLI（2026-08-31 code-ready，未對正式 DB 執行）
 
 預計修改：
 
 - `pipeline/radar/importer.py`：`import-warrant-branch-trades` 的目標嚴格為當日、`volume>0`、`turnover>0`、認購／認售、上市＋上櫃合併、且 `warrants.stock_id → stocks(type=stock,is_active=1)`；ETF／指數／牛熊與未映射標的排除。
-- `pipeline/radar/cli.py`：`--market twse|tpex|all`（預設 `all`）、`--top` 為 safety cap；目標數超過 cap 立即 fail closed，不以 SQL LIMIT 偷裁尾端。`--max-minutes` 非完整即 nonzero，state file 保留後續 retry。
+- `pipeline/radar/cli.py`：`import-warrant-branch-trades` 支援 `--market twse|tpex|all`（預設 `all`）；`backfill-warrant-branches` 亦已支援明確 `--market all`（legacy 預設仍是 `twse`）。`--top` 為 safety cap；目標數超過 cap 立即 fail closed，不以 SQL LIMIT 偷裁尾端。`--max-minutes` 或 state 未完整即 nonzero，state file 保留後續 retry；明確 state path 不得是 DB／SQLite sidecar 或其 alias。
 - `pipeline/tests/test_warrant_branch_import.py`：覆蓋上市＋上櫃同池、ETF／零成交排除、market filter、cap fail、ok/empty skip 與 error retry、CLI wiring；既有歷史逐日測試同步普通股標的條件。
 - `pipeline/radar/export/json_export.py` 與 `pipeline/tests/test_json_export.py`
   - 單日型使用當日正向 `net_amount ≥ 200 萬`；連買型使用連續正買超交易日 `streak_net_amount ≥ 200 萬`，不可改用買進總額或任意 120 日累計。
