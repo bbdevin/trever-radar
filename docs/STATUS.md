@@ -2,11 +2,12 @@
 
 > 單一進度真相。每完成一個里程碑就更新本檔。規格細節看各編號文件,別寫在這裡。
 
-## 2026-08-31 日常分點權證過渡池：上市成交額門檻（程式／測試完成，未同步正式機）
+## 2026-08-31 日常分點權證過渡池：上市成交額門檻（已同步正式機）
 
 - [x] `import-branch-trades` 新增可選 `--warrant-turnover-min N`：未提供時仍完全沿用 legacy `warrants=200` Top-N 與其他既有呼叫；提供時只取標的是 active 普通股的當日 TWSE 認購／認售 `turnover >= N`（含等於；`N=0` 合法、負值 fail closed），並明確取代、不疊加 legacy Top-N，避免同一權證重複入列。TWSE 限制是權證 market，標的可為 TWSE／TPEx 普通股。
 - [x] 受版本控制的 `daily-branches.sh` 改為普通股 `--top 0`（不含 ETF）加 `--warrant-turnover-min 1000000`。這不是 TPEx 全市場獨立輪，也沒有改 schema、cron、workflow、評分或正式資料庫。
-- [x] fixture 覆蓋 999,999 排除、1,000,000 包含、call／put 皆可、TPEx 排除及舊 Top200 相容；targeted `test_warrant_branch_import.py` **13 passed**，完整 pipeline pytest **296 passed、58 subtests**。**未連線／修改 VPS、未執行正式 import、export 或 deploy。**
+- [x] fixture 覆蓋 999,999 排除、1,000,000 包含、call／put 皆可、TPEx 權證與 ETF／inactive／未映射標的排除、TWSE 權證連結 TPEx 普通股保留及舊 Top200 相容；targeted `test_warrant_branch_import.py` **13 passed**，完整 pipeline pytest **296 passed、58 subtests**，Luna High review **APPROVE**。
+- [x] 為避免半途切換，先等待 17:40 舊版日輪完成（1,199 ok／952 empty／0 failed／29,467 rows；19:21 前完成 export/deploy，Worker version `36874b4b-492e-4862-92a7-66ee69b1933a`）且 DB lock 釋放。確認 VPS 無 tracked dirty 並保留四個既有 untracked 後，才 ff-only 由 `1fefb09` 同步至 `ae1ad45`；正式腳本已驗只含 `--warrant-turnover-min 1000000`、不含 `--warrants 200`。同步本身未手動執行 DB／import／export／deploy，未改 cron／schema／workflow。
 
 ## 2026-08-31 分點明細正式發布與上櫃日 K 鎖事件
 
