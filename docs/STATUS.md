@@ -2,6 +2,12 @@
 
 > 單一進度真相。每完成一個里程碑就更新本檔。規格細節看各編號文件,別寫在這裡。
 
+## 2026-08-31 日常分點權證過渡池：上市成交額門檻（程式／測試完成，未同步正式機）
+
+- [x] `import-branch-trades` 新增可選 `--warrant-turnover-min N`：未提供時仍完全沿用 legacy `warrants=200` Top-N 與其他既有呼叫；提供時只取標的是 active 普通股的當日 TWSE 認購／認售 `turnover >= N`（含等於；`N=0` 合法、負值 fail closed），並明確取代、不疊加 legacy Top-N，避免同一權證重複入列。TWSE 限制是權證 market，標的可為 TWSE／TPEx 普通股。
+- [x] 受版本控制的 `daily-branches.sh` 改為普通股 `--top 0`（不含 ETF）加 `--warrant-turnover-min 1000000`。這不是 TPEx 全市場獨立輪，也沒有改 schema、cron、workflow、評分或正式資料庫。
+- [x] fixture 覆蓋 999,999 排除、1,000,000 包含、call／put 皆可、TPEx 排除及舊 Top200 相容；targeted `test_warrant_branch_import.py` **13 passed**，完整 pipeline pytest **296 passed、58 subtests**。**未連線／修改 VPS、未執行正式 import、export 或 deploy。**
+
 ## 2026-08-31 分點明細正式發布與上櫃日 K 鎖事件
 
 - [x] 使用者授權後，以不刪未追蹤檔、不重啟回補、不改 cron、不寫 `radar.db` 的受控方式，確認遠端 diff 不與未追蹤檔衝突，再將 VPS `main` 由 `ef4c50c` fast-forward 至 `591c09e`；既有 `cloudflare-data-worker/package-lock.json`、`data/`、`radar-quick-catchup.sh`、`run-backfill.sh` 均保留。重建 `radar-pipeline` 後只執行唯讀 `export-json` 與 data Worker deploy，Worker version=`ca3eff26-680c-4e14-81ca-d3accde31a21`。

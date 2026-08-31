@@ -13,9 +13,9 @@ radar import-daily --datasets quotes,insti
 radar compute-indicators --all --days 5
 radar seed-branches
 # top=0: 當日有報價的全部 type=stock(不含 ETF)。
-# 全市場權證輪尚未通過容量/時間 PoC，先保留既有上市 Top 200，避免資料斷層；
-# 待獨立輪正式啟用時，才在同一次排程變更中切為 --warrants 0。
-radar import-branch-trades --top 0 --warrants 200 --sleep 1.0
+# 全市場權證輪尚未通過容量/時間 PoC；過渡池只含標的是 active 普通股的
+# 上市認購／認售、當日成交金額至少 100 萬的權證。此模式取代 legacy --warrants Top-N，不能疊加。
+radar import-branch-trades --top 0 --warrant-turnover-min 1000000 --sleep 1.0
 radar compute-branch-stats
 radar compute-scores
 radar compute-performance

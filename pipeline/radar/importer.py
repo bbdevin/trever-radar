@@ -937,19 +937,26 @@ def backfill_warrant_branches(top: int = 200, days: int = 120,
 
 def import_branch_trades(date: str | None = None, top: int = 80,
                          ids: list[str] | None = None, warrants: int = 200,
-                         sleep_s: float = 1.2) -> dict:
+                         sleep_s: float = 1.2,
+                         warrant_turnover_min: int | None = None) -> dict:
     """富邦公開頁抓分點進出(每筆一請求,節流)。
 
     池選擇:
     - ``ids`` 指定清單時只用該清單
     - ``top <= 0``: **全部**當日有報價的 ``type=stock``(不含 ETF)
     - 否則: 當日 daily_scores 前 top 檔;無分數則退回成交金額前 top(僅 stock)
-    另保留當日成交金額前 ``warrants`` 大的上市權證作過渡池；上市＋上櫃
-    全市場權證由可續跑的 ``import_warrant_branch_trades`` 獨立處理。
+    未指定 ``warrant_turnover_min`` 時，另保留當日成交金額前 ``warrants`` 大的
+    上市權證作過渡池（legacy 相容）。指定門檻時改為上市認購／認售、標的是
+    active 普通股且當日成交金額 ``>= warrant_turnover_min`` 的池（``0`` 合法），
+    且不會再疊加 legacy Top-N。
+    上市＋上櫃全市場權證仍由可續跑的 ``import_warrant_branch_trades`` 獨立處理。
     """
     from sqlalchemy import text
 
     from .providers import fubon
+
+    if warrant_turnover_min is not None and warrant_turnover_min < 0:
+        raise ValueError("warrant_turnover_min must be >= 0")
 
     init_db()
     engine = get_engine()
@@ -981,15 +988,31 @@ def import_branch_trades(date: str | None = None, top: int = 80,
                     "JOIN stocks s ON s.id = p.stock_id AND s.type = 'stock' "
                     "WHERE p.date = :d ORDER BY p.turnover DESC LIMIT :n"),
                     {"d": iso_d, "n": top})]
-        if warrants > 0 and not ids:
+        if not ids and warrant_turnover_min is not None:
+            # The threshold pool deliberately replaces (rather than augments)
+            # legacy --warrants, so one warrant can never be queued twice.
+            targets += [r[0] for r in conn.execute(text(
+                "SELECT d.warrant_id FROM warrant_daily d "
+                "JOIN warrants w ON w.id = d.warrant_id "
+                "JOIN stocks s ON s.id = w.stock_id "
+                "AND s.type = 'stock' AND s.is_active = 1 "
+                "WHERE d.date = :d AND d.turnover >= :turnover_min "
+                "AND w.market = 'twse' AND w.kind IN ('call','put') "
+                "ORDER BY d.turnover DESC, d.warrant_id ASC"),
+                {"d": iso_d, "turnover_min": warrant_turnover_min})]
+        elif warrants > 0 and not ids:
             targets += [r[0] for r in conn.execute(text(
                 "SELECT d.warrant_id FROM warrant_daily d "
                 "JOIN warrants w ON w.id = d.warrant_id "
                 "WHERE d.date = :d AND w.market = 'twse' AND w.kind IN ('call','put') "
                 "ORDER BY d.turnover DESC LIMIT :n"), {"d": iso_d, "n": warrants})]
 
+    warrant_pool = (
+        f"turnover_min={warrant_turnover_min}"
+        if warrant_turnover_min is not None else f"warrants={warrants}"
+    )
     print(f"branch trades pool: {len(targets)} targets "
-          f"(top={top}, warrants={0 if ids else warrants})", flush=True)
+          f"(top={top}, {warrant_pool if not ids else 'warrants=0 (ids override)'})", flush=True)
     done = empty = failed = written = 0
     for sid in targets:
         try:

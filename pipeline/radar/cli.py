@@ -107,7 +107,12 @@ def cmd_seed_branches(_args):
 def cmd_import_branch_trades(args):
     from .importer import import_branch_trades
     ids = args.ids.split(",") if args.ids else None
-    import_branch_trades(args.date, args.top, ids, warrants=args.warrants, sleep_s=args.sleep)
+    import_branch_trades(
+        args.date, args.top, ids,
+        warrants=args.warrants,
+        sleep_s=args.sleep,
+        warrant_turnover_min=args.warrant_turnover_min,
+    )
 
 
 def cmd_import_warrant_branch_trades(args):
@@ -392,6 +397,8 @@ def main(argv=None):
     bt.add_argument("--ids", default=None, help="comma list overrides pool")
     bt.add_argument("--warrants", type=int, default=200,
                     help="legacy bundled warrant pool; 0 disables it (use import-warrant-branch-trades for full market)")
+    bt.add_argument("--warrant-turnover-min", type=int, default=None,
+                    help="active-stock TWSE call/put pool: same-day turnover >= N (N >= 0); overrides --warrants")
     bt.add_argument("--sleep", type=float, default=1.2, help="overall request interval")
     bt.set_defaults(fn=cmd_import_branch_trades)
 

@@ -11,7 +11,7 @@ import radar.config as config
 import radar.db as db
 from radar import schema
 import radar.importer as importer
-from radar.importer import import_warrant_branch_trades
+from radar.importer import import_branch_trades, import_warrant_branch_trades
 from radar.providers import NoDataError
 
 
@@ -74,6 +74,54 @@ class WarrantBranchImportTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "refuse to silently truncate"):
             import_warrant_branch_trades("20260828", market="all", top=1,
                                          state_file=self.state, dry_run=True)
+
+    def test_legacy_warrant_top_n_and_turnover_threshold_pool(self):
+        """Threshold mode is inclusive, active-stock TWSE call/put-only, and replaces Top-N."""
+        with db.get_engine().begin() as conn:
+            conn.execute(schema.warrants.insert(), [
+                {"id": "BELOW", "name": "below", "market": "twse", "kind": "call", "stock_id": "1111"},
+                {"id": "CALL_EQ", "name": "call equal", "market": "twse", "kind": "call", "stock_id": "1111"},
+                {"id": "PUT_ABOVE", "name": "put above", "market": "twse", "kind": "put", "stock_id": "1111"},
+                {"id": "TPEX_HIGH", "name": "tpex high", "market": "tpex", "kind": "call", "stock_id": "2222"},
+                {"id": "TW_TO_TPEX", "name": "listed warrant on otc stock", "market": "twse", "kind": "call", "stock_id": "2222"},
+                {"id": "ETF_HIGH", "name": "etf high", "market": "twse", "kind": "call", "stock_id": "0050"},
+                {"id": "INACTIVE_HIGH", "name": "inactive high", "market": "twse", "kind": "put", "stock_id": "3333"},
+                {"id": "UNMAPPED_HIGH", "name": "unmapped high", "market": "twse", "kind": "call", "stock_id": "9999"},
+                {"id": "NULL_STOCK_HIGH", "name": "null stock high", "market": "twse", "kind": "put", "stock_id": None},
+            ])
+            conn.execute(schema.warrant_daily.insert(), [
+                {"warrant_id": "BELOW", "date": DATE, "close": 1, "volume": 1, "turnover": 999_999},
+                {"warrant_id": "CALL_EQ", "date": DATE, "close": 1, "volume": 1, "turnover": 1_000_000},
+                {"warrant_id": "PUT_ABOVE", "date": DATE, "close": 1, "volume": 1, "turnover": 1_000_001},
+                {"warrant_id": "TPEX_HIGH", "date": DATE, "close": 1, "volume": 1, "turnover": 2_000_000},
+                {"warrant_id": "TW_TO_TPEX", "date": DATE, "close": 1, "volume": 1, "turnover": 1_500_000},
+                {"warrant_id": "ETF_HIGH", "date": DATE, "close": 1, "volume": 1, "turnover": 1_000_000},
+                {"warrant_id": "INACTIVE_HIGH", "date": DATE, "close": 1, "volume": 1, "turnover": 1_000_000},
+                {"warrant_id": "UNMAPPED_HIGH", "date": DATE, "close": 1, "volume": 1, "turnover": 1_000_000},
+                {"warrant_id": "NULL_STOCK_HIGH", "date": DATE, "close": 1, "volume": 1, "turnover": 1_000_000},
+            ])
+
+        with patch("radar.providers.fubon.fetch_branch_trades", return_value=[]) as fetch:
+            import_branch_trades("20260828", top=0, warrants=200, sleep_s=0,
+                                 warrant_turnover_min=1_000_000)
+        threshold_targets = [call.args[0] for call in fetch.call_args_list]
+        self.assertEqual(set(threshold_targets), {"CALL_EQ", "PUT_ABOVE", "TW_TO_TPEX"})
+        self.assertNotIn("BELOW", threshold_targets)  # 999,999 is below the inclusive floor.
+        self.assertNotIn("TPEX_HIGH", threshold_targets)
+        for excluded in ("ETF_HIGH", "INACTIVE_HIGH", "UNMAPPED_HIGH", "NULL_STOCK_HIGH"):
+            self.assertNotIn(excluded, threshold_targets)
+
+        with patch("radar.providers.fubon.fetch_branch_trades", return_value=[]) as fetch:
+            import_branch_trades("20260828", top=0, warrants=2, sleep_s=0)
+        # Omitting the new parameter preserves the existing Top-N contract.
+        self.assertEqual([call.args[0] for call in fetch.call_args_list], ["TW_TO_TPEX", "PUT_ABOVE"])
+
+        with patch("radar.providers.fubon.fetch_branch_trades", return_value=[]):
+            import_branch_trades("20260828", top=0, warrants=0, sleep_s=0,
+                                 warrant_turnover_min=0)
+        with self.assertRaisesRegex(ValueError, ">= 0"):
+            import_branch_trades("20260828", top=0, warrants=0, sleep_s=0,
+                                 warrant_turnover_min=-1)
 
     def test_dry_run_is_strictly_read_only(self):
         db_path = Path(config.DB_URL.removeprefix("sqlite:///"))
@@ -268,6 +316,14 @@ class WarrantBranchImportTests(unittest.TestCase):
         with patch("radar.importer.import_branch_trades", return_value={}) as legacy:
             cli.main(["import-branch-trades", "--top", "0", "--warrants", "0"])
         self.assertEqual(legacy.call_args.kwargs["warrants"], 0)
+        self.assertIsNone(legacy.call_args.kwargs["warrant_turnover_min"])
+
+        with patch("radar.importer.import_branch_trades", return_value={}) as threshold:
+            cli.main(["import-branch-trades", "--top", "0", "--warrant-turnover-min", "1000000"])
+        self.assertEqual(threshold.call_args.kwargs["warrant_turnover_min"], 1_000_000)
+
+        with self.assertRaisesRegex(ValueError, ">= 0"):
+            cli.main(["import-branch-trades", "--warrant-turnover-min", "-1"])
 
         with patch("radar.importer.backfill_warrant_branches",
                    return_value={"stopped": None}) as backfill:
@@ -287,7 +343,9 @@ class WarrantBranchImportTests(unittest.TestCase):
                 cli.main(["backfill-warrant-branches", "--days", "1"])
 
         script = Path(__file__).parents[2] / "vps" / "scripts" / "daily-branches.sh"
-        self.assertIn("--warrants 200", script.read_text(encoding="utf-8"))
+        script_text = script.read_text(encoding="utf-8")
+        self.assertIn("--warrant-turnover-min 1000000", script_text)
+        self.assertNotIn("--warrants 200", script_text)
         poc = Path(__file__).parents[2] / "vps" / "scripts" / "daily-warrant-branches-poc.sh"
         poc_text = poc.read_text(encoding="utf-8")
         self.assertIn("radar_timeout", poc_text)
