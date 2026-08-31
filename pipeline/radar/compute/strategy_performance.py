@@ -27,7 +27,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import text
 
 from .. import config
-from ..db import get_engine, init_db
+from .read_only_sqlite import get_read_only_sqlite_engine, safe_report_output_path
 
 HORIZONS = (5, 10, 20)
 
@@ -185,73 +185,77 @@ def fetch_strategy_events(
     lookback_dates: int = 180,
 ) -> dict[str, list[StrategyEvent]]:
     """Read DB and build StrategyEvent lists per strategy (report-only)."""
-    init_db()
-    engine = get_engine()
-
-    with engine.connect() as conn:
-        # Resolve min_date by most recent distinct daily_scores dates unless user fixes it.
-        if not min_date:
-            dates = [
-                r[0]
-                for r in conn.execute(text(
-                    """
-                    SELECT DISTINCT date
-                    FROM daily_scores
-                    WHERE fwd_5d IS NOT NULL OR fwd_10d IS NOT NULL OR fwd_20d IS NOT NULL
-                    ORDER BY date DESC
-                    LIMIT :n
-                    """
-                ), {"n": lookback_dates}).fetchall()
-            ]
-            if not dates:
-                return {}
-            min_date = min(dates)
-
-        requested_min_date = min_date
-        # One prior actual trading day is enough to tell whether a setup on
-        # the report boundary continues an earlier episode. A NULL-only price
-        # date is not a trading bar for this purpose.
-        warmup_date = conn.execute(text("""
-            SELECT MAX(date) FROM daily_prices
-            WHERE date < :min_date AND close IS NOT NULL
-        """), {"min_date": requested_min_date}).scalar()
-        query_start = warmup_date or requested_min_date
-
-        rows = conn.execute(text(
-            """
-            SELECT
-                ds.stock_id,
-                ds.date,
-                ds.fwd_5d,
-                ds.fwd_10d,
-                ds.fwd_20d,
-                ds.reasons AS ds_reasons,
-                ti.reasons AS ti_reasons
-            FROM daily_scores ds
-            LEFT JOIN indicators_daily ti
-              ON ti.stock_id = ds.stock_id AND ti.date = ds.date
-            WHERE ds.date >= :query_start
-              AND (
-                ds.fwd_5d IS NOT NULL OR ds.fwd_10d IS NOT NULL OR ds.fwd_20d IS NOT NULL
-                OR ds.date = :warmup_date
-              )
-            ORDER BY ds.date DESC, ds.stock_id
-            """
-        ), {"query_start": query_start, "warmup_date": warmup_date}).fetchall()
-
-    events_by_code: dict[str, list[StrategyEvent]] = {}
-    event_dates = [r[1] for r in rows]
-    # Episode continuity must follow the complete price calendar, not merely
-    # dates that happen to have matured fwd returns/daily_scores rows.
-    if event_dates:
+    engine = get_read_only_sqlite_engine(
+        report_name="phase3 strategy performance report",
+        required_tables=("daily_scores", "indicators_daily", "daily_prices"),
+    )
+    try:
         with engine.connect() as conn:
-            trading_dates = [r[0] for r in conn.execute(text("""
-                SELECT DISTINCT date FROM daily_prices
-                WHERE date >= :start AND date <= :end AND close IS NOT NULL
-                ORDER BY date
-            """), {"start": min(event_dates), "end": max(event_dates)}).fetchall()]
-    else:
-        trading_dates = []
+            # Resolve min_date by most recent distinct daily_scores dates unless user fixes it.
+            if not min_date:
+                dates = [
+                    r[0]
+                    for r in conn.execute(text(
+                        """
+                        SELECT DISTINCT date
+                        FROM daily_scores
+                        WHERE fwd_5d IS NOT NULL OR fwd_10d IS NOT NULL OR fwd_20d IS NOT NULL
+                        ORDER BY date DESC
+                        LIMIT :n
+                        """
+                    ), {"n": lookback_dates}).fetchall()
+                ]
+                if not dates:
+                    return {}
+                min_date = min(dates)
+
+            requested_min_date = min_date
+            # One prior actual trading day is enough to tell whether a setup on
+            # the report boundary continues an earlier episode. A NULL-only price
+            # date is not a trading bar for this purpose.
+            warmup_date = conn.execute(text("""
+                SELECT MAX(date) FROM daily_prices
+                WHERE date < :min_date AND close IS NOT NULL
+            """), {"min_date": requested_min_date}).scalar()
+            query_start = warmup_date or requested_min_date
+
+            rows = conn.execute(text(
+                """
+                SELECT
+                    ds.stock_id,
+                    ds.date,
+                    ds.fwd_5d,
+                    ds.fwd_10d,
+                    ds.fwd_20d,
+                    ds.reasons AS ds_reasons,
+                    ti.reasons AS ti_reasons
+                FROM daily_scores ds
+                LEFT JOIN indicators_daily ti
+                  ON ti.stock_id = ds.stock_id AND ti.date = ds.date
+                WHERE ds.date >= :query_start
+                  AND (
+                    ds.fwd_5d IS NOT NULL OR ds.fwd_10d IS NOT NULL OR ds.fwd_20d IS NOT NULL
+                    OR ds.date = :warmup_date
+                  )
+                ORDER BY ds.date DESC, ds.stock_id
+                """
+            ), {"query_start": query_start, "warmup_date": warmup_date}).fetchall()
+
+        events_by_code: dict[str, list[StrategyEvent]] = {}
+        event_dates = [r[1] for r in rows]
+        # Episode continuity must follow the complete price calendar, not merely
+        # dates that happen to have matured fwd returns/daily_scores rows.
+        if event_dates:
+            with engine.connect() as conn:
+                trading_dates = [r[0] for r in conn.execute(text("""
+                    SELECT DISTINCT date FROM daily_prices
+                    WHERE date >= :start AND date <= :end AND close IS NOT NULL
+                    ORDER BY date
+                """), {"start": min(event_dates), "end": max(event_dates)}).fetchall()]
+        else:
+            trading_dates = []
+    finally:
+        engine.dispose()
     for r in rows:
         _sid, date, fwd5, fwd10, fwd20, ds_reasons, ti_reasons = r
         ds_items = _parse_reasons(ds_reasons)
@@ -298,7 +302,9 @@ def build_phase3_strategy_performance_report(
         out_path = Path(config.ROOT) / "docs" / "reports" / f"phase3_strategy_performance_{tag}.md"
     else:
         out_path = Path(out)
-        out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path = safe_report_output_path(
+        out_path, report_name="phase3 strategy performance report",
+    )
 
     events_by_code = fetch_strategy_events(
         min_date=min_date,
@@ -370,6 +376,7 @@ def build_phase3_strategy_performance_report(
     lines.append(f"（共 {sum(int(perf[c]['per_horizon']['h20']['samples']) for c in perf)} 個 matured 20d 樣本分布在各策略上）")
 
     report = "\n".join(lines) + "\n"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(report, encoding="utf-8")
 
     # Light info for CLI output.

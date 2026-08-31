@@ -15,8 +15,8 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import text
 
 from .. import config
-from ..db import get_engine, init_db
 from .scores import combine
+from .read_only_sqlite import get_read_only_sqlite_engine, safe_report_output_path
 
 _S_CODE_RE = re.compile(r"^S([1-9]|10)_")
 
@@ -45,53 +45,61 @@ def _fmt_pct(v: float) -> str:
 
 
 def build_phase2_diff_report(date: str | None = None, out: str | None = None) -> dict:
-    init_db()
-    engine = get_engine()
-    with engine.connect() as conn:
-        latest = conn.execute(text("SELECT MAX(date) FROM daily_scores")).scalar()
-        if not latest:
-            raise RuntimeError("daily_scores is empty; run compute-scores first")
-        if date:
-            target_date = f"{date[:4]}-{date[4:6]}-{date[6:8]}"
-        else:
-            # Prefer a date that actually contains S-strategy reasons, so the
-            # diff report is decision-useful by default.
-            target_date = conn.execute(
+    # Reject a dangerous explicit output path before even reading report data.
+    if out is not None:
+        safe_report_output_path(out, report_name="phase2 diff report")
+    engine = get_read_only_sqlite_engine(
+        report_name="phase2 diff report",
+        required_tables=("daily_scores", "indicators_daily", "stocks"),
+    )
+    try:
+        with engine.connect() as conn:
+            latest = conn.execute(text("SELECT MAX(date) FROM daily_scores")).scalar()
+            if not latest:
+                raise RuntimeError("daily_scores is empty; run compute-scores first")
+            if date:
+                target_date = f"{date[:4]}-{date[4:6]}-{date[6:8]}"
+            else:
+                # Prefer a date that actually contains S-strategy reasons, so the
+                # diff report is decision-useful by default.
+                target_date = conn.execute(
+                    text(
+                        """
+                        SELECT MAX(ds.date)
+                        FROM daily_scores ds
+                        JOIN indicators_daily id
+                          ON id.stock_id = ds.stock_id AND id.date = ds.date
+                        WHERE id.reasons LIKE '%"code": "S%'
+                        """
+                    )
+                ).scalar() or latest
+
+            rows = conn.execute(
                 text(
                     """
-                    SELECT MAX(ds.date)
+                    SELECT
+                      ds.stock_id,
+                      s.name,
+                      ds.branch_score,
+                      ds.warrant_score,
+                      ds.tech_score,
+                      ds.inst_score,
+                      ds.theme_score,
+                      ds.risk_penalty,
+                      ds.final,
+                      id.reasons
                     FROM daily_scores ds
-                    JOIN indicators_daily id
+                    JOIN stocks s ON s.id = ds.stock_id
+                    LEFT JOIN indicators_daily id
                       ON id.stock_id = ds.stock_id AND id.date = ds.date
-                    WHERE id.reasons LIKE '%"code": "S%'
+                    WHERE ds.date = :d
+                    ORDER BY ds.stock_id
                     """
-                )
-            ).scalar() or latest
-
-        rows = conn.execute(
-            text(
-                """
-                SELECT
-                  ds.stock_id,
-                  s.name,
-                  ds.branch_score,
-                  ds.warrant_score,
-                  ds.tech_score,
-                  ds.inst_score,
-                  ds.theme_score,
-                  ds.risk_penalty,
-                  ds.final,
-                  id.reasons
-                FROM daily_scores ds
-                JOIN stocks s ON s.id = ds.stock_id
-                LEFT JOIN indicators_daily id
-                  ON id.stock_id = ds.stock_id AND id.date = ds.date
-                WHERE ds.date = :d
-                ORDER BY ds.stock_id
-                """
-            ),
-            {"d": target_date},
-        ).fetchall()
+                ),
+                {"d": target_date},
+            ).fetchall()
+    finally:
+        engine.dispose()
 
     if not rows:
         raise RuntimeError(f"no daily_scores rows on {target_date}")
@@ -174,6 +182,7 @@ def build_phase2_diff_report(date: str | None = None, out: str | None = None) ->
     lines.append("")
 
     out_path = Path(out) if out else (config.ROOT / "docs" / "reports" / f"phase2_score_diff_{target_date}.md")
+    out_path = safe_report_output_path(out_path, report_name="phase2 diff report")
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text("\n".join(lines), encoding="utf-8")
 

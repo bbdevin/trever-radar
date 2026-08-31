@@ -9,6 +9,13 @@
 - [x] 首頁一級 tabs 順序為綜合／策略／未發動／已發動／資券／市場掃描／追高風險／失效／口袋／權證。ThemeToggle 已存在，不是待做項。
 - [x] 已登入 in-app browser 390×844 實測：`clientWidth=375 / scrollWidth=375`；`stock-context-grid=347/347`、header `202/202`、price `154/154`、market `135/135`；基本資料地址、股務、來源、3 題材與庫藏股誠實空態可達，且無 console error。Design QA comparison 來源、實作與歷程見根目錄 `design-qa.md`（final result: passed）。
 
+## 2026-08-31 G-RO 策略報表／Phase 2 diff 真正唯讀
+
+- [x] `phase2-diff-report` 與 `phase3-strategy-performance-report` 不再呼叫 `init_db()`、不建表／migration／切 WAL；只接受既存實體 SQLite，驗 DB header 與必要表後以 URI `mode=ro` 的 `SELECT` 讀取。不存在、非 SQLite、缺必要表均 fail closed，保持既有 CLI／報表輸出契約。
+- [x] `--out` 在寫檔前拒絕 configured DB、精確 `-wal/-shm/-journal` 路徑，以及既有 symlink／hardlink alias（含 sidecar hardlink）；輸出不會覆寫資料庫或 SQLite sidecar。
+- [x] active-WAL fixture 證明可讀到未 checkpoint 的最新策略列；SQL 為 SELECT、無 DB DDL/DML／DB 或 sidecar 檔案建立／migration，DB、WAL 與 journal 內容不變。SQLite 為正確併發 WAL 讀取，可能更新 `-shm` 的 reader-lock/read-mark 協調 metadata；這不是 DB／WAL 內容寫入，且測試確認 SHM 未刪除或截斷。
+- [x] 完整 pipeline pytest **278 passed、58 subtests**；Luna High 最終 review **APPROVE**。**未跑正式 VPS 報表、未讀寫正式 DB、未改 cron／workflow。**
+
 ## 2026-08-31 VPS 唯讀稽核（12:16–12:26 +08）
 
 - [x] 本機與 VPS `main` 均為 `8603f3a`；可用 alias 為 `trever-vps`（`trever_vps` 無法解析）。正式 crontab 已核對 14:10／15:00／16:10／17:40／21:20／22:00、01:10、03／09／12／20、23:30、TDCC 週六 06:30、董事每月 16 日 07:00。

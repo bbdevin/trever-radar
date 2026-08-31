@@ -30,8 +30,8 @@
 |---|---|---|
 | Phase 0 文件化 | ✅ 完成(2026-07-10) | 本文件及共同記憶入口已更新 |
 | Phase 1 UI 刪減與合併 | ✅ 完成(2026-07-10) | 低風險,但仍須先看現有 diff;完成後為 `docs/22` 騰出首頁空間 |
-| Phase 2 策略/分數解耦 | 🔄 進行中 | 解耦程式+測試已完成(2026-07-10);差異報告 CLI 已完成(2026-08-19);VPS 最新日報告+正式重算待使用者批准 |
-| Phase 3 策略績效閉環 | ⏳ 待確認 | 先做客觀報告,不由 agent 自動升級策略;有助判斷 S12 是否適合作 Armed 主訊號 |
+| Phase 2 策略/分數解耦 | 🔄 進行中 | 解耦程式+測試已完成(2026-07-10);差異報告 CLI 已完成並於 2026-08-31 hardened 為真正唯讀;VPS 最新日報告+正式重算待使用者批准 |
+| Phase 3 策略績效閉環 | ⏳ 待確認 | 客觀報表產出器已於 2026-08-31 hardened 為真正唯讀；仍須人類看過報告才可決定策略治理，有助判斷 S12 是否適合作 Armed 主訊號 |
 | Phase 4 排程簡化 | 📝 提案稿已改寫(2026-08-20) | 對齊 VPS cron+Worker 資料層;cron/script **未改**,待另確認目標態或變體 B |
 | 之後 → `docs/22` Armed | 📝 規劃定案 | 見該文件 A1–A3;不屬本 B 方案 Phase 編號 |
 
@@ -192,6 +192,8 @@ frozen reason code 或任何歷史績效資料。
 3. 補 S2-S13 各自的正例、反例與邊界測試。
 4. 驗證 T1-T5 在移除策略 bonus 後仍符合 `docs/04` 原技術分規則。
 5. 產出舊/新 `tech_score` 差異報告,交 Reviewer 與使用者確認。(✅ 工具已完成:`python -m pipeline.radar.cli phase2-diff-report [--date YYYYMMDD] [--out path]`;本機樣本見 `docs/reports/phase2_score_diff_2026-07-06.md`;**VPS 最新資料日重跑仍待確認**)
+
+> **G-RO 唯讀硬化（2026-08-31）**：Phase 2 diff 與 Phase 3 strategy-performance 兩個報表入口不再呼叫 `init_db()`；只開既存實體 SQLite 的 URI `mode=ro`，先驗檔頭與必要表，缺 DB／非 SQLite／缺表立即 fail closed。`--out` 不可指向 DB、`-wal/-shm/-journal` 或其既有 symlink／hardlink alias。為看見 active writer 的最新 WAL frames，SQLite 可能改寫 `-shm` reader-lock/read-mark 協調 metadata；報表本身不改 DB／WAL 內容、不做 DDL/DML／migration。完整 pipeline pytest **278 passed、58 subtests**，Luna High review **APPROVE**；**未跑正式 VPS 報表、未作正式 DB 回算或動 cron。**
 
 **禁止事項**:完成程式碼不等於可重算正式資料。全市場 `compute-indicators --all`
 與重新部署會改變正式榜單,必須先由使用者另外確認 VPS / Actions 重算與回灌方式;
