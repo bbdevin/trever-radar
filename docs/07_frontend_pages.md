@@ -60,6 +60,10 @@
 
 **`/branch` 現況（2026-08-31）**：分點動向區名稱為「分點最近交易日進出」。`branches/today.json` v1 提供 `as_of` 與 `movements`；資料日是 tracked 分點在價格日以前的實際最新交易日，不是強制等於價格日。前端同時接受舊 bare mapping，舊檔不冒稱日期；表格顯示股票連結、買進／賣出／淨買賣／佔比，gross 值中性、淨值正紅負綠零中性，缺佔比顯示「—」。
 
+**分點明細範圍（2026-08-31）**：`branches/track/index.json`／lazy shards 的 detail set 為所有 `tracked_branches` 加上最新 `branch_rankings` 中非隔日沖、依 `rank_score DESC, samples DESC` 的前 100 名；同名時 tracked source 優先，ranking-only 保留 candidate／auto 等來源。三層硬界線為：ranking Top100、總 detail branches 最多 200（tracked 自身超限即 fail closed，絕不靜默丟失）、每 shard 最多 20,000 rows。每 shard 僅收 export date 以前的 120 日視窗，`as_of`／`first_date`／`last_date` 是實際 rows 日期（空 shard 均為 null）；舊 index/shard 仍可讀。現有 evidence 是一次估算而非容量保證：排行 831、原 history index 47；tracked+非隔日沖 Top100 聯集 138 分點、599,525 rows，估約 22.9 MiB。正式 VPS 尚未同步或 export/deploy data。
+
+`/branch` 將 track index 的 loading／error／ready 分開：只有 ready index 命中的卡可開逐日明細，其他明示「僅有排行」；索引失敗會 inline alert 但排行榜仍可用。shard contract／fetch error 可重載，真正空 shard 說明「120 日視窗未進每日前15大買／賣超，不代表沒有交易」，並顯示分點資料日、可用交易日數與候選 badge。
+
 | Tab | 主欄位 | 排序/篩選 | 情境 |
 |---|---|---|---|
 | 權證異動 | 標的、權證金額、20日倍數、購售比、連續天數、標的漲幅、權證分 | 倍數/連續天數;排除已漲>5% | 找先行卡位 |

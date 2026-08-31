@@ -1666,6 +1666,12 @@ def _export_warrant_branches(out: Path, engine, date: str, base20: list[str]):
 # 檔名用 branch_name 的 sha1 前 16 碼(URL/檔名安全、確定性),前端由 index.json 取得對照。
 TRACK_WINDOW_DAYS = 120          # 近 N 個日曆日
 TRACK_MAX_ROWS = 20_000          # 體積防線:超過則裁到最近 120 個交易日並標 truncated
+# 每日 detail 僅擴至最新排行中非隔日沖的前 N 名，避免排名卡的下鑽變成
+# 全市場分點歷史匯出。tracked 分點永遠保留，不受這個排名視窗限制。
+TRACK_RANK_DETAIL_LIMIT = 100
+# tracked + ranking-only 的聯集硬上限。tracked 本身超限時 fail closed，
+# 不可靜默丟棄使用者／既有追蹤名單。
+TRACK_DETAIL_MAX_BRANCHES = 200
 
 
 def _track_safe_key(branch_name: str) -> str:
@@ -1681,12 +1687,43 @@ def _export_tracked_branch_history(out: Path, engine, date: str):
 
     with engine.connect() as conn:
         tracked = [dict(r._mapping) for r in conn.execute(text(
-            "SELECT branch_name, source FROM tracked_branches ORDER BY branch_name"))]
-        if not tracked:
+            "SELECT branch_name, COALESCE(NULLIF(TRIM(source), ''), 'manual') AS source "
+            "FROM tracked_branches "
+            "WHERE branch_name IS NOT NULL AND TRIM(branch_name) <> '' "
+            "ORDER BY branch_name"))]
+        if len(tracked) > TRACK_DETAIL_MAX_BRANCHES:
+            raise ValueError(
+                f"tracked branches ({len(tracked)}) exceed detail cap "
+                f"({TRACK_DETAIL_MAX_BRANCHES}); refusing to omit tracked entries"
+            )
+        ranked = [dict(r._mapping) for r in conn.execute(text("""
+            SELECT branch_name, COALESCE(NULLIF(TRIM(source), ''), 'candidate') AS source
+            FROM branch_rankings
+            WHERE as_of = (SELECT MAX(as_of) FROM branch_rankings)
+              AND is_daytrade = 0
+              AND branch_name IS NOT NULL AND TRIM(branch_name) <> ''
+            ORDER BY rank_score DESC, samples DESC, branch_name ASC
+            LIMIT :limit
+        """), {"limit": TRACK_RANK_DETAIL_LIMIT})]
+
+        # tracked source wins on a duplicate.  Ranking-only entries retain
+        # their candidate/auto/etc. source so the client can label them.  Fill
+        # any spare hard-cap capacity in ranking order, not lexical order.
+        details_by_name = {row["branch_name"]: row["source"] for row in tracked}
+        for row in ranked:
+            if row["branch_name"] not in details_by_name:
+                if len(details_by_name) >= TRACK_DETAIL_MAX_BRANCHES:
+                    break
+                details_by_name[row["branch_name"]] = row["source"]
+        details = [
+            {"branch_name": branch_name, "source": source}
+            for branch_name, source in sorted(details_by_name.items())
+        ]
+        if not details:
             (track_dir / "index.json").write_text("[]", encoding="utf-8")
             return
 
-        # 近 120 日曆日內、tracked 分點的每日×每股淨買超(買賣都要,net 帶正負)。
+        # 近 120 日曆日內、bounded detail set 的每日×每股淨買超(買賣都要,net 帶正負)。
         # 以 (branch_name, date, stock_id) 聚合:同 branch_name 的多個 branch_key(不同來源頁)
         # net_lots 相加、pct 取平均(單一來源時即原值)。僅取 stocks 表內的證券(排除 6 碼權證)。
         rows = conn.execute(text("""
@@ -1694,11 +1731,15 @@ def _export_tracked_branch_history(out: Path, engine, date: str):
                    SUM(b.net_lots) AS net_lots, AVG(b.pct) AS pct
             FROM branch_trades b
             JOIN stocks s ON s.id = b.stock_id AND s.type IN ('stock', 'etf')
-            WHERE b.branch_name IN (SELECT branch_name FROM tracked_branches)
+            WHERE b.branch_name IN :names
               AND b.date >= date(:d, '-' || :win || ' days')
+              AND b.date <= :d
             GROUP BY b.branch_name, b.date, b.stock_id
             ORDER BY b.branch_name, b.date, b.stock_id
-        """), {"d": date, "win": TRACK_WINDOW_DAYS}).fetchall()
+        """).bindparams(bindparam("names", expanding=True)), {
+            "d": date, "win": TRACK_WINDOW_DAYS,
+            "names": sorted(details_by_name),
+        }).fetchall()
 
         # 交易日視窗下緣(僅在單分點超量時用於裁切)
         td_cutoff = conn.execute(text(
@@ -1731,19 +1772,24 @@ def _export_tracked_branch_history(out: Path, engine, date: str):
                 stock_meta[mid] = {"name": name, "close": close}
 
     index = []
-    for t in tracked:
+    for t in details:
         bname = t["branch_name"]
         b_rows = by_branch.get(bname, [])
         truncated = False
-        if len(b_rows) > TRACK_MAX_ROWS and td_cutoff is not None:
-            b_rows = [row for row in b_rows if row[0] >= td_cutoff]
+        if len(b_rows) > TRACK_MAX_ROWS:
+            if td_cutoff is not None:
+                b_rows = [row for row in b_rows if row[0] >= td_cutoff]
+            # daily_prices can be unavailable or sparse.  The per-shard cap
+            # remains hard in that case, retaining the newest stable rows.
+            if len(b_rows) > TRACK_MAX_ROWS:
+                b_rows = b_rows[-TRACK_MAX_ROWS:]
             truncated = True
 
         used_ids = {row[1] for row in b_rows}
         payload = {
             "branch_name": bname,
             "source": t["source"],
-            "as_of": date,
+            "as_of": b_rows[-1][0] if b_rows else None,
             "days": TRACK_WINDOW_DAYS,
             "rows": b_rows,
             "stocks": {sid: stock_meta[sid] for sid in used_ids if sid in stock_meta},
@@ -1761,6 +1807,7 @@ def _export_tracked_branch_history(out: Path, engine, date: str):
             "file": fname,
             "rows_count": len(b_rows),
             "first_date": b_rows[0][0] if b_rows else None,
+            "last_date": b_rows[-1][0] if b_rows else None,
         })
 
     (track_dir / "index.json").write_text(

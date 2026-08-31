@@ -16,7 +16,7 @@
 | IA-1A 首頁任務流 Pilot | ✅ **完成(2026-07-12, commit `8d4aee5`)** — Compact Brief 壓縮、Primary Queue 前置、MoneyFlow 收合面板、DesktopNav active state、桌機導覽任務導向命名 |
 | IA-1B 榜單收斂 | ✅ **完成；2026-08-31 現況覆寫** — 首頁一級 tab 為 10 個：綜合、策略、未發動、已發動、資券、市場掃描、追高風險、失效、口袋、權證；市場掃描承接熱門／爆量／強勢／弱勢等掃描維度 |
 | IA-2 個股判讀工作台 | ✅ **完成(2026-07-12, commit `8d4aee5`)** — StockDecisionHeader（reasons≤3/risks≤2/觀察失效+距離%/來源徽章）合入 stock/page.tsx |
-| IA-3 分點研究工作台 | ✅ **完成(2026-07-12, commit `df02e6e`)** — rankings 改雙欄 Master-Detail 響應式佈局，左滾動排行榜帶 active 高亮，右即時渲染詳情或無 track 提示，取消獨立追蹤按鈕 |
+| IA-3 分點研究工作台 | ✅ **完成(2026-07-12；2026-08-31 bounded detail rule 落地)** — rankings 改雙欄 Master-Detail 響應式佈局；detail set 為 tracked + 最新非隔日沖 Top100 排名聯集，三層 hard cap=Top100／200 branches／20k rows-shard（138 分點／599,525 rows／約22.9 MiB 僅為當次 evidence），只有 ready index 命中卡可下鑽，其他明示僅有排行；索引／shard error 不偽裝成空資料 |
 | IA-4A 自選追蹤手動版 | ✅ **完成(2026-07-12, commit `8d4aee5`)** — 完整重寫 watchlist/page.tsx：距觀察/失效價%、5 種排序、分組（需要注意/一般追蹤） |
 | IA-4B Armed 狀態增強 | ✅ **完成(2026-08-20 A4 Extended/Faded)** — 首頁現有未發動／已發動／追高風險／失效狀態入口；不自動寫入使用者自選 |
 | IA-5 個股 K線/籌碼日報分層 | ✅ **完成(2026-08-20；2026-08-31 更新現況)** — 一級分頁現為 `K線 \| 籌碼日報 \| 三大法人 \| 資券 \| 大戶 \| 基本資料 \| 技術 \| 權證`；籌碼買超/賣超分頁；點分點下鑽進出+對應 K 線 |

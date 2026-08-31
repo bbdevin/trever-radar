@@ -17,6 +17,7 @@ import {
 const SOURCE_BADGE: Record<string, { label: string; cls: string }> = {
   manual: { label: "手動", cls: "bg-warn/10 text-warn" },
   auto: { label: "自動", cls: "bg-primary/10 text-primary" },
+  candidate: { label: "候選", cls: "bg-muted text-muted-foreground" },
 };
 
 const PRESET_PERIODS = [1, 5, 10, 20];
@@ -25,6 +26,31 @@ const TOP_N = 15;
 function fileFor(index: TrackIndexEntry[], branchName: string | null): TrackIndexEntry | null {
   if (!branchName) return null;
   return index.find((e) => e.branch_name === branchName) ?? null;
+}
+
+function isTrackRow(row: unknown): row is [string, string, number, number | null] {
+  return Array.isArray(row)
+    && row.length === 4
+    && typeof row[0] === "string"
+    && typeof row[1] === "string"
+    && typeof row[2] === "number"
+    && (typeof row[3] === "number" || row[3] === null);
+}
+
+/** Reject malformed static JSON instead of treating a contract failure as empty data. */
+function isBranchTrackFile(payload: unknown, branchName: string): payload is BranchTrackFile {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return false;
+  const data = payload as Record<string, unknown>;
+  if (data.branch_name !== branchName || typeof data.source !== "string"
+    || (typeof data.as_of !== "string" && data.as_of !== null)
+    || typeof data.days !== "number" || !Array.isArray(data.rows)
+    || !data.rows.every(isTrackRow)
+    || !data.stocks || typeof data.stocks !== "object" || Array.isArray(data.stocks)) return false;
+  return Object.values(data.stocks as Record<string, unknown>).every((meta) => {
+    if (!meta || typeof meta !== "object" || Array.isArray(meta)) return false;
+    const value = meta as Record<string, unknown>;
+    return typeof value.name === "string" && (typeof value.close === "number" || value.close === null);
+  });
 }
 
 /** 聚合表格骨架:欄位版面與正式表格對齊(V1 慣例)。 */
@@ -118,6 +144,8 @@ export default function BranchTrackView({
   const entry = fileFor(index, branchName);
   const [data, setData] = useState<BranchTrackFile | null>(null);
   const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
   const [period, setPeriod] = useState<number | "custom">(20);
   const [customRaw, setCustomRaw] = useState("30");
   const [sideTab, setSideTab] = useState<"buy" | "sell">("buy");
@@ -126,20 +154,30 @@ export default function BranchTrackView({
   useEffect(() => {
     if (!entry) {
       setData(null);
+      setLoadError(null);
       return;
     }
     let cancelled = false;
     setLoading(true);
     setData(null);
+    setLoadError(null);
     dataFetch(`/data/branches/track/${entry.file}`)
       .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
-      .then((j: BranchTrackFile) => { if (!cancelled) setData(j); })
-      .catch(() => { if (!cancelled) setData(null); })
+      .then((j: unknown) => {
+        if (cancelled) return;
+        if (!isBranchTrackFile(j, entry.branch_name)) {
+          setLoadError("明細資料格式無法驗證，請重新載入。");
+          return;
+        }
+        setData(j);
+      })
+      .catch(() => { if (!cancelled) setLoadError("明細資料無法載入，請重新載入。"); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [entry?.file]);
+  }, [entry?.file, entry?.branch_name, reloadKey]);
 
   const availableDays = useMemo(() => (data ? tradingDaysDesc(data.rows).length : 0), [data]);
+  const hasValidData = data !== null && !loading && loadError === null;
 
   // 自訂 N:clamp 到可用交易日數;回報是否被 clamp 以提示
   const customParsed = Math.max(1, Math.floor(Number(customRaw) || 0));
@@ -205,6 +243,11 @@ export default function BranchTrackView({
         </div>
       </div>
 
+      <div className="flex flex-wrap gap-x-3 gap-y-1 text-[12px] text-muted-foreground">
+        <span>分點資料日 {hasValidData ? (data?.as_of ?? "資料日未提供") : "—"}</span>
+        <span>可用交易日數 {hasValidData ? availableDays : "—"}</span>
+      </div>
+
       {/* 期間 pills */}
       <div className="flex flex-wrap items-center gap-2">
         <div role="tablist" aria-label="期間" className="flex flex-wrap gap-0.5 rounded-full border border-border bg-card p-[3px]">
@@ -261,13 +304,24 @@ export default function BranchTrackView({
       {/* 內容 */}
       {loading ? (
         <TableSkeleton />
-      ) : !data || data.rows.length === 0 ? (
+      ) : loadError ? (
+        <div role="alert" className="flex flex-col items-center gap-3 rounded-[var(--r-lg)] border border-border bg-card px-4 py-[46px] text-center text-sm text-muted-foreground">
+          <span>{loadError}</span>
+          <button
+            type="button"
+            onClick={() => setReloadKey((value) => value + 1)}
+            className="min-h-11 rounded-full border border-border bg-card px-4 text-[13.5px] font-semibold text-foreground transition-colors hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            重新載入
+          </button>
+        </div>
+      ) : data && data.rows.length === 0 ? (
         <div className="rounded-[var(--r-lg)] border border-border bg-card px-4 py-[46px] text-center text-sm text-muted-foreground">
-          此分點近 {data?.days ?? 120} 日無買賣超紀錄。免費分點資料自 2026-07-07 起累積,且僅涵蓋每日前 15 大買賣超,冷門進出不可見。
+          目前匯出的 {data.days} 日視窗內沒有進入每日前 15 大買／賣超，不代表沒有交易。
         </div>
       ) : buys.length === 0 && sells.length === 0 ? (
         <div className="py-[46px] text-center text-sm text-muted-foreground">此期間無淨買賣超紀錄。</div>
-      ) : (
+      ) : !data ? null : (
         <div className="flex flex-col gap-3">
           <BuySellSplit
             value={sideTab}

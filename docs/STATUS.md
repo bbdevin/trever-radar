@@ -29,6 +29,13 @@
 - [x] 驗證：exporter targeted **11 passed**；完整 pipeline pytest **290 passed、58 subtests passed**；`web npx tsc --noEmit` 與 `git diff --check` 通過。未跑正式 VPS／DB／export，未改 cron／workflow。
 - [x] VPS 唯讀：分點回補仍單實例，最後完成 `2025-05-09`、`fetched=118,264`、至少 `320/490` 日期；DB `5,324,414,976` bytes、WAL `115,298,232` bytes、可用約 7.0GB（75% 使用）。近期未見 import error；最新成功 backup／`integrity_check` 無現有證據可確認，8/22 log 有 Drive quota 403，主機未見 `.db.gz`。dirty tree 仍會阻擋 pull。**未重啟、未改 cron、未執行正式 DB。**
 
+## 2026-08-31 分點排行 bounded detail union（code／測試完成，未同步正式資料）
+
+- [x] `branches/track` detail set 改為全部 tracked 分點聯集最新 ranking snapshot 的非隔日沖 Top100（`rank_score DESC, samples DESC`）；同名以 tracked source 優先，ranking-only 保留 candidate／auto。三層 hard cap 為 Top100、最多 200 branches、每 shard 最多 20,000 rows；tracked 自身超過 200 即 fail closed，ranking 只填剩餘額度。query 只讀 bounded names，嚴格限制 `date >= 120日窗 AND date <= export date`；不改 rankings、stats、score、schema 或 tracked seed。
+- [x] shard `as_of`／index `first_date`／additive `last_date` 均為實際 row 日期；tracked 無 rows 仍有 null shard。`/branch` 僅在 index ready 且命中時開明細；loading／index error／shard fetch-or-contract error／valid empty 皆分開呈現，候選、資料日、可用交易日數與每日前15大裁剪限制可見。舊 index/shard 保持可讀。
+- [x] 唯讀 evidence：正式站 ranking 831、舊 history index 47；`華南永昌-大安` 排名第8、VPS 近120日依現行口徑 4,887 rows，原為 candidate 未 tracked。聯集估 138 分點／599,525 rows／約22.9 MiB，僅為當次估算；實際受 Top100／200 branches／20k rows-shard 三層 hard cap 約束。**程式完成但正式 VPS 未同步、未 export/deploy data；未改 DB／cron／workflow。**
+- [x] 驗證：exporter targeted **16 passed**；完整 pipeline pytest **295 passed、58 subtests passed**；`web npx tsc --noEmit`、`git diff --check` 通過。`npm run build` 已啟動 Next 15.5.20，但長時間無後續 stdout（Node 持續有 CPU）後依協調指示中止，故 **build 未完成，未宣稱通過**；現有 node verifier 僅驗個股 mobile，與本次 `/branch` 契約不適用。
+
 ## 2026-08-31 VPS 唯讀稽核（12:16–12:26 +08）
 
 - [x] 本機與 VPS `main` 均為 `8603f3a`；可用 alias 為 `trever-vps`（`trever_vps` 無法解析）。正式 crontab 已核對 14:10／15:00／16:10／17:40／21:20／22:00、01:10、03／09／12／20、23:30、TDCC 週六 06:30、董事每月 16 日 07:00。

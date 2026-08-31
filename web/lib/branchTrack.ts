@@ -12,7 +12,8 @@ export interface TrackStockMeta {
 export interface BranchTrackFile {
   branch_name: string;
   source: string;
-  as_of: string;
+  /** Actual last branch-trade date; null is a valid empty shard. */
+  as_of: string | null;
   days: number;
   rows: TrackRow[];
   stocks: Record<string, TrackStockMeta>;
@@ -25,6 +26,8 @@ export interface TrackIndexEntry {
   file: string;
   rows_count: number;
   first_date: string | null;
+  /** Additive in v2; absent in older exported indexes. */
+  last_date?: string | null;
 }
 
 export interface AggregatedStock {

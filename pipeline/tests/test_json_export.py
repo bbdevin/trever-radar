@@ -9,10 +9,12 @@ import json
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 import radar.config as config
 import radar.db as db
 from radar import schema
+from radar.export import json_export
 from radar.export.json_export import export_json
 
 D = "2026-07-09"
@@ -226,7 +228,7 @@ class TrackedBranchHistoryExportTests(unittest.TestCase):
             "movements": {},
         })
 
-    def test_index_and_untracked_excluded(self):
+    def test_index_and_untracked_excluded_without_ranking_candidates(self):
         import hashlib
         track = self._run()
         index = json.loads((track / "index.json").read_text(encoding="utf-8"))
@@ -236,6 +238,7 @@ class TrackedBranchHistoryExportTests(unittest.TestCase):
         self.assertEqual([e["source"] for e in index], ["manual", "auto"])
         self.assertEqual([e["rows_count"] for e in index], [3, 2])          # 凱基 120 日外的列被排除
         self.assertEqual([e["first_date"] for e in index], ["2026-07-09", "2026-07-06"])
+        self.assertEqual([e["last_date"] for e in index], ["2026-07-10", "2026-07-08"])
 
         # 未追蹤分點不產檔,也不在 index
         self.assertNotIn("元大-土城", [e["branch_name"] for e in index])
@@ -268,6 +271,157 @@ class TrackedBranchHistoryExportTests(unittest.TestCase):
         ])
         # 120 日視窗外(2026-02-01, net 999)被排除
         self.assertNotIn("2026-02-01", [r[0] for r in p["rows"]])
+
+    def test_ranked_detail_union_is_bounded_and_excludes_future_or_daytrade(self):
+        """tracked wins source; only the patched top-two non-daytrade ranks join it."""
+        with db.get_engine().begin() as conn:
+            conn.execute(schema.tracked_branches.insert(), [
+                {"branch_name": "無資料-分點", "source": "auto"},
+            ])
+            conn.execute(schema.branch_rankings.insert(), [
+                # tracked source must take precedence over this ranking source.
+                {"branch_name": "凱基-台北", "as_of": self.AS_OF, "rank_score": 99,
+                 "samples": 50, "is_daytrade": 0, "source": "candidate"},
+                {"branch_name": "候選-A", "as_of": self.AS_OF, "rank_score": 98,
+                 "samples": 40, "is_daytrade": 0, "source": "candidate"},
+                {"branch_name": "候選-B", "as_of": self.AS_OF, "rank_score": 97,
+                 "samples": 30, "is_daytrade": 0, "source": "auto"},
+                {"branch_name": "第101名", "as_of": self.AS_OF, "rank_score": 96,
+                 "samples": 20, "is_daytrade": 0, "source": "candidate"},
+                {"branch_name": "隔日沖-第一", "as_of": self.AS_OF, "rank_score": 999,
+                 "samples": 99, "is_daytrade": 1, "source": "candidate"},
+            ])
+            from pipeline.radar.importer import upsert_branch_trades
+            upsert_branch_trades(conn, [
+                {"stock_id": "2330", "date": "2026-07-09", "branch_key": "ca1", "branch_name": "候選-A",
+                 "buy_lots": 10, "sell_lots": 0, "net_lots": 10, "pct": 0.1},
+                {"stock_id": "2317", "date": self.AS_OF, "branch_key": "ca1", "branch_name": "候選-A",
+                 "buy_lots": 20, "sell_lots": 5, "net_lots": 15, "pct": 0.2},
+                # The price date is 07-10: this row must never leak into the shard.
+                {"stock_id": "2454", "date": "2026-07-11", "branch_key": "ca1", "branch_name": "候選-A",
+                 "buy_lots": 30, "sell_lots": 0, "net_lots": 30, "pct": 0.3},
+                {"stock_id": "2330", "date": self.AS_OF, "branch_key": "cb1", "branch_name": "候選-B",
+                 "buy_lots": 8, "sell_lots": 2, "net_lots": 6, "pct": 0.1},
+                {"stock_id": "2330", "date": self.AS_OF, "branch_key": "d1", "branch_name": "隔日沖-第一",
+                 "buy_lots": 100, "sell_lots": 0, "net_lots": 100, "pct": 1.0},
+                {"stock_id": "2330", "date": self.AS_OF, "branch_key": "r101", "branch_name": "第101名",
+                 "buy_lots": 100, "sell_lots": 0, "net_lots": 100, "pct": 1.0},
+            ])
+
+        # A small patched limit makes the top-N boundary deterministic without
+        # manufacturing 101 ranking fixture rows.
+        with patch("radar.export.json_export.TRACK_RANK_DETAIL_LIMIT", 2):
+            track = self._run()
+        index = json.loads((track / "index.json").read_text(encoding="utf-8"))
+        by_name = {entry["branch_name"]: entry for entry in index}
+
+        self.assertEqual(set(by_name), {"凱基-台北", "富邦-新竹", "無資料-分點", "候選-A"})
+        self.assertEqual(by_name["凱基-台北"]["source"], "manual")
+        self.assertEqual(by_name["候選-A"]["source"], "candidate")
+        self.assertNotIn("候選-B", by_name)       # rank #3 is outside patched top-2
+        self.assertNotIn("第101名", by_name)
+        self.assertNotIn("隔日沖-第一", by_name)
+
+        candidate = json.loads((track / by_name["候選-A"]["file"]).read_text(encoding="utf-8"))
+        self.assertEqual(candidate["as_of"], self.AS_OF)
+        self.assertEqual(candidate["rows"][0][0], "2026-07-09")
+        self.assertEqual(candidate["rows"][-1][0], self.AS_OF)
+        self.assertNotIn("2026-07-11", [row[0] for row in candidate["rows"]])
+        self.assertEqual(by_name["候選-A"]["first_date"], "2026-07-09")
+        self.assertEqual(by_name["候選-A"]["last_date"], self.AS_OF)
+
+        empty = json.loads((track / by_name["無資料-分點"]["file"]).read_text(encoding="utf-8"))
+        self.assertEqual(empty["rows"], [])
+        self.assertIsNone(empty["as_of"])
+        self.assertIsNone(by_name["無資料-分點"]["first_date"])
+        self.assertIsNone(by_name["無資料-分點"]["last_date"])
+
+    def test_detail_caps_keep_tracked_or_fail_closed_and_hard_cap_rows(self):
+        # With the existing two tracked entries, a two-branch cap leaves no
+        # room for a ranking-only candidate but must preserve both tracked.
+        with db.get_engine().begin() as conn:
+            conn.execute(schema.branch_rankings.insert(), [
+                {"branch_name": "候選-額外", "as_of": self.AS_OF, "rank_score": 99,
+                 "samples": 20, "is_daytrade": 0, "source": "candidate"},
+            ])
+        with patch("radar.export.json_export.TRACK_DETAIL_MAX_BRANCHES", 2):
+            track = self._run()
+        index = json.loads((track / "index.json").read_text(encoding="utf-8"))
+        self.assertEqual([entry["branch_name"] for entry in index], ["凱基-台北", "富邦-新竹"])
+
+        with db.get_engine().begin() as conn:
+            conn.execute(schema.tracked_branches.insert(), [
+                {"branch_name": "第三個追蹤", "source": "manual"},
+            ])
+        with patch("radar.export.json_export.TRACK_DETAIL_MAX_BRANCHES", 2):
+            with self.assertRaisesRegex(ValueError, "exceed detail cap"):
+                self._run()
+
+        # A zero-day daily-price lookup has no td_cutoff, yet MAX rows remains
+        # a hard cap and preserves the newest row in the stable date/stock sort.
+        with patch("radar.export.json_export.TRACK_WINDOW_DAYS", 0), \
+             patch("radar.export.json_export.TRACK_MAX_ROWS", 1):
+            track = self._run()
+        index = json.loads((track / "index.json").read_text(encoding="utf-8"))
+        kfile = next(entry["file"] for entry in index if entry["branch_name"] == "凱基-台北")
+        capped = json.loads((track / kfile).read_text(encoding="utf-8"))
+        self.assertEqual(capped["rows"], [[self.AS_OF, "2330", 350, 1.2]])
+        self.assertTrue(capped["truncated"])
+
+    def test_production_detail_caps_and_tie_order_are_locked(self):
+        # Keep production limits explicit.  The preceding patched-cap test
+        # exercises the row-cap mechanism; inserting 20,001 DB rows here would
+        # make the focused exporter suite disproportionately slow.
+        self.assertEqual(json_export.TRACK_RANK_DETAIL_LIMIT, 100)
+        self.assertEqual(json_export.TRACK_DETAIL_MAX_BRANCHES, 200)
+        self.assertEqual(json_export.TRACK_MAX_ROWS, 20_000)
+
+        with db.get_engine().begin() as conn:
+            conn.execute(schema.branch_rankings.insert(), [
+                {"branch_name": f"同分-{i:03d}", "as_of": self.AS_OF,
+                 "rank_score": 80, "samples": 10, "is_daytrade": 0,
+                 "source": "candidate"}
+                for i in range(101)
+            ])
+        track = self._run()
+        index = json.loads((track / "index.json").read_text(encoding="utf-8"))
+        ranked_names = [entry["branch_name"] for entry in index if entry["source"] == "candidate"]
+        self.assertEqual(ranked_names, [f"同分-{i:03d}" for i in range(100)])
+        self.assertNotIn("同分-100", ranked_names)
+
+    def test_production_tracked_cap_fails_closed_at_201(self):
+        with db.get_engine().begin() as conn:
+            # The base fixture owns two tracked rows; direct bulk insertion
+            # supplies the remaining 199 for the real production limit.
+            conn.execute(schema.tracked_branches.insert(), [
+                {"branch_name": f"追蹤-{i:03d}", "source": "manual"}
+                for i in range(199)
+            ])
+        with self.assertRaisesRegex(ValueError, r"tracked branches \(201\) exceed detail cap \(200\)"):
+            self._run()
+
+    def test_null_or_blank_source_falls_back_and_blank_names_are_excluded(self):
+        with db.get_engine().begin() as conn:
+            conn.execute(schema.tracked_branches.insert(), [
+                {"branch_name": "無來源-追蹤", "source": ""},
+                {"branch_name": "", "source": ""},
+                {"branch_name": "   ", "source": "auto"},
+            ])
+            conn.execute(schema.branch_rankings.insert(), [
+                {"branch_name": "無來源-候選", "as_of": self.AS_OF, "rank_score": 99,
+                 "samples": 10, "is_daytrade": 0, "source": None},
+                {"branch_name": "", "as_of": self.AS_OF, "rank_score": 98,
+                 "samples": 10, "is_daytrade": 0, "source": None},
+                {"branch_name": "   ", "as_of": self.AS_OF, "rank_score": 97,
+                 "samples": 10, "is_daytrade": 0, "source": "auto"},
+            ])
+        track = self._run()
+        index = json.loads((track / "index.json").read_text(encoding="utf-8"))
+        by_name = {entry["branch_name"]: entry for entry in index}
+        self.assertEqual(by_name["無來源-追蹤"]["source"], "manual")
+        self.assertEqual(by_name["無來源-候選"]["source"], "candidate")
+        self.assertNotIn("", by_name)
+        self.assertNotIn("   ", by_name)
 
     def test_stocks_lookup_name_and_close(self):
         track = self._run()

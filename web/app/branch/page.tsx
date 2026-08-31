@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Search, Info, TrendingUp, TrendingDown, Building2, User, Star } from "lucide-react";
+import { ArrowLeft, Search, Info, TrendingUp, TrendingDown, Building2, User, Star } from "lucide-react";
 import { IconFlame, IconTrend, IconZap } from "@/components/Icons";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -31,27 +31,36 @@ type RankingsData = {
   daytrade: Ranking[];
 };
 
+const TRACK_FILE_RE = /^[a-f0-9]{16}\.json$/;
+
+function isTrackIndexEntry(value: unknown): value is TrackIndexEntry {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const entry = value as Record<string, unknown>;
+  return typeof entry.branch_name === "string" && entry.branch_name.trim().length > 0
+    && typeof entry.source === "string" && entry.source.trim().length > 0
+    && typeof entry.file === "string" && TRACK_FILE_RE.test(entry.file)
+    && typeof entry.rows_count === "number" && Number.isFinite(entry.rows_count)
+    && Number.isInteger(entry.rows_count) && entry.rows_count >= 0
+    && (typeof entry.first_date === "string" || entry.first_date === null)
+    && (!("last_date" in entry) || typeof entry.last_date === "string" || entry.last_date === null);
+}
+
+function normalizeTrackIndex(payload: unknown): TrackIndexEntry[] {
+  if (!Array.isArray(payload) || !payload.every(isTrackIndexEntry)) {
+    throw new Error("invalid track index contract");
+  }
+  return payload;
+}
+
 function NoTrackDetailPanel({ branchName }: { branchName: string }) {
   return (
     <div className="flex h-full min-h-[300px] flex-col items-center justify-center rounded-[var(--r-lg)] border border-border bg-card p-6 text-center shadow-[var(--shadow-card)] animate-in fade-in duration-300">
       <div className="mb-3 rounded-full bg-[color:var(--ink-2)]/10 p-3 text-[color:var(--ink-2)]">
-        <svg
-          width="28"
-          height="28"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          className="opacity-80"
-        >
-          <path d="M2 12h20M12 2v20M4.93 4.93l14.14 14.14M4.93 19.07L19.07 4.93" />
-        </svg>
+        <Info size={28} className="opacity-80" />
       </div>
       <h3 className="text-base font-bold text-foreground mb-1">{branchName}</h3>
       <p className="max-w-xs text-xs leading-relaxed text-muted-foreground">
-        {"目前此分點暫無 120 日歷勲買賣明細（系統自 2026-07-07 起僅追蹤熱門股，若要追蹤此分點請等待數據持續累積－特定地緣分點可追蹤）。"}
+        {"目前只有排行統計，尚未提供逐日進出明細；可選擇標示「可追蹤」的分點。"}
       </p>
     </div>
   );
@@ -453,6 +462,7 @@ export default function BranchPage() {
   const [warrantTimeframe, setWarrantTimeframe] = useState<"1d" | "2d" | "5d" | "30d" | "120d">("1d");
   const [viewMode, setViewMode] = useState<"by_stock" | "by_branch">("by_stock");
   const [trackIndex, setTrackIndex] = useState<TrackIndexEntry[]>([]);
+  const [trackIndexStatus, setTrackIndexStatus] = useState<"loading" | "ready" | "error">("loading");
   const [trackOpen, setTrackOpen] = useState(false);
   const [trackBranch, setTrackBranch] = useState<string | null>(null);
   const [error, setError] = useState(false);
@@ -485,15 +495,19 @@ export default function BranchPage() {
       .catch(() => {});
 
     dataFetch("/data/branches/track/index.json")
-      .then((r) => (r.ok ? r.json() : []))
-      .then((j: TrackIndexEntry[]) => {
-        const arr = Array.isArray(j) ? j : [];
+      .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
+      .then(normalizeTrackIndex)
+      .then((arr) => {
         setTrackIndex(arr);
+        setTrackIndexStatus("ready");
         if (arr.length > 0) {
           setTrackBranch((prev) => prev || arr[0].branch_name);
         }
       })
-      .catch(() => setTrackIndex([]));
+      .catch(() => {
+        setTrackIndex([]);
+        setTrackIndexStatus("error");
+      });
   }, []);
 
   if (error) {
@@ -518,6 +532,7 @@ export default function BranchPage() {
   const totalBranches = mainRankings.length + daytradeRankings.length;
   const enoughSampleCount = [...mainRankings, ...daytradeRankings].filter(r => r.samples >= MIN_SAMPLES).length;
   const trackNames = new Set(trackIndex.map((e) => e.branch_name));
+  const trackIndexReady = trackIndexStatus === "ready";
   const hasDataWarning = [...mainRankings, ...daytradeRankings].some((r) => r.samples < MIN_SAMPLES);
 
   // IA-3: filter logic
@@ -547,11 +562,11 @@ export default function BranchPage() {
         </div>
         <div className="flex flex-col gap-0.5 rounded-[var(--r-md)] border border-border bg-card px-3 py-2 shadow-[var(--shadow-card)]">
           <span className="text-[10.5px] text-muted-foreground">{"有歷史明細"}</span>
-          <span className="num text-[15px] font-bold">{trackIndex.length}</span>
+          <span className="num text-[15px] font-bold">{trackIndexReady ? trackIndex.length : "—"}</span>
         </div>
         <div className="flex flex-col gap-0.5 rounded-[var(--r-md)] border border-border bg-card px-3 py-2 shadow-[var(--shadow-card)]">
-          <span className="text-[10.5px] text-muted-foreground">{"資料起始日"}</span>
-          <span className="num text-[13px] font-bold">{"2026-07-07"}</span>
+          <span className="text-[10.5px] text-muted-foreground">{"明細狀態"}</span>
+          <span className="text-[13px] font-bold">{trackIndexStatus === "loading" ? "讀取中" : trackIndexStatus === "error" ? "無法載入" : "可選擇"}</span>
         </div>
       </div>
 
@@ -559,7 +574,15 @@ export default function BranchPage() {
         <Alert className="mb-4 bg-card">
           <AlertDescription className="flex flex-wrap items-baseline gap-2.5 text-[13px] text-foreground">
             <span className="shrink-0 rounded-md bg-warn/15 px-2 py-0.5 text-[11.5px] font-bold tracking-[0.3px] text-warn">{"樣本不足"}</span>
-            <span>{"由於系統自 2026-07-07 才開始收集免費分點資料，部分分點的歷史交易筆數過少，導致無法計算勝率。需待資料持續累積數週。"}</span>
+            <span>{"免費分點資料僅涵蓋每日前 15 大買賣超；部分分點的歷史列或成熟樣本不足，因此無法計算勝率。"}</span>
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {trackIndexStatus === "error" && (
+        <Alert role="alert" className="mb-4 bg-card">
+          <AlertDescription className="text-[13px] text-foreground">
+            歷史明細索引無法載入；排行榜仍可使用，暫不提供逐日進出下鑽。
           </AlertDescription>
         </Alert>
       )}
@@ -575,19 +598,21 @@ export default function BranchPage() {
               onChange={e => setFilterSearch(e.target.value)}
               placeholder={"搜尋分點"}
               aria-label={"分點名稱搜尋"}
-              className="h-8 rounded-md border border-border bg-card pl-7 pr-2.5 text-[12.5px] text-foreground placeholder:text-muted-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="min-h-11 rounded-md border border-border bg-card pl-7 pr-2.5 text-[12.5px] text-foreground placeholder:text-muted-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             />
           </div>
           <button
             onClick={() => setFilterTrackable(v => !v)}
-            className={filterChipClass(filterTrackable, "accent")}
+            className={cn(filterChipClass(filterTrackable, "accent"), "min-h-11 disabled:cursor-not-allowed disabled:opacity-50")}
             aria-pressed={filterTrackable}
+            disabled={!trackIndexReady}
+            title={trackIndexReady ? undefined : "歷史明細索引尚未就緒"}
           >
             {"可追蹤"}
           </button>
           <button
             onClick={() => setFilterEnough(v => !v)}
-            className={filterChipClass(filterEnough, "accent")}
+            className={cn(filterChipClass(filterEnough, "accent"), "min-h-11")}
             aria-pressed={filterEnough}
           >
             {"樣本足夠"}
@@ -595,7 +620,7 @@ export default function BranchPage() {
           <button
             onClick={() => setFilterDaytrade(v => v === "exclude" ? "all" : "exclude")}
             className={cn(
-              "cursor-pointer rounded-full px-3 py-1 text-[12px] font-semibold transition-colors duration-200",
+              "min-h-11 cursor-pointer rounded-full px-3 py-1 text-[12px] font-semibold transition-colors duration-200",
               filterDaytrade === "exclude"
                 ? "bg-down/20 text-down shadow-sm"
                 : "bg-muted text-muted-foreground hover:bg-secondary hover:text-foreground",
@@ -607,7 +632,7 @@ export default function BranchPage() {
           {(filterSearch || filterTrackable || filterEnough || filterDaytrade !== "all") && (
             <button
               onClick={() => { setFilterSearch(""); setFilterTrackable(false); setFilterEnough(false); setFilterDaytrade("all"); }}
-              className="rounded-full px-3 py-1 text-[12px] text-muted-foreground hover:bg-secondary"
+              className="min-h-11 rounded-full px-3 py-1 text-[12px] text-muted-foreground hover:bg-secondary"
             >
               {"清除"}
             </button>
@@ -628,14 +653,28 @@ export default function BranchPage() {
       </div>
 
       {tab === "rankings" && (() => {
-        const openTrack = (name: string) => {
-          setTrackBranch(name);
-          setTrackOpen(true);
-        };
-
         const renderCard = (r: Ranking) => {
-          const isTrackable = trackNames.has(r.branch_name);
+          const isTrackable = trackIndexReady && trackNames.has(r.branch_name);
           const isActive = trackBranch === r.branch_name;
+          const card = <RankCard r={r} trackable={isTrackable} active={isActive} />;
+          if (!trackIndexReady) {
+            return (
+              <div key={r.branch_name} className="rounded-[var(--r-lg)]">
+                {card}
+                <p className="px-2 pt-1 text-[11px] text-muted-foreground">
+                  {trackIndexStatus === "loading" ? "明細索引讀取中" : "明細索引無法載入"}
+                </p>
+              </div>
+            );
+          }
+          if (!isTrackable) {
+            return (
+              <div key={r.branch_name} className="rounded-[var(--r-lg)]" title="此分點目前僅有排行統計">
+                {card}
+                <p className="px-2 pt-1 text-[11px] text-muted-foreground">僅有排行</p>
+              </div>
+            );
+          }
           return (
             <button
               key={r.branch_name}
@@ -649,7 +688,7 @@ export default function BranchPage() {
               aria-label={`${"查看"} ${r.branch_name} ${"的近 N 日買賣超明細"}`}
               className="block w-full min-h-11 rounded-[var(--r-lg)] p-0 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
-              <RankCard r={r} trackable={isTrackable} active={isActive} />
+              {card}
             </button>
           );
         };
@@ -672,7 +711,7 @@ export default function BranchPage() {
               {filteredDaytrade.length > 0 && (
                 <div className="flex flex-col gap-2.5 mt-2">
                   <div className="flex items-baseline gap-2 px-1">
-                    <h2 className="text-[14px] font-semibold text-down">{"雔日沖分點"}</h2>
+                    <h2 className="text-[14px] font-semibold text-down">{"隔日沖分點"}</h2>
                     <span className="text-[11px] text-muted-foreground">{"反指標/風險訊號"}</span>
                   </div>
                   <div className="flex flex-col gap-2.5">
@@ -685,7 +724,7 @@ export default function BranchPage() {
             {/* 右側：詳情面板（手機上當詳情未被打開時隱藏） */}
             <div className={cn("flex-1 w-full", !trackOpen && "hidden md:block")}>
               {trackBranch ? (
-                trackNames.has(trackBranch) ? (
+                trackIndexReady && trackNames.has(trackBranch) ? (
                   <BranchTrackView
                     index={trackIndex}
                     branchName={trackBranch}
@@ -698,13 +737,13 @@ export default function BranchPage() {
                 )
               ) : (
                 <div className="flex h-full min-h-[300px] flex-col items-center justify-center rounded-[var(--r-lg)] border border-border bg-card p-6 text-center text-muted-foreground shadow-[var(--shadow-card)]">
-                  {"請選取左剗分點以查看買賣明細"}
+                  {"請選取左側可追蹤分點以查看買賣明細"}
                 </div>
               )}
             </div>
 
             {/* 手機版專屬下鑽蓋屏（只在手機且 trackOpen 被打開時，多渲染一個帶有返回鍵的浮動詳情以保證返回路徑清晰） */}
-            {trackOpen && trackBranch && trackNames.has(trackBranch) && (
+            {trackOpen && trackBranch && trackIndexReady && trackNames.has(trackBranch) && (
               <div className="safe-overlay md:hidden fixed inset-0 z-50 overflow-y-auto bg-background animate-in slide-in-from-right duration-200">
                 <BranchTrackView
                   index={trackIndex}
@@ -715,15 +754,13 @@ export default function BranchPage() {
                 />
               </div>
             )}
-            {trackOpen && trackBranch && !trackNames.has(trackBranch) && (
+            {trackOpen && trackBranch && trackIndexReady && !trackNames.has(trackBranch) && (
               <div className="safe-overlay md:hidden fixed inset-0 z-50 flex flex-col gap-4 bg-background animate-in slide-in-from-right duration-200">
                 <button
                   onClick={() => setTrackOpen(false)}
                   className="inline-flex min-h-11 w-fit items-center gap-1.5 rounded-full border border-border bg-card px-3 text-[13.5px] font-semibold text-muted-foreground transition-colors hover:text-foreground"
                 >
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="mr-1">
-                    <path d="M19 12H5M12 19l-7-7 7-7" />
-                  </svg>
+                  <ArrowLeft size={16} className="mr-1" />
                   {"返回"}
                 </button>
                 <div className="flex-1">

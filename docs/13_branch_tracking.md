@@ -80,6 +80,14 @@
 ### 分點視角頁(點任一分點)
 近 90 日操作時間軸(買賣超 × 股票)、績效統計卡、擅長產業/題材分布、在追蹤個股上的 K 線足跡連結(09)。
 
+### 分點逐日明細的 bounded 聯集（2026-08-31 已落地）
+
+`branches/track/index.json` 的 detail set 不再只限 `tracked_branches`：它是所有 tracked 分點，聯集最新 `branch_rankings` 快照中 `is_daytrade=0`、依 `rank_score DESC, samples DESC` 的前 100 名。去重時 tracked source 優先；只因排行入選的分點保留 `candidate`／`auto` 等來源並可產 lazy shard。這不改排行、統計、分數、資料表或追蹤 seed。
+
+三層 hard cap 為 ranking Top100、聯集最多 200 branches、每 shard 最多 20,000 rows。tracked 分點本身若超過 200，export fail closed，絕不靜默省略；尚有容量才依排名順序加入 ranking-only。每 shard 限在 export date 以前的 120 日視窗；即使 `daily_prices` 無法提供裁切下緣，仍只保留最新 20,000 rows 並標 `truncated`。payload `as_of`、index `first_date`／additive `last_date` 均取實際資料列日期，沒有 rows 的 tracked shard 仍存在且三者皆為 null。前端可讀舊 index／shard；只有 ready index 命中的排行卡才可下鑽，其他如實標「僅有排行」。索引或 shard contract/fetch 失敗不能偽裝成 empty，排行榜仍可使用；empty 只表示該 120 日視窗未進每日前 15 大買／賣超，不代表沒有交易。
+
+目前唯讀容量 evidence：排名 831、舊 history index 47；`華南永昌-大安` 排第 8、近 120 日依現行口徑有 4,887 rows，但原本僅是 candidate。tracked+非隔日沖 Top100 聯集為 138 分點／599,525 rows，估約 22.9 MiB；這是當次估算，不是對未來資料量的保證，實際上由三層 hard cap 約束。程式已完成；正式 VPS 尚未同步、未 export/deploy data，未改 DB／cron。
+
 ### 權證大戶 Tab (原權證分點)
 以 Bento Grid 卡片呈現，並提供 `1D / 2D / 5D / 30D` 的快速切換 (Pill Selector)。
 卡片重點展示：分點名稱、標的名稱與代號、醒目的淨買賣金額 (大買/大賣標籤)。僅顯示淨買賣超 > 500萬台幣 的主力大戶。
