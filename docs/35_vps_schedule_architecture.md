@@ -1,6 +1,6 @@
 # VPS 排程／回補／大戶 — 四層架構（規劃定案）
 
-> 狀態：**架構定案 2026-08-26，正式機最近核對 2026-08-31 16:07 +08**；`bf-supervisor`、`safe-stats＋scores`、TDCC B1/B2＋週六 06:30 與董監每月槽均已掛正式 crontab。
+> 狀態：**架構定案 2026-08-26，正式機最近核對 2026-08-31 16:46 +08**；`bf-supervisor`、`safe-stats＋scores`、TDCC B1/B2＋週六 06:30 與董監每月槽均已掛正式 crontab。
 > 對齊：`docs/08` §0（時刻表）、`docs/33`（mid／stats）、`docs/34`（資券／大戶）、`docs/31`（單一寫者）  
 > 來源：使用者確認之全盤盤點——日更與算分全留、歷史回補全自動跑到完＋ntfy、大戶納入週末槽。
 
@@ -16,7 +16,7 @@
 - 已觀察到 8/28 日更成功：15:00 TPEx 10,657；21:20 margin TWSE 1,291／TPEx 920；22:48 branches 56,508。TDCC 8/29 成功（as_of 8/28，3,375 stocks／50,625 rows）；董事 8/26 成功（2026-07，1,975／45,045），下次為 9/16。
 - 歷史錯誤包含 dirty `git pull`、permission denied、8/22 Drive quota 403、TPEx 520；近期未見分點錯誤。尚未驗證最新 weekly backup 是否成功且 integrity 為 ok，也未估算 completeness／ETA。可用空間低於 20GB，**不得自行啟用全市場權證輪**。
 - **13:05–13:06 +08 續查（唯讀）**：分點回補仍為單實例，最後完成 `2025-05-09`、`fetched=118,264`、至少 `320/490` 日期；DB `5,324,414,976` bytes、WAL `115,298,232` bytes、可用約 7.0GB（75% 使用）。近期未見 import error；主機未見 `.db.gz`，最新成功 backup／`integrity_check` 仍無現有證據可確認。dirty tree 仍阻擋 pull；**未重啟、未改 cron、未執行正式 DB。**
-- **15:00 鎖事件與 15:45 受控發布**：14:10 `daily-market.sh` 因週一題材／公司資料跑至 15:11，15:00 `daily-tpex-quotes.sh` 因 DB lock 安全略過；15:43 後無 holder，勿刪空 lock path。16:10 `daily-insti.sh` 再抓 `dailyQuotes` 時三次 HTTP 520，16:11 提前結束；16:13 VPS 直探 `dailyQuotes`／公司 OpenAPI 已恢復 200，屬短暫上游／CDN 異常。2026-08-31 TPEx 日 K 當時仍未落 DB，下一自動補抓為 17:40。使用者另授權受控 code/data publish：既有未追蹤檔完整保留，VPS ff-only 至 `591c09e`，只跑唯讀 export＋Worker deploy（version `ca3eff26-680c-4e14-81ca-d3accde31a21`），未寫 DB、未改 cron、未手動重啟回補。
+- **15:00 鎖事件、520 與手動恢復**：14:10 `daily-market.sh` 因週一題材／公司資料跑至 15:11，15:00 `daily-tpex-quotes.sh` 因 DB lock 安全略過；15:43 後無 holder，勿刪空 lock path。16:10 與後續三次手動完整腳本均因 `dailyQuotes` HTTP 520 fail closed。response 為 Cloudflare SJC、16-byte body，同 URL／IP 在分鐘內交替 200／520且不是 429；只能確認 edge/origin 路徑間歇異常，無供應商內部 log 可證明更深層原因。使用者授權後，以同一官方 URL 的 curl 長退避取得並驗證 `date=20260831`、`stat=ok`、19 欄／10,713 rows，再交既有 parser＋transaction 匯入；權證彙總 845、指標 5,078、scores 750、export 2,410 stocks、Worker deploy（version `51b690a4-9b50-407d-b981-1d6c26e9533c`）均成功。正式 DB 8/31 TPEx=888 stock／119 ETF／6 ETN／1 other，正式站 6488 已顯示 2026-08-31；未改 cron／code／workflow。另清理由中止唯讀 SQL 留下的單一 orphan process，未碰 writer／回補服務。
 
 ## 2. 四層架構圖
 
