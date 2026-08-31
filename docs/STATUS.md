@@ -23,6 +23,12 @@
 - [x] 個股權證分點面板使用 `index.data_date` 顯示資料日；文案改為「已匯入且符合條件的權證／涵蓋依已匯入池」。舊 500 萬 fallback 不宣稱資料日或全市場涵蓋；100／500 萬門檻、前 15 大限制與既有資料契約未改。
 - [x] 完整 pipeline pytest **288 passed、58 subtests**，`npx tsc --noEmit`、`git diff --check` 通過；Luna High 最終 review **APPROVE**。**未跑正式 VPS PoC／DB／export，未改 cron／workflow；VPS free 7GB <20GB gate，禁止自行啟用全市場權證輪。**
 
+## 2026-08-31 分點最近交易日進出契約與 VPS 唯讀續查（13:05–13:06 +08）
+
+- [x] `branches/today.json` 改為向下相容 v1 wrapper：`{version:1, as_of, movements}`。`as_of` 是價格日以前 tracked 分點的實際最大 `branch_trades.date`，再取該日全部 tracked movement；無資料為 null／空 mapping。`/branch` 同時接受舊 bare mapping，顯示「分點最近交易日進出」與新 payload 資料日；買進／賣出為中性 gross、淨買賣正紅負綠零中性、缺佔比為「—」。未改 schema、評分、threshold、排程或正式資料。
+- [x] 驗證：exporter targeted **11 passed**；完整 pipeline pytest **290 passed、58 subtests passed**；`web npx tsc --noEmit` 與 `git diff --check` 通過。未跑正式 VPS／DB／export，未改 cron／workflow。
+- [x] VPS 唯讀：分點回補仍單實例，最後完成 `2025-05-09`、`fetched=118,264`、至少 `320/490` 日期；DB `5,324,414,976` bytes、WAL `115,298,232` bytes、可用約 7.0GB（75% 使用）。近期未見 import error；最新成功 backup／`integrity_check` 無現有證據可確認，8/22 log 有 Drive quota 403，主機未見 `.db.gz`。dirty tree 仍會阻擋 pull。**未重啟、未改 cron、未執行正式 DB。**
+
 ## 2026-08-31 VPS 唯讀稽核（12:16–12:26 +08）
 
 - [x] 本機與 VPS `main` 均為 `8603f3a`；可用 alias 為 `trever-vps`（`trever_vps` 無法解析）。正式 crontab 已核對 14:10／15:00／16:10／17:40／21:20／22:00、01:10、03／09／12／20、23:30、TDCC 週六 06:30、董事每月 16 日 07:00。

@@ -135,10 +135,37 @@ type Movement = {
   buy_lots: number;
   sell_lots: number;
   net_lots: number;
-  pct: number;
+  pct: number | null;
 };
 
 type TodayMovements = Record<string, Movement[]>;
+
+type TodayPayload = {
+  as_of: string | null;
+  movements: TodayMovements;
+};
+
+function normalizeTodayPayload(payload: unknown): TodayPayload {
+  if (payload && typeof payload === "object" && !Array.isArray(payload)) {
+    const wrapper = payload as { version?: unknown; as_of?: unknown; movements?: unknown };
+    if (wrapper.version === 1 && "movements" in wrapper) {
+      return {
+        as_of: typeof wrapper.as_of === "string" ? wrapper.as_of : null,
+        movements: wrapper.movements && typeof wrapper.movements === "object" && !Array.isArray(wrapper.movements)
+          ? wrapper.movements as TodayMovements
+          : {},
+      };
+    }
+  }
+  // Code can deploy before the next export: preserve the legacy bare mapping
+  // and do not invent a date it did not carry.
+  return {
+    as_of: null,
+    movements: payload && typeof payload === "object" && !Array.isArray(payload)
+      ? payload as TodayMovements
+      : {},
+  };
+}
 
 type WarrantBreakdown = {
   warrant_id: string;
@@ -419,7 +446,7 @@ export default function BranchPage() {
   const [radar, setRadar] = useState<RadarJson | null>(null);
   const [tab, setTab] = useState<"rankings" | "today" | "warrant">("rankings");
   const [rankingsData, setRankingsData] = useState<RankingsData | null>(null);
-  const [today, setToday] = useState<TodayMovements | null>(null);
+  const [today, setToday] = useState<TodayPayload | null>(null);
   const [warrantBranches, setWarrantBranches] = useState<Record<string, WarrantBranch[]>>({
     "1d": [], "2d": [], "5d": [], "30d": [], "120d": []
   });
@@ -448,6 +475,7 @@ export default function BranchPage() {
 
     dataFetch("/data/branches/today.json")
       .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
+      .then(normalizeTodayPayload)
       .then(setToday)
       .catch(() => setError(true));
 
@@ -828,10 +856,11 @@ export default function BranchPage() {
           <ConcentrationTab radar={radar} />
           
           <div className="mb-[-12px] flex items-baseline gap-2">
-            <h2 className="text-[15px] font-semibold text-foreground">分點今日買超</h2>
+            <h2 className="text-[15px] font-semibold text-foreground">分點最近交易日進出</h2>
+            {today.as_of && <span className="text-[11.5px] text-muted-foreground">資料日 {today.as_of}</span>}
           </div>
-          {Object.entries(today).length === 0 && <div className="py-[46px] text-center text-sm text-muted-foreground">今日無追蹤分點的買超紀錄</div>}
-          {Object.entries(today).map(([branchName, trades]) => (
+          {Object.entries(today.movements).length === 0 && <div className="py-[46px] text-center text-sm text-muted-foreground">目前無追蹤分點的最近交易日進出紀錄</div>}
+          {Object.entries(today.movements).map(([branchName, trades]) => (
             <div key={branchName} className="rounded-[var(--r-lg)] border border-border bg-card p-4 shadow-[var(--shadow-card)]">
               <div className="mb-3 flex items-center justify-between border-b border-border pb-3">
                 <span className="text-lg font-semibold text-foreground">{branchName}</span>
@@ -841,8 +870,9 @@ export default function BranchPage() {
                   <thead>
                     <tr>
                       <th className="px-2 py-2 text-left font-semibold text-muted-foreground">股票</th>
-                      <th className="px-2 py-2 text-right font-semibold text-muted-foreground">買超</th>
-                      <th className="px-2 py-2 text-right font-semibold text-muted-foreground">淨額</th>
+                      <th className="px-2 py-2 text-right font-semibold text-muted-foreground">買進</th>
+                      <th className="px-2 py-2 text-right font-semibold text-muted-foreground">賣出</th>
+                      <th className="px-2 py-2 text-right font-semibold text-muted-foreground">淨買賣</th>
                       <th className="px-2 py-2 text-right font-semibold text-muted-foreground">佔比</th>
                     </tr>
                   </thead>
@@ -858,11 +888,12 @@ export default function BranchPage() {
                             <span className="text-foreground">{t.stock_name}</span> <span className="text-xs text-muted-foreground">{t.stock_id}</span>
                           </a>
                         </td>
-                        <td className="px-2 py-2.5 text-right whitespace-nowrap text-up">{t.buy_lots}</td>
-                        <td className={cn("px-2 py-2.5 text-right whitespace-nowrap", t.net_lots > 0 ? "text-up" : "text-down")}>
+                        <td className="px-2 py-2.5 text-right whitespace-nowrap text-[color:var(--ink-2)]">{t.buy_lots}</td>
+                        <td className="px-2 py-2.5 text-right whitespace-nowrap text-[color:var(--ink-2)]">{t.sell_lots}</td>
+                        <td className={cn("px-2 py-2.5 text-right whitespace-nowrap", t.net_lots > 0 ? "text-up" : t.net_lots < 0 ? "text-down" : "text-[color:var(--ink-2)]")}>
                           {t.net_lots > 0 ? "+" : ""}{t.net_lots}
                         </td>
-                        <td className="px-2 py-2.5 text-right whitespace-nowrap text-xs text-[color:var(--ink-2)]">{t.pct}%</td>
+                        <td className="px-2 py-2.5 text-right whitespace-nowrap text-xs text-[color:var(--ink-2)]">{t.pct == null ? "—" : `${t.pct}%`}</td>
                       </tr>
                     ))}
                   </tbody>

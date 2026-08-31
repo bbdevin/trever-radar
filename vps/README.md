@@ -242,6 +242,7 @@ crontab -l   # 確認
 - DB 5.32GB、WAL 115MB、free 7.0GB（75% 使用）、WAL mode；writer 活躍時沒有跑 integrity，故最新 integrity/backup 成功狀態皆 unknown。主表最新為 2026-08-28；`branch_trades_raw` 21,522,284、`daily_prices` 10,205,766、`daily_scores` 19,341、`warrant_daily` 5,729,141。
 - 8/28 可見成功：15:00 TPEx 10,657；21:20 margin TWSE 1,291／TPEx 920；22:48 branches 56,508。TDCC 8/29 成功（as_of 8/28，3,375／50,625），董事 8/26 成功（2026-07，1,975／45,045；下次 9/16）。近期未見分點錯誤；歷史錯誤含 dirty pull、permission denied、Drive quota 403、TPEx 520。
 - 下一步僅可先做唯讀確認：最新 weekly backup 是否成功與 `integrity_check=ok`、回補 completeness／ETA。free <20GB，**不得自行啟用全市場權證、寫正式 DB 或修改 cron**。
+- **13:05–13:06 +08 續查（唯讀）**：分點回補仍單實例，最後完成 `2025-05-09`、`fetched=118,264`、至少 `320/490` 日期；DB `5,324,414,976` bytes、WAL `115,298,232` bytes、可用約 7.0GB（75% 使用），近期未見 import error。主機未見 `.db.gz`，最新成功 backup／`integrity_check` 尚無證據；8/22 log 有 Drive quota 403。dirty tree 仍阻擋 pull；**未重啟、未改 cron、未執行正式 DB。**
 
 **影子驗證(cutover 前必過,docs/31 WP-B2)**:cron 全開後連續 2–3 個交易日,
 每日收盤後比對 `https://radar.techtrever.com/data-preview/radar.json` 與正式站

@@ -1483,14 +1483,24 @@ def _export_branches(out: Path, engine, date: str):
         (branches_dir / "rankings.json").write_text(
             json.dumps(rankings, ensure_ascii=False), encoding="utf-8")
             
-        # Today's Movements
-        today_trades = [dict(r._mapping) for r in conn.execute(text("""
-            SELECT b.branch_name, b.stock_id, s.name as stock_name, b.buy_lots, b.sell_lots, b.net_lots, b.pct
+        # Tracked movements can arrive after the price export date.  Label the
+        # payload with their actual latest date instead of silently exporting
+        # an empty "today" table when branch data is one session behind.
+        today_as_of = conn.execute(text("""
+            SELECT MAX(b.date)
+            FROM branch_trades b
+            WHERE b.date <= :d
+              AND b.branch_name IN (SELECT branch_name FROM tracked_branches)
+        """), {"d": date}).scalar()
+        today_trades = [] if today_as_of is None else [dict(r._mapping) for r in conn.execute(text("""
+            SELECT b.branch_name, b.stock_id, s.name AS stock_name,
+                   b.buy_lots, b.sell_lots, b.net_lots, b.pct
             FROM branch_trades b
             JOIN stocks s ON s.id = b.stock_id
-            WHERE b.date = :d AND b.branch_name IN (SELECT branch_name FROM tracked_branches)
+            WHERE b.date = :as_of
+              AND b.branch_name IN (SELECT branch_name FROM tracked_branches)
             ORDER BY b.branch_name, b.net_lots DESC
-        """), {"d": date})]
+        """), {"as_of": today_as_of})]
         
         # Group by branch
         movements = {}
@@ -1501,7 +1511,11 @@ def _export_branches(out: Path, engine, date: str):
             movements[bname].append(r)
             
         (branches_dir / "today.json").write_text(
-            json.dumps(movements, ensure_ascii=False), encoding="utf-8")
+            json.dumps({
+                "version": 1,
+                "as_of": today_as_of,
+                "movements": movements,
+            }, ensure_ascii=False), encoding="utf-8")
 
         # 權證分點異動:近 40 個交易日,分點對單一權證的大額淨買(≥300 張)
         d40 = conn.execute(text(

@@ -187,6 +187,45 @@ class TrackedBranchHistoryExportTests(unittest.TestCase):
         export_json(out)
         return out / "branches" / "track"
 
+    def _today_payload(self):
+        out = Path(self._tmp.name) / "out"
+        export_json(out)
+        return json.loads((out / "branches" / "today.json").read_text(encoding="utf-8"))
+
+    def test_today_wrapper_uses_latest_tracked_branch_date_before_price_date(self):
+        # Export date is newer than the branch feed; the wrapper must label
+        # the latter rather than call the movements "today" or return empty.
+        with db.get_engine().begin() as conn:
+            conn.execute(schema.daily_prices.insert(), [
+                {"stock_id": sid, "date": "2026-07-11", "close": close,
+                 "volume": 1000, "turnover": 100}
+                for sid, close in (("2330", 1090.0), ("2317", 212.0), ("2454", 1210.0))
+            ])
+        payload = self._today_payload()
+
+        self.assertEqual(payload["version"], 1)
+        self.assertEqual(payload["as_of"], self.AS_OF)
+        self.assertEqual(set(payload["movements"]), {"凱基-台北"})
+        rows = payload["movements"]["凱基-台北"]
+        self.assertEqual([row["stock_id"] for row in rows], ["2330", "2317"])
+        self.assertEqual(rows[0]["buy_lots"], 500)
+        self.assertEqual(rows[0]["sell_lots"], 150)
+        self.assertEqual(rows[0]["net_lots"], 350)
+        self.assertEqual(rows[0]["pct"], 1.2)
+        self.assertEqual(rows[1]["buy_lots"], 100)
+        self.assertEqual(rows[1]["sell_lots"], 300)
+        self.assertEqual(rows[1]["net_lots"], -200)
+        self.assertIsNone(rows[1]["pct"])
+
+    def test_today_wrapper_is_empty_when_no_tracked_movement_exists(self):
+        with db.get_engine().begin() as conn:
+            conn.execute(schema.tracked_branches.delete())
+        self.assertEqual(self._today_payload(), {
+            "version": 1,
+            "as_of": None,
+            "movements": {},
+        })
+
     def test_index_and_untracked_excluded(self):
         import hashlib
         track = self._run()
