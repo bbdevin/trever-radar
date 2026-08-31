@@ -1,6 +1,21 @@
-# 專案狀態（2026-08-28）
+# 專案狀態（2026-08-31）
 
 > 單一進度真相。每完成一個里程碑就更新本檔。規格細節看各編號文件,別寫在這裡。
+
+## 2026-08-31 個股／首頁 UI 最終正式站 QA（HEAD `8603f3a`）
+
+- [x] `052e0e0`…`8603f3a` 五個 commits 已部署，`8603f3a` deploy 成功。它們**覆寫**本檔與舊 handoff 中所有 `f323f95`「Decision 預設收合／可展開收合」和舊 4／7 homepage tabs 的敘述：Decision 現為固定完整顯示、無收合 button、四 pills 可見；觀察／失效價屬右側行情摘要下方，不在 Decision。
+- [x] 個股 header：代號與名稱分離、44×44 Watchlist 固定右上、價格在名稱下方、行情去框；行情摘要的開高低有方向時才顯示 `▲`／`▼` 及紅／綠，持平／缺昨收時為中性色且無 glyph。個股一級 tabs 是 K線／籌碼日報／三大法人／資券／大戶／基本資料／技術／權證。
+- [x] 首頁一級 tabs 順序為綜合／策略／未發動／已發動／資券／市場掃描／追高風險／失效／口袋／權證。ThemeToggle 已存在，不是待做項。
+- [x] 已登入 in-app browser 390×844 實測：`clientWidth=375 / scrollWidth=375`；`stock-context-grid=347/347`、header `202/202`、price `154/154`、market `135/135`；基本資料地址、股務、來源、3 題材與庫藏股誠實空態可達，且無 console error。Design QA comparison 來源、實作與歷程見根目錄 `design-qa.md`（final result: passed）。
+
+## 2026-08-31 VPS 唯讀稽核（12:16–12:26 +08）
+
+- [x] 本機與 VPS `main` 均為 `8603f3a`；可用 alias 為 `trever-vps`（`trever_vps` 無法解析）。正式 crontab 已核對 14:10／15:00／16:10／17:40／21:20／22:00、01:10、03／09／12／20、23:30、TDCC 週六 06:30、董事每月 16 日 07:00。
+- [x] `radar-bf-branches`、`radar-worker` 皆活躍且各有一個 guard/supervisor；權證歷史 done=`2026-08-27T00:25:33+08`。分點為長 in-flight：319 日期、最後完成 2025-05-12、fetched=116,891，03:56–12:26 雖無完成行但 DB 持續成長，故不重啟。
+- [x] DB 5.32GB／WAL 115MB／free 7.0GB（75%）、WAL mode；writer 活躍，未跑 `integrity_check`，所以最新 weekly backup 成功與 integrity 為 unknown。主表最新 2026-08-28；`branch_trades_raw` 21,522,284、`daily_prices` 10,205,766、`daily_scores` 19,341、`warrant_daily` 5,729,141。
+- [x] 8/28 日更可見成功：TPEx 10,657、margin TWSE 1,291／TPEx 920、branches 56,508；TDCC 8/29 成功（as_of 8/28，3,375／50,625），董事 8/26 成功（2026-07，1,975／45,045；下次 9/16）。
+- ⚠️ VPS 有未追蹤 `data/`、`package-lock.json`、`radar-quick-catchup.sh`、`run-backfill.sh`，歷史上會阻斷 `git pull`；不得自行刪除／pull／重啟／改 cron。僅待唯讀確認 weekly backup+integrity 與 completeness／ETA；free <20GB，禁止自行啟用全市場權證輪、正式 DB 寫入或任何回補操作。
 
 ## 2026-08-28 權證分點全市場 code-ready（未啟用）
 
@@ -8,10 +23,10 @@
 - `daily-branches.sh` 已把 legacy 權證數明列為 `--warrants 200`；全市場獨立輪未啟用前保留 17:40／22:00 上市 Top 200，避免權證分點資料斷層，正式切換時才同輪改為 `0`。新增 `daily-warrant-branches-poc.sh` 但未加正式 cron。2026-08-27 VPS 合格目標 20,081（TWSE 16,225 + TPEx 3,856），sleep=1.0 估 6–8h，DB 約 4.7GB／free 7.6GB < 20GB gate，因此**未 SSH 寫正式 DB、未跑 PoC、未 deploy**；需容量、1／5 日與三交易日 benchmark 人工確認後才可啟用。
 - 驗證：權證 targeted pytest **12 passed**；完整 pipeline pytest **273 passed、58 subtests passed**；`compileall`、`git diff --check` 通過；另把 PoC script 與 `lib.sh` 經 SSH stdin 交由 VPS `bash -n -s` 唯讀解析，兩者 exit 0（未 pull、未寫 DB、未動 cron）。
 
-## 2026-08-28 個股資訊補強與權證更新修正
+## 2026-08-28 個股資訊補強與權證更新修正（歷史；UI 現況由本檔頂部 `8603f3a` 覆寫）
 
-- [x] **個股頁 browser annotation 收斂（正式站已驗收，HEAD `f323f95`）**：首屏身份區依最新指定改為第一列「3376 新日興」、第二列「217▲7(+3.33%)」、第三列市場／產業；44px 自選星號與第一列同高，身份內容位於 44px 返回鍵右側。行情摘要固定右側並用 glyph＋紅／綠／中性色顯示開高低，Decision 左側首要判讀完整換行；刪除重複 compact 公司概況，題材 compact 與絕對 URL guard 均保留。390×844（client 375）、深／淺色、Decision 展開／收合、無水平 overflow 與正式 deploy 已驗收；證據見根目錄 `design-qa.md`。
-- [x] **個股手機首屏 UI 校正（`55beda9`／`c26ea04` 為歷史基準，版面已由上列 `f323f95` 取代）**：不再使用「名稱與報價同行」舊格式；目前固定代號＋名稱、現價＋漲跌點數（漲跌幅）、市場＋產業三層。活躍題材嚴格 2+N、Decision 預設收合、八個一級 tab 水平捲入與 `scrollY=0` regression 修正仍有效；勿依舊截圖恢復被移除的概況列或下方行情卡。
+- [x] **個股頁 browser annotation 收斂（歷史 HEAD `f323f95`）**：身份三層、44px 自選星號、行情／基本資料／題材 compact 與絕對 URL guard 的基礎均保留；該輪的 Decision 展開／收合驗收已由 `8603f3a` 的固定完整 Decision 覆寫。當時 390×844（client 375）無水平 overflow 的證據仍作歷程保留。
+- [x] **個股手機首屏 UI 校正（`55beda9`／`c26ea04`／`f323f95` 均為歷史基準）**：舊「名稱與報價同行」格式不再適用；當時的 identity 三層、活躍題材嚴格 2+N、八個一級 tab 與 `scrollY=0` regression 修正仍有效。**Decision 預設收合已廢止**；勿依舊截圖恢復被移除的概況列或下方行情卡。
 - [x] 個股名稱／報價區保留開高低收、量額與行情資料日；行情目前位於 Decision 右側。完整公司地址、代理電話／地址、官方來源、題材 lifecycle 與庫藏股事實仍在「基本資料」一級 tab（技術左側）；首屏 compact 公司概況因資訊重複已移除，未改回 bottom sheet 或內部分頁。
 - [x] 個股權證分點與全市場探索拆成雙層資料契約：既有 `warrant_branches.json` 維持 `>=500 萬`；新增 `branches/warrant-stock-details/index.json` 與 `{stock_id}.json` 分片供個股顯示 `>=100 萬`，100–499 萬標「觀察」、500 萬以上標「大額」。W5 500 萬、首頁／Armed 2,000 萬及 `/branch` 契約均未改；個股權證摘要新增資料日與裁剪限制說明。
 - [x] `daily-insti.sh` 修正為權證主檔先於當日彙總；主檔失敗仍沿用既有 mapping 彙總，不阻擋法人／日K 上線。16:10 crontab 時間不變、未新增獨立腳本或 cron。
@@ -50,7 +65,7 @@
 - 流程為**模型中立、角色導向**:Planner / Executor / Reviewer 由本次任務指定,不由模型品牌永久決定;規則見 `AGENTS.md` 與 `docs/17_no_fable_workflow.md`。
 - 工具清單:Claude Code、AGY/Gemini、Codex、GPT/Grok 等高階模型均可任三角色;Cursor 為 IDE / 確認介面;人類使用者為唯一決策者。
 
-下一步:**資料架構 B 案遷移**(`docs/31` v3,2026-07-15 使用者定案;同日因 R2 需綁卡改「Workers 靜態資產資料層 + Google Drive 單雲備份」,全程免綁卡):radar.db 常駐 VPS 單一寫者、雲端資料鏈退役、repo 轉回 private——WP-B0 人工步驟與 WP-B1 進行中。其後依 `docs/20` B 方案完成策略解耦與績效閉環。
+下一步:**資料架構 B 案剩餘項**(`docs/31` v3)：WP-B0～B3、B5、B7 已完成，repo 依免綁卡定案維持 public；尚餘 WP-B4 加固／還原演練，以及需人工確認才可啟動的 WP-B6／WP-M4。策略解耦與績效閉環現況見下方未完成清單，不得把本段解讀為重新遷移或轉 private。
 
 ## 已完成 ✅
 
@@ -98,20 +113,20 @@
 - [x] **凌晨長任務常態化**:data-backfill 每天 01:10 深歷史增量(已拉深跳過,日常近零請求);週六 01:10 DB 備份(**週六全市場還原因子+指標全重算已於 2026-07-10 停用,改 VPS 跑後回灌,雲端 fallback=手動 task=adjust**);排程總表 = docs/08 §0
 - [x] **分批即時更新**:14:10 收盤閃電更新(日K+權證+指標+分數→部署,資料日當天變今天)→ 16:10 法人+權證主檔 → 17:40 融資券+分點全量 → 21:00 補抓;各資料集「有效日」寫進 radar.json `freshness`,晚公布的前端標「今日尚未公布,暫用前一日」並以前一日數值填充
 - [x] 管線效能優化(docs/15):指標增量計算(`--days 5`,全市場 26 秒,原全歷史重算數十分)、release 備份週五化(原三支 workflow 每日各 gzip 1GB)、修正 daily-warrants/branches 繞過 cache 的分岔 bug、pip/npm 快取
-- [x] GitHub Actions 全自動管線 + Cloudflare Pages 部署 + 自訂網域
-- [x] `main` push 觸發正式部署;push 事件跳過資料匯入,只用 cache/release DB 匯出 JSON、build、deploy
+- [x] GitHub Actions 全自動管線 + Cloudflare Pages 部署 + 自訂網域（歷史管線；2026-07-18 cutover 後 GitHub Actions 只負責程式碼 build／deploy）
+- [x] `main` push 觸發正式程式碼部署；2026-07-18 cutover 後不再讀 cache／release DB、匯出資料或碰正式 `radar.db`
 - [x] FinMind 免費 token(600 req/hr,`RADAR_FINMIND_TOKEN`,GitHub secret 已設)
-- [x] **排程觸發改用 Cloudflare Worker**(2026-07-09):GitHub 原生 `schedule:` 實測延遲 2.5–3.5 小時,6 支資料 workflow 已全數改為 `workflow_dispatch:` only,由 `cloudflare-trigger/`(單一 10 分鐘 cron trigger + 程式碼比對時間表,繞開 Cloudflare 免費方案 3/Worker、5/帳號 的 cron 上限)準時觸發;新增 `daily-margin`(22:10 台北,融資券保底輪)
+- [x] **排程觸發改用 Cloudflare Worker（2026-07-09 歷史里程碑）**：其後已於 2026-07-18 WP-B3 cutover 退役；正式資料排程現由 VPS cron 執行，Cloudflare trigger crons 已清空，資料 workflow 檔案只保留且無觸發源
 
 ## 未完成(依優先序)
 
-0. **資料架構 B 案遷移**(`docs/31` v3「Workers 靜態資產資料層」,2026-07-15 定案,最高優先):WP-B0 前置(**Executor 部分已完成 2026-07-15,同日改版 v3**:cloudflare-data-worker/(assets 模式)、pipeline/Dockerfile、vps/.env.example;人工部分待做:Cloudflare API token(Workers scope)、VPS node/rclone gdrive、VPS 首次 wrangler deploy)→ ~~WP-B1 合規止血~~(✅ **2026-07-15 完成**:首份 Drive 快照 `radar-20260715.db.gz` 就位後,public release 的 `radar.db.gz` asset 已刪,docs/10 §3 紅線解除;雲端鏈進入 cache 單腿期,cutover 目標 ≤1 週)→ ~~WP-B2 VPS cron 影子跑~~ ✅ **2026-07-18 驗收通過**(連續交易日 07-16/07-17 shadow 與正式站 freshness/榜單一致、ntfy 無 High 告警)→ ~~WP-B3 cutover~~ ✅ **2026-07-18 執行完成**(Step 1-5 全落地:`/data/*` Worker route 接管、trigger crons 清空、deploy.yml 純 build(commit `109c8ad`)、intraday `.env` 改自訂網域、repo 轉 private;Step 6 驗收:未登入三入口 302 紅線通過、資料 workflow 確認零觸發;~~遺留:Actions Billing 阻斷~~ **同晚已解:使用者依免綁卡原則將 repo 改回 public**(Step 5 反轉,理由見上線資訊表 Repo 列),deploy 恢復成功(1m7s),改回後紅線重驗仍 302)→ WP-B4/B5 加固與文件同步(~~WP-B5 文件大同步~~ ✅ **完成 2026-07-18**;WP-B4 加固/還原演練仍待開)→ WP-B6 開跑 WP-M4(前置:修 `backfill_warrant_branches` bug ✅ **已於 2026-07-18 完成並合併 main**,commit `a87df0d`/merge `4ea5f95`,回歸測試見 `pipeline/tests/test_backfill_warrant_branches.py`,詳 docs/30 §3;WP-M4 全市場回補本身尚未開跑)→ ~~WP-B7 登入統一~~ ✅ **2026-08-20 完成**(站內 Google + Worker JWT;Access 已關,裸 curl `/data` 直接 401)。每包動工前需使用者確認。
+0. **資料架構 B 案後續（遷移主鏈已完成）**：`docs/31` v3 的 WP-B0～B3、B5、B7 均已完成；VPS `radar.db` 是唯一寫者，資料走 Workers 靜態資產，備份走 Google Drive，repo 依免綁卡定案維持 public。尚餘 WP-B4 加固／還原演練，以及 WP-B6／WP-M4 全市場回補；後者雖已修妥 `backfill_warrant_branches` 前置 bug，但正式開跑仍須使用者確認。歷史 cutover 細節與回滾紀錄保留在 `docs/31`／`docs/32`，不得把本項解讀為重新遷移、轉 private 或自動啟動回補。
 1. ~~**私人測試版 Access**(`docs/21` A0-A2)~~ ✅ **2026-07-13 完成**:使用者手動於 Cloudflare Zero Trust 設定(Google IdP + email 白名單,單一 Application 覆蓋三類入口),執行紀錄見 `docs/21` §4 A3;R2 部分見第 6 項,仍未動。
 2. **B 方案 Phase 2—策略/分數解耦**(`docs/20`,高風險資料語意變更):S1-S13 只產生 tag/reason,不得再增加 `tech_score` 或其他分項;~~補 S2-S13 測試~~ **2026-07-10 完成**(S2-S13 正例/邊界反例 36 項 + 解耦回歸斷言,S11-S13 抽純函式零行為變化,pytest 91 全過,verifier 窮舉探針 CONFIRMED);~~舊/新分數差異報告~~ **2026-08-19 完成**(CLI `python -m pipeline.radar.cli phase2-diff-report`,模組 `pipeline/radar/compute/phase2_diff_report.py`,本機樣本 `docs/reports/phase2_score_diff_2026-07-06.md`——77 檔、該日 0 檔受 S1-S10 bonus 影響;**VPS 最新資料日重跑待使用者確認**)。仍缺:使用者批准後的正式全市場重算、回灌及部署。
 3. **B 方案 Phase 3—策略績效閉環**(`docs/20`):✅ **工作 3 完成（2026-08-19）**。VPS 正式資料日（2026-08-19）報告已產出：180 日 lookback、1659 事件、508 matured 20d 樣本。lifecycle v2（2026-08-27）依使用者恢復觀察決策改為 **S2、S5 = Shadow**；其餘亦為 Shadow；無 Active／Retired。`strategy_meta` 欄位已新增至 `json_export.py`（含 status/h5/h10/h20/sufficient_samples）；前端首頁策略 Tab 加 Shadow badge 與績效摘要行。此為 metadata 觀察狀態，不改策略公式、權重、`final`、selector cap、DB 或正式回算。
 4a. **盤中訊號雷達 + 分點追蹤視角**(`docs/24`,2026-07-11 使用者指定排入):~~Part B 分點追蹤視角~~ **2026-07-11 完成**(B1 export + B2 前端);~~Part A 盤中雷達~~ **2026-07-12 程式碼完成**(I1-I3 完成,含 `worker.py` 與前端 `IntradayPanel.tsx` 即時推播),部署方向為 VPS docker+cron(非本機,2026-07-12 使用者定案,`docs/vps_backfill_plan.md` Step 5)。Supabase SQL 已執行、Fugle 金鑰已備。排查發現 Step 5 手冊寫於 2026-07-13 Cloudflare Access 上線前,`.env` 缺 Access service token,worker 抓 `radar.json` 會被 Access 擋 403 fatal exit;已補 `pipeline/intraday/.env.example`(六變數)與 crontab 整合。2026-07-16 使用者建立 Access Service Token 並掛上既有 Access Application 原則後,VPS 首次 live smoke test 炸出 `fugle-marketdata` 套件 API 飄移(`connect()/subscribe()` 官方已改同步呼叫、WebSocket callback 給原始 JSON 字串非 dict),當晚修復(commit `fcb3aef`,回歸測試 pytest 104 全過)。2026-07-18 確認已跟上盤中實跑、cron 常態化,首頁盤中面板穩定 online,但**當天回報 online 卻始終沒有任何訊號推播**;查 07-17 全日 log 發現連續數百筆「Error processing trade: no running event loop」——Fugle SDK 的 `on("message")` callback 跑在背景執行緒(`connect()/subscribe()` 是同步方法),不是 `asyncio.run(main())` 那條主執行緒,`process_trade()` 用 `asyncio.create_task(push_signal(...))` 排程推播,在沒有事件迴圈的執行緒下 `create_task()` 本身就 RuntimeError,`push_signal()` 主體(真正寫 Supabase 那段)從未執行過,100% 靜默失敗;心跳不受影響是因為它跑在主執行緒事件迴圈。**✅ 2026-07-18 當天修復**(commit `c7ce175`):`push_signal` 改一般同步函式、`process_trade()` 直接呼叫,不再依賴事件迴圈;順便把 I-1~I-4 門檻判定抽成純函式 `evaluate_signals()`(docs/24 §2.2,方便單元測試)並補齊原本掛零沒接線的 **I-2(爆量)**——用 `adv20` 依開盤經過分鐘數等比例折算基準達 2 倍觸發(pipeline 尚未輸出「同時刻量能基準曲線」,先求有訊號可用,精確版待後補)。新回歸測試刻意先對照舊碼重現一模一樣的 production traceback 再驗證修正,pytest 115 全過。Part A 全流程完成上線,待下一個交易日觀察是否真的開始推播訊號。
 5. **功能·視覺 backlog**(`docs/23`)：✅ **2026-07-12 F 系列全數完成**。已完成清單：V1/V2/V3.1/V3.2(2026-07-11)；F2 日報摘要、F3 訊號摘要（合入個股頁）、F1.1/F1.2 自選距關鍵價%+排序（合入 IA-4A）、V3.3 Sonner toast、**F1.3 一鍵加入今日 Armed**、**F4.1 掃描收斂（合入 IA-1B）+ F4.2 策略四類分群**（2026-07-12）。~~剩餘僅 V3 淺色 token 對比為「只回報未改」~~ **V3 淺色 token 對比已於 2026-07-12 補強(含 KChart 淺色主題)**。不得插隊，Executor 依 WP-* 工作包執行。
-5a. **任務導向 UI 資訊架構**(`docs/25`)：IA-1A～IA-4B 已完成。**IA-5 / IA-3b / IA-5b（2026-08-20）**：個股一級分頁 `K線 | 籌碼日報 | 三大法人 | 技術 | 權證`；K 線不堆技術卡、手機圖區放大；籌碼與分點追蹤買方/賣方全寬對半切；點分點下鑽。**掃讀微優化（同日）**：訊號摘要可收合（K 線預設收）、手機 sticky 一級 tab、修正「綜合評分」錯字。
+5a. **任務導向 UI 資訊架構**(`docs/25`)：IA-1A～IA-4B 已完成。**IA-5 / IA-3b / IA-5b（2026-08-20；頁籤現況更新至 2026-08-31）**：個股一級分頁為 `K線 | 籌碼日報 | 三大法人 | 資券 | 大戶 | 基本資料 | 技術 | 權證`；K 線不堆技術卡、手機圖區放大；籌碼與分點追蹤買方/賣方全寬對半切；點分點下鑽。**掃讀微優化（同日）**：K 線訊號摘要可收合、手機 sticky 一級 tab、修正「綜合評分」錯字；首屏 Decision 則依 2026-08-31 現況固定完整顯示，不可混為同一元件。
 6. ~~R2 R0-R2(`docs/21`)~~ **2026-07-15 作廢**:R2 啟用需綁信用卡,不採用;快照職責改 Google Drive、還原演練併入 `docs/31` WP-B4。
 7. **B 方案 Phase 4—排程簡化**(`docs/20`):📝 **2026-08-20 提案稿已改寫**（對齊 VPS cron + Worker 資料層;建議 14:10/22:10 兩次資料 deploy,中間輪只寫 DB）。**cron/script 未改**,待使用者確認目標態或變體 B 後另開實作。不得未確認就改 `vps/scripts` 或 workflow。
   5b. **首頁掃讀體驗+個股頁資訊架構統一**(docs/28,2026-07-12 規劃定案):WP-H2 語意色彩層次(已完成 2026-07-12)→ **WP-H4 個股頁分點統一(2026-07-12 完成,commit 83649ae)**→ **WP-H1 題材分組(2026-08-20 完成)**:綜合/市場掃描可切「分數|題材」,一檔只歸當日最熱題材、sticky header;桌機與分數榜同 2/3/4 欄且預設全開,手機前 3 組展開→ **WP-H3 卡片走勢改當日分時(2026-08-20 完成)**:Fugle 1 分 K → `spark_day`/`spark_open`,缺資料標「30日」→ **WP-H5 手機版(2026-07-12 完成)**。**docs/28 已全部完成**。
@@ -154,7 +169,7 @@
 - 2026-08-27 **融資主輪改 21:20**：TWSE ~21:00 產製,不必等到 22:40;分點第二輪改 **22:00** 避 lock。
 - 2026-08-27 **融資未更新修復**：根因＝`git pull` 後腳本丟 +x → 22:10 `daily-margin` **Permission denied**（21:00 branches 同掛）；另 17:40 抓 MI_MARGN 過早必 empty。已：`sync_code` 強制 `chmod +x`、crontab 改 `bash` 呼叫、branches 不再抓 margin、腳本 git mode 100755。
 - 2026-08-26 **交接**：`handoff.md` 已寫完整 Handoff＋下一對話可貼提示詞；本機／VPS 皆在 `a81860c`。
-- 2026-08-26 **Phase D1/D2 董監＋內部人％**：`import-directors`（TWSE/TPEx OpenAPI）、`director_holdings`、HoldersPanel「董監持股」分頁；週表 `insider_pct` ffill。VPS `monthly-directors.sh` 已掛正式 crontab（每月 16 日 07:00；2026-08-27 唯讀核對，尚未到下一次例行首跑）。
+- 2026-08-26 **Phase D1/D2 董監＋內部人％**：`import-directors`（TWSE/TPEx OpenAPI）、`director_holdings`、HoldersPanel「董監持股」分頁；週表 `insider_pct` ffill。VPS `monthly-directors.sh` 已掛正式 crontab（每月 16 日 07:00）；2026-08-26 已成功匯入 2026-07 月資料，下一次正式 cron 為 2026-09-16。
 - 2026-08-26 **內部人％公式修正**：姓名去重＋（目前持股＋關係人合計）÷集保；對齊籌碼／元大（2476≈12.09；舊式~10.48）。
 - 2026-08-26 **ntfy 改繁中成功摘要**：日更結束發「三大法人 · 成功」「分點籌碼 · 成功」等；失敗／略過／注意同標題格式（VPS 已 pull）。
 - 2026-08-26 **上櫃 15:00 主補抓槽**：新增 `daily-tpex-quotes.sh`（quotes→指標→分數→export）；**VPS crontab 已掛**平日 15:00；安靜窗 14:05–15:45。14:10 上市閃電不變；16:10／17:40／22:10 仍保底再抓。
@@ -168,7 +183,7 @@
 - 2026-08-27 **正式 VPS 回補／安靜窗實況驗證**：16:57 實測 repo HEAD 為 `2b0de0c`、tracked files 乾淨；正式 crontab 已含 TDCC 週六 06:30 與董監每月 16 日 07:00。權證回補已完成：`bf-warrant.done=2026-08-27T00:25:33+08:00`，`warrant_branch_hist` 12,644 rows／status ok。歷史分點尚未完成：最後完成 2025-10-29、累計 fetched 23,156；490 個目標交易日已走訪約 201 日（41%），餘約 289 日；此為日期走訪進度而非 completeness，舊日期缺口較大，不可線性推 ETA，未見 traceback／too-many-failures／stopped。`radar.db` 約 4.3G、WAL 約 91M，磁碟餘 7.9G（71%）；因有活躍寫者未跑 integrity check。14:10 TPEx empty、15:00 補抓 10,629 筆成功，15:05 scores 751 檔／24 檔達 65，export/deploy 成功。已清除兩個殘留診斷 shell，安全重啟 guard/supervisor；分點容器於 14:05–15:45 為 paused，15:46:05 自動 unpause，15:46:11 實測 `running|paused=false`，無 duplicate／restart。16:58 已完成 data Worker deploy；該 16:58 歷史事件當時未做程式碼部署、migration 或全市場重算；17:34 已完成正式 Pages code deploy 與策略 metadata 原子發布。
 - 2026-08-26 **修字級／深淺色選單無反應**：頭像選單改原生 button；`userPrefs` 只依 `userId` 重拉並擋住進行中 refresh 蓋寫本機切換。
 - 2026-08-26 **搜尋歷史＋文字縮放**：每位登入使用者搜尋紀錄（可清除）與 Header「A」三档字級綁帳號（`docs/36`）。**Supabase `20260826114421_create_user_ui_prefs.sql` 已執行**。
-- 2026-08-26 **VPS 四層排程架構定案（文件）**：[`docs/35_vps_schedule_architecture.md`](35_vps_schedule_architecture.md)——日更真相／歷史加深（含 bf-supervisor 目標）／發布／大戶週六 06:30；已同步 `08`§0、`33` S2、`34` §4.4。**程式尚未實作**。
+- 2026-08-26 **VPS 四層排程架構定案（歷史規劃節點）**：[`docs/35_vps_schedule_architecture.md`](35_vps_schedule_architecture.md)——當時只完成文件；其後 S2、TDCC 與正式 crontab 已落地，現況由 2026-08-31 頂部稽核與 `docs/35` 覆寫。
 - 2026-08-26 **分點每日全股票**：`import-branch-trades --top 0`（當日有報價 type=stock，不含 ETF）；法人／資券本已是全市場單請求。大戶比率＝TDCC 週更，Phase B 待實作。
 - 2026-08-26 **倉和卡 8/24**：DB 已有 8/25，個股 JSON 未重匯；觸發 force export。
 - 2026-08-25 **WP-M1 個股 JSON 全市場**:`export-json` 改寫全部 active stock/etf(不綁評分池);今日無報價仍更新最新 K 線,修倉和類卡在舊日。
@@ -243,7 +258,7 @@
 - 2026-07-11 WP-V2 榜單/表格一致性(docs/23 §2 V2,只動 UI 不動資料語意):①權證明細標竿表補排序回饋——表頭可排序欄改鍵盤可聚焦 `<button>` + `aria-sort=ascending/descending`,選中欄加 inset ring + 亮字選中態;②`/branch` 集中度榜與「今日買超」兩個 div-grid 真表格遷成語意化 `<table>/<thead>/<tbody>`(對齊權證表字級/分隔線,`overflow-x-auto` 手機可橫滑,不裁代號/漲跌,淨額補 +/- 號),分點前13大買賣超與權證大戶群組維持卡片列不硬遷;③首頁 stale freshness 標示改琥珀徽章 + lucide `Clock`(用既有 `--warn` token,不新增色票)。無新增依賴,`npm run build` 過。
 - 2026-07-11 個股頁多層圖:復刻籌碼K線版面——KChart 新增「主力買賣超(前15大)」pane(branch_history 每日全分點 net 加總柱 + 累計線,工具列可開關並記憶於既有 settings localStorage)與勾選驅動的「分點進出」pane(BranchFlowSection 前13大買/賣列表加 checkbox,上限 10,勾選集合每日 net 加總 + 累計線,無勾選不渲染);單 chart 實例 X 軸全 pane 同步,D/W/M 用新 `periodKey` 對齊 K 棒桶重取樣,pane 標題與游標當日/累計數值(帶正負號)以 v5 `createTextWatermark` 畫在對應 pane;無 branch_history 時兩 pane 不渲染、高度回原本。`npm run build` 過,以正式站 2330 真實資料 headless 驗證柱/累計數字與來源吻合。
 - 2026-07-12 **docs/25 IA-1B (首頁榜單收斂) 與 IA-3 (分點研究 Master-Detail 整合) 實作**（commit `df02e6e`）：
-  - **IA-1B 首頁榜單收斂**：首頁 7 個一級 Tab 壓縮為 4 個，將「熱門/爆量/強勢/弱勢」榜單合併收合為「市場掃描」一級 Tab，當切換到此 Tab 時下方顯示 Segmented sub-selector pill 切換，且正確顯示各子模式 counts，解決行動端排版擁擠。
+  - **IA-1B 首頁榜單收斂（歷史實作紀錄）**：曾將 7 個一級 Tab 壓縮為 4 個，將「熱門/爆量/強勢/弱勢」收進「市場掃描」；現況已由本檔頂部 `8603f3a` 的 10 個一級 tabs 覆寫。
   - **IA-3 分點研究 Master-Detail 整合**：改寫 `branch/page.tsx`。桌機版在排行榜採用 `grid-cols-[380px_1fr]` 雙欄佈局（左欄過濾名單可獨立滾動並顯示 active focus-ring，右欄即時加載 `BranchTrackView` 或無 track 資料提示）；手機版保留單欄列表並覆蓋下鑽，帶有 ArrowLeft 安全返回，徹底移除了原本獨立的「追蹤視角」模式按鈕。
   - **BranchTrackView.tsx 改造**：支援 `hideBack` prop，在桌機詳情面板上隱藏返回鍵。
 - 2026-07-12 **docs/23 F 系列 + docs/25 IA Phase A-F 完整實作**（commit `8d4aee5`，11 files, +597/-138）：

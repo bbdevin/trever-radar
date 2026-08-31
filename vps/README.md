@@ -205,7 +205,7 @@ sqlite3 radar.db "PRAGMA integrity_check;"        # ok 才能用
 | `daily-tpex-quotes.sh` | 15:00 一–五 | 上櫃日K 主補抓→權證彙總→指標→分數→export→deploy |
 | `daily-insti.sh` | 16:10 一–五 | daily-insti(quotes 保底→法人→權證主檔(失敗不擋)→**當日權證彙總**→指標→分數→export→deploy；2026-08-28 起確保新主檔先於彙總) |
 | `daily-branches.sh` | 17:40 + 22:00 一–五 | daily-branches(quotes/insti 補抓→指標→普通股全市場 `--top 0`＋**過渡期上市 Top 200 權證**→分點統計→分數→績效→export→prune→deploy;**不含融資**;第二輪在資券後)。全市場獨立輪正式啟用時才切 `--warrants 0`，避免過渡期資料斷層。 |
-| `daily-warrant-branches-poc.sh` | **未排程** | 上市＋上櫃權證單一全市場 PoC／未來日輪；20GB free-space、DB/source lock、BF pause/resume、hard timeout、atomic state resume。2026-08-28 VPS 只有 7.6GB，故**不得啟用／不得寫正式 DB／不得 deploy**。 |
+| `daily-warrant-branches-poc.sh` | **未排程** | 上市＋上櫃權證單一全市場 PoC／未來日輪；20GB free-space、DB/source lock、BF pause/resume、hard timeout、atomic state resume。2026-08-28 的 7.6GB 是歷史快照；2026-08-31 最新為 7.0GB，故仍**不得啟用／不得寫正式 DB／不得 deploy**。 |
 | `daily-margin.sh` | 21:20 一–五 | daily-margin(日K+融資券主輪→分數→績效→export→deploy;TWSE ~21:00＋約 20 分緩衝) |
 | `data-backfill.sh` | 01:10 每日 | data-backfill task=deep(深歷史增量) |
 | `weekly-backup.sh` | 週六 05:00 | (新)checkpoint→integrity_check→gzip→Drive+retention |
@@ -215,7 +215,7 @@ sqlite3 radar.db "PRAGMA integrity_check;"        # ok 才能用
 - **2026-08-24 回補中途動態上線(S1)**:`mid-backfill-publish.sh` + `bf-cron-guard.sh`;crontab `03/09/12/20` mid 只 export。
 - **2026-08-25 S1.1**:mid 預設略過 stats(防 OOM);`safe-branch-stats.sh` @ 23:30 專跑排行;stats 程式改增量累加。詳 `docs/33`。
 - **2026-08-21 回補與 cron 並行**:歷史回補用具名容器 `radar-bf-branches` / `radar-bf-warrant`(勿用 `manual-catchup.sh` 包長跑——它會握 flock)。另跑 `bf-cron-guard`(已收進 `vps/scripts/`)。
-- **開輪 `git pull --ff-only` + docker build**(layer cache,requirements 沒變近零成本)——舊碼算舊 reasons 的既有教訓。
+- **開輪 `git pull --ff-only` + docker build**(layer cache,requirements 沒變近零成本)只適用於已獲授權且 working tree clean 的正常狀態。2026-08-31 快照有未追蹤檔，現階段**不得自行 pull**；先依 §9.1 界線處理。
 - **失敗 → ntfy High；日更／週更成功 → 繁中摘要**（標題如「三大法人 · 成功」）。
 - 非交易日:importer 靠 NoDataError 安全空跑,不手刻假日曆(既有定案)。
 - deploy 憑證只在主機(`vps/.env`),容器只拿到 `RADAR_FINMIND_TOKEN` 與 `FUGLE_API_KEY`(後者從 `pipeline/intraday/.env` 讀入,WP-H3 當日分時與盤中 worker 同一把)——權限分離。
@@ -233,6 +233,15 @@ crontab -l   # 確認
 
 手動補跑任一輪:直接執行對應 script,例 `vps/scripts/daily-market.sh`。
 看狀態:`tail -f ~/radar-cron.log`、`docker ps -a`、ntfy 通知。
+
+### 9.1 2026-08-31 正式機唯讀稽核快照（不構成操作授權）
+
+- 稽核時間為 12:16–12:26 +08；SSH alias 僅 `trever-vps` 可解析，`trever_vps` 不可用。本機／VPS `main` 均為 `8603f3a`。正式 crontab 已有 14:10／15:00／16:10／17:40／21:20／22:00、01:10、03／09／12／20、23:30、TDCC 週六 06:30、董事每月 16 日 07:00。
+- 工作樹有未追蹤 `data/`、`package-lock.json`、`radar-quick-catchup.sh`、`run-backfill.sh`；歷史上這些項目曾阻斷 `git pull`。**不得刪除未追蹤檔、不得自行 pull、不得重啟容器／guard／supervisor。**
+- `radar-bf-branches` 與 `radar-worker` 活躍，各一個 guard/supervisor；權證回補容器不存在，done=`2026-08-27T00:25:33+08`。分點回補為 319 日期、最後完成 2025-05-12、fetched=116,891；03:56–12:26 雖無完成行但 DB 持續成長，判定長 in-flight，勿重啟。
+- DB 5.32GB、WAL 115MB、free 7.0GB（75% 使用）、WAL mode；writer 活躍時沒有跑 integrity，故最新 integrity/backup 成功狀態皆 unknown。主表最新為 2026-08-28；`branch_trades_raw` 21,522,284、`daily_prices` 10,205,766、`daily_scores` 19,341、`warrant_daily` 5,729,141。
+- 8/28 可見成功：15:00 TPEx 10,657；21:20 margin TWSE 1,291／TPEx 920；22:48 branches 56,508。TDCC 8/29 成功（as_of 8/28，3,375／50,625），董事 8/26 成功（2026-07，1,975／45,045；下次 9/16）。近期未見分點錯誤；歷史錯誤含 dirty pull、permission denied、Drive quota 403、TPEx 520。
+- 下一步僅可先做唯讀確認：最新 weekly backup 是否成功與 `integrity_check=ok`、回補 completeness／ETA。free <20GB，**不得自行啟用全市場權證、寫正式 DB 或修改 cron**。
 
 **影子驗證(cutover 前必過,docs/31 WP-B2)**:cron 全開後連續 2–3 個交易日,
 每日收盤後比對 `https://radar.techtrever.com/data-preview/radar.json` 與正式站

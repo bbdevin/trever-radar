@@ -1,12 +1,20 @@
 # VPS 排程／回補／大戶 — 四層架構（規劃定案）
 
-> 狀態：**架構定案 2026-08-26，正式機唯讀核對 2026-08-27**；`bf-supervisor`、`safe-stats＋scores`、TDCC B1/B2＋週六 06:30 與董監每月槽均已掛正式 crontab。
+> 狀態：**架構定案 2026-08-26，正式機最近唯讀核對 2026-08-31 12:16–12:26 +08**；`bf-supervisor`、`safe-stats＋scores`、TDCC B1/B2＋週六 06:30 與董監每月槽均已掛正式 crontab。
 > 對齊：`docs/08` §0（時刻表）、`docs/33`（mid／stats）、`docs/34`（資券／大戶）、`docs/31`（單一寫者）  
 > 來源：使用者確認之全盤盤點——日更與算分全留、歷史回補全自動跑到完＋ntfy、大戶納入週末槽。
 
 ## 1. 一句話
 
 **日更真相（含算分）照跑；歷史分點／權證由管家單寫者自動跑到完；大戶週更；發布（mid／夜間 stats）與備份／盤中獨立。**
+
+### 2026-08-31 唯讀實況與保守界線
+
+- 本機／VPS `main` 都是 `8603f3a`；僅 `trever-vps` alias 可解析。VPS 工作樹有未追蹤 `data/`、`package-lock.json`、`radar-quick-catchup.sh`、`run-backfill.sh`，過去因此 `git pull` 失敗；**不得自行刪除、pull、重啟或修改 cron**。
+- `radar-bf-branches`、`radar-worker` 均活躍，各有一個 guard/supervisor。權證歷史容器不存在，完成旗標為 `2026-08-27T00:25:33+08`。分點回補狀態為 319 日期、最後完成 `2025-05-12`、`fetched=116891`；03:56–12:26 沒有完成行，但 DB 持續成長，按長時間 in-flight 處理，**不重啟**。
+- DB 約 5.32GB、WAL 約 115MB、可用空間約 7.0GB（75% 使用）、WAL mode。因仍有 writer，未跑 `integrity_check`，其結果為 unknown。最新主表日期為 2026-08-28；`branch_trades_raw=21,522,284`、`daily_prices=10,205,766`、`daily_scores=19,341`、`warrant_daily=5,729,141`。
+- 已觀察到 8/28 日更成功：15:00 TPEx 10,657；21:20 margin TWSE 1,291／TPEx 920；22:48 branches 56,508。TDCC 8/29 成功（as_of 8/28，3,375 stocks／50,625 rows）；董事 8/26 成功（2026-07，1,975／45,045），下次為 9/16。
+- 歷史錯誤包含 dirty `git pull`、permission denied、8/22 Drive quota 403、TPEx 520；近期未見分點錯誤。尚未驗證最新 weekly backup 是否成功且 integrity 為 ok，也未估算 completeness／ETA。可用空間低於 20GB，**不得自行啟用全市場權證輪**。
 
 ## 2. 四層架構圖
 
@@ -126,10 +134,10 @@ flowchart LR
 
 | 項目 | 現況 | 目標 |
 |---|---|---|
-| 歷史 bf | `bf-supervisor.sh` 單寫者＋自啟＋完成 ntfy；既有 legacy 權證回補已完成、分點進行中（2026-08-27） | 全市場上市＋上櫃權證新輪僅 code-ready：先過 20GB／1日、5日與三交易日 runtime PoC，才可另提正式啟用 |
+| 歷史 bf | `bf-supervisor.sh` 單寫者＋自啟；權證已完成，分點長時間 in-flight（2026-08-31：319 日期、最後完成 2025-05-12、fetched 116,891，DB 持續成長） | 先唯讀確認完成訊號／backup／integrity；不得因暫無完成行自行重啟。全市場上市＋上櫃權證新輪仍僅 code-ready，需 20GB／1日、5日與三交易日 runtime PoC 及人工確認 |
 | 23:30 | `safe-branch-stats`：**stats → scores → export** | 已對齊目標 |
 | 大戶 | B1 入庫＋B2 UI＋`weekly-tdcc.sh` @ 週六 06:30；正式 cron 已掛，2026-08-26 實跑成功 | 觀察下一個週六例行輪 |
-| 安靜窗 | `lib.sh` 已是 14:05–15:45；但 2026-08-27 核對時 guard/supervisor 為更新前啟動的舊常駐程序，當日 15:16 已提前 unpause | 安全時點重啟常駐程序後再驗證 15:45 生效 |
+| 安靜窗 | `lib.sh` 設定為 14:05–15:45；2026-08-31 唯讀稽核未重驗下一次狀態轉換，且分點回補正處於長 in-flight | 僅在下一個既有安靜窗唯讀觀察 pause／unpause；不得為驗證而重啟 guard／supervisor |
 
 **不刪**：日更輪次、mid×4、算分、備份、盤中。大戶**不進**綜合分、**不能**日更。
 

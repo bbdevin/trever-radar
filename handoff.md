@@ -1,10 +1,20 @@
-# Handoff — 2026-08-28（個股資訊補強；權證全市場分點 code-ready）
+# Handoff — 2026-08-31（正式站 UI QA；VPS 唯讀稽核）
+
+## 2026-08-31 最新交接
+
+- **Current Goal**：已將 `052e0e0`…`8603f3a` 的正式站 UI 證據與 2026-08-31 VPS 唯讀稽核落檔；本次只有文件，未修改程式、schema、workflow、VPS、cron、DB。文件由主協調 review 後依一般流程 commit／push；這不構成任何正式資料或排程操作授權。
+- **UI final（HEAD `8603f3a`）**：`8603f3a` deploy success。個股為代號／名稱分離、44×44 Watchlist 右上、價格在名稱下方、行情去框；Decision 固定完整顯示（無收合 button，四 pills 可見），觀察／失效價在行情下方。行情摘要的開高低有方向時才顯示 `▲`／`▼`＋紅／綠，持平／缺昨收時為中性色且無 glyph。個股 8 tabs：K線／籌碼日報／三大法人／資券／大戶／基本資料／技術／權證；首頁 10 tabs：綜合／策略／未發動／已發動／資券／市場掃描／追高風險／失效／口袋／權證。ThemeToggle 已上線。
+- **正式站證據**：in-app browser 390×844，`clientWidth=375 / scrollWidth=375`；`stock-context-grid=347/347`、header `202/202`、price `154/154`、market `135/135`；基本資料已驗地址、股務、來源、3 題材、庫藏股誠實空態，無 console error。來源／最終實作／比較歷程與 `final result: passed` 在根目錄 `design-qa.md`。先前 `f323f95` 的「Decision 預設收合」是歷史紀錄，已被本輪明確覆寫。
+- **VPS 2026-08-31 12:16–12:26 +08（唯讀）**：alias 為 `trever-vps`；本機/VPS main `8603f3a`。cron 已見 14:10/15:00/16:10/17:40/21:20/22:00、01:10、03/09/12/20、23:30、TDCC Sat06:30、董事 monthly16 07:00。`radar-bf-branches`／`radar-worker` 活躍，各一 guard/supervisor；權證 done=`2026-08-27T00:25:33+08`。分點為長 in-flight（319 日期、最後完成 2025-05-12、fetched=116891；03:56–12:26 無完成行但 DB 持續成長），**不得重啟**。
+- **VPS 風險／下一步**：DB 5.32GB／WAL115MB／free7.0GB（75%），writer 活躍故 integrity 與最新 weekly backup 結果 unknown。VPS 有未追蹤 `data/`、`package-lock.json`、`radar-quick-catchup.sh`、`run-backfill.sh`，曾阻斷 pull；不得刪除、pull、重啟或動 cron。free <20GB，禁止自行啟用全市場權證。若使用者另行授權，先唯讀確認 weekly backup+integrity 與回補 completeness／ETA。
+
+## 歷史交接（2026-08-28，已由上列 UI 現況覆寫）
 
 ## 2026-08-28 最新交接
 
 - **個股頁最新 browser annotation 已部署並完成正式站 QA（HEAD `f323f95`）**：身份區第一列固定「代號＋完整名稱」（3376 新日興），第二列為「現價＋漲跌點數（漲跌幅）」、第三列市場／產業；44px 自選星號與第一列同高，身份內容在返回鍵右側。行情摘要固定首屏右側，開高低用方向 glyph＋紅／綠／中性色；Decision 首要判讀完整換行且展開不推移行情。重複 compact 概況列維持移除，基本資料題材 compact 與絕對 HTTP(S) URL guard 均保留。390×844（client 375）、深／淺色、Decision 展開／收合與無水平 overflow 已在已登入正式站驗收；參考圖、第一輪與最終畫面同輸入比較無待處理 P0／P1／P2，詳見 `design-qa.md`。`npx tsc --noEmit`、`git diff --check`、deploy 通過；Terra High 實作、Luna High 最終唯讀 review APPROVE。未改資料/API/export/globals/KChart/pipeline/schema/workflow。
 
-- **`55beda9`／`c26ea04` 個股首屏 UI 僅為歷史基準，版面已由上列 `f323f95` 取代**：舊「名稱與報價同行」格式不再適用；目前是代號＋名稱、現價＋漲跌點數（漲跌幅）、市場＋產業三層。嚴格當日活躍題材 2+N、Decision 預設收合、八個一級 tab、只調水平 `scrollLeft` 與 `scrollY=0` 修正仍有效。`BasicInfoPanel` 的公司資料／題材／庫藏股三 section 及地址／股務／來源／庫藏股／集團資訊均保留；勿依舊截圖恢復被移除的概況列。
+- **`55beda9`／`c26ea04`／`f323f95` 個股首屏 UI 均為歷史基準**：舊「名稱與報價同行」格式不再適用；identity 三層、嚴格當日活躍題材 2+N、八個一級 tab、只調水平 `scrollLeft` 與 `scrollY=0` 修正仍有效。**Decision 預設收合已由上列 `8603f3a` 廢止**。`BasicInfoPanel` 的公司資料／題材／庫藏股三 section 及地址／股務／來源／庫藏股／集團資訊均保留；勿依舊截圖恢復被移除的概況列。
 
 - 權證分點已完成安全 code-ready，**未碰正式 VPS／DB／cron／deploy**：新 `import-warrant-branch-trades --market all` 將 TWSE＋TPEx 當日有量有額的認購／認售、且標的是 active 普通股的權證合併抓取；ETF／指數、牛熊、未映射／inactive 標的排除。`--top` 是 cap，超出 fail closed、不偷裁；state JSON 原子記錄 ok／empty／error／pending，error 可 retry。既有 `backfill-warrant-branches` 可明確加 `--market all` 使用同一標的口徑；為相容正式 supervisor／舊手動指令，其預設仍是上市 Top 200，單一市場的 `--top` 仍為排序裁剪。
 - `daily-branches.sh` 已明列 legacy `--warrants 200`；因全市場獨立輪尚未啟用，17:40／22:00 暫時保留上市 Top 200，避免過渡期資料斷層，正式切換時才改 `0`。新增未排程 `daily-warrant-branches-poc.sh`（20GB free-space、DB/source lock、owned-only BF pause/resume、hard timeout、未完整不發布）。唯讀 VPS 實數：TWSE 16,225 + TPEx 3,856 = 20,081，sleep=1.0 約 6–8h；DB 約 4.7GB／free 7.6GB < 20GB，故未啟用任何正式 cron、未寫正式資料，下一步必先容量／1日、5日與三日 benchmark，並獲人工批准。
