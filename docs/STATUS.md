@@ -2,13 +2,14 @@
 
 > 單一進度真相。每完成一個里程碑就更新本檔。規格細節看各編號文件,別寫在這裡。
 
-## 2026-09-01 TPEx 520 結構化重試與 16:10 安全降級（程式／測試完成）
+## 2026-09-01 TPEx 520 結構化重試與 16:10 安全降級（已同步正式機程式碼）
 
 - [x] HTTP 層新增 `RadarHTTPError(status_code, url, attempts, original_error)`。一般端點仍維持既有三次、線性無 jitter 的預設；TPEx `dailyQuotes` 僅在**從第一次起全為 HTTP 520**時提高到五次（5／10／20／40 秒＋0–2 秒 jitter）。任何 502／timeout 等非 520 一旦出現，整段序列立即維持至多三次，後續 520 也不延長；最後一次失敗不再多 sleep。成功 JSON 的空表仍是 `NoDataError`，JSON／parser／DB 例外不會偽標 HTTP。
 - [x] `_run` 對有 HTTP status 的耗盡失敗 additive 回傳 `error_kind='http'`／`status_code`，無 status 的 timeout／connection 則為 `error_kind='transport'`；兩者均保留既有 `import_logs.error` 文字。`import-daily --datasets quotes` 僅在 TWSE quotes 成功、TPEx quotes 是唯一 HTTP 520 error 時 exit **75**。empty 為 0；TWSE／雙錯、非 520、transport 或 combined datasets 一律 1。
 - [x] `daily-insti.sh` 是唯一消化 75 的日更腳本：先 warn，仍跑獨立法人與 best-effort 權證主檔，接著明示「本輪不發布」並跳過 aggregate／compute／export／deploy、exit 75 等待 17:40；權證主檔失敗只提示後續重試，不假稱資料會上線。非 75 維持 High 失敗通知與原 exit code，不能發成功。未改 cron、schema、workflow、secrets 或正式 DB。
 - [x] 驗證：targeted HTTP／CLI／動態 shell harness 加既有權證 import 共 **29 passed、12 subtests**；完整 pipeline pytest **312 passed、70 subtests**；本機 `bash -n vps/scripts/daily-insti.sh` 與 `git diff --check` 通過。
-- [x] 2026-08-31 **22:00** 正式分點輪已成功採用 100 萬池：2,619 targets、61,687 rows、0 failed，`23:53:26 CMDEND`，Worker=`5548186b-8d40-4fae-a00b-a596dee59564`。這是已知成功事實；今日端點穩定性仍 unknown，未由本輪連線或操作 VPS。
+- [x] commit `e9ce054` 已 push `main`。2026-09-01 13:13 +08 確認正式 VPS 無 DB／分點來源鎖、無日更程序、無 tracked dirty，保留既有四項 untracked 後由 `1e11345` ff-only 同步至 `e9ce054`；正式檔已驗有 520 五次政策與 exit 75。同步只更新版本控制程式碼，**未手動執行正式 DB／import／export／deploy，未改 cron**；真實 520 降級路徑仍待自然事件驗證。
+- [x] 2026-08-31 **22:00** 正式分點輪已成功採用 100 萬池：2,619 targets、61,687 rows、0 failed，`23:53:26 CMDEND`，Worker=`5548186b-8d40-4fae-a00b-a596dee59564`。這是已知成功事實；今日端點穩定性仍 unknown。
 
 ## 2026-08-31 日常分點權證過渡池：上市成交額門檻（已同步正式機）
 

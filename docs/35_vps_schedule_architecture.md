@@ -18,6 +18,7 @@
 - **13:05–13:06 +08 續查（唯讀）**：分點回補仍為單實例，最後完成 `2025-05-09`、`fetched=118,264`、至少 `320/490` 日期；DB `5,324,414,976` bytes、WAL `115,298,232` bytes、可用約 7.0GB（75% 使用）。近期未見 import error；主機未見 `.db.gz`，最新成功 backup／`integrity_check` 仍無現有證據可確認。dirty tree 仍阻擋 pull；**未重啟、未改 cron、未執行正式 DB。**
 - **15:00 鎖事件、520 與手動恢復**：14:10 `daily-market.sh` 因週一題材／公司資料跑至 15:11，15:00 `daily-tpex-quotes.sh` 因 DB lock 安全略過；15:43 後無 holder，勿刪空 lock path。16:10 與後續三次手動完整腳本均因 `dailyQuotes` HTTP 520 fail closed。response 為 Cloudflare SJC、16-byte body，同 URL／IP 在分鐘內交替 200／520且不是 429；只能確認 edge/origin 路徑間歇異常，無供應商內部 log 可證明更深層原因。使用者授權後，以同一官方 URL 的 curl 長退避取得並驗證 `date=20260831`、`stat=ok`、19 欄／10,713 rows，再交既有 parser＋transaction 匯入；權證彙總 845、指標 5,078、scores 750、export 2,410 stocks、Worker deploy（version `51b690a4-9b50-407d-b981-1d6c26e9533c`）均成功。正式 DB 8/31 TPEx=888 stock／119 ETF／6 ETN／1 other，正式站 6488 已顯示 2026-08-31；未改 cron／code／workflow。另清理由中止唯讀 SQL 留下的單一 orphan process，未碰 writer／回補服務。
 - **22:00 100 萬權證過渡池成功**：8/31 的上市 active 普通股標的認購／認售 `>=100萬` 輪次完成 2,619 targets／61,687 rows／0 failed，`23:53:26 CMDEND`，Worker=`5548186b-8d40-4fae-a00b-a596dee59564`。這只是已知一輪成功，今日 endpoint 穩定性仍 unknown；未由此文件授權操作 VPS／DB／cron。
+- **2026-09-01 13:13 程式碼安全同步**：確認 DB／分點來源鎖均無 holder、無日更 script、tracked clean，保留 `cloudflare-data-worker/package-lock.json`、`data/`、`radar-quick-catchup.sh`、`run-backfill.sh` 後，VPS `main` 由 `1e11345` ff-only 至 `e9ce054`。正式 `tpex.py` 已含 520 五次政策，`daily-insti.sh` 已含 exit 75 安全降級；未手動執行 DB／import／export／deploy，未改 cron。真實 520 路徑尚未自然觸發驗證。
 
 ## 2. 四層架構圖
 
