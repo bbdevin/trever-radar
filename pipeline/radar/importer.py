@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo
 from . import config, schema
 from .classify import classify, warrant_kind
 from .db import get_engine, init_db, upsert
+from .http import RadarHTTPError
 from .providers import NoDataError, tpex, twse
 
 
@@ -40,6 +41,21 @@ def _run(source: str, dataset: str, date: str, fn) -> dict:
         with engine.begin() as conn:
             _log(conn, source, dataset, date, 0, "empty", error=str(e)[:500])
         return {"source": source, "dataset": dataset, "rows": 0, "status": "empty"}
+    except RadarHTTPError as e:
+        with engine.begin() as conn:
+            _log(conn, source, dataset, date, 0, "error", error=str(e)[:500])
+        result = {
+            "source": source, "dataset": dataset, "rows": 0, "status": "error",
+            "error": str(e),
+        }
+        if e.status_code is None:
+            # Connection/timeout failures have no HTTP response; callers must
+            # not mistake them for the narrowly recoverable TPEx 520 case.
+            result["error_kind"] = "transport"
+        else:
+            result["error_kind"] = "http"
+            result["status_code"] = e.status_code
+        return result
     except Exception as e:  # noqa: BLE001 - one failed dataset must not kill the run
         with engine.begin() as conn:
             _log(conn, source, dataset, date, 0, "error", error=str(e)[:500])

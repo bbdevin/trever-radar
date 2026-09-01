@@ -2,6 +2,14 @@
 
 > 單一進度真相。每完成一個里程碑就更新本檔。規格細節看各編號文件,別寫在這裡。
 
+## 2026-09-01 TPEx 520 結構化重試與 16:10 安全降級（程式／測試完成）
+
+- [x] HTTP 層新增 `RadarHTTPError(status_code, url, attempts, original_error)`。一般端點仍維持既有三次、線性無 jitter 的預設；TPEx `dailyQuotes` 僅在**從第一次起全為 HTTP 520**時提高到五次（5／10／20／40 秒＋0–2 秒 jitter）。任何 502／timeout 等非 520 一旦出現，整段序列立即維持至多三次，後續 520 也不延長；最後一次失敗不再多 sleep。成功 JSON 的空表仍是 `NoDataError`，JSON／parser／DB 例外不會偽標 HTTP。
+- [x] `_run` 對有 HTTP status 的耗盡失敗 additive 回傳 `error_kind='http'`／`status_code`，無 status 的 timeout／connection 則為 `error_kind='transport'`；兩者均保留既有 `import_logs.error` 文字。`import-daily --datasets quotes` 僅在 TWSE quotes 成功、TPEx quotes 是唯一 HTTP 520 error 時 exit **75**。empty 為 0；TWSE／雙錯、非 520、transport 或 combined datasets 一律 1。
+- [x] `daily-insti.sh` 是唯一消化 75 的日更腳本：先 warn，仍跑獨立法人與 best-effort 權證主檔，接著明示「本輪不發布」並跳過 aggregate／compute／export／deploy、exit 75 等待 17:40；權證主檔失敗只提示後續重試，不假稱資料會上線。非 75 維持 High 失敗通知與原 exit code，不能發成功。未改 cron、schema、workflow、secrets 或正式 DB。
+- [x] 驗證：targeted HTTP／CLI／動態 shell harness 加既有權證 import 共 **29 passed、12 subtests**；完整 pipeline pytest **312 passed、70 subtests**；本機 `bash -n vps/scripts/daily-insti.sh` 與 `git diff --check` 通過。
+- [x] 2026-08-31 **22:00** 正式分點輪已成功採用 100 萬池：2,619 targets、61,687 rows、0 failed，`23:53:26 CMDEND`，Worker=`5548186b-8d40-4fae-a00b-a596dee59564`。這是已知成功事實；今日端點穩定性仍 unknown，未由本輪連線或操作 VPS。
+
 ## 2026-08-31 日常分點權證過渡池：上市成交額門檻（已同步正式機）
 
 - [x] `import-branch-trades` 新增可選 `--warrant-turnover-min N`：未提供時仍完全沿用 legacy `warrants=200` Top-N 與其他既有呼叫；提供時只取標的是 active 普通股的當日 TWSE 認購／認售 `turnover >= N`（含等於；`N=0` 合法、負值 fail closed），並明確取代、不疊加 legacy Top-N，避免同一權證重複入列。TWSE 限制是權證 market，標的可為 TWSE／TPEx 普通股。
@@ -58,10 +66,10 @@
 - [x] 8/28 日更可見成功：TPEx 10,657、margin TWSE 1,291／TPEx 920、branches 56,508；TDCC 8/29 成功（as_of 8/28，3,375／50,625），董事 8/26 成功（2026-07，1,975／45,045；下次 9/16）。
 - ⚠️ VPS 有未追蹤 `data/`、`package-lock.json`、`radar-quick-catchup.sh`、`run-backfill.sh`，歷史上會阻斷 `git pull`；不得自行刪除／pull／重啟／改 cron。僅待唯讀確認 weekly backup+integrity 與 completeness／ETA；free <20GB，禁止自行啟用全市場權證輪、正式 DB 寫入或任何回補操作。
 
-## 2026-08-28 權證分點全市場 code-ready（未啟用）
+## 2026-08-28 權證分點全市場 code-ready（歷史；日常上市 100 萬池已於 2026-08-31 同步）
 
 - 富邦／MoneyDJ `zco` 五鏡像可抓上市與上櫃權證，舊「上櫃無免費來源」說法已更正。`import-warrant-branch-trades --market all` 已以當日有量有額、認購／認售、普通股活躍標的組成合併池，ETF／指數排除；atomic state 會區分 ok／empty／error／pending，錯誤可續跑，cap 超限 fail closed。
-- `daily-branches.sh` 已把 legacy 權證數明列為 `--warrants 200`；全市場獨立輪未啟用前保留 17:40／22:00 上市 Top 200，避免權證分點資料斷層，正式切換時才同輪改為 `0`。新增 `daily-warrant-branches-poc.sh` 但未加正式 cron。2026-08-27 VPS 合格目標 20,081（TWSE 16,225 + TPEx 3,856），sleep=1.0 估 6–8h，DB 約 4.7GB／free 7.6GB < 20GB gate，因此**未 SSH 寫正式 DB、未跑 PoC、未 deploy**；需容量、1／5 日與三交易日 benchmark 人工確認後才可啟用。
+- 此段原本的「上市 Top 200／未同步」只屬當時歷史：現行 `daily-branches.sh` 已改為上市、active 普通股標的的認購／認售 `turnover >=100萬` 過渡池，且已於 8/31 22:00 正式成功；**上市＋上櫃全市場** PoC／cron 仍未啟用。`daily-warrant-branches-poc.sh` 未加正式 cron，20GB gate 與人工 benchmark 要求不變。
 - 驗證：權證 targeted pytest **12 passed**；完整 pipeline pytest **273 passed、58 subtests passed**；`compileall`、`git diff --check` 通過；另把 PoC script 與 `lib.sh` 經 SSH stdin 交由 VPS `bash -n -s` 唯讀解析，兩者 exit 0（未 pull、未寫 DB、未動 cron）。
 
 ## 2026-08-28 個股資訊補強與權證更新修正（歷史；UI 現況由本檔頂部 `8603f3a` 覆寫）
@@ -213,7 +221,7 @@
 - 2026-08-26 **Phase D1/D2 董監＋內部人％**：`import-directors`（TWSE/TPEx OpenAPI）、`director_holdings`、HoldersPanel「董監持股」分頁；週表 `insider_pct` ffill。VPS `monthly-directors.sh` 已掛正式 crontab（每月 16 日 07:00）；2026-08-26 已成功匯入 2026-07 月資料，下一次正式 cron 為 2026-09-16。
 - 2026-08-26 **內部人％公式修正**：姓名去重＋（目前持股＋關係人合計）÷集保；對齊籌碼／元大（2476≈12.09；舊式~10.48）。
 - 2026-08-26 **ntfy 改繁中成功摘要**：日更結束發「三大法人 · 成功」「分點籌碼 · 成功」等；失敗／略過／注意同標題格式（VPS 已 pull）。
-- 2026-08-26 **上櫃 15:00 主補抓槽**：新增 `daily-tpex-quotes.sh`（quotes→指標→分數→export）；**VPS crontab 已掛**平日 15:00；安靜窗 14:05–15:45。14:10 上市閃電不變；16:10／17:40／22:10 仍保底再抓。
+- 2026-08-26 **上櫃 15:00 主補抓槽**：新增 `daily-tpex-quotes.sh`（quotes→指標→分數→export）；**VPS crontab 已掛**平日 15:00；安靜窗 14:05–15:45。14:10 上市閃電不變；16:10／17:40／22:00 仍保底再抓。
 - 2026-08-26 **上櫃日K 14:10 常 empty**：上市已是當日、上櫃卡前一日（`tpex dailyQuotes: no populated table`）。根因＝抓太早＋無後續補抓。已手動補齊 08-24／25／26 上櫃全日K（先前 08-24／25 僅 ~367 檔半套，約 520 檔看起來停在 08-21）。
 - 2026-08-26 **週表內部人％暫隱藏**：口徑仍難穩對齊；UI 拿掉欄位，保留「董監持股」明細分頁。
 - 2026-08-26 **TDCC archive 回補已上 VPS**：`backfill-tdcc` 灌入 16 週（2026-04-30～08-14；08-21 已有略過）+ export/deploy 完成（`~/tdcc-archive-backfill.done`）。

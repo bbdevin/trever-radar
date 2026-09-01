@@ -29,7 +29,23 @@ def cmd_import_daily(args):
             bad = True
             line += f"  {r.get('error', '')[:120]}"
         print(line)
-    sys.exit(1 if bad else 0)
+    errors = [r for r in results if r["status"] == "error"]
+    tpex_520_only = (
+        datasets == ["quotes"]
+        and len(results) == 2
+        and len(errors) == 1
+        and sum(
+            r["source"] == "twse" and r["dataset"] == "quotes" and r["status"] == "ok"
+            for r in results
+        ) == 1
+        and sum(
+            r["source"] == "tpex" and r["dataset"] == "quotes"
+            and r["status"] == "error" and r.get("error_kind") == "http"
+            and r.get("status_code") == 520
+            for r in results
+        ) == 1
+    )
+    sys.exit(75 if tpex_520_only else (1 if bad else 0))
 
 
 def cmd_backfill(args):

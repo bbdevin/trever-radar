@@ -9,12 +9,14 @@
 > **2026-08-31 12:16–12:26 +08 唯讀稽核**：SSH alias 為 `trever-vps`（`trever_vps` 無法解析）；本機與 VPS `main` 皆為 `8603f3a`。正式 crontab 已見平日 14:10／15:00／16:10／17:40／21:20／22:00、01:10、mid 03／09／12／20、23:30、TDCC 週六 06:30、董監每月 16 日 07:00；`radar-bf-branches` 與 `radar-worker` 各有一個 guard/supervisor。VPS 有未追蹤 `data/`、`package-lock.json`、`radar-quick-catchup.sh`、`run-backfill.sh`，歷史上曾使 `git pull` 失敗，**不得刪除或自行 pull**。本段是快照，不授權重啟、清理、DB 寫入或 cron 變更；細節與待驗項見 `docs/35`、`vps/README.md`。
 >
 > **2026-08-31 上櫃鎖／520 與手動恢復**：14:10 `daily-market.sh` 因週一題材／公司資料流程跑到 15:11，15:00 `daily-tpex-quotes.sh` 搶不到 `/tmp/radar-db.lock`，依設計安全略過並送 ntfy；15:43 後已無 holder，0-byte lock path 不是 stale lock，勿刪。16:10 與後續三次手動完整腳本均因 `dailyQuotes` HTTP 520 fail closed；response 為 Cloudflare SJC、16-byte body，同 URL／IP 在分鐘內交替 200／520，且不是 429。只能確認 Cloudflare edge 到 TPEx origin 路徑發生間歇異常；沒有供應商內部 log，不能斷言更深層原因。使用者授權後，以同一官方 URL 的 curl 長退避取得 payload，先驗 `date=20260831`、`stat=ok`、19 欄／10,713 rows，再交既有 parser＋transaction 匯入；後續彙總、指標、分數、export、Worker deploy 均成功（version `51b690a4-9b50-407d-b981-1d6c26e9533c`），正式站 6488 已顯示 2026-08-31。未改 cron／code／workflow；永久 retry／隔離方案須另案確認。
+>
+> **2026-08-31 22:00 日常權證過渡池成功**：現行上市 active 普通股標的、認購／認售且成交額 `>=100萬` 的輪次完成 2,619 targets／61,687 rows／0 failed，`23:53:26 CMDEND`，data Worker=`5548186b-8d40-4fae-a00b-a596dee59564`。這不代表今日 TPEx endpoint 穩定；其狀態仍 unknown。本輪僅新增程式重試／安全降級，未操作 VPS、正式 DB 或 cron。
 
 | 台北時間 | 執行者(VPS cron script / GitHub Actions) | 內容 |
 |---|---|---|
 | 平日 14:10 | VPS `vps/scripts/daily-market.sh` | 日K+權證成交(14:00 公布)→ 當日權證彙總 → 指標增量(--days 5)→ 綜合分 →(週一)概念股更新 + **import-geo**(公司/分點地址,docs/27 G1) → export-json(**含 Fugle 當日 1 分 K spark_day**,約 +3–4 分鐘;同日後續輪走 `data/spark_day.json` 快取)→ `wrangler deploy`。**上櫃 dailyQuotes 14:10 常尚未出表**(empty,上市通常已好) |
 | 平日 15:00 | VPS `vps/scripts/daily-tpex-quotes.sh` | **上櫃日K 主補抓**(約 14:57 起才有完整表)+ 權證彙總 + 指標增量 + 分數 → export-json → deploy |
-| 平日 16:10 | VPS `vps/scripts/daily-insti.sh` | **上櫃日K 保底再抓** → 法人買賣超(16:00 公布) → 權證主檔(失敗不擋後續) → **當日權證重新彙總**（成功用新主檔；失敗沿用既有主檔）→ 指標增量 → 重算分數 → export-json → deploy。2026-08-28 修正原本「先彙總、後更新主檔」造成新權證未進當輪摘要的時序問題；時間仍為 16:10，不新增獨立 cron。 |
+| 平日 16:10 | VPS `vps/scripts/daily-insti.sh` | **上櫃日K 保底再抓** → 法人買賣超(16:00 公布) → 權證主檔(失敗不擋後續) → **當日權證重新彙總**（成功用新主檔；失敗沿用既有主檔）→ 指標增量 → 重算分數 → export-json → deploy。唯一例外：quotes 僅 TPEx HTTP 520（TWSE 已成功）時 CLI exit 75；腳本仍跑法人／主檔，但 warn 後跳過彙總／計算／發布並把 75 留給 17:40，不能報成功。非 75 仍 High fail。時間仍為 16:10，不新增 cron。 |
 | 平日 17:40 | VPS `vps/scripts/daily-branches.sh` | **再補日K** + 法人補抓 + 指標增量 + **分點全股票 `--top 0`（不含 ETF）＋標的是 active 普通股的上市認購／認售、當日成交金額 `>=1,000,000` 元權證過渡池** + 分點統計 + 分數 + 績效回填 → export-json → prune → deploy。閾值模式明確取代 legacy `--warrants` Top-N，不疊加重複目標；權證 market 以 TWSE 定義，標的可為 TWSE／TPEx 普通股；全市場獨立輪仍未啟用，未改 cron。(**不含融資**:MI_MARGN 約 21:00 才產製,17:40 必空) |
 | 平日 21:20 | VPS `vps/scripts/daily-margin.sh` | **融資券主輪**(TWSE ~21:00 產製,約 20 分緩衝):再補日K + margin → 分數 → 績效 → export → deploy;若仍落後價格日則對齊再抓 + ntfy warn |
 | 平日 22:00 | VPS `vps/scripts/daily-branches.sh`(第二輪) | 同上分點補抓(冪等);刻意排在資券之後,避免搶 lock |

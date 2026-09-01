@@ -25,10 +25,16 @@ def fetch_daily_quotes(date: str) -> list[Quote]:
     """dailyQuotes type=AL — all OTC securities incl. 7xxxxx warrants (~10k rows).
 
     TPEx often has not populated this table at 14:10 (TWSE MI_INDEX is usually ready).
-    Callers retry at 16:10 / 17:40 / 22:10; empty → NoDataError, not a hard fail.
+    Callers retry at 16:10 / 17:40 / 22:00; empty → NoDataError, not a hard fail.
     """
-    j = get_json(f"{BASE}/afterTrading/dailyQuotes",
-                 {"date": roc_date(date), "type": "AL", "response": "json"})
+    j = get_json(
+        f"{BASE}/afterTrading/dailyQuotes",
+        {"date": roc_date(date), "type": "AL", "response": "json"},
+        # 520 is a known intermittent TPEx edge/origin response.  It alone
+        # gets five total attempts; all other transport failures stay at 3.
+        status_retries={520: 5}, backoff_base=5.0,
+        exponential_backoff=True, jitter_max=2.0,
+    )
     table = _table(j, "dailyQuotes", date, "代號")
     fields = [f.strip() for f in table["fields"]]
     idx = {name: i for i, name in enumerate(fields)}

@@ -17,6 +17,7 @@
 - 歷史錯誤包含 dirty `git pull`、permission denied、8/22 Drive quota 403、TPEx 520；近期未見分點錯誤。尚未驗證最新 weekly backup 是否成功且 integrity 為 ok，也未估算 completeness／ETA。可用空間低於 20GB，**不得自行啟用全市場權證輪**。
 - **13:05–13:06 +08 續查（唯讀）**：分點回補仍為單實例，最後完成 `2025-05-09`、`fetched=118,264`、至少 `320/490` 日期；DB `5,324,414,976` bytes、WAL `115,298,232` bytes、可用約 7.0GB（75% 使用）。近期未見 import error；主機未見 `.db.gz`，最新成功 backup／`integrity_check` 仍無現有證據可確認。dirty tree 仍阻擋 pull；**未重啟、未改 cron、未執行正式 DB。**
 - **15:00 鎖事件、520 與手動恢復**：14:10 `daily-market.sh` 因週一題材／公司資料跑至 15:11，15:00 `daily-tpex-quotes.sh` 因 DB lock 安全略過；15:43 後無 holder，勿刪空 lock path。16:10 與後續三次手動完整腳本均因 `dailyQuotes` HTTP 520 fail closed。response 為 Cloudflare SJC、16-byte body，同 URL／IP 在分鐘內交替 200／520且不是 429；只能確認 edge/origin 路徑間歇異常，無供應商內部 log 可證明更深層原因。使用者授權後，以同一官方 URL 的 curl 長退避取得並驗證 `date=20260831`、`stat=ok`、19 欄／10,713 rows，再交既有 parser＋transaction 匯入；權證彙總 845、指標 5,078、scores 750、export 2,410 stocks、Worker deploy（version `51b690a4-9b50-407d-b981-1d6c26e9533c`）均成功。正式 DB 8/31 TPEx=888 stock／119 ETF／6 ETN／1 other，正式站 6488 已顯示 2026-08-31；未改 cron／code／workflow。另清理由中止唯讀 SQL 留下的單一 orphan process，未碰 writer／回補服務。
+- **22:00 100 萬權證過渡池成功**：8/31 的上市 active 普通股標的認購／認售 `>=100萬` 輪次完成 2,619 targets／61,687 rows／0 failed，`23:53:26 CMDEND`，Worker=`5548186b-8d40-4fae-a00b-a596dee59564`。這只是已知一輪成功，今日 endpoint 穩定性仍 unknown；未由此文件授權操作 VPS／DB／cron。
 
 ## 2. 四層架構圖
 
@@ -60,7 +61,7 @@ flowchart TB
 |---|---|---|
 | 14:10 | `daily-market.sh` | indicators → **scores**；（週一）themes／geo。上櫃 quotes 此時常 empty |
 | 15:00 | `daily-tpex-quotes.sh` | **上櫃日K 主補抓** → indicators → **scores** → export |
-| 16:10 | `daily-insti.sh` | quotes 保底 → insti → 權證主檔（失敗不擋）→ **權證當日彙總** → indicators → **scores**；主檔成功即採新 mapping，失敗則沿用舊 mapping 完成彙總 |
+| 16:10 | `daily-insti.sh` | quotes 保底 → insti → 權證主檔（失敗不擋）→ **權證當日彙總** → indicators → **scores**；主檔成功即採新 mapping，失敗則沿用舊 mapping 完成彙總。唯一的 TPEx HTTP 520 partial（TWSE quotes ok）回 75：仍跑 insti／主檔，warn 後不做彙總、計算、export/deploy，等 17:40；其他錯誤照 High fail |
 | 17:40 | `daily-branches.sh` | 再補 quotes＋insti → indicators → 全股票分點 `--top 0`（不含 ETF）＋標的是 active 普通股的上市認購／認售、當日成交金額 `>=1,000,000` 元過渡池 → **branch-stats** → **scores** → **performance**（**不含 margin**）。權證 market 以 TWSE 定義，標的可為 TWSE／TPEx 普通股；此閾值取代、不疊加 legacy `--warrants` Top-N，非全市場獨立輪，未改 cron |
 | 21:20 | `daily-margin.sh` | 再補 quotes + **margin 主輪** → **scores** → **performance**（TWSE ~21:00 產製＋約 20 分緩衝） |
 | 22:00 | `daily-branches.sh` | 分點第二輪（排在資券後,避 lock） |
