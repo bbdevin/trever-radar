@@ -21,6 +21,17 @@
 
 - [x] VPS `~/trever-radar` HEAD 已是 `bf65dd0`（日更腳本自行 pull），16:10 `daily-insti.sh` 執行中（`import-warrant-master` 階段），持有 `/tmp/radar-db.lock`。本輪的 `data_date`／anchor 修正會由這條既有排程自然發布，**未手動觸發任何正式 import／export／deploy，未改 cron**。
 - [x] 既有四個未追蹤檔（`cloudflare-data-worker/package-lock.json`、`data/`、`radar-quick-catchup.sh`、`run-backfill.sh`）仍在且未阻斷本次 pull。磁碟 `29G` 中已用 `19G`、free `8.1G`（71%）；仍低於 20GB gate，禁止自行啟用全市場權證輪。分點回補 `backfill-branches --top 0 --days 490` 仍單實例執行中，guard／supervisor 各一，未重啟。
+## 2026-09-02 排行 V2 與 E2 穩定度：兩支唯讀 shadow 工具（決策證據，未改 schema、未寫 DB）
+
+> 依 `AGENTS.md` 高風險流程，schema 大改與正式回算不得由單一模型拍板。這兩支工具的目的是**先把人類要做的選擇量化**，不是先實作 V2。兩者都不呼叫 `init_db()`、不建表、不 migration、不寫任何欄位，皆以 `mode=ro` 讀既存 DB，`--out` 沿用既有守衛拒絕寫到 DB 或其 `-wal/-shm/-journal`（含 symlink／hardlink alias）。
+
+- [x] **`branch-ranking-v2-shadow --as-of --out`**：一次輸出 V1 與 V2 的對照。`docs/13` §8 的「成熟樣本 <10 不評分」語意含糊，本報表**不替人類選**，而是同時量化三種讀法——(a) 仍評分並保留名次、只標記樣本不足；(b) 仍列榜但 score／rank 皆 null；(c) 直接不列入。每種讀法各報 listed／scored／進榜／退榜數與存活者的名次漂移統計。隔日沖同時給 V1 的 4 筆與 `docs/13` 原規劃的 8 筆最低觀察數：**V1 在觀察數不足時回 `False`（未判定卻預設為否），V2 明確記為 `unknown` 且 verdict 為 null**。回吐比率一律由既有 `daytrade_flag` 產生，不重新推導公式；名次以「分數降冪、同分依分點名稱升冪」決定，V1／V2 兩側用同一規則，確保漂移來自成熟度規則而非決勝方式差異。
+- [x] **`branch-point-in-time-series --as-of-from --as-of-to --step --window-days --out`**：把既有 E2 單日 shadow 沿多個 as_of 交易日推進並彙總，回答「這個訊號跨時間穩不穩，還是只是我們剛好挑到那一天」。`--window-days` 數的是**市場交易日**而非日曆日（日曆窗口會在假期靜默縮短、使各 as_of 不可比）；歷史不足的窗口逐一標記、不補值。彙總**由 `episode_samples` 重算而非平均各日 rate**，並同時輸出 `pooled_numerator`／`pooled_denominator`／`pooled_rate` 與各日分母序列。單一觀察的 `stdev` 為 null 而非 0.0。缺席的 as_of 明列於 `absent_as_of_dates`，不前向填補；輸出另註明連續窗口會重複觀察同一批 episode，是重疊視角而非獨立樣本。`buy_sell_pairing: false`、`trade_profit_attribution: false` 明寫在 metadata，沒有任何欄位被命名或計算為勝率。
+- [x] **對 schema 決策最有用的一項觀察**：fixture 中同一個 `low_buy_rate`，各日平均為 **75%** 而 pooled 為 **66.7%**，差距純粹來自分母加權（分母序列 2,2,1,1）。這具體證明**只存一個 rate、不存分母的 schema 是不可還原的**。另 `fwd5_positive_rate` 在分母恆為 1 個成熟 episode 時於 0↔100 之間擺盪、`high_sell_rate` 對稀疏分點多數 as_of 未定義——存成裸 nullable float 之後將無法與「真的是 0」區分。相對地，出席與否、episode 數軌跡、known／unknown 與 evidence／insufficient 計數在每個出席日都有定義且可重現。
+- [x] 驗證：完整 pipeline pytest **350 passed、70 subtests**（基線 314 ＋ 兩工具共 36 個新測試），`git diff --check` 通過，`schema.py` 未被改動。排行 V2 的作者 agent 在跑完整套件前因 session 額度中斷，其程式碼與測試由主協調接手審核（唯讀 engine、無 schema import、無寫入路徑）後才合併，非逕行採信。
+- ⚠️ **fixture 能證明什麼、不能證明什麼**：兩者的測試都是合成且刻意極端的（少量分點／股票、收盤在 100／200 間交替使分位數可精確驗算）。它們能證明彙總確實會把不穩定、稀疏與缺口呈現出來，**不能**給出真實世界的量級——真實分點一年下來 `low_buy_rate` 波動多大、生產規模下每個窗口的成熟 episode 分母是 3 還是 300、真實分點多常掉出前 15 大截切，都要對非正式環境的真實 DB 副本跑過才知道。`--window-days` 與 `--step` 的取值本身也是 fixture 無法代為判斷的。
+- ⚠️ **待人類決定**：①「成熟樣本 <10」採 (a)／(b)／(c) 哪一種；②隔日沖最低觀察數維持 4 或改回 `docs/13` 原規劃的 8；③是否把 E2 結果落成 schema，以及若要落，是否連分母一併存（依上述觀察，只存 rate 不可還原）。三項都尚未實作，也不得由 agent 代選。
+
 ## 2026-09-02 WP-B6／M4 容量分析：20GB gate 在現有硬體上無法達成（唯讀）
 
 - [x] **實測佔用**：磁碟 `29G` 總量、已用 `19G`、free `8.0G`（71%）。`radar.db` 5,523,030,016 bytes ＋ WAL 97,903,592 bytes；repo 內 `data/` 5.3G、`web/` 894M、`cloudflare-data-worker/` 201M；另有 `/swapfile2` 2.0G；Docker images 3.023GB。
@@ -53,6 +64,7 @@
 - [x] **契約細節**：`--env-file` 的值是第一個 `=` 之後的整行原文，不去引號、不去空白，所以一律不加引號；變數為空時仍寫 `KEY=`（省略整行會變成改由 host 環境查找，語意不同）；值含換行則 fail closed（`notify` + `exit 1`），不默默截斷金鑰。既有 trap 以 `trap -p` 讀出後串接而非覆蓋；子 shell 內不串接，避免提早跑掉父層的 flag 清理／unpause。
 - [x] **離開碼語意逐字保留**：`( exit "$rc" )` 後再 `return "$rc"`——`set -e` 生效時就地中止（維持函式內失敗不觸發 ERR trap 的舊行為，否則每次失敗會多噴一則 High 通知），`set -e` 被抑制時（`if radar …`／`radar || …`）忠實回傳 docker 離開碼，`daily-insti.sh` 的 exit 75 分支靠這個碼。
 - [x] **驗證（VPS 上以 `/tmp/secfix` 的複本執行，掛零 volume、只跑 `python -c`，未碰 DB／lock／cron）**：兩把金鑰的 host shell 值與容器內值長度與 sha256 前綴完全一致（197 bytes／`75b2d82a645e7c5d`；100 bytes／`5208eb09c98a5a08`），`-d` 分離容器亦同，證明刪檔時機正確。env 檔為 `600 huang:huang`、無引號無填充。實測新 argv 為 `docker run --rm --env-file /tmp/radar-env.XXXX …`，金鑰命中數 0。合成值另證引號不會被剝除、空值等價於 `-e KEY=`。`bash -n`（VPS bash 5.1.8）與 `git diff --check` 通過。VPS checkout 僅四個既有未追蹤檔、HEAD 未動、無殘留 `/tmp/radar-env.*`。
+- [x] **正式管線首次執行已驗證**：17:40 那輪自行 pull `bf65dd0..4bc4712`（含本修正）後照常完成 twse quotes 34,034／tpex quotes 10,813／twse insti 1,312／tpex insti 889／indicators 185 列／分點池 2,789 targets。以 stdin 傳入樣式（金鑰不進 argv）掃描 `radar-cron.log`，兩把金鑰命中數皆為 **0**；主機無殘留 `/tmp/radar-env.*`。至此 `--env-file` 已在真實 cron 路徑上運作，不只是測試環境。
 - [x] `vps/.env` 與 `pipeline/intraday/.env` 已由 `644` 收為 `600`（`/home/huang` 本即 `700`，故此層屬縱深防禦）。
 - [x] **金鑰不輪換：2026-09-02 使用者定案。** 理由：該 VPS 為單一操作者、只有使用者本人能登入，argv 可讀的對象實際上不存在第二個。此決定已知悉「本次修正只堵未來通道、不能撤銷過去每輪 cron 期間的可讀狀態」，仍選擇不重簽。**後續 agent 不要再把輪換列為待辦或自行執行。** repo 端另已確認乾淨：`vps/.env`、`pipeline/intraday/.env` 均在 `.gitignore:28`，git 全歷史無此二檔，無任何 tracked `.env`，所以暴露面從未擴散到 public repo。
 - ⚠️ 未評估（另案）：主機另有 `portainer`／`appsec-agent`／`npm-attachment`／`watchtower` 等第三方容器，若任一以 `--pid=host` 或掛 host `/proc` 執行仍看得到 argv；portainer 持 docker socket 本身即等同 root。
