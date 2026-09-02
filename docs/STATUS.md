@@ -21,6 +21,28 @@
 
 - [x] VPS `~/trever-radar` HEAD 已是 `bf65dd0`（日更腳本自行 pull），16:10 `daily-insti.sh` 執行中（`import-warrant-master` 階段），持有 `/tmp/radar-db.lock`。本輪的 `data_date`／anchor 修正會由這條既有排程自然發布，**未手動觸發任何正式 import／export／deploy，未改 cron**。
 - [x] 既有四個未追蹤檔（`cloudflare-data-worker/package-lock.json`、`data/`、`radar-quick-catchup.sh`、`run-backfill.sh`）仍在且未阻斷本次 pull。磁碟 `29G` 中已用 `19G`、free `8.1G`（71%）；仍低於 20GB gate，禁止自行啟用全市場權證輪。分點回補 `backfill-branches --top 0 --days 490` 仍單實例執行中，guard／supervisor 各一，未重啟。
+## 2026-09-02 Fable 5.1 決策：E2 持久化粒度與隔日沖訊號重新定義（決策紀錄，尚未實作）
+
+> 依 `AGENTS.md`「單一模型不得獨自拍板 schema 大改」，使用者將這兩題委由 Fable 5.1 定奪。以下為決策內容；**程式尚未實作，正式 DB 未動**。
+
+- [x] **Fable 另外查出、我方已獨立驗證的三個事實**：①`branch_stock_stats.is_daytrade_suspect` **寫了但沒有任何消費者**——全 repo 只有 schema 欄位定義、`compute_branch_stats.py:367` 的寫入與本輪文件，沒有 export 或 UI 讀它，所以真正會觸發的 pair 層級訊號目前完全不可見；②分點層級的布林值 gate 了三處（`json_export._export_branches` 的主榜／隔日沖切分、detail set 的 `AND is_daytrade = 0`、`compute_branch_stats.py:381` 的 `AUTO_IN`），而三者今天都是 no-op；③E2 report builder 把每個 episode 保留在記憶體（單一 as_of 約 913k 個），與 **2026-08-25 OOM** 同一種形狀——該 OOM 屬實，見 `vps/README.md:219`、`compute_branch_stats.py:199` 註解與 `crontab.example:45`「避免 1.7G RAM OOM」。故任何持久化路徑**不得**照原樣呼叫 `build_branch_point_in_time_report`，必須在 pair 迴圈內串流累加。
+- [x] **決策一：E2 只在分點層級持久化，且只存整數計數，永不存 rate。** 新增 additive table `branch_pit_stats`，PK 為 `(branch_name, as_of, window_market_days)`（把窗口納入 PK，日後換窗口不必重寫）。欄位含 `window_from`／`definitions_version`（`'e2-v1'`）／`computed_at`／`observed_trade_rows`／`stock_count`／`buy_episodes`／`sell_episodes`／`buy_pctile_known`／`buy_pctile_unknown`／`sell_pctile_known`／`sell_pctile_unknown`／`low_buy_count`／`high_sell_count`／`fwd5_matured`／`fwd5_unknown`／`fwd5_positive_count`／`fwd5_sum_pct`。**每個分子都有對應分母與 unknown 計數，所有比率一律讀取時再除**；存 `fwd5_sum_pct` 而非平均，pooled 平均才精確。約 821 列／as_of、約 200KB／as_of、約 50MB／年，對 5.5GB 的 DB 是雜訊。**保留期限：永久不 prune。**
+- [x] **不做分點×個股表**（~140GB，算術上排除）、**不做市場層級表**（它就是分點列的欄位加總，讀取時 pool 即可）。持久化而非每次重跑的理由是：工具讀的是 `branch_trades WHERE date <= as_of`，而 490 日回補**正在改變過去日期的查詢結果**——帶 `computed_at` 的列是「我們在第 X 天看得到什麼」的唯一紀錄，半年後重算是另一個觀測，不是同一個。
+- [x] **決策二：分點層級隔日沖旗標保留，但改以「已判定 pair 中被標記的比例」定義，退休 pooled 回吐比率。** pooled 比率結構上已死——涵蓋約 1,128 檔股票的分點不可能在總體上達到 60% 次日回吐，831/831 一致即為證明。pair 層級 `DAYTRADE_MIN_OBS` 改 **8**，觀察數不足時 `daytrade_flag` 回 `(None, None)`、`is_daytrade_suspect` 寫 **NULL 而非 False**；`branch_stock_stats` 增 `daytrade_obs`／`daytrade_paybacks` 讓 pair 比率自帶分母。分點層級以 `daytrade_pairs_determined`／`daytrade_pairs_flagged` 兩個計數表達，**分母必須是已判定 pair 而非全部 pair**——平均每 pair 僅 4.97 個事件，把未判定當成「非隔日沖」正是 E2 fixture 證明過的分母錯誤。`AUTO_IN` 只被 `is_daytrade = 1` 擋，NULL 不擋（否則幾乎沒有新分點能自動入選）。
+- [x] **成熟度級距兩個層級都不採用**：分點層級惰性（漂移 0、只差 1 個分點）；pair 層級不排名、不評分、不顯示，加級距只是裝飾且依構造會有約九成落在 insufficient。改為在 `branch_rankings` 增 `matured_samples`，這才是 §8 稽核指出的真正缺陷（`samples` 混合成熟與未成熟），前端 `MIN_SAMPLES` 徽章改讀 `matured_samples ?? samples`——即 shadow 的讀法 (a)，榜單集合不變、只多一個誠實標記。
+- [x] **校準已定案（Fable 第二輪，依實測重訂）**：`DAYTRADE_PAIR_SHARE = **0.20**`、`DAYTRADE_MIN_PAIRS = **20**`、`DAYTRADE_MIN_OBS = **8**`。規則：`determined < 20` → `is_daytrade = NULL`；`determined >= 20 且 flagged/determined >= 0.20` → `1`；其餘 `0`。初擬的 0.5 實測會標記 **0 個**分點（見下節），等同重現它要修的缺陷，故重訂。
+- [x] **關鍵重新詮釋：0.33 是「可觀測性上限」，不是行為上限。** 一個 pair 只有在該分點當天擠進該股**前 15 大賣方**時，次日翻單才被看見。真正的隔日沖分點每筆都翻，但截切把大多數翻單藏起來了。凱基-台北是台股最公認的隔日沖分點，兩種分母下都只到 0.31–0.32——那不是它的行為，是資料來源的天花板。因此**分點層級的 share 活在 0～約 0.33 的尺度上**，常數必須按該尺度訂，且徽章語意必須寫成「**在每日前 15 大可見範圍內翻單的比例**」，**絕不可說成「多數時候翻單」**。
+- [x] **兩個常數各買到什麼**：`0.20` 高於 p99（0.12）且約為 p90（0.025）的 8 倍，與主體差一個數量級而非毫釐；約為觀測上限的三分之二，是在受截切限制的尺度上最誠實的「多數」類比。選 0.20 而非 0.15 是刻意保守——布林值只驅動榜單切分與 `AUTO_IN` 阻擋，而 share 與其分母**無論如何都會匯出並顯示在每張卡上**，所以保守不會讓資訊消失（元大-竹科 80/408 仍顯示為「隔日沖 80/408 檔」讓使用者自行判斷）；反之偽陽性會把分點逐出主榜並擋掉自動追蹤。`20` 則是讓常數不被機率淹沒的最小分母：pair 層級基準率約 1.5%，`min_pairs=10` 時只需 2 個 flagged 就跨過 0.20，`P(>=2/10)≈0.94%`、乘約 800 個分點約 **7.5 個偽陽性**（多於真陽性）；`min_pairs=20` 需 4 個，`P(>=4/20)≈2.4e-4`、全榜期望約 **0.2 個**。**此機率推算已由主協調獨立驗算，數字正確。**
+- ⚠️ **文件語意要求（Fable 指定，實作時必須同步寫入 `docs/13` §8）**：徽章意義為「**可判定的分點×個股 pair 中、在每日前 15 大可見範圍內次日翻單的比例**」；須載明今日資料的可觀測上限約 0.33，以及 0.20／20 是由 **2026-08-28 的分布**推導而來、不是行為定義。同一段落須**撤回**先前「min-obs 8 是 no-op」的說法，並附上 5,118 → 2,100 的數字。
+- ⚠️ **上線前驗收（進行中）**：Fable 要求以真實規則精確重算後才實作（observations = 合併前的合格買超日、determined 為 `observations >= 8`、flagged 為回吐比率 `>= 0.6`），**驗收規則：flagged 分點數落在 2–10 之間且含凱基-台北才可照案實作**；若不符**不得自行調整常數**，須帶數字回送 Fable。放棄的部分：0.10–0.20 區間（代理指標下約 9 個，含元大-竹科 0.196、群益金鼎-台北 0.19）不會被標記，它們仍留在主榜並顯示自身 share。
+
+## 2026-09-02 隔日沖 pair-share 校準實測：0.5 門檻會標記 0 個分點
+
+- [x] 對還原副本的 `branch_stock_stats` 依分點分組（831 個分點）。**分母＝全部 pair**（既有旗標，min-obs 4），取 pair 數 ≥10 的 829 個分點：share p50 **0.0018**、p90 0.0080、p99 0.0496、**max 0.3117**；`>=0.5` **0 個**、`>=0.3` 1 個、`>=0.2` 1 個、`>=0.1` 3 個、`>=0.05` 8 個。前五名：凱基-台北 615/1973 = 0.3117、群益金鼎-大安 151/1046 = 0.1444、新加坡商瑞銀 245/1862 = 0.1316、元大證券 174/1934 = 0.0900、元大-竹科 136/1623 = 0.0838。
+- [x] **分母＝`events_count >= 8` 的 pair**（min-obs 8 的代理指標），808 個分點：p50 **0.0000**、p90 0.0250、p99 0.1223、**max 0.3433**；`>=0.5` **0 個**、`>=0.3` 3 個、`>=0.2` 3 個、`>=0.1` 12 個、`>=0.05` 32 個。前三名：元大-三峽 23/67 = 0.3433、凱基-台北 614/1947 = 0.3154、群益金鼎-大安 48/160 = 0.3000。
+- [x] **pair 層級 min-obs 由 4 提到 8 不是 no-op**：pair 池由 937,856 縮到 **139,076（14.83%）**，flagged 由 5,118 降到 **2,100（-59%）**。**先前「改 8 零代價」的結論只在分點層級成立**（該層規則本來就是死的），不得引用為 pair 層級的證據；此更正由 Fable 指出，我方接受。
+- ⚠️ **代理指標的兩個保守偏誤**：①`events_count` 是合併後的事件數，而隔日沖觀察數是合併前的合格日，故 `observations >= events`，用 `events_count >= 8` 篩比真正的 `observations >= 8` **更嚴格**，真實已判定池大於 139,076；②既有 flag 是在 min-obs 4 下算的，分子中可能含在 min-obs 8 下未判定的 pair。要精確數字需完整重算（約 20 分鐘），已告知 Fable 可依需要執行。
+
 ## 2026-09-02 E2 穩定度序列真實資料結果：全粒度持久化在硬體上不可行
 
 > 對 WP-B4 還原出的 2026-08-28 正式副本執行 `branch-point-in-time-series --as-of-from 2026-07-01 --as-of-to 2026-08-28 --step 5 --window-days 60`（本機、唯讀、未碰正式 DB）。
