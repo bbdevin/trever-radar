@@ -1,4 +1,13 @@
-# Handoff — 2026-08-31（正式站 UI QA；VPS 唯讀稽核）
+# Handoff — 2026-09-02（權證分點 export 資料日與分點文案）
+
+## 2026-09-02 最新交接
+
+- **Current Goal**：本輪 Confirmed Scope = 勝率稽核後續清單裡的低風險項「branch export 日期修正 +『今日買超』文案／正負淨額一致」，程式與測試已完成並 push；正式站要等下一次 VPS `export-json` 才會反映，本輪未跑正式 DB／export／deploy。
+- **權證分點 export 資料日（2026-09-02）**：`_export_warrant_branches` 原本把 `data_date` 和 1d／2d／5d／30d 的窗口 anchor 全綁在 `daily_prices` 最新日，分點晚一輪公布時 1d 桶會全空、payload 卻宣稱資料日是報價日（和 `today.json` 的 `as_of` 同一種錯）。現在先用與主查詢相同條件求「不晚於報價日、在近 120 報價日窗口內」的實際最大權證分點日 `bd1`，以 `bd1` 為 1d anchor、嚴格早於 `bd1` 的報價日推 2d／5d／30d，主查詢加 `b.date <= :d1` 上界；`index.json`／`{stock_id}.json` 的 `data_date` 改報 `bd1`，池內無資料時為 `null` 且直接跳過主查詢（市場檔仍為五個空 timeframe，stale shard 照舊清除）。前端 `WarrantBranchPanel` 的 `data_date` 放寬為 `string | null`、只在非 null 時驗 ISO，避免空池被誤判成索引格式錯誤。
+- **分點文案（2026-09-02）**：`BranchTrackView` 表頭「淨買超張」→「淨買賣張」（該表由買超／賣超分頁餵 sign-filtered rows，賣超分頁顯示負值）；`/branch` tab「今日動向」／hint「買超明細」→「最近動向」／「買進／賣出與淨買賣明細」，與標題「分點最近交易日進出」及買進／賣出／淨買賣／佔比四欄一致。sign 著色本來就正確（gross 中性、net 正紅負綠零中性），未動。tab key 仍是 `today`，無 URL 相依。
+- **驗證**：targeted `test_warrant_branch_export.py` **3 passed**（新增落後一日、空池兩案）；完整 pipeline pytest **314 passed、70 subtests**；`npx tsc --noEmit`、`git diff --check` 通過。未改 schema、cron、workflow、secrets、評分、門檻、正式 DB。
+- **環境陷阱**：完整 pytest 必須 `cd pipeline` **且** `PYTHONPATH=<repo root>`。只 `cd pipeline` 會讓 `test_json_export.py` 的 `from pipeline.radar...` 匯入失敗（10 failed），只在 repo root 跑則 `radar` 匯不到（28 collection errors）。兩者都不是回歸，別誤判。
+- **未做**：`branches/warrant_branches.json` 全市場檔仍無資料日欄位；補上會改 payload 形狀與前端契約，留待另案。
 
 ## 2026-08-31 最新交接
 
@@ -54,7 +63,7 @@ Codex Multi-Agent V2 執行偏好：Sol high 做整體架構／複雜跨模組�
 ## 勝率稽核後續（2026-08-27，唯讀）
 
 - 已完成策略／分點勝率定義與資料鏈稽核；未改排名、schema 或正式資料，未回算。
-- 低風險待另案：branch export 日期修正與「今日買超」文案／正負淨額一致（尚未做）。
+- ~~低風險待另案：branch export 日期修正與「今日買超」文案／正負淨額一致~~ **已於 2026-09-02 完成**（見本檔頂部）。正負淨額著色原本就正確，實際修的是權證分點 `data_date`／窗口 anchor 與兩處誤導標籤。
 - 高風險待確認：排行 V2（`events_count`／`matured_samples`、成熟門檻、隔日沖定義與 point-in-time shadow diff）；需人工確認後才改 schema／正式回算。
 - **前次 Done**: margin cron **21:20**；branches 第二輪 **22:00**；08-26 已 catchup
 - **Branch**: `main`

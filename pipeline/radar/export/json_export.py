@@ -1547,17 +1547,34 @@ def _export_warrant_branches(out: Path, engine, date: str, base20: list[str]):
         if not dates:
             return
         
-        d1 = dates[0]
-        d2 = dates[1] if len(dates) > 1 else d1
-        d5 = dates[4] if len(dates) > 4 else d2
-        d30 = dates[29] if len(dates) > 29 else dates[-1]
+        price_date = dates[0]
         d120 = dates[-1]
+
+        # 分點常比報價晚一輪公布。窗口與 data_date 都必須錨在「不晚於報價日的
+        # 實際最大權證分點交易日」,否則分點落後一天時 1d 桶會全空,payload 卻
+        # 宣稱資料日是報價日(與 branches/today.json 的 as_of 同一種錯)。
+        # 條件與下方主查詢一致,避免錨到只有被排除標的的日期。
+        bd1 = conn.execute(text("""
+            SELECT MAX(b.date)
+            FROM branch_trades b
+            JOIN warrants w ON w.id = b.stock_id
+            JOIN stocks s ON s.id = w.stock_id
+            WHERE LENGTH(b.stock_id) = 6 AND b.date >= :d120 AND b.date <= :price_date
+              AND s.type = 'stock'
+              AND s.name NOT LIKE '%指%'
+        """), {"d120": d120, "price_date": price_date}).scalar()
+
+        prior = [d for d in dates if d < bd1] if bd1 else []
+        d1 = bd1 or price_date
+        d2 = prior[0] if prior else d1
+        d5 = prior[3] if len(prior) > 3 else d2
+        d30 = prior[28] if len(prior) > 28 else (prior[-1] if prior else d1)
 
         # Calculate estimated NTD amount: net_lots * 1000 * price
         # Since warrant_daily might miss some days, we fallback to 1.0 if unknown, though usually it's there.
         # We query per warrant to provide breakdown.
-        rows = conn.execute(text("""
-            SELECT 
+        rows = [] if not bd1 else conn.execute(text("""
+            SELECT
                 b.branch_name,
                 w.stock_id AS underlying_id,
                 s.name AS underlying_name,
@@ -1578,7 +1595,7 @@ def _export_warrant_branches(out: Path, engine, date: str, base20: list[str]):
             JOIN warrants w ON w.id = b.stock_id
             JOIN stocks s ON s.id = w.stock_id
             LEFT JOIN warrant_daily wd ON wd.warrant_id = b.stock_id AND wd.date = b.date
-            WHERE LENGTH(b.stock_id) = 6 AND b.date >= :d120
+            WHERE LENGTH(b.stock_id) = 6 AND b.date >= :d120 AND b.date <= :d1
               AND s.type = 'stock'
               AND s.name NOT LIKE '%指%'
             GROUP BY b.branch_name, w.stock_id, s.name, b.stock_id, w.name, w.kind
@@ -1649,14 +1666,14 @@ def _export_warrant_branches(out: Path, engine, date: str, base20: list[str]):
             (detail_dir / f"{stock_id}.json").write_text(json.dumps({
                 "version": 1,
                 "threshold": WARRANT_BRANCH_DETAIL_MIN_AMOUNT,
-                "data_date": d1,
+                "data_date": bd1,
                 "stock_id": stock_id,
                 "timeframes": timeframes,
             }, ensure_ascii=False), encoding="utf-8")
         (detail_dir / "index.json").write_text(json.dumps({
             "version": 1,
             "threshold": WARRANT_BRANCH_DETAIL_MIN_AMOUNT,
-            "data_date": d1,
+            "data_date": bd1,
             "stocks": sorted(detail_by_stock),
         }, ensure_ascii=False), encoding="utf-8")
 

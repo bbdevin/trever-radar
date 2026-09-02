@@ -96,6 +96,43 @@ class WarrantBranchDetailExportTests(unittest.TestCase):
             )
             self.assertNotIn("五十萬分點", [row["branch_name"] for row in detail["timeframes"][timeframe]])
 
+    def test_data_date_and_windows_follow_branch_trades_not_price_date(self):
+        """分點比報價晚一輪時,資料日必須是實際分點日,1d 桶不可被清空。"""
+        lead = "2026-08-10"  # 只有報價、沒有分點的較新交易日
+        with db.get_engine().begin() as conn:
+            conn.execute(schema.daily_prices.insert(), [
+                {"stock_id": stock_id, "date": lead, "close": 1000.0, "volume": 1000, "turnover": 1}
+                for stock_id in ("2330", "2317")
+            ])
+        out = Path(self._tmp.name) / "out"
+        out.mkdir(parents=True, exist_ok=True)
+        export_json(out)
+        detail_dir = out / "branches" / "warrant-stock-details"
+        index = json.loads((detail_dir / "index.json").read_text(encoding="utf-8"))
+        detail = json.loads((detail_dir / "2330.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(index["data_date"], self.DATES[-1])
+        self.assertEqual(detail["data_date"], self.DATES[-1])
+        self.assertEqual(
+            [row["branch_name"] for row in detail["timeframes"]["1d"]],
+            ["七百萬賣超分點", "六百萬分點", "兩百萬分點"],
+        )
+
+    def test_empty_warrant_branch_pool_reports_null_data_date(self):
+        """池內沒有權證分點時報 null,不可拿報價日充當資料日。"""
+        with db.get_engine().begin() as conn:
+            conn.execute(schema.branch_trades_raw.delete())
+        out = Path(self._tmp.name) / "out"
+        out.mkdir(parents=True, exist_ok=True)
+        export_json(out)
+        detail_dir = out / "branches" / "warrant-stock-details"
+        index = json.loads((detail_dir / "index.json").read_text(encoding="utf-8"))
+
+        self.assertIsNone(index["data_date"])
+        self.assertEqual(index["stocks"], [])
+        market = json.loads((out / "branches" / "warrant_branches.json").read_text(encoding="utf-8"))
+        self.assertEqual(market, {"1d": [], "2d": [], "5d": [], "30d": [], "120d": []})
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -2,6 +2,17 @@
 
 > 單一進度真相。每完成一個里程碑就更新本檔。規格細節看各編號文件,別寫在這裡。
 
+## 2026-09-02 權證分點 export 資料日修正與分點文案一致（程式／測試完成，未跑正式 export）
+
+- [x] `_export_warrant_branches` 先用與主查詢完全相同的條件（`LENGTH(stock_id)=6`、`warrants`／`stocks` join、`type='stock'`、排除含「指」）求出「不晚於報價日、且在近 120 個報價日窗口內」的實際最大權證分點交易日 `bd1`，再以 `bd1` 為 1d anchor，2d／5d／30d 改由嚴格早於 `bd1` 的報價日推導，主查詢另加 `b.date <= :d1` 上界。分點比報價晚一輪公布時，1d 桶不再被清空。
+- [x] `branches/warrant-stock-details/index.json` 與 `{stock_id}.json` 的 `data_date` 改為 `bd1`（實際分點資料日），不再是 `daily_prices` 最新日。池內完全沒有符合條件的權證分點時 `data_date` 為 `null`，不拿報價日充數；此時主查詢直接跳過，市場檔仍輸出五個空 timeframe，stale shard 照舊清除。這與 `branches/today.json` 的 `as_of` 是同一種錯，本輪對齊。
+- [x] 前端 `WarrantBranchPanel` 的 index／shard `data_date` 型別放寬為 `string | null`，只在非 null 時驗 ISO 格式（否則空池會被誤判成「索引格式錯誤」）；資料日原本就是條件顯示，null 時不顯示，其餘契約（version、threshold、index 為權威、shard 一致性）不變。
+- [x] 文案：`BranchTrackView` 表頭「淨買超張」→「淨買賣張」——該表由買超／賣超分頁餵入 sign-filtered rows，賣超分頁顯示的是負值，舊標籤錯。`/branch` 的 tab「今日動向」／hint「買超明細」→「最近動向」／「買進／賣出與淨買賣明細」，與既有標題「分點最近交易日進出」及表格四欄一致。tab key 仍是 `today`（僅內部 state，無 URL 相依）。
+- [x] 驗證：targeted `test_warrant_branch_export.py` **3 passed**（新增「分點落後報價一日」與「空池報 null」兩案）；完整 pipeline pytest **314 passed、70 subtests**；`web npx tsc --noEmit`、`git diff --check` 通過。未改 schema、cron、workflow、secrets、評分、門檻或正式 DB；正式站要等下一次 VPS `export-json` 才會反映。
+- 環境註記：完整 pytest 必須 `cd pipeline` **且** `PYTHONPATH=<repo root>`。只 `cd pipeline` 會讓 `test_json_export.py` 的 `from pipeline.radar...` 失敗（10 failed），只在 repo root 跑則 `radar` 匯不到（28 collection errors）；兩者都不是程式壞掉。
+- 刻意取捨：`b.date <= :d1` 對五個 timeframe 一體適用，所以 120d 桶也收斂到 `bd1`。分點若領先報價日（正常排程不會發生），那些列會被排除而不是計入 120d。選一致性（payload 每個數字都不晚於宣告的 `data_date`）而非完整性。
+- 未做（留待另案）：`branches/warrant_branches.json` 全市場檔仍沒有資料日欄位，其 bucket 現在同樣錨在 `bd1` 卻無處說明；補上會改 payload 形狀與前端契約，不在本輪 scope。
+
 ## 2026-09-01 TPEx 520 結構化重試與 16:10 安全降級（已同步正式機程式碼）
 
 - [x] HTTP 層新增 `RadarHTTPError(status_code, url, attempts, original_error)`。一般端點仍維持既有三次、線性無 jitter 的預設；TPEx `dailyQuotes` 僅在**從第一次起全為 HTTP 520**時提高到五次（5／10／20／40 秒＋0–2 秒 jitter）。任何 502／timeout 等非 520 一旦出現，整段序列立即維持至多三次，後續 520 也不延長；最後一次失敗不再多 sleep。成功 JSON 的空表仍是 `NoDataError`，JSON／parser／DB 例外不會偽標 HTTP。

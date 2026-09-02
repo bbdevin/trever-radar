@@ -24,14 +24,15 @@ export type WarrantBranchRow = {
 type WarrantBranchDetailIndex = {
   version: number;
   threshold: number;
-  data_date: string;
+  /** 實際權證分點資料日；池內無資料時為 null（不以報價日充數）。 */
+  data_date: string | null;
   stocks: string[];
 };
 
 type WarrantBranchDetailShard = {
   version: number;
   threshold: number;
-  data_date: string;
+  data_date: string | null;
   stock_id: string;
   timeframes: Record<string, WarrantBranchRow[]>;
 };
@@ -88,7 +89,7 @@ export default function WarrantBranchPanel({ stockId }: { stockId: string }) {
         if (
           index.version !== DETAIL_CONTRACT_VERSION
           || index.threshold !== DETAIL_MIN_AMOUNT
-          || !ISO_DATE.test(index.data_date)
+          || (index.data_date !== null && !ISO_DATE.test(index.data_date))
           || !Array.isArray(index.stocks)
           || !index.stocks.every((id) => typeof id === "string")
         ) throw new Error("權證分點索引格式錯誤");

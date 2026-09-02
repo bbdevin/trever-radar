@@ -254,7 +254,7 @@ function ConcentrationTab({ radar }: { radar: RadarJson | null }) {
 
 const TABS = [
   { key: "rankings", label: "排行榜", hint: "分點操作勝率與可信度排行", icon: IconFlame },
-  { key: "today", label: "今日動向", hint: "追蹤分點於最近交易日的買超明細", icon: IconZap },
+  { key: "today", label: "最近動向", hint: "追蹤分點於最近交易日的買進／賣出與淨買賣明細", icon: IconZap },
   { key: "warrant", label: "權證分點異動(實驗)", hint: "追蹤分點針對單一標的之多檔權證，累計買賣超達 500 萬的動向", icon: IconTrend },
 ] as const;
 

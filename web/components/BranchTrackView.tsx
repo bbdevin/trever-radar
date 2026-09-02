@@ -89,7 +89,7 @@ function AggTable({
           <thead>
             <tr>
               <th className="px-3.5 py-2.5 text-left font-semibold text-muted-foreground">股票</th>
-              <th className="px-3.5 py-2.5 text-right font-semibold text-muted-foreground whitespace-nowrap">淨買超張</th>
+              <th className="px-3.5 py-2.5 text-right font-semibold text-muted-foreground whitespace-nowrap">淨買賣張</th>
               <th className="px-3.5 py-2.5 text-right font-semibold text-muted-foreground whitespace-nowrap">估算金額</th>
               <th className="px-3.5 py-2.5 text-right font-semibold text-muted-foreground whitespace-nowrap">平均佔比</th>
             </tr>
