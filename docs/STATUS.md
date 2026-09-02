@@ -11,7 +11,17 @@
 - [x] 驗證：targeted `test_warrant_branch_export.py` **3 passed**（新增「分點落後報價一日」與「空池報 null」兩案）；完整 pipeline pytest **314 passed、70 subtests**；`web npx tsc --noEmit`、`git diff --check` 通過。未改 schema、cron、workflow、secrets、評分、門檻或正式 DB；正式站要等下一次 VPS `export-json` 才會反映。
 - 環境註記：完整 pytest 必須 `cd pipeline` **且** `PYTHONPATH=<repo root>`。只 `cd pipeline` 會讓 `test_json_export.py` 的 `from pipeline.radar...` 失敗（10 failed），只在 repo root 跑則 `radar` 匯不到（28 collection errors）；兩者都不是程式壞掉。
 - 刻意取捨：`b.date <= :d1` 對五個 timeframe 一體適用，所以 120d 桶也收斂到 `bd1`。分點若領先報價日（正常排程不會發生），那些列會被排除而不是計入 120d。選一致性（payload 每個數字都不晚於宣告的 `data_date`）而非完整性。
-- 未做（留待另案）：`branches/warrant_branches.json` 全市場檔仍沒有資料日欄位，其 bucket 現在同樣錨在 `bd1` 卻無處說明；補上會改 payload 形狀與前端契約，不在本輪 scope。
+- [x] **全市場檔補資料日（同日第二輪）**：`branches/warrant_branches.json` 改為 `{version:1, threshold, data_date, timeframes}` v1 wrapper，形式沿用 `today.json` 的既有先例而非另創形狀。`/branch` 權證分頁新增 `normalizeWarrantBranchPayload`，wrapper 與舊的裸 mapping 都能讀，舊檔不捏造日期；分頁顯示「分點資料日 X；各區間由該日往前推算，不含更新的分點資料」。`WarrantBranchPanel` 的 404 fallback 同樣雙讀，只有快照真的帶 `data_date` 才顯示，否則維持「該快照未提供資料日」。500 萬門檻、排序、by_stock／by_branch 檢視均未改。
+- [x] 資料與程式碼是分開的發布鏈（push→Pages 幾分鐘；JSON→VPS export 之後才更新），所以新舊組合會並存；雙讀 normalize 就是為此。`docs/07` §個股／branch 段已同步新 payload 形狀。
+- [x] `WarrantBranchPanel` 的 fallback 順手收斂兩個不一致：壞掉或非物件的 body 一律變成空 mapping（原本 `null` body 會讓面板永遠停在骨架屏，既不顯示資料也不顯示錯誤，此洞在改動前就存在）；wrapper 的 `data_date` 現在也要通過 `ISO_DATE` 才顯示，與 index 路徑同標準。
+- ⚠️ 已知並接受的空窗：**舊 bundle + 新 JSON** 時，舊程式碼對 wrapper 取 `payload["1d"]` 會得到 undefined，畫面顯示「此區間內無淨買賣超 500 萬以上之權證大戶」——這是誤導性空狀態而非誠實空狀態。正常發布順序下不會發生（Pages 幾分鐘、下一次 export 在數小時後）；只在 Pages build 失敗或使用者停在舊分頁時出現，重新整理即修復。這與 `today.json` v1 wrapper 當初接受的是同一種取捨；沒有任何前端修法能讓已載入的舊 bundle 認得新形狀。
+- [x] 第二輪驗證：完整 pipeline pytest **314 passed、70 subtests**；`npx tsc --noEmit` 通過。Fable 唯讀 review 走完四種發布組合、13 組畸形輸入、共用常數 mutation 與 `isWrapped` 收斂，結論 **CONFIRMED、0 defect**。
+
+## 2026-09-02 VPS 唯讀查核（16:07–16:15 +08）
+
+- [x] VPS `~/trever-radar` HEAD 已是 `bf65dd0`（日更腳本自行 pull），16:10 `daily-insti.sh` 執行中（`import-warrant-master` 階段），持有 `/tmp/radar-db.lock`。本輪的 `data_date`／anchor 修正會由這條既有排程自然發布，**未手動觸發任何正式 import／export／deploy，未改 cron**。
+- [x] 既有四個未追蹤檔（`cloudflare-data-worker/package-lock.json`、`data/`、`radar-quick-catchup.sh`、`run-backfill.sh`）仍在且未阻斷本次 pull。磁碟 `29G` 中已用 `19G`、free `8.1G`（71%）；仍低於 20GB gate，禁止自行啟用全市場權證輪。分點回補 `backfill-branches --top 0 --days 490` 仍單實例執行中，guard／supervisor 各一，未重啟。
+- ⚠️ **資安待處理（未動，屬部署設定）**：`daily-insti.sh` 的 `docker run` 以 `-e RADAR_FINMIND_TOKEN=…`、`-e FUGLE_API_KEY=…` 傳入金鑰，因此完整值出現在 `ps`／`/proc` 的命令列參數中，任何本機使用者可讀。建議改 `--env-file`（檔案權限 600）並輪換這兩把金鑰。改動 VPS 腳本與 secrets 屬人工確認項，未自行執行。
 
 ## 2026-09-01 TPEx 520 結構化重試與 16:10 安全降級（已同步正式機程式碼）
 

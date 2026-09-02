@@ -7,7 +7,9 @@
 - **分點文案（2026-09-02）**：`BranchTrackView` 表頭「淨買超張」→「淨買賣張」（該表由買超／賣超分頁餵 sign-filtered rows，賣超分頁顯示負值）；`/branch` tab「今日動向」／hint「買超明細」→「最近動向」／「買進／賣出與淨買賣明細」，與標題「分點最近交易日進出」及買進／賣出／淨買賣／佔比四欄一致。sign 著色本來就正確（gross 中性、net 正紅負綠零中性），未動。tab key 仍是 `today`，無 URL 相依。
 - **驗證**：targeted `test_warrant_branch_export.py` **3 passed**（新增落後一日、空池兩案）；完整 pipeline pytest **314 passed、70 subtests**；`npx tsc --noEmit`、`git diff --check` 通過。未改 schema、cron、workflow、secrets、評分、門檻、正式 DB。
 - **環境陷阱**：完整 pytest 必須 `cd pipeline` **且** `PYTHONPATH=<repo root>`。只 `cd pipeline` 會讓 `test_json_export.py` 的 `from pipeline.radar...` 匯入失敗（10 failed），只在 repo root 跑則 `radar` 匯不到（28 collection errors）。兩者都不是回歸，別誤判。
-- **未做**：`branches/warrant_branches.json` 全市場檔仍無資料日欄位；補上會改 payload 形狀與前端契約，留待另案。
+- **全市場檔資料日（同日第二輪）**：`branches/warrant_branches.json` 改為 `{version:1, threshold, data_date, timeframes}` v1 wrapper，沿用 `today.json` 既有先例。`/branch` 權證分頁加 `normalizeWarrantBranchPayload` 雙讀 wrapper 與舊裸 mapping（舊檔不捏造日期），顯示「分點資料日 X；各區間由該日往前推算」；`WarrantBranchPanel` 的 404 fallback 同樣雙讀，只有快照真的帶日期才顯示。500 萬門檻、排序與兩種檢視未改；`docs/07` 已同步 payload 形狀。程式碼走 Pages（push 後幾分鐘）、JSON 走 VPS export（更晚），新舊組合必然並存，雙讀就是為此。
+- **VPS 唯讀查核（2026-09-02 16:07–16:15 +08）**：`~/trever-radar` HEAD 已是 `bf65dd0`——**日更腳本自己會 pull**，所以第一輪的 `data_date`／anchor 修正會由 16:10 `daily-insti.sh` 這條既有排程自然發布；當時正在 `import-warrant-master` 階段並持有 `/tmp/radar-db.lock`。四個既有未追蹤檔仍在、未阻斷 pull。磁碟 free 8.1G／71%，仍低於 20GB gate。分點回補 `backfill-branches --top 0 --days 490` 單實例執行中，guard／supervisor 各一。**未手動 import／export／deploy，未重啟、未改 cron。**
+- ⚠️ **資安待處理（未動）**：`daily-insti.sh` 的 `docker run` 用 `-e RADAR_FINMIND_TOKEN=…`／`-e FUGLE_API_KEY=…` 傳金鑰，完整值因此出現在 `ps`／`/proc` 命令列，任何本機使用者可讀。建議改 `--env-file`（600）並輪換兩把金鑰。屬部署設定＋secrets，需人工確認，未自行改。
 
 ## 2026-08-31 最新交接
 

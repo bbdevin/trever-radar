@@ -78,10 +78,23 @@ export default function WarrantBranchPanel({ stockId }: { stockId: string }) {
         if (indexResponse.status === 404) {
           const legacyResponse = await dataFetch("/data/branches/warrant_branches.json");
           if (!legacyResponse.ok) throw legacyResponse.status;
+          // 全市場檔已改為 v1 wrapper，但程式碼可能早於下一次 export 上線，
+          // 舊的裸 mapping 仍要能讀，且不替它捏造資料日。
+          const legacy = await legacyResponse.json() as unknown;
+          const asMapping = (value: unknown): Record<string, WarrantBranchRow[]> =>
+            value && typeof value === "object" && !Array.isArray(value)
+              ? value as Record<string, WarrantBranchRow[]>
+              : {};
+          const wrapper = asMapping(legacy) as { version?: unknown; data_date?: unknown; timeframes?: unknown };
+          const isWrapped = wrapper.version === 1 && "timeframes" in wrapper;
           return {
-            rows: await legacyResponse.json() as Record<string, WarrantBranchRow[]>,
+            // 壞掉的 body 收斂成空 mapping,而不是 null——null 會讓面板永遠停在
+            // 骨架屏,既不顯示資料也不顯示錯誤。
+            rows: isWrapped ? asMapping(wrapper.timeframes) : asMapping(legacy),
             fallback: true,
-            dataDate: null,
+            dataDate: isWrapped && typeof wrapper.data_date === "string" && ISO_DATE.test(wrapper.data_date)
+              ? wrapper.data_date
+              : null,
           };
         }
         if (!indexResponse.ok) throw indexResponse.status;
@@ -160,7 +173,7 @@ export default function WarrantBranchPanel({ stockId }: { stockId: string }) {
             已匯入且符合條件的權證之估計淨買／賣超；涵蓋依已匯入池，每檔權證僅保留前 15 大分點。區間淨額 ≥ {(usingMarketFallback ? LARGE_AMOUNT : DETAIL_MIN_AMOUNT) / 10000} 萬才顯示，點列可看權證明細。
           </p>
           {dataDate && <p className="mt-1 text-[11px] text-muted-foreground">資料日 {dataDate}</p>}
-          {usingMarketFallback && <p className="mt-1 text-[11px] text-muted-foreground">100 萬明細快照尚未發布，暫以既有 500 萬門檻快照顯示；舊快照未提供資料日。</p>}
+          {usingMarketFallback && <p className="mt-1 text-[11px] text-muted-foreground">100 萬明細快照尚未發布，暫以既有 500 萬門檻快照顯示{dataDate ? "" : "；該快照未提供資料日"}。</p>}
         </div>
         {(buyN > 0 || sellN > 0) && (
           <span className="text-[11.5px] text-muted-foreground">

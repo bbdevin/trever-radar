@@ -1651,8 +1651,16 @@ def _export_warrant_branches(out: Path, engine, date: str, base20: list[str]):
         for k in results:
             results[k].sort(key=lambda x: -abs(x["net_amount"]))
 
+        # 與 warrant-stock-details 同一個誠實性契約:全市場檔也要說出自己的
+        # 資料日,否則五個 timeframe 錨在 bd1 卻無處可查。沿用 today.json 的
+        # v1 wrapper 形式,舊的裸 mapping 由前端 normalize 續讀。
         (branches_dir / "warrant_branches.json").write_text(
-            json.dumps(results, ensure_ascii=False), encoding="utf-8")
+            json.dumps({
+                "version": 1,
+                "threshold": WARRANT_BRANCH_MARKET_MIN_AMOUNT,
+                "data_date": bd1,
+                "timeframes": results,
+            }, ensure_ascii=False), encoding="utf-8")
         detail_dir = branches_dir / "warrant-stock-details"
         detail_dir.mkdir(exist_ok=True)
         # Remove stale per-stock shards before writing the current index. The

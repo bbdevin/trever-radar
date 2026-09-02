@@ -192,6 +192,37 @@ type WarrantBranch = {
   breakdown?: WarrantBreakdown[];
 };
 
+type WarrantTimeframes = Record<string, WarrantBranch[]>;
+
+type WarrantBranchPayload = {
+  data_date: string | null;
+  timeframes: WarrantTimeframes;
+};
+
+const EMPTY_WARRANT_TIMEFRAMES: WarrantTimeframes = { "1d": [], "2d": [], "5d": [], "30d": [], "120d": [] };
+
+function normalizeWarrantBranchPayload(payload: unknown): WarrantBranchPayload {
+  if (payload && typeof payload === "object" && !Array.isArray(payload)) {
+    const wrapper = payload as { version?: unknown; data_date?: unknown; timeframes?: unknown };
+    if (wrapper.version === 1 && "timeframes" in wrapper) {
+      return {
+        data_date: typeof wrapper.data_date === "string" ? wrapper.data_date : null,
+        timeframes: wrapper.timeframes && typeof wrapper.timeframes === "object" && !Array.isArray(wrapper.timeframes)
+          ? wrapper.timeframes as WarrantTimeframes
+          : EMPTY_WARRANT_TIMEFRAMES,
+      };
+    }
+  }
+  // 同 normalizeTodayPayload:程式碼可能早於下一次 export 上線,舊的裸 mapping
+  // 仍要能讀,且不替它捏造資料日。
+  return {
+    data_date: null,
+    timeframes: payload && typeof payload === "object" && !Array.isArray(payload)
+      ? payload as WarrantTimeframes
+      : EMPTY_WARRANT_TIMEFRAMES,
+  };
+}
+
 function EmptyNotice({ tag, children }: { tag: string; children: React.ReactNode }) {
   return (
     <Alert className="mb-4 bg-card">
@@ -456,8 +487,8 @@ export default function BranchPage() {
   const [tab, setTab] = useState<"rankings" | "today" | "warrant">("rankings");
   const [rankingsData, setRankingsData] = useState<RankingsData | null>(null);
   const [today, setToday] = useState<TodayPayload | null>(null);
-  const [warrantBranches, setWarrantBranches] = useState<Record<string, WarrantBranch[]>>({
-    "1d": [], "2d": [], "5d": [], "30d": [], "120d": []
+  const [warrantBranches, setWarrantBranches] = useState<WarrantBranchPayload>({
+    data_date: null, timeframes: EMPTY_WARRANT_TIMEFRAMES,
   });
   const [warrantTimeframe, setWarrantTimeframe] = useState<"1d" | "2d" | "5d" | "30d" | "120d">("1d");
   const [viewMode, setViewMode] = useState<"by_stock" | "by_branch">("by_stock");
@@ -490,7 +521,8 @@ export default function BranchPage() {
       .catch(() => setError(true));
 
     dataFetch("/data/branches/warrant_branches.json")
-      .then((r) => (r.ok ? r.json() : { "1d": [], "2d": [], "5d": [], "30d": [], "120d": [] }))
+      .then((r) => (r.ok ? r.json() : null))
+      .then(normalizeWarrantBranchPayload)
       .then(setWarrantBranches)
       .catch(() => {});
 
@@ -773,7 +805,7 @@ export default function BranchPage() {
       })()}
 
       {tab === "warrant" && (() => {
-        const data = warrantBranches[warrantTimeframe] || [];
+        const data = warrantBranches.timeframes[warrantTimeframe] || [];
         
         let content;
         if (data.length === 0) {
@@ -883,6 +915,11 @@ export default function BranchPage() {
                 </button>
               </div>
             </div>
+            <p className="text-[11.5px] text-muted-foreground">
+              {warrantBranches.data_date
+                ? `分點資料日 ${warrantBranches.data_date}；各區間由該日往前推算,不含更新的分點資料。`
+                : "此快照未提供分點資料日。"}
+            </p>
             {content}
           </div>
         );

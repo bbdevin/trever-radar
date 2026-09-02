@@ -67,9 +67,15 @@ class WarrantBranchDetailExportTests(unittest.TestCase):
         detail_dir.mkdir(parents=True)
         (detail_dir / "stale.json").write_text("old shard", encoding="utf-8")
         export_json(out)
-        market = json.loads((out / "branches" / "warrant_branches.json").read_text(encoding="utf-8"))
+        payload = json.loads((out / "branches" / "warrant_branches.json").read_text(encoding="utf-8"))
         index = json.loads((detail_dir / "index.json").read_text(encoding="utf-8"))
         detail = json.loads((detail_dir / "2330.json").read_text(encoding="utf-8"))
+
+        # 全市場檔為 v1 wrapper,並自報同一個分點資料日。
+        self.assertEqual(payload["version"], 1)
+        self.assertEqual(payload["threshold"], 5_000_000)
+        self.assertEqual(payload["data_date"], self.DATES[-1])
+        market = payload["timeframes"]
 
         self.assertEqual(index, {
             "version": 1, "threshold": 1_000_000, "data_date": self.DATES[-1], "stocks": ["2330"],
@@ -111,8 +117,10 @@ class WarrantBranchDetailExportTests(unittest.TestCase):
         index = json.loads((detail_dir / "index.json").read_text(encoding="utf-8"))
         detail = json.loads((detail_dir / "2330.json").read_text(encoding="utf-8"))
 
+        market = json.loads((out / "branches" / "warrant_branches.json").read_text(encoding="utf-8"))
         self.assertEqual(index["data_date"], self.DATES[-1])
         self.assertEqual(detail["data_date"], self.DATES[-1])
+        self.assertEqual(market["data_date"], self.DATES[-1])
         self.assertEqual(
             [row["branch_name"] for row in detail["timeframes"]["1d"]],
             ["七百萬賣超分點", "六百萬分點", "兩百萬分點"],
@@ -131,7 +139,12 @@ class WarrantBranchDetailExportTests(unittest.TestCase):
         self.assertIsNone(index["data_date"])
         self.assertEqual(index["stocks"], [])
         market = json.loads((out / "branches" / "warrant_branches.json").read_text(encoding="utf-8"))
-        self.assertEqual(market, {"1d": [], "2d": [], "5d": [], "30d": [], "120d": []})
+        self.assertEqual(market, {
+            "version": 1,
+            "threshold": 5_000_000,
+            "data_date": None,
+            "timeframes": {"1d": [], "2d": [], "5d": [], "30d": [], "120d": []},
+        })
 
 
 if __name__ == "__main__":
