@@ -21,6 +21,15 @@
 
 - [x] VPS `~/trever-radar` HEAD 已是 `bf65dd0`（日更腳本自行 pull），16:10 `daily-insti.sh` 執行中（`import-warrant-master` 階段），持有 `/tmp/radar-db.lock`。本輪的 `data_date`／anchor 修正會由這條既有排程自然發布，**未手動觸發任何正式 import／export／deploy，未改 cron**。
 - [x] 既有四個未追蹤檔（`cloudflare-data-worker/package-lock.json`、`data/`、`radar-quick-catchup.sh`、`run-backfill.sh`）仍在且未阻斷本次 pull。磁碟 `29G` 中已用 `19G`、free `8.1G`（71%）；仍低於 20GB gate，禁止自行啟用全市場權證輪。分點回補 `backfill-branches --top 0 --days 490` 仍單實例執行中，guard／supervisor 各一，未重啟。
+## 2026-09-02 WP-B6／M4 容量分析：20GB gate 在現有硬體上無法達成（唯讀）
+
+- [x] **實測佔用**：磁碟 `29G` 總量、已用 `19G`、free `8.0G`（71%）。`radar.db` 5,523,030,016 bytes ＋ WAL 97,903,592 bytes；repo 內 `data/` 5.3G、`web/` 894M、`cloudflare-data-worker/` 201M；另有 `/swapfile2` 2.0G；Docker images 3.023GB。
+- [x] **清理救不了**：`docker system df` 顯示可回收僅 images 175.2MB ＋ local volumes 28.24MB ＋ build cache 691B，合計不到 210MB。家目錄除 repo 外最大者是 1.2M 的 log。
+- [x] **gate 數學上不可達**：`docs/30` §5 要求開跑前 free ≥20GB、跑完仍 ≥10GB。29G 的磁碟要 free 20G，等於全機用量須 ≤9G，而 `radar.db` 單檔就 5.5G，再加 OS、Docker images 3.0G 與 swap 2.0G 已然超過。**這不是「等使用者按下去」的問題，是現有硬體無法滿足該門檻。**
+- [x] **關鍵前提**：`docs/30` §5 自己寫明舊估計「+0.7–1.0GB」已作廢，**必須先跑 1 日與 5 日 PoC** 量測每千次請求的 DB＋WAL＋索引成長，再據以推估 120 日總量。換言之 **20GB 是等待該量測期間的保守佔位值，不是實測需求**。目前沒有任何實測數字可以支持或推翻它。
+- [x] **Phase 1 其實正在跑**：`docs/30` 的 WP-M4 Phase 1 目標是 `backfill-branches --top 2500 --days 490`，而 VPS 上此刻執行中的正是 `backfill-branches --top 0 --days 490`（`--top 0` = 當日全部有量普通股，範圍不小於 2500 的安全上限）。被磁碟擋住的只有 Phase 2（權證全市場 120 日，`docs/30` §5 估 ~1.44M 請求、約 20 天連續執行——**估計值，非實測**）。
+- ⚠️ **待人類決策（三選一，不由 agent 拍板）**：①依 `docs/30` §5 原本就要求的方式跑 1／5 日 PoC 取得實測成長率，再用實測值重訂 gate；②擴充 VPS 磁碟；③不做 Phase 2。①會寫入正式 DB，屬人工確認項；②牽涉費用，與 `docs/12` 零成本原則相關；三者都未執行。
+
 ## 2026-09-02 週備份鏈唯讀稽核：先前「備份狀態不明」的判斷是錯的
 
 - [x] **備份正常運作，有證據。** Drive `gdrive:trever-radar-backup/` 現有 6 份：`radar-20260829.db.gz`（1,162,065,971 bytes，2026-08-29 05:12）、`0824`（12:59，臨時跑）、`0822`（05:10）、`0815`（05:09）、`0814`（17:47，臨時跑）、`0725`（05:18）。最近一次週六排程備份為 **8/29 成功**。
