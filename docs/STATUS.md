@@ -65,7 +65,10 @@
 - [x] **先前三個「症狀」全部是誤判**：①「主機未見 `.db.gz`」是 `weekly-backup.sh:29` 上傳後 `rm -f "$SNAP"` 的正常行為；②「log 無備份痕跡」是正常路徑幾乎不輸出（`db_sql >/dev/null`、rclone 靜默、只有 `notify_ok`）；③「8/22 Drive quota 403」不是持續阻斷——8/22 當天 05:10 的快照確實存在，且 Drive 為 **5 TiB 總量、已用 13.376 GiB、free 4.987 TiB**（Trashed 2.558 GiB），容量從來不是瓶頸，該 403 應發生在上傳成功之後的 retention 刪檔階段。
 - [x] **最新快照已做不落地的串流驗證**：`rclone cat | gunzip -c` 全程串流、不寫磁碟，`gunzip` exit 0（gzip CRC 完好、未截斷），解開後前 16 bytes 為 `SQLite format 3\0`，解壓總長 **4,819,320,832 bytes（約 4.49 GiB）**，與 8/29 當時規模相符。耗時 37 秒，前後磁碟同為 8.0G free。
 - [x] retention 現況與 `weekly-backup.sh:32-35` 規則一致（保留最近 4 份，更舊者每月留最新一份）：0829／0824／0822／0815 為最近四份，0814（202608）與 0725（202607）各為其月份代表。
-- ⚠️ **仍未做：WP-B4 還原演練。** 有完好快照 ≠ 驗證過還原結果可用。完整演練需約 6.6GB（1.1GB 下載 + 4.5GB 解開）加上還原後的 `integrity_check` 與表列數抽查，VPS 目前僅 8.0GB free（71%），在正式機做太緊；`sqlite3` 也無法直接讀 pipe，所以無法比照上面純串流完成。待人類決定在何處進行。
+- [x] **WP-B4 還原演練已完成（2026-09-02，專案首次）**，在本機進行，對正式機零影響（未動 VPS 磁碟、未取鎖、未碰正式 DB）。自 Drive 取回 `radar-20260829.db.gz` **1,162,065,971 bytes**（與 Drive 列出的大小逐位元相符），解開得 **4,819,320,832 bytes**（與先前串流量測完全一致）。
+- [x] **還原結果可用，不只是檔案完好**：`PRAGMA quick_check` = **ok**（12.4 秒）、完整 `PRAGMA integrity_check` = **ok**（231.8 秒）、`foreign_key_check` **0 違規**、`page_count × page_size` 精確等於檔案大小、`journal_mode=wal`。內容抽查：22 表、`stocks` 2,491、`daily_prices` 10,205,766、`branch_trades_raw` 18,380,545、`warrant_daily` 5,729,141、`daily_scores` 19,341、`tracked_branches` 47，且 `daily_prices`／`branch_trades_raw`／`daily_scores`／`branch_rankings` 的最新日期一致為 **2026-08-28**（快照 8/29 05:12 取，涵蓋至 8/28，時序自洽）。
+- [x] **與已知正式狀態交叉核對通過**：`daily_prices`、`warrant_daily`、`daily_scores` 的列數與本檔 8/31 12:16 稽核紀錄完全相同；`branch_trades_raw` 較少（18,380,545 vs 21,522,284）正是因為分點回補持續在寫入。**至此備份鏈為端到端已驗證，不再只是「快照存在」。**
+- [x] 這份還原副本另作為兩支 shadow 工具的真實資料基準（fixture 給不出量級，見上節），跑完即可刪除；它不是第二份正式資料，不得回寫 VPS。
 
 ## 2026-09-02 VPS 金鑰改走 docker --env-file（使用者授權後執行）
 
