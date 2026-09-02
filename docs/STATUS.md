@@ -21,7 +21,14 @@
 
 - [x] VPS `~/trever-radar` HEAD 已是 `bf65dd0`（日更腳本自行 pull），16:10 `daily-insti.sh` 執行中（`import-warrant-master` 階段），持有 `/tmp/radar-db.lock`。本輪的 `data_date`／anchor 修正會由這條既有排程自然發布，**未手動觸發任何正式 import／export／deploy，未改 cron**。
 - [x] 既有四個未追蹤檔（`cloudflare-data-worker/package-lock.json`、`data/`、`radar-quick-catchup.sh`、`run-backfill.sh`）仍在且未阻斷本次 pull。磁碟 `29G` 中已用 `19G`、free `8.1G`（71%）；仍低於 20GB gate，禁止自行啟用全市場權證輪。分點回補 `backfill-branches --top 0 --days 490` 仍單實例執行中，guard／supervisor 各一，未重啟。
-- ⚠️ **資安待處理（未動，屬部署設定）**：`daily-insti.sh` 的 `docker run` 以 `-e RADAR_FINMIND_TOKEN=…`、`-e FUGLE_API_KEY=…` 傳入金鑰，因此完整值出現在 `ps`／`/proc` 的命令列參數中，任何本機使用者可讀。建議改 `--env-file`（檔案權限 600）並輪換這兩把金鑰。改動 VPS 腳本與 secrets 屬人工確認項，未自行執行。
+## 2026-09-02 VPS 金鑰改走 docker --env-file（使用者授權後執行）
+
+- [x] **問題**：`vps/scripts/lib.sh` 的 `radar()`／`radar_timeout()` 與 `bf-supervisor.sh` 的 `start_job()` 以 `-e RADAR_FINMIND_TOKEN=…`、`-e FUGLE_API_KEY=…` 傳金鑰，完整值因此進入 argv。實測該主機 `/proc` **未掛 `hidepid`**，任何本機 uid 都能由 `/proc/<pid>/cmdline` 讀走兩把金鑰。`daily-margin.sh`、`weekly-backup.sh` 的 `docker run` 不含金鑰，未動；`crontab.example` 的 radar-worker 早已是 `--env-file`。
+- [x] **修法**：改由 `radar_secret_env_new` 現產 `mktemp` 0600 檔（明確再 `chmod 600`），以 `--env-file` 傳入，呼叫一回來即刪，另掛 EXIT trap 兜底 `set -e` 中止／被 kill 的殘檔。值來源仍是既有 `vps/.env`／`pipeline/intraday/.env`，**不需在 VPS 預先建任何檔**，所以沒有「腳本先更新、檔案還沒建」的順序風險。容器內拿到的仍是同樣兩個環境變數，而 `/proc/<pid>/environ` 只有 owner 可讀。
+- [x] **契約細節**：`--env-file` 的值是第一個 `=` 之後的整行原文，不去引號、不去空白，所以一律不加引號；變數為空時仍寫 `KEY=`（省略整行會變成改由 host 環境查找，語意不同）；值含換行則 fail closed（`notify` + `exit 1`），不默默截斷金鑰。既有 trap 以 `trap -p` 讀出後串接而非覆蓋；子 shell 內不串接，避免提早跑掉父層的 flag 清理／unpause。
+- [x] **離開碼語意逐字保留**：`( exit "$rc" )` 後再 `return "$rc"`——`set -e` 生效時就地中止（維持函式內失敗不觸發 ERR trap 的舊行為，否則每次失敗會多噴一則 High 通知），`set -e` 被抑制時（`if radar …`／`radar || …`）忠實回傳 docker 離開碼，`daily-insti.sh` 的 exit 75 分支靠這個碼。
+- [x] **驗證（VPS 上以 `/tmp/secfix` 的複本執行，掛零 volume、只跑 `python -c`，未碰 DB／lock／cron）**：兩把金鑰的 host shell 值與容器內值長度與 sha256 前綴完全一致（197 bytes／`75b2d82a645e7c5d`；100 bytes／`5208eb09c98a5a08`），`-d` 分離容器亦同，證明刪檔時機正確。env 檔為 `600 huang:huang`、無引號無填充。實測新 argv 為 `docker run --rm --env-file /tmp/radar-env.XXXX …`，金鑰命中數 0。合成值另證引號不會被剝除、空值等價於 `-e KEY=`。`bash -n`（VPS bash 5.1.8）與 `git diff --check` 通過。VPS checkout 僅四個既有未追蹤檔、HEAD 未動、無殘留 `/tmp/radar-env.*`。
+- ⚠️ **仍待人工處理**：①**輪換兩把金鑰**——本次只堵住未來的外洩通道，不能撤銷過去每一輪 cron 期間的可讀狀態；②`vps/.env` 與 `pipeline/intraday/.env` 目前 `644`（`/home/huang` 為 `700` 故目前不可達，屬縱深防禦）；③主機另有 `portainer`／`appsec-agent`／`npm-attachment`／`watchtower` 等第三方容器，若任一以 `--pid=host` 或掛 host `/proc` 執行仍看得到 argv，portainer 持 docker socket 本身即等同 root——另案評估。
 
 ## 2026-09-01 TPEx 520 結構化重試與 16:10 安全降級（已同步正式機程式碼）
 
