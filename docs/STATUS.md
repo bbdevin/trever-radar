@@ -21,6 +21,15 @@
 
 - [x] VPS `~/trever-radar` HEAD 已是 `bf65dd0`（日更腳本自行 pull），16:10 `daily-insti.sh` 執行中（`import-warrant-master` 階段），持有 `/tmp/radar-db.lock`。本輪的 `data_date`／anchor 修正會由這條既有排程自然發布，**未手動觸發任何正式 import／export／deploy，未改 cron**。
 - [x] 既有四個未追蹤檔（`cloudflare-data-worker/package-lock.json`、`data/`、`radar-quick-catchup.sh`、`run-backfill.sh`）仍在且未阻斷本次 pull。磁碟 `29G` 中已用 `19G`、free `8.1G`（71%）；仍低於 20GB gate，禁止自行啟用全市場權證輪。分點回補 `backfill-branches --top 0 --days 490` 仍單實例執行中，guard／supervisor 各一，未重啟。
+## 2026-09-02 週備份鏈唯讀稽核：先前「備份狀態不明」的判斷是錯的
+
+- [x] **備份正常運作，有證據。** Drive `gdrive:trever-radar-backup/` 現有 6 份：`radar-20260829.db.gz`（1,162,065,971 bytes，2026-08-29 05:12）、`0824`（12:59，臨時跑）、`0822`（05:10）、`0815`（05:09）、`0814`（17:47，臨時跑）、`0725`（05:18）。最近一次週六排程備份為 **8/29 成功**。
+- [x] **該次 `integrity_check` 必然回 `ok`。** `weekly-backup.sh:18-22` 在 `CHECK != ok` 時 `notify` 後 `exit 1`，早於 gzip 與上傳；快照存在本身即證明檢查通過。不需另跑 `integrity_check` 去確認過去那一輪。
+- [x] **先前三個「症狀」全部是誤判**：①「主機未見 `.db.gz`」是 `weekly-backup.sh:29` 上傳後 `rm -f "$SNAP"` 的正常行為；②「log 無備份痕跡」是正常路徑幾乎不輸出（`db_sql >/dev/null`、rclone 靜默、只有 `notify_ok`）；③「8/22 Drive quota 403」不是持續阻斷——8/22 當天 05:10 的快照確實存在，且 Drive 為 **5 TiB 總量、已用 13.376 GiB、free 4.987 TiB**（Trashed 2.558 GiB），容量從來不是瓶頸，該 403 應發生在上傳成功之後的 retention 刪檔階段。
+- [x] **最新快照已做不落地的串流驗證**：`rclone cat | gunzip -c` 全程串流、不寫磁碟，`gunzip` exit 0（gzip CRC 完好、未截斷），解開後前 16 bytes 為 `SQLite format 3\0`，解壓總長 **4,819,320,832 bytes（約 4.49 GiB）**，與 8/29 當時規模相符。耗時 37 秒，前後磁碟同為 8.0G free。
+- [x] retention 現況與 `weekly-backup.sh:32-35` 規則一致（保留最近 4 份，更舊者每月留最新一份）：0829／0824／0822／0815 為最近四份，0814（202608）與 0725（202607）各為其月份代表。
+- ⚠️ **仍未做：WP-B4 還原演練。** 有完好快照 ≠ 驗證過還原結果可用。完整演練需約 6.6GB（1.1GB 下載 + 4.5GB 解開）加上還原後的 `integrity_check` 與表列數抽查，VPS 目前僅 8.0GB free（71%），在正式機做太緊；`sqlite3` 也無法直接讀 pipe，所以無法比照上面純串流完成。待人類決定在何處進行。
+
 ## 2026-09-02 VPS 金鑰改走 docker --env-file（使用者授權後執行）
 
 - [x] **問題**：`vps/scripts/lib.sh` 的 `radar()`／`radar_timeout()` 與 `bf-supervisor.sh` 的 `start_job()` 以 `-e RADAR_FINMIND_TOKEN=…`、`-e FUGLE_API_KEY=…` 傳金鑰，完整值因此進入 argv。實測該主機 `/proc` **未掛 `hidepid`**，任何本機 uid 都能由 `/proc/<pid>/cmdline` 讀走兩把金鑰。`daily-margin.sh`、`weekly-backup.sh` 的 `docker run` 不含金鑰，未動；`crontab.example` 的 radar-worker 早已是 `--env-file`。
@@ -28,7 +37,9 @@
 - [x] **契約細節**：`--env-file` 的值是第一個 `=` 之後的整行原文，不去引號、不去空白，所以一律不加引號；變數為空時仍寫 `KEY=`（省略整行會變成改由 host 環境查找，語意不同）；值含換行則 fail closed（`notify` + `exit 1`），不默默截斷金鑰。既有 trap 以 `trap -p` 讀出後串接而非覆蓋；子 shell 內不串接，避免提早跑掉父層的 flag 清理／unpause。
 - [x] **離開碼語意逐字保留**：`( exit "$rc" )` 後再 `return "$rc"`——`set -e` 生效時就地中止（維持函式內失敗不觸發 ERR trap 的舊行為，否則每次失敗會多噴一則 High 通知），`set -e` 被抑制時（`if radar …`／`radar || …`）忠實回傳 docker 離開碼，`daily-insti.sh` 的 exit 75 分支靠這個碼。
 - [x] **驗證（VPS 上以 `/tmp/secfix` 的複本執行，掛零 volume、只跑 `python -c`，未碰 DB／lock／cron）**：兩把金鑰的 host shell 值與容器內值長度與 sha256 前綴完全一致（197 bytes／`75b2d82a645e7c5d`；100 bytes／`5208eb09c98a5a08`），`-d` 分離容器亦同，證明刪檔時機正確。env 檔為 `600 huang:huang`、無引號無填充。實測新 argv 為 `docker run --rm --env-file /tmp/radar-env.XXXX …`，金鑰命中數 0。合成值另證引號不會被剝除、空值等價於 `-e KEY=`。`bash -n`（VPS bash 5.1.8）與 `git diff --check` 通過。VPS checkout 僅四個既有未追蹤檔、HEAD 未動、無殘留 `/tmp/radar-env.*`。
-- ⚠️ **仍待人工處理**：①**輪換兩把金鑰**——本次只堵住未來的外洩通道，不能撤銷過去每一輪 cron 期間的可讀狀態；②`vps/.env` 與 `pipeline/intraday/.env` 目前 `644`（`/home/huang` 為 `700` 故目前不可達，屬縱深防禦）；③主機另有 `portainer`／`appsec-agent`／`npm-attachment`／`watchtower` 等第三方容器，若任一以 `--pid=host` 或掛 host `/proc` 執行仍看得到 argv，portainer 持 docker socket 本身即等同 root——另案評估。
+- [x] `vps/.env` 與 `pipeline/intraday/.env` 已由 `644` 收為 `600`（`/home/huang` 本即 `700`，故此層屬縱深防禦）。
+- [x] **金鑰不輪換：2026-09-02 使用者定案。** 理由：該 VPS 為單一操作者、只有使用者本人能登入，argv 可讀的對象實際上不存在第二個。此決定已知悉「本次修正只堵未來通道、不能撤銷過去每輪 cron 期間的可讀狀態」，仍選擇不重簽。**後續 agent 不要再把輪換列為待辦或自行執行。** repo 端另已確認乾淨：`vps/.env`、`pipeline/intraday/.env` 均在 `.gitignore:28`，git 全歷史無此二檔，無任何 tracked `.env`，所以暴露面從未擴散到 public repo。
+- ⚠️ 未評估（另案）：主機另有 `portainer`／`appsec-agent`／`npm-attachment`／`watchtower` 等第三方容器，若任一以 `--pid=host` 或掛 host `/proc` 執行仍看得到 argv；portainer 持 docker socket 本身即等同 root。
 
 ## 2026-09-01 TPEx 520 結構化重試與 16:10 安全降級（已同步正式機程式碼）
 
