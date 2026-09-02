@@ -93,6 +93,27 @@ def _migrate_sqlite(conn):
         if name not in margin_cols:
             conn.exec_driver_sql(f"ALTER TABLE daily_margins ADD COLUMN {name} {sql_type}")
 
+    # 分點隔日沖改版:pooled 比率 → 配對比例。舊快照的這些欄位維持 NULL,
+    # 該 NULL 就是版本標記,用來區分 pooled 時代與新版的 branch_rankings 快照。
+    rank_cols = {r[1] for r in conn.exec_driver_sql("PRAGMA table_info(branch_rankings)").fetchall()}
+    rank_additions = {
+        "matured_samples": "INTEGER",
+        "daytrade_pairs_determined": "INTEGER",
+        "daytrade_pairs_flagged": "INTEGER",
+    }
+    for name, sql_type in rank_additions.items():
+        if name not in rank_cols:
+            conn.exec_driver_sql(f"ALTER TABLE branch_rankings ADD COLUMN {name} {sql_type}")
+
+    bss_cols = {r[1] for r in conn.exec_driver_sql("PRAGMA table_info(branch_stock_stats)").fetchall()}
+    bss_additions = {
+        "daytrade_obs": "INTEGER",
+        "daytrade_paybacks": "INTEGER",
+    }
+    for name, sql_type in bss_additions.items():
+        if name not in bss_cols:
+            conn.exec_driver_sql(f"ALTER TABLE branch_stock_stats ADD COLUMN {name} {sql_type}")
+
     view_check = conn.exec_driver_sql("SELECT type FROM sqlite_master WHERE name='branch_trades'").scalar()
     if view_check == 'table':
         conn.exec_driver_sql("ALTER TABLE branch_trades RENAME TO branch_trades_old")

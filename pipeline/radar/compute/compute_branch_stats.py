@@ -26,10 +26,19 @@ from .performance import forward_returns
 # 事件資格
 QUAL_PCT = 1.0                 # 淨買超 ≥ 成交值 1%
 
-# 隔日沖判定
+# 隔日沖判定(分兩層:pair =(分點,個股),branch = 跨股彙總)
+#
+# 語意警告:一筆 pair 觀察只有在「次日該分點出現在該股當日前 15 大賣超」時才算回吐。
+# 真正的隔日沖desk幾乎全數當沖出場,但免費資料每日只有前 15 大,多數出場看不見,
+# 因此連台股最知名的隔日沖分點實測也只到 0.315,而非接近 1.0。
+# 所以 branch 層的 DAYTRADE_PAIR_SHARE 讀作:
+#   「可判定的(分點×個股)配對中,在每日前 15 大切片內看得到隔日翻單的比例」。
+# 絕不可寫成「多數情況下隔日出場」之類的文案。
 DAYTRADE_PAYBACK = 0.7         # 次日回吐 ≥ 當日淨買 70% 視為回吐
-DAYTRADE_RATE = 0.6            # 回吐比率 ≥ 60% → 隔日沖
-DAYTRADE_MIN_OBS = 4           # 觀察數 < 4 不判定
+DAYTRADE_RATE = 0.6            # pair 層:回吐比率 ≥ 60% → 該配對標記隔日沖
+DAYTRADE_MIN_OBS = 8           # pair 層:合併連續段「之前」的觀察數 < 8 不判定(換取單一配對的雜訊過濾)
+DAYTRADE_MIN_PAIRS = 20        # branch 層:可判定配對 < 20 不判定(換取分點層比例的分母穩定度)
+DAYTRADE_PAIR_SHARE = 0.20     # branch 層:被標記配對佔可判定配對 ≥ 20% → 隔日沖分點(換取在前 15 大切片下仍可辨識的門檻)
 
 # 排行 / 追蹤門檻(§2b/§5)
 MIN_RANK_EVENTS = 5           # 入榜門檻:pooled 事件數 ≥ 5(前端 <10 顯示樣本不足)
@@ -67,18 +76,34 @@ def merge_consecutive_events(qual_dates: list[str], date_index: dict[str, int]) 
     return events
 
 
-def daytrade_flag(observations: list[tuple[float, float]]) -> tuple[bool, float | None]:
-    """隔日沖判定。observations 為 (當日淨買張, 次一交易日同分點賣出張) 清單。
+def daytrade_flag(observations: list[tuple[float, float]],
+                  min_obs: int | None = None) -> tuple[bool | None, float | None]:
+    """單一 (分點, 個股) 配對的隔日沖判定。observations 為 (當日淨買張, 次一交易日同分點賣出張)。
 
     次日該分點無紀錄(未進前 15 大賣超)→ sell=0,視為未回吐;這是免費資料
-    (每日僅前 15 大)的誠實限制。觀察數 < 4 → (False, None) 不判定。
+    (每日僅前 15 大)的誠實限制。
+
+    觀察數 < min_obs(預設 DAYTRADE_MIN_OBS)→ (None, None):「無法判定」,不是
+    「判定為非隔日沖」。呼叫端必須把 None 當 NULL 傳遞,不可與 False 混用。
+    min_obs 只給影子報表凍結歷史門檻用,線上計算一律走預設值。
     """
+    threshold = DAYTRADE_MIN_OBS if min_obs is None else min_obs
     obs = [(net, sell) for net, sell in observations if net and net > 0]
-    if len(obs) < DAYTRADE_MIN_OBS:
-        return False, None
+    if len(obs) < threshold:
+        return None, None
     paybacks = sum(1 for net, sell in obs if (sell or 0) >= DAYTRADE_PAYBACK * net)
     rate = paybacks / len(obs)
     return rate >= DAYTRADE_RATE, rate
+
+
+def auto_in_blocked_by_daytrade(is_daytrade: bool | None) -> bool:
+    """自動入選的隔日沖閘門:只有「確定是隔日沖」(True)才擋。
+
+    is_daytrade 為 None 代表「未判定」(可判定配對 < DAYTRADE_MIN_PAIRS),不得擋。
+    絕大多數新分點都是未判定,若把這裡寫成 `not is_daytrade` 之類的真值測試,
+    自動入選將幾乎永遠不會發生。請勿「修正」成真值測試。
+    """
+    return is_daytrade is True
 
 
 def price_percentile(close: float | None, low: float | None, high: float | None) -> float:
@@ -142,7 +167,7 @@ class _BranchAgg:
     __slots__ = (
         "n_events", "sum_pctile", "n_matured", "win_count", "sum_ret5",
         "n_ev_90", "n_matured_90", "sum_ret5_90", "n_ev_2y", "amount",
-        "dt_obs", "dt_paybacks",
+        "dt_pairs_determined", "dt_pairs_flagged",
     )
 
     def __init__(self) -> None:
@@ -156,15 +181,20 @@ class _BranchAgg:
         self.sum_ret5_90 = 0.0
         self.n_ev_2y = 0
         self.amount = 0.0
-        self.dt_obs = 0
-        self.dt_paybacks = 0
+        self.dt_pairs_determined = 0
+        self.dt_pairs_flagged = 0
 
-    def add_obs(self, net: float, sell: float) -> None:
-        if not net or net <= 0:
+    def add_pair(self, pair_is_daytrade: bool | None) -> None:
+        """每個 (分點, 個股) 配對只計一次。None = 該配對觀察數不足,兩個計數都不動。
+
+        舊版把所有配對的觀察數 pooled 起來算單一比率;分點平均橫跨 ~1,128 檔,
+        pooled 比率永遠到不了 0.6,實測 831 個分點全為 false。改計配對比例。
+        """
+        if pair_is_daytrade is None:
             return
-        self.dt_obs += 1
-        if (sell or 0) >= DAYTRADE_PAYBACK * net:
-            self.dt_paybacks += 1
+        self.dt_pairs_determined += 1
+        if pair_is_daytrade:
+            self.dt_pairs_flagged += 1
 
     def add_event(self, date: str, fwd5: float | None, pctile: float,
                   cutoff90: str, cutoff2y: str) -> None:
@@ -184,10 +214,11 @@ class _BranchAgg:
             self.n_matured_90 += 1
             self.sum_ret5_90 += fwd5
 
-    def is_daytrade(self) -> bool:
-        if self.dt_obs < DAYTRADE_MIN_OBS:
-            return False
-        return (self.dt_paybacks / self.dt_obs) >= DAYTRADE_RATE
+    def is_daytrade(self) -> bool | None:
+        """None = 可判定配對不足,無法判定(不等於「不是隔日沖分點」)。"""
+        if self.dt_pairs_determined < DAYTRADE_MIN_PAIRS:
+            return None
+        return (self.dt_pairs_flagged / self.dt_pairs_determined) >= DAYTRADE_PAIR_SHARE
 
 
 def compute_all():
@@ -276,8 +307,14 @@ def compute_all():
                         nrow = datemap.get(trading_dates[idx + 1])
                         next_sell = (nrow["sell"] if nrow else 0) or 0
                     obs.append((net, next_sell))
-                    agg.add_obs(net, next_sell)
+                # pair 層判定用「合併連續段之前」的觀察數(obs 逐資格日,未合併)。
                 st_daytrade, _ = daytrade_flag(obs)
+                dt_obs = sum(1 for net, _s in obs if net and net > 0)
+                dt_paybacks = sum(
+                    1 for net, sell in obs
+                    if net and net > 0 and (sell or 0) >= DAYTRADE_PAYBACK * net
+                )
+                agg.add_pair(st_daytrade)
 
                 # 合併事件 + 前瞻報酬 + 買點分位 → 直接打進累加器。
                 events = merge_consecutive_events(qual_dates, date_index)
@@ -307,9 +344,10 @@ def compute_all():
                             amt += (datemap[qd]["net"] or 0) * 1000 * cl
                 agg.amount += amt
 
-                # 緊湊 tuple:(events, win, ret5, daytrade, last_active)
+                # 緊湊 tuple:(events, win, ret5, daytrade, last_active, dt_obs, dt_paybacks)
                 stock_stats[(br, sid)] = (
                     len(events), _r1(win_rate), _r2(avg_ret5), st_daytrade, qual_dates[-1],
+                    dt_obs, dt_paybacks,
                 )
 
             if n_done % 400 == 0:
@@ -332,6 +370,9 @@ def compute_all():
             "win_rate": win_rate,
             "avg_ret5": avg_ret5,
             "is_dt": agg.is_daytrade(),
+            "n_matured": agg.n_matured,
+            "dt_pairs_determined": agg.dt_pairs_determined,
+            "dt_pairs_flagged": agg.dt_pairs_flagged,
             "n_ev_90": agg.n_ev_90,
             "n_ev_2y": agg.n_ev_2y,
         }
@@ -350,8 +391,11 @@ def compute_all():
             "win_rate": _r1(m["win_rate"]),
             "avg_ret5": _r2(m["avg_ret5"]),
             "samples": m["n_events"],
+            "matured_samples": m["n_matured"],
             "style": "daytrade" if m["is_dt"] else "swing",
             "is_daytrade": m["is_dt"],
+            "daytrade_pairs_determined": m["dt_pairs_determined"],
+            "daytrade_pairs_flagged": m["dt_pairs_flagged"],
             "source": tracked.get(br, "candidate"),
         })
 
@@ -364,8 +408,10 @@ def compute_all():
             "events_count": s[0],
             "win_rate": s[1],
             "avg_ret5": s[2],
-            "is_daytrade_suspect": s[3],
+            "is_daytrade_suspect": s[3],   # None = 觀察數不足,未判定(不是 False)
             "last_active_date": s[4],
+            "daytrade_obs": s[5],
+            "daytrade_paybacks": s[6],
             "updated_at": now,
         }
         for (br, sid), s in stock_stats.items() if br in persist
@@ -377,8 +423,10 @@ def compute_all():
     for br, m in branch_meta.items():
         src = tracked.get(br)
         if src is None:
+            # NULL(未判定)不擋自動入選 —— 見 auto_in_blocked_by_daytrade 的說明。
+            blocked_by_daytrade = auto_in_blocked_by_daytrade(m["is_dt"])
             if (m["n_ev_2y"] >= AUTO_IN_EVENTS_2Y and m["score"] >= AUTO_IN_SCORE
-                    and not m["is_dt"] and m["n_ev_90"] >= AUTO_IN_EVENTS_90):
+                    and not blocked_by_daytrade and m["n_ev_90"] >= AUTO_IN_EVENTS_90):
                 auto_in.append(br)
         elif src == "auto":
             if m["score"] < AUTO_OUT_SCORE and m["n_ev_90"] < AUTO_OUT_EVENTS_90:

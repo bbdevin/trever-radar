@@ -245,7 +245,9 @@ branch_stock_stats = Table(
     Column("events_count", Integer),
     Column("win_rate", Float),
     Column("avg_ret5", Float),
-    Column("is_daytrade_suspect", Boolean),
+    Column("is_daytrade_suspect", Boolean),   # NULL = 觀察數不足,未判定
+    Column("daytrade_obs", Integer),          # 判定用觀察數(合併連續段之前)
+    Column("daytrade_paybacks", Integer),     # 其中次日回吐筆數
     Column("last_active_date", Text),
     Column("updated_at", Text)
 )
@@ -258,9 +260,12 @@ branch_rankings = Table(
     Column("rank_score", Float),
     Column("win_rate", Float),
     Column("avg_ret5", Float),
-    Column("samples", Integer),
+    Column("samples", Integer),               # 事件數(合併後)
+    Column("matured_samples", Integer),       # 其中已成熟(有 5 日前瞻報酬)的事件數 = 勝率分母
     Column("style", Text), # swing, short, daytrade
-    Column("is_daytrade", Boolean),
+    Column("is_daytrade", Boolean),           # NULL = 可判定配對不足,未判定
+    Column("daytrade_pairs_determined", Integer),   # 可判定的 (分點,個股) 配對數
+    Column("daytrade_pairs_flagged", Integer),      # 其中被標記隔日沖的配對數
     Column("source", Text)
 )
 

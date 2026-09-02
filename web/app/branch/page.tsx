@@ -21,8 +21,14 @@ type Ranking = {
   avg_ret5: number | null;
   samples: number;
   style: string;
-  is_daytrade: number;
+  is_daytrade: number | null;
   source: string;
+  // 以下為新欄位。Cloudflare Pages 的程式碼在 push 後幾分鐘就上線,JSON 卻要等
+  // 下一次 VPS export 才更新,因此舊 payload 會跑在新程式碼上 —— 一律 optional,
+  // 且必須有乾淨的 fallback。
+  matured_samples?: number | null;
+  daytrade_pairs_determined?: number | null;
+  daytrade_pairs_flagged?: number | null;
 };
 
 type RankingsData = {
@@ -68,6 +74,37 @@ function NoTrackDetailPanel({ branchName }: { branchName: string }) {
 
 const MIN_SAMPLES = 10; // 樣本 < 10 顯示「樣本不足」(docs/13 §4)
 
+// 勝率/平均報酬的分母是「已成熟事件數」,不是事件總數。舊 payload 沒有
+// matured_samples,退回 samples(舊行為)。
+function effectiveSamples(r: Ranking): number {
+  return r.matured_samples ?? r.samples;
+}
+
+// 隔日沖分點的判定門檻:可判定的 (分點×個股) 配對 >= 20 才下結論。
+const MIN_DAYTRADE_PAIRS = 20;
+
+// 這個徽章陳述證據,不下判決。
+// 一筆配對只有在「次日該分點出現在該股當日前 15 大賣超」時才算翻單;真正的隔日沖
+// desk 幾乎全數當沖出場,但每日前 15 大的切片看不到多數出場,所以連台股最知名的
+// 隔日沖分點實測也只到 0.315。徽章讀作:「可判定的分點×個股配對中,在每日前 15 大
+// 切片內看得到隔日翻單的比例」—— 絕不可寫成「多數情況下隔日出場」。
+const DAYTRADE_TOOLTIP =
+  "可判定的「分點×個股」配對中,隔日在該股前 15 大賣超名單再度出現、且賣出量達當日淨買 70% 以上的比例。"
+  + "每日僅公布前 15 大,多數出場看不見,因此此比例是下限,不代表該分點多數情況下隔日出場。"
+  + `可判定配對 < ${MIN_DAYTRADE_PAIRS} 檔時不下判定。`;
+
+function daytradeBadge(r: Ranking): { label: string; flagged: boolean } | null {
+  const determined = r.daytrade_pairs_determined;
+  const flagged = r.daytrade_pairs_flagged;
+  // 舊 payload 沒有配對欄位:退回只顯示既有的 is_daytrade 結論。
+  if (determined == null || flagged == null) {
+    return r.is_daytrade === 1 ? { label: "隔日沖", flagged: true } : null;
+  }
+  if (determined < MIN_DAYTRADE_PAIRS) return { label: "隔日沖未判定", flagged: false };
+  if (r.is_daytrade === 1) return { label: `隔日沖 ${flagged}/${determined} 檔`, flagged: true };
+  return null;
+}
+
 const SOURCE_BADGE: Record<string, { label: string; cls: string }> = {
   manual: { label: "手動", cls: "bg-warn/10 text-warn" },
   auto: { label: "自動", cls: "bg-primary/10 text-primary" },
@@ -75,8 +112,9 @@ const SOURCE_BADGE: Record<string, { label: string; cls: string }> = {
 };
 
 function RankCard({ r, trackable, active }: { r: Ranking; trackable?: boolean; active?: boolean }) {
-  const enoughSamples = r.samples >= MIN_SAMPLES;
+  const enoughSamples = effectiveSamples(r) >= MIN_SAMPLES;
   const badge = SOURCE_BADGE[r.source] ?? SOURCE_BADGE.candidate;
+  const dtBadge = daytradeBadge(r);
   return (
     <div className={cn(
       "flex h-full flex-col gap-3 rounded-[var(--r-lg)] border p-3.5 shadow-[var(--shadow-card)] transition-all duration-200",
@@ -100,7 +138,17 @@ function RankCard({ r, trackable, active }: { r: Ranking; trackable?: boolean; a
             </span>
           )}
           <span className={cn("rounded-md px-1.5 py-0.5 text-[10.5px] font-bold", badge.cls)}>{badge.label}</span>
-          {r.is_daytrade === 1 && <span className="rounded-md bg-down/10 px-2 py-0.5 text-[11.5px] font-bold text-down">隔日沖</span>}
+          {dtBadge && (
+            <span
+              title={DAYTRADE_TOOLTIP}
+              className={cn(
+                "rounded-md px-2 py-0.5 text-[11.5px] font-bold",
+                dtBadge.flagged ? "bg-down/10 text-down" : "bg-muted text-muted-foreground",
+              )}
+            >
+              {dtBadge.label}
+            </span>
+          )}
         </div>
       </div>
       <div className="grid grid-cols-2 gap-3">
@@ -562,17 +610,17 @@ export default function BranchPage() {
   const mainRankings = rankingsData.rankings;
   const daytradeRankings = rankingsData.daytrade;
   const totalBranches = mainRankings.length + daytradeRankings.length;
-  const enoughSampleCount = [...mainRankings, ...daytradeRankings].filter(r => r.samples >= MIN_SAMPLES).length;
+  const enoughSampleCount = [...mainRankings, ...daytradeRankings].filter(r => effectiveSamples(r) >= MIN_SAMPLES).length;
   const trackNames = new Set(trackIndex.map((e) => e.branch_name));
   const trackIndexReady = trackIndexStatus === "ready";
-  const hasDataWarning = [...mainRankings, ...daytradeRankings].some((r) => r.samples < MIN_SAMPLES);
+  const hasDataWarning = [...mainRankings, ...daytradeRankings].some((r) => effectiveSamples(r) < MIN_SAMPLES);
 
   // IA-3: filter logic
   const allRankings = [...mainRankings, ...daytradeRankings];
   const filteredRankings = allRankings.filter(r => {
     if (filterSearch && !r.branch_name.includes(filterSearch)) return false;
     if (filterTrackable && !trackNames.has(r.branch_name)) return false;
-    if (filterEnough && r.samples < MIN_SAMPLES) return false;
+    if (filterEnough && effectiveSamples(r) < MIN_SAMPLES) return false;
     if (filterDaytrade === "exclude" && r.is_daytrade === 1) return false;
     if (filterDaytrade === "only" && r.is_daytrade !== 1) return false;
     return true;

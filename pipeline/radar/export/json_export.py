@@ -1470,15 +1470,17 @@ def _export_branches(out: Path, engine, date: str):
         # Rankings：只取最新一次快照(branch_rankings 保留歷史,§5)。
         # 隔日沖分點另列 daytrade 清單,不混入主榜(§3b:它們是反指標/風險訊號)。
         rows = [dict(r._mapping) for r in conn.execute(text(
-            "SELECT branch_name, as_of, rank_score, win_rate, avg_ret5, samples, style, is_daytrade, source "
+            "SELECT branch_name, as_of, rank_score, win_rate, avg_ret5, samples, matured_samples, "
+            "style, is_daytrade, daytrade_pairs_determined, daytrade_pairs_flagged, source "
             "FROM branch_rankings "
             "WHERE as_of = (SELECT MAX(as_of) FROM branch_rankings) "
             "ORDER BY rank_score DESC, samples DESC"
         ))]
         rankings = {
             "as_of": rows[0]["as_of"] if rows else None,
-            "rankings": [r for r in rows if not r["is_daytrade"]],
-            "daytrade": [r for r in rows if r["is_daytrade"]],
+            # is_daytrade 為 NULL = 未判定 → 走主榜,不進 daytrade 清單。
+            "rankings": [r for r in rows if r["is_daytrade"] != 1],
+            "daytrade": [r for r in rows if r["is_daytrade"] == 1],
         }
         (branches_dir / "rankings.json").write_text(
             json.dumps(rankings, ensure_ascii=False), encoding="utf-8")
@@ -1725,7 +1727,7 @@ def _export_tracked_branch_history(out: Path, engine, date: str):
             SELECT branch_name, COALESCE(NULLIF(TRIM(source), ''), 'candidate') AS source
             FROM branch_rankings
             WHERE as_of = (SELECT MAX(as_of) FROM branch_rankings)
-              AND is_daytrade = 0
+              AND COALESCE(is_daytrade, 0) = 0   -- NULL = 未判定,不當作隔日沖排除
               AND branch_name IS NOT NULL AND TRIM(branch_name) <> ''
             ORDER BY rank_score DESC, samples DESC, branch_name ASC
             LIMIT :limit

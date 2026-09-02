@@ -336,6 +336,52 @@ class TrackedBranchHistoryExportTests(unittest.TestCase):
         self.assertIsNone(by_name["無資料-分點"]["first_date"])
         self.assertIsNone(by_name["無資料-分點"]["last_date"])
 
+    def test_null_is_daytrade_stays_in_main_list_and_detail_set(self):
+        """未判定(NULL)不是隔日沖:主榜要收它,明細候選集也不能被 SQL 的 NULL 語意吃掉。"""
+        with db.get_engine().begin() as conn:
+            conn.execute(schema.branch_rankings.insert(), [
+                {"branch_name": "未判定-分點", "as_of": self.AS_OF, "rank_score": 99,
+                 "samples": 30, "matured_samples": 12, "is_daytrade": None,
+                 "daytrade_pairs_determined": 3, "daytrade_pairs_flagged": 1,
+                 "source": "candidate"},
+                {"branch_name": "隔日沖-確定", "as_of": self.AS_OF, "rank_score": 98,
+                 "samples": 40, "matured_samples": 20, "is_daytrade": 1,
+                 "daytrade_pairs_determined": 100, "daytrade_pairs_flagged": 32,
+                 "source": "candidate"},
+            ])
+            from radar.importer import upsert_branch_trades
+            upsert_branch_trades(conn, [
+                {"stock_id": "2330", "date": self.AS_OF, "branch_key": "u1",
+                 "branch_name": "未判定-分點", "buy_lots": 10, "sell_lots": 0,
+                 "net_lots": 10, "pct": 0.1},
+                {"stock_id": "2330", "date": self.AS_OF, "branch_key": "dd1",
+                 "branch_name": "隔日沖-確定", "buy_lots": 90, "sell_lots": 0,
+                 "net_lots": 90, "pct": 0.9},
+            ])
+        out = Path(self._tmp.name) / "out"
+        export_json(out)
+
+        rankings = json.loads((out / "branches" / "rankings.json").read_text(encoding="utf-8"))
+        main = {r["branch_name"] for r in rankings["rankings"]}
+        daytrade = {r["branch_name"] for r in rankings["daytrade"]}
+        self.assertIn("未判定-分點", main)
+        self.assertNotIn("未判定-分點", daytrade)
+        self.assertIn("隔日沖-確定", daytrade)
+
+        # 分母隨比例一起出貨,前端才能顯示「flagged/determined」。
+        row = next(r for r in rankings["rankings"] if r["branch_name"] == "未判定-分點")
+        self.assertIsNone(row["is_daytrade"])
+        self.assertEqual(row["matured_samples"], 12)
+        self.assertEqual(row["daytrade_pairs_determined"], 3)
+        self.assertEqual(row["daytrade_pairs_flagged"], 1)
+
+        # COALESCE(is_daytrade, 0) = 0:NULL 列必須留在明細候選集。
+        index = json.loads(
+            (out / "branches" / "track" / "index.json").read_text(encoding="utf-8"))
+        names = {e["branch_name"] for e in index}
+        self.assertIn("未判定-分點", names)
+        self.assertNotIn("隔日沖-確定", names)
+
     def test_detail_caps_keep_tracked_or_fail_closed_and_hard_cap_rows(self):
         # With the existing two tracked entries, a two-branch cap leaves no
         # room for a ranking-only candidate but must preserve both tracked.

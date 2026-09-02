@@ -32,7 +32,6 @@ from sqlalchemy import text
 
 # V1 的公式與門檻一律匯入重用,絕不在本模組重新推導。
 from .compute_branch_stats import (
-    DAYTRADE_MIN_OBS,
     DAYTRADE_RATE,
     MIN_RANK_EVENTS,
     QUAL_PCT,
@@ -57,6 +56,10 @@ REQUIRED_TABLES = (
 V2_MATURED_PROVISIONAL = 10     # 成熟樣本 >= 10 → 暫定
 V2_MATURED_SUFFICIENT = 30      # 成熟樣本 >= 30 → 充分
 V2_DAYTRADE_MIN_OBS = 8         # 隔日沖最低觀察數(V1 為 4)
+# 本報表凍結的是「改版前」的 V1 基準:min_obs=4,且觀察數不足時靜默回傳 False。
+# 線上 compute_branch_stats.DAYTRADE_MIN_OBS 已改為 8 且未判定回傳 None;
+# 這裡刻意保留常數 4,報表描述的是歷史行為,不隨線上門檻漂移。
+V1_DAYTRADE_MIN_OBS = 4
 
 INTERPRETATIONS: dict[str, str] = {
     "a_score_and_flag": (
@@ -91,15 +94,17 @@ def maturity_tier(matured_samples: int) -> str:
 def daytrade_verdicts(observations: list[tuple[float, float]]) -> dict[str, Any]:
     """同一組觀察值在 4 筆與 8 筆最低門檻下的隔日沖判定。
 
-    回吐比率一律由 ``daytrade_flag`` 產生(不在此重新推導);觀察數不足時
-    V1 回傳 (False, None) —— 亦即「未判定卻預設為否」,V2 則明確記為 unknown。
+    回吐比率一律由 ``daytrade_flag`` 產生(不在此重新推導);改版前的 V1 在
+    觀察數不足時回傳 (False, None) —— 亦即「未判定卻預設為否」,V2 則明確記為
+    unknown。線上 daytrade_flag 現已回傳 None,此處明確補回歷史的 False。
     """
     obs_count = sum(1 for net, _sell in observations if net and net > 0)
-    is_dt_v1, rate = daytrade_flag(observations)
+    is_dt_v1, rate = daytrade_flag(observations, min_obs=V1_DAYTRADE_MIN_OBS)
+    v1_determined = obs_count >= V1_DAYTRADE_MIN_OBS
     v1 = {
-        "min_obs": DAYTRADE_MIN_OBS,
-        "verdict": is_dt_v1,
-        "status": "determined" if obs_count >= DAYTRADE_MIN_OBS else "not_determined_defaults_false",
+        "min_obs": V1_DAYTRADE_MIN_OBS,
+        "verdict": is_dt_v1 if v1_determined else False,
+        "status": "determined" if v1_determined else "not_determined_defaults_false",
     }
     if obs_count >= V2_DAYTRADE_MIN_OBS and rate is not None:
         v2 = {
@@ -241,8 +246,9 @@ def _fetch(conn, as_of: str) -> tuple[dict[str, _BranchAgg], dict[str, list[tupl
                 if index is not None and index + 1 < len(trading_dates):
                     next_row = datemap.get(trading_dates[index + 1])
                     next_sell = (next_row["sell"] if next_row else 0) or 0
+                # 隔日沖判定改為配對層後,_BranchAgg 不再 pooled 累加觀察值;
+                # 本報表的隔日沖區塊一律由 observations 自行推導。
                 observations[branch_name].append((net, next_sell))
-                agg.add_obs(net, next_sell)
 
             for event_date in merge_consecutive_events(qual_dates, date_index):
                 perf = forward_returns(adj_candles, event_date)
@@ -457,7 +463,7 @@ def build_branch_ranking_v2_shadow_report(*, as_of: str) -> dict[str, Any]:
             "thresholds": {
                 "qualifying_pct": QUAL_PCT,
                 "v1_min_rank_events": MIN_RANK_EVENTS,
-                "v1_daytrade_min_obs": DAYTRADE_MIN_OBS,
+                "v1_daytrade_min_obs": V1_DAYTRADE_MIN_OBS,
                 "v2_daytrade_min_obs": V2_DAYTRADE_MIN_OBS,
                 "v2_matured_provisional": V2_MATURED_PROVISIONAL,
                 "v2_matured_sufficient": V2_MATURED_SUFFICIENT,
