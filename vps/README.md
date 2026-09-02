@@ -222,6 +222,7 @@ sqlite3 radar.db "PRAGMA integrity_check;"        # ok 才能用
 - **失敗 → ntfy High；日更／週更成功 → 繁中摘要**（標題如「三大法人 · 成功」）。
 - 非交易日:importer 靠 NoDataError 安全空跑,不手刻假日曆(既有定案)。
 - deploy 憑證只在主機(`vps/.env`),容器只拿到 `RADAR_FINMIND_TOKEN` 與 `FUGLE_API_KEY`(後者從 `pipeline/intraday/.env` 讀入,WP-H3 當日分時與盤中 worker 同一把)——權限分離。
+- **金鑰用 `docker --env-file` 傳,不用 `-e KEY=值`**(2026-09-02):argv 在 Linux 上人人可讀(`ps`、`/proc/<pid>/cmdline` 對同機任何帳號開放),`-e` 會把兩把金鑰的完整值攤在命令列上;改由 `lib.sh` 的 `radar_secret_env_new` 於每次呼叫前用 `mktemp` 現產一個 **0600** 暫存檔(`/tmp/radar-env.XXXXXXXX`),docker client 讀完即用,呼叫一回來就刪,另掛 EXIT trap 兜底(串接既有 trap,不覆蓋)。容器內拿到的仍是同樣兩個環境變數,而 `/proc/<pid>/environ` 只有 owner 讀得到,不是外洩面。檔案格式:`KEY=值` 一行一個、**值不加引號**(docker 取第一個 `=` 之後的整行原文,不去引號、不去空白,`FUGLE_API_KEY` 的中間空白與結尾 `=` 因此逐位元保留);變數未設時仍寫 `KEY=`,容器內得到空字串,與舊的 `-e KEY=` 行為一致。同一把金鑰的盤中 worker 本來就走 `--env-file`(見 `crontab.example`)。
 
 安裝(一次):
 

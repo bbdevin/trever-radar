@@ -110,16 +110,88 @@ if [ -z "${FUGLE_API_KEY:-}" ] && [ -f "$REPO/pipeline/intraday/.env" ]; then
   export FUGLE_API_KEY
 fi
 
+# 金鑰一律走 --env-file,不用 `-e KEY=值`:argv 在 Linux 上人人可讀
+# (`ps` / `/proc/<pid>/cmdline`),用 -e 等於把兩把金鑰完整值攤給本機任一帳號;
+# 改走 0600 暫存檔後,容器內拿到的還是同樣兩個環境變數,而 `/proc/<pid>/environ`
+# 只有 owner 讀得到,不是外洩面。
+#
+# docker --env-file 解析規則(值 = 第一個 '=' 之後的整行原文):
+#   * 不去引號、不去空白 → 值一律不加引號,中間空白與結尾 '=' 都逐位元保留
+#     (FUGLE_API_KEY 兩者都有,加引號會把引號本身當成值的一部分送進去)。
+#   * 變數未設／為空 → 仍要寫 `KEY=`,容器內得到空字串,與原本 `-e KEY=` 相同;
+#     整行省略會變成「改由 host 環境查找」,語意不同,不可省。
+#   * 值內含換行無法用這個格式表達 → fail closed,不默默截斷金鑰。
+RADAR_SECRET_ENV_FILE=""
+RADAR_SECRET_TRAP_DONE=0
+
+radar_secret_env_cleanup() {
+  if [ -n "${RADAR_SECRET_ENV_FILE:-}" ]; then
+    rm -f "$RADAR_SECRET_ENV_FILE" 2>/dev/null || true
+    RADAR_SECRET_ENV_FILE=""
+  fi
+}
+
+# EXIT 兜底(正常路徑在每次呼叫後就刪了,這裡收 set -e 中止／被 kill 的殘檔)。
+# 多支腳本是在 source lib.sh 之後才裝自己的 EXIT trap(收 flag / unpause 容器),
+# 所以延後到「第一次真的要產檔」才掛,並把既有指令串在前面——絕不覆蓋既有 trap。
+# 子 shell(如 $(radar …))裡不串:trap 改不回父層,且 bash 不會在子 shell 結束時
+# 跑繼承來的 EXIT trap,串進去反而會提早跑掉父層的 flag 清理／unpause。
+# 維護約束:新腳本的 `trap … EXIT` 一律要裝在第一次呼叫 radar/radar_timeout 之前,
+# 否則會把這裡串好的清理蓋掉(現有腳本都符合;正常路徑另有即時刪檔,不致外洩)。
+radar_secret_install_trap() {
+  if [ "$RADAR_SECRET_TRAP_DONE" = "1" ]; then
+    return 0
+  fi
+  RADAR_SECRET_TRAP_DONE=1
+  local existing="" q="'"
+  if [ "${BASHPID:-$$}" = "$$" ]; then
+    existing="$(trap -p EXIT)"      # 形如:trap -- 'cmd' EXIT
+    existing="${existing#trap -- }"
+    existing="${existing% EXIT}"
+  fi
+  if [ -n "$existing" ]; then
+    eval "trap ${existing}${q};${q}${q}radar_secret_env_cleanup${q} EXIT"
+  else
+    trap 'radar_secret_env_cleanup' EXIT
+  fi
+}
+
+# 現產一個 0600 暫存檔;mktemp 本來就是 0600,仍明確 chmod 一次。
+radar_secret_env_new() {
+  case "${RADAR_FINMIND_TOKEN:-}${FUGLE_API_KEY:-}" in
+    *$'\n'*)
+      notify "金鑰值含換行，無法以 --env-file 完整傳入容器，本輪中止" high "失敗"
+      exit 1
+      ;;
+  esac
+  radar_secret_env_cleanup
+  radar_secret_install_trap
+  RADAR_SECRET_ENV_FILE="$(mktemp "${TMPDIR:-/tmp}/radar-env.XXXXXXXX")"
+  chmod 600 "$RADAR_SECRET_ENV_FILE"
+  {
+    printf 'RADAR_FINMIND_TOKEN=%s\n' "${RADAR_FINMIND_TOKEN:-}"
+    printf 'FUGLE_API_KEY=%s\n' "${FUGLE_API_KEY:-}"
+  } > "$RADAR_SECRET_ENV_FILE"
+}
+
 # 跑管線一個指令。容器內 /app = repo 根;第三個 -v 必掛,export-json 產物才會落地主機。
 # 只傳 RADAR_FINMIND_TOKEN / FUGLE_API_KEY 進容器(deploy 憑證留在主機,權限分離)。
 radar() {
+  local rc=0
+  radar_secret_env_new
   docker run --rm \
-    -e RADAR_FINMIND_TOKEN="${RADAR_FINMIND_TOKEN:-}" \
-    -e FUGLE_API_KEY="${FUGLE_API_KEY:-}" \
+    --env-file "$RADAR_SECRET_ENV_FILE" \
     -v "$REPO/pipeline":/app/pipeline \
     -v "$REPO/data":/app/data \
     -v "$REPO/web/public/data":/app/web/public/data \
-    radar-pipeline python -m radar "$@"
+    radar-pipeline python -m radar "$@" || rc=$?
+  radar_secret_env_cleanup
+  # 失敗語意保持與改動前逐字相同:set -e 生效時就地中止(且不觸發 ERR trap——
+  # 函式內失敗本來就不會觸發,ERR trap 不繼承進函式);set -e 被抑制時
+  # (`if radar …` / `radar || …`)忠實回傳 docker 的離開碼(daily-insti 的
+  # exit 75 分支靠這個碼判斷)。
+  ( exit "$rc" )
+  return "$rc"
 }
 
 # GNU timeout cannot execute the shell function above.  Wrap the real Docker
@@ -127,14 +199,18 @@ radar() {
 radar_timeout() {
   local hard_timeout_seconds="$1"
   shift
+  local rc=0
+  radar_secret_env_new
   timeout --signal=TERM --kill-after=30s "${hard_timeout_seconds}s" \
     docker run --rm \
-      -e RADAR_FINMIND_TOKEN="${RADAR_FINMIND_TOKEN:-}" \
-      -e FUGLE_API_KEY="${FUGLE_API_KEY:-}" \
+      --env-file "$RADAR_SECRET_ENV_FILE" \
       -v "$REPO/pipeline":/app/pipeline \
       -v "$REPO/data":/app/data \
       -v "$REPO/web/public/data":/app/web/public/data \
-      radar-pipeline python -m radar "$@"
+      radar-pipeline python -m radar "$@" || rc=$?
+  radar_secret_env_cleanup
+  ( exit "$rc" )
+  return "$rc"
 }
 
 # JSON 上線:wrangler 讀 vps/.env 的 CLOUDFLARE_API_TOKEN/ACCOUNT_ID(已 set -a 載入),

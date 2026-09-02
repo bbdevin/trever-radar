@@ -91,13 +91,18 @@ start_job() {
   ensure_image
   docker rm -f "$name" >/dev/null 2>&1 || true
   log "START $name: $*"
-  if ! docker run -d --name "$name" \
-    -e RADAR_FINMIND_TOKEN="${RADAR_FINMIND_TOKEN:-}" \
-    -e FUGLE_API_KEY="${FUGLE_API_KEY:-}" \
+  # 金鑰走 --env-file(lib.sh),不放 argv;docker client 在建立容器時就把檔案讀完,
+  # `-d` 回來時容器已建好,所以呼叫一回來就可以刪檔(見 lib.sh 註解)。
+  local rc=0
+  radar_secret_env_new
+  docker run -d --name "$name" \
+    --env-file "$RADAR_SECRET_ENV_FILE" \
     -v "$REPO/pipeline":/app/pipeline \
     -v "$REPO/data":/app/data \
     -v "$REPO/web/public/data":/app/web/public/data \
-    radar-pipeline python -m radar "$@" >/dev/null; then
+    radar-pipeline python -m radar "$@" >/dev/null || rc=$?
+  radar_secret_env_cleanup
+  if [ "$rc" -ne 0 ]; then
     log "FAILED to start $name"
     notify "無法啟動容器 ${name}" high "失敗"
     return 1
