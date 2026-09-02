@@ -21,6 +21,16 @@
 
 - [x] VPS `~/trever-radar` HEAD 已是 `bf65dd0`（日更腳本自行 pull），16:10 `daily-insti.sh` 執行中（`import-warrant-master` 階段），持有 `/tmp/radar-db.lock`。本輪的 `data_date`／anchor 修正會由這條既有排程自然發布，**未手動觸發任何正式 import／export／deploy，未改 cron**。
 - [x] 既有四個未追蹤檔（`cloudflare-data-worker/package-lock.json`、`data/`、`radar-quick-catchup.sh`、`run-backfill.sh`）仍在且未阻斷本次 pull。磁碟 `29G` 中已用 `19G`、free `8.1G`（71%）；仍低於 20GB gate，禁止自行啟用全市場權證輪。分點回補 `backfill-branches --top 0 --days 490` 仍單實例執行中，guard／supervisor 各一，未重啟。
+## 2026-09-02 E2 穩定度序列真實資料結果：全粒度持久化在硬體上不可行
+
+> 對 WP-B4 還原出的 2026-08-28 正式副本執行 `branch-point-in-time-series --as-of-from 2026-07-01 --as-of-to 2026-08-28 --step 5 --window-days 60`（本機、唯讀、未碰正式 DB）。
+
+- [x] **輸出量級直接否決了全粒度持久化**：9 個 as_of 點涵蓋 821 個分點與 **945,131 個分點×個股實體**，產生 **5.07 GB** JSON（1 個 as_of 無資料）。若做歷史回算約 250 個 as_of，同粒度將達 **~140 GB** 級。VPS 僅 29G 總量／8.0G free，且 `docs/12` 零成本原則排除需綁卡的代管儲存。**在分點×個股粒度持久化 point-in-time 結果不可行，這不是門檻問題而是量級問題。**
+- [x] **市場層級的 rate 穩定到近乎常數**：`low_buy_rate` 在 as_of 2026-08-20 為 **53.283864%**、2026-08-27 為 **53.292160%**（相差 0.008 個百分點）；`high_sell_rate` 為 34.392680% → 34.075746%。穩定是好事，但也代表**市場層級彙總資訊量極低**——真正的變異在小分母的分點×個股。
+- [x] **unknown 的質量在真實規模上很大，證實「只存 rate 不存分母不可還原」**：某個 as_of 的 913,078 個 buy episode 中，`fwd5` 已成熟 686,722、**未成熟 226,356（25%）**；缺已知 20 日分位者 **212,140（23%）**。亦即任何裸 rate 都藏起了約四分之一的資料。同一 `low_buy_rate` 在 fixture 上各日平均 75% vs pooled 66.7%，差距純由分母加權而來。
+- [x] 其他實測：某 as_of 的 `observed_branch_stock_rows` 780,485、`observed_branch_trade_rows` 3,295,177、`universe_branch_count` 831~832、`window_truncated` 為 false、`trade_rows_missing_pct` 為 0。
+- ⚠️ 持久化的粒度與欄位設計、以及分點層級隔日沖訊號的存廢，已依使用者指示交由 **Fable 5.1** 決策（`AGENTS.md` 禁止單一模型自行拍板 schema）。結論落定前不得實作。
+
 ## 2026-09-02 排行 V2 真實資料結果：兩個「待人工確認」的問題被證明是空的，但挖出一個真的
 
 > 對 WP-B4 還原出的 2026-08-28 正式副本執行 `branch-ranking-v2-shadow`（本機、唯讀、未碰正式 DB）。fixture 給不出量級，真實資料給出了，而結論與 `docs/13` §8 的預期相反。
