@@ -1,0 +1,9 @@
+# Shell scripts must keep LF in the working tree, not just in the index.
+#
+# These run on the VPS under bash, and the pipeline's shell test harness runs
+# them locally too. On Windows `core.autocrlf=true` rewrites them to CRLF on
+# checkout, and bash then fails on the stray carriage return with errors like
+# `$'\r': command not found`. The committed blobs are already LF, so this
+# changes nothing about history — it only stops fresh clones and git worktrees
+# from producing scripts that cannot run.
+*.sh text eol=lf
