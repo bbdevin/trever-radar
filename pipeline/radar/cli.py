@@ -262,6 +262,27 @@ def cmd_branch_point_in_time_report(args):
     )
 
 
+def cmd_branch_point_in_time_series(args):
+    from .compute.branch_point_in_time_series import write_branch_point_in_time_series
+
+    report = write_branch_point_in_time_series(
+        as_of_from=args.as_of_from,
+        as_of_to=args.as_of_to,
+        step=args.step,
+        window_days=args.window_days,
+        out=args.out,
+    )
+    coverage = report["coverage"]
+    print(
+        "branch-point-in-time-series "
+        f"as_of_dates={coverage['as_of_dates_evaluated']} "
+        f"branches={coverage['branch_entity_count']} "
+        f"branch_stocks={coverage['branch_stock_entity_count']} "
+        f"empty_as_of_dates={len(coverage['as_of_dates_with_no_branch_stock_rows'])} "
+        f"-> {args.out}"
+    )
+
+
 def cmd_import_geo(_args):
     from .import_geo import import_geo
     import_geo()
@@ -540,6 +561,21 @@ def main(argv=None):
     bpit.add_argument("--to", dest="date_to", required=True, help="YYYY-MM-DD inclusive event end; must be <= as-of")
     bpit.add_argument("--out", required=True, help="JSON output path")
     bpit.set_defaults(fn=cmd_branch_point_in_time_report)
+
+    bpits = sub.add_parser(
+        "branch-point-in-time-series",
+        help="read-only E2 shadow stability series across many as-of trading days",
+    )
+    bpits.add_argument("--as-of-from", dest="as_of_from", required=True,
+                       help="YYYY-MM-DD first as-of (walk lands on market trading days only)")
+    bpits.add_argument("--as-of-to", dest="as_of_to", required=True,
+                       help="YYYY-MM-DD last as-of; must be on or after --as-of-from")
+    bpits.add_argument("--step", type=int, default=1,
+                       help="walk every Nth market trading day in the as-of range (default 1)")
+    bpits.add_argument("--window-days", dest="window_days", type=int, default=60,
+                       help="trailing window in market trading days ending at each as-of (default 60)")
+    bpits.add_argument("--out", required=True, help="JSON output path")
+    bpits.set_defaults(fn=cmd_branch_point_in_time_series)
 
     exp = sub.add_parser("export-json", help="write web/public/data/*.json for the frontend")
     exp.add_argument("--out", default=None, help="output dir (default web/public/data)")
