@@ -163,7 +163,7 @@ class TrackedBranchHistoryExportTests(unittest.TestCase):
                 {"branch_name": "富邦-新竹", "source": "auto"},
             ])
             # 分點交易:凱基/富邦 追蹤,元大 未追蹤(不應產檔)。
-            from pipeline.radar.importer import upsert_branch_trades
+            from radar.importer import upsert_branch_trades
             upsert_branch_trades(conn, [
                 # 凱基-台北:含賣超(net 負)、pct null、與 120 日視窗外的一列。
                 {"stock_id": "2330", "date": "2026-07-09", "branch_key": "k1", "branch_name": "凱基-台北",
@@ -291,7 +291,7 @@ class TrackedBranchHistoryExportTests(unittest.TestCase):
                 {"branch_name": "隔日沖-第一", "as_of": self.AS_OF, "rank_score": 999,
                  "samples": 99, "is_daytrade": 1, "source": "candidate"},
             ])
-            from pipeline.radar.importer import upsert_branch_trades
+            from radar.importer import upsert_branch_trades
             upsert_branch_trades(conn, [
                 {"stock_id": "2330", "date": "2026-07-09", "branch_key": "ca1", "branch_name": "候選-A",
                  "buy_lots": 10, "sell_lots": 0, "net_lots": 10, "pct": 0.1},
