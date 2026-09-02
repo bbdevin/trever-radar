@@ -21,7 +21,19 @@
 
 - [x] VPS `~/trever-radar` HEAD 已是 `bf65dd0`（日更腳本自行 pull），16:10 `daily-insti.sh` 執行中（`import-warrant-master` 階段），持有 `/tmp/radar-db.lock`。本輪的 `data_date`／anchor 修正會由這條既有排程自然發布，**未手動觸發任何正式 import／export／deploy，未改 cron**。
 - [x] 既有四個未追蹤檔（`cloudflare-data-worker/package-lock.json`、`data/`、`radar-quick-catchup.sh`、`run-backfill.sh`）仍在且未阻斷本次 pull。磁碟 `29G` 中已用 `19G`、free `8.1G`（71%）；仍低於 20GB gate，禁止自行啟用全市場權證輪。分點回補 `backfill-branches --top 0 --days 490` 仍單實例執行中，guard／supervisor 各一，未重啟。
-## 2026-09-02 Fable 5.1 決策：E2 持久化粒度與隔日沖訊號重新定義（決策紀錄，尚未實作）
+## 2026-09-03 隔日沖重新定義已實作並端到端驗證（決策二完成；正式 DB 未動）
+
+- [x] **實作範圍**（commit `0821f04`）：`DAYTRADE_MIN_OBS` 4→**8**、新增 `DAYTRADE_MIN_PAIRS = 20`／`DAYTRADE_PAIR_SHARE = 0.20`；`daytrade_flag` 觀察數不足時回 **`(None, None)`** 而非 `(False, None)`；`branch_stock_stats.is_daytrade_suspect` 未判定寫 **NULL**，並新增 `daytrade_obs`／`daytrade_paybacks` 讓 pair 比率自帶分母；`_BranchAgg` 由 pooled 回吐比率改為 `dt_pairs_determined`／`dt_pairs_flagged` 兩個 pair 計數，`is_daytrade()` 回 `bool | None`；`branch_rankings` 新增 `matured_samples`／`daytrade_pairs_determined`／`daytrade_pairs_flagged`；`AUTO_IN` 抽成具名的 `auto_in_blocked_by_daytrade()`，**只被 `is True` 擋、NULL 不擋**，並在註解明寫不得「修正」成真值測試。
+- [x] **匯出端的真 bug 已修**：`json_export.py` 的 detail-set 查詢原為 `AND is_daytrade = 0`，SQL 三值邏輯會**靜默丟掉 NULL 列**；改為 `AND COALESCE(is_daytrade, 0) = 0`（`pocket.py` 既有慣用法）。rankings 主榜／隔日沖切分原為 Python falsy 判斷，路由本來就正確但屬隱含，改為顯式 `!= 1`／`== 1` 以免日後被改壞。全 repo 其餘 `is_daytrade` 分支已逐一檢視。
+- [x] **前端**：`Ranking` 的三個新欄位**全為 optional**（程式碼走 Pages 幾分鐘上線、JSON 要等下次 VPS export，舊 payload 必然配新程式碼）；`effectiveSamples()` = `matured_samples ?? samples` 套用於卡片／摘要計數／警告條／篩選**四處**，避免表頭與卡片數字打架；徽章呈現證據而非判決——flagged 顯示「隔日沖 615/1951 檔」、`determined < 20` 顯示「隔日沖未判定」、舊 payload 退回既有「隔日沖」標籤。tooltip 明寫**此比例是下限**。
+- [x] **端到端驗證（對 WP-B4 還原出的 4.8GB 正式副本實跑 `compute-branch-stats`，本機，正式 DB 未動）**：additive migration 五個欄位**全部成功加到真實生產形狀的 DB**；831 分點、938,177 筆 stock-stat 列、auto-in/out 皆 0。結果與先前獨立精確重算**逐項吻合**：`is_daytrade=1` **3 個**（凱基-台北 **615/1951 = 0.3152**、群益金鼎-大安 **57/197 = 0.2893**、元大-三峽 **23/80 = 0.2875**）、pair `suspect=1` **2,236**、`daytrade_obs >= 8` **164,569**、`determined >= 20` **799**、最接近落選者 元大-竹科 0.1799／凱基-宜蘭 0.1569／群益金鼎-台北 0.1500。內部一致：2,236 + 162,333 = 164,569；938,177 − 164,569 = **773,608 個未判定 pair**（過去被靜默寫成 False）。
+- [x] **`samples != matured_samples` 的分點有 819 個**，證明 §8 稽核指出的混淆確實存在且現已分離；`matured_samples` 無 NULL。`is_daytrade NULL` 為 32 而先前獨立腳本算 28，非分歧——腳本只走到 827 個有合格日的分點（827−799=28），排行表為 831（831−799=32）。
+- [x] 驗證：完整 pipeline pytest **363 passed、70 subtests**（基線 350 ＋ 13 個新測試，含 19/20 配對與 0.19/0.20 比例邊界、NULL 不擋 `AUTO_IN`、NULL 列不被 detail-set 丟掉）；`npx tsc --noEmit`、`git diff --check` 通過。
+- [x] **`branch_ranking_v2_shadow` 的歷史被刻意凍結**：該報表是本次決策的稽核紀錄，若跟著改門檻就會變成描述新程式而非它當初佐證的歷史。作法是給 `daytrade_flag` 加 opt-in 的 `min_obs` 參數（預設仍為 `DAYTRADE_MIN_OBS`，線上路徑不變），shadow 模組用自己的 `V1_DAYTRADE_MIN_OBS = 4` 並顯式重申歷史上的 `False`。
+- 已知但**刻意不動**：`branch_rankings.style` 對未判定分點仍寫 `"swing"`。它與 `is_daytrade_suspect` 同屬「寫了沒人讀」——前端只在型別宣告出現、無任何渲染處，故改它零效益且屬資料契約變更。若日後 `style` 要上 UI，須一併處理未判定狀態。
+- ⚠️ **尚未做**：決策一的 `branch_pit_stats` 計數帳與串流持久化模組（與本次同樣會改 `schema.py`，故分開進行）。正式 DB 的 migration 與回算**未執行**；正式站要等下一次 VPS 部署與 export 才會反映。
+
+## 2026-09-02 Fable 5.1 決策：E2 持久化粒度與隔日沖訊號重新定義（決策紀錄）
 
 > 依 `AGENTS.md`「單一模型不得獨自拍板 schema 大改」，使用者將這兩題委由 Fable 5.1 定奪。以下為決策內容；**程式尚未實作，正式 DB 未動**。
 
