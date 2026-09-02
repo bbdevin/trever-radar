@@ -283,6 +283,27 @@ def cmd_branch_point_in_time_series(args):
     )
 
 
+def cmd_branch_ranking_v2_shadow(args):
+    from .compute.branch_ranking_v2_shadow import write_branch_ranking_v2_shadow_report
+
+    report = write_branch_ranking_v2_shadow_report(as_of=args.as_of, out=args.out)
+    summary = report["summary"]
+    tiers = summary["maturity_tiers"]
+    print(
+        "branch-ranking-v2-shadow "
+        f"branches={summary['branches_evaluated']} v1_ranked={summary['v1_ranked_count']} "
+        f"tiers(insufficient/provisional/sufficient)="
+        f"{tiers['insufficient']}/{tiers['provisional']}/{tiers['sufficient']} -> {args.out}"
+    )
+    for key, info in summary["interpretations"].items():
+        drift = info["rank_drift"]
+        print(
+            f"  {key}: listed={info['listed_count']} scored={info['scored_count']} "
+            f"left={info['left_count']} entered={info['entered_count']} "
+            f"drift(mean_abs)={drift['mean_abs']} survivors={drift['survivors']}"
+        )
+
+
 def cmd_import_geo(_args):
     from .import_geo import import_geo
     import_geo()
@@ -576,6 +597,15 @@ def main(argv=None):
                        help="trailing window in market trading days ending at each as-of (default 60)")
     bpits.add_argument("--out", required=True, help="JSON output path")
     bpits.set_defaults(fn=cmd_branch_point_in_time_series)
+
+    v2s = sub.add_parser(
+        "branch-ranking-v2-shadow",
+        help="read-only docs/13 §8 ranking-V2 shadow JSON: V1 vs three readings of "
+             "'matured < 10 不評分' (no schema change, no DB write)",
+    )
+    v2s.add_argument("--as-of", required=True, help="YYYY-MM-DD inclusive knowledge cutoff")
+    v2s.add_argument("--out", required=True, help="JSON output path")
+    v2s.set_defaults(fn=cmd_branch_ranking_v2_shadow)
 
     exp = sub.add_parser("export-json", help="write web/public/data/*.json for the frontend")
     exp.add_argument("--out", default=None, help="output dir (default web/public/data)")
