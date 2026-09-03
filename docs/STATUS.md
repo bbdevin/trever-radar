@@ -21,6 +21,26 @@
 
 - [x] VPS `~/trever-radar` HEAD 已是 `bf65dd0`（日更腳本自行 pull），16:10 `daily-insti.sh` 執行中（`import-warrant-master` 階段），持有 `/tmp/radar-db.lock`。本輪的 `data_date`／anchor 修正會由這條既有排程自然發布，**未手動觸發任何正式 import／export／deploy，未改 cron**。
 - [x] 既有四個未追蹤檔（`cloudflare-data-worker/package-lock.json`、`data/`、`radar-quick-catchup.sh`、`run-backfill.sh`）仍在且未阻斷本次 pull。磁碟 `29G` 中已用 `19G`、free `8.1G`（71%）；仍低於 20GB gate，禁止自行啟用全市場權證輪。分點回補 `backfill-branches --top 0 --days 490` 仍單實例執行中，guard／supervisor 各一，未重啟。
+## 2026-09-03 題材匯入「永遠不可能成功」的缺陷（線上已壞 3 天，非「尚未執行」）
+
+- [x] **症狀**：個股名稱區的「活躍題材」自 **2026-08-31 起完全不顯示**。正式 DB 的 `themes` 832 筆**全部是 `stale`**，且 `data_date`／`source_updated_at` **0/832 從未被寫入**。文件先前記為「`import-themes` 尚未執行」是錯的——它每週一都有跑（`daily-market.sh:15`，`taipei_date +%u = 1` 時觸發），歷史 7/08 起每週 ok 約 6,869 列。
+- [x] **根因**：`importer.py` 的完成條件要求 `empty == 0`。8/31 的紀錄是 `failed=0, empty=230`——**抓取全部成功**，只是 1,062 個分類中有 230 類沒有成分股。讀那些分類名即可確認它們**合理為空**：白酒、煙草、槍枝、麻紡、葡萄酒、咖啡相關、瀝青、氨綸、芳綸、羊毛、絲織品、皮革製品、製帽、樂器、農用機械、運動服、球場……富邦分類法是通用的，台股本來就沒有這些產業。
+- [x] **為何從 8/27 起才壞**：`empty == 0` 是 docs/37 C 的 lifecycle 那批（2026-08-27）帶進來的。8/24 那次成功是舊規則下的結果；新規則第一次執行（8/31）就必然失敗，**且只要富邦清單裡永遠有空分類，它就會永遠失敗**。`data_date`／`source_updated_at` 只在成功路徑寫入，所以從未被寫過——這解釋了 0/832。
+- [x] **修法（commit `c6f4e22`）**：`empty` 不再阻擋完成。抓得到、解析成功但沒有成分股，是**已觀測到的事實**，不是不完整；真正的來源異常會計入 `failed`（例外），本來就分開計數。新條件為 `limit is None and failed == 0 and not empty_sweep and len(staged) + empty == len(theme_list)`——staged 與 empty 相加必須等於清單長度，故「既未 staged 也未計入」的分類仍會擋下。
+- [x] **保留原本 fail-closed 的用意**：新增 `THEME_EMPTY_MAX_SHARE = 0.5` 防「來源整體壞掉、每頁都回傳格式正確卻空白」的情形——那會看起來像一次乾淨的全空。門檻取「超過清單一半」：實測 230/1,062 ≈ **22%**，距 50% 有兩倍以上餘裕，足以容納正常年度波動而仍擋得下全面空白。partial 的 `reason` now 明示是哪條規則觸發（`empty sweep` / `fetch failed` / `limit` / `unobserved categories`）。
+- [x] 空分類**不會被標 active**：前置 pass 先把所有非 retired 的 fubon 列設為 `stale`，只有 staged 的會 upsert 成 `active`，所以空分類自然維持 `stale` 且不新增 `stock_themes`。`retired` 的保護未動——已明確 retire 的分類不會被一次完整抓取復活。
+- [x] 以 8/31 的實際數字驗算新規則：`limit=None`、`failed=0`、`empty_sweep = 230 > 531` 為 false、`832 + 230 = 1062`（= 清單長度）→ **complete = True**，那一輪在新規則下會成功。
+- [x] 驗證：完整 pipeline pytest **381 passed、74 subtests**（基線 376 ＋ 5，含「有空分類但無失敗 → 完成且空者維持 stale」「單一失敗仍走 partial」「全空掃描擋下」「門檻兩側 5/10 與 6/10」「retired 不被復活」）；`git diff --check` 通過。
+- ⚠️ **仍待執行**：修好之後**必須手動跑一次 `import-themes`** 才會生效——排程只在週一，否則要等 9/07。將在 14:10 日更結束、DB 鎖釋放後執行。
+- 已知並接受：空分類若**先前**有成分股，其舊 `stock_themes` 會保留。刪掉它們等於做出「缺席即退役」的推論，正是本模組要避免的；而該分類維持 `stale`，前端的活躍題材不會顯示它。
+
+## 2026-09-03 庫藏股正式機首次匯入（`import-buybacks`）
+
+- [x] 使用者授權後於 12:21 執行，前置檢查通過（無日更程序、`/tmp/radar-db.lock` 未被持有、free 8.0G、MemAvailable 1,294MB），並以 `flock -n` 取同一把鎖避免與回補寫入交錯。
+- [x] 結果：**23 個計畫、23 檔股票**（上櫃 13／上市 10），`board_date` 2026-08-05～2026-08-24，`report_date` 2026-09-03，`import_logs` 記 `mops/buybacks ok rows=23`。這是 `buybacks` 表**首次有資料**（先前 0 列）。
+- [x] 雖以 `--days 366` 查詢，回傳的 `board_date` 僅到 8/05——MOPS `t35sc09` 給的是**執行期間仍在進行中**的計畫，不是一年歷史；`execution_pct` 為 None 亦屬正常（尚未執行完畢）。這符合 E1 KB1「只呈現 MOPS 事實」的設計。
+- [x] **未手動 export／deploy**：14:10 的 `daily-market.sh` 本來就會 export 並上線，少一次人工發布即少一份風險。
+
 ## 2026-09-03 E2 持久化已實作，三項上線前量測全數通過（決策一完成；正式 DB 未動）
 
 - [x] **實作**（commit `b933ab3`）：新表 `branch_pit_stats`，PK `(branch_name, as_of, window_market_days)` 加 `ix_branch_pit_stats_as_of`，**全表無任何 rate 欄位**——每個分子都帶分母與 unknown 計數，`fwd5_sum_pct` 存總和而非平均以保 pooled 精確。新模組 `branch_point_in_time_persist.py` 與 CLI `branch-point-in-time-persist --as-of YYYY-MM-DD [--window-days N]`（預設 60）。`prune.py` 加註此表**刻意永不清理**。兩支唯讀 shadow 工具行為未變。
