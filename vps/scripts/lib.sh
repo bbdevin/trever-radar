@@ -33,6 +33,7 @@ job_zh() {
     backfill-tdcc.sh) echo "大戶回補" ;;
     disk-cleanup.sh) echo "磁碟清理" ;;
     manual-catchup.sh) echo "手動追補" ;;
+    adjust-backfill.sh) echo "還原因子回補" ;;
     *) echo "${SCRIPT_NAME%.sh}" ;;
   esac
 }
