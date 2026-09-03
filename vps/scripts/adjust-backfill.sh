@@ -7,7 +7,9 @@
 # 指標、未來報酬與分點勝率全都乘上這個因子,等於整條評分鏈建立在未還原價之上。
 # 2026-09-02 的 4 檔實測修好了 6669(還原收盤 2,614.99 → 2,610.00,即 -0.19%
 # 而非 -66.5%),4 檔 12 秒(每檔約 3 秒)、更新 22,975 列價格。
-# 全市場推估:約 2,494 檔、2.1 小時、約 1,400 萬列更新。
+# 全市場實測範圍:2,413 檔(有價格列的 stock/etf;含或不含 is_active 過濾結果
+# 相同,已於 2026-09-03 核對,下市標的在 branch_trades 為 0 筆),約 2.0 小時、
+# 約 1,400 萬列更新。
 #
 # 為什麼要分塊:VPS 排程沒有乾淨的多小時空檔(14:10 跑到 ~15:11、15:00、16:10、
 # 17:40 跑到 ~19:21、21:20、22:00、23:30、01:10)。單一長跑會抓著
@@ -126,18 +128,22 @@ if [ -f "$STATE_FILE" ] && [ ! -s "$STATE_FILE" ]; then
   exit 0
 fi
 
-# EXIT trap 必須在 pause 之前、也在第一次呼叫 radar 之前掛好(lib.sh 的維護約束)。
-chain_exit_trap 'unpause_bf_containers'
-
-echo "pause backfill (if any); mem=${MEM}MB free_disk=${FREE}G"
-pause_bf_containers
-
 # 讓路、不排隊:搶不到就走,絕不 block 等鎖。
+# 先搶鎖再 pause,順序不可對調:本腳本會被每隔幾分鐘的迴圈重複呼叫,絕大多數
+# 呼叫都會在這裡略過。若先 pause,11 小時的視窗會產生約 220 次無謂的
+# pause/unpause(真正做事的只有約 13 次),不只浪費,還會提高撞上 guard 與
+# cleanup 之間 state-cache race 的機率(2026-08-27 17:35 曾發生)。
 exec 9>/tmp/radar-db.lock
 if ! flock -n 9; then
   echo "radar-db.lock held — skip (a scheduled round or another writer is running)"
   exit 0
 fi
+
+# EXIT trap 必須在 pause 之前、也在第一次呼叫 radar 之前掛好(lib.sh 的維護約束)。
+chain_exit_trap 'unpause_bf_containers'
+
+echo "pause backfill (if any); mem=${MEM}MB free_disk=${FREE}G"
+pause_bf_containers
 
 # 這支工作要寫上百萬列,pause 與搶鎖之間磁碟可能已經被別的工作吃掉。
 FREE2="$(free_gb)"
