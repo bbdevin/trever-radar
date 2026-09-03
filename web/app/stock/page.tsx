@@ -15,6 +15,7 @@ import { Building2, ChevronDown, ChevronUp, Flame, MapPin, Phone, ShieldCheck, T
 import { IconArrowLeft } from "@/components/Icons";
 import KChart from "@/components/KChart";
 import BranchFlowSection from "@/components/BranchFlowSection";
+import BranchPctilePanel from "@/components/BranchPctilePanel";
 import BranchDrillView from "@/components/BranchDrillView";
 import InstiPanel from "@/components/InstiPanel";
 import MarginPanel from "@/components/MarginPanel";
@@ -268,16 +269,21 @@ function StockView() {
       </div>
       {view === "chart" && <KChart candles={cs} visibleDays={visibleDays} mainForce={mainForce} />}
       {view === "chips" && (
-        <BranchFlowSection
-          branches={data.branches}
-          branchHistory={data.branch_history}
-          score={branchScore}
-          reasons={branchReasons}
-          heading="分點進出"
-          id="branch"
-          quoteDate={last.t}
-          onOpenBranch={setDrillBranch}
-        />
+        <>
+          <BranchFlowSection
+            branches={data.branches}
+            branchHistory={data.branch_history}
+            score={branchScore}
+            reasons={branchReasons}
+            heading="分點進出"
+            id="branch"
+            quoteDate={last.t}
+            onOpenBranch={setDrillBranch}
+          />
+          {/* 分點進出的長期背景資訊,所以接在同一個籌碼分頁的當日/區間進出之後;
+              舊 JSON 沒有這個鍵時整節不渲染。 */}
+          <BranchPctilePanel data={data.branch_pctile_counts} />
+        </>
       )}
       {view === "insti" && <InstiPanel data={data} candles={cs} />}
       {view === "margin" && <MarginPanel data={data} candles={cs} />}

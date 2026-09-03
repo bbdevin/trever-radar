@@ -218,6 +218,13 @@ export interface StockJson {
       net: number;
     }[];
   }[];
+  /**
+   * 每一對(分點, 個股)在固定窗口內的買/賣進出場價格分位計數。
+   * 只有分子與分母,沒有旗標、分數或名次——這個性質量測到「傾向為真、標籤不可
+   * 重現」,所以讀取端只能呈現次數與該股自身的同側比率,不得做成徽章。
+   * 舊版 JSON 沒有這個鍵;缺鍵時整節不渲染。
+   */
+  branch_pctile_counts?: BranchPctileCounts;
   warrant: WarrantSummary | null;
   warrant_history: WarrantHistoryPoint[];
   active_warrants: ActiveWarrant[];
@@ -237,6 +244,36 @@ export interface StockJson {
   holders_meta?: HoldersMeta;
   /** 董監最新月明細(docs/34 §4.6 D1) */
   directors_latest?: DirectorsLatest | null;
+}
+
+/** 單一分點在這檔股票的兩側計數;known 是分母,unknown 分位不可知另計。 */
+export interface BranchPctileRow {
+  branch_name: string;
+  buy_pctile_known: number;
+  buy_pctile_unknown: number;
+  low_buy_count: number;
+  sell_pctile_known: number;
+  sell_pctile_unknown: number;
+  high_sell_count: number;
+}
+
+/** 個股頁的分位計數 payload;`branches` 可能是空陣列(誠實的空,不是錯誤)。 */
+export interface BranchPctileCounts {
+  version: number;
+  /** 窗口結束日;整份快照尚未產生時可能為 null。 */
+  as_of: string | null;
+  window_market_days: number | null;
+  window_from: string | null;
+  computed_at: string | null;
+  definitions_version: string | null;
+  min_known_episodes_per_side: number;
+  max_branches: number;
+  /** 同一檔股票所有分點合計的同側計數,當作讀每一列的尺。 */
+  stock_buy_pctile_known: number | null;
+  stock_low_buy_count: number | null;
+  stock_sell_pctile_known: number | null;
+  stock_high_sell_count: number | null;
+  branches: BranchPctileRow[];
 }
 
 export interface HoldersThresholdCell {
