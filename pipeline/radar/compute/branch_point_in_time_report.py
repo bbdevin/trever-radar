@@ -384,8 +384,17 @@ def build_branch_point_in_time_report(
                     continue
                 placeholders = ", ".join(f":stock_{i}" for i in range(len(chunk)))
                 params = {"as_of": as_of, **{f"stock_{i}": sid for i, sid in enumerate(chunk)}}
+                # 還原價,與 branch_point_in_time_persist._price_rows_for_stock 一致。
+                # 兩者若一邊還原、一邊不還原,唯讀報表與兩張持久化表會在任何
+                # adj_factor != 1 的個股上給出不同分位——而確認用的 battery 正是
+                # 走這支報表的 helper,那樣會驗到與面板不同的東西。
+                # 分位不受此影響的理由見 `_close_range_percentile`:窗後發生的
+                # 除權息讓窗內收盤同乘一個常數,常數在 min/max 分位中相消。
+                # NULL * factor 仍是 NULL,故缺值仍是缺值。
                 price_rows = conn.execute(text(f"""
-                SELECT stock_id, date, open, close
+                SELECT stock_id, date,
+                       open * COALESCE(adj_factor, 1.0) AS open,
+                       close * COALESCE(adj_factor, 1.0) AS close
                 FROM daily_prices
                 WHERE date <= :as_of AND stock_id IN ({placeholders})
                 ORDER BY stock_id, date
@@ -498,7 +507,7 @@ def build_branch_point_in_time_report(
         "definitions": {
             "universe": "manual tracked branches available at as_of plus branches identifiable in branch_rankings snapshots at or before as_of",
             "event": "buy: net_lots > 0 and pct >= 1%; sell: net_lots < 0 and abs(pct) >= 1%; same branch-stock-direction adjacent market trading days are one episode",
-            "event_price": "unadjusted event-day daily close, available after that market session",
+            "event_price": "event-day daily close adjusted by adj_factor, available after that market session; a corporate action after the window scales every close in it by the same constant and cancels in the percentile",
             "price_percentile_20d": "(event close - min close) / (max close - min close) using exactly the event day and preceding 19 market trading days; missing/zero-range/short windows are unknown",
             "low_buy": "buy episode with known 20-day price percentile <= 0.40",
             "high_sell": "sell episode with known 20-day price percentile >= 0.60",
