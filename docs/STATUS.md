@@ -32,7 +32,11 @@
 - [x] 每個 as_of 寫 **821** 列（與序列工具數到的 821 個分點一致），`window_truncated` 皆為 false。模組對非交易日 **fail closed**（實測 2026-08-22 週六被正確拒絕）。
 - [x] 驗證：完整 pipeline pytest **372 passed、74 subtests**（基線 363／70 ＋ 9 測試 4 subtests）；`git diff --check` 通過。`create_all` 能在既有 DB 上建表**經測試證實**（在已填資料的 DB 上 drop 該表、呼叫 `init_db()`、斷言它回來），不需 `_migrate_sqlite` 條目。
 - [x] **順帶修掉既有效能缺陷**：`_price_observation` 原本**每個 episode 都重算一次 `sorted(market_index)`**，在 913k episode 下是 O(n·m log m)。改為可傳入預先算好的 `market_days`／`row_by_date`（不傳則與原行為逐字相同），並把 `0.40`／`0.60` 具名為 `LOW_BUY_MAX_PCTILE`／`HIGH_SELL_MIN_PCTILE`（值不變）。既有 report 測試未改動且全過。
-- ⚠️ **尚未做**：正式機尚未執行此 CLI，也未加 cron。歷史回算即為本指令對交易日迴圈，重跑同一 as_of 會取代該列，故可中斷續跑。是否排程與回補多久，待人類決定。
+- [x] **已排入夜間作業（使用者授權後，commit `818f0eb`）**：折進既有的 `safe-branch-stats.sh`（23:30），**不新增 cron、不新增第二個寫入者**。理由：該腳本已完成此步需要的全部守衛——安靜窗、`/tmp/radar-db.lock`、mid-publish flag、磁碟與記憶體門檻，以及 backfill 容器的 pause；獨立排程等於把五道保護重寫一遍並遲早漂移，而且對單一寫入者的 DB 多加一個搶鎖者。位置在 `compute-branch-stats` **成功之後**（帳本讀的是它剛更新的資料）、`compute-scores` 之前。
+- [x] **失敗不中止本輪**：沿用 `compute-scores` 既有的 `set +e`／捕捉 rc／`set -e`／`notify_warn` 後繼續的形狀。這張帳本次要於分數／匯出／上線，不得因它擋住當天價格上線。結果寫入 `$STATE_FILE` 的 `pit=`（`ok`／`failed_rc_N`／`skipped_env`），並提供 `SKIP_PIT=1` 環境變數關閉。
+- [x] **預設 as_of 取自 `daily_prices` 而非 `branch_trades`**：`compute_branch_stats` 用的是 `MAX(date) FROM branch_trades`，但 `plan_as_of_window` 要求 as_of 必須存在於 `daily_prices`。**若某天分點資料先落地而行情匯入失敗（8/31 的 TPEx 520 即為此類），沿用分點慣例會讓預設值每晚失敗。** 故改用 `daily_prices`，與 `adjustments.py`／`importer.py`／`performance.py` 一致；無可用交易日時 fail closed（CLI 非零退出），不會靜默寫零列。
+- [x] 驗證：完整 pipeline pytest **376 passed、74 subtests**（基線 372 ＋ 4）；`bash -n vps/scripts/safe-branch-stats.sh` rc 0（本機 WSL GNU bash 5.2.21，執行前先確認該 bash 確實可用而非只信 rc）；`git diff --check` 通過。
+- ⚠️ **歷史回補待執行**：決定先 seed **60 個交易日**（約 40 分鐘）。理由是回補列**不具備當初證成持久化的性質**——`computed_at` 誠實標示它們是「今天對過去的看法」，而非「當天看得到什麼」，價值弱於每日新增的列；60 日正好等於窗口長度，序列即刻可用，日後隨時可加深（重跑同一 as_of 會取代該列，可中斷續跑）。將以 `flock` 取同一把 `/tmp/radar-db.lock`、暫停回補容器、執行後恢復，紀律比照 `safe-branch-stats.sh`，不新增檔案。
 
 ## 2026-09-03 隔日沖重新定義已實作並端到端驗證（決策二完成；正式 DB 未動）
 
