@@ -46,8 +46,19 @@ CRON_TZ=Asia/Taipei
 # 腳本內再次檢查 quiet 窗與 radar-db.lock;無 bf 容器則 noop
 0 3,9,12,20 * * *  bash /home/huang/trever-radar/vps/scripts/mid-backfill-publish.sh >> /home/huang/radar-cron.log 2>&1
 
-# 分點排行＋分數(docs/33 S2 / docs/35):每日 23:30 — pause bf → stats → scores → export
-30 23 * * *    bash /home/huang/trever-radar/vps/scripts/safe-branch-stats.sh >> /home/huang/radar-cron.log 2>&1
+# 分點排行＋分數(docs/33 S2 / docs/35):每日 00:05 — pause bf → stats → 帳本 → 分點×個股分位 → scores → export
+#
+# 2026-09-04 由 23:30 改為 00:05。原因:`in_radar_quiet_window` 的平日窗是
+# `2115 <= hhmm <= 2330`(閉區間),而 cron 在 23:30:01 觸發 → hhmm=2330 → 落在窗內,
+# **平日必定略過**。log 佐證:8/29(六)、8/30(日)有 done,8/27、8/28、8/31、9/01、
+# 9/02、9/03 全部只有 start 沒有 done——這支作業自該窗設定以來平日從未執行。
+# 週末窗(六 0055-0230 與 0450-0730、日 0055-0400)不含 23:30,所以只有週末跑得完。
+#
+# 為何是 00:05 而不是 00:30:本作業實測需 56–59 分鐘(8/29→00:26、8/30→00:29),
+# 加上新增的帳本與分位計數會更久;01:10 是 deep backfill。00:05 起算約有 65 分鐘。
+# 22:00 那輪通常 23:55–00:12 結束(實測 8/31 23:53、9/03 約 00:12),故 00:05 時鎖多半已釋放;
+# 若偶爾超時而擋到 01:10,被略過的是可續跑、每日都有的 deep backfill,代價最低。
+5 0 * * *      bash /home/huang/trever-radar/vps/scripts/safe-branch-stats.sh >> /home/huang/radar-cron.log 2>&1
 
 # 資券 240 日回補(docs/34 A4):週日 02:30 — 一次性(DONE flag);避開 daily 窗
 30 2 * * 0     bash /home/huang/trever-radar/vps/scripts/backfill-margin.sh >> /home/huang/radar-cron.log 2>&1

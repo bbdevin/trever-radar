@@ -21,6 +21,15 @@
 
 - [x] VPS `~/trever-radar` HEAD 已是 `bf65dd0`（日更腳本自行 pull），16:10 `daily-insti.sh` 執行中（`import-warrant-master` 階段），持有 `/tmp/radar-db.lock`。本輪的 `data_date`／anchor 修正會由這條既有排程自然發布，**未手動觸發任何正式 import／export／deploy，未改 cron**。
 - [x] 既有四個未追蹤檔（`cloudflare-data-worker/package-lock.json`、`data/`、`radar-quick-catchup.sh`、`run-backfill.sh`）仍在且未阻斷本次 pull。磁碟 `29G` 中已用 `19G`、free `8.1G`（71%）；仍低於 20GB gate，禁止自行啟用全市場權證輪。分點回補 `backfill-branches --top 0 --days 490` 仍單實例執行中，guard／supervisor 各一，未重啟。
+## 2026-09-04 ⚠️ 夜間分點作業自安靜窗設定以來平日從未執行（cron 與守衛邊界相等）
+
+- ⚠️ **症狀**：`safe-branch-stats.sh` 的 `$STATE_FILE` 停在 `finished=2026-08-31T00:29:44`，且 `branch_pit_stats`、`branch_stock_pctile_counts` 皆為 **0 列**——今日接進該作業的兩個新計算完全沒有產出。
+- [x] **根因是邊界相等的 off-by-one**：`lib.sh` 的 `in_radar_quiet_window` 平日窗為 `2115 <= hhmm <= 2330`（**閉區間**），而 cron 在 **23:30:01** 觸發 → `hhmm = 2330` → 落在窗內，log 直接印 `inside quiet window — skip`。差一分鐘就會執行。
+- [x] **log 佐證只有週末跑得完**：`start` 於 8/27、8/28、8/29、8/30、8/31、9/01、9/02、9/03 皆有；`done` 只有 **8/30 00:26**（前一晚是週六）與 **8/31 00:29**（前一晚是週日）。週六窗為 0055–0230 與 0450–0730、週日 0055–0400，**都不含 23:30**，所以只有週末夜能通過。平日六次全被自己的守衛擋掉。
+- [x] **改為 00:05（非 00:30）的理由**：本作業實測需 **56–59 分鐘**（8/29→00:26、8/30→00:29），加上新增的帳本與分位計數會更久；**01:10 是 deep backfill**。00:30 開跑必然撞上，00:05 起算約有 65 分鐘。22:00 那輪實測 23:53（8/31）至約 00:12（9/03）結束，故 00:05 時鎖多半已釋放；若偶爾超時而擋到 01:10，被略過的是可續跑、每日都有的 deep backfill，代價最低。
+- ⚠️ **正式 crontab 需人工修改**：agent 對正式機 crontab 的寫入被權限層擋下（與 `AGENTS.md`「改 cron 屬人工確認項」一致，未繞過）。`vps/scripts/crontab.example` 已更新為 `5 0 * * *` 並寫入上述理由；正式機請由人執行（先 `crontab -l` 備份、`sed` 只改該行、`diff` 確認僅一行差異後再套用）。**在人工套用前，該作業平日仍不會執行。**
+- 附帶觀察（未處理）：平日的 `safe-branch-stats` 與 22:00 的 `daily-branches` 在 stats／scores／export／deploy 上**大幅重疊**——22:00 那輪本來就會呼叫 `compute-branch-stats`。真正只存在於夜間作業的是今日新增的兩個計算。日後可考慮把那兩個計算移進 22:00 那輪、讓夜間作業退成週末補算；本輪不動，因為那牽涉判斷哪一次 invocation 該跑。
+
 ## 2026-09-03 隔日沖重新定義已在正式站生效並驗收（17:40 那輪）
 
 - [x] 正式資料 `as_of 2026-09-03`、831 個分點：`is_daytrade=1` **3**、`=0` 808、**`NULL` 20**（未判定——改動前這 20 個會被靜默寫成 False）。`matured_samples` 未填 **0**、`samples != matured_samples` **819**，與先前量測一致。
