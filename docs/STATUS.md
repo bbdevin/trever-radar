@@ -21,6 +21,16 @@
 
 - [x] VPS `~/trever-radar` HEAD 已是 `bf65dd0`（日更腳本自行 pull），16:10 `daily-insti.sh` 執行中（`import-warrant-master` 階段），持有 `/tmp/radar-db.lock`。本輪的 `data_date`／anchor 修正會由這條既有排程自然發布，**未手動觸發任何正式 import／export／deploy，未改 cron**。
 - [x] 既有四個未追蹤檔（`cloudflare-data-worker/package-lock.json`、`data/`、`radar-quick-catchup.sh`、`run-backfill.sh`）仍在且未阻斷本次 pull。磁碟 `29G` 中已用 `19G`、free `8.1G`（71%）；仍低於 20GB gate，禁止自行啟用全市場權證輪。分點回補 `backfill-branches --top 0 --days 490` 仍單實例執行中，guard／supervisor 各一，未重啟。
+## 2026-09-03 稽核方法：找出「指令寫好了，但沒有任何排程呼叫它」的功能
+
+> 今天連續三個問題都屬同一類：程式碼、CLI、匯出、前端型別都在，但**沒有任何在跑的腳本呼叫它**，所以資料永遠不會出現。這個稽核可重複執行，成本很低。
+
+- **方法**：把 `pipeline/radar/cli.py` 的所有 `add_parser("…")` 子命令列出來，與 **`vps/scripts/*.sh`**（真正在跑的那條路徑）比對。**不要把 `.github/workflows/*.yml` 算進去**——那 5 支資料 workflow 已退役、沒有觸發源，卻會讓子命令看起來「有被引用」，`compute-adjustments` 第一次就是這樣被漏掉的。
+- **2026-09-03 結果**：34 個子命令，10 個未被任何在跑的 vps 腳本呼叫。其中**設計上就是手動工具**（合理，非缺口）：`branch-point-in-time-report`／`branch-point-in-time-series`／`branch-ranking-v2-shadow` 三支唯讀 shadow、`phase2-diff-report`／`phase3-strategy-performance-report` 兩支唯讀報表、`init-db`、以及 `docs/37` E1 明定為手動 CLI 的 `import-buybacks`。
+- **真正的缺口三項**：①`compute-adjustments`（見下節，影響最大）；②`import-stock-info` 最後成功為 2026-07-07、僅 2 次，**2,494 檔 active 股票中有 19 檔沒有產業別**，且**新上市個股將永遠沒有**——產業別餵首頁族群資金流 treemap 與個股頁；③`import-descriptions` 為 **0/2,494**。
+- **③ 的實際影響低於文件宣稱**：`stocks.description` 只出現在 `web/lib/types.ts:385` 的型別宣告，**前端沒有任何元件渲染它**（`json_export` 仍會帶出）。所以它是休眠的程式碼路徑，不是使用者看得到的缺口——但本檔完成清單寫「股票卡資訊優化…新增公司基本業務說明 (Description)」，該宣稱**不成立**，很可能是 `docs/37` B 的 `company_profiles`（1,985 筆、1,984 筆有地址）取代它之後沒有回頭修文件。
+- **反向驗證**：`branch-point-in-time-persist` **沒有**出現在未呼叫清單中，因為它今天剛被接進 `safe-branch-stats.sh`——這確認了該稽核確實反映真實連線狀態。
+
 ## 2026-09-03 ⚠️ 重大資料缺陷：`adj_factor` 全市場從未計算，還原價實際上不存在
 
 > 唯讀稽核發現，尚未修復，**需人類決定**。這是目前已知影響面最大的資料問題。
