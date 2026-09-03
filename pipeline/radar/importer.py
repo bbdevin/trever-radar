@@ -1052,6 +1052,16 @@ def import_branch_trades(date: str | None = None, top: int = 80,
     return {"done": done, "empty": empty, "failed": failed, "rows": written}
 
 
+# 一個抓得到、解析成功、但沒有成分股的分類是「已觀測到的事實」，不是抓取不完整：
+# 富邦分類表通用，台股本來就沒有白酒／煙草／槍枝／麻紡等產業。真正的來源異常會計
+# 入 failed（例外），不會變成 empty。
+#
+# 唯一還要防的是來源整體壞掉、每頁都回傳格式正確卻空白的清單——那會看起來像一次
+# 乾淨的全空。門檻設在「超過清單的一半」：2026-08-31 實測 1,062 類中 230 類為空
+# （約 22%），離 50% 還有兩倍以上距離，足以容納正常年度波動而仍能擋下全面空白。
+THEME_EMPTY_MAX_SHARE = 0.5
+
+
 def import_themes(limit: int | None = None) -> dict:
     """概念股分類(富邦公開頁):清單 1 請求 + 每類 1 請求(3 秒節流)。
 
@@ -1107,9 +1117,14 @@ def import_themes(limit: int | None = None) -> dict:
         if done % 25 == 0:
             print(f"themes {done}/{len(theme_list)} ...", flush=True)
 
-    # 只有全來源、全題材成功才把任何分類設為 active；partial/empty/--limit
-    # 皆保留舊資料並 stale，避免把暫缺誤解為 retired 或新鮮完整資料。
-    complete = limit is None and failed == 0 and empty == 0 and len(staged) == len(theme_list)
+    # 只有整份清單都實際觀測過（staged + empty 恰等於清單長度）、無任何 failed、
+    # 且非 --limit，才把 staged 的分類設為 active；否則保留舊資料並 stale，避免把
+    # 暫缺誤解為 retired。空成分不算不完整，但整體空比例過高視為來源壞掉。
+    empty_sweep = empty > THEME_EMPTY_MAX_SHARE * len(theme_list)
+    complete = (
+        limit is None and failed == 0 and not empty_sweep
+        and len(staged) + empty == len(theme_list)
+    )
     if complete:
         with engine.begin() as conn:
             # A fetched listing has no authority to reverse an explicit retired
@@ -1140,7 +1155,10 @@ def import_themes(limit: int | None = None) -> dict:
         print(f"themes: {done} groups, {links} memberships, complete", flush=True)
         return {"themes": done, "links": links, "failed": 0, "status": "active"}
 
-    reason = f"partial themes: failed={failed}, empty={empty}, limit={limit}"
+    rule = ("empty sweep (>%.0f%% of list)" % (THEME_EMPTY_MAX_SHARE * 100)) if empty_sweep \
+        else "fetch failed" if failed else "limit" if limit is not None else "unobserved categories"
+    reason = (f"partial themes [{rule}]: failed={failed}, empty={empty}/{len(theme_list)}, "
+              f"limit={limit}")
     result = _mark_stale(reason)
     result.update({"themes": done, "links": links, "failed": failed, "empty": empty})
     print(f"themes: {done} groups staged, {links} memberships; {reason}; prior data kept", flush=True)

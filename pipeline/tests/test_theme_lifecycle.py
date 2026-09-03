@@ -115,6 +115,81 @@ class ThemeLifecycleTests(unittest.TestCase):
             limited = import_themes(limit=1)
         self.assertEqual(limited["status"], "stale")
 
+    @staticmethod
+    def _run(names, empties):
+        """Run import_themes over ``names`` where ``empties`` return no members."""
+        members = {code: ([] if code in empties else [f"100{i}"])
+                   for i, code in enumerate(names)}
+        with patch("radar.providers.fubon.fetch_theme_list",
+                   return_value=[(code, f"題材{code}") for code in names]), \
+             patch("radar.providers.fubon.fetch_theme_members",
+                   side_effect=lambda code: members[code]):
+            return import_themes()
+
+    def test_successfully_observed_empty_categories_do_not_block_completion(self):
+        # 台股沒有白酒/煙草類的成分股：抓得到卻沒有成員是事實，不是抓取不完整。
+        with db.get_engine().begin() as conn:
+            conn.execute(schema.themes.insert(), [
+                {"id": "B", "name": "白酒", "source": "fubon", "status": "active"},
+            ])
+        result = self._run(["A", "B", "C"], empties={"B"})
+        self.assertEqual(result["status"], "active")
+        with db.get_engine().connect() as conn:
+            rows = dict(conn.exec_driver_sql(
+                "SELECT id, status FROM themes ORDER BY id").fetchall())
+            staged = conn.exec_driver_sql(
+                "SELECT data_date, source_updated_at FROM themes WHERE id='A'").fetchone()
+            empty_members = conn.exec_driver_sql(
+                "SELECT COUNT(*) FROM stock_themes WHERE theme_id='B'").scalar()
+        self.assertEqual(rows, {"A": "active", "B": "stale", "C": "active"})
+        self.assertTrue(all(staged))  # lifecycle columns finally get written
+        self.assertEqual(empty_members, 0)
+
+    def test_a_single_failed_fetch_still_forces_the_partial_path(self):
+        with patch("radar.providers.fubon.fetch_theme_list",
+                   return_value=[("A", "甲"), ("B", "乙")]), \
+             patch("radar.providers.fubon.fetch_theme_members",
+                   side_effect=[["1001"], RuntimeError("down")]):
+            result = import_themes()
+        self.assertEqual(result["status"], "stale")
+        self.assertEqual(result["failed"], 1)
+        self.assertEqual(result["empty"], 0)
+
+    def test_implausible_empty_sweep_keeps_prior_data(self):
+        # 來源整體壞掉時每頁都「格式正確但空白」，不得被當成一次乾淨的全空。
+        with db.get_engine().begin() as conn:
+            conn.execute(schema.themes.insert(), [
+                {"id": "A", "name": "甲", "source": "fubon", "status": "active"}])
+            conn.execute(schema.stock_themes.insert(), [{"theme_id": "A", "stock_id": "1001"}])
+        names = [chr(ord("A") + i) for i in range(4)]
+        result = self._run(names, empties=set(names[1:]))  # 3/4 空
+        self.assertEqual(result["status"], "stale")
+        with db.get_engine().connect() as conn:
+            self.assertEqual(conn.exec_driver_sql(
+                "SELECT status FROM themes WHERE id='A'").scalar(), "stale")
+            self.assertEqual(conn.exec_driver_sql(
+                "SELECT stock_id FROM stock_themes WHERE theme_id='A'").scalar(), "1001")
+
+    def test_empty_share_threshold_boundary(self):
+        names = [chr(ord("A") + i) for i in range(10)]
+        self.assertEqual(self._run(names, empties=set(names[:5]))["status"], "active")   # 恰 50%
+        self.assertEqual(self._run(names, empties=set(names[:6]))["status"], "stale")    # 60%
+
+    def test_retired_survives_a_complete_run_that_contains_empties(self):
+        with db.get_engine().begin() as conn:
+            conn.execute(schema.themes.insert(), [{
+                "id": "A", "name": "保留停用", "source": "fubon", "status": "retired"}])
+            conn.execute(schema.stock_themes.insert(), [{"theme_id": "A", "stock_id": "1001"}])
+        result = self._run(["A", "B", "C"], empties={"B"})
+        self.assertEqual(result["status"], "active")
+        with db.get_engine().connect() as conn:
+            row = conn.exec_driver_sql(
+                "SELECT name, status FROM themes WHERE id='A'").fetchone()
+            members = conn.exec_driver_sql(
+                "SELECT stock_id FROM stock_themes WHERE theme_id='A'").fetchall()
+        self.assertEqual(row, ("保留停用", "retired"))
+        self.assertEqual(members, [("1001",)])
+
     def test_source_list_failure_marks_existing_rows_stale_without_deleting(self):
         with db.get_engine().begin() as conn:
             conn.execute(schema.themes.insert(), [{"id": "A", "name": "甲", "source": "fubon", "status": "active"}])
