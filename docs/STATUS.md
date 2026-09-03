@@ -21,6 +21,14 @@
 
 - [x] VPS `~/trever-radar` HEAD 已是 `bf65dd0`（日更腳本自行 pull），16:10 `daily-insti.sh` 執行中（`import-warrant-master` 階段），持有 `/tmp/radar-db.lock`。本輪的 `data_date`／anchor 修正會由這條既有排程自然發布，**未手動觸發任何正式 import／export／deploy，未改 cron**。
 - [x] 既有四個未追蹤檔（`cloudflare-data-worker/package-lock.json`、`data/`、`radar-quick-catchup.sh`、`run-backfill.sh`）仍在且未阻斷本次 pull。磁碟 `29G` 中已用 `19G`、free `8.1G`（71%）；仍低於 20GB gate，禁止自行啟用全市場權證輪。分點回補 `backfill-branches --top 0 --days 490` 仍單實例執行中，guard／supervisor 各一，未重啟。
+## 2026-09-03 隔日沖重新定義已在正式站生效並驗收（17:40 那輪）
+
+- [x] 正式資料 `as_of 2026-09-03`、831 個分點：`is_daytrade=1` **3**、`=0` 808、**`NULL` 20**（未判定——改動前這 20 個會被靜默寫成 False）。`matured_samples` 未填 **0**、`samples != matured_samples` **819**，與先前量測一致。
+- [x] 被標記者：群益金鼎-大安 **67/240**、凱基-台北 **544/1960**、元大-三峽 **29/113**。比率與 2026-08-28 副本上的量測略有差異（凱基-台北當時 615/1951 = 0.3152，現為 0.2776），**屬預期**：as_of 不同，且 490 日回補持續往回填舊資料，歷史本身在變。三個名字與相對順序不變，全部仍在 0.20 以上。
+- [x] pair 層 `is_daytrade_suspect=1` 為 **2,433**（08-28 時 2,236，隨資料增長）、`NULL` **825,732**——這 82 萬個「未判定」在改動前全部被當成「不是隔日沖」。
+- [x] 匯出端正確：`branches/rankings.json` 帶齊 `matured_samples`／`daytrade_pairs_determined`／`daytrade_pairs_flagged`；主榜 **828** 筆、隔日沖榜 **3** 筆（831−3），`NULL` 正確留在主榜（`COALESCE(is_daytrade,0)=0` 修正生效）。
+- [x] **`compute_branch_stats.py` 於 `b83c51e` 被重構**（觀察建構抽成 `daytrade_observations()`、計數抽成 `daytrade_counts()`，`daytrade_flag` 改走同一份）。經逐項核對為**行為保留**：`datemap[qd]` → safe-get 值相同（`qual_dates` 由 `datemap` 產生）、過濾與回吐規則逐字相同、判斷式與除數等價。**並修掉當日稍早放行的一個瑕疵**——pair 層計數原本是回吐規則的第二份複製，現已合一。完整 pytest **400 passed、98 subtests**（由主協調自行執行，非採信回報）。該重構於 2026-09-03 約 19:30 推送，正式機要到隔日 14:10 才會 pull，故今晚 23:30 那輪仍走已驗證的舊版。
+
 ## 2026-09-03 關鍵分點證據面板已實作（後端 `b715e88` ＋ 前端 `f377235`；今晚 23:30 產生首份資料）
 
 > 使用者選定「證據呈現版」。依量測結論：傾向為真（樣本外 2.3–2.9× 且勝過規模配對安慰劑），但標籤再現率僅 1.6–5.4%，**故不做二元徽章，只呈現計數與尺**。
