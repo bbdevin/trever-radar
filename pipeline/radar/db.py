@@ -114,6 +114,24 @@ def _migrate_sqlite(conn):
         if name not in bss_cols:
             conn.exec_driver_sql(f"ALTER TABLE branch_stock_stats ADD COLUMN {name} {sql_type}")
 
+    # 窗口內重算的次日回吐計數。這張表每次計算都整份取代,所以既有檔案的舊列
+    # 會維持 NULL 直到下一次 compute;NULL 代表「這份快照沒算」,不是 0 次。
+    bspc_cols = {
+        r[1] for r in
+        conn.exec_driver_sql("PRAGMA table_info(branch_stock_pctile_counts)").fetchall()
+    }
+    bspc_additions = {
+        "daytrade_obs": "INTEGER",
+        "daytrade_paybacks": "INTEGER",
+        "stock_daytrade_obs": "INTEGER",
+        "stock_daytrade_paybacks": "INTEGER",
+    }
+    if bspc_cols:
+        for name, sql_type in bspc_additions.items():
+            if name not in bspc_cols:
+                conn.exec_driver_sql(
+                    f"ALTER TABLE branch_stock_pctile_counts ADD COLUMN {name} {sql_type}")
+
     view_check = conn.exec_driver_sql("SELECT type FROM sqlite_master WHERE name='branch_trades'").scalar()
     if view_check == 'table':
         conn.exec_driver_sql("ALTER TABLE branch_trades RENAME TO branch_trades_old")

@@ -31,6 +31,18 @@ episode 的分位可知、其中幾次落在高檔(``high_sell``)。分位不可
 都同時存下**該檔股票自身跨所有分點 pooled 的同一組分子與分母**——那是這一對
 唯一有意義的比較基準。少了它,列裡的數字沒辦法被正確地讀。
 
+⚠️ 次日回吐的計數為什麼算在這裡,而不是從 ``branch_stock_stats`` join 過來
+------------------------------------------------------------------------
+``branch_stock_stats.daytrade_obs`` / ``daytrade_paybacks`` 用的是**全部可得歷史**;
+本表的分位計數用的是 490 個交易日的 trailing window。把兩者 join 到同一個面板,
+會讓兩個期間不同的數字並排在同一個標題下——這種安靜的錯配正是這個 codebase
+一再吃虧的地方。因此這裡在同一次串流中、用**同一個窗口**重算一次,與分位計數
+放在同一列。定義本身(``DAYTRADE_PAYBACK``/``DAYTRADE_RATE``/``DAYTRADE_MIN_OBS``
+與觀察建構)全部從 :mod:`radar.compute.compute_branch_stats` import,不重寫。
+
+同樣只存計數:觀察數低於 ``DAYTRADE_MIN_OBS`` 是**無法判定**,不是「不會翻單」。
+門檻留在讀取端(export 會把它一起帶出去),資料裡不燒任何判定。
+
 不是損益
 --------
 全部是**進出場價格分位**。``docs/37`` 已 defer 買賣配對並禁止獲利歸因,因此
@@ -75,6 +87,11 @@ from .branch_point_in_time_report import (
     _episode_runs,
     _price_observation,
 )
+from .compute_branch_stats import (
+    DAYTRADE_MIN_OBS,  # noqa: F401  (re-exported: 讀取端的門檻只有這一份)
+    daytrade_counts,
+    daytrade_observations,
+)
 
 # 定義版本:買/賣事件、20 日分位門檻若改變就 bump,舊列因此仍可辨識。
 DEFINITIONS_VERSION = "e2-pair-v1"
@@ -87,16 +104,26 @@ WRITE_CHUNK_ROWS = 2000
 
 
 class _PairCounter:
-    """一對(分點, 個股)的累加器。只有六個整數,永不持有 episode。"""
+    """一對(分點, 個股)的累加器。只有八個整數,永不持有 episode。"""
 
     __slots__ = (
         "buy_pctile_known", "buy_pctile_unknown", "low_buy_count",
         "sell_pctile_known", "sell_pctile_unknown", "high_sell_count",
+        "daytrade_obs", "daytrade_paybacks",
     )
 
     def __init__(self) -> None:
         for name in self.__slots__:
             setattr(self, name, 0)
+
+    def add_daytrade(self, obs: int, paybacks: int) -> None:
+        """次日回吐的原始計數。分子與分母都存,**不存比率也不存旗標**。
+
+        觀察數低於 ``DAYTRADE_MIN_OBS`` 代表「無法判定」,不是「沒有隔日翻單」。
+        把門檻套在這裡會把那個區別燒進資料;因此門檻留在讀取端,這裡只存數字。
+        """
+        self.daytrade_obs += obs
+        self.daytrade_paybacks += paybacks
 
     def add_buy(self, observation: dict[str, Any]) -> None:
         """買方 episode。與賣方各自獨立計數,兩者之間沒有任何配對關係。"""
@@ -187,7 +214,7 @@ def compute_branch_stock_pctile_counts(
         # stock-major:每檔個股的價格切片只載入一次就釋放,而且一檔算完就能
         # 算出該檔的 pooled 基準(那把尺),當場寫出、當場丟掉。
         trade_rows = conn.execution_options(yield_per=2000).execute(text("""
-            SELECT b.stock_id, b.branch_name, b.date, b.net_lots, b.pct
+            SELECT b.stock_id, b.branch_name, b.date, b.net_lots, b.sell_lots, b.pct
             FROM branch_trades b
             JOIN stocks s ON s.id = b.stock_id
             WHERE s.type = 'stock'
@@ -204,8 +231,12 @@ def compute_branch_stock_pctile_counts(
                     continue
                 buy_dates: list[str] = []
                 sell_dates: list[str] = []
+                # 這一對在窗口內的每一列(不只合格日):次日回吐要查的是次一交易日
+                # 的 sell_lots,那一天本身不必是事件。只活到這一對算完為止。
+                datemap: dict[str, dict[str, Any]] = {}
                 for row in pair_group:
                     net_lots, pct = row["net_lots"], row["pct"]
+                    datemap[row["date"]] = {"net": net_lots, "sell": row["sell_lots"]}
                     if net_lots is None or pct is None:
                         continue
                     if net_lots > 0 and pct >= QUAL_PCT:
@@ -219,6 +250,15 @@ def compute_branch_stock_pctile_counts(
                         price_conn, stock_id=stock_id, date_from=price_from, date_to=as_of,
                     )
                 counter = counters.setdefault(branch_name, _PairCounter())
+                # 次日回吐:與上面的分位計數走**同一個窗口**、同一把市場交易日曆。
+                # 觀察建構本身不在這裡重寫,直接用 compute_branch_stats 的那一份;
+                # 那張表算的是全期,這裡算的是 window,兩者因此永遠不能併排比較,
+                # 也正是這幾個計數不從 branch_stock_stats join 過來的理由。
+                # 注意日曆:那邊用該股自身有收盤價的交易日,這裡用市場交易日曆
+                # (與 _episode_runs 同一把),停牌股的「次一交易日」可能不同。
+                counter.add_daytrade(*daytrade_counts(daytrade_observations(
+                    buy_dates, datemap, trading_days, market_index,
+                )))
                 for dates, add in ((buy_dates, counter.add_buy), (sell_dates, counter.add_sell)):
                     for start_date, _end_date, _episode_dates in _episode_runs(dates, market_index):
                         add(_price_observation(
@@ -238,6 +278,8 @@ def compute_branch_stock_pctile_counts(
                 "stock_low_buy_count": sum(c.low_buy_count for c in counters.values()),
                 "stock_sell_pctile_known": sum(c.sell_pctile_known for c in counters.values()),
                 "stock_high_sell_count": sum(c.high_sell_count for c in counters.values()),
+                "stock_daytrade_obs": sum(c.daytrade_obs for c in counters.values()),
+                "stock_daytrade_paybacks": sum(c.daytrade_paybacks for c in counters.values()),
             }
             for branch_name, counter in sorted(counters.items()):
                 buffer.append({

@@ -16,6 +16,7 @@ import radar.db as db
 from radar import schema
 from radar.cli import main
 from radar.compute.branch_stock_pctile_counts import (
+    DAYTRADE_MIN_OBS,
     DEFINITIONS_VERSION,
     compute_branch_stock_pctile_counts,
 )
@@ -247,6 +248,133 @@ class BranchStockPctileCountsComputeTests(unittest.TestCase):
         self.assertEqual({row["as_of"] for row in rows}, {self.as_of})
 
 
+class BranchStockPctileDaytradeCountsTests(unittest.TestCase):
+    """次日回吐的計數:窗口必須和分位計數同一個,而且低於門檻只是「未判定」。
+
+    這幾個數字刻意不從 ``branch_stock_stats`` join 過來——那張表算的是全期,
+    併排在同一個面板上會是兩個期間的數字。這裡測的正是「窗口有生效」。
+    """
+
+    def setUp(self):
+        self.tmp = TemporaryDirectory()
+        self.tmp_path = Path(self.tmp.name)
+        self.old_url, self.old_dir = config.DB_URL, config.DATA_DIR
+        config.DB_URL = "sqlite:///" + (self.tmp_path / "dt.db").as_posix()
+        config.DATA_DIR = self.tmp_path
+        db._engine = None
+        db.init_db()
+        self.days = _market_days(date(2026, 1, 5), 40)
+        self.as_of = self.days[39]
+        day = self.days.__getitem__
+
+        def buy(branch_id, index):
+            return {"stock_id": "D", "date": day(index), "branch_id": branch_id,
+                    "net_lots": 10, "sell_lots": 0, "pct": 1.0, "source": "fixture"}
+
+        def next_day_sell(branch_id, index, sell_lots):
+            # 次日的一列:賣出張數是要看的東西,但這一列本身不是事件
+            # (|pct| < QUAL_PCT),所以不會被算成賣方 episode。
+            return {"stock_id": "D", "date": day(index), "branch_id": branch_id,
+                    "net_lots": -sell_lots, "sell_lots": sell_lots, "pct": -0.5,
+                    "source": "fixture"}
+
+        with db.get_engine().begin() as conn:
+            conn.execute(schema.stocks.insert(), [
+                {"id": "D", "name": "Daytrade", "market": "twse", "type": "stock"},
+            ])
+            conn.execute(schema.daily_prices.insert(), [
+                {"stock_id": "D", "date": d, "open": 100, "close": 100, "adj_factor": 1.0}
+                for d in self.days
+            ])
+            conn.execute(schema.tracked_branches.insert(), [
+                {"branch_name": "FLIPPER", "source": "manual", "added_at": self.days[0]},
+                {"branch_name": "NOFLIP", "source": "manual", "added_at": self.days[0]},
+            ])
+            conn.execute(schema.branch_dim.insert(), [
+                {"id": 1, "branch_key": "flipper", "branch_name": "FLIPPER"},
+                {"id": 2, "branch_key": "noflip", "branch_name": "NOFLIP"},
+            ])
+            conn.execute(schema.branch_trades_raw.insert(), [
+                # FLIPPER 的合格買超日刻意跨在 20 日窗口的兩邊:
+                # 窗口外(第 5/7/9 天)三次,三次都在次日回吐;
+                # 窗口內(第 25/27/29/31 天)四次,只有第 25 天在次日回吐。
+                buy(1, 5), next_day_sell(1, 6, 8),
+                buy(1, 7), next_day_sell(1, 8, 8),
+                buy(1, 9), next_day_sell(1, 10, 8),
+                buy(1, 25), next_day_sell(1, 26, 8),
+                buy(1, 27),                              # 次日完全沒有紀錄 = 0 張
+                buy(1, 29), next_day_sell(1, 30, 3),     # 3 < 0.7 × 10,不算回吐
+                buy(1, 31),
+                # NOFLIP:窗口內剛好 8 次合格買超,一次都沒有在次日回吐。
+                # 這是「判定得出來的 0 次」,與 FLIPPER 的「4 次不足以判定」不同。
+                *[buy(2, index) for index in (20, 22, 24, 26, 28, 30, 32, 34)],
+            ])
+
+    def tearDown(self):
+        if db._engine is not None:
+            db._engine.dispose()
+        db._engine = None
+        config.DB_URL, config.DATA_DIR = self.old_url, self.old_dir
+        self.tmp.cleanup()
+
+    def _by_branch(self, window_days):
+        compute_branch_stock_pctile_counts(as_of=self.as_of, window_days=window_days)
+        with db.get_engine().connect() as conn:
+            return {
+                row["branch_name"]: dict(row)
+                for row in conn.execute(text(
+                    "SELECT * FROM branch_stock_pctile_counts"
+                )).mappings()
+            }
+
+    def test_daytrade_counts_use_the_same_window_as_the_percentile_counts(self):
+        windowed = self._by_branch(20)["FLIPPER"]
+        self.assertEqual(windowed["window_market_days"], 20)
+        self.assertEqual(windowed["window_from"], self.days[20])
+        # 窗口內四次合格買超,其中一次次日回吐。
+        self.assertEqual(windowed["daytrade_obs"], 4)
+        self.assertEqual(windowed["daytrade_paybacks"], 1)
+        # 分位計數同樣只數窗口內的 episode(這裡價格全平,分位一律不可知),
+        # 兩組數字對得起來:同一個窗口、同一批合格買超日。
+        self.assertEqual(
+            windowed["buy_pctile_known"] + windowed["buy_pctile_unknown"], 4)
+
+        # 換一個窗口,答案必須跟著變 —— 否則就代表這幾個數字不是窗口內算的
+        # (例如從 branch_stock_stats 的全期數字 join 進來)。
+        wider = self._by_branch(40)["FLIPPER"]
+        self.assertEqual(wider["window_market_days"], 40)
+        self.assertEqual(wider["daytrade_obs"], 7)
+        self.assertEqual(wider["daytrade_paybacks"], 4)
+        self.assertEqual(wider["buy_pctile_known"] + wider["buy_pctile_unknown"], 7)
+
+    def test_below_minimum_observations_are_stored_raw_not_flattened(self):
+        rows = self._by_branch(20)
+        thin, determined = rows["FLIPPER"], rows["NOFLIP"]
+        # 未達門檻的那一對照樣存原始計數,讀取端才有辦法說「未判定」。
+        self.assertLess(thin["daytrade_obs"], DAYTRADE_MIN_OBS)
+        self.assertEqual(thin["daytrade_obs"], 4)
+        self.assertEqual(thin["daytrade_paybacks"], 1)
+        # 「判定得出來的 0 次」與「不足以判定」是兩個不同的事實,而且分得出來:
+        # 兩者的分子都可能是 0,唯一的區別就在分母。
+        self.assertGreaterEqual(determined["daytrade_obs"], DAYTRADE_MIN_OBS)
+        self.assertEqual(determined["daytrade_obs"], 8)
+        self.assertEqual(determined["daytrade_paybacks"], 0)
+        self.assertNotEqual(thin["daytrade_obs"], determined["daytrade_obs"])
+
+    def test_stock_pooled_daytrade_counts_are_the_row_sums_of_that_stock(self):
+        rows = self._by_branch(20)
+        expected_obs = sum(row["daytrade_obs"] for row in rows.values())
+        expected_paybacks = sum(row["daytrade_paybacks"] for row in rows.values())
+        self.assertEqual(expected_obs, 12)
+        self.assertEqual(expected_paybacks, 1)
+        for name, row in rows.items():
+            with self.subTest(branch=name):
+                self.assertEqual(row["stock_daytrade_obs"], expected_obs)
+                self.assertEqual(row["stock_daytrade_paybacks"], expected_paybacks)
+                self.assertLessEqual(row["daytrade_obs"], row["stock_daytrade_obs"])
+                self.assertLessEqual(row["daytrade_paybacks"], row["daytrade_obs"])
+
+
 class BranchPctileRankingTests(unittest.TestCase):
     """排序用的是「超出該檔股票自身基準」的差額,不是原始比率。"""
 
@@ -374,14 +502,18 @@ class BranchPctileExportTests(unittest.TestCase):
             {"stock_id": "1111", "branch_name": "甲", "buy_pctile_known": 33,
              "buy_pctile_unknown": 2, "low_buy_count": 28, "sell_pctile_known": 20,
              "sell_pctile_unknown": 1, "high_sell_count": 14,
+             "daytrade_obs": 30, "daytrade_paybacks": 21,
              "stock_buy_pctile_known": 1000, "stock_low_buy_count": 572,
-             "stock_sell_pctile_known": 900, "stock_high_sell_count": 287},
+             "stock_sell_pctile_known": 900, "stock_high_sell_count": 287,
+             "stock_daytrade_obs": 800, "stock_daytrade_paybacks": 96},
             # 兩側都不足 5 筆:必須被門檻擋掉。
             {"stock_id": "1111", "branch_name": "乙", "buy_pctile_known": 4,
              "buy_pctile_unknown": 0, "low_buy_count": 4, "sell_pctile_known": 4,
              "sell_pctile_unknown": 0, "high_sell_count": 4,
+             "daytrade_obs": 4, "daytrade_paybacks": 4,
              "stock_buy_pctile_known": 1000, "stock_low_buy_count": 572,
-             "stock_sell_pctile_known": 900, "stock_high_sell_count": 287},
+             "stock_sell_pctile_known": 900, "stock_high_sell_count": 287,
+             "stock_daytrade_obs": 800, "stock_daytrade_paybacks": 96},
         ])
         payload = self._export("1111")["branch_pctile_counts"]
         self.assertEqual(payload["version"], 1)
@@ -397,11 +529,19 @@ class BranchPctileExportTests(unittest.TestCase):
         self.assertEqual(payload["stock_low_buy_count"], 572)
         self.assertEqual(payload["stock_sell_pctile_known"], 900)
         self.assertEqual(payload["stock_high_sell_count"], 287)
+        # 次日回吐是同一列帶出來的第三組計數,不是另一張表 join 進來的:
+        # 門檻與該股自身的尺都跟著 payload 走。
+        self.assertEqual(payload["min_daytrade_obs"], DAYTRADE_MIN_OBS)
+        self.assertEqual(payload["stock_daytrade_obs"], 800)
+        self.assertEqual(payload["stock_daytrade_paybacks"], 96)
         self.assertEqual(payload["branches"], [{
             "branch_name": "甲", "buy_pctile_known": 33, "buy_pctile_unknown": 2,
             "low_buy_count": 28, "sell_pctile_known": 20, "sell_pctile_unknown": 1,
-            "high_sell_count": 14,
+            "high_sell_count": 14, "daytrade_obs": 30, "daytrade_paybacks": 21,
         }])
+        # 入選條件沒變:乙仍然因為兩側分位可知次數不足而不在清單裡,
+        # 它的次日回吐計數再漂亮也不會把它抬進來。
+        self.assertEqual([b["branch_name"] for b in payload["branches"]], ["甲"])
         # 沒有任何判定欄位:沒有比率、沒有旗標、沒有名次。
         for banned in ("rate", "score", "rank", "flag", "is_key", "win", "profit"):
             with self.subTest(banned=banned):
@@ -420,6 +560,8 @@ class BranchPctileExportTests(unittest.TestCase):
         # 這檔股票在快照裡完全沒有列,所以它自己的基準是「不知道」,不是 0。
         self.assertIsNone(payload["stock_buy_pctile_known"])
         self.assertIsNone(payload["stock_sell_pctile_known"])
+        self.assertIsNone(payload["stock_daytrade_obs"])
+        self.assertIsNone(payload["stock_daytrade_paybacks"])
         # window 中繼資料仍然來自快照,頁面才說得出自己涵蓋哪一段期間。
         self.assertEqual(payload["as_of"], self.DATES[-1])
 

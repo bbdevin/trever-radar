@@ -354,11 +354,17 @@ branch_stock_pctile_counts = Table(
     Column("sell_pctile_known", Integer),         # 分母
     Column("sell_pctile_unknown", Integer),
     Column("high_sell_count", Integer),           # 分子,分母 = sell_pctile_known
+    # 次日回吐:與上面同一個 window 內重算,**不是** branch_stock_stats 的全期數字
+    # (那兩欄期間不同,併排會誤讀)。低於 DAYTRADE_MIN_OBS = 無法判定,不是 0 次。
+    Column("daytrade_obs", Integer),              # 分母:窗口內可判定的合格買超日數
+    Column("daytrade_paybacks", Integer),         # 分子:其中次日賣出 >= 當日淨買 70%
     # 該檔股票自身、跨所有分點 pooled 的同一組計數(= 這一對的比較基準)。
     Column("stock_buy_pctile_known", Integer),
     Column("stock_low_buy_count", Integer),
     Column("stock_sell_pctile_known", Integer),
     Column("stock_high_sell_count", Integer),
+    Column("stock_daytrade_obs", Integer),
+    Column("stock_daytrade_paybacks", Integer),
     Index("ix_branch_stock_pctile_counts_stock", "stock_id"),
 )
 

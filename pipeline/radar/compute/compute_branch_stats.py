@@ -76,6 +76,43 @@ def merge_consecutive_events(qual_dates: list[str], date_index: dict[str, int]) 
     return events
 
 
+def daytrade_observations(qual_dates: list[str], datemap: dict[str, dict],
+                          trading_dates: list[str],
+                          date_index: dict[str, int]) -> list[tuple[float, float]]:
+    """把每個資格買超日配上「次一交易日同分點的賣出張數」,回傳 (淨買張, 次日賣出張)。
+
+    次日該分點無紀錄(未進該股當日前 15 大賣超)→ sell=0,視為未回吐;這是免費
+    資料每日只有前 15 大的誠實限制,不是「確定沒賣」。資格日不在日曆上、或已經
+    是日曆最後一天 → 同樣是 0(看不到次日,不是看到沒回吐)。
+
+    日曆由呼叫端給:``compute_all`` 給該股自身有收盤價的交易日;pair 粒度的
+    ``branch_stock_pctile_counts`` 給它自己那把市場交易日曆(與它切 episode 的
+    同一把),兩邊因此各自窗口一致。這個函式是**唯一**一份觀察建構,任何第二份
+    複製都會與這裡漂移。
+    """
+    observations: list[tuple[float, float]] = []
+    for qd in qual_dates:
+        net = (datemap.get(qd) or {}).get("net")
+        idx = date_index.get(qd)
+        next_sell = 0
+        if idx is not None and idx + 1 < len(trading_dates):
+            nrow = datemap.get(trading_dates[idx + 1])
+            next_sell = (nrow["sell"] if nrow else 0) or 0
+        observations.append((net, next_sell))
+    return observations
+
+
+def daytrade_counts(observations: list[tuple[float, float]]) -> tuple[int, int]:
+    """(可判定觀察數, 其中次日回吐數)。net 缺值或 <=0 的列根本不是一次觀察。
+
+    只回原始計數,不回比率也不回布林:分子與分母存下來,門檻才能只活在一個地方
+    (``DAYTRADE_MIN_OBS``),而不是被每個讀取端各自複製一份。
+    """
+    obs = [(net, sell) for net, sell in observations if net and net > 0]
+    paybacks = sum(1 for net, sell in obs if (sell or 0) >= DAYTRADE_PAYBACK * net)
+    return len(obs), paybacks
+
+
 def daytrade_flag(observations: list[tuple[float, float]],
                   min_obs: int | None = None) -> tuple[bool | None, float | None]:
     """單一 (分點, 個股) 配對的隔日沖判定。observations 為 (當日淨買張, 次一交易日同分點賣出張)。
@@ -88,11 +125,10 @@ def daytrade_flag(observations: list[tuple[float, float]],
     min_obs 只給影子報表凍結歷史門檻用,線上計算一律走預設值。
     """
     threshold = DAYTRADE_MIN_OBS if min_obs is None else min_obs
-    obs = [(net, sell) for net, sell in observations if net and net > 0]
-    if len(obs) < threshold:
+    n_obs, paybacks = daytrade_counts(observations)
+    if n_obs < threshold:
         return None, None
-    paybacks = sum(1 for net, sell in obs if (sell or 0) >= DAYTRADE_PAYBACK * net)
-    rate = paybacks / len(obs)
+    rate = paybacks / n_obs
     return rate >= DAYTRADE_RATE, rate
 
 
@@ -298,22 +334,10 @@ def compute_all():
                     branch_aggs[br] = agg
 
                 # 隔日沖觀察:每個資格買超日 → 次一交易日同分點賣出張(無紀錄=0)。
-                obs: list[tuple[float, float]] = []
-                for qd in qual_dates:
-                    net = datemap[qd]["net"]
-                    idx = date_index.get(qd)
-                    next_sell = 0
-                    if idx is not None and idx + 1 < len(trading_dates):
-                        nrow = datemap.get(trading_dates[idx + 1])
-                        next_sell = (nrow["sell"] if nrow else 0) or 0
-                    obs.append((net, next_sell))
+                obs = daytrade_observations(qual_dates, datemap, trading_dates, date_index)
                 # pair 層判定用「合併連續段之前」的觀察數(obs 逐資格日,未合併)。
                 st_daytrade, _ = daytrade_flag(obs)
-                dt_obs = sum(1 for net, _s in obs if net and net > 0)
-                dt_paybacks = sum(
-                    1 for net, sell in obs
-                    if net and net > 0 and (sell or 0) >= DAYTRADE_PAYBACK * net
-                )
+                dt_obs, dt_paybacks = daytrade_counts(obs)
                 agg.add_pair(st_daytrade)
 
                 # 合併事件 + 前瞻報酬 + 買點分位 → 直接打進累加器。

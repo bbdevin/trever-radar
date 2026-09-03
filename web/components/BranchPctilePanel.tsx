@@ -17,6 +17,12 @@ import type { BranchPctileCounts, BranchPctileRow } from "@/lib/types";
 
 const CONTRACT_VERSION = 1;
 
+/** 次日回吐一列的定義,寫在 title 裡,與另外兩側同一種講法。 */
+const DAYTRADE_LABEL = "次日回吐";
+const DAYTRADE_DEFINITION =
+  "合格買超日的次日，同一分點又出現在這檔股票的前 15 大賣超，"
+  + "且賣出張數達當日淨買的七成以上";
+
 type SideSpec = {
   key: "buy" | "sell";
   label: string;
@@ -123,9 +129,9 @@ export default function BranchPctilePanel({ data }: { data: BranchPctileCounts |
           不是完整紀錄。
         </p>
         <p className="text-[11.5px] leading-relaxed text-muted-foreground">
-          每一側都附上這檔股票自身的同側比率當作尺——兩側的基準本來就不同，
-          只看單一個百分比會誤讀。以下全部是進出場價格分位的計次，不是損益，
-          也不代表之後會延續。
+          每一列都附上這檔股票自身的同一項比率當作尺——各項的基準本來就不同，
+          只看單一個百分比會誤讀。以下全部是進出場時點的計次（價格分位與次日回吐），
+          不是損益，也不代表之後會延續。
         </p>
       </div>
 
@@ -150,6 +156,7 @@ export default function BranchPctilePanel({ data }: { data: BranchPctileCounts |
                   <SideBar key={side.key} side={side} row={row} payload={data} />
                 ))}
               </div>
+              <DaytradeBar row={row} payload={data} />
             </li>
           ))}
         </ul>
@@ -157,9 +164,111 @@ export default function BranchPctilePanel({ data }: { data: BranchPctileCounts |
 
       <p className="text-[11px] leading-relaxed text-muted-foreground">
         「低四成／高四成」指當日收盤在該股近 20 日收盤區間中的位置。買、賣兩側各自獨立計數，
-        沒有配對成一筆交易，因此不能讀成賺賠。
+        沒有配對成一筆交易，因此不能讀成賺賠。「次日回吐」數的是{DAYTRADE_DEFINITION}的次數；
+        出場多半落在看不見的成交裡，所以那個次數同樣是下限，不是完整紀錄，也不能當成對某個分點的判定。
       </p>
     </section>
+  );
+}
+
+/**
+ * 第三列:次日回吐。與上面兩側同一個窗口、同一種視覺語言。
+ *
+ * 這裡刻意有三種狀態,不是兩種:
+ *   1. 缺鍵(舊版 payload)——整列不畫。沒有這項觀察,和觀察到 0 次不是同一件事。
+ *   2. 觀察數 < min_daytrade_obs ——明講「無法判定」。這正是這次改版的重點:
+ *      未判定不等於「不會回吐」,絕不能退化成 0 或空白。
+ *   3. 觀察數足夠 —— 分子/分母 + 百分比 + 該股自身的尺。
+ *
+ * 門檻不寫死在前端,只讀 payload 帶來的 min_daytrade_obs:定義留在 pipeline 一處。
+ * 方向色同樣不用——這是計次,不是判定,更不是「這是隔日沖分點」這種斷言。
+ */
+function DaytradeBar({
+  row,
+  payload,
+}: {
+  row: BranchPctileRow;
+  payload: BranchPctileCounts;
+}) {
+  const obs = row.daytrade_obs;
+  const paybacks = row.daytrade_paybacks;
+  const minObs = payload.min_daytrade_obs;
+  // 舊 JSON 配新程式碼是常態(程式碼會早於下一次 VPS 匯出上線),缺任何一項就不畫。
+  if (!isCount(obs) || !isCount(paybacks) || !isCount(minObs) || paybacks > obs) return null;
+
+  const determined = obs >= minObs;
+  const branchRate = determined ? rate(paybacks, obs) : null;
+  const stockObs = payload.stock_daytrade_obs;
+  const stockPaybacks = payload.stock_daytrade_paybacks;
+  const stockRate = rate(
+    isCount(stockPaybacks) ? stockPaybacks : null,
+    isCount(stockObs) ? stockObs : null,
+  );
+  const diff = branchRate != null && stockRate != null ? branchRate - stockRate : null;
+
+  const summary = branchRate != null
+    ? `${DAYTRADE_LABEL}：${obs} 次合格買超中有 ${paybacks} 次，${fmtPct(branchRate)}；`
+      + (stockRate != null
+        ? `此股自身 ${fmtPct(stockRate)}，${diff! >= 0 ? "高於" : "低於"}此股 ${fmtPp(diff!)}`
+        : "此股自身比率未提供")
+    : `${DAYTRADE_LABEL}：窗口內只有 ${obs} 次可觀察的合格買超，未達 ${minObs} 次，無法判定`;
+
+  return (
+    <div className="grid min-w-0 gap-1.5" role="group" aria-label={summary}>
+      <div className="flex flex-wrap items-baseline justify-between gap-x-2 gap-y-0.5">
+        <span className="text-[12px] font-semibold text-foreground" title={DAYTRADE_DEFINITION}>
+          {DAYTRADE_LABEL}
+        </span>
+        {determined ? (
+          <span className="num text-[12.5px] text-foreground">
+            <span className="font-bold">{paybacks}</span>
+            <span className="text-muted-foreground"> / {obs} 次</span>
+            {branchRate != null && <span className="ml-1 font-bold">{fmtPct(branchRate)}</span>}
+          </span>
+        ) : (
+          <span className="text-[12px] font-semibold text-muted-foreground">無法判定</span>
+        )}
+      </div>
+
+      {/* 同一條 0–100% 軸。未判定時不畫實心條——沒有可以畫的比率;但刻度線照畫,
+          因為那把尺(此股自身)本身是已知的。 */}
+      <div className="relative h-2.5 w-full rounded-full bg-secondary" aria-hidden="true">
+        {branchRate != null && (
+          <div
+            className="absolute inset-y-0 left-0 rounded-full bg-primary/70"
+            style={{ width: `${Math.min(100, Math.max(0, branchRate))}%` }}
+          />
+        )}
+        {stockRate != null && (
+          <div
+            className="absolute -top-1 h-4.5 w-0.5 rounded-full bg-[color:var(--ink-2)]"
+            style={{ left: `${Math.min(100, Math.max(0, stockRate))}%`, transform: "translateX(-1px)" }}
+          />
+        )}
+      </div>
+
+      <p className="text-[11px] leading-snug text-muted-foreground">
+        {determined ? (
+          stockRate != null && isCount(stockPaybacks) && isCount(stockObs) ? (
+            <>
+              此股全體分點同項 {stockPaybacks} / {stockObs} 次（{fmtPct(stockRate)}）
+              {diff != null && (
+                <span className="text-foreground">
+                  {" "}· {diff >= 0 ? "高於" : "低於"}此股 {fmtPp(diff)}
+                </span>
+              )}
+            </>
+          ) : (
+            <>此股自身同項比率未提供，這一格沒有可比的尺</>
+          )
+        ) : (
+          <>
+            窗口內只有 {obs} 次可觀察的合格買超，未達 {minObs} 次，無法判定；
+            這是次數不足，不是「沒有回吐」。
+          </>
+        )}
+      </p>
+    </div>
   );
 }
 

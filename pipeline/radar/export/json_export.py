@@ -22,6 +22,7 @@ from ..compute.strategy_performance import (
     compute_strategy_performance_from_events,
     fetch_strategy_events,
 )
+from ..compute.compute_branch_stats import DAYTRADE_MIN_OBS
 from ..compute.margin_cost import build_margin_cost_series
 from ..compute.display_window import display_window_bounds, window_label
 
@@ -67,10 +68,14 @@ BRANCH_PCTILE_VERSION = 1
 _BRANCH_PCTILE_COLUMNS = (
     "branch_name", "buy_pctile_known", "buy_pctile_unknown", "low_buy_count",
     "sell_pctile_known", "sell_pctile_unknown", "high_sell_count",
+    # 次日回吐:同一個 window 內算出來的第三組計數,不是入選條件,只是已入選
+    # 分點的額外脈絡。低於 min_daytrade_obs 時是「無法判定」,讀取端不得當 0。
+    "daytrade_obs", "daytrade_paybacks",
 )
 _BRANCH_PCTILE_STOCK_COLUMNS = (
     "stock_buy_pctile_known", "stock_low_buy_count",
     "stock_sell_pctile_known", "stock_high_sell_count",
+    "stock_daytrade_obs", "stock_daytrade_paybacks",
 )
 _BRANCH_PCTILE_WINDOW_COLUMNS = (
     "as_of", "window_market_days", "window_from", "computed_at", "definitions_version",
@@ -141,6 +146,8 @@ def _branch_pctile_payload(conn, sid: str, meta: dict | None, table_exists: bool
         "version": BRANCH_PCTILE_VERSION,
         "min_known_episodes_per_side": BRANCH_PCTILE_MIN_KNOWN_PER_SIDE,
         "max_branches": BRANCH_PCTILE_MAX_BRANCHES,
+        # 判定門檻只有這一份:前端不自己寫死 8,低於它就顯示「無法判定」。
+        "min_daytrade_obs": DAYTRADE_MIN_OBS,
     }
     for column in _BRANCH_PCTILE_WINDOW_COLUMNS:
         payload[column] = window.get(column)

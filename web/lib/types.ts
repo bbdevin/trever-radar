@@ -255,6 +255,13 @@ export interface BranchPctileRow {
   sell_pctile_known: number;
   sell_pctile_unknown: number;
   high_sell_count: number;
+  /**
+   * 次日回吐:同一個窗口內,可判定的合格買超日數,以及其中次日賣出達當日淨買
+   * 七成以上的次數。此欄早於資料上線,舊 payload 會缺;缺鍵 = 沒有這項觀察,
+   * 不是 0 次。obs 低於 `min_daytrade_obs` 時是「無法判定」,同樣不是 0 次。
+   */
+  daytrade_obs?: number;
+  daytrade_paybacks?: number;
 }
 
 /** 個股頁的分位計數 payload;`branches` 可能是空陣列(誠實的空,不是錯誤)。 */
@@ -273,6 +280,10 @@ export interface BranchPctileCounts {
   stock_low_buy_count: number | null;
   stock_sell_pctile_known: number | null;
   stock_high_sell_count: number | null;
+  /** 次日回吐的判定門檻與該股自身 pooled 計數;舊 payload 會缺這三鍵。 */
+  min_daytrade_obs?: number;
+  stock_daytrade_obs?: number | null;
+  stock_daytrade_paybacks?: number | null;
   branches: BranchPctileRow[];
 }
 
