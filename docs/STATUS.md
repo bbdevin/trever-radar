@@ -21,6 +21,19 @@
 
 - [x] VPS `~/trever-radar` HEAD 已是 `bf65dd0`（日更腳本自行 pull），16:10 `daily-insti.sh` 執行中（`import-warrant-master` 階段），持有 `/tmp/radar-db.lock`。本輪的 `data_date`／anchor 修正會由這條既有排程自然發布，**未手動觸發任何正式 import／export／deploy，未改 cron**。
 - [x] 既有四個未追蹤檔（`cloudflare-data-worker/package-lock.json`、`data/`、`radar-quick-catchup.sh`、`run-backfill.sh`）仍在且未阻斷本次 pull。磁碟 `29G` 中已用 `19G`、free `8.1G`（71%）；仍低於 20GB gate，禁止自行啟用全市場權證輪。分點回補 `backfill-branches --top 0 --days 490` 仍單實例執行中，guard／supervisor 各一，未重啟。
+## 2026-09-03 E2 持久化已實作，三項上線前量測全數通過（決策一完成；正式 DB 未動）
+
+- [x] **實作**（commit `b933ab3`）：新表 `branch_pit_stats`，PK `(branch_name, as_of, window_market_days)` 加 `ix_branch_pit_stats_as_of`，**全表無任何 rate 欄位**——每個分子都帶分母與 unknown 計數，`fwd5_sum_pct` 存總和而非平均以保 pooled 精確。新模組 `branch_point_in_time_persist.py` 與 CLI `branch-point-in-time-persist --as-of YYYY-MM-DD [--window-days N]`（預設 60）。`prune.py` 加註此表**刻意永不清理**。兩支唯讀 shadow 工具行為未變。
+- [x] **記憶體約束已解**：不呼叫會保留全部 episode 的 `build_branch_point_in_time_report`（單一 as_of 約 913k 個，與 2026-08-25 那次 1.7GB OOM 同形狀），改為 **stock-major 串流**——分點計數器與順序無關，故以 `stock_id, branch_name, date` 排序並 `yield_per` 串流，一支股票的價格切片用完即丟；價格只抓 `window_from` 前 19 個市場日至 `as_of`（任何分位或 fwd5 讀得到的完整範圍）；價格查詢走第二條連線以免擾動串流游標。
+- [x] **量測一：記憶體與時間（對 WP-B4 還原出的 4.8GB 正式副本實跑）**：peak working set **63 MB**（行程基線 42MB，計算本身約 +21MB），每個 as_of **31–50 秒**。對照 `compute-branch-stats` 當初的 **1.7GB** OOM，相差約 **27 倍**。Fable 的放行條件是「RSS 須明顯低於 `compute-branch-stats`」→ **通過**。
+- [x] **量測二：實際容量**：5 個 as_of 共寫 4,104 列，DB 成長 **155,648 bytes** = **38 bytes／列**；每個 as_of **30 KB**、每 245 交易日 **7.3 MB**。Fable 原估 200KB／as_of、50MB／年，**實際小約 7 倍**。
+- [x] **量測三：分點間離散度（決定它能否上 UI）**：as_of 2026-08-28、分母 `buy_pctile_known >= 30` 者 **816 個分點**，`low_buy_count / buy_pctile_known` 的 p10 **0.4941**、p50 **0.5546**、p90 **0.6037**、min 0.3587、max 0.6702，**p90−p10 = 10.95 個百分點**、stdev 4.63pp。Fable 的規則是「差距若不到約 3 個百分點，只能當帳本、不得在 UI 呈現得像它能區分分點」→ **10.95pp 遠高於門檻，該表確有區辨力**，日後可考慮上 UI（本輪不做）。
+- [x] **unknown 的質量再次獲證**：該 as_of 共 912,015 個 buy episode，已知分位 690,052、**未知 221,963（24.3%）**；`fwd5` 已成熟 684,768、未成熟 227,247。pooled `low_buy_rate` = **53.8054%**。與先前序列量到的 23% 未知、53.29% 一致。**這就是「只存 rate 會藏起四分之一資料」的實證。**
+- [x] 每個 as_of 寫 **821** 列（與序列工具數到的 821 個分點一致），`window_truncated` 皆為 false。模組對非交易日 **fail closed**（實測 2026-08-22 週六被正確拒絕）。
+- [x] 驗證：完整 pipeline pytest **372 passed、74 subtests**（基線 363／70 ＋ 9 測試 4 subtests）；`git diff --check` 通過。`create_all` 能在既有 DB 上建表**經測試證實**（在已填資料的 DB 上 drop 該表、呼叫 `init_db()`、斷言它回來），不需 `_migrate_sqlite` 條目。
+- [x] **順帶修掉既有效能缺陷**：`_price_observation` 原本**每個 episode 都重算一次 `sorted(market_index)`**，在 913k episode 下是 O(n·m log m)。改為可傳入預先算好的 `market_days`／`row_by_date`（不傳則與原行為逐字相同），並把 `0.40`／`0.60` 具名為 `LOW_BUY_MAX_PCTILE`／`HIGH_SELL_MIN_PCTILE`（值不變）。既有 report 測試未改動且全過。
+- ⚠️ **尚未做**：正式機尚未執行此 CLI，也未加 cron。歷史回算即為本指令對交易日迴圈，重跑同一 as_of 會取代該列，故可中斷續跑。是否排程與回補多久，待人類決定。
+
 ## 2026-09-03 隔日沖重新定義已實作並端到端驗證（決策二完成；正式 DB 未動）
 
 - [x] **實作範圍**（commit `0821f04`）：`DAYTRADE_MIN_OBS` 4→**8**、新增 `DAYTRADE_MIN_PAIRS = 20`／`DAYTRADE_PAIR_SHARE = 0.20`；`daytrade_flag` 觀察數不足時回 **`(None, None)`** 而非 `(False, None)`；`branch_stock_stats.is_daytrade_suspect` 未判定寫 **NULL**，並新增 `daytrade_obs`／`daytrade_paybacks` 讓 pair 比率自帶分母；`_BranchAgg` 由 pooled 回吐比率改為 `dt_pairs_determined`／`dt_pairs_flagged` 兩個 pair 計數，`is_daytrade()` 回 `bool | None`；`branch_rankings` 新增 `matured_samples`／`daytrade_pairs_determined`／`daytrade_pairs_flagged`；`AUTO_IN` 抽成具名的 `auto_in_blocked_by_daytrade()`，**只被 `is True` 擋、NULL 不擋**，並在註解明寫不得「修正」成真值測試。
