@@ -50,6 +50,111 @@ _STRATEGY_LIFECYCLE: dict[str, dict[str, str | int]] = {
 }
 
 
+# ── docs/37 E2 pair 粒度:個股頁的「買點／賣點價格分位計數」讀取端 ──
+# 這裡輸出的是計數與分母,不是判定。每一對都附上該檔股票自身 pooled 的同一組
+# 分子與分母,因為兩側基準率差很多(全市場低買 53.35% / 高賣 35.35%),
+# 沒有那把尺,單看一個比率會把買側的基準值誤讀成優異表現。
+# 這個性質也不持久(隔年重新標記率僅 1.6–5.4%),所以 payload 裡沒有任何
+# 旗標、分數或名次,措辭只能是「歷史上數到幾次」。
+#
+# 兩側各至少 5 筆已知分位 episode 才輸出:再少下去分母薄到讀不出東西。
+BRANCH_PCTILE_MIN_KNOWN_PER_SIDE = 5
+# 每檔股票最多列 10 個分點。個股頁是給人讀的,不是資料傾印;量測顯示即使
+# 要求兩側各 10 筆仍有 8.6 萬對,不設上限會讓熱門股列出數百列。
+BRANCH_PCTILE_MAX_BRANCHES = 10
+BRANCH_PCTILE_VERSION = 1
+
+_BRANCH_PCTILE_COLUMNS = (
+    "branch_name", "buy_pctile_known", "buy_pctile_unknown", "low_buy_count",
+    "sell_pctile_known", "sell_pctile_unknown", "high_sell_count",
+)
+_BRANCH_PCTILE_STOCK_COLUMNS = (
+    "stock_buy_pctile_known", "stock_low_buy_count",
+    "stock_sell_pctile_known", "stock_high_sell_count",
+)
+_BRANCH_PCTILE_WINDOW_COLUMNS = (
+    "as_of", "window_market_days", "window_from", "computed_at", "definitions_version",
+)
+
+
+def _branch_pctile_table_exists(conn) -> bool:
+    """舊資料庫還沒跑過這個計算時,匯出照樣要成功,只是內容是誠實的空。"""
+    return bool(conn.execute(text(
+        "SELECT 1 FROM sqlite_master WHERE type='table' "
+        "AND name='branch_stock_pctile_counts'"
+    )).scalar())
+
+
+def _branch_pctile_snapshot_meta(conn) -> dict | None:
+    """整份快照共用同一組 window 中繼資料,取任一列即可。"""
+    row = conn.execute(text(f"""
+        SELECT {", ".join(_BRANCH_PCTILE_WINDOW_COLUMNS)}
+        FROM branch_stock_pctile_counts LIMIT 1
+    """)).mappings().first()
+    return dict(row) if row else None
+
+
+def _rank_branch_pctile_rows(rows: list[dict], limit: int, min_known: int) -> list[dict]:
+    """依「超出該檔股票自身基準率多少」排序,不是依原始比率排序。
+
+    排序鍵是買側與賣側各自對**同一檔股票自身 pooled 率**的差額相加。之所以不
+    能把兩側合併成一個比率再排,是因為兩側的 null 根本不同(全市場低買 53.35%、
+    高賣 35.35%):合併之後,一對「買很多次、賣很少次」的分點會被買側的高基準
+    率抬起來,看起來勝過一對真正在賣側超出基準的分點。分開扣掉各自的基準,
+    這個假象才會消失——這正是把那把尺存進每一列的用途。
+
+    (同一檔股票的清單裡,基準是常數,所以這個鍵與「兩側比率相加」給出同一個
+    順序;差別出現在跨股票比較,以及上面說的合併比率讀法。)
+    """
+    def margin(row: dict) -> float:
+        total = 0.0
+        for side_num, side_den, stock_num, stock_den in (
+            ("low_buy_count", "buy_pctile_known", "stock_low_buy_count", "stock_buy_pctile_known"),
+            ("high_sell_count", "sell_pctile_known", "stock_high_sell_count", "stock_sell_pctile_known"),
+        ):
+            pair_rate = row[side_num] / row[side_den]
+            base = row[stock_num] / row[stock_den] if row[stock_den] else 0.0
+            total += pair_rate - base
+        return total
+
+    qualified = [
+        row for row in rows
+        if (row["buy_pctile_known"] or 0) >= min_known
+        and (row["sell_pctile_known"] or 0) >= min_known
+    ]
+    qualified.sort(key=lambda row: (-margin(row), row["branch_name"]))
+    return qualified[:limit]
+
+
+def _branch_pctile_payload(conn, sid: str, meta: dict | None, table_exists: bool) -> dict:
+    """個股頁的 payload。沒有合格分點時輸出誠實的空清單,不是缺鍵。"""
+    rows: list[dict] = []
+    if table_exists:
+        rows = [dict(row) for row in conn.execute(text(f"""
+            SELECT {", ".join(_BRANCH_PCTILE_COLUMNS + _BRANCH_PCTILE_STOCK_COLUMNS
+                              + _BRANCH_PCTILE_WINDOW_COLUMNS)}
+            FROM branch_stock_pctile_counts WHERE stock_id = :s
+        """), {"s": sid}).mappings()]
+    window = dict(rows[0]) if rows else (dict(meta) if meta else {})
+    stock_totals = rows[0] if rows else {}
+    payload = {
+        "version": BRANCH_PCTILE_VERSION,
+        "min_known_episodes_per_side": BRANCH_PCTILE_MIN_KNOWN_PER_SIDE,
+        "max_branches": BRANCH_PCTILE_MAX_BRANCHES,
+    }
+    for column in _BRANCH_PCTILE_WINDOW_COLUMNS:
+        payload[column] = window.get(column)
+    for column in _BRANCH_PCTILE_STOCK_COLUMNS:
+        payload[column] = stock_totals.get(column)
+    payload["branches"] = [
+        {column: row[column] for column in _BRANCH_PCTILE_COLUMNS}
+        for row in _rank_branch_pctile_rows(
+            rows, BRANCH_PCTILE_MAX_BRANCHES, BRANCH_PCTILE_MIN_KNOWN_PER_SIDE,
+        )
+    ]
+    return payload
+
+
 def _active_buybacks_by_stock(conn, as_of: str) -> dict[str, dict]:
     """Return one current MOPS plan per issuer without allowing future reports."""
     candidates: dict[str, list[dict]] = {}
@@ -1309,6 +1414,10 @@ def export_json(out_dir: Path | None = None) -> dict:
         """)).mappings()
         company_profiles = {row["stock_id"]: dict(row) for row in profile_rows}
         active_buybacks = _active_buybacks_by_stock(conn, d)
+        branch_pctile_exists = _branch_pctile_table_exists(conn)
+        branch_pctile_meta = (
+            _branch_pctile_snapshot_meta(conn) if branch_pctile_exists else None
+        )
         # 榜單優先(全歷史),其餘依代號排序,穩定輸出
         export_ids = list(dict.fromkeys(
             list(union.keys()) + sorted(stock_meta.keys())
@@ -1422,6 +1531,10 @@ def export_json(out_dir: Path | None = None) -> dict:
                     for r in stock_branches
                 ],
                 "branch_history": branch_history,
+                # 計數與分母,不是判定;鍵永遠存在,沒有合格分點時是空清單。
+                "branch_pctile_counts": _branch_pctile_payload(
+                    conn, sid, branch_pctile_meta, branch_pctile_exists,
+                ),
                 "warrant": s["warrant"],
                 "warrant_history": [
                     {"t": r[0], "call_turnover": r[1] or 0, "put_turnover": r[2] or 0,

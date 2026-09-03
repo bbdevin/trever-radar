@@ -301,6 +301,24 @@ def cmd_branch_point_in_time_persist(args):
     )
 
 
+def cmd_branch_stock_pctile_counts(args):
+    from .compute.branch_stock_pctile_counts import (
+        compute_branch_stock_pctile_counts,
+        resolve_default_as_of,
+    )
+
+    as_of = args.as_of or resolve_default_as_of()
+    info = compute_branch_stock_pctile_counts(as_of=as_of, window_days=args.window_days)
+    print(
+        "branch-stock-pctile-counts "
+        f"as_of={info['as_of']} "
+        f"window={info['window_market_days']}d(from={info['window_from']}"
+        f"{',truncated' if info['window_truncated'] else ''}) "
+        f"pairs={info['pairs_written']} stocks={info['stocks_written']} "
+        f"elapsed={info['elapsed_sec']}s"
+    )
+
+
 def cmd_branch_ranking_v2_shadow(args):
     from .compute.branch_ranking_v2_shadow import write_branch_ranking_v2_shadow_report
 
@@ -631,6 +649,22 @@ def main(argv=None):
                             "(default 60); too little history truncates the window and "
                             "is recorded in window_from, never padded")
     bpitp.set_defaults(fn=cmd_branch_point_in_time_persist)
+
+    bspc = sub.add_parser(
+        "branch-stock-pctile-counts",
+        help="replace the latest branch × stock snapshot of buy/sell price-percentile "
+             "counts (counts and denominators only; no rates, no flags, no ranking — "
+             "the measured re-flag rate across years is only a few percent)",
+    )
+    bspc.add_argument("--as-of", default=None,
+                      help="YYYY-MM-DD; must be a market trading day. "
+                           "Omitted: the latest trading day that has price data "
+                           "(MAX(date) FROM daily_prices); fails loudly if there is none")
+    bspc.add_argument("--window-days", dest="window_days", type=int, default=490,
+                      help="trailing window in market trading days ending at --as-of "
+                           "(default 490); too little history truncates the window and "
+                           "is recorded in window_from, never padded")
+    bspc.set_defaults(fn=cmd_branch_stock_pctile_counts)
 
     v2s = sub.add_parser(
         "branch-ranking-v2-shadow",

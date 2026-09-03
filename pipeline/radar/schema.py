@@ -315,6 +315,53 @@ branch_pit_stats = Table(
     Index("ix_branch_pit_stats_as_of", "as_of"),
 )
 
+# docs/37 E2 pair 粒度:一個「分點 × 個股」在一段 trailing window 內,
+# 買進 episode 有幾次落在 20 日收盤分位的低檔、賣出 episode 有幾次落在高檔。
+#
+# ⚠️ 讀這張表之前必須知道的兩件事(2026-09-03 唯讀量測,見 docs/STATUS.md):
+#   1. **兩側基準率不對稱**:全市場 pooled 低買 53.35%、高賣 35.35%。所以
+#      「低買率 60%」在買側幾乎是基準值,在賣側卻是大幅超出。任何一個比率
+#      單獨看都沒有意義,必須跟**同一檔股票自己的 pooled 率**比。這就是每列
+#      都帶 stock_* 分子與分母的原因——它們是尺,不是裝飾。
+#   2. **這個性質不持久**:同一條規則在下一個年度重新標記到同一對的比率只有
+#      1.6%–5.4%。傾向(pair 樣本外仍以 2.3–2.9× 勝過自己那檔股票的 null)為真,
+#      「總是低買高賣」不成立。因此本表**不存任何布林旗標、不存分數、不排名**,
+#      只存計數;要不要相信,由讀的人看著分母自己判斷。請不要把它變成徽章。
+#
+# 只存最新一份快照:整張表每次重算就被取代,鍵是 (branch_name, stock_id)。
+# 約 90 萬列、數十 MB。若改成跨 as_of 的 point-in-time 序列,實測約 140 GB,
+# 磁碟放不下——那條路已被否決,這張表刻意不是那個東西。
+# 因此本表也**不進 prune.py**:它沒有可刪的歷史,只有一份當下的快照。
+#
+# 不存比率(同 branch_pit_stats):比率不可還原成 pooled,分子與分母才可以。
+# unknown 分位另外計數,永遠不當成「沒做到」。
+#
+# 全部是**進出場價格分位**,不是損益:docs/37 禁止買賣配對與獲利歸因,
+# 因此買方與賣方 episode 各自獨立計數,沒有任何欄位是勝率或報酬。
+branch_stock_pctile_counts = Table(
+    "branch_stock_pctile_counts",
+    metadata,
+    Column("branch_name", Text, primary_key=True),
+    Column("stock_id", Text, primary_key=True),
+    Column("as_of", Text),                        # 市場交易日
+    Column("window_market_days", Integer),        # 實際納入的交易日數
+    Column("window_from", Text),                  # window 內第一個市場交易日
+    Column("definitions_version", Text),
+    Column("computed_at", Text),                  # ISO 時戳 = 資料可得性
+    Column("buy_pctile_known", Integer),          # 分母
+    Column("buy_pctile_unknown", Integer),        # 分位不可知,不是失敗
+    Column("low_buy_count", Integer),             # 分子,分母 = buy_pctile_known
+    Column("sell_pctile_known", Integer),         # 分母
+    Column("sell_pctile_unknown", Integer),
+    Column("high_sell_count", Integer),           # 分子,分母 = sell_pctile_known
+    # 該檔股票自身、跨所有分點 pooled 的同一組計數(= 這一對的比較基準)。
+    Column("stock_buy_pctile_known", Integer),
+    Column("stock_low_buy_count", Integer),
+    Column("stock_sell_pctile_known", Integer),
+    Column("stock_high_sell_count", Integer),
+    Index("ix_branch_stock_pctile_counts_stock", "stock_id"),
+)
+
 # docs/27 G1:公司與券商分點地址(口袋名單前置)。
 company_profiles = Table(
     "company_profiles",

@@ -4,7 +4,8 @@
 # 避開 daily-* 窗;pause bf;記憶體不足則跳過;stats 失敗則中止(不跑 scores/export)。
 #
 # 環境變數:MIN_FREE_GB=4;MIN_MEM_MB=900;SKIP_EXPORT=1 只算不上線;SKIP_SCORES=1 略過分數;
-#           SKIP_PIT=1 略過 point-in-time 帳本。
+#           SKIP_PIT=1 略過 point-in-time 帳本;
+#           SKIP_PAIR_PCTILE=1 略過分點×個股價格分位計數。
 source "$(dirname "$0")/lib.sh"
 
 FLAG="${MID_PUBLISH_FLAG:-/tmp/radar-mid-publish.flag}"
@@ -83,6 +84,7 @@ set -e
 STATS_NOTE="ok"
 SCORES_NOTE="skipped"
 PIT_NOTE="skipped"
+PAIR_PCTILE_NOTE="skipped"
 if [ "$rc" -ne 0 ]; then
   STATS_NOTE="failed_rc_${rc}"
   echo "compute-branch-stats failed rc=$rc"
@@ -119,6 +121,28 @@ else
   PIT_NOTE="skipped_env"
 fi
 
+# branch-stock-pctile-counts:同一批原料的 pair 粒度快照(分點 × 個股 的低買/
+# 高賣計數),個股頁要用。折在這裡的理由與上面那段完全相同(共用五道守衛、
+# 單一寫入者、成本可忽略),而且它讀的也是 compute-branch-stats 剛更新的資料。
+# 整張表每輪被取代,失敗只是舊快照留著,所以**同樣不中止本輪**:它次要於
+# 分數、匯出與上線,不能因為它擋住當天的價格上線。
+if [ "${SKIP_PAIR_PCTILE:-0}" != "1" ]; then
+  echo "branch-stock-pctile-counts"
+  set +e
+  radar branch-stock-pctile-counts
+  qrc=$?
+  set -e
+  if [ "$qrc" -ne 0 ]; then
+    PAIR_PCTILE_NOTE="failed_rc_${qrc}"
+    echo "branch-stock-pctile-counts failed rc=$qrc (continue to scores)"
+    notify_warn "分點×個股價格分位計數失敗（碼 ${qrc}），仍繼續分數與匯出"
+  else
+    PAIR_PCTILE_NOTE="ok"
+  fi
+else
+  PAIR_PCTILE_NOTE="skipped_env"
+fi
+
 if [ "${SKIP_SCORES:-0}" != "1" ]; then
   echo "compute-scores"
   set +e
@@ -146,6 +170,7 @@ fi
   echo "finished=$(taipei_date -Is)"
   echo "stats=$STATS_NOTE"
   echo "pit=$PIT_NOTE"
+  echo "pair_pctile=$PAIR_PCTILE_NOTE"
   echo "scores=$SCORES_NOTE"
   echo "mem_before=$MEM"
   echo "mem_after_pause=$MEM2"
@@ -164,5 +189,5 @@ if ! pgrep -f 'vps/scripts/bf-supervisor.sh' >/dev/null 2>&1; then
   nohup bash "$REPO/vps/scripts/bf-supervisor.sh" >> "${BF_SUPERVISOR_LOG:-$HOME/bf-supervisor.log}" 2>&1 &
 fi
 
-notify_ok "分點排行與分數夜間重算完成（統計=${STATS_NOTE}，帳本=${PIT_NOTE}，分數=${SCORES_NOTE}）"
+notify_ok "分點排行與分數夜間重算完成（統計=${STATS_NOTE}，帳本=${PIT_NOTE}，分位計數=${PAIR_PCTILE_NOTE}，分數=${SCORES_NOTE}）"
 echo "=== safe-branch-stats done $(taipei_date -Is) ==="

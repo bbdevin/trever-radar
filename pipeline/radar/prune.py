@@ -4,6 +4,10 @@
 它的每一列都帶著 ``computed_at``,記錄「那一天實際看得到什麼」;因為
 ``branch_trades`` 仍在 backfill,刪掉之後重算得到的是**另一個觀察**,不是同一
 筆資料。一年約 50 MB,是這顆磁碟上最不值得刪的東西。請不要順手把它加進來。
+
+同樣刻意不刪的還有 ``branch_stock_pctile_counts``(分點 × 個股 的價格分位計數)。
+它**只有一份最新快照**,每次重算就整份被取代,所以沒有可以 prune 的歷史;
+在這裡刪它只會讓個股頁短暫變空,不會省下任何長期空間。
 """
 from sqlalchemy import text
 from .db import get_engine, init_db
