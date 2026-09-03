@@ -21,6 +21,14 @@
 
 - [x] VPS `~/trever-radar` HEAD 已是 `bf65dd0`（日更腳本自行 pull），16:10 `daily-insti.sh` 執行中（`import-warrant-master` 階段），持有 `/tmp/radar-db.lock`。本輪的 `data_date`／anchor 修正會由這條既有排程自然發布，**未手動觸發任何正式 import／export／deploy，未改 cron**。
 - [x] 既有四個未追蹤檔（`cloudflare-data-worker/package-lock.json`、`data/`、`radar-quick-catchup.sh`、`run-backfill.sh`）仍在且未阻斷本次 pull。磁碟 `29G` 中已用 `19G`、free `8.1G`（71%）；仍低於 20GB gate，禁止自行啟用全市場權證輪。分點回補 `backfill-branches --top 0 --days 490` 仍單實例執行中，guard／supervisor 各一，未重啟。
+## 2026-09-03 事故與復原：手動題材作業擋掉 15:00 上櫃行情輪（已修復）
+
+- ⚠️ **經過**：14:58 手動啟動 `import-themes`（修好完成條件後的首次執行），而 **15:00 就有 `daily-tpex-quotes` 排程輪**。守衛只檢查了「15:45 之後不開跑」的絕對上界，**沒有檢查「距離下一個排程輪還有多久」**；且預估 15–25 分鐘、實際跑 35 分鐘仍未完成。結果 15:00 那輪 `flock -n` 搶不到鎖而略過，今日 TPEx 行情一度為 **0 筆**（14:10 那輪抓到的是 `no populated table`，當時 TPEx 尚未公布，這正是 15:00 輪存在的理由）。
+- [x] **資料未受損**：`import_themes` 是全部 staged 完才在單一 transaction 寫入，中止只損失該次抓取、不留半截。停止後確認 `themes` 仍為 832 stale、`stock_themes` 6,869 列、最後 log 仍是 2026-08-31。
+- [x] **已修復**：手動補跑 `daily-tpex-quotes.sh` → `tpex quotes ok rows=10994`，今日上櫃 **1,013 檔**（與 09-02 相同）。在它進入指標／分數／export 之前停止，把鎖讓給 16:10 的 `daily-insti`（該輪本來就會重做這些，且今日法人**沒有後續補跑**，不可再被擋）。確認鎖已釋放、回補容器於 **15:49:30 UNPAUSE**、`paused=false` 運行中。
+- [x] **教訓（已知但未落實）**：同日稍早 commit 的 `vps/scripts/adjust-backfill.sh` header 就寫明「平日 02:30–14:05 是唯一長空檔」與「單一長跑會抓著鎖不放，害當輪日更略過」。**理由寫對了，執行時卻在兩分鐘的縫隙裡啟動長作業。** 正確的守衛條件是「距下一個排程輪的剩餘時間 > 作業預估耗時」，不是絕對時間上界；長爬蟲一律排進 02:30–14:05。
+- ⚠️ **題材仍待執行**：完成條件已修（`c6f4e22`）且已在正式機上，但尚未成功跑過一次，`themes` 仍全數 stale、個股「活躍題材」仍不顯示。下週一（09-07）的排程會自動以新規則執行；若要更早，併進 02:30–14:05 窗口與 `adj_factor` 回補一起做。
+
 ## 2026-09-03 關鍵分點（per-stock 低買高賣）可行性量測：傾向為真且通過樣本外，但標籤不可重現
 
 > 使用者定義：關鍵分點是**針對某一檔股票**而言的——某券商分點在該股常於相對低點買進、相對高點賣出。全程唯讀量測，**未實作任何功能**，設計決定待人類定奪。
