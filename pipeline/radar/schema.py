@@ -269,6 +269,52 @@ branch_rankings = Table(
     Column("source", Text)
 )
 
+# docs/37 E2:分點 point-in-time 觀察帳本。每列 = 一個分點在某個 as_of、
+# 某個 trailing window 下「當天可觀察到的事實」。
+#
+# 只存計數,不存比率:同一個 low_buy 比率,各日平均是 75%,pooled 起來卻是
+# 66.7%,差別純粹來自分母權重。存了比率就再也還原不回 pooled;存了分子與分母
+# 就兩種都算得出來。同理 fwd5_sum_pct 存的是「總和」而不是平均,跨列 pooled
+# 平均才會精確。每個分子都附帶它的分母與 unknown 數,單一列即可自我描述。
+#
+# computed_at 是「資料可得性」的時戳,不是修改時間:branch_trades 仍在
+# backfill,同一個過去日期在不同時間重算會得到不同結果。那不是同一個觀察,
+# 是另一個觀察;computed_at 是唯一能區分兩者的欄位。
+#
+# window_market_days 進 primary key,是為了讓日後第二種 window 長度可以並存,
+# 而不必改寫既有歷史。
+#
+# 這張表**永不 prune**(見 prune.py 的註解):一年約 50 MB。
+#
+# 框架(docs/37 已明確 defer pairing、禁止歸因):buy 與 sell episode 各自
+# 獨立計數,不做 buy→sell 配對、不做交易損益歸因、不宣稱勝率。fwd5 只是
+# 描述性觀察,不是分點實際獲利或持倉成本。
+branch_pit_stats = Table(
+    "branch_pit_stats",
+    metadata,
+    Column("branch_name", Text, primary_key=True),
+    Column("as_of", Text, primary_key=True),            # 必須是市場交易日
+    Column("window_market_days", Integer, primary_key=True),  # 實際納入的交易日數
+    Column("window_from", Text),                        # window 內第一個市場交易日
+    Column("definitions_version", Text),                # 'e2-v1';定義改變才 bump
+    Column("computed_at", Text),                        # ISO 時戳 = 資料可得性
+    Column("observed_trade_rows", Integer),
+    Column("stock_count", Integer),                     # window 內有資料列的相異個股數
+    Column("buy_episodes", Integer),
+    Column("sell_episodes", Integer),
+    Column("buy_pctile_known", Integer),
+    Column("buy_pctile_unknown", Integer),
+    Column("sell_pctile_known", Integer),
+    Column("sell_pctile_unknown", Integer),
+    Column("low_buy_count", Integer),                   # 分母 = buy_pctile_known
+    Column("high_sell_count", Integer),                 # 分母 = sell_pctile_known
+    Column("fwd5_matured", Integer),
+    Column("fwd5_unknown", Integer),
+    Column("fwd5_positive_count", Integer),             # 分母 = fwd5_matured
+    Column("fwd5_sum_pct", Float),                      # 總和,不是平均
+    Index("ix_branch_pit_stats_as_of", "as_of"),
+)
+
 # docs/27 G1:公司與券商分點地址(口袋名單前置)。
 company_profiles = Table(
     "company_profiles",

@@ -22,6 +22,10 @@ from .. import config
 QUAL_PCT = 1.0
 PRICE_WINDOW_DAYS = 20
 FORWARD_CLOSE_DAY = 5
+# Named forms of the thresholds already stated in this module's "definitions"
+# block; the values are unchanged, they are merely reusable by name now.
+LOW_BUY_MAX_PCTILE = 0.40
+HIGH_SELL_MIN_PCTILE = 0.60
 
 
 def _sqlite_db_path() -> Path:
@@ -108,17 +112,26 @@ def _episode_runs(dates: list[str], market_index: dict[str, int]) -> list[tuple[
 def _price_observation(
     *,
     event_date: str,
-    price_rows: list[dict[str, Any]],
+    price_rows: list[dict[str, Any]] | None = None,
     market_index: dict[str, int],
+    market_days: list[str] | None = None,
+    row_by_date: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Return event-day percentile and a descriptive forward five-day observation.
 
     The event price is the unadjusted daily close, which is available after that
     trading session.  The percentile window contains only the event day and the
     preceding 19 market days.  No future price chooses an event or percentile.
+
+    ``market_days`` and ``row_by_date`` are optional precomputed forms of the two
+    derived lookups below.  They exist purely so a caller that evaluates many
+    events can build them once instead of per event; passing neither reproduces
+    the original behaviour exactly.
     """
-    row_by_date = {row["date"]: row for row in price_rows}
-    market_days = sorted(market_index, key=market_index.get)
+    if row_by_date is None:
+        row_by_date = {row["date"]: row for row in (price_rows or [])}
+    if market_days is None:
+        market_days = sorted(market_index, key=market_index.get)
     event_index = market_index.get(event_date)
     event_row = row_by_date.get(event_date)
     result: dict[str, Any] = {
@@ -299,12 +312,12 @@ def build_branch_point_in_time_report(
                     "trading_day_count": len(episode_dates),
                     **observation,
                     "low_buy": (
-                        percentile <= 0.40
+                        percentile <= LOW_BUY_MAX_PCTILE
                         if direction == "buy" and observation["price_percentile_status"] == "known"
                         else None
                     ),
                     "high_sell": (
-                        percentile >= 0.60
+                        percentile >= HIGH_SELL_MIN_PCTILE
                         if direction == "sell" and observation["price_percentile_status"] == "known"
                         else None
                     ),

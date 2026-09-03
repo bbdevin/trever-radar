@@ -1,4 +1,10 @@
-"""Database pruning utilities."""
+"""Database pruning utilities.
+
+刻意不刪的表:``branch_pit_stats``(docs/37 E2 的 point-in-time 觀察帳本)。
+它的每一列都帶著 ``computed_at``,記錄「那一天實際看得到什麼」;因為
+``branch_trades`` 仍在 backfill,刪掉之後重算得到的是**另一個觀察**,不是同一
+筆資料。一年約 50 MB,是這顆磁碟上最不值得刪的東西。請不要順手把它加進來。
+"""
 from sqlalchemy import text
 from .db import get_engine, init_db
 

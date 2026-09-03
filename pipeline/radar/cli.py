@@ -283,6 +283,20 @@ def cmd_branch_point_in_time_series(args):
     )
 
 
+def cmd_branch_point_in_time_persist(args):
+    from .compute.branch_point_in_time_persist import compute_branch_pit_stats
+
+    info = compute_branch_pit_stats(as_of=args.as_of, window_days=args.window_days)
+    print(
+        "branch-point-in-time-persist "
+        f"as_of={info['as_of']} "
+        f"window={info['window_market_days']}d(from={info['window_from']}"
+        f"{',truncated' if info['window_truncated'] else ''}) "
+        f"branches={info['branches_written']} "
+        f"elapsed={info['elapsed_sec']}s"
+    )
+
+
 def cmd_branch_ranking_v2_shadow(args):
     from .compute.branch_ranking_v2_shadow import write_branch_ranking_v2_shadow_report
 
@@ -597,6 +611,20 @@ def main(argv=None):
                        help="trailing window in market trading days ending at each as-of (default 60)")
     bpits.add_argument("--out", required=True, help="JSON output path")
     bpits.set_defaults(fn=cmd_branch_point_in_time_series)
+
+    bpitp = sub.add_parser(
+        "branch-point-in-time-persist",
+        help="persist one as-of of E2 branch-level point-in-time counts into "
+             "branch_pit_stats (counts only, never rates; re-running one as-of "
+             "replaces its rows, so a backfill is this command in a loop)",
+    )
+    bpitp.add_argument("--as-of", required=True,
+                       help="YYYY-MM-DD; must be a market trading day")
+    bpitp.add_argument("--window-days", dest="window_days", type=int, default=60,
+                       help="trailing window in market trading days ending at --as-of "
+                            "(default 60); too little history truncates the window and "
+                            "is recorded in window_from, never padded")
+    bpitp.set_defaults(fn=cmd_branch_point_in_time_persist)
 
     v2s = sub.add_parser(
         "branch-ranking-v2-shadow",
