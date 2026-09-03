@@ -31,7 +31,8 @@
 - [x] 驗證：完整 pipeline pytest **363 passed、70 subtests**（基線 350 ＋ 13 個新測試，含 19/20 配對與 0.19/0.20 比例邊界、NULL 不擋 `AUTO_IN`、NULL 列不被 detail-set 丟掉）；`npx tsc --noEmit`、`git diff --check` 通過。
 - [x] **`branch_ranking_v2_shadow` 的歷史被刻意凍結**：該報表是本次決策的稽核紀錄，若跟著改門檻就會變成描述新程式而非它當初佐證的歷史。作法是給 `daytrade_flag` 加 opt-in 的 `min_obs` 參數（預設仍為 `DAYTRADE_MIN_OBS`，線上路徑不變），shadow 模組用自己的 `V1_DAYTRADE_MIN_OBS = 4` 並顯式重申歷史上的 `False`。
 - 已知但**刻意不動**：`branch_rankings.style` 對未判定分點仍寫 `"swing"`。它與 `is_daytrade_suspect` 同屬「寫了沒人讀」——前端只在型別宣告出現、無任何渲染處，故改它零效益且屬資料契約變更。若日後 `style` 要上 UI，須一併處理未判定狀態。
-- ⚠️ **尚未做**：決策一的 `branch_pit_stats` 計數帳與串流持久化模組（與本次同樣會改 `schema.py`，故分開進行）。正式 DB 的 migration 與回算**未執行**；正式站要等下一次 VPS 部署與 export 才會反映。
+- [x] **使用者已批准正式上線（2026-09-03 02:3x +08）**。此為 `AGENTS.md`「仍須人工確認：schema migration」所要求的人工放行，非自動 push 的延伸。批准當下 VPS HEAD 為 `d3949f5`（01:10 `data-backfill` 拉的，僅文件），實作尚未進入正式機。預期時序：**14:10** `daily-market.sh` pull 後由 `init_db()` 在正式 `radar.db` 執行五個 `ALTER TABLE ADD COLUMN`；**17:40** `daily-branches.sh` 呼叫 `compute-branch-stats` 使新定義生效並 export／deploy 上線（**23:30** `safe-branch-stats.sh` 亦會重算）。使用者可見的變化：3 個分點被標記並移入隔日沖清單、32 個顯示「未判定」。回滾路徑為 `git revert` ＋ 下一輪 cron；已加的欄位為 additive，留著無害，且舊快照的 NULL 即版本標記。**本輪未手動在 VPS 執行任何 import／export／deploy／migration，未改 cron。**
+- ⚠️ **尚未做**：決策一的 `branch_pit_stats` 計數帳與串流持久化模組（與本次同樣會改 `schema.py`，故分開進行）。
 
 ## 2026-09-02 Fable 5.1 決策：E2 持久化粒度與隔日沖訊號重新定義（決策紀錄）
 
