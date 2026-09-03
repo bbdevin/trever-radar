@@ -109,6 +109,28 @@ def _episode_runs(dates: list[str], market_index: dict[str, int]) -> list[tuple[
     return out
 
 
+def _close_range_percentile(
+    *,
+    close: float,
+    window_days: list[str],
+    row_by_date: dict[str, dict[str, Any]],
+) -> tuple[float | None, str | None]:
+    """Position of ``close`` in the min/max close range of ``window_days``.
+
+    Returns ``(percentile, reason)`` with exactly one of the two set.  This is the
+    single arithmetic shared by the backward :func:`_price_observation` and the
+    forward :func:`_forward_price_observation`; the two differ only in which
+    market days they hand it, never in how the number is computed.
+    """
+    closes = [row_by_date.get(day, {}).get("close") for day in window_days]
+    if any(value is None for value in closes):
+        return None, "missing_close_in_20d_window"
+    low, high = min(closes), max(closes)
+    if high == low:
+        return None, "zero_price_range"
+    return round((close - low) / (high - low), 6), None
+
+
 def _price_observation(
     *,
     event_date: str,
@@ -119,9 +141,22 @@ def _price_observation(
 ) -> dict[str, Any]:
     """Return event-day percentile and a descriptive forward five-day observation.
 
-    The event price is the unadjusted daily close, which is available after that
-    trading session.  The percentile window contains only the event day and the
-    preceding 19 market days.  No future price chooses an event or percentile.
+    The event price is the daily close supplied by the caller, which is available
+    after that trading session.  The percentile window contains only the event day
+    and the preceding 19 market days.  No future price chooses an event or
+    percentile.  This backward window is the definition of record: it is the sole
+    selection criterion and the sole number displayed.
+
+    Callers that read prices through
+    :func:`radar.compute.branch_point_in_time_persist._price_rows_for_stock`
+    supply **backward-adjusted** closes, and that does not weaken the
+    point-in-time promise.  ``adj_factor`` is cumulative-backward, so a corporate
+    action occurring *after* a window multiplies every close in that window by the
+    same constant, and a constant factor cancels in a min/max percentile:
+    ``(kx - k·min) / (k·max - k·min) == (x - min) / (max - min)``.  The backward
+    percentile therefore remains a function of past prices only, even on adjusted
+    data.  Only a factor change *inside* the window moves the number, which is
+    exactly the split or dividend the raw series was misreading as a crash.
 
     ``market_days`` and ``row_by_date`` are optional precomputed forms of the two
     derived lookups below.  They exist purely so a caller that evaluates many
@@ -157,17 +192,16 @@ def _price_observation(
         if start < 0:
             result["price_percentile_reason"] = "insufficient_prior_market_days"
         else:
-            window_days = market_days[start:event_index + 1]
-            closes = [row_by_date.get(day, {}).get("close") for day in window_days]
-            if any(value is None for value in closes):
-                result["price_percentile_reason"] = "missing_close_in_20d_window"
+            percentile, reason = _close_range_percentile(
+                close=event_row["close"],
+                window_days=market_days[start:event_index + 1],
+                row_by_date=row_by_date,
+            )
+            if reason is not None:
+                result["price_percentile_reason"] = reason
             else:
-                low, high = min(closes), max(closes)
-                if high == low:
-                    result["price_percentile_reason"] = "zero_price_range"
-                else:
-                    result["price_percentile_20d"] = round((event_row["close"] - low) / (high - low), 6)
-                    result["price_percentile_status"] = "known"
+                result["price_percentile_20d"] = percentile
+                result["price_percentile_status"] = "known"
 
     entry_index = event_index + 1
     exit_index = event_index + FORWARD_CLOSE_DAY
@@ -186,6 +220,87 @@ def _price_observation(
     else:
         result["fwd5_pct"] = round((exit_close / entry_open - 1.0) * 100.0, 6)
         result["fwd5_status"] = "matured"
+    return result
+
+
+def _forward_price_observation(
+    *,
+    event_date: str,
+    price_rows: list[dict[str, Any]] | None = None,
+    market_index: dict[str, int],
+    market_days: list[str] | None = None,
+    row_by_date: dict[str, dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """The event close's position in the event day plus the **following** 19 market days.
+
+    The exact mirror of :func:`_price_observation`'s backward percentile — same
+    ``PRICE_WINDOW_DAYS``, same arithmetic via :func:`_close_range_percentile` —
+    turned around in time.
+
+    This is **not** the definition of record.  The shipped selector, and the only
+    number displayed, is the backward percentile.  This forward quantity is a
+    separately named measurement quantity, admitted only after it passes the
+    committed out-of-sample battery on repaired prices (see ``docs/STATUS.md``,
+    2026-09-03 「關鍵分點(per-stock 低買高賣)可行性量測」, and
+    ``docs/04_signal_rules.md`` §2).  Nothing calls it yet; it exists so that
+    battery can be written against one implementation rather than a second copy
+    of the arithmetic.
+
+    Status is three-valued, and the three values are not interchangeable:
+
+    ``known``
+        The forward window lies entirely at or before ``as_of`` and every close
+        in it is present.
+    ``immature``
+        The window would extend past the last market day available at ``as_of``.
+        Nothing is wrong with the data; the answer does not exist yet.  Immature
+        is its own state: it must never be folded into ``unknown``, and it must
+        never be counted in any denominator.
+    ``unknown``
+        The window is fully available but the prices needed cannot be read
+        (event outside the calendar, missing close, or a zero-width range).
+
+    ``market_days`` is the market calendar **through ``as_of`` only**, the same
+    list :func:`_price_observation` receives.  Every day this function reads comes
+    from that list, so it can never read a date later than ``as_of``: a window
+    that would need one is reported ``immature`` instead.
+    """
+    if row_by_date is None:
+        row_by_date = {row["date"]: row for row in (price_rows or [])}
+    if market_days is None:
+        market_days = sorted(market_index, key=market_index.get)
+    event_index = market_index.get(event_date)
+    result: dict[str, Any] = {
+        "event_price": None,
+        "price_percentile_forward_20d": None,
+        "price_percentile_forward_status": "unknown",
+        "price_percentile_forward_reason": None,
+    }
+    if event_index is None:
+        result["price_percentile_forward_reason"] = "event_not_in_market_calendar"
+        return result
+    end = event_index + (PRICE_WINDOW_DAYS - 1)
+    if end >= len(market_days):
+        # Maturity is a calendar fact and is decided before any price is read, so
+        # a not-yet-complete window can never be mistaken for missing data.
+        result["price_percentile_forward_status"] = "immature"
+        result["price_percentile_forward_reason"] = "insufficient_following_market_days"
+        return result
+    event_row = row_by_date.get(event_date)
+    if event_row is None or event_row["close"] is None:
+        result["price_percentile_forward_reason"] = "missing_event_close"
+        return result
+    result["event_price"] = event_row["close"]
+    percentile, reason = _close_range_percentile(
+        close=event_row["close"],
+        window_days=market_days[event_index:end + 1],
+        row_by_date=row_by_date,
+    )
+    if reason is not None:
+        result["price_percentile_forward_reason"] = reason
+    else:
+        result["price_percentile_forward_20d"] = percentile
+        result["price_percentile_forward_status"] = "known"
     return result
 
 

@@ -94,7 +94,10 @@ from .compute_branch_stats import (
 )
 
 # 定義版本:買/賣事件、20 日分位門檻若改變就 bump,舊列因此仍可辨識。
-DEFINITIONS_VERSION = "e2-pair-v1"
+# v2(2026-09-04):價格改用 adj_factor 還原。兩張表共用
+# :func:`radar.compute.branch_point_in_time_persist._price_rows_for_stock`,
+# 所以這裡與 ``branch_point_in_time_persist.DEFINITIONS_VERSION`` 必須同時 bump。
+DEFINITIONS_VERSION = "e2-pair-v2"
 
 # 490 個市場交易日:與 backfill 目標、以及 2026-09-03 那次量測的窗口一致。
 DEFAULT_WINDOW_DAYS = 490

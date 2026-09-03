@@ -13,6 +13,9 @@ import radar.db as db
 from radar import schema
 from radar.cli import main
 from radar.compute.branch_point_in_time_report import (
+    PRICE_WINDOW_DAYS,
+    _forward_price_observation,
+    _price_observation,
     build_branch_point_in_time_report,
     get_read_only_engine,
     validate_report_window,
@@ -247,6 +250,127 @@ class BranchPointInTimeReportTests(unittest.TestCase):
             validate_report_window(as_of="2026-01-02", date_from="2026-01-01", date_to="2026-01-03")
         with self.assertRaisesRegex(ValueError, "YYYY-MM-DD"):
             validate_report_window(as_of="2026/01/02", date_from="2026-01-01", date_to="2026-01-02")
+
+
+class _RecordingRows(dict):
+    """A ``row_by_date`` that remembers every date the caller looked up."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.accessed: list[str] = []
+
+    def get(self, key, default=None):
+        self.accessed.append(key)
+        return super().get(key, default)
+
+
+class ForwardPriceObservationTests(unittest.TestCase):
+    """The forward percentile is a separate, separately named quantity.
+
+    It is not the definition of record and nothing in the pipeline calls it; it
+    exists so the gated out-of-sample battery has one implementation of the
+    arithmetic to measure rather than a second copy of it.
+    """
+
+    def setUp(self):
+        self.days = _market_days(date(2026, 1, 2), 40)
+        self.market_index = {day: index for index, day in enumerate(self.days)}
+
+    def _rows(self, closes):
+        return _RecordingRows({
+            day: {"date": day, "open": 100, "close": closes[index]}
+            for index, day in enumerate(self.days)
+        })
+
+    def test_it_never_reads_a_date_later_than_as_of(self):
+        # The calendar handed in stops at as_of, exactly as the callers build it.
+        as_of_index = 24
+        market_days = self.days[:as_of_index + 1]
+        market_index = {day: index for index, day in enumerate(market_days)}
+        rows = self._rows([100 + (index % 7) for index in range(len(self.days))])
+        for event_index in range(len(market_days)):
+            _forward_price_observation(
+                event_date=market_days[event_index],
+                market_index=market_index,
+                market_days=market_days,
+                row_by_date=rows,
+            )
+        self.assertTrue(rows.accessed)
+        self.assertLessEqual(max(rows.accessed), self.days[as_of_index])
+
+    def test_immature_is_distinguishable_from_unknown(self):
+        as_of_index = 24
+        market_days = self.days[:as_of_index + 1]
+        market_index = {day: index for index, day in enumerate(market_days)}
+        closes = [100 + (index % 7) for index in range(len(self.days))]
+
+        # The window would need days that do not exist at as_of yet.
+        immature = _forward_price_observation(
+            event_date=market_days[as_of_index - (PRICE_WINDOW_DAYS - 2)],
+            market_index=market_index,
+            market_days=market_days,
+            row_by_date=self._rows(closes),
+        )
+        self.assertEqual(immature["price_percentile_forward_status"], "immature")
+        self.assertEqual(
+            immature["price_percentile_forward_reason"], "insufficient_following_market_days",
+        )
+        self.assertIsNone(immature["price_percentile_forward_20d"])
+
+        # A fully available window whose prices cannot be read is a different fact.
+        gapped = list(closes)
+        gapped[3] = None
+        unknown = _forward_price_observation(
+            event_date=market_days[0],
+            market_index=market_index,
+            market_days=market_days,
+            row_by_date=self._rows(gapped),
+        )
+        self.assertEqual(unknown["price_percentile_forward_status"], "unknown")
+        self.assertNotEqual(
+            unknown["price_percentile_forward_status"],
+            immature["price_percentile_forward_status"],
+        )
+
+        # An event outside the market calendar is unknown, never immature.
+        off_calendar = _forward_price_observation(
+            event_date="2020-01-02",
+            market_index=market_index,
+            market_days=market_days,
+            row_by_date=self._rows(closes),
+        )
+        self.assertEqual(off_calendar["price_percentile_forward_status"], "unknown")
+        self.assertEqual(
+            off_calendar["price_percentile_forward_reason"], "event_not_in_market_calendar",
+        )
+
+    def test_a_symmetric_series_makes_forward_mirror_backward(self):
+        # Closes depend only on the distance from the event day, so the backward
+        # and forward windows are mirror images and must agree exactly.
+        event_index = 20
+        closes = []
+        for index in range(len(self.days)):
+            distance = abs(index - event_index)
+            closes.append(110 if distance == 0 else (100 if distance % 2 else 120))
+        rows = self._rows(closes)
+        backward = _price_observation(
+            event_date=self.days[event_index],
+            market_index=self.market_index,
+            market_days=self.days,
+            row_by_date=rows,
+        )
+        forward = _forward_price_observation(
+            event_date=self.days[event_index],
+            market_index=self.market_index,
+            market_days=self.days,
+            row_by_date=rows,
+        )
+        self.assertEqual(backward["price_percentile_status"], "known")
+        self.assertEqual(forward["price_percentile_forward_status"], "known")
+        self.assertAlmostEqual(backward["price_percentile_20d"], 0.5)
+        self.assertAlmostEqual(
+            forward["price_percentile_forward_20d"], backward["price_percentile_20d"],
+        )
 
 
 if __name__ == "__main__":

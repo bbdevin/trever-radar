@@ -296,7 +296,7 @@ branch_pit_stats = Table(
     Column("as_of", Text, primary_key=True),            # 必須是市場交易日
     Column("window_market_days", Integer, primary_key=True),  # 實際納入的交易日數
     Column("window_from", Text),                        # window 內第一個市場交易日
-    Column("definitions_version", Text),                # 'e2-v1';定義改變才 bump
+    Column("definitions_version", Text),                # 'e2-v2';定義改變才 bump
     Column("computed_at", Text),                        # ISO 時戳 = 資料可得性
     Column("observed_trade_rows", Integer),
     Column("stock_count", Integer),                     # window 內有資料列的相異個股數

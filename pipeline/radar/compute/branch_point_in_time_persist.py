@@ -64,7 +64,11 @@ from .branch_point_in_time_report import (
 from .branch_point_in_time_series import plan_as_of_walk
 
 # 定義版本:買/賣事件、20 日分位、fwd5 的定義若改變就 bump,舊列因此仍可辨識。
-DEFINITIONS_VERSION = "e2-v1"
+# v2(2026-09-04):價格改用 adj_factor 還原(見 :func:`_price_rows_for_stock`)。
+# `_price_rows_for_stock` 同時餵 ``branch_stock_pctile_counts``,所以那邊的
+# ``DEFINITIONS_VERSION`` 必須與這裡同一次 commit 一起 bump,否則新舊列會擠在
+# 同一個標籤底下。
+DEFINITIONS_VERSION = "e2-v2"
 
 DEFAULT_WINDOW_DAYS = 60
 
@@ -168,11 +172,28 @@ def resolve_default_as_of() -> str:
 
 
 def _price_rows_for_stock(conn, *, stock_id: str, date_from: str, date_to: str) -> dict[str, dict[str, Any]]:
-    """One stock's close/open slice, keyed by date. Dropped before the next stock."""
+    """One stock's backward-adjusted close/open slice, keyed by date.
+
+    ``adj_factor`` is applied here for the same reason ``indicators.py`` and
+    ``performance.py`` apply it: on raw prices a 3-for-1 split reads as a 66%
+    crash inside a 20-day range, and the percentile would then be measuring the
+    corporate action rather than the price.  ``COALESCE`` keeps rows that predate
+    the column's default, and ``NULL * factor`` stays ``NULL``, so a missing
+    close remains missing rather than becoming zero.
+
+    This does not weaken the point-in-time promise: ``adj_factor`` is
+    cumulative-backward, so an action occurring *after* a window multiplies every
+    close in that window by the same constant, and a constant factor cancels in a
+    min/max percentile (see ``_price_observation``).
+
+    Dropped before the next stock.
+    """
     return {
         row["date"]: {"open": row["open"], "close": row["close"]}
         for row in conn.execute(text("""
-            SELECT date, open, close
+            SELECT date,
+                   open * COALESCE(adj_factor, 1.0) AS open,
+                   close * COALESCE(adj_factor, 1.0) AS close
             FROM daily_prices
             WHERE stock_id = :stock_id AND date >= :date_from AND date <= :date_to
         """), {"stock_id": stock_id, "date_from": date_from, "date_to": date_to}).mappings()

@@ -12,10 +12,12 @@ from radar import schema
 from radar.cli import main
 from radar.compute.branch_point_in_time_persist import (
     DEFINITIONS_VERSION,
+    _price_rows_for_stock,
     compute_branch_pit_stats,
     plan_as_of_window,
     resolve_default_as_of,
 )
+from radar.compute.branch_point_in_time_report import _price_observation
 
 
 def _market_days(start: date, count: int) -> list[str]:
@@ -199,6 +201,44 @@ class BranchPointInTimePersistTests(unittest.TestCase):
         )
         self.assertAlmostEqual(pooled, 50.0)
         self.assertNotAlmostEqual(mean(per_row_rates), pooled, places=3)
+
+    def _percentile_at(self, index: int) -> float | None:
+        market_index = {day: position for position, day in enumerate(self.days)}
+        with db.get_engine().connect() as conn:
+            row_by_date = _price_rows_for_stock(
+                conn, stock_id="P", date_from=self.days[0], date_to=self.days[-1],
+            )
+        return _price_observation(
+            event_date=self.days[index],
+            market_index=market_index,
+            market_days=self.days,
+            row_by_date=row_by_date,
+        )["price_percentile_20d"]
+
+    def _set_adj_factor(self, factor: float, through_index: int) -> None:
+        with db.get_engine().begin() as conn:
+            conn.execute(text(
+                "UPDATE daily_prices SET adj_factor = :factor "
+                "WHERE stock_id = 'P' AND date <= :through"
+            ), {"factor": factor, "through": self.days[through_index]})
+
+    def test_percentile_is_invariant_under_a_factor_shared_by_the_whole_window(self):
+        # The fixture's adj_factor is 1.0 throughout, so this is the raw number.
+        self.assertAlmostEqual(self._percentile_at(19), 0.3)
+        # adj_factor is cumulative-backward: a corporate action occurring after
+        # the window scales every close in the window by the same constant, and a
+        # constant cancels in a min/max percentile.  The event day here is 19 and
+        # the rescaled block runs through day 21, so the whole window shares 0.8.
+        self._set_adj_factor(0.8, 21)
+        self.assertAlmostEqual(self._percentile_at(19), 0.3)
+
+    def test_a_factor_change_inside_the_window_does_move_the_percentile(self):
+        self.assertAlmostEqual(self._percentile_at(19), 0.3)
+        # Now the action lands on day 19 itself, so only the earlier closes are
+        # rescaled.  The number moves, which is the point: on raw prices that
+        # split reads as a crash inside the range.
+        self._set_adj_factor(0.5, 18)
+        self.assertAlmostEqual(self._percentile_at(19), 1.0)
 
     def test_table_is_created_on_an_existing_database_without_alter(self):
         with db.get_engine().begin() as conn:
