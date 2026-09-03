@@ -21,6 +21,22 @@
 
 - [x] VPS `~/trever-radar` HEAD 已是 `bf65dd0`（日更腳本自行 pull），16:10 `daily-insti.sh` 執行中（`import-warrant-master` 階段），持有 `/tmp/radar-db.lock`。本輪的 `data_date`／anchor 修正會由這條既有排程自然發布，**未手動觸發任何正式 import／export／deploy，未改 cron**。
 - [x] 既有四個未追蹤檔（`cloudflare-data-worker/package-lock.json`、`data/`、`radar-quick-catchup.sh`、`run-backfill.sh`）仍在且未阻斷本次 pull。磁碟 `29G` 中已用 `19G`、free `8.1G`（71%）；仍低於 20GB gate，禁止自行啟用全市場權證輪。分點回補 `backfill-branches --top 0 --days 490` 仍單實例執行中，guard／supervisor 各一，未重啟。
+## 2026-09-03 關鍵分點證據面板已實作（後端 `b715e88` ＋ 前端 `f377235`；今晚 23:30 產生首份資料）
+
+> 使用者選定「證據呈現版」。依量測結論：傾向為真（樣本外 2.3–2.9× 且勝過規模配對安慰劑），但標籤再現率僅 1.6–5.4%，**故不做二元徽章，只呈現計數與尺**。
+
+- [x] **後端**：新表 `branch_stock_pctile_counts`，PK `(branch_name, stock_id)`，`metadata.create_all` 建立（新表不需 ALTER），**只留最新快照、每輪取代**。欄位為窗口 metadata（`as_of`／`window_market_days`／`window_from`／`definitions_version` `e2-pair-v1`／`computed_at`）＋ 六個 pair 計數（買賣兩側的 known／unknown／命中）＋ **把該股自身的四個計數反正規化到每一列**當作尺。**全表無 rate／score／flag／rank／win／return 欄位**，有測試掃 `PRAGMA table_info` 確保。未加入 `prune.py`（最新快照無歷史可清），`prune.py` 內有註記說明。
+- [x] **與 Fable 先前「不做分點×個股表」的決議不衝突**：那條排除的是「945k 實體 × 250 個 as_of ≈ 140GB」的**時間序列**；本表是**當下一張快照**（約 90 萬列、數十 MB），差三個數量級，用途與保留策略都不同。
+- [x] **計算**：`radar branch-stock-pctile-counts [--as-of] [--window-days 490]`，沿用 `branch_point_in_time_report` 的 `LOW_BUY_MAX_PCTILE`／`HIGH_SELL_MIN_PCTILE`／`QUAL_PCT`／`_episode_runs`／`_price_observation`，定義不重述。**stock-major 串流**（`yield_per=2000`）並逐股分批 flush，不緩存 90 萬列結果。合成壓力測試（300 檔 × 400 分點 × 490 日 = 441 萬列、549MB DB、產出 12 萬對）`tracemalloc` peak **3.3MB**、整體 peak working set **74.6MB**（其中 63MB 是呼叫前已駐留的直譯器與 SQLAlchemy，計算本身約 +11MB）。記憶體只隨「每檔股票的分點數」成長，不隨配對總數。
+- [x] **匯出**：每檔個股 JSON 新增 `branch_pctile_counts`（key 恆存在，`branches` 可為空）；門檻為**兩側各至少 5 次分位可知**，上限 **10 個分點**，依「超過該股自身比率的幅度」排序。不輸出任何比率——讀取端自己除。
+- [x] **接線**：`safe-branch-stats.sh` 於 `SKIP_PIT` 區塊之後，同一形狀（`set +e`／捕捉／`set -e`／`notify_warn` 後繼續、寫 `pair_pctile=`、`SKIP_PAIR_PCTILE=1` 可關）。**不得中止本輪**。
+- [x] **前端**：`web/components/BranchPctilePanel.tsx`，掛在個股頁「籌碼」分頁 `BranchFlowSection` 之後（同一批對象的長窗口背景，讀起來是延續而非新地方）。資料已在個股 payload 內，故不另外 fetch。每一側呈現 `28 / 33 次 84.8%` ＋ 一條 0–100% 軸（實心條＝該分點、刻度＝該股基準）＋ 帶正負號的 `±Npp`——**只給兩個百分比要讀者自己心算，那把尺就白給了**。分位不可知的次數另外標示且不計入分母。
+- [x] **文案紅線（全部落實）**：標題為「歷史上在這檔股票買點偏低、賣點偏高的分點」；明寫「這是窗口內累積的紀錄，不是今日盤後名單，與它今天有沒有進前 15 大無關」；限制段用**實測門檻**（多數股票幾張即可進前 15、熱絡個股要數十張，故計數是活動量下限）；頁尾「買賣兩側各自獨立計數，沒有配對成一筆交易，因此不能讀成賺賠」。**無「關鍵分點」斷言、無「總是」、無名次編號、無紅綠方向色**（紅綠會讓計數讀起來像判決）、無損益字眼。
+- [x] **舊 payload 安全**：`version !== 1`／非物件／`branches` 非陣列一律 `return null`；`rate()` 在分母 ≤0 或命中 > 分母時回 null 而非 0%；每個 metadata 欄位個別型別檢查。程式碼走 Pages 幾分鐘上線、JSON 要等 export，舊配新必然發生。
+- [x] 驗證：完整 pipeline pytest **397 passed、96 subtests**（基線 381／74）；`npx tsc --noEmit` 通過；`bash -n` 通過；`git diff --check` 通過。`web/scripts/verify-mobile-stock.mjs` **不適用且未執行**（它 import `playwright`，repo 未安裝；且只驗身份區 375×812，不涵蓋籌碼分頁）——未假冒瀏覽器驗證。
+- ⚠️ **資料要等今晚 23:30** 那輪跑完 `branch-stock-pctile-counts` 並 export 後才會出現；在那之前面板顯示的是誠實空狀態，不是錯誤。
+- ⚠️ **`adj_factor` 修完後此量測值得重跑**：20 日收盤分位目前建立在**未還原價**上，除權息與分割會扭曲分位，因而扭曲低買／高賣的判定。
+
 ## 2026-09-03 分點資料涵蓋度實測：「只有前 15 大」比想像中寬鬆，且早已不限評分池
 
 > 起因：使用者要求「關鍵分點每天買、就算沒列在前 15 大，只要過往低買高賣也要列出來」。前半段後端本來就是這樣（`branch_stock_pctile_counts` 用 490 交易日歷史，不看今日名次）；後半段促使我實測「前 15 大」到底擋掉多少。
