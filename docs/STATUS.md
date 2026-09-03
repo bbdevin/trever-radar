@@ -21,6 +21,18 @@
 
 - [x] VPS `~/trever-radar` HEAD 已是 `bf65dd0`（日更腳本自行 pull），16:10 `daily-insti.sh` 執行中（`import-warrant-master` 階段），持有 `/tmp/radar-db.lock`。本輪的 `data_date`／anchor 修正會由這條既有排程自然發布，**未手動觸發任何正式 import／export／deploy，未改 cron**。
 - [x] 既有四個未追蹤檔（`cloudflare-data-worker/package-lock.json`、`data/`、`radar-quick-catchup.sh`、`run-backfill.sh`）仍在且未阻斷本次 pull。磁碟 `29G` 中已用 `19G`、free `8.1G`（71%）；仍低於 20GB gate，禁止自行啟用全市場權證輪。分點回補 `backfill-branches --top 0 --days 490` 仍單實例執行中，guard／supervisor 各一，未重啟。
+## 2026-09-03 ⚠️ 重大資料缺陷：`adj_factor` 全市場從未計算，還原價實際上不存在
+
+> 唯讀稽核發現，尚未修復，**需人類決定**。這是目前已知影響面最大的資料問題。
+
+- [x] **事實**：2026-09-02 有報價的 **2,393 檔全部 `adj_factor = 1.0`**；整個資料庫**只有 1 檔股票（2330）**有非 1 的還原因子。`import_logs` 的 `adj_factor` 只有 **1 次** ok 紀錄（2026-07-07）——就是 STATUS 完成清單裡那句「**已用 2330 實測**」。**crontab 與所有 `vps/scripts/*.sh` 都沒有任何地方呼叫 `compute-adjustments`**。
+- [x] **成因**：`db.py:31-33` 以 `ALTER TABLE ... ADD COLUMN adj_factor REAL NOT NULL DEFAULT 1.0` 加欄位，所有列因此停在預設值 1.0；只有 2330 那次測試被更新。另本檔早先記載「週六全市場還原因子+指標全重算已於 2026-07-10 停用，改 VPS 跑後回灌」——**雲端那條停了，VPS 這條從未接上**。
+- [x] **消費端確認**（所以影響不是理論的）：`indicators.py:232-235` 把 OHLC 全部乘 `adj_factor` 後才算指標；`performance.py:99-100` 的前瞻報酬用 `open * COALESCE(adj_factor,1.0)`／`close * …`；`compute_branch_stats.py:264` 取還原 candle 算分點勝率；`json_export.py:1333/1338` 把 `adj_factor` 帶進個股 K 線 JSON。
+- [x] **具體證據（真實正式資料）**：緯穎 6669 於 **2026-09-02** 由 7,800 → 2,610（**−66.5%**）、寶雅* 5904 於 08-20 由 677 → 75.9（**−88.8%**）、群益臺灣加權正2 00685L 於 07-07 由 306 → 12.23（**−96.0%**）、中美晶 5483 於 08-20 −32.9%，全部 `adj_factor = 1.0`。這些是分割／減資／除權息，不是真實跌幅（股名帶 `*` 即當日除權息；08-20 為除權息集中日）。2026-06-01 以來單日跌幅 ≤ −3% 共 **15,219 筆，其中 adj_factor 未變者 15,219 筆（100%）**。
+- [x] 對照 2330 的正確樣貌：`0.97807 → 0.98264 → 0.98682 → 0.99078 → 0.99409 → 0.99733 → 1.0` 逐段累乘——全庫僅此一檔正確。
+- ⚠️ **影響鏈**：技術指標（走還原價）→ `tech_score` → 綜合分 `final`（技術佔 20%）→ `compute-performance` 的 `fwd_1d`…`fwd_20d` → **分點 `win_rate`／`avg_ret5`** → `rank_score` 與排行。**注意：2026-09-03 上線的隔日沖重新定義不受影響**（它只用 `net_lots`／`sell_lots`，不碰價格），但同一張表的 `win_rate`／`avg_ret5`／`rank_score` 受影響。
+- ⚠️ **修復代價（尚未執行，待人類決定）**：`compute-adjustments --all` 對 2,494 檔各發一次 FinMind 請求，CLI 預設 `--sleep 7.0` → 約 **4.8 小時**；其後需重算指標、重算 `compute-performance`、重算 `compute-branch-stats` 與 scores，再 export。整串是多小時等級的正式 DB 回算，且 VPS 正在跑 490 日分點回補、free 僅 8.0GB。依 `AGENTS.md` 屬「正式 DB 全市場重算」，**必須人工確認**。
+
 ## 2026-09-03 題材匯入「永遠不可能成功」的缺陷（線上已壞 3 天，非「尚未執行」）
 
 - [x] **症狀**：個股名稱區的「活躍題材」自 **2026-08-31 起完全不顯示**。正式 DB 的 `themes` 832 筆**全部是 `stale`**，且 `data_date`／`source_updated_at` **0/832 從未被寫入**。文件先前記為「`import-themes` 尚未執行」是錯的——它每週一都有跑（`daily-market.sh:15`，`taipei_date +%u = 1` 時觸發），歷史 7/08 起每週 ok 約 6,869 列。
