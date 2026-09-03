@@ -284,9 +284,13 @@ def cmd_branch_point_in_time_series(args):
 
 
 def cmd_branch_point_in_time_persist(args):
-    from .compute.branch_point_in_time_persist import compute_branch_pit_stats
+    from .compute.branch_point_in_time_persist import (
+        compute_branch_pit_stats,
+        resolve_default_as_of,
+    )
 
-    info = compute_branch_pit_stats(as_of=args.as_of, window_days=args.window_days)
+    as_of = args.as_of or resolve_default_as_of()
+    info = compute_branch_pit_stats(as_of=as_of, window_days=args.window_days)
     print(
         "branch-point-in-time-persist "
         f"as_of={info['as_of']} "
@@ -618,8 +622,10 @@ def main(argv=None):
              "branch_pit_stats (counts only, never rates; re-running one as-of "
              "replaces its rows, so a backfill is this command in a loop)",
     )
-    bpitp.add_argument("--as-of", required=True,
-                       help="YYYY-MM-DD; must be a market trading day")
+    bpitp.add_argument("--as-of", default=None,
+                       help="YYYY-MM-DD; must be a market trading day. "
+                            "Omitted: the latest trading day that has price data "
+                            "(MAX(date) FROM daily_prices); fails loudly if there is none")
     bpitp.add_argument("--window-days", dest="window_days", type=int, default=60,
                        help="trailing window in market trading days ending at --as-of "
                             "(default 60); too little history truncates the window and "

@@ -145,6 +145,28 @@ def plan_as_of_window(*, trading_days: list[str], as_of: str, window_days: int) 
     return plan[0]
 
 
+def resolve_default_as_of() -> str:
+    """最新一個「有價格資料」的市場交易日,作為省略 ``--as-of`` 時的預設。
+
+    為什麼是 ``daily_prices`` 而不是 ``compute_branch_stats`` 用的
+    ``MAX(branch_trades.date)``:本模組的 as_of 必須落在 ``daily_prices`` 的交易日
+    上(見 :func:`plan_as_of_window`),分點資料的最新日期不保證有價格列,拿它當
+    預設會在分點比價格早到的那幾天直接失敗。因此沿用 ``adjustments.py`` /
+    ``importer.py`` 的 ``SELECT MAX(date) FROM daily_prices`` 慣例。
+
+    沒有任何交易日就 raise:寧可讓夜間排程看到明確錯誤,也不要靜默寫 0 列。
+    """
+    init_db()
+    with get_engine().connect() as conn:
+        as_of = conn.execute(text("SELECT MAX(date) FROM daily_prices")).scalar()
+    if not as_of:
+        raise ValueError(
+            "no market trading day with price data: daily_prices is empty; "
+            "import prices first or pass --as-of explicitly"
+        )
+    return as_of
+
+
 def _price_rows_for_stock(conn, *, stock_id: str, date_from: str, date_to: str) -> dict[str, dict[str, Any]]:
     """One stock's close/open slice, keyed by date. Dropped before the next stock."""
     return {

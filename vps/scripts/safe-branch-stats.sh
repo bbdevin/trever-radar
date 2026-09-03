@@ -3,7 +3,8 @@
 # 與 mid-backfill-publish 分離:mid 只負責加深 JSON;本腳本專跑 stats→scores→export。
 # 避開 daily-* 窗;pause bf;記憶體不足則跳過;stats 失敗則中止(不跑 scores/export)。
 #
-# 環境變數:MIN_FREE_GB=4;MIN_MEM_MB=900;SKIP_EXPORT=1 只算不上線;SKIP_SCORES=1 略過分數。
+# 環境變數:MIN_FREE_GB=4;MIN_MEM_MB=900;SKIP_EXPORT=1 只算不上線;SKIP_SCORES=1 略過分數;
+#           SKIP_PIT=1 略過 point-in-time 帳本。
 source "$(dirname "$0")/lib.sh"
 
 FLAG="${MID_PUBLISH_FLAG:-/tmp/radar-mid-publish.flag}"
@@ -81,6 +82,7 @@ set -e
 
 STATS_NOTE="ok"
 SCORES_NOTE="skipped"
+PIT_NOTE="skipped"
 if [ "$rc" -ne 0 ]; then
   STATS_NOTE="failed_rc_${rc}"
   echo "compute-branch-stats failed rc=$rc"
@@ -88,6 +90,33 @@ if [ "$rc" -ne 0 ]; then
   rm -f "$FLAG"
   unpause_bf_containers
   exit "$rc"
+fi
+
+# branch-point-in-time-persist 落在這裡、而不是自己一條 cron:
+#   1. 它需要的守衛這支腳本已經全做過了 —— 安靜窗、/tmp/radar-db.lock、
+#      mid-publish flag、磁碟與記憶體門檻,以及 backfill 容器的 pause。
+#      獨立排程等於把這五道保護重寫一遍,而且遲早會漂移。
+#   2. 這個 DB 是單一寫入者。多一條 cron 就是多一個寫入者,會跟本腳本
+#      與回補容器搶鎖;折進這裡則沿用同一把鎖、同一個時間窗。
+#   3. 成本 31~50 秒,對一支本來就跑好幾分鐘的工作可忽略。
+# 必須在 compute-branch-stats 成功之後(帳本讀的是它剛更新的資料),
+# 在 compute-scores 之前(順序固定,便於對照 state 檔)。
+# 失敗不中止本輪:這張帳本次要於分數/匯出/上線,不能因為它而擋住當天的價格上線。
+if [ "${SKIP_PIT:-0}" != "1" ]; then
+  echo "branch-point-in-time-persist"
+  set +e
+  radar branch-point-in-time-persist
+  prc=$?
+  set -e
+  if [ "$prc" -ne 0 ]; then
+    PIT_NOTE="failed_rc_${prc}"
+    echo "branch-point-in-time-persist failed rc=$prc (continue to scores)"
+    notify_warn "分點 point-in-time 帳本落地失敗（碼 ${prc}），仍繼續分數與匯出"
+  else
+    PIT_NOTE="ok"
+  fi
+else
+  PIT_NOTE="skipped_env"
 fi
 
 if [ "${SKIP_SCORES:-0}" != "1" ]; then
@@ -116,6 +145,7 @@ fi
 {
   echo "finished=$(taipei_date -Is)"
   echo "stats=$STATS_NOTE"
+  echo "pit=$PIT_NOTE"
   echo "scores=$SCORES_NOTE"
   echo "mem_before=$MEM"
   echo "mem_after_pause=$MEM2"
@@ -134,5 +164,5 @@ if ! pgrep -f 'vps/scripts/bf-supervisor.sh' >/dev/null 2>&1; then
   nohup bash "$REPO/vps/scripts/bf-supervisor.sh" >> "${BF_SUPERVISOR_LOG:-$HOME/bf-supervisor.log}" 2>&1 &
 fi
 
-notify_ok "分點排行與分數夜間重算完成（統計=${STATS_NOTE}，分數=${SCORES_NOTE}）"
+notify_ok "分點排行與分數夜間重算完成（統計=${STATS_NOTE}，帳本=${PIT_NOTE}，分數=${SCORES_NOTE}）"
 echo "=== safe-branch-stats done $(taipei_date -Is) ==="

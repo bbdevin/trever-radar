@@ -14,6 +14,7 @@ from radar.compute.branch_point_in_time_persist import (
     DEFINITIONS_VERSION,
     compute_branch_pit_stats,
     plan_as_of_window,
+    resolve_default_as_of,
 )
 
 
@@ -219,6 +220,33 @@ class BranchPointInTimePersistTests(unittest.TestCase):
         rows = self._rows(as_of=self.late_as_of, window_market_days=10)
         self.assertEqual([row["branch_name"] for row in rows], ["OTHER", "POOL"])
         self.assertEqual(rows[0]["window_from"], self.days[18])
+
+    def test_default_as_of_is_the_latest_trading_day_with_price_data(self):
+        # branch_trades stops at day 25, but the ledger's as_of must be a day
+        # daily_prices knows about, so the default follows daily_prices.
+        self.assertEqual(resolve_default_as_of(), self.days[27])
+
+    def test_cli_without_as_of_uses_the_latest_trading_day(self):
+        main(["branch-point-in-time-persist", "--window-days", "10"])
+        rows = self._rows()
+        self.assertEqual({row["as_of"] for row in rows}, {self.late_as_of})
+        self.assertEqual([row["branch_name"] for row in rows], ["OTHER", "POOL"])
+
+    def test_explicit_as_of_is_unaffected_by_the_default(self):
+        main(["branch-point-in-time-persist", "--as-of", self.early_as_of, "--window-days", "10"])
+        self.assertEqual({row["as_of"] for row in self._rows()}, {self.early_as_of})
+
+    def test_default_as_of_fails_closed_when_there_is_no_trading_day(self):
+        with db.get_engine().begin() as conn:
+            conn.exec_driver_sql("DELETE FROM daily_prices")
+        with self.assertRaisesRegex(ValueError, "no market trading day"):
+            resolve_default_as_of()
+        with self.assertRaises(ValueError):
+            main(["branch-point-in-time-persist"])
+        with db.get_engine().connect() as conn:
+            self.assertEqual(
+                conn.execute(text("SELECT COUNT(*) FROM branch_pit_stats")).scalar(), 0
+            )
 
 
 if __name__ == "__main__":
