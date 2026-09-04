@@ -93,6 +93,20 @@ const DAYTRADE_TOOLTIP =
   + "每日僅公布前 15 大,多數出場看不見,因此此比例是下限,不代表該分點多數情況下隔日出場。"
   + `可判定配對 < ${MIN_DAYTRADE_PAIRS} 檔時不下判定。`;
 
+// 「可信度」是一個認識論斷言——這個分點可以信——而分數的組成一半以上不是那件事。
+// 實作權重見 compute_branch_stats.py::credibility_score:
+//   0.30 上漲率 + 0.25 平均漲跌 + 0.15 買點分位 + 0.10 規模 + 0.20 近效性
+// 前兩項合計 55%,而它們量的是「訊號日之後 5 日收盤有沒有比較高」,沒有進出場
+// 規則、沒有損益。畫面上只印一個 0–100 的數字而不說組成,讀者只能從「可信度」
+// 三個字去推論它代表什麼,那正是這批標籤問題的共同形狀。
+// 這裡只補揭露、不改分數也不改名:要不要連「可信度」這個詞都換掉是產品決策。
+const CREDIBILITY_TOOLTIP =
+  "0–100 的排序用分數,組成為:5日上漲率 30%、5日平均漲跌 25%、買點分位 15%、"
+  + "近 90 日買超金額規模 10%、近效性 20%。"
+  + "其中上漲率與平均漲跌合計 55%,量的是訊號日之後 5 個交易日收盤是否較高,"
+  + "沒有進出場規則、不是損益,也不代表該分點實際獲利。"
+  + "級距為 V1 起始值,尚未經績效校準。";
+
 function daytradeBadge(r: Ranking): { label: string; flagged: boolean } | null {
   const determined = r.daytrade_pairs_determined;
   const flagged = r.daytrade_pairs_flagged;
@@ -177,8 +191,8 @@ function RankCard({ r, trackable, active }: { r: Ranking; trackable?: boolean; a
           <div className="num text-foreground">{r.samples}</div>
         </div>
         <div>
-          <div className="text-xs text-muted-foreground">可信度分數</div>
-          <div className={cn("num", r.rank_score >= 70 ? "text-warn" : "text-[color:var(--accent-2)]")}>{r.rank_score}</div>
+          <div className="text-xs text-muted-foreground" title={CREDIBILITY_TOOLTIP}>可信度分數</div>
+          <div className={cn("num", r.rank_score >= 70 ? "text-warn" : "text-[color:var(--accent-2)]")} title={CREDIBILITY_TOOLTIP}>{r.rank_score}</div>
         </div>
       </div>
     </div>
