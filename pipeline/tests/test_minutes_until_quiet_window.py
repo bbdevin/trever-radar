@@ -38,16 +38,16 @@ def _lib_path_for_bash():
 LIB_FOR_BASH = _lib_path_for_bash()
 
 
-def _script(args):
+def _script(args, fn="minutes_until_quiet_window"):
     return (
         f'source "{LIB_FOR_BASH}"\n'
-        f'minutes_until_quiet_window {args}\n'
+        f'{fn} {args}\n'
     )
 
 
-def _run(args=""):
+def _run(args="", fn="minutes_until_quiet_window"):
     return subprocess.run(
-        [BASH, "-c", _script(args)], capture_output=True, text=True, timeout=120,
+        [BASH, "-c", _script(args, fn)], capture_output=True, text=True, timeout=120,
     )
 
 
@@ -64,12 +64,20 @@ def _bash_available():
 BASH_OK = _bash_available()
 
 
-def minutes_until(dow=None, hhmm=None):
-    proc = _run("" if dow is None else f"{int(dow)} {int(hhmm)}")
+def _minutes(fn, dow=None, hhmm=None):
+    proc = _run("" if dow is None else f"{int(dow)} {int(hhmm)}", fn)
     assert proc.returncode == 0, f"shell call failed: {proc.stderr}"
     out = proc.stdout.strip()
     assert out.isdigit(), f"expected a whole number of minutes, got {out!r} ({proc.stderr})"
     return int(out)
+
+
+def minutes_until(dow=None, hhmm=None):
+    return _minutes("minutes_until_quiet_window", dow, hhmm)
+
+
+def minutes_until_writer(dow=None, hhmm=None):
+    return _minutes("minutes_until_next_scheduled_writer", dow, hhmm)
 
 
 @unittest.skipUnless(
@@ -136,6 +144,60 @@ class MinutesUntilQuietWindowTest(unittest.TestCase):
 
     def test_no_argument_form_uses_the_current_taipei_time(self):
         self.assertLessEqual(minutes_until(), 1440)
+
+
+@unittest.skipUnless(
+    BASH_OK,
+    "no usable bash (this test drives the real shell function; on Windows it needs WSL)",
+)
+class MinutesUntilNextScheduledWriterTest(unittest.TestCase):
+    """安靜窗不是排程的全部——mid-publish 的 03/09/12/20 四輪不在窗表裡。
+
+    `quiet_window_at` 的註解自己寫著那四輪「由 mid flag 另擋」。用 flag 擋
+    「不要同時開第二個 bf 寫者」是夠的,但擋不住相反方向的傷害:
+    `mid-backfill-publish.sh` 開頭是 `fuser /tmp/radar-db.lock` → 略過,所以任何
+    握著 DB 鎖跨過整點的長工作,都會讓那一輪靜默消失。只問安靜窗的守衛會允許
+    02:31 開一個 240 分鐘的塊,一口氣吃掉 03:00 那輪。
+
+    mid-publish 覆蓋區間取整點起 `MID_PUBLISH_RUN_MINUTES`(預設 20;實測耗時
+    10:43–13:14 分)。
+    """
+
+    def test_mid_publish_slots_are_treated_as_scheduled_writers(self):
+        # 03:00 起 20 分鐘內視為有寫入者在跑。
+        self.assertEqual(minutes_until_writer(1, 300), 0)
+        self.assertEqual(minutes_until_writer(1, 319), 0)
+        # 03:20 已出 mid 區間,下一個是 09:00 → (9*60) - (3*60+20) = 340
+        self.assertEqual(minutes_until_writer(1, 320), 340)
+
+    def test_the_long_weekday_gap_is_cut_short_by_mid_publish(self):
+        # 只問安靜窗:02:31 → 14:05 是 694 分鐘。
+        self.assertEqual(minutes_until(1, 231), 694)
+        # 問「下一個排程寫入者」:03:00 就到了,只剩 29 分鐘。
+        # 這正是這個函式存在的理由——694 會讓守衛核准一個吃掉 03:00 那輪的塊。
+        self.assertEqual(minutes_until_writer(1, 231), 29)
+
+    def test_evening_gap_is_cut_short_by_the_20_00_round(self):
+        # 只問安靜窗:19:31 → 21:15 是 104 分鐘。
+        self.assertEqual(minutes_until(1, 1931), 104)
+        # 實際上 20:00 那輪先到 → 29 分鐘。
+        self.assertEqual(minutes_until_writer(1, 1931), 29)
+
+    def test_never_later_than_the_quiet_window_answer(self):
+        # 定義上它是兩者取先,所以任何時刻都不可能比只問安靜窗更晚。
+        for dow in range(1, 8):
+            for hhmm in (0, 231, 359, 800, 1200, 1331, 1931, 2359):
+                with self.subTest(dow=dow, hhmm=hhmm):
+                    self.assertLessEqual(
+                        minutes_until_writer(dow, hhmm), minutes_until(dow, hhmm),
+                        "加入 mid-publish 之後只可能更早,不可能更晚",
+                    )
+
+    def test_mid_publish_applies_on_weekends_too(self):
+        # crontab 是 `0 3,9,12,20 * * *`——每天,與 dow 無關。
+        # 週六 08:00 只問安靜窗要等到週日 00:55(1015 分),但 09:00 那輪先到。
+        self.assertEqual(minutes_until(6, 800), 1015)
+        self.assertEqual(minutes_until_writer(6, 800), 60)
 
 
 class DriverSanityTest(unittest.TestCase):

@@ -305,6 +305,62 @@ minutes_until_quiet_window() {
   return 0
 }
 
+# mid-backfill-publish 的排程時段(crontab: `0 3,9,12,20 * * *`,每天,與 dow 無關)。
+#
+# 為什麼要單獨列一份:這四輪**不在** quiet_window_at 裡——那個函式的註解自己寫著
+# 「mid 03/09/12/20 附近短窗由 mid flag 另擋」。用 flag 擋對「不要同時開第二個 bf
+# 寫者」是夠的,但對「我這個長工作會不會害那一輪跑不成」不夠:
+# mid-backfill-publish.sh 一開頭是 `fuser /tmp/radar-db.lock` → 略過,所以任何
+# 握著 DB 鎖跨過整點的長工作,都會讓那一輪靜默消失。一支要跑好幾週的爬蟲,
+# 這等於吃掉數十次發布。
+#
+# 刻意不把它們併進 quiet_window_at:那會改變五支既有腳本的行為(它們會開始在
+# mid 期間略過),是超出需要的副作用。這裡只多給長工作一個更完整的問法。
+#
+# 實測耗時 10:43–13:14 分(2026-09-02～09-04 的 radar-cron.log),取 20 分鐘涵蓋。
+MID_PUBLISH_HOURS="${MID_PUBLISH_HOURS:-3 9 12 20}"
+MID_PUBLISH_RUN_MINUTES="${MID_PUBLISH_RUN_MINUTES:-20}"
+
+mid_publish_at() {
+  local hhmm="$1" h m x
+  h=$(( hhmm / 100 ))
+  m=$(( hhmm % 100 ))
+  [ "$m" -lt "$MID_PUBLISH_RUN_MINUTES" ] || return 1
+  for x in $MID_PUBLISH_HOURS; do
+    [ "$h" -eq "$x" ] && return 0
+  done
+  return 1
+}
+
+# 距離「下一個會有排程寫入者在跑的分鐘」還有幾分鐘——安靜窗與 mid-publish 兩者取先。
+# 長工作要問的是這個,不是只問安靜窗;`minutes_until_quiet_window` 保留給
+# 只在意 daily/deep 那類窗口的呼叫者。
+# 可傳入明確的 <dow> <hhmm>(測試用);不傳則用台北現在時刻。
+minutes_until_next_scheduled_writer() {
+  local dow hhmm
+  if [ "$#" -ge 2 ]; then
+    dow="$1"
+    hhmm="$2"
+  else
+    dow=$(TZ=Asia/Taipei date +%u)
+    hhmm=$((10#$(TZ=Asia/Taipei date +%H%M)))
+  fi
+  local start_min=$(( (hhmm / 100) * 60 + hhmm % 100 ))
+  local i abs_min probe_dow probe_min probe_hhmm
+  for (( i = 0; i <= QUIET_SCAN_CAP_MINUTES; i++ )); do
+    abs_min=$(( start_min + i ))
+    probe_dow=$(( ((dow - 1 + abs_min / 1440) % 7) + 1 ))
+    probe_min=$(( abs_min % 1440 ))
+    probe_hhmm=$(( (probe_min / 60) * 100 + probe_min % 60 ))
+    if quiet_window_at "$probe_dow" "$probe_hhmm" || mid_publish_at "$probe_hhmm"; then
+      echo "$i"
+      return 0
+    fi
+  done
+  echo "$QUIET_SCAN_CAP_MINUTES"
+  return 0
+}
+
 # bf 具名容器(歷史回補;不拿 flock)
 BF_CONTAINERS="${BF_CONTAINERS:-radar-bf-branches radar-bf-warrant}"
 

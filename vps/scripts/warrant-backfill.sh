@@ -20,7 +20,9 @@
 #
 # ── 讓路而不是排隊(本腳本存在的主要理由)────────────────────────────────
 # 一次呼叫只做**一塊**,塊的長度由「距離下一輪排程還有多久」決定:
-#   BUDGET = minutes_until_quiet_window - WARRANT_SAFETY_MINUTES
+#   BUDGET = minutes_until_next_scheduled_writer - WARRANT_SAFETY_MINUTES
+# 「下一輪排程」同時涵蓋安靜窗(daily/deep/週末備份)**與 mid-publish 的
+# 03/09/12/20 四輪——後者不在安靜窗表裡,但一樣會因為本腳本握著 DB 鎖而被略過。
 # 再以 WARRANT_MAX_MINUTES 封頂,並以 --max-minutes 傳給 CLI。
 # 因為塊長是從剩餘時間**推導**出來的,它在定義上不可能跑進下一輪排程裡。
 #
@@ -168,16 +170,22 @@ if [ "${MEM:-0}" -lt "$MIN_MEM_MB" ]; then
 fi
 
 # 時間守衛:塊長 = 距下一輪排程的剩餘時間 - 安全邊際,再封頂。
-UNTIL="$(minutes_until_quiet_window)"
+# 用 minutes_until_next_scheduled_writer 而不是 minutes_until_quiet_window:
+# mid-backfill-publish 的 03/09/12/20 四輪**不在**安靜窗表裡(quiet_window_at 的
+# 註解自己寫著那四輪由 mid flag 另擋),而 mid-backfill-publish.sh 開頭是
+# `fuser /tmp/radar-db.lock` → 略過,所以本腳本只要握著鎖跨過整點,那一輪就
+# 靜默消失。只問安靜窗的話,02:31 起跑一個 240 分鐘的塊會一口氣吃掉 03:00;
+# 19:31 起跑 30 分鐘會吃掉 20:00。一支要跑數週的爬蟲,那是數十次被吃掉的發布。
+UNTIL="$(minutes_until_next_scheduled_writer)"
 BUDGET=$(( UNTIL - SAFETY_MINUTES ))
 if [ "$BUDGET" -lt "$MIN_CHUNK_MINUTES" ]; then
-  echo "next quiet window in ${UNTIL}min; budget ${BUDGET}min < ${MIN_CHUNK_MINUTES}min — skip (too short to be worth a pause/unpause cycle)"
+  echo "next scheduled writer in ${UNTIL}min; budget ${BUDGET}min < ${MIN_CHUNK_MINUTES}min — skip (too short to be worth a pause/unpause cycle)"
   exit 0
 fi
 if [ "$BUDGET" -gt "$MAX_MINUTES" ]; then
   BUDGET="$MAX_MINUTES"
 fi
-echo "next quiet window in ${UNTIL}min; chunk budget ${BUDGET}min (safety ${SAFETY_MINUTES}min, cap ${MAX_MINUTES}min)"
+echo "next scheduled writer in ${UNTIL}min; chunk budget ${BUDGET}min (safety ${SAFETY_MINUTES}min, cap ${MAX_MINUTES}min)"
 
 # 讓路、不排隊:搶不到就走,絕不 block 等鎖(先搶鎖、後 pause,見檔頭)。
 exec 9>/tmp/radar-db.lock
