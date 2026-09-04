@@ -131,6 +131,55 @@ class BackfillQuotesGapTests(_BaseSqliteTest):
             f"repaired list should name tpex for {TARGET}: {result['repaired']}",
         )
 
+    def test_outage_longer_than_half_the_window_is_still_detected(self):
+        """The reference must not be definable by the outage it exists to catch.
+
+        This is the shape of the real incident and the reason the reference is a
+        high quantile rather than a median. TPEx was short for 25 consecutive
+        trading days; whether those days are a minority of the scanned window
+        depends entirely on the caller's `days` argument, which the detector must
+        not be sensitive to. Here 8 of 12 history dates are degraded — a median
+        would land on the degraded value and pronounce every one of them healthy.
+        """
+        good = HISTORY_DATES[:4]
+        degraded = HISTORY_DATES[4:]          # 8 of 12 — the majority
+        for d in good:
+            self._seed_quotes(d, TWSE_N, TPEX_N)
+        for d in degraded:
+            self._seed_quotes(d, TWSE_N, TPEX_N // 4)
+        self._seed_quotes(TARGET, TWSE_N, TPEX_N // 4)
+
+        calls = []
+        with patch("radar.importer.import_daily", side_effect=_fake_import_daily(calls)), \
+             patch("radar.importer.datetime") as mock_dt:
+            mock_dt.now.return_value = _tz_now(TARGET)
+            result = backfill(1, ["quotes"])
+
+        self.assertIn(
+            "20260819", calls,
+            "an outage occupying most of the window must still be flagged — "
+            "the reference is meant to describe what the market delivers when "
+            "it is healthy, not what it delivered while broken",
+        )
+        self.assertTrue(
+            any(r["market"] == "tpex" for r in result["repaired"]),
+            f"tpex should be named as the incomplete market: {result['repaired']}",
+        )
+
+    def test_reference_quantile_tracks_the_healthy_level_not_the_majority(self):
+        """Same point at the unit level, so a failure says which half is wrong."""
+        from radar.importer import _REFERENCE_QUANTILE, _quantile
+
+        # 4 healthy days at 20, 8 broken days at 5 — broken is the majority.
+        vals = [20] * 4 + [5] * 8
+        self.assertEqual(
+            _quantile(vals, _REFERENCE_QUANTILE), 20,
+            "the reference must be the healthy level; a median here returns 5 "
+            "and silently blesses every broken date",
+        )
+        # Nearest-rank means the reference is always a count some date reported.
+        self.assertIn(_quantile(vals, _REFERENCE_QUANTILE), vals)
+
     def test_full_strength_date_is_skipped_with_zero_import_calls(self):
         self._seed_full_history()
         self._seed_quotes(TARGET, TWSE_N, TPEX_N)

@@ -1,6 +1,7 @@
 """Daily import orchestration: fetch → DTO → upsert, with import_logs bookkeeping."""
 import hashlib
 import json
+import math
 import os
 import tempfile
 import time
@@ -140,7 +141,7 @@ def backfill_margin(
       `_MIN_MARKET_SAMPLES`), so this is the only signal available there.
     - market-relative (``strict_markets=True``, default): reuses
       `_market_reference`/`_incomplete_markets` — the same per-market
-      median-reference check `backfill()` uses, just against
+      per-market reference check `backfill()` uses, just against
       ``daily_margins``. This catches a date where one market silently failed
       while the other logged ok and the *total* still clears `min_rows`.
       Measured production case (2026-09-02): 1,293 rows total (> the 500
@@ -239,6 +240,11 @@ def backfill_margin(
 # market is exempt from the completeness check (see `backfill` docstring).
 _MIN_MARKET_SAMPLES = 5
 
+# Quantile of a market's per-date row counts taken as "what it normally
+# delivers". High on purpose — see `_market_reference` for why the median is
+# the wrong statistic for a shortfall detector.
+_REFERENCE_QUANTILE = 0.9
+
 
 def _market_reference(conn, table, window_start_iso: str) -> tuple[dict, dict]:
     """Per-(date, market) row counts and a per-market reference level, for `table`.
@@ -249,15 +255,34 @@ def _market_reference(conn, table, window_start_iso: str) -> tuple[dict, dict]:
     concept ("this date is under-represented for some market relative to what
     that market normally delivers"), just against a different table.
 
-    Reference = median row count across dates in the window that have *any*
-    row for that market. Restricting to dates with data means a date with a
-    total outage (0 rows) contributes no sample, so a run of total outages
-    can never drag its own market's reference down to mask itself. Using the
-    median (not max) means a handful of genuinely bad days doesn't get to
-    define the norm.
-    """
-    import statistics
+    Reference = a high quantile (`_REFERENCE_QUANTILE`) of the row count
+    across dates in the window that have *any* row for that market.
+    Restricting to dates with data means a date with a total outage (0 rows)
+    contributes no sample, so a run of total outages can never drag its own
+    market's reference down to mask itself.
 
+    **Why the upper end of the distribution and not the median.** This is a
+    shortfall detector, and the count is bounded above by the size of the
+    market's universe — ``daily_prices``/``daily_margins`` are keyed on
+    ``(stock_id, date)``, so no date can report more rows than there are
+    stocks. There is no "too many rows" failure to be robust against, which
+    is the only thing the median would buy. What the median costs is severe:
+    it assumes bad days are a minority of the window, and the outage this
+    function exists to catch was **25 consecutive trading days**. Worked
+    through against the real 2026 data, TPEx at ~985 normal and ~475 during
+    the outage: with a 60-day window the split is 35 good / 25 bad and the
+    median lands on 985, so the outage is caught; with a 40-day window it is
+    16 good / 25 bad, the median lands on **475**, and every bad date is
+    silently declared healthy. Whether the bug is detected would depend on
+    the caller's ``days`` argument. A high quantile returns 985 in both.
+
+    The quantile is 0.9 rather than the plain max so that one anomalous day
+    (a market holiday that still logs a partial session, a one-off duplicate
+    universe) cannot single-handedly raise the bar for every other date. With
+    the ``_MIN_MARKET_SAMPLES`` floor of 5 samples, 0.9 sits at or next to the
+    largest sample, which is the intended reading of "what this market
+    normally delivers".
+    """
     from sqlalchemy import text
 
     assert table in ("daily_prices", "daily_margins"), table
@@ -273,11 +298,23 @@ def _market_reference(conn, table, window_start_iso: str) -> tuple[dict, dict]:
         counts.setdefault(d, {})[market] = n
         series.setdefault(market, []).append(n)
     reference = {
-        market: int(statistics.median(vals))
+        market: _quantile(vals, _REFERENCE_QUANTILE)
         for market, vals in series.items()
         if len(vals) >= _MIN_MARKET_SAMPLES
     }
     return counts, reference
+
+
+def _quantile(values: list[int], q: float) -> int:
+    """`q`-quantile by nearest-rank, so the result is always an observed count.
+
+    Nearest-rank (rather than an interpolating quantile) keeps the reference
+    equal to a row count some date actually reported, which makes a flagged
+    date explainable: "this market delivered N here against M on <that date>".
+    """
+    ordered = sorted(values)
+    idx = min(len(ordered) - 1, max(0, math.ceil(q * len(ordered)) - 1))
+    return int(ordered[idx])
 
 
 def _incomplete_markets(d_iso: str, counts: dict, reference: dict, fraction: float) -> list[str]:
@@ -322,7 +359,9 @@ def backfill(days: int, datasets: list[str] | None = None, *,
       instead of being dropped from the accounting — a NULL-market
       population can still be flagged if it goes missing.
     - A market's reference row-count (see ``_market_reference``) is the
-      median count across window dates that have any data for it, and is
+      0.9-quantile of its count across window dates that have any data for
+      it — deliberately the upper end, because a run of bad days longer than
+      half the window would let a median define itself as normal — and is
       trusted only with >= 5 such dates; thinner markets (e.g. a fresh DB
       with a handful of dates) are exempt from the check for that market, so
       a small DB never produces nonsense results.
