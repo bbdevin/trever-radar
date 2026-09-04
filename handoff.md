@@ -2,7 +2,13 @@
 
 ## 2026-09-04 最新交接
 
-- **Current Goal**：`adj_factor` 全市場修復已於 07:16 跑完(2,413 檔、0 失敗),接下來三件事按此順序:①`compute-performance --all` 把修好的價格傳導到 `daily_scores` 的前瞻報酬(**待人工放行**);②驗證 2026-09-05 00:05 那輪真的產出 `branch_pit_stats` 與 `branch_stock_pctile_counts`;③在修好的價格上重跑方向 battery——**往前看那側若 obs/exp 塌到 1.5× 以下,已上線的關鍵分點證據面板要撤**。這是活的風險,不得假設不會發生。以下條目由新到舊。
+- **Current Goal**：本輪的主軸從「驗證關鍵分點面板」變成「先把面板底下的資料修對」——今天連續查出三層資料缺陷,而它們全都餵進同一份分析。按依賴順序:
+  1. **`daily_prices` 約 15,150 個股票×日缺漏**(見下方 🚨 條目)。修復工具開發中,**執行待人工放行**。在補齊之前,E2 的 20 市場日窗口對受影響股票是跨著空洞算的,方向 battery 跑出來的數字對那批股票不可信。
+  2. **`compute-performance --all`**,把已修好的還原因子傳導到 `daily_scores` 的前瞻報酬(2,592 列受除權息汙染)。**待人工放行**。分點排行不需要,它會自己重算。
+  3. **驗證 2026-09-05 00:05 那輪**真的產出 `branch_pit_stats` 與 `branch_stock_pctile_counts` 兩張表的列。查表,不要因為 cron 改了就假設成功。
+  4. **在修好的資料上跑方向 battery**(`radar branch-window-direction-battery`,已進版控並通過獨立驗證)。**往前看那側若 obs/exp 塌到 1.5× 以下,已上線的關鍵分點證據面板要撤。** 這是活的風險,不得假設不會發生。
+
+  以下條目由新到舊。
 
 ## 2026-09-02 起的交接
 
@@ -19,6 +25,13 @@
   - **執行窗口**:平日 **02:30–14:05** 是唯一的長空檔(約 11.5 小時),2.0 小時的總量塞得進去。晚間各間隔不到兩小時,硬塞會讓 chunk 跨進日更起點而使該輪略過。
   - **範圍實測**:2,413 檔(有價格列的 stock/etf);`is_active` 過濾與否結果**相同**,下市標的在 `branch_trades` 為 0 筆,故無遺漏。每檔約 3 秒(`--sleep` 預設是 **1.0**,`cli.py:427`;STATUS 先前寫 7.0 已過時)。
   - **跑完之後**只需 `compute-performance --all`(修 `fwd_1d..20d`,那是餵分點勝率的);branch-stats 與 scores 由 23:30 既有那輪自然重算。歷史 `indicators_daily` 影響低——K 線圖的指標是前端用還原價全歷史算的,存的那份主要供當日評分而當日每天重算。**腳本刻意不接重算鏈**,別把它們綁進去。
+- 🚨 **`daily_prices` 有約 15,150 個「股票×日」永久缺漏,現有任何指令都補不回來(2026-09-04 唯讀發現)。** 把今天抓到夜間作業的那套「排程活性稽核」推廣到全部排程時查出來的。
+  - **兩個洞**:①**上櫃報價 2026-07-16～08-19 連續 25 個交易日**——`import_logs` 每天成對記兩筆,上市 `ok rows≈31,000`、上櫃 `empty rows=0`,一天不漏;`daily_prices` 每日上櫃列數 **~475 對正常 ~985**,即每天缺約 510 檔。08-20 恢復(`ok rows=10,634`),時間點正是 `e58a820` 加入 15:00 上櫃補抓槽。②**2026-08-11／12／13 三天完全沒有 quotes 匯入紀錄**(log 由 08-10 直接跳到 08-14),上市列數 **~565 對正常 ~1,365**,每天缺約 800 檔;同期 `daily_institutional` 為 **0**。那正是 8/21 事故(本地 dirty scripts → `git pull` Aborting)的區間。
+  - **為什麼補不回來**:`backfill()`(`importer.py:212-226`)以 `have = SELECT DISTINCT date FROM daily_prices` 判斷,**只要那天有任何一列就 `continue`**。台股報價來自上市／上櫃兩個各自獨立的來源、在同一次 `import_daily(ds,["quotes"])` 內分別記錄,一邊成功另一邊失敗時,那個日期就永遠被當成完成。`backfill --days 60 --datasets quotes` 今天跑會把這 28 天全部跳過。
+  - **`deep_backfill` 也救不了**:它以「最早日期 < 2010」當新鮮度檢查跳過已補過的股票,一檔在 6 月被 deep 過的股票,7 月的洞永遠不會被回頭補。缺口中仍有 ~475 檔上櫃有資料,正是那些在缺口**之後**才被 deep 到的。
+  - ⚠️ **這個缺陷有人踩過但只繞了一半**:`backfill_margin` 的 docstring 自己寫著「Unlike `backfill()`, checks `daily_margins` completeness per date instead of skipping when `daily_prices` already has the day」——只幫融資券繞過去,報價沒繞。而 `backfill_margin` 自己也不完全:它用絕對下限 `cnt < min_rows`(預設 500),而 2026-09-02 的 `daily_margins` 有 **1,293 列對正常 2,211**(缺 980 檔上櫃＋83 檔上市,來自 21:21:20 那筆 `margin error rows=0` 的半途失敗),1,293 > 500 故永不被標記。
+  - ⚠️ **對進行中分析的意義**:E2 的「事件日前 20 個市場日」窗口是由 `date_index` 依實際存在的列建出來的,受影響的股票那個窗會無聲地跨過 25 個交易日的空洞,分位因此失真。方向 battery 在修好之前跑出來的數字,對這批股票是不可信的。
+  - **修復開發中**:讓 `backfill()` 改以「每個市場相對於自身常態水準」判斷完整性(不寫死列數,市場集合由 `stocks.market` 推導),並與 `backfill_margin` 共用同一個判準。**執行仍須人工放行**(全市場重新匯入)。
 - **`adj_factor` 全市場修復已完成(2026-09-04 07:16)**:driver 跑完 **2,413 檔、0 失敗**,`all done — state file is empty`;過程中 01:01 正確印 `inside quiet window — skip` 讓路,未與任何排程搶鎖。**但修復尚未傳導到分數列**——`compute_performance` 預設的候選條件是 `entry_price IS NULL OR fwd_20d IS NULL`,**已填好的列永遠不會重算**,故跨除權息的窗仍帶著用未還原價算出的 `fwd_1d..20d`。需 `--all`;規模實測 `daily_scores` 僅 **22,361 列／35 個日期**(2026-07-06～09-03),不會重演八月 1.7GB 的記憶體形狀。**已寫好含 `flock -n`／安靜窗檢查／pause bf／EXIT trap／前後 `SUM(fwd_20d)` 對照的一次性腳本,執行被權限層擋下,待人工放行**(與 AGENTS「全市場重算須人工確認」一致,未繞過)。
   - **曝險已量化(唯讀)**:2026-06-01 以來共 **1,504 個除權息／分割事件、涵蓋 1,360 檔**;`daily_scores` 中 **2,592／22,361 列(11.6%)** 的 20 交易日前瞻窗跨越其中至少一個事件,那些列的 `fwd_*` 現在是錯的。最大者 5314 於 08-20 `0.2406 → 1.0`(4.16 倍)、6669 緯穎於 09-02 `0.3353 → 1.0`;以緯穎為例,未還原時該窗算出約 **−66.5%** 的假虧損,還原後接近 0%。
   - ⚠️ **更正 handoff 稍早那條影響鏈的說法**:`compute_branch_stats` **不讀 `daily_scores.fwd_*`**,它自己用 `forward_returns(adj_candles, ed)` 從 `daily_prices` 現算(`compute_branch_stats.py:300` 取 `adj_factor`、`:347` 算前瞻),所以**分點 `win_rate`／`avg_ret5`／`rank_score` 會在下一輪 `compute-branch-stats`(22:00 或 mid-publish)自動用修好的價格重算,不需人工介入**。真正卡在 `daily_scores.fwd_*` 的是 `strategy_performance.py`——即首頁 `strategy_meta` 的 S1–S13 策略績效紀錄。所以 `--all` 修的是「策略到底有沒有用」那組數字,不是分點排行。
