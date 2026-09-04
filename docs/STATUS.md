@@ -2,7 +2,7 @@
 
 > 單一進度真相。每完成一個里程碑就更新本檔。規格細節看各編號文件,別寫在這裡。
 
-## 2026-09-04 分點夜間作業四天沒跑：只鎖不搶 + 略過通知升級 + 迴歸測試（程式／測試完成，正式機待人工套用＋09-05驗證）
+## 2026-09-04 分點夜間作業四天沒跑：只鎖不搶 + 略過通知升級 + fd 9 洩漏 + 迴歸測試（正式機排程已套用，待 09-05 驗證）
 
 > 承接上一條「2026-09-04 ⚠️ 夜間分點作業自安靜窗設定以來平日從未執行」條目:那一條記錄了症狀與根因、並已把
 > `crontab.example` 的排程改成 `5 0 * * *`。本條記錄三部分的實際修復與其測試證據。
@@ -14,7 +14,10 @@
 - [x] **修復三(最有價值的產出):`pipeline/tests/test_cron_quiet_window.py`**——直接用 regex 從 `lib.sh` 原始碼解析安靜窗範圍、從 `crontab.example` 解析每條 `bash .../scripts/x.sh` 排程,兩邊都不是手抄副本,腳本改了下一次跑測試就用新內容比對。判準取捨:平日窗是一~五共用同一組數字,撞一天等於撞五天,零容忍;週六／週日各自獨立定義窗口,且 repo 裡確實有「機會型」工作故意允許偶爾撞到週末窗就跳過(`mid-backfill-publish.sh` 一天四時段、`monthly-directors.sh` 用 day-of-month 排程剛好某年 16 日落在週六)——這些不是本次事故的同一種系統性吞沒,判準只在「週末所有可觸及時刻全部撞窗」時才算違規;`backfill-margin.sh` 原始碼自己用 `[ "$dow" -ne 7 ] &&` 明講週日槽位刻意落在窗內,解析成「該 dow 呼叫不會執行到」,不算違規。另加 `SLOT_MARGIN_MINUTES=5` 邊界緩衝,不讓下一次窗口微調又卡在邊界上。
 - [x] **驗證**:完整 pipeline pytest **445 passed、98 subtests**(基線 436／98,新增 9 案)。`bash -n vps/scripts/safe-branch-stats.sh` 語法乾淨;`git diff --check` 通過,未引入 CRLF。**實測迴歸**:把 `crontab.example` 的 `safe-branch-stats.sh` 排程臨時改回 `30 23 * * *` 後,`test_no_guarded_cron_slot_is_swallowed_by_a_quiet_window` 產出 `safe-branch-stats.sh at 23:30 (dow field '*', resolved dow=1) falls inside weekday quiet window 2115..2330 (21:15..23:30)`(平日一~五各出一則,共五則),`test_current_safe_branch_stats_slot_0005_passes` 亦失敗;改回 `5 0 * * *` 後全數 9 案通過。已確認改動後再改回,`git status` 只留意料中的三個檔案(兩個修改＋一個新增測試)。
 - [x] `vps/scripts/crontab.example` 的 00:05 排程理由段落補上 `e47a175` 提交訊息作為根因出處(原本只寫窗口數字,沒點名是哪個提交造成的合併)。
-- ⚠️ **正式機仍需人工套用**:同上一條目,agent 對正式機 crontab 的寫入被權限層擋下,`crontab.example` 已更新但正式機排程仍是舊值,套用前這支工作平日仍不會執行。鎖與略過通知的修復已在本次提交的腳本檔裡,但正式機要跑到新版程式碼還是得靠既有的 `sync_code`(`SAFE_STATS_SYNC=1` 或下一次手動 `git pull`)。
+- 🚨 **修復一原樣上線會讓整條日更停擺——已補修,這是本輪最重要的攔截**。`flock` 鎖的是 **open file description** 而不是程序,而 `safe-branch-stats.sh` 收尾時會用 `nohup ... &` 補起 `bf-cron-guard.sh` 與 `bf-supervisor.sh` 兩個**常駐** daemon(只在它們不在跑時才起)。在持鎖狀態下起,兩個 daemon 會繼承 fd 9,鎖就**永遠不會釋放**:此後 14:10／15:00／16:10／17:40／21:20／22:00 每一輪的 `acquire_db_lock` 都 `flock -n` 失敗而 `exit 0`,而 `bf-cron-guard.sh` 用 `fuser /tmp/radar-db.lock` 偵測寫入者時會看到自己,把回補容器永遠 pause 住。**比原本要修的 bug 嚴重得多。** 修法是在起 daemon 之前 `exec 9>&-`(此時 stats／pit／pctile／scores／export／deploy 全部做完,放鎖安全),repo 內既有先例:`manual-catchup.sh:36` 在呼叫自己要拿同一把鎖的 `weekly-backup.sh` 之前就是這樣做的。
+- 🚨 **同一個洞在 `weekly-tdcc.sh` 已經存在於正式機**(不是本輪引入):它 `:32` 呼叫 `acquire_db_lock`、`:47/:50` 補起同兩個 daemon,中間沒有釋放。平常不觸發是因為 daemon 幾乎總是在跑(`@reboot` ＋ 每 5／10 分鐘保活),`pgrep` 擋掉了 `nohup`;但只要遇上兩個 daemon 都不在的時刻(例如重開機後 `@reboot` 尚未生效),週六 06:30 那輪就會把鎖永久留下。已一併修掉。
+- [x] **修復五:`pipeline/tests/test_vps_lock_discipline.py`**——從腳本原始碼判定「哪支持鎖」(`acquire_db_lock` 呼叫或自己 `exec 9>/tmp/radar-db.lock`)與「哪支起常駐子程序」(`nohup ... &`),要求兩者之間必須有 `exec 9>&-`,不維護白名單。另有兩條防解析器失效的檢查:整體上必須偵測到多支持鎖腳本與多支起 daemon 腳本(否則規則等於沒在查),以及 `safe-branch-stats.sh`／`weekly-tdcc.sh` 這兩支確實走在被檢查的路徑上。**實測迴歸**:以位元組安全的方式移除 `exec 9>&-` 後,測試產出 `safe-branch-stats.sh:229 在持鎖狀態下起常駐子程序(鎖取得於 :71,其間沒有 `exec 9>&-`)——daemon 會繼承 fd 9 並讓 /tmp/radar-db.lock 永不釋放`,還原後通過。完整 pipeline pytest **448 passed、100 subtests**。
+- [x] **正式機 crontab 已套用**(2026-09-04 01:0x,依使用者明示指示):先 `crontab -l` 備份到 `~/crontab-backup-<stamp>.txt`,以 sed 只改該行時間欄位,`diff` 標記數 ≠ 2 就拒絕寫入,套用後行數不變、`5 0 * * *` 已在線上。**先前 agent 的寫入嘗試被權限層擋下,是停下說明後才由使用者放行,未繞過。** 程式碼側則由 14:10 `daily-market.sh` 的 `sync_code` 拉到正式機。
 - ⚠️ **必須實測驗證,不能假設**:即使正式機排程套用成功,`branch_pit_stats`／`branch_stock_pctile_counts` 兩張表要等 **2026-09-05 00:05** 那一輪才會第一次真正寫入——下一次查核正式機時要直接看這兩張表的列數與 `$STATE_FILE` 的 `finished=`,不能因為 cron 改了就假設它已經成功。
 
 ## 2026-09-02 權證分點 export 資料日修正與分點文案一致（程式／測試完成，未跑正式 export）

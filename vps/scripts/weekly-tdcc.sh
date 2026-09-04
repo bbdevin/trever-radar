@@ -44,6 +44,13 @@ if [ "$PAUSED" -eq 1 ]; then
   PAUSED=0
 fi
 
+# flock 綁在 open file description 上,而下面兩個 nohup 出來的是常駐程序,
+# 會繼承 acquire_db_lock 開的 fd 9 並在本腳本結束後繼續持有那把鎖。真的發生時
+# (兩個 daemon 剛好都不在跑,例如重開機後 @reboot 尚未生效),之後每一輪日更的
+# acquire_db_lock 都會搶不到而 exit 0。DB 工作在上面已全部結束,此處放鎖是安全的。
+# 同樣的處理見 manual-catchup.sh:36。
+exec 9>&-
+
 if ! pgrep -f 'vps/scripts/bf-cron-guard.sh' >/dev/null 2>&1; then
   nohup bash "$REPO/vps/scripts/bf-cron-guard.sh" >> "${BF_GUARD_LOG:-$HOME/bf-cron-guard.log}" 2>&1 &
 fi

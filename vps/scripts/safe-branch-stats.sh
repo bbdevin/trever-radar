@@ -217,6 +217,15 @@ rm -f "$FLAG"
 echo "unpause backfill"
 unpause_bf_containers
 
+# 起 daemon 之前必須先關掉 fd 9 —— flock 綁在 open file description 上,
+# 而下面兩個 nohup 出來的是**常駐**程序,會繼承 fd 9 並讓這把鎖在本腳本
+# 結束後仍然被持有。那會讓 14:10/15:00/16:10/17:40/21:20/22:00 每一輪的
+# acquire_db_lock 全部搶不到而 exit 0(整條日更停擺),而 bf-cron-guard 用
+# fuser 偵測時會看到自己,把回補容器永遠 pause 住。
+# 此處 DB 工作已全部結束(stats/pit/pctile/scores/export/deploy 都在上面),
+# 所以現在放鎖是安全的。同樣的處理見 manual-catchup.sh:36。
+exec 9>&-
+
 if ! pgrep -f 'vps/scripts/bf-cron-guard.sh' >/dev/null 2>&1; then
   nohup bash "$REPO/vps/scripts/bf-cron-guard.sh" >> "${BF_GUARD_LOG:-$HOME/bf-cron-guard.log}" 2>&1 &
 fi
