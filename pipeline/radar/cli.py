@@ -52,7 +52,8 @@ def cmd_backfill(args):
     from .importer import backfill
     info = backfill(args.days, args.datasets.split(","))
     print(f"backfill done: {info['trading_days']} trading days present "
-          f"({info['imported']} newly imported, {info['probes']} probes)")
+          f"({info['imported']} newly imported, {info['probes']} probes, "
+          f"{len(info['repaired'])} market-gaps repaired)")
 
 
 def cmd_backfill_margin(args):
@@ -60,7 +61,8 @@ def cmd_backfill_margin(args):
     info = backfill_margin(args.days, args.sleep, args.dry_run, args.min_rows)
     print(
         f"backfill-margin: target={info['days_target']} imported={info['imported']} "
-        f"skipped={info['skipped']} errors={info['errors']}"
+        f"skipped={info['skipped']} errors={info['errors']} "
+        f"market-gaps={len(info['repaired'])}"
         + (" (dry-run)" if info["dry_run"] else "")
     )
 

@@ -125,11 +125,32 @@ def backfill_margin(
     sleep_s: float = 0.4,
     dry_run: bool = False,
     min_rows: int = 500,
+    *,
+    strict_markets: bool = True,
+    min_market_fraction: float = 0.5,
 ) -> dict:
     """Backfill TWSE/TPEx margin for recent trading days with gaps or missing buy fields.
 
     Unlike ``backfill()``, checks ``daily_margins`` completeness per date instead of
     skipping when ``daily_prices`` already has the day.
+
+    A date is re-imported if *any* of three independent checks trips:
+    - ``cnt < min_rows`` — absolute floor. Still needed: on a small/fresh DB
+      the market-relative reference below isn't trusted yet (see
+      `_MIN_MARKET_SAMPLES`), so this is the only signal available there.
+    - market-relative (``strict_markets=True``, default): reuses
+      `_market_reference`/`_incomplete_markets` — the same per-market
+      median-reference check `backfill()` uses, just against
+      ``daily_margins``. This catches a date where one market silently failed
+      while the other logged ok and the *total* still clears `min_rows`.
+      Measured production case (2026-09-02): 1,293 rows total (> the 500
+      floor) but only because TWSE was near-full while TPEx lost ~980 stocks
+      and TWSE lost 83 — a ``margin error rows=0`` at 21:21:20 that night
+      shows a run that partially failed; the floor alone could never see it.
+    - ``null_buy > cnt * 0.05`` — orthogonal data-quality check, unchanged.
+
+    Pass ``strict_markets=False`` to disable the new check and rely on the
+    floor + null_buy checks alone (the pre-fix behaviour).
     """
     import time as time_mod
 
@@ -147,9 +168,17 @@ def backfill_margin(
                 {"cap": days + 60},
             ).fetchall()
         ]
+        # Window for the reference must cover the same span we might repair;
+        # trading_days is newest-first, so the oldest entry is the floor.
+        window_start = trading_days[-1] if trading_days else "9999-99-99"
+        market_counts, reference = (
+            _market_reference(conn, "daily_margins", window_start)
+            if strict_markets else ({}, {})
+        )
     targets = list(reversed(trading_days[:days]))
 
     imported = skipped = errors = 0
+    repaired: list[dict] = []
     for d_iso in targets:
         ds = d_iso.replace("-", "")
         with get_engine().connect() as conn:
@@ -163,13 +192,20 @@ def backfill_margin(
             ).fetchone()
         cnt = int(row[0] or 0)
         null_buy = int(row[1] or 0)
-        need = cnt < min_rows or (cnt > 0 and null_buy > cnt * 0.05)
+        missing_markets = (
+            _incomplete_markets(d_iso, market_counts, reference, min_market_fraction)
+            if strict_markets else []
+        )
+        need = cnt < min_rows or (cnt > 0 and null_buy > cnt * 0.05) or bool(missing_markets)
         if not need:
             skipped += 1
             continue
+        if missing_markets:
+            repaired.extend({"date": d_iso, "market": m} for m in missing_markets)
         if dry_run:
             print(
-                f"backfill-margin dry-run {d_iso}: rows={cnt} null_buy={null_buy}",
+                f"backfill-margin dry-run {d_iso}: rows={cnt} null_buy={null_buy}"
+                + (f" incomplete_markets={','.join(missing_markets)}" if missing_markets else ""),
                 flush=True,
             )
             imported += 1
@@ -194,44 +230,155 @@ def backfill_margin(
         "skipped": skipped,
         "errors": errors,
         "dry_run": dry_run,
+        "repaired": repaired,
     }
 
 
-def backfill(days: int, datasets: list[str] | None = None) -> dict:
+# A market's reference row-count is trusted only once at least this many
+# sampled trading days exist for it in the scanned window; below that, the
+# market is exempt from the completeness check (see `backfill` docstring).
+_MIN_MARKET_SAMPLES = 5
+
+
+def _market_reference(conn, table, window_start_iso: str) -> tuple[dict, dict]:
+    """Per-(date, market) row counts and a per-market reference level, for `table`.
+
+    `table` must be a trusted internal literal (``daily_prices`` or
+    ``daily_margins``) — it is interpolated into SQL, never caller/user input.
+    Shared by `backfill()` and `backfill_margin()`: both need the identical
+    concept ("this date is under-represented for some market relative to what
+    that market normally delivers"), just against a different table.
+
+    Reference = median row count across dates in the window that have *any*
+    row for that market. Restricting to dates with data means a date with a
+    total outage (0 rows) contributes no sample, so a run of total outages
+    can never drag its own market's reference down to mask itself. Using the
+    median (not max) means a handful of genuinely bad days doesn't get to
+    define the norm.
+    """
+    import statistics
+
+    from sqlalchemy import text
+
+    assert table in ("daily_prices", "daily_margins"), table
+    rows = conn.execute(text(
+        f"SELECT COALESCE(s.market, '__null__') AS market, t.date, COUNT(*) AS n "
+        f"FROM {table} t JOIN stocks s ON s.id = t.stock_id "
+        f"WHERE t.date >= :start "
+        f"GROUP BY market, t.date"
+    ), {"start": window_start_iso}).fetchall()
+    counts: dict[str, dict[str, int]] = {}
+    series: dict[str, list[int]] = {}
+    for market, d, n in rows:
+        counts.setdefault(d, {})[market] = n
+        series.setdefault(market, []).append(n)
+    reference = {
+        market: int(statistics.median(vals))
+        for market, vals in series.items()
+        if len(vals) >= _MIN_MARKET_SAMPLES
+    }
+    return counts, reference
+
+
+def _incomplete_markets(d_iso: str, counts: dict, reference: dict, fraction: float) -> list[str]:
+    """Markets whose row count on `d_iso` falls below `fraction` of their reference.
+
+    Markets with no trusted reference (see `_MIN_MARKET_SAMPLES`) are silently
+    skipped — there isn't enough information to call them incomplete, and a
+    thin/fresh DB must not produce false positives.
+    """
+    day_counts = counts.get(d_iso, {})
+    return sorted(
+        market for market, ref in reference.items()
+        if ref > 0 and day_counts.get(market, 0) < fraction * ref
+    )
+
+
+def backfill(days: int, datasets: list[str] | None = None, *,
+             strict_markets: bool = True, min_market_fraction: float = 0.5) -> dict:
     """Import the last `days` trading days (skips weekends and already-imported dates).
 
     Runs oldest-last (walks backwards from today). Holidays cost one probe each and
     are logged as 'empty'. Safe to interrupt and re-run: already-present dates skip.
+
+    Completeness (``strict_markets=True``, the default — this is the fix for the
+    "half-empty date" bug): a date counts as done only when *every market with
+    enough history in the window* is adequately represented, not merely when
+    the date has one row. TWSE and TPEx quotes are two independent sources
+    fetched in the same ``import_daily`` call; when one silently fails while
+    the other succeeds, the old "date exists in daily_prices" check could
+    never detect or repair the resulting half-empty date (measured in
+    production: 2026-07-16..08-19, TWSE ok/TPEx empty every day, ~510 TPEx
+    stocks missing per day; 2026-08-11..08-13, no quotes import ran at all,
+    ~800 TWSE stocks missing per day — ~15,150 missing rows total, and
+    permanently unrepairable by the old check since `deep_backfill` never
+    revisits a stock once it has pre-2010 history).
+
+    Rules, applied per date:
+    - Market comes from ``stocks.market`` (observed values: twse, tpex),
+      discovered from the data rather than hardcoded, so a new market is
+      picked up automatically without a code change. Rows whose stock has a
+      NULL market are grouped into a synthetic ``__null__`` market bucket
+      instead of being dropped from the accounting — a NULL-market
+      population can still be flagged if it goes missing.
+    - A market's reference row-count (see ``_market_reference``) is the
+      median count across window dates that have any data for it, and is
+      trusted only with >= 5 such dates; thinner markets (e.g. a fresh DB
+      with a handful of dates) are exempt from the check for that market, so
+      a small DB never produces nonsense results.
+    - A date is incomplete if any checked market's count on it is below
+      ``min_market_fraction`` (default 0.5) of that market's reference.
+
+    Pass ``strict_markets=False`` for the old, pre-fix "date has any row is
+    enough" check.
     """
     from datetime import date as date_cls, timedelta
 
     from sqlalchemy import text
 
     init_db()
+    today = datetime.now(ZoneInfo(config.TZ)).date()
+    # scan cap: trading days ≈ 5/7 of calendar days; generous margin for holidays
+    scan_calendar_days = days * 2 + 40
+    window_start = (today - timedelta(days=scan_calendar_days)).isoformat()
+
     with get_engine().connect() as conn:
         have = {r[0] for r in conn.execute(text("SELECT DISTINCT date FROM daily_prices"))}
-    cur = datetime.now(ZoneInfo(config.TZ)).date()
+        market_counts, reference = (
+            _market_reference(conn, "daily_prices", window_start) if strict_markets else ({}, {})
+        )
+
+    cur = today
     done = imported = probes = 0
-    # scan cap: trading days ≈ 5/7 of calendar days; generous margin for holidays
-    for _ in range(days * 2 + 40):
+    repaired: list[dict] = []
+    for _ in range(scan_calendar_days):
         if done >= days:
             break
         ds = cur.strftime("%Y%m%d")
         if cur.weekday() >= 5:  # Sat/Sun: no request
             cur -= timedelta(days=1)
             continue
-        if iso(ds) in have:
-            done += 1
-            cur -= timedelta(days=1)
-            continue
+        d_iso = iso(ds)
+        if d_iso in have:
+            missing = (
+                _incomplete_markets(d_iso, market_counts, reference, min_market_fraction)
+                if strict_markets else []
+            )
+            if not missing:
+                done += 1
+                cur -= timedelta(days=1)
+                continue
+            print(f"backfill {d_iso} incomplete: {','.join(missing)} below "
+                  f"{min_market_fraction:.0%} of reference; re-importing", flush=True)
+            repaired.extend({"date": d_iso, "market": m} for m in missing)
         results = import_daily(ds, datasets or ["quotes"])
         probes += 1
         if any(r["dataset"] == "quotes" and r["status"] == "ok" for r in results):
             done += 1
             imported += 1
-            print(f"backfill {iso(ds)} ok ({done}/{days})", flush=True)
+            print(f"backfill {d_iso} ok ({done}/{days})", flush=True)
         cur -= timedelta(days=1)
-    return {"trading_days": done, "imported": imported, "probes": probes}
+    return {"trading_days": done, "imported": imported, "probes": probes, "repaired": repaired}
 
 
 def deep_backfill(ids: list[str] | None = None, top: int | None = None,
