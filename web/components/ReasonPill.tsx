@@ -14,6 +14,19 @@ export type ReasonFamily = "chips" | "tech" | "warrant" | "risk" | "neutral";
  *   R* → 風險 / W* → 權證 / B*、I*、S11-S13 → 籌碼 / T\d、S1-S10 → 技術 / 其他(T_THEME 等)→ 中性。
  * 無 code(純文字理由)一律歸中性,呼叫端若已知語意(如風險列)可用 risk 參數強制覆寫。
  */
+/** S11 起是籌碼事件策略,S1–S10 是技術面(docs/19 §4 對照表)。
+ *
+ * 抽成函式是因為第二份手抄清單已經出過事:`app/stock/page.tsx` 曾寫
+ * `["S11","S12","S13"].includes(c)`,但 `c` 是完整 code(如
+ * `"S13_SHORT_SQUEEZE"`),那個比較永遠不成立——個股頁的分點理由區從來
+ * 沒顯示過那三個籌碼理由,而它上一行的註解正說它們應該在。用同一個
+ * 判準就不會有第二份清單可漂。
+ */
+export function isChipStrategyCode(code?: string | null): boolean {
+  const m = /^S(\d+)/.exec((code ?? "").toUpperCase());
+  return m ? Number(m[1]) >= 11 : false;
+}
+
 export function reasonFamily(code?: string | null): ReasonFamily {
   const c = (code ?? "").toUpperCase();
   if (!c) return "neutral";
@@ -21,7 +34,7 @@ export function reasonFamily(code?: string | null): ReasonFamily {
   if (c.startsWith("W")) return "warrant";
   if (c.startsWith("B") || c.startsWith("I")) return "chips";
   const s = /^S(\d+)/.exec(c);
-  if (s) return Number(s[1]) >= 11 ? "chips" : "tech";
+  if (s) return isChipStrategyCode(c) ? "chips" : "tech";
   if (/^T\d/.test(c)) return "tech";
   if (c.startsWith("G1_") || c.startsWith("G2_") || c.startsWith("K1_") || c.startsWith("T1_")) return "chips";
   if (c.startsWith("H1_") || c.startsWith("KB")) return "warrant";

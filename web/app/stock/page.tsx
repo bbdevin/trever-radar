@@ -21,7 +21,7 @@ import InstiPanel from "@/components/InstiPanel";
 import MarginPanel from "@/components/MarginPanel";
 import HoldersPanel from "@/components/HoldersPanel";
 import WarrantBranchPanel from "@/components/WarrantBranchPanel";
-import ReasonPill from "@/components/ReasonPill";
+import ReasonPill, { isChipStrategyCode } from "@/components/ReasonPill";
 import PocketBadges from "@/components/PocketBadges";
 import { Skeleton } from "@/components/ui/skeleton";
 import WatchlistButton from "@/components/WatchlistButton";
@@ -107,12 +107,15 @@ function StockView() {
       .sort((a, b) => (a.t < b.t ? -1 : 1));
   }, [data]);
 
-  // 分點理由過濾：B* 系列(分點) + S11-S13(籌碼事件)
+  // 分點理由過濾：B* 系列(分點) + S11 起的籌碼事件策略
+  // 舊寫法是 ["S11","S12","S13"].includes(c),但 c 是完整 code(如
+  // "S13_SHORT_SQUEEZE"),永遠不成立——這三個理由從未在此區顯示過。
+  // 改用 ReasonPill 的同一個判準,不再維護第二份清單。
   // 必須在所有條件 return 之前宣告，符合 Rules of Hooks
   const branchReasons = useMemo(
     () => (data?.raw_reasons ?? []).filter((r) => {
       const c = r.code ?? "";
-      return c.startsWith("B") || ["S11", "S12", "S13"].includes(c);
+      return c.startsWith("B") || isChipStrategyCode(c);
     }),
     [data]
   );
