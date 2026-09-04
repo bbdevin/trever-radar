@@ -18,6 +18,28 @@ const META: Record<string, { label: string; icon: typeof Star }> = {
   KB1_BUYBACK_WINDOW: { label: "庫藏股", icon: Shield },
 };
 
+/** 舊 payload 的人話全文仍寫著改名前的「關鍵分點同買：」。
+ *
+ * META 的雙讀只修好 compact 模式的徽章字樣;個股頁是 compact=false、渲染的是
+ * 伺服器產生的 t.text,tooltip 也是,所以在下一次 VPS export 之前(程式碼走
+ * Pages 幾分鐘就上,JSON 要等當天的匯出輪)會出現徽章寫「追蹤分點」、展開卻寫
+ * 「關鍵分點同買」的矛盾。這次改名的整個重點就是那三個字不該再指這個東西,
+ * 讓它在畫面上多留幾小時等於沒改。
+ *
+ * 只改顯示,不碰資料:僅對 legacy code 生效,且只換開頭那一段前綴,分點名稱
+ * 原樣保留。新 payload 走 T1 分支,這段完全不執行——和 META 裡的 K1 條目同時
+ * 可以刪掉。
+ */
+const LEGACY_TEXT_PREFIX = "關鍵分點同買";
+const CURRENT_TEXT_PREFIX = "追蹤分點同買";
+
+function displayText(t: PocketTag): string {
+  if (t.code === "K1_KEY_BUY" && t.text.startsWith(LEGACY_TEXT_PREFIX)) {
+    return CURRENT_TEXT_PREFIX + t.text.slice(LEGACY_TEXT_PREFIX.length);
+  }
+  return t.text;
+}
+
 /** docs/27 G4:口袋 reason badges。卡片最多 4 個 +N;個股頁傳 compact=false 顯示人話全文。 */
 export default function PocketBadges({
   tags,
@@ -36,19 +58,20 @@ export default function PocketBadges({
       {shown.map((t) => {
         const meta = META[t.code];
         const Icon = meta?.icon;
+        const full = displayText(t);
         return (
           <ReasonPill
             key={t.code}
             code={t.code}
-            text={compact ? (meta?.label ?? t.text) : t.text}
-            title={t.text}
+            text={compact ? (meta?.label ?? full) : full}
+            title={full}
             icon={Icon ? <Icon strokeWidth={1.8} /> : undefined}
           />
         );
       })}
       {extra > 0 && (
         <span
-          title={tags.slice(max).map((t) => t.text).join(" / ")}
+          title={tags.slice(max).map(displayText).join(" / ")}
           className="inline-flex items-center rounded-full border border-[color:var(--line)] px-2 py-[3px] text-[11.5px] font-medium text-muted-foreground"
         >
           +{extra}
