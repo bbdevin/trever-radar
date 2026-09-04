@@ -319,6 +319,44 @@ def cmd_branch_stock_pctile_counts(args):
     )
 
 
+def cmd_branch_window_direction_battery(args):
+    from .compute.branch_window_direction_battery import (
+        write_branch_window_direction_battery,
+    )
+
+    report = write_branch_window_direction_battery(
+        as_of=args.as_of, window_days=args.window_days, seed=args.seed, out=args.out,
+    )
+    split = report["split"]
+    print(
+        "branch-window-direction-battery "
+        f"as_of={report['metadata']['as_of']} "
+        f"window={split['window_market_days']}d"
+        f"{'(truncated)' if split['window_truncated'] else ''} "
+        f"formation={split['formation_from']}..{split['formation_to']}"
+        f"({split['formation_market_days']}d) "
+        f"evaluation={split['evaluation_from']}..{split['evaluation_to']}"
+        f"({split['evaluation_market_days']}d) -> {args.out}"
+    )
+    for direction, info in report["directions"].items():
+        survivorship = info["survivorship"]
+        unlagged, lag = info["evaluation"]["unlagged"], info["evaluation"]["lag"]
+        placebo = info["placebo"]["unlagged"]
+        print(
+            f"  {direction}: flagged_pairs={info['formation']['flagged_pairs']} "
+            f"stocks={info['formation']['flagged_stocks']} "
+            f"activity={survivorship['with_evaluation_activity']} "
+            f"survivors={survivorship['survivors']} "
+            f"exceeds_both={unlagged['exceeds_own_stock_both']}/{unlagged['compared_pairs']} "
+            f"obs_exp={unlagged['obs_exp']} lag_obs_exp={lag['obs_exp']} "
+            f"placebo_obs_exp={placebo['obs_exp']} "
+            f"re_flag={info['re_flag']['re_flagged_on_evaluation_half']}"
+            f"/{info['re_flag']['formation_flagged_pairs']} (not a criterion)"
+        )
+    for verdict in report["verdicts"]:
+        print(f"  {verdict['line']}")
+
+
 def cmd_branch_ranking_v2_shadow(args):
     from .compute.branch_ranking_v2_shadow import write_branch_ranking_v2_shadow_report
 
@@ -665,6 +703,27 @@ def main(argv=None):
                            "(default 490); too little history truncates the window and "
                            "is recorded in window_from, never padded")
     bspc.set_defaults(fn=cmd_branch_stock_pctile_counts)
+
+    bwdb = sub.add_parser(
+        "branch-window-direction-battery",
+        help="read-only time-split out-of-sample battery deciding whether the shipped "
+             "per-stock buy-low/sell-high panel stays up and whether the forward "
+             "percentile may ever be added (flow-matched placebo + lag test + the "
+             "pre-registered withdrawal verdicts; writes nothing to the database)",
+    )
+    bwdb.add_argument("--as-of", dest="as_of", required=True,
+                      help="YYYY-MM-DD inclusive knowledge cutoff; the window is the "
+                           "market trading days at or before it")
+    bwdb.add_argument("--window-days", dest="window_days", type=int, default=490,
+                      help="window in market trading days ending at --as-of (default 490); "
+                           "it is halved by trading day into formation and evaluation. "
+                           "Too little history truncates the window and is reported, "
+                           "never padded")
+    bwdb.add_argument("--seed", type=int, default=20260904,
+                      help="seed for the flow-matched placebo draw (default 20260904); "
+                           "the same seed and database reproduce the same placebo set")
+    bwdb.add_argument("--out", required=True, help="JSON output path")
+    bwdb.set_defaults(fn=cmd_branch_window_direction_battery)
 
     v2s = sub.add_parser(
         "branch-ranking-v2-shadow",

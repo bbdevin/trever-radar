@@ -21,6 +21,18 @@
 
 - [x] VPS `~/trever-radar` HEAD 已是 `bf65dd0`（日更腳本自行 pull），16:10 `daily-insti.sh` 執行中（`import-warrant-master` 階段），持有 `/tmp/radar-db.lock`。本輪的 `data_date`／anchor 修正會由這條既有排程自然發布，**未手動觸發任何正式 import／export／deploy，未改 cron**。
 - [x] 既有四個未追蹤檔（`cloudflare-data-worker/package-lock.json`、`data/`、`radar-quick-catchup.sh`、`run-backfill.sh`）仍在且未阻斷本次 pull。磁碟 `29G` 中已用 `19G`、free `8.1G`（71%）；仍低於 20GB gate，禁止自行啟用全市場權證輪。分點回補 `backfill-branches --top 0 --days 490` 仍單實例執行中，guard／supervisor 各一，未重啟。
+## 2026-09-04 撤回決策的 battery 已進版控（`branch-window-direction-battery`；尚未跑正式資料）
+
+> 補的是同日抓到的缺陷②：**先前那套樣本外驗證從未被提交成腳本**，只有結果留在本檔。一個能讓**已上線**面板下架的決策，必須有人能重跑。
+
+- [x] **新 CLI（唯讀）**：`radar branch-window-direction-battery --as-of YYYY-MM-DD [--window-days 490] [--seed 20260904] --out out.json`。`mode=ro` 引擎、走 `read_only_sqlite.py` 的既有 guard（DB 不存在即失敗；`--out` 拒絕資料庫本身與 `-wal`／`-shm`／`-journal`，含 symlink 與 hardlink 別名），**不呼叫 `init_db()`、不建表、不寫任何一列**。吃 `RADAR_DB_URL`，所以可以指向還原出來的正式副本而不是正式機。
+- [x] **協定即程式碼**：490 個市場交易日依**交易日**對半切（245／245，奇數多的一天歸評估半段），**episode 於各半段獨立重建**（跨邊界的連續段在兩半段各成為一個 episode），邊界四個日期一律輸出。往前看與往後看**平起平坐**：形成半段兩側各 ≥10 次分位可知且兩率 ≥0.7 → 標記；存活率**先於**任何績效數字輸出；評估半段一律對**該股自身、同半段、同方向**的 pooled 率比較；obs/exp 走**每對的二項 null**（p = 該股評估半段自身率），`obs` 與 `exp` 共用同一個判定式。
+- [x] **兩個對照組都在**：①**張數配對安慰劑**——同股、未標記、形成半段**兩側 episode 數各 ±25%**且**事件日 `abs(pct)` 中位數 ±25%**（`--seed` 決定抽樣，可重現；不會抽到被標記者自己，同一安慰劑每檔股票只用一次）；②**lag 測試**——參考價改用**次一市場交易日**還原收盤，窗口定義不變。兩者都跑完整評估並輸出 obs/exp 與中位超額。
+- [x] **四條撤回條件逐條印 verdict 行**（`[WITHDRAW …]`／`[KEEP …]`／`[NOT EVALUABLE …]`），門檻與觀測值一起進 JSON，讀的人可自行重算：往後看 vs 安慰劑（2σ 內或安慰劑 obs/exp > 1.5）、lag 掉超過一半、往後看 < 2.0 而往前看 ≥ 2.5、以及**往前看 obs/exp < 1.5 即撤下已上線面板**。**再標記率照樣輸出但明寫不是撤回條件**（`is_withdrawal_criterion: false` ＋ 一則 note），避免被重新翻案。
+- [x] **記憶體形狀與 `branch_stock_pctile_counts` 相同**：stock-major `yield_per=2000` 串流、價格一次只載一檔、**任何時候不持有 episode 清單**。實測 `tracemalloc` peak：90 對 0.17MB、180 對 0.19MB、360 對 0.23MB、1,500 對 0.57MB（測試中另有「pair 數加倍、peak 不得加倍」的成長率斷言）。
+- [x] 驗證：新增 `pipeline/tests/test_branch_window_direction_battery.py` **31 案**；完整 pipeline pytest **436 passed、98 subtests**（基線 405／98）；`git diff --check` 通過。
+- ⚠️ **尚未跑任何正式資料**：`adj_factor` 全市場回補與 490 日分點回補完成前跑出來的數字不算數。**結構性限制（程式已誠實處理並輸出）**：往後看的窗口需要事件後 19 個市場日，故評估半段末端的事件在 `as_of` 當下**未成熟**——一律排除於分母外、**絕不當成沒命中**，因此往後看可用的評估事件天生少於往前看，`coverage.forward_maturity_note` 有記。
+
 ## 2026-09-04 Fable 5.1 決策：買低賣高的窗口方向（事前為定義、事後須先過閘門）
 
 > `docs/04` §2 line 64 原規格寫「**其後** 20 日」（往後看），而實作用的是事件日＋**前** 19 個市場日（往前看），兩者**自程式寫成以來就互相矛盾**。使用者將此決策委由 Fable 5.1。
