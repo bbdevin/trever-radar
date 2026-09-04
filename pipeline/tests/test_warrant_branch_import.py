@@ -337,10 +337,24 @@ class WarrantBranchImportTests(unittest.TestCase):
         self.assertEqual(legacy_backfill.call_args.args[0], 200)
         self.assertEqual(legacy_backfill.call_args.args[-1], "twse")
 
+        # 可續跑的停止用 75、真失敗用 1。驅動腳本要靠離開碼分辨這兩件事,
+        # 不能去比對訊息字面——那等於把 shell 綁在一個 Python f-string 上。
+        for stopped in ("time budget reached at 2026-09-01",
+                        "resume required: 3 date(s) remain incomplete"):
+            with self.subTest(stopped=stopped):
+                with patch("radar.importer.backfill_warrant_branches",
+                           return_value={"stopped": stopped}):
+                    with self.assertRaises(SystemExit) as ctx:
+                        cli.main(["backfill-warrant-branches", "--days", "1"])
+                self.assertEqual(ctx.exception.code,
+                                 cli.WARRANT_BACKFILL_INCOMPLETE_EXIT)
+
         with patch("radar.importer.backfill_warrant_branches",
-                   return_value={"stopped": "time budget reached"}):
-            with self.assertRaisesRegex(SystemExit, "backfill incomplete"):
+                   return_value={"stopped": "too many failures at 2026-09-01: 31"}):
+            with self.assertRaises(SystemExit) as ctx:
                 cli.main(["backfill-warrant-branches", "--days", "1"])
+        self.assertEqual(ctx.exception.code, 1,
+                         "抓取連續失敗是真失敗,不可以和『時間到了』共用離開碼")
 
         script = Path(__file__).parents[2] / "vps" / "scripts" / "daily-branches.sh"
         script_text = script.read_text(encoding="utf-8")

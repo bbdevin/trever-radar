@@ -173,14 +173,34 @@ def cmd_backfill_branches(args):
     backfill_branches(args.top, args.days, args.sleep, args.max_minutes)
 
 
+# 「還沒跑完,下次接著跑」與「真的壞了」必須用不同離開碼分開。
+#
+# 這兩件事先前共用 exit 1,於是任何驅動腳本只能去比對 `stopped` 的字面訊息——
+# 把 shell 綁在一個 Python f-string 上,改一個字就靜默壞掉,而且壞的方向是把
+# 失敗當成正常。75 沿用本檔 `cmd_import_daily` 已經在用的慣例(TPEx 520 那種
+# 預期內的不完整),`daily-insti.sh` 也是靠它判斷。
+#
+# 對既有呼叫者無影響:`bf-supervisor.sh` 以 `|| true` 忽略離開碼,
+# `manual-catchup.sh` 與 `vps_mega_finalize.sh` 都只看「非零就停」。
+WARRANT_BACKFILL_INCOMPLETE_EXIT = 75
+
+# 可續跑的停止理由(對照 `_backfill_warrant_branches_with_state` 寫進 `stopped`
+# 的三種字串)。剩下那個 "too many failures at ..." 是真失敗,不列在這裡。
+_WARRANT_RESUMABLE_STOPS = ("time budget reached", "resume required")
+
+
 def cmd_backfill_warrant_branches(args):
     from .importer import backfill_warrant_branches
     info = backfill_warrant_branches(
         args.top, args.days, args.sleep, args.max_minutes, args.market,
         state_file=args.state_file,
     )
-    if info["stopped"]:
-        raise SystemExit(f"warrant branch backfill incomplete: {info['stopped']}")
+    stopped = info["stopped"]
+    if not stopped:
+        return
+    print(f"warrant branch backfill incomplete: {stopped}", file=sys.stderr)
+    resumable = stopped.startswith(_WARRANT_RESUMABLE_STOPS)
+    raise SystemExit(WARRANT_BACKFILL_INCOMPLETE_EXIT if resumable else 1)
 
 
 def cmd_import_tdcc(args):

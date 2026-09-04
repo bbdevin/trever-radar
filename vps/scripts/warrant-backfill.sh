@@ -197,9 +197,6 @@ fi
 # EXIT trap 必須在 pause 之前、也在第一次呼叫 radar 之前掛好(lib.sh 的維護約束)。
 chain_exit_trap 'unpause_bf_containers'
 
-RUN_LOG="$(mktemp "${TMPDIR:-/tmp}/warrant-backfill-run.XXXXXX")"
-chain_exit_trap "rm -f '$RUN_LOG'"
-
 echo "pause backfill (if any); mem=${MEM}MB free_disk=${FREE}G"
 pause_bf_containers
 
@@ -226,31 +223,27 @@ radar backfill-warrant-branches \
   --days "$DAYS" \
   --sleep "$SLEEP" \
   --max-minutes "$BUDGET" \
-  --state-file "$STATE_BASE" 2>&1 | tee "$RUN_LOG"
-rc="${PIPESTATUS[0]}"
+  --state-file "$STATE_BASE"
+rc=$?
 set -e
 ELAPSED=$(( $(date +%s) - START ))
 
-# CLI 的離開碼語意(讀 pipeline/radar/importer.py 的
-# `_backfill_warrant_branches_with_state` 與 cli.py 的
-# `cmd_backfill_warrant_branches` 確認過,不是猜的):
+# CLI 的離開碼語意(見 cli.py 的 `cmd_backfill_warrant_branches`):
 #   rc=0  → 這個 days 深度內每一個日期都已完整。
-#   rc!=0 → cli 一律 `raise SystemExit(f"warrant branch backfill incomplete: {stopped}")`,
-#           所以「乾淨停下」與「真的壞了」共用同一個離開碼,只能靠 stopped 文字分辨:
-#             "time budget reached at <date>"   ← 我們自己的 --max-minutes,成功
-#             "resume required: N date(s) ..."  ← 還有日期沒跑完,下次接著跑,成功
-#             "too many failures at <date>: .." ← 連續 30 次以上抓取失敗,真失敗
-#           其他非零(python traceback、docker 失敗、目標數超過 --top 的
-#           fail-closed RuntimeError)都沒有這行,一律當真失敗處理。
+#   rc=75 → 乾淨停下、可續跑(我們自己的 --max-minutes 到了,或還有日期沒跑完)。
+#           **這是成功**,不是失敗:下一次呼叫從 state 接著跑。
+#   其他非零 → 真失敗(連續抓取失敗、python traceback、docker 失敗、目標數
+#           超過 --top 的 fail-closed RuntimeError)。
+#
+# 這裡刻意用離開碼而不是比對 log 文字。先前兩者共用 exit 1,唯一的分辨方式是
+# grep `stopped` 的字面訊息——把這支 shell 綁在一個 Python f-string 上,改一個
+# 字就靜默壞掉,而且壞的方向是把真失敗當成正常繼續跑。cli.py 已改為回 75
+# (沿用該檔 `cmd_import_daily` 對「預期內的不完整」既有的慣例)。
 VERDICT="unknown"
 if [ "$rc" -eq 0 ]; then
   VERDICT="complete"
-elif grep -q 'warrant branch backfill incomplete: time budget reached' "$RUN_LOG"; then
-  VERDICT="clean-stop-time-budget"
-elif grep -q 'warrant branch backfill incomplete: resume required' "$RUN_LOG"; then
-  VERDICT="clean-stop-resume-required"
-elif grep -q 'warrant branch backfill incomplete: too many failures' "$RUN_LOG"; then
-  VERDICT="failed-too-many-failures"
+elif [ "$rc" -eq 75 ]; then
+  VERDICT="clean-stop"
 else
   VERDICT="failed"
 fi
@@ -302,7 +295,7 @@ case "$VERDICT" in
       : > "$DONE_FLAG"
     fi
     ;;
-  clean-stop-*)
+  clean-stop)
     # 乾淨停下不是失敗:state 檔留著,下一次呼叫接著跑。不發高優先通知。
     echo "stopped cleanly and incomplete — next invocation resumes from the per-date state files"
     ;;
