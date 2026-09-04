@@ -46,7 +46,7 @@ STRATEGIES: list[dict[str, str]] = [
     {"key": "S10_BOTTOM_MACD", "label": "底部MACD轉強"},
     {"key": "S11_INSTI_BREAKOUT", "label": "法人連買突破"},
     {"key": "S12_BRANCH_ACCUMULATION", "label": "分點集中未發動"},
-    {"key": "S13_SHORT_SQUEEZE", "label": "融券回補軋空"},
+    {"key": "S13_SHORT_SQUEEZE", "label": "融券減＋帶量長紅"},
 ]
 
 STRATEGY_CODE_SET = {s["key"] for s in STRATEGIES}

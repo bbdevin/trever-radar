@@ -1,3 +1,21 @@
+/**
+ * S13 reason text 改名(融券回補軋空 → 融券減＋帶量大漲)的顯示期轉場。
+ *
+ * 程式碼走 Pages 幾分鐘就上,但 `daily_scores.reasons`/`indicators_daily.reasons`
+ * 的 `text` 是 VPS 匯出當下寫死的字串,要等下一輪 export 才會換成新字。這段時間
+ * 舊 payload 仍會把「融券回補軋空」原樣送到畫面。只改顯示,不碰資料:只對含舊
+ * 字樣的 S13 reason 生效,新 payload 走不到這裡。用法比照
+ * `PocketBadges.tsx` 的 `displayText()`——新 export 上線、舊字樣不再出現後可刪除。
+ */
+const LEGACY_S13_TEXT = "融券回補軋空";
+
+export function legacyReasonText(code: string | null | undefined, text: string): string {
+  if (code === "S13_SHORT_SQUEEZE" && text.startsWith(LEGACY_S13_TEXT)) {
+    return "融券減少＋帶量大漲";
+  }
+  return text;
+}
+
 /** 金額(元)→ 億,1 位小數 */
 export function fmtE8(n: number | null | undefined): string {
   if (n == null) return "—";

@@ -28,7 +28,7 @@ import WatchlistButton from "@/components/WatchlistButton";
 import { dataFetch } from "@/lib/dataFetch";
 import { OFFLINE_DATA_COPY, isBrowserOffline } from "@/lib/pwa";
 import type { Buyback, CompanyTheme, RecentThemeHeat, StockJson } from "@/lib/types";
-import { MARKET_LABEL, chgClass, fmtE8, fmtX } from "@/lib/format";
+import { MARKET_LABEL, chgClass, fmtE8, fmtX, legacyReasonText } from "@/lib/format";
 import { signInWithGoogle, useSession } from "@/lib/useSession";
 import { cn, pillTabClass } from "@/lib/utils";
 
@@ -542,7 +542,7 @@ function StockDecisionHeader({
         <div className="flex min-h-0 flex-1 flex-col border-t border-[color:var(--line)] px-2.5 py-2">
           <div className="flex min-h-0 flex-1 flex-wrap content-start gap-1 overflow-y-auto [scrollbar-width:thin]">
             {reasons.map((r, i) => (
-              <ReasonPill key={`reason-${i}`} code={r.code} text={r.text} />
+              <ReasonPill key={`reason-${i}`} code={r.code} text={legacyReasonText(r.code, r.text)} />
             ))}
             <PocketBadges tags={data.pocket_tags} compact />
             {risks.map((r, i) => (

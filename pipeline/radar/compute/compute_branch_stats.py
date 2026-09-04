@@ -6,7 +6,7 @@
 純函式 merge_consecutive_events / daytrade_flag / price_percentile / recency_factor /
 credibility_score 可單元測試;compute_all() 負責取數、彙總與落地。
 
-級距說明:score 各項的門檻(勝率 40→70、報酬 0→5%、金額 1e7→1e9、買點分位、近效性)
+級距說明:score 各項的門檻(上漲率/win_rate 40→70、報酬 0→5%、金額 1e7→1e9、買點分位、近效性)
 皆為 docs/04/13 的 V1 起始值,待績效資料累積後再校準。
 """
 from __future__ import annotations

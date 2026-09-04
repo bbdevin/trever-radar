@@ -405,7 +405,7 @@ def s12_branch_accumulation(buy_conc, conc_avg20, chg5, chg) -> bool:
 
 
 def s13_short_squeeze(short_bal, short_prev, chg, t_vr) -> bool:
-    """S13 融券回補軋空。逐字搬自 compute_scores。
+    """S13 融券減＋帶量長紅。逐字搬自 compute_scores。
     None 語意:short_bal / short_prev 用 `is not None` 明確判定;chg / t_vr 沿用
     原式 truthy 檢查(None 或 0 皆 falsy)。"""
     if not (short_bal is not None and short_prev is not None
@@ -624,11 +624,11 @@ def compute_scores(date: str | None = None) -> dict:
         if s12_branch_accumulation(buy_conc, conc_avg20, chg5, chg):
             b_reasons.append({"code": "S12_BRANCH_ACCUMULATION", "points": 20, "text": "主力分點集中但股價尚未大漲(大買超未反映)"})
 
-        # S13: 融券回補軋空
+        # S13: 融券減＋帶量長紅
         short_bal = m[3] if m and len(m) > 3 else None
         short_prev = m[4] if m and len(m) > 4 else None
         if s13_short_squeeze(short_bal, short_prev, chg, t_vr):
-            i_reasons.append({"code": "S13_SHORT_SQUEEZE", "points": 20, "text": "融券回補軋空(融券減少+帶量大漲)"})
+            i_reasons.append({"code": "S13_SHORT_SQUEEZE", "points": 20, "text": "融券減少＋帶量大漲"})
 
         base = combine(b_score, w_score, t_score, i_score, theme_score)
         if base is None:

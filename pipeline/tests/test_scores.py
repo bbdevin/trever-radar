@@ -1,5 +1,7 @@
+import inspect
 import unittest
 
+import radar.compute.scores as scores_module
 from radar.compute.scores import (
     buy_concentration,
     s11_insti_breakout,
@@ -196,6 +198,16 @@ class S13ShortSqueezeTests(unittest.TestCase):
         self.assertFalse(s13_short_squeeze(500, None, 5, 2.0))
         self.assertFalse(s13_short_squeeze(500, 2000, None, 2.0))
         self.assertFalse(s13_short_squeeze(500, 2000, 5, None))
+
+    def test_reason_text_does_not_claim_squeeze_mechanism(self):
+        """Regression guard: S13's reason text/docstring must never re-carry 軋空.
+
+        軋空 asserts a forced-short-covering mechanism this signal (two daily
+        aggregates coinciding) cannot establish. Mirrors the 關鍵 guard in
+        test_pocket.py.
+        """
+        source = inspect.getsource(scores_module)
+        self.assertNotIn("軋空", source)
 
 
 if __name__ == "__main__":

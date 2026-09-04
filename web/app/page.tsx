@@ -118,7 +118,7 @@ const STRATEGIES = [
   { key: "S10_BOTTOM_MACD", label: "底部MACD轉強", desc: "股價處於長期低檔區，MACD 於零軸下方黃金交叉且柱狀圖明顯翻紅" },
   { key: "S11_INSTI_BREAKOUT", label: "法人連買突破", desc: "外資或投信連續 3 日買超，配合技術面突破轉強" },
   { key: "S12_BRANCH_ACCUMULATION", label: "分點集中未發動", desc: "主力分點買超極度集中（佔比 > 15% 且倍增），但股價尚未明顯大漲" },
-  { key: "S13_SHORT_SQUEEZE", label: "融券回補軋空", desc: "融券餘額處於高檔（> 1000 張）且近期連續減少，當日帶量長紅突破" },
+  { key: "S13_SHORT_SQUEEZE", label: "融券減＋帶量長紅", desc: "融券餘額處於高檔（> 1000 張）且近期連續減少，當日帶量長紅突破" },
 ];
 
 // F4.2: 四類 UI 分群(見 docs/20 §4.1)。只分群、不改 S code 語意;籌碼事件預設展開。
@@ -562,7 +562,7 @@ function RadarView() {
                         return (
                           <span key={phase.key}>
                             {phase.label}：{samples > 0 && h20
-                              ? `20日勝率 ${h20.win_rate != null ? h20.win_rate.toFixed(1) + "%" : "—"}／樣本 ${samples}`
+                              ? `20日上漲率 ${h20.win_rate != null ? h20.win_rate.toFixed(1) + "%" : "—"}／樣本 ${samples}`
                               : "20日樣本尚不足"}
                           </span>
                         );
@@ -588,7 +588,7 @@ function RadarView() {
                       </span>
                     )}
                     {hasSamples
-                      ? `20日勝率 ${h20.win_rate != null ? h20.win_rate.toFixed(1) + "%" : "—"} ／樣本 ${h20.samples} 筆`
+                      ? `20日上漲率 ${h20.win_rate != null ? h20.win_rate.toFixed(1) + "%" : "—"} ／樣本 ${h20.samples} 筆`
                       : "20日樣本尚不足，績效待觀察"}
                     {meta.rationale && `；${meta.rationale}`}
                   </span>

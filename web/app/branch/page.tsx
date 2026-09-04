@@ -74,7 +74,7 @@ function NoTrackDetailPanel({ branchName }: { branchName: string }) {
 
 const MIN_SAMPLES = 10; // 樣本 < 10 顯示「樣本不足」(docs/13 §4)
 
-// 勝率/平均報酬的分母是「已成熟事件數」,不是事件總數。舊 payload 沒有
+// 上漲率/平均漲跌的分母是「已成熟事件數」,不是事件總數。舊 payload 沒有
 // matured_samples,退回 samples(舊行為)。
 function effectiveSamples(r: Ranking): number {
   return r.matured_samples ?? r.samples;
@@ -153,7 +153,7 @@ function RankCard({ r, trackable, active }: { r: Ranking; trackable?: boolean; a
       </div>
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <div className="text-xs text-muted-foreground">勝率 (5日)</div>
+          <div className="text-xs text-muted-foreground">5日上漲率</div>
           {enoughSamples ? (
             <div className={cn("text-lg font-semibold", r.win_rate != null ? (r.win_rate > 50 ? "text-up" : "text-down") : "text-[color:var(--ink-2)]")}>
               {r.win_rate != null ? `${r.win_rate.toFixed(1)}%` : "-"}
@@ -163,7 +163,7 @@ function RankCard({ r, trackable, active }: { r: Ranking; trackable?: boolean; a
           )}
         </div>
         <div>
-          <div className="text-xs text-muted-foreground">平均報酬 (5日)</div>
+          <div className="text-xs text-muted-foreground">5日平均漲跌</div>
           {enoughSamples ? (
             <div className={cn("text-lg font-semibold", r.avg_ret5 != null ? (r.avg_ret5 > 0 ? "text-up" : "text-down") : "text-[color:var(--ink-2)]")}>
               {r.avg_ret5 != null ? `${r.avg_ret5.toFixed(1)}%` : "-"}
@@ -332,7 +332,7 @@ function ConcentrationTab({ radar }: { radar: RadarJson | null }) {
 }
 
 const TABS = [
-  { key: "rankings", label: "排行榜", hint: "分點操作勝率與可信度排行", icon: IconFlame },
+  { key: "rankings", label: "排行榜", hint: "分點上漲率與可信度排行", icon: IconFlame },
   { key: "today", label: "最近動向", hint: "追蹤分點於最近交易日的買進／賣出與淨買賣明細", icon: IconZap },
   { key: "warrant", label: "權證分點異動(實驗)", hint: "追蹤分點針對單一標的之多檔權證，累計買賣超達 500 萬的動向", icon: IconTrend },
 ] as const;
@@ -654,7 +654,7 @@ export default function BranchPage() {
         <Alert className="mb-4 bg-card">
           <AlertDescription className="flex flex-wrap items-baseline gap-2.5 text-[13px] text-foreground">
             <span className="shrink-0 rounded-md bg-warn/15 px-2 py-0.5 text-[11.5px] font-bold tracking-[0.3px] text-warn">{"樣本不足"}</span>
-            <span>{"免費分點資料僅涵蓋每日前 15 大買賣超；部分分點的歷史列或成熟樣本不足，因此無法計算勝率。"}</span>
+            <span>{"免費分點資料僅涵蓋每日前 15 大買賣超；部分分點的歷史列或成熟樣本不足，因此無法計算上漲率。"}</span>
           </AlertDescription>
         </Alert>
       )}

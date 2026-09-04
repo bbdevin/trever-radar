@@ -4,7 +4,7 @@ import WatchlistButton from "@/components/WatchlistButton";
 import ReasonPill, { reasonFamily, type ReasonFamily } from "@/components/ReasonPill";
 import PocketBadges from "@/components/PocketBadges";
 import type { RadarStock } from "@/lib/types";
-import { MARKET_LABEL, chgClass, fmtE8, fmtLots, fmtPct, fmtX } from "@/lib/format";
+import { MARKET_LABEL, chgClass, fmtE8, fmtLots, fmtPct, fmtX, legacyReasonText } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 const CHG_TEXT: Record<string, string> = { up: "text-up", down: "text-down", flat: "text-foreground" };
@@ -179,7 +179,7 @@ export default function StockCard({ s, index = 99 }: { s: RadarStock; index?: nu
 function CardReasonPills({ s }: { s: RadarStock }) {
   const rawReasons = s.raw_reasons?.length ? s.raw_reasons : s.reasons.map((text) => ({ text, code: undefined }));
   const items: { code?: string; text: string; risk: boolean; fam: ReasonFamily }[] = [
-    ...rawReasons.slice(0, 2).map((r) => ({ code: r.code, text: r.text, risk: false, fam: reasonFamily(r.code) })),
+    ...rawReasons.slice(0, 2).map((r) => ({ code: r.code, text: legacyReasonText(r.code, r.text), risk: false, fam: reasonFamily(r.code) })),
     ...s.risks.slice(0, 1).map((text) => ({ text, risk: true, fam: "risk" as ReasonFamily })),
   ];
   if (items.length === 0) return null;
