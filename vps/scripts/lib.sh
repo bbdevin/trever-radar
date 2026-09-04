@@ -34,6 +34,7 @@ job_zh() {
     disk-cleanup.sh) echo "磁碟清理" ;;
     manual-catchup.sh) echo "手動追補" ;;
     adjust-backfill.sh) echo "還原因子回補" ;;
+    warrant-backfill.sh) echo "權證分點回補" ;;
     *) echo "${SCRIPT_NAME%.sh}" ;;
   esac
 }
@@ -228,10 +229,13 @@ taipei_date() { TZ=Asia/Taipei date "$@"; }
 # 安靜窗(docs/35):daily-* / deep / 週六備份+TDCC / mid 期間不應開新 bf 寫者。
 # 回傳 0 = 在窗內(應 pause / 勿啟動回補)。
 # 單一真相:bf-cron-guard / mid-publish / safe-stats / margin-bf / bf-supervisor 共用。
-in_radar_quiet_window() {
-  local dow hhmm
-  dow=$(TZ=Asia/Taipei date +%u)
-  hhmm=$((10#$(TZ=Asia/Taipei date +%H%M)))
+#
+# 範圍字面值只有這一份(在 quiet_window_at 裡)。in_radar_quiet_window 只是
+# 「用現在時刻去問」的薄包裝,minutes_until_quiet_window 則是「用未來時刻去問」;
+# 三者共用同一組數字,不可能有第二份副本漂移。
+# pipeline/tests/test_cron_quiet_window.py 也是直接 regex 解析這個函式的原始碼。
+quiet_window_at() {
+  local dow="$1" hhmm="$2"
   # 週六:01:10 deep;05:00 backup → 06:30 TDCC(涵蓋至 07:30)
   if [ "$dow" -eq 6 ]; then
     { [ "$hhmm" -ge 55 ] && [ "$hhmm" -le 230 ]; } && return 0
@@ -251,6 +255,54 @@ in_radar_quiet_window() {
   { [ "$hhmm" -ge 2115 ] && [ "$hhmm" -le 2330 ]; } && return 0
   { [ "$hhmm" -ge 55 ] && [ "$hhmm" -le 230 ]; } && return 0
   return 1
+}
+
+in_radar_quiet_window() {
+  local dow hhmm
+  dow=$(TZ=Asia/Taipei date +%u)
+  hhmm=$((10#$(TZ=Asia/Taipei date +%H%M)))
+  quiet_window_at "$dow" "$hhmm"
+}
+
+# 距離「下一個落在安靜窗內的分鐘」還有幾分鐘(整數,印到 stdout)。
+#
+# 為什麼需要這個:`in_radar_quiet_window` 只能回答「現在在不在窗內」。長工作真正
+# 該問的是「在下一輪排程開跑之前,我還剩多少時間」——2026-09-03 事故就是拿絕對
+# 時刻當上界(「17:00 以前都可以開跑」),結果在 17:38 開了一個 20 分鐘的塊,
+# 兩分鐘後 17:40 的分點輪就撞上來。正確守衛是「剩餘時間 > 預估耗時」,
+# 所以要先有辦法算出剩餘時間。
+#
+# 逐分鐘往前掃(而不是解析範圍算差),因為範圍定義只存在於 quiet_window_at 的
+# 分支裡:掃描等於把同一份定義當黑箱來問,平日／週六／週日三組不同範圍、跨午夜、
+# 跨 day-of-week 全部自動正確,不需要在這裡重寫一次範圍邏輯。
+# 已經在窗內 → 0。掃滿 24 小時仍找不到 → 印出上限 1440(目前每一天都有 00:55
+# 那段窗,所以這條路走不到;留著是為了不讓未來把窗全刪掉時回傳無限大)。
+#
+# 可傳入明確的 <dow> <hhmm>(測試用);不傳則用台北現在時刻。
+QUIET_SCAN_CAP_MINUTES=1440
+minutes_until_quiet_window() {
+  local dow hhmm
+  if [ "$#" -ge 2 ]; then
+    dow="$1"
+    hhmm="$2"
+  else
+    dow=$(TZ=Asia/Taipei date +%u)
+    hhmm=$((10#$(TZ=Asia/Taipei date +%H%M)))
+  fi
+  local start_min=$(( (hhmm / 100) * 60 + hhmm % 100 ))
+  local i abs_min probe_dow probe_min probe_hhmm
+  for (( i = 0; i <= QUIET_SCAN_CAP_MINUTES; i++ )); do
+    abs_min=$(( start_min + i ))
+    probe_dow=$(( ((dow - 1 + abs_min / 1440) % 7) + 1 ))
+    probe_min=$(( abs_min % 1440 ))
+    probe_hhmm=$(( (probe_min / 60) * 100 + probe_min % 60 ))
+    if quiet_window_at "$probe_dow" "$probe_hhmm"; then
+      echo "$i"
+      return 0
+    fi
+  done
+  echo "$QUIET_SCAN_CAP_MINUTES"
+  return 0
 }
 
 # bf 具名容器(歷史回補;不拿 flock)

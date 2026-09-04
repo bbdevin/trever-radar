@@ -3,6 +3,7 @@
 > **狀態（2026-08-31）：全市場日抓 importer／CLI、atomic resume state、disabled PoC script 與測試已 code-ready；`backfill-warrant-branches --market all` 已實作，且可選 `--state-file BASE` 以每日期＋市場分檔續跑。正式 PoC、歷史回補、cron、正式 DB 寫入及 export/deploy 均未執行。**
 > VPS 唯讀實數：2026-08-27 當日 eligible TWSE 16,225 + TPEx 3,856 = 20,081；sleep=1.0 理論 5h35、實測估 6–8h；2026-08-31 DB 5.32GB、free 7.0GB，低於本文件 20GB 閘門。因此不得正式開跑或加 active cron。
 > 正式執行仍須由使用者親自在 VPS 啟動；agent 不得自行部署、改 cron 或寫入正式 DB。
+> **2026-09-04 更新**：使用者決定深度改為 **90 個交易日**（120 日在現有磁碟上放不下），並分 30 → 60 → 90 三段跑；執行器 `vps/scripts/warrant-backfill.sh` 已寫好但**尚未在正式機執行**。容量數字、分段理由與時間守衛見 §5.1、§5.2。
 
 ## 1. Confirmed Scope
 
@@ -247,6 +248,53 @@ Phase 2 必須具備：
 - 依實測外推 120 日最終容量。
 
 開跑前仍要求可用空間 ≥20 GB，且外推完成後至少保留 10 GB；不滿足即停止並回報，不自行縮短範圍。
+
+### 5.1 2026-09-04 容量決定：深度 90 日，分 30 → 60 → 90 三段跑
+
+使用者已決定權證分點的目標深度是 **90 個交易日**（不是本文件 §1.2 原訂的 120 日），並附帶兩個條件：現在就把執行器寫出來、找時間跑，且**不得干擾既有排程**。
+
+下表把「量到的」與「推算的」分開，兩者不可混用：
+
+| 項目 | 值 | 性質 |
+|---|---:|---|
+| 正式機可用磁碟（2026-09-04） | 7.52 GB（8,070,471,680 bytes） | **實測** |
+| 每列容量上界 | 約 156 bytes/row | **推算**：由**另一張表**推得的上界，不是權證分點的實測值 |
+| 120 日全市場權證分點需求 | 約 8.4 GB | **推算**（由上表 156 bytes/row 外推） |
+| 90 日全市場權證分點需求 | 約 6.3 GB | **推算**（同上） |
+| 仍在跑的 490 日股票分點回補剩餘需求 | 約 0.6 GB | **推算** |
+| 90 日跑完後的剩餘餘裕 | 約 0.6 GB | **推算**（7.52 − 6.3 − 0.6） |
+| 連續抓取所需時間 | 約 20 天 | **推算** |
+| 只塞平日 11.5 小時空檔所需時間 | 約 41 天 | **推算** |
+
+結論：
+
+- **120 日在現有磁碟上不可行**：約 8.4 GB > 7.52 GB。要做 120 日必須先換更大的磁碟，本文件 §1.2 的 `--days 120` 在換碟之前不得執行。
+- 90 日雖然放得下，但只剩約 0.6 GB 餘裕，而這段期間（約 20～41 天）日常排程還在持續寫入。單寫者 SQLite 的 VPS 一旦寫滿磁碟是**全面停擺**，不是變慢。
+- 因此深度是參數，分三段跑：`WARRANT_DAYS=30` → `60` → `90`。
+
+**第一段（30 日）存在的理由是量測，不是保守。** 上表唯一撐著整個 90 日決定的數字（156 bytes/row）是從別的表推論出來的上界。30 日這一段會在每一塊前後記錄 `page_count × page_size`、`radar.db*` 實際佔用位元組與 `branch_trades` 列數，把 bytes/row 的**實測值**寫進 `WARRANT_MEASURE_LOG`（預設 `$HOME/warrant-backfill-measure.log`）。若實測值低於上界，90 日放得下；若更高，維運者在吃掉約 2 GB 的時候就知道，而不是在第 35 天才發現。
+
+把 `WARRANT_DAYS` 調高是安全的：CLI 對每一個「日期＋市場」寫一個獨立的 atomic state 檔，已經跑完的日期在下一次呼叫只會被判定為 complete，不花任何請求。
+
+### 5.2 執行器：`vps/scripts/warrant-backfill.sh`
+
+一次呼叫只做**一塊**，而塊的長度是從「距離下一輪排程還有多久」推導出來的：
+
+```text
+BUDGET = minutes_until_quiet_window - WARRANT_SAFETY_MINUTES   （預設安全邊際 15 分鐘）
+BUDGET 以 WARRANT_MAX_MINUTES 封頂（預設 240 分鐘）
+BUDGET < WARRANT_MIN_CHUNK_MINUTES（預設 20 分鐘）→ 略過，不值得為它 pause/unpause
+```
+
+因為塊長是從剩餘時間推導出來的，它在定義上不可能跑進下一輪排程裡。**絕對時刻上界不等價**：絕對上界只回答「現在幾點」，不回答「還剩多久」，所以它允許在 17:38 開一個 20 分鐘的塊，而 17:40 的分點輪兩分鐘後就撞上來——2026-09-03 事故正是如此。為此在 `vps/scripts/lib.sh` 新增 `quiet_window_at <dow> <hhmm>`（範圍字面值的唯一一份）與 `minutes_until_quiet_window`，`in_radar_quiet_window` 改成傳入現在時刻的薄包裝，既有五支呼叫者行為不變。
+
+其餘與 `adjust-backfill.sh` 同形：先搶 `/tmp/radar-db.lock` 再 pause 容器（順序不可對調）、另取 `/tmp/radar-branch-source.lock` 避免與股票分點回補交錯打 MoneyDJ、取鎖後重驗磁碟、`MIN_FREE_GB` 預設 **2**（刻意低於他處的 4，因為這份工作的目的就是吃磁碟，但仍必須遠早於 ENOSPC 停手）、跌破地板即高優先通知並停止再開新塊。`--max-minutes` 造成的乾淨停止是**成功**，不是失敗，不發高優先通知。
+
+本腳本與 `adjust-backfill.sh` 一樣**刻意不在 crontab 裡**；驅動方式是迴圈：
+
+```bash
+while bash vps/scripts/warrant-backfill.sh; do sleep 180; done
+```
 
 ## 6. 與現行排程共存
 

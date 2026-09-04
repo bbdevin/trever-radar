@@ -84,10 +84,16 @@ def _extract_ranges(block):
 def parse_quiet_windows(lib_text):
     """回傳 {dow: [(start_hhmm, end_hhmm), ...]},dow 用 `date +%u`(1=一..7=日)。
 
-    範圍全部用 regex 直接從 `in_radar_quiet_window()` 的原始碼抓,不是另一份
-    手打的複製——腳本改了範圍,這裡下一次執行就會抓到新範圍,不會悄悄漂移。
+    範圍全部用 regex 直接從 `quiet_window_at()` 的原始碼抓,不是另一份手打的
+    複製——腳本改了範圍,這裡下一次執行就會抓到新範圍,不會悄悄漂移。
+
+    範圍原本住在 `in_radar_quiet_window()` 裡;`quiet_window_at()` 是把同一份
+    範圍邏輯抽出來、改吃明確 `<dow> <hhmm>` 的函式(`in_radar_quiet_window` 已
+    變成傳入現在時刻的薄包裝,`minutes_until_quiet_window` 則傳入未來時刻)。
+    字面值仍然只有這一份、仍然只從原始碼解析,驗的性質完全沒變:只是換了
+    範圍所在的函式名。下面 `-eq 6` / `-eq 7` 的分支形狀也原封不動。
     """
-    body = _extract_function_body(lib_text, "in_radar_quiet_window")
+    body = _extract_function_body(lib_text, "quiet_window_at")
 
     sat_m = re.search(r'if \[ "\$dow" -eq 6 \]; then\n(.*?)\n\s*fi\n', body, re.S)
     sun_m = re.search(r'if \[ "\$dow" -eq 7 \]; then\n(.*?)\n\s*fi\n', body, re.S)
