@@ -48,12 +48,30 @@ def cmd_import_daily(args):
     sys.exit(75 if tpex_520_only else (1 if bad else 0))
 
 
+def _warn_unverified_markets(info, cmd: str) -> None:
+    """A market the gap check could not evaluate must not read as a clean bill.
+
+    The reference needs `_MIN_MARKET_SAMPLES` dates carrying rows, and the
+    sample count is starved by exactly the thing being looked for: the longer
+    and more total an outage, the fewer dates have rows. Below the floor the
+    market is exempted, so the worst outages produce the least output. Saying
+    so on the last line keeps an operator from reading silence as health.
+    """
+    for market in info.get("unverified_markets", []):
+        n = info.get("samples", {}).get(market, 0)
+        print(f"{cmd}: WARNING {market} was NOT checked for gaps — only {n} "
+              f"date(s) in the window carry any rows, too few to establish "
+              f"what normal looks like. Re-run with a larger --days if this "
+              f"market should have data.")
+
+
 def cmd_backfill(args):
     from .importer import backfill
     info = backfill(args.days, args.datasets.split(","))
     print(f"backfill done: {info['trading_days']} trading days present "
           f"({info['imported']} newly imported, {info['probes']} probes, "
           f"{len(info['repaired'])} market-gaps repaired)")
+    _warn_unverified_markets(info, "backfill")
 
 
 def cmd_backfill_margin(args):
@@ -65,6 +83,7 @@ def cmd_backfill_margin(args):
         f"market-gaps={len(info['repaired'])}"
         + (" (dry-run)" if info["dry_run"] else "")
     )
+    _warn_unverified_markets(info, "backfill-margin")
 
 
 def cmd_deep_backfill(args):

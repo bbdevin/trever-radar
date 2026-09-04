@@ -180,6 +180,53 @@ class BackfillQuotesGapTests(_BaseSqliteTest):
         # Nearest-rank means the reference is always a count some date reported.
         self.assertIn(_quantile(vals, _REFERENCE_QUANTILE), vals)
 
+    def test_a_market_starved_below_the_sample_floor_says_so(self):
+        """The check's blind spot must announce itself instead of passing quietly.
+
+        The reference needs >= `_MIN_MARKET_SAMPLES` dates carrying rows, and the
+        sample count is starved by exactly what we are hunting: the more total the
+        outage, the fewer dates have any rows. Below the floor the market is
+        exempted, so the worst outages produce the least output — silence that
+        reads identically to a clean result. Independent verification reproduced
+        this: a market present on only 4 of 29 window dates, then absent entirely
+        on the target date, is not flagged at all.
+
+        The exemption itself is correct — you cannot infer "normal" from four
+        samples. What must not happen is it passing without a word.
+        """
+        for d in HISTORY_DATES[:4]:
+            self._seed_quotes(d, TWSE_N, TPEX_N)
+        for d in HISTORY_DATES[4:]:
+            self._seed_quotes(d, TWSE_N, 0)      # tpex starved below the floor
+        self._seed_quotes(TARGET, TWSE_N, 0)
+
+        calls = []
+        with patch("radar.importer.import_daily", side_effect=_fake_import_daily(calls)), \
+             patch("radar.importer.datetime") as mock_dt:
+            mock_dt.now.return_value = _tz_now(TARGET)
+            result = backfill(1, ["quotes"])
+
+        self.assertEqual(
+            result["unverified_markets"], ["tpex"],
+            "tpex has 4 sampled dates, below the floor — it must be reported as "
+            "unverified rather than silently omitted",
+        )
+        self.assertEqual(result["samples"]["tpex"], 4)
+        self.assertNotIn("tpex", result["reference"])
+        self.assertIn("twse", result["reference"],
+                      "the healthy market must still be checked normally")
+
+    def test_describe_reference_separates_checked_from_unverifiable(self):
+        from radar.importer import describe_reference
+
+        lines = describe_reference({"twse": 30}, {"twse": 12, "tpex": 3})
+        joined = "\n".join(lines)
+        self.assertIn("twse: reference=30 from 12 dates", joined)
+        self.assertIn("UNVERIFIED", joined)
+        self.assertIn("NOT checked", joined,
+                      "the line must say the market was not checked, not merely "
+                      "that a number was unavailable")
+
     def test_full_strength_date_is_skipped_with_zero_import_calls(self):
         self._seed_full_history()
         self._seed_quotes(TARGET, TWSE_N, TPEX_N)

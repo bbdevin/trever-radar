@@ -172,11 +172,16 @@ def backfill_margin(
         # Window for the reference must cover the same span we might repair;
         # trading_days is newest-first, so the oldest entry is the floor.
         window_start = trading_days[-1] if trading_days else "9999-99-99"
-        market_counts, reference = (
+        market_counts, reference, samples = (
             _market_reference(conn, "daily_margins", window_start)
-            if strict_markets else ({}, {})
+            if strict_markets else ({}, {}, {})
         )
     targets = list(reversed(trading_days[:days]))
+    unverified = sorted(set(samples) - set(reference))
+    if strict_markets:
+        print("backfill-margin market reference:", flush=True)
+        for line in describe_reference(reference, samples):
+            print(line, flush=True)
 
     imported = skipped = errors = 0
     repaired: list[dict] = []
@@ -232,6 +237,9 @@ def backfill_margin(
         "errors": errors,
         "dry_run": dry_run,
         "repaired": repaired,
+        "reference": dict(reference),
+        "samples": dict(samples),
+        "unverified_markets": unverified,
     }
 
 
@@ -255,11 +263,19 @@ def _market_reference(conn, table, window_start_iso: str) -> tuple[dict, dict]:
     concept ("this date is under-represented for some market relative to what
     that market normally delivers"), just against a different table.
 
+    Returns ``(counts, reference, samples)``. ``samples`` is the number of
+    window dates carrying any rows per market, including markets with too few
+    to earn a reference — callers need it to tell "checked and clean" apart
+    from "could not check", which is the whole point of `describe_reference`.
+
     Reference = a high quantile (`_REFERENCE_QUANTILE`) of the row count
     across dates in the window that have *any* row for that market.
     Restricting to dates with data means a date with a total outage (0 rows)
     contributes no sample, so a run of total outages can never drag its own
-    market's reference down to mask itself.
+    market's reference down to mask itself. That restriction has a cost: it
+    also starves the sample count, and below `_MIN_MARKET_SAMPLES` the market
+    is exempted rather than flagged — see `describe_reference` for why that
+    has to be said out loud instead of passing silently.
 
     **Why the upper end of the distribution and not the median.** This is a
     shortfall detector, and the count is bounded above by the size of the
@@ -302,7 +318,48 @@ def _market_reference(conn, table, window_start_iso: str) -> tuple[dict, dict]:
         for market, vals in series.items()
         if len(vals) >= _MIN_MARKET_SAMPLES
     }
-    return counts, reference
+    samples = {market: len(vals) for market, vals in series.items()}
+    return counts, reference, samples
+
+
+def describe_reference(reference: dict, samples: dict) -> list[str]:
+    """Human-readable lines about what the check could and could not verify.
+
+    Both limits of this detector are silent by construction, and silence here
+    reads exactly like health:
+
+    - A market with fewer than `_MIN_MARKET_SAMPLES` dates carrying any rows is
+      exempt from the check. That floor exists so a fresh DB does not produce
+      nonsense, but it points the wrong way under stress: the longer and more
+      total an outage, the fewer dates carry rows, so a market can starve its
+      own sample count below the floor and buy itself silence. Verified: a
+      market present on only 4 of 29 window dates and then absent entirely on
+      the target date is not flagged at all.
+    - The reference is a high quantile of the window, so an outage covering
+      more than about 90% of the scanned `days` becomes its own definition of
+      normal. Verified: flagged through 35/39 degraded dates, silent from
+      36/39 on.
+
+    Neither can be fixed by choosing a better statistic — both are what it
+    means to infer "normal" from the same data that may be broken. What can be
+    fixed is the silence. Printing the reference and its sample count lets an
+    operator who knows the domain catch both instantly: "tpex reference=475
+    from 39 dates" is obviously wrong to anyone who knows TPEx delivers ~985,
+    and "tpex UNVERIFIED (4 dates)" says the check abstained rather than
+    passed. Callers surface these lines; they are not decorative.
+    """
+    lines = []
+    for market in sorted(samples):
+        n = samples[market]
+        if market in reference:
+            lines.append(f"  {market}: reference={reference[market]} from {n} dates")
+        else:
+            lines.append(
+                f"  {market}: UNVERIFIED — only {n} date(s) with any rows in the "
+                f"window, below the {_MIN_MARKET_SAMPLES} needed to establish a "
+                f"reference; this market was NOT checked for gaps"
+            )
+    return lines
 
 
 def _quantile(values: list[int], q: float) -> int:
@@ -383,9 +440,16 @@ def backfill(days: int, datasets: list[str] | None = None, *,
 
     with get_engine().connect() as conn:
         have = {r[0] for r in conn.execute(text("SELECT DISTINCT date FROM daily_prices"))}
-        market_counts, reference = (
-            _market_reference(conn, "daily_prices", window_start) if strict_markets else ({}, {})
+        market_counts, reference, samples = (
+            _market_reference(conn, "daily_prices", window_start)
+            if strict_markets else ({}, {}, {})
         )
+
+    unverified = sorted(set(samples) - set(reference))
+    if strict_markets:
+        print("backfill market reference:", flush=True)
+        for line in describe_reference(reference, samples):
+            print(line, flush=True)
 
     cur = today
     done = imported = probes = 0
@@ -417,7 +481,15 @@ def backfill(days: int, datasets: list[str] | None = None, *,
             imported += 1
             print(f"backfill {d_iso} ok ({done}/{days})", flush=True)
         cur -= timedelta(days=1)
-    return {"trading_days": done, "imported": imported, "probes": probes, "repaired": repaired}
+    return {
+        "trading_days": done,
+        "imported": imported,
+        "probes": probes,
+        "repaired": repaired,
+        "reference": dict(reference),
+        "samples": dict(samples),
+        "unverified_markets": unverified,
+    }
 
 
 def deep_backfill(ids: list[str] | None = None, top: int | None = None,
