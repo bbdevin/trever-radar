@@ -2,6 +2,21 @@
 
 > 單一進度真相。每完成一個里程碑就更新本檔。規格細節看各編號文件,別寫在這裡。
 
+## 2026-09-04 分點夜間作業四天沒跑：只鎖不搶 + 略過通知升級 + 迴歸測試（程式／測試完成，正式機待人工套用＋09-05驗證）
+
+> 承接上一條「2026-09-04 ⚠️ 夜間分點作業自安靜窗設定以來平日從未執行」條目:那一條記錄了症狀與根因、並已把
+> `crontab.example` 的排程改成 `5 0 * * *`。本條記錄三部分的實際修復與其測試證據。
+
+- ⚠️ **確認的損害**:正式機 `branch_pit_stats`＝0 列、`branch_stock_pctile_counts`＝0 列——這兩張表自新增以來從未寫入任何一列(其餘腳本都不呼叫這兩個指令)。分點排行分數不受影響:`mid-backfill-publish.sh` 每天 03/09/12/20 仍會呼叫 `compute-branch-stats`／`compute-scores`／`export-json` 把排行與分數重新算出來,受影響的只有這兩張新表。
+- ⚠️ **根因**(細節見上一條目):`e47a175`(fix(vps): run margin at 21:20 after TWSE publish)把平日兩段安靜窗 `2055..2200`＋`2235..2320` 合併成一段閉區間 `2115..2330`,而舊排程 `30 23 * * *` 在 23:30:01 觸發時 `hhmm=2330` 剛好落在窗尾,平日五天必定被自己的守衛擋掉、印 `inside quiet window — skip` 後 `exit 0`,只有週末(窗口定義不同)僥倖跑完。
+- [x] **修復一:`safe-branch-stats.sh` 從「偷看鎖」改成「真的搶鎖」**。原本用 `fuser /tmp/radar-db.lock` 只是偵測有沒有人持鎖,偵測完到真正動筆之間仍有競態窗口(SQLite 單一寫入者)。改成直接 `exec 9>/tmp/radar-db.lock; flock -n 9`,搶到才往下走、一路持有到程序結束(fd 9 隨 EXIT 自動關閉即釋放,腳本內未重用/手動關閉該 fd)。副作用是刻意接受的取捨:01:10 的 `data-backfill.sh` 若撞上本作業仍在跑會整晚讓路——深歷史回補可續跑、晚一夜零損失,而夜間帳本不可續跑,這正是本次事故要保護的東西,已在腳本內留言禁止「修好」成雙方都不持鎖。
+- [x] **修復二:略過通知按「連續多久沒成功」分級**。新增 `skip_or_alarm()`,五個 `exit 0` 略過點(安靜窗、鎖占用、mid-publish flag、磁碟、記憶體)全部改呼叫它:讀 `$STATE_FILE` 的 `finished=` 時間戳,距今 < `STALE_HOURS`(預設 30)用原本的 `notify_skip`(default 優先權);超過、或 state 檔不存在、或時間戳解析失敗(用 `date -d` 解,失敗一律視為 stale,寧可吵不要靜默),改用 **high** 優先權自己發一則、文字帶上距上次成功完成幾小時。鎖占用這一站因為要在呼叫 `acquire_db_lock`(它自己會 `notify_skip`+`exit 0`)之前先做分級判斷,所以改成腳本內直接 `flock`,不繞經 `lib.sh` 的 `acquire_db_lock`——`acquire_db_lock` 本身給其他呼叫者的行為完全沒動。
+- [x] **修復三(最有價值的產出):`pipeline/tests/test_cron_quiet_window.py`**——直接用 regex 從 `lib.sh` 原始碼解析安靜窗範圍、從 `crontab.example` 解析每條 `bash .../scripts/x.sh` 排程,兩邊都不是手抄副本,腳本改了下一次跑測試就用新內容比對。判準取捨:平日窗是一~五共用同一組數字,撞一天等於撞五天,零容忍;週六／週日各自獨立定義窗口,且 repo 裡確實有「機會型」工作故意允許偶爾撞到週末窗就跳過(`mid-backfill-publish.sh` 一天四時段、`monthly-directors.sh` 用 day-of-month 排程剛好某年 16 日落在週六)——這些不是本次事故的同一種系統性吞沒,判準只在「週末所有可觸及時刻全部撞窗」時才算違規;`backfill-margin.sh` 原始碼自己用 `[ "$dow" -ne 7 ] &&` 明講週日槽位刻意落在窗內,解析成「該 dow 呼叫不會執行到」,不算違規。另加 `SLOT_MARGIN_MINUTES=5` 邊界緩衝,不讓下一次窗口微調又卡在邊界上。
+- [x] **驗證**:完整 pipeline pytest **445 passed、98 subtests**(基線 436／98,新增 9 案)。`bash -n vps/scripts/safe-branch-stats.sh` 語法乾淨;`git diff --check` 通過,未引入 CRLF。**實測迴歸**:把 `crontab.example` 的 `safe-branch-stats.sh` 排程臨時改回 `30 23 * * *` 後,`test_no_guarded_cron_slot_is_swallowed_by_a_quiet_window` 產出 `safe-branch-stats.sh at 23:30 (dow field '*', resolved dow=1) falls inside weekday quiet window 2115..2330 (21:15..23:30)`(平日一~五各出一則,共五則),`test_current_safe_branch_stats_slot_0005_passes` 亦失敗;改回 `5 0 * * *` 後全數 9 案通過。已確認改動後再改回,`git status` 只留意料中的三個檔案(兩個修改＋一個新增測試)。
+- [x] `vps/scripts/crontab.example` 的 00:05 排程理由段落補上 `e47a175` 提交訊息作為根因出處(原本只寫窗口數字,沒點名是哪個提交造成的合併)。
+- ⚠️ **正式機仍需人工套用**:同上一條目,agent 對正式機 crontab 的寫入被權限層擋下,`crontab.example` 已更新但正式機排程仍是舊值,套用前這支工作平日仍不會執行。鎖與略過通知的修復已在本次提交的腳本檔裡,但正式機要跑到新版程式碼還是得靠既有的 `sync_code`(`SAFE_STATS_SYNC=1` 或下一次手動 `git pull`)。
+- ⚠️ **必須實測驗證,不能假設**:即使正式機排程套用成功,`branch_pit_stats`／`branch_stock_pctile_counts` 兩張表要等 **2026-09-05 00:05** 那一輪才會第一次真正寫入——下一次查核正式機時要直接看這兩張表的列數與 `$STATE_FILE` 的 `finished=`,不能因為 cron 改了就假設它已經成功。
+
 ## 2026-09-02 權證分點 export 資料日修正與分點文案一致（程式／測試完成，未跑正式 export）
 
 - [x] `_export_warrant_branches` 先用與主查詢完全相同的條件（`LENGTH(stock_id)=6`、`warrants`／`stocks` join、`type='stock'`、排除含「指」）求出「不晚於報價日、且在近 120 個報價日窗口內」的實際最大權證分點交易日 `bd1`，再以 `bd1` 為 1d anchor，2d／5d／30d 改由嚴格早於 `bd1` 的報價日推導，主查詢另加 `b.date <= :d1` 上界。分點比報價晚一輪公布時，1d 桶不再被清空。

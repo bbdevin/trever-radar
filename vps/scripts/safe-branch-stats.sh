@@ -13,6 +13,10 @@ STATE_FILE="${SAFE_STATS_STATE:-$HOME/safe-branch-stats.state}"
 MIN_FREE_GB="${MIN_FREE_GB:-4}"
 MIN_MEM_MB="${MIN_MEM_MB:-900}"
 CONTAINERS="${BF_CONTAINERS:-radar-bf-branches radar-bf-warrant}"
+# 2026-08-31~09-03 事故(docs/STATUS.md):安靜窗 off-by-one 讓本作業四天沒跑,
+# 卻只送出 default 優先權的略過通知,沒人注意到。STALE_HOURS 是「連續幾小時
+# 沒有一次成功完成」的門檻,超過就改吹 high 優先權(見 skip_or_alarm)。
+STALE_HOURS="${STALE_HOURS:-30}"
 
 trap - ERR
 trap 'rm -f "$FLAG" 2>/dev/null || true; unpause_bf_containers' EXIT
@@ -25,37 +29,69 @@ mem_available_mb() {
   awk '/MemAvailable:/ {printf "%d", $2/1024}' /proc/meminfo
 }
 
+# 唯一決定「這次略過該用 default 還是 high 優先權」的地方,五個 skip 出口都呼叫它。
+# 邏輯:讀 $STATE_FILE 的 finished= 時間戳,離現在超過 $STALE_HOURS 小時(或
+# state 檔不存在、或時間戳解析失敗)就視為「已經連續失敗/被擋一段時間」,
+# 改用 high 優先權自己發一則(而不是 notify_skip 固定的 default),文字帶上
+# 距上次成功完成多久,讓值班的人一眼看出這不是單次、無害的略過。
+skip_or_alarm() {
+  local reason="$1" finished_raw="" finished_epoch now_epoch age_h
+  now_epoch="$(date +%s)"
+  if [ -f "$STATE_FILE" ]; then
+    finished_raw="$(grep -m1 '^finished=' "$STATE_FILE" 2>/dev/null | cut -d= -f2- || true)"
+  fi
+  if [ -n "$finished_raw" ] && finished_epoch="$(date -d "$finished_raw" +%s 2>/dev/null)"; then
+    age_h=$(( (now_epoch - finished_epoch) / 3600 ))
+    if [ "$age_h" -lt "$STALE_HOURS" ]; then
+      notify_skip "$reason"
+    else
+      notify "${reason}；距上次成功完成已 ${age_h} 小時（超過 ${STALE_HOURS} 小時門檻）" high "略過"
+    fi
+  else
+    # state 檔不存在，或 finished= 缺失／無法解析 → 寧可吵不要靜默重演 08-31~09-03。
+    notify "${reason}；找不到可解析的上次成功完成紀錄（$STATE_FILE）" high "略過"
+  fi
+}
+
 echo "=== safe-branch-stats start $(taipei_date -Is) ==="
 
 if in_radar_quiet_window; then
   echo "inside quiet window — skip"
-  notify_skip "正值日更安靜窗，分點排行略過"
+  skip_or_alarm "正值日更安靜窗，分點排行略過"
   exit 0
 fi
 
-if fuser /tmp/radar-db.lock >/dev/null 2>&1; then
+# 直接搶鎖(而不是像過去只用 fuser 偷看),搶到就一路持有到本程序結束
+# (fd 9 在 EXIT 時由 kernel 自動關閉即釋放,不需要、也不應該手動 close/reuse fd 9)。
+# 只「看」不「拿」曾是本次事故唯一真正的第二層保護——安靜窗算錯之後,
+# 這裡就形同虛設,才會四天寫進 0 列都沒人擋下來。
+# 拿到鎖之後,01:10 的 data-backfill.sh 若撞上本作業仍在跑會自行讓路一晚:
+# 深歷史回補是可續跑的,晚一夜不損失任何資料;夜間帳本不是,這正是本次
+# 事故要保護的東西,所以刻意選邊。不要「修好」成雙方都不持鎖。
+exec 9>/tmp/radar-db.lock
+if ! flock -n 9; then
   echo "radar-db.lock held — skip"
-  notify_skip "資料庫鎖占用，分點排行略過"
+  skip_or_alarm "資料庫鎖占用，分點排行略過"
   exit 0
 fi
 
 if [ -f "$FLAG" ]; then
   echo "mid-publish flag present — skip"
-  notify_skip "回補中途上線進行中，分點排行略過"
+  skip_or_alarm "回補中途上線進行中，分點排行略過"
   exit 0
 fi
 
 FREE="$(free_gb)"
 awk -v f="$FREE" -v m="$MIN_FREE_GB" 'BEGIN { exit !(f+0 >= m+0) }' || {
   echo "disk free ${FREE}G < ${MIN_FREE_GB}G — skip"
-  notify_skip "磁碟空間不足（剩 ${FREE}G），分點排行略過"
+  skip_or_alarm "磁碟空間不足（剩 ${FREE}G），分點排行略過"
   exit 0
 }
 
 MEM="$(mem_available_mb)"
 if [ "${MEM:-0}" -lt "$MIN_MEM_MB" ]; then
   echo "MemAvailable ${MEM}MB < ${MIN_MEM_MB}MB — skip"
-  notify_skip "記憶體不足（${MEM}MB < ${MIN_MEM_MB}MB），分點排行略過"
+  skip_or_alarm "記憶體不足（${MEM}MB < ${MIN_MEM_MB}MB），分點排行略過"
   exit 0
 fi
 
