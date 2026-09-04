@@ -5,7 +5,15 @@ import type { PocketTag } from "@/lib/types";
 const META: Record<string, { label: string; icon: typeof Star }> = {
   G1_GEO_BUY: { label: "地緣買", icon: MapPin },
   G2_GEO_SELL: { label: "地緣賣", icon: MapPin },
-  K1_KEY_BUY: { label: "關鍵分點", icon: Star },
+  // T1_TRACKED_BUY is the current code (docs/27 rename); K1_KEY_BUY is the
+  // legacy code a payload exported before the rename still carries (JSON only
+  // refreshes at the next VPS export). Both map to the corrected label so old
+  // payloads render correctly too. Drop K1_KEY_BUY once no shipped payload
+  // predates the rename. Note: "關鍵分點" itself is a reserved name for a
+  // different, per-stock low-buy-high-sell concept — see docs/27 — and is not
+  // used here.
+  T1_TRACKED_BUY: { label: "追蹤分點", icon: Star },
+  K1_KEY_BUY: { label: "追蹤分點", icon: Star },
   H1_HOT_THEME: { label: "題材熱門", icon: Flame },
   KB1_BUYBACK_WINDOW: { label: "庫藏股", icon: Shield },
 };

@@ -78,7 +78,7 @@
 > **2026-09-04 更正:本節從未實作,且已被另一套設計取代。** `key_branches` 表不存在;`docs/05` 提到的 `branches.is_key`／`key_source` 欄位也不存在(整張 `branches` 表都不存在,分點以 `branch_dim`／`branch_stock_stats`／`branch_rankings`／`tracked_branches` 表示)。B5 的加分規則同樣從未進入 `compute-scores`。
 >
 > **實際存在的兩樣東西**:
-> 1. `pocket.py` 的 `K1_KEY_BUY` tag(`docs/27` G2):`key_keys` = 全部 `tracked_branches` **聯集** 最新排行中 `rank_score >= 70` 且 `COALESCE(is_daytrade,0)=0` 者;觸發條件為近 5 日任一該類分點累計淨買 **≥ 500 張或 ≥ 成交量 0.3%**。模組首行明寫 **Shadow,不進綜合分**,只影響口袋名單排序。
+> 1. `pocket.py` 的 `T1_TRACKED_BUY` tag(`docs/27` G2;**2026-09-04 由 `K1_KEY_BUY` 更名為 `T1_TRACKED_BUY`,UI 標籤「追蹤分點」**,理由見本節與 `docs/27`——它跟下面第 2 點是兩件不同的事,舊名字混用了兩者):`tracked_keys` = 全部 `tracked_branches` **聯集** 最新排行中 `rank_score >= 70` 且 `COALESCE(is_daytrade,0)=0` 者;觸發條件為近 5 日任一該類分點累計淨買 **≥ 500 張或 ≥ 成交量 0.3%**。模組首行明寫 **Shadow,不進綜合分**,只影響口袋名單排序。沒有價格、沒有分位——單純是「有在追蹤或高可信度的分點買了不少」。
 > 2. **per-stock 證據面板**(2026-09-03 上線):不做「是不是關鍵分點」的斷言,只呈現該分點在該股的低買／高賣計數與該股自身基準。理由是量測顯示傾向為真(樣本外 2.3–2.9×)但**標籤再現率僅 1.6–5.4%**,不支持任何暗示永久性的徽章。詳見 `docs/STATUS.md` 2026-09-03／09-04 條目。
 >
 > **不要照下面兩行去實作**——那會做出一條與已上線設計相衝突的加分規則。原文保留以標示改動:

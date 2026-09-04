@@ -45,7 +45,7 @@
 
 | 家族 | code 前綴 | Token | 呈現 |
 |---|---|---|---|
-| 籌碼/分點 | `B*`、`I*`(法人)、`S11`–`S13`、`G1_`/`G2_`(地緣)、`K1_`(關鍵分點) | `--accent-2` 青 | `bg-[color:var(--accent-2)]/12` + 青字 + 青圓點(口袋 badge 可改星/圖釘 icon) |
+| 籌碼/分點 | `B*`、`I*`(法人)、`S11`–`S13`、`G1_`/`G2_`(地緣)、`T1_`(追蹤分點;`K1_` 為 2026-09-04 前的舊 wire code,兩者相容) | `--accent-2` 青 | `bg-[color:var(--accent-2)]/12` + 青字 + 青圓點(口袋 badge 可改星/圖釘 icon) |
 | 技術 | `T\d`(T1–T5)、`S1`–`S10` | `--primary` 藍 | `bg-primary/12` + 藍字 + 藍圓點 |
 | 權證 | `W*`、`H1_`(熱門題材)、`KB*`(庫藏股,G3) | `--warn` 琥珀 | `bg-warn/12` + 琥珀字 + 琥珀圓點(口袋題材用火 icon) |
 | 風險 | `R*`,或呼叫端 `risk` 參數強制 | `--destructive` 紅 | `bg-destructive/12` + 紅字 + `AlertTriangle` icon |

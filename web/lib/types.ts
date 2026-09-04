@@ -70,7 +70,9 @@ export interface ActiveWarrant {
 
 export interface PocketTag {
   code: string;
-  family: "GEO" | "KEY" | "THEME" | "BUYBACK";
+  // "KEY" kept for payloads exported before the K1→T1 rename (docs/27); drop once
+  // no shipped JSON predates it. New payloads emit "TRACKED".
+  family: "GEO" | "KEY" | "TRACKED" | "THEME" | "BUYBACK";
   text: string;
   strength?: "weak" | "strong";
   branches?: string[];

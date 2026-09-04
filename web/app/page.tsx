@@ -85,7 +85,7 @@ const TABS: { key: TabKey; label: string; hint: string; icon: any }[] = [
   {
     key: "pocket",
     label: "口袋",
-    hint: "地緣／關鍵分點／熱門題材等理由疊加（≥2）的觀察池；不進綜合分，只做排序與提醒。",
+    hint: "地緣／追蹤分點／熱門題材等理由疊加（≥2）的觀察池；不進綜合分，只做排序與提醒。",
     icon: Briefcase,
   },
   {
@@ -617,7 +617,7 @@ function RadarView() {
         <div className="mx-auto max-w-md py-[46px] text-center text-sm leading-relaxed text-muted-foreground">
           {tab === "pocket"
             ? (radar.pocket_note
-              ?? "口袋名單要至少兩個獨立理由(地緣/關鍵分點/題材/未發動或集中度)才入榜。地緣目前僅涵蓋每日評分池,且要等公司住址匯入後才會出現。")
+              ?? "口袋名單要至少兩個獨立理由(地緣/追蹤分點/題材/未發動或集中度)才入榜。地緣目前僅涵蓋每日評分池,且要等公司住址匯入後才會出現。")
             : tab === "score" || tab === "mark"
             ? "今日無達門檻的標的。寧缺勿濫是一大設計原則——沒有符合條件時不硬湊，也可能是盤後分點尚未更新。"
             : "今日此榜無符合條件的標的，或該類資料尚未更新。稍後回來再看，系統會依交易所公佈時間分批更新。"}

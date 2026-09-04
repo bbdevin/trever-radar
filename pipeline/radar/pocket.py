@@ -1,4 +1,4 @@
-"""docs/27 G2:地緣買/賣、關鍵分點同買、熱門題材 tag(Shadow,不進綜合分)。"""
+"""docs/27 G2:地緣買/賣、追蹤分點同買、熱門題材 tag(Shadow,不進綜合分)。"""
 from __future__ import annotations
 
 from collections import defaultdict
@@ -11,13 +11,13 @@ from .theme_lifecycle import eligible_for_hot_theme
 
 DUAL_NORTH = frozenset({"台北市", "新北市"})
 GEO_WINDOW = 20
-KEY_WINDOW = 5
+TRACKED_WINDOW = 5
 GEO_VOL_SHARE = 0.005          # 地緣淨額 ≥ 期間成交量 0.5%
 GEO_TOP15_SHARE = 0.25         # 或 ≥ 期間前15大總淨買(賣) 25%
 GEO_MIN_BROKERS = 2
 GEO_STREAK = 3
-KEY_VOL_SHARE = 0.003          # 近 5 日淨買 ≥ 成交量 0.3%
-KEY_MIN_LOTS = 500
+TRACKED_VOL_SHARE = 0.003      # 近 5 日淨買 ≥ 成交量 0.3%
+TRACKED_MIN_LOTS = 500
 HOT_THEME_VS20 = 1.15
 HOT_THEME_TOP = 10
 RANK_SCORE_MIN = 70
@@ -27,7 +27,7 @@ STRONG_BROKERS = 3
 STRONG_VOL_SHARE = 0.01
 STRONG_TOP15_SHARE = 0.40
 
-POCKET_WEIGHTS = {"GEO": 30, "KEY": 30, "BUYBACK": 15, "THEME": 15, "ARMED_OR_CONC": 10}
+POCKET_WEIGHTS = {"GEO": 30, "TRACKED": 30, "BUYBACK": 15, "THEME": 15, "ARMED_OR_CONC": 10}
 
 # V1 噪音名單可擴;總公司/外資已由 kind 排除
 NOISE_NAME_KEYS: frozenset[str] = frozenset()
@@ -178,15 +178,23 @@ def geo_trigger(
     }
 
 
-def key_buy_trigger(
+def tracked_buy_trigger(
     *,
     trades: list[dict],
-    key_keys: set[str],
+    tracked_keys: set[str],
     window_dates: list[str],
     volumes: dict[str, int],
 ) -> dict | None:
-    """近 5 日任一關鍵分點累計淨買 ≥ 成交量 0.3% 或 ≥ 500 張。"""
-    if not key_keys:
+    """近 5 日任一追蹤分點累計淨買 ≥ 成交量 0.3% 或 ≥ 500 張。
+
+    NOT the same thing as「關鍵分點」(reserved term): that means a branch
+    repeatedly buying a given stock near its relative lows and selling near
+    its relative highs, per-stock and price-percentile based — see
+    branch_stock_pctile_counts / BranchPctilePanel. This trigger has no price
+    and no percentile in it; it only means a tracked or auto-qualified
+    (high rank_score) branch bought size recently. Do not re-merge the two.
+    """
+    if not tracked_keys:
         return None
     win = set(window_dates)
     nets: dict[str, int] = defaultdict(int)
@@ -194,7 +202,7 @@ def key_buy_trigger(
         if t["date"] not in win:
             continue
         name = t.get("branch_name") or ""
-        if normalize_branch_name(name) not in key_keys:
+        if normalize_branch_name(name) not in tracked_keys:
             continue
         nets[name] += int(t.get("net_lots") or 0)
     hits = [(name, net) for name, net in nets.items() if net > 0]
@@ -204,15 +212,15 @@ def key_buy_trigger(
     qualified = []
     for name, net in sorted(hits, key=lambda x: -x[1]):
         share = (net * 1000 / period_vol) if period_vol > 0 else 0.0
-        if net >= KEY_MIN_LOTS or share >= KEY_VOL_SHARE:
+        if net >= TRACKED_MIN_LOTS or share >= TRACKED_VOL_SHARE:
             qualified.append((name, net, share))
     if not qualified:
         return None
     shown = [n for n, _, _ in qualified[:3]]
-    text = "關鍵分點同買：" + "、".join(shown)
+    text = "追蹤分點同買：" + "、".join(shown)
     return {
-        "code": "K1_KEY_BUY",
-        "family": "KEY",
+        "code": "T1_TRACKED_BUY",
+        "family": "TRACKED",
         "text": text,
         "branches": shown,
     }
@@ -257,8 +265,8 @@ def pocket_score(families: set[str]) -> int:
     score = 0
     if "GEO" in families:
         score += POCKET_WEIGHTS["GEO"]
-    if "KEY" in families:
-        score += POCKET_WEIGHTS["KEY"]
+    if "TRACKED" in families:
+        score += POCKET_WEIGHTS["TRACKED"]
     if "BUYBACK" in families:
         score += POCKET_WEIGHTS["BUYBACK"]
     if "THEME" in families:
@@ -311,7 +319,7 @@ def buyback_window_trigger(buybacks: list[dict], as_of: str) -> dict | None:
 class PocketContext:
     companies: dict[str, dict] = field(default_factory=dict)
     geo_by_key: dict[str, dict] = field(default_factory=dict)
-    key_keys: set[str] = field(default_factory=set)
+    tracked_keys: set[str] = field(default_factory=set)
     trades: dict[str, list] = field(default_factory=dict)
     volumes: dict[str, dict] = field(default_factory=dict)
     buybacks: dict[str, list] = field(default_factory=dict)
@@ -348,7 +356,7 @@ def load_pocket_context(conn, window_dates: list[str], stock_ids: list[str]) -> 
         "AND rank_score >= :mn "
         "AND COALESCE(is_daytrade, 0) = 0"
     ), {"mn": RANK_SCORE_MIN})]
-    ctx.key_keys = {normalize_branch_name(n) for n in tracked + ranked if n}
+    ctx.tracked_keys = {normalize_branch_name(n) for n in tracked + ranked if n}
 
     # Point-in-time guard: plans published after the quote date cannot create a
     # historical KB1.  Null source dates are not treated as fresh.
@@ -424,14 +432,14 @@ def tag_stock(
     )
     if geo_sell:
         tags.append(geo_sell)
-    key = key_buy_trigger(
+    tracked = tracked_buy_trigger(
         trades=trades,
-        key_keys=ctx.key_keys,
+        tracked_keys=ctx.tracked_keys,
         window_dates=window5,
         volumes=vols,
     )
-    if key:
-        tags.append(key)
+    if tracked:
+        tags.append(tracked)
     # Export provides `_active_themes` even when it is an empty list. That makes
     # legacy/unknown, stale, and retired classifications fail closed for H1.
     theme = hot_theme_trigger(stock.get("_active_themes", stock.get("themes") or []), hot_names)
@@ -460,7 +468,7 @@ def apply_pocket(
 ) -> list[str]:
     """Export 掛 tag。回傳口袋名單 id(≥2 family,pocket_score 降序,最多 40)。"""
     window20 = list(reversed(trading_dates_desc[:GEO_WINDOW]))
-    window5 = list(reversed(trading_dates_desc[:KEY_WINDOW]))
+    window5 = list(reversed(trading_dates_desc[:TRACKED_WINDOW]))
     ids = [s["id"] for s in all_stocks]
     ctx = load_pocket_context(conn, window20, ids)
     quote_date = trading_dates_desc[0] if trading_dates_desc else None

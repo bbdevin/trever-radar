@@ -1255,7 +1255,7 @@ def export_json(out_dir: Path | None = None) -> dict:
             for r in conc_rows
         ), key=lambda x: x["vs20"], reverse=True)[:40]
 
-        # docs/27 G2:地緣/關鍵/題材 tag + 口袋名單(僅排序,不進 daily_scores.final)
+        # docs/27 G2:地緣/追蹤/題材 tag + 口袋名單(僅排序,不進 daily_scores.final)
         pocket_ids = apply_pocket(
             conn, all_stocks, dates, themes,
             {r["id"] for r in concentration},
@@ -1335,7 +1335,7 @@ def export_json(out_dir: Path | None = None) -> dict:
         "generated_at": now,
         "freshness": freshness,
         "note": "綜合分=分點/權證/技術/法人/題材加權−風險扣分;≥65 為觀察門檻",
-        "pocket_note": "地緣/關鍵僅涵蓋每日評分池(有分點前15大);tag 不進綜合分",
+        "pocket_note": "地緣/追蹤僅涵蓋每日評分池(有分點前15大);tag 不進綜合分",
         "summary_text": _build_summary_text(),
         "summary": [
             {"market": m, "turnover": t, "up": up, "down": down}

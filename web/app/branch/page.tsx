@@ -130,11 +130,11 @@ function RankCard({ r, trackable, active }: { r: Ranking; trackable?: boolean; a
         <div className="flex items-center gap-1.5">
           {(r.rank_score >= 70 || r.source === "manual") && (
             <span
-              title="關鍵分點:手動種子或可信度分數 ≥70"
+              title="追蹤分點:手動種子或可信度分數 ≥70"
               className="inline-flex items-center gap-0.5 rounded-md bg-[color:var(--accent-2)]/12 px-1.5 py-0.5 text-[10.5px] font-bold text-[color:var(--accent-2)]"
             >
               <Star className="h-3 w-3" strokeWidth={1.8} />
-              {"關鍵"}
+              {"追蹤"}
             </span>
           )}
           <span className={cn("rounded-md px-1.5 py-0.5 text-[10.5px] font-bold", badge.cls)}>{badge.label}</span>

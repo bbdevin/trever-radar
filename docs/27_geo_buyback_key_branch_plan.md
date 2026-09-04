@@ -1,9 +1,13 @@
-# 27 地緣券商 + 庫藏股分點 + 關鍵分點同買 → 口袋名單(2026-07-12 規劃)
+# 27 地緣券商 + 庫藏股分點 + 追蹤分點同買 → 口袋名單(2026-07-12 規劃)
 
 > **2026-08-27 規劃治理更新**：本檔既有 G0–G4 歷史規劃與已完成 G1/G2/G4 實作備註仍保留；公司地址／題材 freshness／集團／庫藏股 KB1／關鍵分點 E2 的最新分期、契約與人工確認門檻，改以 [`docs/37_company_theme_group_buyback_branch_plan.md`](37_company_theme_group_buyback_branch_plan.md) 為準。KB2 明確不實作。
 
-> 使用者需求原話:地緣=「公司在高雄、都是高雄(甚至同區)的券商分點在買」;要整理出哪些股票有地緣買/地緣賣,疊加「題材熱門」「關鍵分點(常低買高賣,如富邦新店/凱基信義)同買」等多重理由,呈現成**口袋名單**;另要顯示**庫藏股是哪個分點在執行**。
-> 本檔把 docs/13 一直卡在「人工名單」的地緣/關鍵分點改為**演算法判定**(人工名單降級為種子/補充)。實作依 docs/17 流程;所有新訊號遵守 docs/20 解耦原則——**只產生 tag/badge,不進綜合分**(Shadow,待 Phase 3 績效證據後再議加權)。
+> **2026-09-04 更名記錄**:本檔原本把口袋 badge `K1_KEY_BUY`(「有在追蹤或高可信度分點買超」)與「關鍵分點」這個詞混用,而「關鍵分點」在本專案已經是另一件事的專屬名稱——**per-stock、依價格分位判定的常低買高賣**(見 `docs/04` §4、`docs/13`、`branch_stock_pctile_counts` / `BranchPctilePanel.tsx`)。這件事目前**只有一個不下斷言的證據面板**,尚未有任何徽章使用「關鍵分點」這個名字,因為標籤再現率只有 1.6–5.4%,且決定該面板是否留下的樣本外檢定電池尚未在還原價上重跑(見 `docs/STATUS.md`)。
+>
+> 為了讓「口袋 badge = 有量的追蹤買超」和「關鍵分點 = 低買高賣」這兩件不相干的事不再共用一個名字,badge 已更名:`K1_KEY_BUY` → `T1_TRACKED_BUY`,UI 標籤「關鍵分點」→「追蹤分點」(呼應 `tracked_branches` 表與 `BranchTrackView.tsx` 既有的「追蹤分點」用語)。**「關鍵分點」自此是保留名稱,目前產品中沒有任何東西使用它**;下文歷史小節(§2「K1_KEY_BUY 關鍵分點同買」等)保留原文供沿革參考,實際程式碼/wire 欄位以本更新為準。
+
+> 使用者需求原話:地緣=「公司在高雄、都是高雄(甚至同區)的券商分點在買」;要整理出哪些股票有地緣買/地緣賣,疊加「題材熱門」「追蹤分點(如富邦新店/凱基信義)同買」等多重理由,呈現成**口袋名單**;另要顯示**庫藏股是哪個分點在執行**。
+> 本檔把 docs/13 一直卡在「人工名單」的地緣/追蹤分點改為**演算法判定**(人工名單降級為種子/補充)。實作依 docs/17 流程;所有新訊號遵守 docs/20 解耦原則——**只產生 tag/badge,不進綜合分**(Shadow,待 Phase 3 績效證據後再議加權)。
 
 ## 1. 資料層(三個新來源,全免費官方)
 
@@ -36,15 +40,15 @@
 - 股票所屬題材位於當日資金流入榜(`vs20 ≥ 1.15`)前 10 → tag,badge 帶題材名。重用既有 themes 資料,零新抓取。
 
 ### 口袋名單(reason stacking)
-- **Reason families**:GEO / KEY / BUYBACK / THEME / ARMED(既有)/ CONC(集中度躍升,既有)——每 family 至多計一次。
-- `pocket_score = 30·GEO + 30·KEY + 15·BUYBACK + 15·THEME + 10·(ARMED∨CONC)`——**僅供口袋名單排序,不進 daily_scores.final**(解耦鐵律)。
+- **Reason families**:GEO / TRACKED(2026-09-04 前為 KEY,見上方更名記錄)/ BUYBACK / THEME / ARMED(既有)/ CONC(集中度躍升,既有)——每 family 至多計一次。
+- `pocket_score = 30·GEO + 30·TRACKED + 15·BUYBACK + 15·THEME + 10·(ARMED∨CONC)`——**僅供口袋名單排序,不進 daily_scores.final**(解耦鐵律)。
 - **入榜**:≥2 個不同 family → 口袋名單;全部 badge 疊加顯示 + 每個 badge 的人話理由(docs 原則:不能只有分數)。
 
 ## 3. UI(沿用既有版式,不新開一級路由)
 
-- 首頁狀態池群新增「**口袋名單**」tab(與 Armed/Triggered 並列):卡片 = 既有 StockCard + **reason badges 列**(地緣buy 藍綠系?——用既有 token 決定;關鍵分點=星;庫藏股=盾;題材=火;最多顯示 4 個 +N);排序 pocket_score。
+- 首頁狀態池群新增「**口袋名單**」tab(與 Armed/Triggered 並列):卡片 = 既有 StockCard + **reason badges 列**(地緣buy 藍綠系?——用既有 token 決定;追蹤分點=星;庫藏股=盾;題材=火;最多顯示 4 個 +N);排序 pocket_score。
 - 個股頁「訊號摘要」區(F3 已建)併入這些 tag 的人話理由。
-- /branch 分點追蹤視角:分點列若屬「關鍵分點」或「地緣分點(對某股)」補小徽章。
+- /branch 分點追蹤視角:分點列若屬「追蹤分點」或「地緣分點(對某股)」補小徽章。
 - 誠實限制常標:分點≠單一人;地緣為統計推測;**KB2 已作廢且不顯示**。
 
 ## 4. 工作包
@@ -93,15 +97,15 @@
 ## G2 實作備註(2026-08-20)
 
 - **Shadow**:`pocket_tags` / `pocket_score` / `lists.pocket` 只在 export;不寫 `daily_scores`、不改 `final`。
-- **涵蓋**:地緣/關鍵只用已抓到的前 15 大分點(每日評分池);`radar.json.pocket_note` 標明。抽不到縣市或雙北缺行政區 → 不判地緣。
+- **涵蓋**:地緣/追蹤只用已抓到的前 15 大分點(每日評分池);`radar.json.pocket_note` 標明。抽不到縣市或雙北缺行政區 → 不判地緣。
 - **強度 V1**:`strong` = ≥3 家地緣券商且(佔量 ≥1% 或佔前 15 淨買/賣 ≥40%),否則 `weak`。
-- **口袋入榜**:≥2 個 family(GEO/KEY/THEME/ARMED/CONC;BUYBACK 待 G3),`pocket_score` 權重見 §2,最多 40 檔。
+- **口袋入榜**:≥2 個 family(GEO/TRACKED/THEME/ARMED/CONC;BUYBACK 待 G3),`pocket_score` 權重見 §2,最多 40 檔。
 
 ## G4 實作備註(2026-08-20)
 
 - 首頁狀態池「口袋」tab 讀 `lists.pocket`(已按 pocket_score 排序);可切分數/題材分組,與綜合榜同一套卡片牆。
-- badges 走既有 `ReasonPill` token:`G1`/`G2`/`K1`=籌碼青+圖釘/星,`H1`=權證琥珀+火。卡片最多 4 個 +N;個股頁 F3 顯示人話全文。
-- `/branch` 排行卡:`rank_score ≥ 70` 或 `source=manual` 標「關鍵」。**未做**「地緣分點對某股」徽章(排行 JSON 沒有個股對照,避免另開 export)。
+- badges 走既有 `ReasonPill` token:`G1`/`G2`/`T1`(2026-09-04 前為 `K1`)=籌碼青+圖釘/星,`H1`=權證琥珀+火。卡片最多 4 個 +N;個股頁 F3 顯示人話全文。
+- `/branch` 排行卡:`rank_score ≥ 70` 或 `source=manual` 標「追蹤」(2026-09-04 前標「關鍵」)。**未做**「地緣分點對某股」徽章(排行 JSON 沒有個股對照,避免另開 export)。
 - 空榜教育文案用 `pocket_note`;誠實限制:統計推測、分點≠單一人、目前僅每日評分池。
 
 ## G3a E1 實作備註(2026-08-27)

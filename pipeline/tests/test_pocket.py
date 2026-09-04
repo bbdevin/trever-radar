@@ -1,4 +1,4 @@
-"""docs/27 G2:地緣/關鍵/題材 tag 純函式(不進綜合分)。"""
+"""docs/27 G2:地緣/追蹤/題材 tag 純函式(不進綜合分)。"""
 import unittest
 
 from radar.pocket import (
@@ -7,7 +7,7 @@ from radar.pocket import (
     hot_theme_names,
     hot_theme_trigger,
     in_geo_circle,
-    key_buy_trigger,
+    tracked_buy_trigger,
     pocket_qualifies,
     pocket_score,
     tag_stock,
@@ -189,35 +189,48 @@ class GeoTriggerTests(unittest.TestCase):
         self.assertEqual(tag["strength"], "weak")
 
 
-class KeyThemePocketTests(unittest.TestCase):
-    def test_key_buy_lots(self):
+class TrackedThemePocketTests(unittest.TestCase):
+    def test_tracked_buy_lots(self):
         win = _dates(5)
         trades = [{"date": win[-1], "branch_name": "富邦-新店", "net_lots": 500}]
         vols = {d: 1_000_000 for d in win}  # 500張/5000千股 = 10% anyway
-        tag = key_buy_trigger(
-            trades=trades, key_keys={"富邦-新店"},
+        tag = tracked_buy_trigger(
+            trades=trades, tracked_keys={"富邦-新店"},
             window_dates=win, volumes=vols,
         )
-        self.assertEqual(tag["code"], "K1_KEY_BUY")
+        self.assertEqual(tag["code"], "T1_TRACKED_BUY")
+        self.assertTrue(tag["text"].startswith("追蹤分點"))
         self.assertIn("富邦-新店", tag["text"])
 
-    def test_key_buy_share_without_500(self):
+    def test_tracked_buy_no_key_word_anywhere(self):
+        """Regression guard: this badge must never re-carry the reserved 關鍵 name."""
+        win = _dates(5)
+        trades = [{"date": win[-1], "branch_name": "富邦-新店", "net_lots": 500}]
+        vols = {d: 1_000_000 for d in win}
+        tag = tracked_buy_trigger(
+            trades=trades, tracked_keys={"富邦-新店"},
+            window_dates=win, volumes=vols,
+        )
+        self.assertNotIn("關鍵", tag["text"])
+        self.assertNotIn("關鍵", tag["code"])
+
+    def test_tracked_buy_share_without_500(self):
         win = _dates(5)
         # 40 張 × 1000 / 100_000 股(5日合計 500_000) = 8% wait 40000/500000=8%
         # want 0.3%: 40*1000/ vol_sum >= 0.003 → vol_sum <= 40e3/0.003 ≈ 13.3e6
         trades = [{"date": win[0], "branch_name": "凱基-信義", "net_lots": 40}]
         vols = {d: 100_000 for d in win}  # 500_000 股; 40000/500000 = 8%
-        tag = key_buy_trigger(
-            trades=trades, key_keys={"凱基-信義"},
+        tag = tracked_buy_trigger(
+            trades=trades, tracked_keys={"凱基-信義"},
             window_dates=win, volumes=vols,
         )
         self.assertIsNotNone(tag)
 
-    def test_key_ignores_non_key(self):
+    def test_tracked_ignores_non_tracked(self):
         win = _dates(5)
         trades = [{"date": win[-1], "branch_name": "隨便-分點", "net_lots": 900}]
-        tag = key_buy_trigger(
-            trades=trades, key_keys={"富邦-新店"},
+        tag = tracked_buy_trigger(
+            trades=trades, tracked_keys={"富邦-新店"},
             window_dates=win, volumes={d: 1000 for d in win},
         )
         self.assertIsNone(tag)
@@ -244,13 +257,13 @@ class KeyThemePocketTests(unittest.TestCase):
     def test_pocket_score_decoupled(self):
         self.assertEqual(pocket_score(set()), 0)
         self.assertEqual(pocket_score({"GEO"}), 30)
-        self.assertEqual(pocket_score({"GEO", "KEY"}), 60)
-        self.assertEqual(pocket_score({"GEO", "KEY", "THEME"}), 75)
+        self.assertEqual(pocket_score({"GEO", "TRACKED"}), 60)
+        self.assertEqual(pocket_score({"GEO", "TRACKED", "THEME"}), 75)
         self.assertEqual(pocket_score({"ARMED"}), 10)
         self.assertEqual(pocket_score({"CONC"}), 10)
         self.assertEqual(pocket_score({"ARMED", "CONC"}), 10)  # 至多一次
         self.assertFalse(pocket_qualifies({"GEO"}))
-        self.assertTrue(pocket_qualifies({"GEO", "KEY"}))
+        self.assertTrue(pocket_qualifies({"GEO", "TRACKED"}))
 
     def test_tag_stock_does_not_touch_scores(self):
         win20 = _dates(20)
@@ -262,7 +275,7 @@ class KeyThemePocketTests(unittest.TestCase):
                 "華南永昌-鳳山": _geo("高雄市", "鳳山區", broker_id="b"),
                 "永豐金-高雄": _geo("高雄市", "新興區", broker_id="c"),
             },
-            key_keys={"富邦-新店"},
+            tracked_keys={"富邦-新店"},
             trades={"2476": (
                 [{"date": d, "branch_name": "玉山-左營", "net_lots": 20} for d in win20]
                 + [{"date": d, "branch_name": "華南永昌-鳳山", "net_lots": 20} for d in win20]
@@ -283,11 +296,11 @@ class KeyThemePocketTests(unittest.TestCase):
         )
         self.assertEqual(stock["scores"]["final"], 71)
         fams = set(stock["pocket_families"])
-        self.assertGreaterEqual(fams, {"GEO", "KEY", "THEME", "ARMED"})
+        self.assertGreaterEqual(fams, {"GEO", "TRACKED", "THEME", "ARMED"})
         self.assertEqual(stock["pocket_score"], 30 + 30 + 15 + 10)
         codes = {t["code"] for t in stock["pocket_tags"]}
         self.assertIn("G1_GEO_BUY", codes)
-        self.assertIn("K1_KEY_BUY", codes)
+        self.assertIn("T1_TRACKED_BUY", codes)
         self.assertIn("H1_HOT_THEME", codes)
 
     def test_broker_family_prefix(self):

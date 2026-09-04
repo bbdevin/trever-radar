@@ -23,7 +23,7 @@ export function reasonFamily(code?: string | null): ReasonFamily {
   const s = /^S(\d+)/.exec(c);
   if (s) return Number(s[1]) >= 11 ? "chips" : "tech";
   if (/^T\d/.test(c)) return "tech";
-  if (c.startsWith("G1_") || c.startsWith("G2_") || c.startsWith("K1_")) return "chips";
+  if (c.startsWith("G1_") || c.startsWith("G2_") || c.startsWith("K1_") || c.startsWith("T1_")) return "chips";
   if (c.startsWith("H1_") || c.startsWith("KB")) return "warrant";
   return "neutral";
 }
