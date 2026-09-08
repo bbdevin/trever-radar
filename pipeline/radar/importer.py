@@ -492,14 +492,39 @@ def backfill(days: int, datasets: list[str] | None = None, *,
     }
 
 
+# A stock whose earliest daily_prices row predates this date must already have
+# had its since-IPO fetch: the daily importers only ever write recent dates
+# (import_daily writes one given day, backfill/backfill_margin walk back ~60
+# days), so nothing but deep_backfill itself could have put an older row there.
+# 2010 was the previous value, and it was unreachable for anything that listed
+# after 2010 — every post-2010 listing and nearly every ETF was re-fetched from
+# IPO every single night, for ever. The constant only has to sit far enough back
+# that no *daily* import can reach it; keeping it a year or two behind the
+# present is enough, and the residual re-fetch is then just this year's IPOs.
+#
+# What would make it wrong: an importer that starts writing arbitrarily old
+# history (a new bulk source, or backfill's window growing to years). Then a
+# pre-2026 row would no longer prove a deep fetch happened, and this predicate
+# would start skipping stocks that were never deep-filled. The fix at that point
+# is a real per-stock marker (import_logs has no stock column today), not a
+# newer year — bumping the year would only re-break the post-2026 listings.
+DEEP_HISTORY_BEFORE = "2026-01-01"
+
+
+def is_deep_enough(min_date: str | None) -> bool:
+    """True when the stock's earliest stored row proves a since-IPO fetch happened."""
+    return bool(min_date) and min_date < DEEP_HISTORY_BEFORE
+
+
 def deep_backfill(ids: list[str] | None = None, top: int | None = None,
                   all_stocks: bool = False, sleep_s: float = 7.0) -> dict:
     """Since-IPO history via FinMind, one request per stock.
 
     Selection: explicit ids > --top N by latest turnover > --all (type stock/etf).
     Anonymous quota is low; a free token (RADAR_FINMIND_TOKEN) allows ~600 req/hr.
-    On quota exhaustion: stops cleanly; re-run later — already-full stocks are skipped
-    via a cheap freshness check (earliest date < 2010 means history already present).
+    On quota exhaustion: stops cleanly; re-run later — a stock is skipped when its
+    earliest stored row predates DEEP_HISTORY_BEFORE, which no daily import could
+    have written, so it can only have come from an earlier since-IPO fetch.
     """
     import time as time_mod
 
@@ -531,7 +556,7 @@ def deep_backfill(ids: list[str] | None = None, top: int | None = None,
 
     done = skipped = failed = 0
     for sid, min_date in targets:
-        if min_date and min_date < "2010-01-01":
+        if is_deep_enough(min_date):
             skipped += 1     # deep history already present
             continue
         try:
