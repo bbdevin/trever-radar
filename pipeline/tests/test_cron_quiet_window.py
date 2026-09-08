@@ -296,6 +296,13 @@ class CronParsingTest(unittest.TestCase):
         names = {j["script"] for j in self.jobs}
         self.assertIn("safe-branch-stats.sh", names)
 
+    def test_dow_range_field_expands(self):
+        # `_parse_field` 本來就吃 `a-b`,但在 crontab.example 出現 dow 範圍之前,
+        # 沒有任何一條測試走過這條路;若有人把它「簡化」成只認 `*` 與逗號列表,
+        # safe-branch-stats.sh 的 `2-6` 那一格會靜悄悄地從檢查範圍裡消失。
+        self.assertEqual(_parse_field("2-6", 0, 7), [2, 3, 4, 5, 6])
+        self.assertEqual(_cron_dow_to_date_u(_parse_field("0-2", 0, 7)), [1, 2, 7])
+
     def test_mid_backfill_publish_multi_hour_slot_expands(self):
         job = next(j for j in self.jobs if j["script"] == "mid-backfill-publish.sh")
         self.assertEqual(sorted(job["hours"]), [3, 9, 12, 20])
@@ -344,10 +351,14 @@ class CronVsQuietWindowTest(unittest.TestCase):
             "cron slot(s) are swallowed by a quiet window (or its margin):\n" + "\n".join(messages),
         )
 
-    def test_current_safe_branch_stats_slot_0005_passes(self):
+    def test_current_safe_branch_stats_slot_0005_tue_to_sat_passes(self):
+        # 2026-09-08:時刻仍是 00:05,但 dow 欄從 `*` 收成 `2-6`(週日/週一那兩輪
+        # 只會覆蓋週五的 as_of,不新增帳本日期)。驗的性質沒變——這一格(現在包含
+        # 週六這個「週末窗定義不同」的日子)不得落在任何安靜窗或其 5 分鐘緩衝內。
         job = next(j for j in self.jobs if j["script"] == "safe-branch-stats.sh")
         self.assertEqual(job["hours"], [0])
         self.assertEqual(job["minutes"], [5])
+        self.assertEqual(job["dows"], [2, 3, 4, 5, 6])
         exempt = self._exempt_dows_for(job["script"])
         failures = evaluate_job(job, self.windows, exempt, SLOT_MARGIN_MINUTES)
         self.assertEqual(failures, [], f"current 00:05 slot unexpectedly flagged: {failures}")

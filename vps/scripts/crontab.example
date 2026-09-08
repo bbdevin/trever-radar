@@ -56,11 +56,17 @@ CRON_TZ=Asia/Taipei
 # 9/02、9/03 全部只有 start 沒有 done——這支作業自該窗設定以來平日從未執行。
 # 週末窗(六 0055-0230 與 0450-0730、日 0055-0400)不含 23:30,所以只有週末跑得完。
 #
-# 為何是 00:05 而不是 00:30:本作業實測需 56–59 分鐘(8/29→00:26、8/30→00:29),
-# 加上新增的帳本與分位計數會更久;01:10 是 deep backfill。00:05 起算約有 65 分鐘。
-# 22:00 那輪通常 23:55–00:12 結束(實測 8/31 23:53、9/03 約 00:12),故 00:05 時鎖多半已釋放;
-# 若偶爾超時而擋到 01:10,被略過的是可續跑、每日都有的 deep backfill,代價最低。
-5 0 * * *      bash /home/huang/trever-radar/vps/scripts/safe-branch-stats.sh >> /home/huang/radar-cron.log 2>&1
+# 為何是 00:05:唯一真正的衝突是 22:00 那輪的尾巴(實測 8/31 23:53、9/03 約 00:12、
+# 9/08 過了 00:05 還在持鎖 → 整夜略過)。這個衝突改用「等」處理,不用「搬」:腳本已
+# 改成 `flock -w 3000`,最晚 00:55 放棄並吹 high。挪時段只會換一組要避的鄰居。
+# 注意:舊註解說 00:05 是為了「趕在 01:10 deep backfill 之前」——今天已不成立,
+# 本作業實測 79–90 分鐘,每夜本來就壓過 01:10,deep backfill 也一直在讓路。
+#
+# 為何是 2-6(週二~週六)而非每天:帳本 as_of 取 MAX(date) FROM daily_prices,
+# 週日與週一兩輪都會解析到週五那個 as_of,而同 PK 是覆蓋——只會把週六那次的
+# computed_at 換掉,不新增任何一天。砍掉這兩天之後,「還會發生的略過」每一次
+# 都確實等於失去一個帳本日期,notify 也就不會再狼來了。
+5 0 * * 2-6    bash /home/huang/trever-radar/vps/scripts/safe-branch-stats.sh >> /home/huang/radar-cron.log 2>&1
 
 # 資券 240 日回補(docs/34 A4):週日 02:30 — 一次性(DONE flag);避開 daily 窗
 30 2 * * 0     bash /home/huang/trever-radar/vps/scripts/backfill-margin.sh >> /home/huang/radar-cron.log 2>&1

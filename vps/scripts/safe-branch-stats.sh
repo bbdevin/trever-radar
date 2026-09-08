@@ -68,12 +68,33 @@ fi
 # 拿到鎖之後,01:10 的 data-backfill.sh 若撞上本作業仍在跑會自行讓路一晚:
 # 深歷史回補是可續跑的,晚一夜不損失任何資料;夜間帳本不是,這正是本次
 # 事故要保護的東西,所以刻意選邊。不要「修好」成雙方都不持鎖。
+#
+# 2026-09-08:改「搶不到就立刻放棄」為「最多等 50 分鐘」。22:00 那輪的尾巴實測
+# 23:53 / 約 00:12 / 一次超過 00:05,而 00:05 撞上它就整夜略過。那一夜的代價
+# 被 log 藏起來了:branch_point_in_time_persist 的 as_of 預設取
+# MAX(date) FROM daily_prices,PK 是 (branch_name, as_of, window_market_days),
+# 同一個 as_of 重跑是**覆蓋**。production 實測 09-05/06/07 三次成功全部解析到
+# as_of=2026-09-04 互相覆蓋成一列;唯一會產生新 as_of 的那一次(09-07)正好被
+# 略過——被吞掉的是一個再也補不回誠實 computed_at 的帳本日期。
+LOCK_WAIT_SECS="${LOCK_WAIT_SECS:-3000}"   # 50 分鐘:00:05 起算,最晚 00:55 放棄
 exec 9>/tmp/radar-db.lock
-if ! flock -n 9; then
-  echo "radar-db.lock held — skip"
-  skip_or_alarm "資料庫鎖占用，分點排行略過"
+_lock_t0="$(date +%s)"
+if flock -w "$LOCK_WAIT_SECS" 9; then
+  # 這行秒數就是「22:00 那輪的尾巴還在不在長」的唯一量測值;沒有它,這次改動
+  # 無法被驗證,下次是要再加時間還是要搬時段也就沒有依據。
+  echo "waited $(( $(date +%s) - _lock_t0 ))s for radar-db.lock"
+else
+  echo "radar-db.lock held — gave up after $(( $(date +%s) - _lock_t0 ))s"
+  # 刻意不走 skip_or_alarm:STALE_HOURS 是 30,而週三漏到週六只隔約 24 小時,
+  # 走 staleness 判斷會判成 default 優先權,損失又一次靜默。等到 00:55 還拿不到,
+  # 代表 22:00 那輪已經跑了 175 分鐘——這是要叫人起來看的事故,不是例行略過。
+  notify "資料庫鎖等滿 ${LOCK_WAIT_SECS} 秒仍未釋放（22:00 那輪疑似卡住），分點排行與帳本本夜落空" high "略過"
   exit 0
 fi
+# data-backfill.sh(01:10)刻意維持 lib.sh 的 `acquire_db_lock`(`flock -n`,搶不到
+# 就讓路一晚)。不要把它也「修好」成會等:深歷史回補是可續跑的,晚一夜零損失,
+# 而讓它排隊只會多出第二個等待者,把 00:05~00:55 這段窗口變成互相堆疊。
+# 單一寫入者的不變式不受本次改動影響:flock 仍是獨占,而等待中的程序不持有任何東西。
 
 if [ -f "$FLAG" ]; then
   echo "mid-publish flag present — skip"
