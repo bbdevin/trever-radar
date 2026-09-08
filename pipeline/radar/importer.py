@@ -5,7 +5,7 @@ import math
 import os
 import tempfile
 import time
-from datetime import date as date_cls, datetime
+from datetime import date as date_cls, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -1041,9 +1041,39 @@ def import_warrant_branch_trades(date: str | None = None, market: str = "all",
             "state_file": str(state_path)}
 
 
+#: 預設把爬取的頭部往回壓一個日曆日(見 `_warrant_branch_trade_dates`)。
+WARRANT_BRANCH_MIN_AGE_DAYS = 1
+
+
+def _warrant_branch_trade_dates(engine, days: int, min_age_days: int) -> list[str]:
+    """最新在前的交易日清單,但**排除**還太新的日期。
+
+    `fubon.fetch_branch_trades` 在頁面解析出零列時一律丟 `NoDataError`,呼叫端
+    無法分辨「這檔權證當天真的沒有分點成交」與「MoneyDJ 還沒發布這一天」——
+    兩者都會被記成終端狀態 `empty`,而 `empty` 永遠不會重試。
+
+    當天的 `warrant_daily` 是 16:10 那輪寫進來的(約 1.8 萬個目標),但分點頁的
+    第一次日更是 17:40,實測還曾延到 22:00 那輪才有資料。所以在交易日傍晚跑一塊,
+    會把最新日期的數千個目標永久標成 empty,而且回報成功。每日目標 hash 救不了:
+    它只在目標清單變動時改變,不會因為鏡像後來開始供資料而改變。
+
+    把頭部壓後 `min_age_days` 個日曆日就沒有這個歧義;代價是頭部落後一個交易日,
+    與 1d／2d 匯出分桶本來就在承受的落後相同。
+    """
+    from sqlalchemy import text
+
+    cutoff = (datetime.now(ZoneInfo(config.TZ)).date()
+              - timedelta(days=max(0, int(min_age_days)))).isoformat()
+    with engine.connect() as conn:
+        return [r[0] for r in conn.execute(text(
+            "SELECT DISTINCT date FROM daily_prices WHERE date <= :cutoff "
+            "ORDER BY date DESC LIMIT :n"), {"n": days, "cutoff": cutoff})]
+
+
 def _backfill_warrant_branches_legacy(top: int = 200, days: int = 120,
                                       sleep_s: float = 1.2, max_minutes: int | None = None,
-                                      market: str = "twse") -> dict:
+                                      market: str = "twse",
+                                      min_age_days: int = WARRANT_BRANCH_MIN_AGE_DAYS) -> dict:
     """March back date-scoped warrant pools, newest date first.
 
     The legacy default remains TWSE top-N.  Explicit ``market='all'`` switches
@@ -1057,12 +1087,9 @@ def _backfill_warrant_branches_legacy(top: int = 200, days: int = 120,
     engine = get_engine()
     deadline = time_mod.monotonic() + max_minutes * 60 if max_minutes else None
 
-    with engine.connect() as conn:
-        trade_dates = [r[0] for r in conn.execute(text(
-            "SELECT DISTINCT date FROM daily_prices ORDER BY date DESC LIMIT :n"),
-            {"n": days})]
+    trade_dates = _warrant_branch_trade_dates(engine, days, min_age_days)
 
-    fetched = skipped_dates = failed = 0
+    fetched = skipped_dates = failed = empty = 0
     stopped = None
     for d_iso in trade_dates:
         date = d_iso.replace("-", "")
@@ -1086,6 +1113,7 @@ def _backfill_warrant_branches_legacy(top: int = 200, days: int = 120,
             try:
                 rows = fubon.fetch_branch_trades(sid, date, throttle=sleep_s)
             except NoDataError:
+                empty += 1
                 continue
             except Exception as e:  # noqa: BLE001
                 failed += 1
@@ -1105,13 +1133,14 @@ def _backfill_warrant_branches_legacy(top: int = 200, days: int = 120,
              datetime.now(ZoneInfo(config.TZ)).strftime("%Y%m%d"),
              fetched, "ok" if not stopped else "error", error=stopped)
     print(f"backfill-warrant-branches: fetched={fetched}, complete_dates={skipped_dates}/"
-          f"{len(trade_dates)}, failed={failed}, stopped={stopped}", flush=True)
-    return {"fetched": fetched, "failed": failed, "stopped": stopped}
+          f"{len(trade_dates)}, empty={empty}, failed={failed}, stopped={stopped}", flush=True)
+    return {"fetched": fetched, "empty": empty, "failed": failed, "stopped": stopped}
 
 
 def _backfill_warrant_branches_with_state(
     top: int, days: int, sleep_s: float, max_minutes: int | None,
     market: str, state_file: str | Path,
+    min_age_days: int = WARRANT_BRANCH_MIN_AGE_DAYS,
 ) -> dict:
     """Resume each historical warrant pool from its own bounded state file."""
     import time as time_mod
@@ -1122,12 +1151,9 @@ def _backfill_warrant_branches_with_state(
     init_db()
     engine = get_engine()
     deadline = time_mod.monotonic() + max_minutes * 60 if max_minutes else None
-    with engine.connect() as conn:
-        trade_dates = [r[0] for r in conn.execute(text(
-            "SELECT DISTINCT date FROM daily_prices ORDER BY date DESC LIMIT :n"),
-            {"n": days})]
+    trade_dates = _warrant_branch_trade_dates(engine, days, min_age_days)
 
-    fetched = failed = completed_dates = 0
+    fetched = failed = completed_dates = empty = 0
     stopped = None
     state_files: list[str] = []
     for d_iso in trade_dates:
@@ -1175,6 +1201,7 @@ def _backfill_warrant_branches_with_state(
                 fetched += 1
             except NoDataError as exc:
                 state["results"][sid] = {"status": "empty", "error": str(exc)[:200]}
+                empty += 1
             except Exception as exc:  # retry this target on the next invocation
                 state["results"][sid] = {"status": "error", "error": str(exc)[:200]}
                 failed += 1
@@ -1207,10 +1234,13 @@ def _backfill_warrant_branches_with_state(
         _log(conn, "fubon", "warrant_branch_hist",
              datetime.now(ZoneInfo(config.TZ)).strftime("%Y%m%d"),
              fetched, "ok" if not stopped else "error", error=stopped)
+    # `empty=` 是「終端 empty 中毒」這一類故障唯一看得見的訊號(鏡像回錯誤頁／
+    # 佔位頁會解析成零列 → NoDataError → 永久 empty,而整塊仍回報成功),
+    # 所以它必須出現在摘要行上,不能只躺在各日 state 檔裡。
     print(f"backfill-warrant-branches: fetched={fetched}, complete_dates={completed_dates}/"
-          f"{len(trade_dates)}, failed={failed}, stopped={stopped}", flush=True)
+          f"{len(trade_dates)}, empty={empty}, failed={failed}, stopped={stopped}", flush=True)
     return {
-        "fetched": fetched, "failed": failed, "stopped": stopped,
+        "fetched": fetched, "empty": empty, "failed": failed, "stopped": stopped,
         "state_files": state_files,
     }
 
@@ -1218,19 +1248,24 @@ def _backfill_warrant_branches_with_state(
 def backfill_warrant_branches(top: int = 200, days: int = 120,
                               sleep_s: float = 1.2, max_minutes: int | None = None,
                               market: str = "twse",
-                              state_file: str | Path | None = None) -> dict:
+                              state_file: str | Path | None = None,
+                              min_age_days: int = WARRANT_BRANCH_MIN_AGE_DAYS) -> dict:
     """March back date-scoped warrant pools, newest date first.
 
     Without ``state_file`` this preserves the legacy top-N behavior exactly.
     When supplied, the path is a base: each date/market gets its own atomic
     ``<stem>-YYYY-MM-DD-<market>.json`` state, avoiding a giant history file.
+
+    ``min_age_days`` holds the head of the crawl back so that "the mirror has
+    not published this date yet" cannot be recorded as a terminal ``empty``
+    (see :func:`_warrant_branch_trade_dates`).
     """
     if state_file is None:
         return _backfill_warrant_branches_legacy(
-            top, days, sleep_s, max_minutes, market,
+            top, days, sleep_s, max_minutes, market, min_age_days,
         )
     return _backfill_warrant_branches_with_state(
-        top, days, sleep_s, max_minutes, market, state_file,
+        top, days, sleep_s, max_minutes, market, state_file, min_age_days,
     )
 
 

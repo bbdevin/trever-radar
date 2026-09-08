@@ -330,6 +330,17 @@ class WarrantBranchImportTests(unittest.TestCase):
             cli.main(["backfill-warrant-branches", "--market", "tpex", "--top", "99", "--state-file", "resume.json"])
         self.assertEqual(backfill.call_args.args[-1], "tpex")
         self.assertEqual(backfill.call_args.kwargs["state_file"], "resume.json")
+        # 預設把頭部壓後一天:未發布的日期會被記成永不重試的 empty。
+        self.assertEqual(backfill.call_args.kwargs["min_age_days"], 1)
+
+        with patch("radar.importer.backfill_warrant_branches",
+                   return_value={"stopped": None}) as min_age:
+            cli.main(["backfill-warrant-branches", "--min-age-days", "3"])
+        self.assertEqual(min_age.call_args.kwargs["min_age_days"], 3)
+
+        # CLI 的字面預設值與 importer 的常數不可以漂移。
+        from radar import importer
+        self.assertEqual(importer.WARRANT_BRANCH_MIN_AGE_DAYS, 1)
 
         with patch("radar.importer.backfill_warrant_branches",
                    return_value={"stopped": None}) as legacy_backfill:

@@ -5,9 +5,11 @@
 import json
 import os
 import unittest
+from datetime import datetime, timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
+from zoneinfo import ZoneInfo
 
 import radar.config as config
 import radar.db as db
@@ -225,6 +227,85 @@ class BackfillWarrantBranchesDateScopedTests(unittest.TestCase):
         with patch("radar.providers.fubon.fetch_branch_trades", side_effect=NoDataError("empty")):
             backfill_warrant_branches(top=10, days=1, sleep_s=0, market="all", state_file=self.state_base)
         self.assertTrue(self._state_path("2026-01-06", "all").is_file(), "market has an independent state scope")
+
+    def _seed_fresh_date(self, d_iso, warrant_id="WD"):
+        with db.get_engine().begin() as conn:
+            conn.execute(schema.daily_prices.insert(), {
+                "stock_id": "2330", "date": d_iso, "close": 100, "volume": 1, "turnover": 1,
+            })
+            conn.execute(schema.warrants.insert(), {
+                "id": warrant_id, "name": "warrant-fresh", "market": "twse",
+                "kind": "call", "stock_id": "2330",
+            })
+            conn.execute(schema.warrant_daily.insert(), {
+                "warrant_id": warrant_id, "date": d_iso, "close": 1,
+                "volume": 1, "turnover": 5000,
+            })
+
+    def test_dates_newer_than_min_age_are_not_visited(self):
+        """尚未發布的日期不可以被爬——它會被記成永不重試的 `empty`。
+
+        `fubon.fetch_branch_trades` 在頁面解析出零列時一律丟 `NoDataError`,
+        呼叫端分不出「當天真的沒有分點成交」與「MoneyDJ 還沒發布這一天」。
+        當天的 warrant_daily 是 16:10 那輪寫的(約 1.8 萬個目標),分點頁第一次
+        日更是 17:40 且實測曾延到 22:00,所以傍晚的一塊會把最新日期整批寫成
+        終端 empty 而且回報成功。每日 target hash 救不了:它只在目標清單變動時
+        改變,不會因為鏡像後來開始供資料而改變。
+        """
+        today = datetime.now(ZoneInfo(config.TZ)).date()
+        fresh = today.isoformat()
+        self._seed_fresh_date(fresh)
+
+        calls = []
+        with patch("radar.providers.fubon.fetch_branch_trades",
+                   side_effect=lambda sid, date, throttle=None: calls.append((sid, date)) or []):
+            result = backfill_warrant_branches(
+                top=200, days=10, sleep_s=0, state_file=self.state_base,
+            )
+        self.assertNotIn("WD", {sid for sid, _ in calls},
+                         "今天的日期不該被造訪:分不出未發布與真的沒有")
+        self.assertFalse(self._state_path(fresh).exists(),
+                         "沒被造訪的日期不該留下 state 檔")
+        self.assertIsNone(result["stopped"],
+                          "頭部被壓後仍算完整,不該回報成續跑")
+
+        # 明確放行(min_age_days=0)時才會抓到它——證明擋下來的是這個參數本身。
+        calls.clear()
+        with patch("radar.providers.fubon.fetch_branch_trades",
+                   side_effect=lambda sid, date, throttle=None: calls.append((sid, date)) or []):
+            backfill_warrant_branches(
+                top=200, days=10, sleep_s=0, state_file=self.state_base, min_age_days=0,
+            )
+        self.assertIn("WD", {sid for sid, _ in calls})
+
+    def test_min_age_also_holds_the_legacy_path_back(self):
+        fresh = datetime.now(ZoneInfo(config.TZ)).date().isoformat()
+        self._seed_fresh_date(fresh)
+        calls = []
+        with patch("radar.providers.fubon.fetch_branch_trades",
+                   side_effect=lambda sid, date, throttle=None: calls.append(sid) or []):
+            backfill_warrant_branches(top=200, days=10, sleep_s=0)
+        self.assertNotIn("WD", calls)
+
+    def test_yesterday_is_old_enough_to_crawl(self):
+        yesterday = (datetime.now(ZoneInfo(config.TZ)).date() - timedelta(days=1)).isoformat()
+        self._seed_fresh_date(yesterday)
+        calls = []
+        with patch("radar.providers.fubon.fetch_branch_trades",
+                   side_effect=lambda sid, date, throttle=None: calls.append(sid) or []):
+            backfill_warrant_branches(top=200, days=10, sleep_s=0, state_file=self.state_base)
+        self.assertIn("WD", calls, "落後一個日曆日就夠;不是把頭部無限往後推")
+
+    def test_empty_count_is_reported(self):
+        """`empty=` 是終端 empty 中毒唯一看得見的訊號,必須進摘要行與回傳值。"""
+        with patch("radar.providers.fubon.fetch_branch_trades",
+                   side_effect=NoDataError("valid empty")):
+            state = backfill_warrant_branches(
+                top=200, days=1, sleep_s=0, state_file=self.state_base,
+            )
+            legacy = backfill_warrant_branches(top=200, days=1, sleep_s=0)
+        self.assertEqual(state["empty"], 1)
+        self.assertEqual(legacy["empty"], 1)
 
     def test_state_base_rejects_database_and_sidecars(self):
         db_path = Path(config.DB_URL.removeprefix("sqlite:///"))

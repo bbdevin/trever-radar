@@ -23,6 +23,8 @@
 #   BUDGET = minutes_until_next_scheduled_writer - WARRANT_SAFETY_MINUTES
 # 「下一輪排程」同時涵蓋安靜窗(daily/deep/週末備份)**與 mid-publish 的
 # 03/09/12/20 四輪——後者不在安靜窗表裡,但一樣會因為本腳本握著 DB 鎖而被略過。
+# (mid-publish 那四輪只在真的有 radar-bf-* 容器時才保留;沒有容器時那一輪自己就是
+# noop,見下方 bf_container_running 的判斷。)
 # 再以 WARRANT_MAX_MINUTES 封頂,並以 --max-minutes 傳給 CLI。
 # 因為塊長是從剩餘時間**推導**出來的,它在定義上不可能跑進下一輪排程裡。
 #
@@ -60,10 +62,24 @@
 #   WARRANT_MAX_MINUTES=240    單塊上限
 #   WARRANT_STATE_BASE=data/warrant-branch-backfill.json
 #                              base path;CLI 在旁邊寫 <stem>-<date>-<market>.json。
-#                              必須落在容器看得到的掛載點(/app/data)之下。
+#                              **相對路徑是相對於容器的工作目錄 /app/pipeline**,
+#                              所以這個預設值落在 `pipeline/data/`(不是 repo 根的
+#                              `data/`,原註解寫錯了)。該路徑同樣有掛載,續跑正常;
+#                              但傳絕對路徑時務必是掛載點下的容器內路徑
+#                              (/app/pipeline、/app/data、/app/web/public/data),
+#                              主機路徑(例如 /home/xxx/…)會寫進容器內的匿名層,
+#                              --rm 之後直接消失(2026-09-08 已有一份報表這樣不見)。
+#   WARRANT_MIN_AGE_DAYS=1     不抓比這更新的日期:分點頁解析出零列一律是
+#                              NoDataError,分不出「當天真的沒成交」與「鏡像還沒
+#                              發布」,後者會被記成永不重試的 empty
 #   WARRANT_MEASURE_LOG=$HOME/warrant-backfill-measure.log
-#   MIN_FREE_GB=2              本腳本刻意低於他處的 4:這份工作的目的就是吃磁碟,
-#                              但必須在遠早於 ENOSPC 之前停手
+#   WARRANT_PAUSE_FILE=/tmp/radar-warrant-backfill.pause
+#                              維運者暫停檔:存在就直接略過(讓人工作業搶白天空檔,
+#                              不必砍掉驅動迴圈)
+#   MIN_FREE_GB=3              本腳本刻意低於他處的 4:這份工作的目的就是吃磁碟,
+#                              但必須在遠早於 ENOSPC 之前停手。地板真正保護的是
+#                              weekly-backup.sh——它握著鎖把約 6.8 GB 的 DB gzip
+#                              到本機磁碟,2 GB 左右就開始失敗。
 #   MIN_MEM_MB=900
 source "$(dirname "$0")/lib.sh"
 
@@ -75,8 +91,17 @@ SAFETY_MINUTES="${WARRANT_SAFETY_MINUTES:-15}"
 MIN_CHUNK_MINUTES="${WARRANT_MIN_CHUNK_MINUTES:-20}"
 MAX_MINUTES="${WARRANT_MAX_MINUTES:-240}"
 STATE_BASE="${WARRANT_STATE_BASE:-data/warrant-branch-backfill.json}"
+MIN_AGE_DAYS="${WARRANT_MIN_AGE_DAYS:-1}"
 MEASURE_LOG="${WARRANT_MEASURE_LOG:-$HOME/warrant-backfill-measure.log}"
-MIN_FREE_GB="${MIN_FREE_GB:-2}"
+PAUSE_FILE="${WARRANT_PAUSE_FILE:-/tmp/radar-warrant-backfill.pause}"
+RUN_LOG="${WARRANT_RUN_LOG:-/tmp/radar-warrant-backfill.run.log}"
+# 吞吐塌陷門檻:實測基準 12,223 列 / 1,802 秒 = 6.8 列/秒、1,465 抓取 / 1,802 秒
+# = 0.81 抓取/秒。低於下列值代表鏡像在餵錯誤頁／佔位頁(解析成零列 → NoDataError
+# → 永久 empty,而整塊仍會回報成功),必須停手而不是繼續把資料庫寫成空的。
+THROUGHPUT_MIN_ELAPSED="${WARRANT_THROUGHPUT_MIN_ELAPSED:-600}"
+MIN_ROWS_PER_SEC="${WARRANT_MIN_ROWS_PER_SEC:-1.5}"
+MIN_FETCH_PER_SEC="${WARRANT_MIN_FETCH_PER_SEC:-0.4}"
+MIN_FREE_GB="${MIN_FREE_GB:-3}"
 MIN_MEM_MB="${MIN_MEM_MB:-900}"
 MARKET="all"
 DONE_FLAG="$HOME/.warrant-backfill.done-${DAYS}d"
@@ -142,6 +167,11 @@ branch_rows() {
 
 echo "=== warrant-backfill start $(taipei_date -Is) days=${DAYS} market=${MARKET} state=${STATE_BASE} ==="
 
+if [ -f "$PAUSE_FILE" ]; then
+  echo "operator pause file ${PAUSE_FILE} present — skip (rm it to resume)"
+  exit 0
+fi
+
 if in_radar_quiet_window; then
   echo "inside quiet window — skip (yield to the scheduled round)"
   exit 0
@@ -176,6 +206,18 @@ fi
 # `fuser /tmp/radar-db.lock` → 略過,所以本腳本只要握著鎖跨過整點,那一輪就
 # 靜默消失。只問安靜窗的話,02:31 起跑一個 240 分鐘的塊會一口氣吃掉 03:00;
 # 19:31 起跑 30 分鐘會吃掉 20:00。一支要跑數週的爬蟲,那是數十次被吃掉的發布。
+#
+# 但那四輪只有在真的有事可做時才值得保留:mid-backfill-publish.sh 現在開頭就是
+# 「沒有 radar-bf-* 容器 → noop」直接離開(歷史回補容器已於 2026-09-07 跑完),
+# 而保留這四輪要價 31% 的淨爬取進度。所以在消費端(只在這裡,不動 lib.sh)先問
+# 同一個述詞、同一份 BF_CONTAINERS 清單:沒有容器就把時段清空,`mid_publish_at`
+# 迭代空清單等於永不成立。這是每次呼叫重新評估的,將來只要再有回補容器起來,
+# 保留就自動恢復,不會漂移成兩份真相。
+if ! bf_container_running; then
+  echo "no radar-bf-* container running — mid-publish is a noop this round; not reserving 03/09/12/20"
+  MID_PUBLISH_HOURS=""
+fi
+
 UNTIL="$(minutes_until_next_scheduled_writer)"
 BUDGET=$(( UNTIL - SAFETY_MINUTES ))
 if [ "$BUDGET" -lt "$MIN_CHUNK_MINUTES" ]; then
@@ -225,16 +267,25 @@ echo "before: branch_rows=${ROWS_BEFORE} db_logical_bytes=${DB_BEFORE} db_on_dis
 
 START=$(date +%s)
 set +e
+# stdout 另存一份:吞吐守衛需要 CLI 自己數的 fetched=(列數差額看不見「抓了很多次
+# 但每次都零列」這種塌陷)。rc 取 PIPESTATUS[0],離開碼語意與加 tee 之前逐字相同。
 radar backfill-warrant-branches \
   --market "$MARKET" \
   --top "$CAP" \
   --days "$DAYS" \
   --sleep "$SLEEP" \
+  --min-age-days "$MIN_AGE_DAYS" \
   --max-minutes "$BUDGET" \
-  --state-file "$STATE_BASE"
-rc=$?
+  --state-file "$STATE_BASE" | tee "$RUN_LOG"
+rc=${PIPESTATUS[0]}
 set -e
 ELAPSED=$(( $(date +%s) - START ))
+# 摘要行與各日進度行都印 fetched=<n>(皆為累計),取最後一個即整塊的總數。
+# (pipefail 生效中,抓不到就是 grep 回 1 → 整條管線非零,所以一律 `|| true`。)
+FETCHED="$(grep -oE 'fetched=[0-9]+' "$RUN_LOG" 2>/dev/null | tail -n 1 | cut -d= -f2 || true)"
+FETCHED="${FETCHED:-0}"
+EMPTY="$(grep -oE 'empty=[0-9]+' "$RUN_LOG" 2>/dev/null | tail -n 1 | cut -d= -f2 || true)"
+EMPTY="${EMPTY:-0}"
 
 # CLI 的離開碼語意(見 cli.py 的 `cmd_backfill_warrant_branches`):
 #   rc=0  → 這個 days 深度內每一個日期都已完整。
@@ -274,7 +325,7 @@ else
 fi
 
 echo "after: branch_rows=${ROWS_AFTER} (+${ROWS_DELTA}) db_logical_bytes=${DB_AFTER} (+${DB_DELTA}) db_on_disk_bytes=${DISK_AFTER} (+${DISK_DELTA})"
-echo "chunk ${VERDICT}: rc=${rc}, ${ELAPSED}s, budget=${BUDGET}min, days=${DAYS}"
+echo "chunk ${VERDICT}: rc=${rc}, ${ELAPSED}s, budget=${BUDGET}min, days=${DAYS}, fetched=${FETCHED}, empty=${EMPTY}"
 echo "disk free ${FREE2}G → ${FREE3}G (${FREE_DELTA}G); bytes/row logical=${BYTES_PER_ROW} on-disk=${DISK_BYTES_PER_ROW}"
 
 if [ ! -f "$MEASURE_LOG" ]; then
@@ -293,6 +344,20 @@ echo "measurement appended to ${MEASURE_LOG}"
 if ! disk_ok "$FREE3"; then
   echo "!!! disk free ${FREE3}G < ${MIN_FREE_GB}G AFTER this chunk — refusing to start further chunks"
   notify "權證分點回補：本塊結束後可用磁碟僅剩 ${FREE3}G（地板 ${MIN_FREE_GB}G），已停止再開新塊，請先清理磁碟或降低 WARRANT_DAYS" high "失敗"
+fi
+
+# 吞吐塌陷守衛:鏡像改餵錯誤頁／佔位頁時,每一個目標都解析成零列 → NoDataError
+# → 被記成**永久** empty,而這一塊仍然會乾淨地回報成功。列數與抓取數是唯一能當場
+# 看出「還在跑但什麼都沒收到」的量。太短的塊不判(暖機與純續跑掃描會失真)。
+if [ "$ELAPSED" -gt "$THROUGHPUT_MIN_ELAPSED" ] && awk \
+    -v rows="$ROWS_DELTA" -v fetched="$FETCHED" -v e="$ELAPSED" \
+    -v minr="$MIN_ROWS_PER_SEC" -v minf="$MIN_FETCH_PER_SEC" \
+    'BEGIN { exit !(rows / e < minr || fetched / e < minf) }'; then
+  RPS="$(awk -v r="$ROWS_DELTA" -v e="$ELAPSED" 'BEGIN { printf "%.2f", r / e }')"
+  FPS="$(awk -v f="$FETCHED" -v e="$ELAPSED" 'BEGIN { printf "%.2f", f / e }')"
+  echo "!!! throughput collapse: ${RPS} rows/s (floor ${MIN_ROWS_PER_SEC}), ${FPS} fetch/s (floor ${MIN_FETCH_PER_SEC}) over ${ELAPSED}s"
+  : > "$PAUSE_FILE"
+  notify "權證分點回補：吞吐塌陷（${RPS} 列/秒、${FPS} 抓取/秒，基準 6.8／0.81），疑似鏡像回錯誤頁被記成永久 empty；已建立暫停檔 ${PAUSE_FILE}，不再開新塊，請人工確認來源後刪除該檔" high "失敗"
 fi
 
 case "$VERDICT" in

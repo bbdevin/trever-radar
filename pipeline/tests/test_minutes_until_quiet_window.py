@@ -64,8 +64,14 @@ def _bash_available():
 BASH_OK = _bash_available()
 
 
-def _minutes(fn, dow=None, hhmm=None):
-    proc = _run("" if dow is None else f"{int(dow)} {int(hhmm)}", fn)
+def _minutes(fn, dow=None, hhmm=None, dom=None):
+    if dow is None:
+        args = ""
+    elif dom is None:
+        args = f"{int(dow)} {int(hhmm)}"
+    else:
+        args = f"{int(dow)} {int(hhmm)} {int(dom)}"
+    proc = _run(args, fn)
     assert proc.returncode == 0, f"shell call failed: {proc.stderr}"
     out = proc.stdout.strip()
     assert out.isdigit(), f"expected a whole number of minutes, got {out!r} ({proc.stderr})"
@@ -76,8 +82,8 @@ def minutes_until(dow=None, hhmm=None):
     return _minutes("minutes_until_quiet_window", dow, hhmm)
 
 
-def minutes_until_writer(dow=None, hhmm=None):
-    return _minutes("minutes_until_next_scheduled_writer", dow, hhmm)
+def minutes_until_writer(dow=None, hhmm=None, dom=None):
+    return _minutes("minutes_until_next_scheduled_writer", dow, hhmm, dom)
 
 
 @unittest.skipUnless(
@@ -192,6 +198,49 @@ class MinutesUntilNextScheduledWriterTest(unittest.TestCase):
                         minutes_until_writer(dow, hhmm), minutes_until(dow, hhmm),
                         "加入 mid-publish 之後只可能更早,不可能更晚",
                     )
+
+    def test_the_nightly_branch_stats_round_is_a_scheduled_writer(self):
+        """2026-09-07 23:40 的實測反例:守衛回答 75,真正的答案是 25。
+
+        `safe-branch-stats.sh` 是 `5 0 * * 2-6`,握著真鎖跑到約 01:35。它**不能**
+        被加進 `quiet_window_at`——那會讓它判定自己在安靜窗裡而略過自己
+        (2026-08-31 停擺的成因),`test_cron_quiet_window.py` 也直接斷言 cron
+        時刻不得落在安靜窗內。所以它只存在於這層 overlay。
+        """
+        # 23:40 → 只問安靜窗是隔天 00:55(75 分);真正先到的是 00:05。
+        self.assertEqual(minutes_until(1, 2340), 75)
+        self.assertEqual(minutes_until_writer(1, 2340), 25)
+        # 跨 day-of-week 也一樣(週五 23:40 → 週六 00:05)。
+        self.assertEqual(minutes_until(5, 2340), 75)
+        self.assertEqual(minutes_until_writer(5, 2340), 25)
+        # 00:05–00:54 視為有寫入者在跑;00:55 起本來就已經在安靜窗裡。
+        self.assertEqual(minutes_until_writer(3, 5), 0)
+        self.assertEqual(minutes_until_writer(3, 30), 0)
+        self.assertEqual(minutes_until_writer(3, 54), 0)
+        self.assertEqual(minutes_until_writer(3, 55), 0)
+        # 00:00 → 5 分鐘後開跑。
+        self.assertEqual(minutes_until_writer(3, 0), 5)
+
+    def test_monthly_directors_needs_a_day_of_month_and_only_fires_on_the_16th(self):
+        """`0 7 16 * *` 是日期限定的,`<dow> <hhmm>` 這個簽章表達不了。
+
+        因此掃描函式多吃一個可選的第三參數 <dom>。省略它 = 「無日期探測」,
+        月排程一律不成立(而不是假裝每天都會發生);正式路徑不帶參數,
+        會自己帶上台北當下的 day-of-month。
+        """
+        # 平日 06:00,無日期:下一個是 09:00 的 mid-publish → 180 分。
+        self.assertEqual(minutes_until_writer(1, 600), 180)
+        # 同一時刻,但今天是 16 號:07:00 的董監輪先到 → 60 分。
+        self.assertEqual(minutes_until_writer(1, 600, 16), 60)
+        # 15 號沒有這一輪,答案回到 180。
+        self.assertEqual(minutes_until_writer(1, 600, 15), 180)
+        # 07:00–07:19 視為在跑;07:20 之後下一個是 09:00 → 100 分。
+        self.assertEqual(minutes_until_writer(1, 700, 16), 0)
+        self.assertEqual(minutes_until_writer(1, 719, 16), 0)
+        self.assertEqual(minutes_until_writer(1, 720, 16), 100)
+        # 它落在平日 02:31–14:05 那段唯一的長空檔裡,正是這個守衛最會核准長塊的地方。
+        self.assertEqual(minutes_until_writer(1, 320, 16), 220)   # 03:20 → 07:00
+        self.assertEqual(minutes_until_writer(1, 320), 340)       # 無日期:09:00
 
     def test_mid_publish_applies_on_weekends_too(self):
         # crontab 是 `0 3,9,12,20 * * *`——每天,與 dow 無關。

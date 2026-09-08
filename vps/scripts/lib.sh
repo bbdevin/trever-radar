@@ -332,27 +332,75 @@ mid_publish_at() {
   return 1
 }
 
-# 距離「下一個會有排程寫入者在跑的分鐘」還有幾分鐘——安靜窗與 mid-publish 兩者取先。
-# 長工作要問的是這個,不是只問安靜窗;`minutes_until_quiet_window` 保留給
-# 只在意 daily/deep 那類窗口的呼叫者。
-# 可傳入明確的 <dow> <hhmm>(測試用);不傳則用台北現在時刻。
+# safe-branch-stats.sh(crontab `5 0 * * 2-6`,但排程日 = 前一交易日的隔天,
+# 對長工作而言就是「每天 00:05 都可能有人開始寫」)。它握著真鎖跑到約 01:35,
+# 而且自 2026-09-08 起開跑前最多會先等到 00:55。
+#
+# **刻意只加在這層 overlay,不加進 quiet_window_at**:把 00:05 併進共用安靜窗表,
+# safe-branch-stats.sh 自己就會判定「我在安靜窗裡」而略過自己——那正是 2026-08-31
+# 的停擺;pipeline/tests/test_cron_quiet_window.py 也直接斷言 cron 時刻不得落在
+# 安靜窗內。00:55 之後已經在安靜窗裡了,所以這裡只需補 0005–0054。
+NIGHTLY_STATS_END_HHMM="${NIGHTLY_STATS_END_HHMM:-54}"
+nightly_stats_at() {
+  local hhmm="$1"
+  [ "$hhmm" -ge 5 ] && [ "$hhmm" -le "$NIGHTLY_STATS_END_HHMM" ]
+}
+
+# monthly-directors.sh(crontab `0 7 16 * *`)——每月 16 日 07:00,坐在平日
+# 02:31–14:05 那段最長的空檔正中間。
+#
+# 這一輪是**日期**限定的,`<dow> <hhmm>` 這個既有簽章表達不了它,所以掃描函式
+# 多吃一個可選的第三個參數 <dom>(day-of-month)。不傳第三參數 = 「這是一個沒有
+# 日期的探測」,此時本述詞一律回 false,而不是假裝每天都會發生:兩參數形式只有
+# 測試在用,正式路徑(不帶參數)一定會帶上台北當下的 day-of-month。
+MONTHLY_DIRECTORS_DOM="${MONTHLY_DIRECTORS_DOM:-16}"
+MONTHLY_DIRECTORS_RUN_MINUTES="${MONTHLY_DIRECTORS_RUN_MINUTES:-20}"
+monthly_directors_at() {
+  local hhmm="$1" dom="${2:-0}"
+  [ "$dom" -eq "$MONTHLY_DIRECTORS_DOM" ] || return 1
+  [ "$hhmm" -ge 700 ] && [ "$hhmm" -lt $(( 700 + MONTHLY_DIRECTORS_RUN_MINUTES )) ]
+}
+
+# 距離「下一個會有排程寫入者在跑的分鐘」還有幾分鐘——安靜窗與 overlay(mid-publish、
+# 00:05 分點排行、每月 16 日董監)取先。長工作要問的是這個,不是只問安靜窗;
+# `minutes_until_quiet_window` 保留給只在意 daily/deep 那類窗口的呼叫者。
+#
+# 2026-09-07 23:40 實測:只認得 00:55 安靜窗的舊版回答 75 分鐘,真正的答案是
+# 25 分鐘(00:05 的 safe-branch-stats.sh),守衛因此核准了一個會吃掉整輪分點
+# 排行的塊。
+#
+# 可傳入明確的 <dow> <hhmm> [<dom>](測試用);不傳則用台北現在時刻與日期。
+# 省略 <dom> 的兩參數形式是「無日期探測」,月排程述詞在那個形式下一律不成立。
 minutes_until_next_scheduled_writer() {
-  local dow hhmm
+  local dow hhmm dom
   if [ "$#" -ge 2 ]; then
     dow="$1"
     hhmm="$2"
+    dom="${3:-0}"
   else
     dow=$(TZ=Asia/Taipei date +%u)
     hhmm=$((10#$(TZ=Asia/Taipei date +%H%M)))
+    dom=$((10#$(TZ=Asia/Taipei date +%d)))
   fi
   local start_min=$(( (hhmm / 100) * 60 + hhmm % 100 ))
-  local i abs_min probe_dow probe_min probe_hhmm
+  local i abs_min probe_dow probe_min probe_hhmm probe_dom day_offset
   for (( i = 0; i <= QUIET_SCAN_CAP_MINUTES; i++ )); do
     abs_min=$(( start_min + i ))
-    probe_dow=$(( ((dow - 1 + abs_min / 1440) % 7) + 1 ))
+    day_offset=$(( abs_min / 1440 ))
+    probe_dow=$(( ((dow - 1 + day_offset) % 7) + 1 ))
     probe_min=$(( abs_min % 1440 ))
     probe_hhmm=$(( (probe_min / 60) * 100 + probe_min % 60 ))
-    if quiet_window_at "$probe_dow" "$probe_hhmm" || mid_publish_at "$probe_hhmm"; then
+    # 掃描上限是 24 小時,所以最多跨一次午夜;要偵測的是「16 日」,而 15+1=16
+    # 每個月都成立,月底 31+1 也永遠不會被誤判成 16,不需要月長度表。
+    if [ "$dom" -gt 0 ]; then
+      probe_dom=$(( dom + day_offset ))
+    else
+      probe_dom=0
+    fi
+    if quiet_window_at "$probe_dow" "$probe_hhmm" \
+       || mid_publish_at "$probe_hhmm" \
+       || nightly_stats_at "$probe_hhmm" \
+       || monthly_directors_at "$probe_hhmm" "$probe_dom"; then
       echo "$i"
       return 0
     fi

@@ -193,7 +193,7 @@ def cmd_backfill_warrant_branches(args):
     from .importer import backfill_warrant_branches
     info = backfill_warrant_branches(
         args.top, args.days, args.sleep, args.max_minutes, args.market,
-        state_file=args.state_file,
+        state_file=args.state_file, min_age_days=args.min_age_days,
     )
     stopped = info["stopped"]
     if not stopped:
@@ -610,6 +610,14 @@ def main(argv=None):
     bwb.add_argument("--max-minutes", type=int, default=None, help="stop cleanly after N minutes")
     bwb.add_argument("--state-file", default=None,
                      help="optional base path; writes one atomic state per date+market beside it")
+    # 不是保守,是正確性:富邦頁解析出零列一律是 NoDataError,分不出「當天真的沒有
+    # 分點成交」與「鏡像還沒發布這一天」,而後者會被記成永不重試的 empty。
+    # 預設值與 `importer.WARRANT_BRANCH_MIN_AGE_DAYS` 相同(此處寫字面量是為了
+    # 維持本檔「importer 一律延後到指令函式裡才 import」的慣例);
+    # test_warrant_branch_import.py 會斷言兩者一致,不會漂移。
+    bwb.add_argument("--min-age-days", type=int, default=1,
+                     help="skip dates newer than N calendar days "
+                          "(the mirror may not have published them yet)")
     bwb.set_defaults(fn=cmd_backfill_warrant_branches)
 
     tdcc = sub.add_parser(
