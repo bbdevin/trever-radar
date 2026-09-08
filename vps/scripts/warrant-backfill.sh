@@ -1,22 +1,26 @@
 #!/usr/bin/env bash
 # 全市場權證分點歷史回補(docs/30 WP-B6 Phase 2)— 一次一塊、可續跑、對排程讓路。
 #
-# 使用者決定的目標深度是 **90 個交易日**,但不能一口氣跑。2026-09-04 在正式機
-# 實測:可用磁碟 7.52 GB(8,070,471,680 bytes)。120 日的估算需求約 8.4 GB
-# (由「每列上界約 156 bytes」推得,而那個上界是從另一張表推論出來的,不是權證
-# 分點實測),因此 120 日在現有磁碟上根本放不下;90 日約 6.3 GB,而仍在跑的
-# 490 日股票分點回補還要再吃約 0.6 GB,只剩約 0.6 GB 餘裕——而這份工作連續抓
-# 要約 20 天,只塞平日 11.5 小時空檔的話約 41 天,期間日常排程還在持續寫入。
-# 單寫者 SQLite 的 VPS 一旦寫滿磁碟是全面停擺,不是變慢。
+# 目標深度 **120 個交易日**(Fable 5.1,2026-09-08),分兩段:先 90,收到完成
+# 通知後改 120。分段不是保守,而是每段結束都是一個有量測撐著的檢查點;調高深度
+# 零成本:CLI 對每個「日期＋市場」寫獨立的 atomic state 檔,已完成的日期在下一次
+# 呼叫只被判定為 complete,不花任何請求。
 #
-# 所以深度是參數,分三段跑:WARRANT_DAYS=30 → 60 → 90。
-#   * 第一段(30 日)存在的理由不是「保守」,是**量測**:它會把「推論出來的
-#     bytes/row 上界」換成權證分點自己的實測值,寫進 WARRANT_MEASURE_LOG。
-#     若實測值比上界低,90 日放得下;若更高,維運者在吃掉約 2 GB 的時候就知道,
-#     而不是在第 35 天才發現。
-#   * 讀完量測日誌之後,維運者把 WARRANT_DAYS 調到 60、再調到 90 即可。
-#     調高是安全的:CLI 對每個「日期＋市場」寫一個獨立的 atomic state 檔,
-#     已經跑完的日期在下一次呼叫只會被判定為 complete,不花任何請求。
+# ── 容量:先前的估計錯了約 3.7 倍,以下是實測 ──────────────────────────────
+# 2026-09-04 一塊 30 分鐘的監督執行(1,465 個標的、0 失敗、1,802 秒)量到:
+#     8.34 列/標的、127.7 bytes/列(邏輯)、126.7(含 WAL 落地)、1.23 秒/標的
+# 換算全市場 17,979 標的/日 → **約 19 MB/交易日**,故 90 日約 1.7 GB、
+# 120 日約 2.3 GB;當時可用磁碟 6.6 GB。
+#
+# 舊估計(120 日 8.4 GB、90 日 6.3 GB、結論「120 日放不下」)錯在把**股票**分點
+# 高成交額池的 23.6 列/標的套到權證上——權證每個標的的分點列少得多。這段留著當
+# 紀錄:**借來的比率不是量測值**,而它差點讓一個放得下的工作被砍掉。
+#
+# 因此真正的限制不是磁碟而是**時間**,且時間是「容量減流入」:每個交易日新增一個
+# 日期插隊,每週約 27 小時在原地踏步;淨進度約 13.8 日/週(mid 槽位關掉時)。
+#
+# 單寫者 SQLite 的 VPS 寫滿磁碟是全面停擺不是變慢,所以 MIN_FREE_GB 仍在,只是它
+# 現在保護的是 weekly-backup.sh 的 gzip 空間,不是這份工作自己的需求。
 #
 # ── 讓路而不是排隊(本腳本存在的主要理由)────────────────────────────────
 # 一次呼叫只做**一塊**,塊的長度由「距離下一輪排程還有多久」決定:
@@ -54,9 +58,12 @@
 # 任何一次略過都回 0,只有真正的失敗才回非 0。
 #
 # ── 環境變數 ────────────────────────────────────────────────────────────
-#   WARRANT_DAYS=30            深度(交易日);讀完量測日誌後改 60 → 90
+#   WARRANT_DAYS=90            深度(交易日);收到 90 日完成通知後改 120
 #   WARRANT_CAP=30000          單日目標數安全上限(超過即 fail closed,不截斷)
-#   WARRANT_SLEEP=1.2          請求間隔(全市場合計)
+#   WARRANT_SLEEP=1.0          請求間隔。1.0 是實測值(1.23 秒/標的 = 1.0 sleep
+#                              + 0.23 實際工作),**不要再往下調**:這是本專案對
+#                              那些免費鏡像最重的一次持續負載,被擋掉會連日更的
+#                              分點池一起賠進去
 #   WARRANT_SAFETY_MINUTES=15  從「距下一輪還有多久」扣掉的安全邊際
 #   WARRANT_MIN_CHUNK_MINUTES=20  低於此值不值得 pause/unpause,直接略過
 #   WARRANT_MAX_MINUTES=240    單塊上限
@@ -84,9 +91,9 @@
 source "$(dirname "$0")/lib.sh"
 
 FLAG="${MID_PUBLISH_FLAG:-/tmp/radar-mid-publish.flag}"
-DAYS="${WARRANT_DAYS:-30}"
+DAYS="${WARRANT_DAYS:-90}"
 CAP="${WARRANT_CAP:-30000}"
-SLEEP="${WARRANT_SLEEP:-1.2}"
+SLEEP="${WARRANT_SLEEP:-1.0}"
 SAFETY_MINUTES="${WARRANT_SAFETY_MINUTES:-15}"
 MIN_CHUNK_MINUTES="${WARRANT_MIN_CHUNK_MINUTES:-20}"
 MAX_MINUTES="${WARRANT_MAX_MINUTES:-240}"
@@ -100,7 +107,6 @@ RUN_LOG="${WARRANT_RUN_LOG:-/tmp/radar-warrant-backfill.run.log}"
 # → 永久 empty,而整塊仍會回報成功),必須停手而不是繼續把資料庫寫成空的。
 THROUGHPUT_MIN_ELAPSED="${WARRANT_THROUGHPUT_MIN_ELAPSED:-600}"
 MIN_ROWS_PER_SEC="${WARRANT_MIN_ROWS_PER_SEC:-1.5}"
-MIN_FETCH_PER_SEC="${WARRANT_MIN_FETCH_PER_SEC:-0.4}"
 MIN_FREE_GB="${MIN_FREE_GB:-3}"
 MIN_MEM_MB="${MIN_MEM_MB:-900}"
 MARKET="all"
@@ -349,15 +355,20 @@ fi
 # 吞吐塌陷守衛:鏡像改餵錯誤頁／佔位頁時,每一個目標都解析成零列 → NoDataError
 # → 被記成**永久** empty,而這一塊仍然會乾淨地回報成功。列數與抓取數是唯一能當場
 # 看出「還在跑但什麼都沒收到」的量。太短的塊不判(暖機與純續跑掃描會失真)。
+# 判準**只用 rows/s**,刻意不加 fetch/s。fetch/s 要從 CLI stdout 解析 `fetched=`,
+# 那是把控制路徑綁在一個 Python 格式字串上——本檔上面的離開碼註解、以及
+# `4141a88` 那次修正,講的都是同一件事;而這裡的失敗方向更差:欄位一改名它就
+# 靜默變成 0,**誤判塌陷、自己建暫停檔把爬蟲停掉**。
+# 它也沒多給資訊:鏡像節流 → 抓取變慢 → 列數同步變少;鏡像餵佔位頁 → fetched
+# 照增但列數不增。兩種故障 rows/s 都看得見,而它來自資料庫列數,不依賴任何字串。
+# fetched / empty 仍然印出來給人看,只是不參與判決。
 if [ "$ELAPSED" -gt "$THROUGHPUT_MIN_ELAPSED" ] && awk \
-    -v rows="$ROWS_DELTA" -v fetched="$FETCHED" -v e="$ELAPSED" \
-    -v minr="$MIN_ROWS_PER_SEC" -v minf="$MIN_FETCH_PER_SEC" \
-    'BEGIN { exit !(rows / e < minr || fetched / e < minf) }'; then
+    -v rows="$ROWS_DELTA" -v e="$ELAPSED" -v minr="$MIN_ROWS_PER_SEC" \
+    'BEGIN { exit !(rows / e < minr) }'; then
   RPS="$(awk -v r="$ROWS_DELTA" -v e="$ELAPSED" 'BEGIN { printf "%.2f", r / e }')"
-  FPS="$(awk -v f="$FETCHED" -v e="$ELAPSED" 'BEGIN { printf "%.2f", f / e }')"
-  echo "!!! throughput collapse: ${RPS} rows/s (floor ${MIN_ROWS_PER_SEC}), ${FPS} fetch/s (floor ${MIN_FETCH_PER_SEC}) over ${ELAPSED}s"
+  echo "!!! throughput collapse: ${RPS} rows/s (floor ${MIN_ROWS_PER_SEC}) over ${ELAPSED}s; fetched=${FETCHED} empty=${EMPTY}"
   : > "$PAUSE_FILE"
-  notify "權證分點回補：吞吐塌陷（${RPS} 列/秒、${FPS} 抓取/秒，基準 6.8／0.81），疑似鏡像回錯誤頁被記成永久 empty；已建立暫停檔 ${PAUSE_FILE}，不再開新塊，請人工確認來源後刪除該檔" high "失敗"
+  notify "權證分點回補：吞吐塌陷（${RPS} 列/秒，基準 6.8;本塊 fetched=${FETCHED} empty=${EMPTY}），疑似鏡像回錯誤頁被記成永久 empty；已建立暫停檔 ${PAUSE_FILE}，不再開新塊，請人工確認來源後刪除該檔" high "失敗"
 fi
 
 case "$VERDICT" in
