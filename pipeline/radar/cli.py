@@ -743,9 +743,19 @@ def main(argv=None):
 
     bspc = sub.add_parser(
         "branch-stock-pctile-counts",
+        # 2026-09-08:原文寫「the measured re-flag rate across years is only a few
+        # percent」,把 re-flag 當成「這個性質不持久」的證據。那是誤讀,而且是
+        # 本專案反覆引用過的那一個:re-flag 量的是**嚴格旗標**(每側 ≥10 次已知
+        # 且兩側 ≥70%)重新達標的比率,分子分母都綁著活動量——評估半段交易少一
+        # 點的分點,無論行為如何都再現不了。真正回答「紀錄有沒有帶到未來」的是
+        # 存活 pair 的 exceeds-both 57.4%,對上約 22–24% 的機率值(2026-09-08 方
+        # 向 battery,obs/exp 2.40 對安慰劑 0.91)。所以正確的因果是:群體傾向
+        # 會延續 → 值得呈現計數;個別身分不會重現 → 不下旗標、不排名。
         help="replace the latest branch × stock snapshot of buy/sell price-percentile "
              "counts (counts and denominators only; no rates, no flags, no ranking — "
-             "the measured re-flag rate across years is only a few percent)",
+             "the tendency holds up out of sample at the group level, but a given "
+             "branch re-earns the strict label about 2% of the time, so this table "
+             "names no branch as anything)",
     )
     bspc.add_argument("--as-of", default=None,
                       help="YYYY-MM-DD; must be a market trading day. "
