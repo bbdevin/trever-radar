@@ -6,7 +6,8 @@
 ``docs/STATUS.md``，腳本沒有進版控。已經上線的「關鍵分點證據面板」靠那份結果
 存活，而 2026-09-04 又替「往後看」窗口寫死了一組撤回條件——**一個能讓已上線
 功能下架的決策，卻沒有任何人能重跑它**。這支 CLI 就是在補這個缺陷：把協定、
-兩個對照組、以及四條撤回條件全部變成可重現的程式碼與可重算的數字。
+兩個對照組、以及六條撤回條件（2026-09-04 寫下四條，2026-09-08 補上往前看缺的
+placebo-relative 與 lag retention 兩條）全部變成可重現的程式碼與可重算的數字。
 
 它算什麼
 --------
@@ -108,7 +109,18 @@ PLACEBO_MAX_OBS_EXP = 1.5
 LAG_MIN_RETAINED_RATIO = 0.5
 FORWARD_MIN_OBS_EXP = 2.0
 BACKWARD_STRONG_OBS_EXP = 2.5
+# 這條門檻的**絕對**值刻意維持 1.5 不動（2026-09-08）。它是在安慰劑還被估在
+# 1.12–1.24 的時候訂下的，而真的量到的張數配對安慰劑是 0.91——也就是說它現在
+# 離「機率」比當初設想的更遠。看到讀數之後再去動它就是調參，所以不動；真正
+# 對應「塌向安慰劑」這句描述的是下面那條 placebo-relative 條件，它是無尺度的，
+# 安慰劑漂到哪裡它就跟到哪裡。
 BACKWARD_PULL_OBS_EXP = 1.5
+
+# 覆核觸發（**不是**撤回條件，永遠不會自己下架任何東西）：命中其一時要有人重看
+# 一次，但判定仍然只能由上面那些事先寫死的條件做。輸出行前綴與 WITHDRAW／KEEP
+# 明確不同，就是為了不被誤讀成判決。
+REVIEW_MIN_SURVIVORS = 100
+REVIEW_MIN_BACKWARD_OBS_EXP = 2.0
 
 # 純提示，不是門檻、不改變任何判定：存活樣本少於此值時點估計不可讀到兩位數。
 LOW_SAMPLE_SURVIVORS = 30
@@ -278,11 +290,21 @@ class _PairAccum:
         self.evaluation = _HalfCounts()
 
 
-def is_flagged(half: _HalfCounts, direction: str) -> bool:
-    """兩側各 ≥10 次分位可知，且兩側命中率各 ≥0.7。門檻不因樣本少而放寬。"""
+def is_flagged(
+    half: _HalfCounts, direction: str,
+    flag_min_known: int = FLAG_MIN_KNOWN_PER_SIDE,
+) -> bool:
+    """兩側各 ≥``flag_min_known`` 次分位可知，且兩側命中率各 ≥0.7。
+
+    ``flag_min_known`` 預設就是協定值 10，**跑一次 battery 的行為完全不變**。它可
+    調只是為了量測：匯出端（``json_export.BRANCH_PCTILE_MIN_KNOWN_PER_SIDE``）顯示
+    的是每側 ≥5，而 battery 一直只在 10 驗過，5–9 這一段從來沒有任何樣本外讀數。
+    有了這個參數，同一份資料可以在 5／8／10 三個值上並排跑出來看。命中率門檻不動，
+    也**不因樣本少而放寬**。
+    """
     for side in SIDES:
         known = half.known[(direction, False, side)]
-        if known < FLAG_MIN_KNOWN_PER_SIDE:
+        if known < flag_min_known:
             return False
         if half.hits[(direction, False, side)] / known < FLAG_MIN_RATE:
             return False
@@ -494,26 +516,26 @@ def _rate(numerator: int, denominator: int) -> float | None:
     return round(numerator / denominator, 6) if denominator else None
 
 
-def build_verdicts(directions: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
-    """把四條事先寫死的撤回條件逐條算出 verdict 行，不留給讀者自己比數字。"""
-    forward_flagged = directions["forward"]["evaluation"]["unlagged"]
-    forward_lag = directions["forward"]["evaluation"]["lag"]
-    forward_placebo = directions["forward"]["placebo"]["unlagged"]
-    backward_flagged = directions["backward"]["evaluation"]["unlagged"]
-    backward_placebo = directions["backward"]["placebo"]["unlagged"]
-    verdicts: list[dict[str, Any]] = []
+def _placebo_verdict(
+    *, direction: str, flagged: dict[str, Any], placebo: dict[str, Any],
+) -> dict[str, Any]:
+    """「該方向 vs 它自己的張數配對安慰劑」——**兩個方向共用這一份 sigma 算術**。
 
-    # ① 往後看 vs 張數配對安慰劑。
-    n1, n2 = forward_flagged["compared_pairs"], forward_placebo["compared_pairs"]
-    placebo_obs_exp = forward_placebo["obs_exp"]
+    兩個方向各寫一份是 2026-09-08 之前的缺陷的溫床：往前看那條當時只比絕對水位，
+    描述卻寫著「塌向安慰劑」。這裡只有一個實作，所以兩個方向問的是同一個問題。
+    """
+    criterion = f"{direction}_vs_flow_matched_placebo"
+    threshold = (
+        f"withdraw if |rate difference| <= {PLACEBO_SIGMA_MULTIPLE} sigma "
+        f"or placebo obs/exp > {PLACEBO_MAX_OBS_EXP}"
+    )
+    n1, n2 = flagged["compared_pairs"], placebo["compared_pairs"]
+    placebo_obs_exp = placebo["obs_exp"]
     if not n1 or not n2:
-        verdicts.append(_verdict(
-            criterion="forward_vs_flow_matched_placebo",
-            applies_to="forward",
-            threshold=(
-                f"withdraw if |rate difference| <= {PLACEBO_SIGMA_MULTIPLE} sigma "
-                f"or placebo obs/exp > {PLACEBO_MAX_OBS_EXP}"
-            ),
+        return _verdict(
+            criterion=criterion,
+            applies_to=direction,
+            threshold=threshold,
             triggered=None,
             observed={
                 "flagged_compared_pairs": n1, "placebo_compared_pairs": n2,
@@ -523,74 +545,105 @@ def build_verdicts(directions: dict[str, dict[str, Any]]) -> list[dict[str, Any]
                 "cannot be evaluated: "
                 f"flagged compared pairs={n1}, flow-matched placebo compared pairs={n2}"
             ),
-        ))
-    else:
-        p1 = forward_flagged["exceeds_own_stock_both"] / n1
-        p2 = forward_placebo["exceeds_own_stock_both"] / n2
-        sigma = math.sqrt(p1 * (1.0 - p1) / n1 + p2 * (1.0 - p2) / n2)
-        within_sigma = abs(p1 - p2) <= PLACEBO_SIGMA_MULTIPLE * sigma
-        placebo_high = placebo_obs_exp is not None and placebo_obs_exp > PLACEBO_MAX_OBS_EXP
-        verdicts.append(_verdict(
-            criterion="forward_vs_flow_matched_placebo",
-            applies_to="forward",
-            threshold=(
-                f"withdraw if |rate difference| <= {PLACEBO_SIGMA_MULTIPLE} sigma "
-                f"or placebo obs/exp > {PLACEBO_MAX_OBS_EXP}"
-            ),
-            triggered=within_sigma or placebo_high,
-            observed={
-                "flagged_exceeds_both_rate": round(p1, 6),
-                "flagged_compared_pairs": n1,
-                "placebo_exceeds_both_rate": round(p2, 6),
-                "placebo_compared_pairs": n2,
-                "difference": round(p1 - p2, 6),
-                "sigma": round(sigma, 6),
-                "sigma_multiple_threshold": PLACEBO_SIGMA_MULTIPLE,
-                "within_sigma_band": within_sigma,
-                "placebo_obs_exp": placebo_obs_exp,
-                "placebo_obs_exp_threshold": PLACEBO_MAX_OBS_EXP,
-                "placebo_obs_exp_exceeded": placebo_high,
-            },
-            statement=(
-                f"exceeds-both {p1:.4f} (n={n1}) vs flow-matched placebo {p2:.4f} (n={n2}); "
-                f"difference {p1 - p2:.4f}, {PLACEBO_SIGMA_MULTIPLE} sigma = "
-                f"{PLACEBO_SIGMA_MULTIPLE * sigma:.4f}; placebo obs/exp = {placebo_obs_exp}"
-            ),
-        ))
+        )
+    p1 = flagged["exceeds_own_stock_both"] / n1
+    p2 = placebo["exceeds_own_stock_both"] / n2
+    sigma = math.sqrt(p1 * (1.0 - p1) / n1 + p2 * (1.0 - p2) / n2)
+    within_sigma = abs(p1 - p2) <= PLACEBO_SIGMA_MULTIPLE * sigma
+    placebo_high = placebo_obs_exp is not None and placebo_obs_exp > PLACEBO_MAX_OBS_EXP
+    return _verdict(
+        criterion=criterion,
+        applies_to=direction,
+        threshold=threshold,
+        triggered=within_sigma or placebo_high,
+        observed={
+            "flagged_exceeds_both_rate": round(p1, 6),
+            "flagged_compared_pairs": n1,
+            "placebo_exceeds_both_rate": round(p2, 6),
+            "placebo_compared_pairs": n2,
+            "difference": round(p1 - p2, 6),
+            "sigma": round(sigma, 6),
+            "sigma_multiple_threshold": PLACEBO_SIGMA_MULTIPLE,
+            "within_sigma_band": within_sigma,
+            "placebo_obs_exp": placebo_obs_exp,
+            "placebo_obs_exp_threshold": PLACEBO_MAX_OBS_EXP,
+            "placebo_obs_exp_exceeded": placebo_high,
+        },
+        statement=(
+            f"exceeds-both {p1:.4f} (n={n1}) vs flow-matched placebo {p2:.4f} (n={n2}); "
+            f"difference {p1 - p2:.4f}, {PLACEBO_SIGMA_MULTIPLE} sigma = "
+            f"{PLACEBO_SIGMA_MULTIPLE * sigma:.4f}; placebo obs/exp = {placebo_obs_exp}"
+        ),
+    )
 
-    # ② lag 測試：往後看的 obs/exp 掉超過一半。
-    unlagged_obs_exp, lagged_obs_exp = forward_flagged["obs_exp"], forward_lag["obs_exp"]
+
+def _lag_verdict(
+    *, direction: str, flagged: dict[str, Any], lag: dict[str, Any],
+) -> dict[str, Any]:
+    """lag 測試：把參考價換成次一市場日之後，obs/exp 掉超過一半就撤回。"""
+    criterion = f"{direction}_lag_test"
+    threshold = f"withdraw if lagged obs/exp < {LAG_MIN_RETAINED_RATIO} x unlagged obs/exp"
+    unlagged_obs_exp, lagged_obs_exp = flagged["obs_exp"], lag["obs_exp"]
     if unlagged_obs_exp is None or lagged_obs_exp is None:
-        verdicts.append(_verdict(
-            criterion="forward_lag_test",
-            applies_to="forward",
-            threshold=f"withdraw if lagged obs/exp < {LAG_MIN_RETAINED_RATIO} x unlagged obs/exp",
+        return _verdict(
+            criterion=criterion,
+            applies_to=direction,
+            threshold=threshold,
             triggered=None,
             observed={"unlagged_obs_exp": unlagged_obs_exp, "lagged_obs_exp": lagged_obs_exp},
             statement=(
                 f"cannot be evaluated: unlagged obs/exp={unlagged_obs_exp}, "
                 f"lagged obs/exp={lagged_obs_exp}"
             ),
-        ))
-    else:
-        verdicts.append(_verdict(
-            criterion="forward_lag_test",
-            applies_to="forward",
-            threshold=f"withdraw if lagged obs/exp < {LAG_MIN_RETAINED_RATIO} x unlagged obs/exp",
-            triggered=lagged_obs_exp < LAG_MIN_RETAINED_RATIO * unlagged_obs_exp,
-            observed={
-                "unlagged_obs_exp": unlagged_obs_exp,
-                "lagged_obs_exp": lagged_obs_exp,
-                "retained_ratio": round(lagged_obs_exp / unlagged_obs_exp, 6)
-                if unlagged_obs_exp else None,
-                "retained_ratio_threshold": LAG_MIN_RETAINED_RATIO,
-            },
-            statement=(
-                f"obs/exp {unlagged_obs_exp} unlagged -> {lagged_obs_exp} under next-market-day "
-                f"reference price (threshold {LAG_MIN_RETAINED_RATIO} x = "
-                f"{LAG_MIN_RETAINED_RATIO * unlagged_obs_exp:.6f})"
-            ),
-        ))
+        )
+    return _verdict(
+        criterion=criterion,
+        applies_to=direction,
+        threshold=threshold,
+        triggered=lagged_obs_exp < LAG_MIN_RETAINED_RATIO * unlagged_obs_exp,
+        observed={
+            "unlagged_obs_exp": unlagged_obs_exp,
+            "lagged_obs_exp": lagged_obs_exp,
+            "retained_ratio": round(lagged_obs_exp / unlagged_obs_exp, 6)
+            if unlagged_obs_exp else None,
+            "retained_ratio_threshold": LAG_MIN_RETAINED_RATIO,
+        },
+        statement=(
+            f"obs/exp {unlagged_obs_exp} unlagged -> {lagged_obs_exp} under next-market-day "
+            f"reference price (threshold {LAG_MIN_RETAINED_RATIO} x = "
+            f"{LAG_MIN_RETAINED_RATIO * unlagged_obs_exp:.6f})"
+        ),
+    )
+
+
+def build_verdicts(directions: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    """把六條事先寫死的撤回條件逐條算出 verdict 行，不留給讀者自己比數字。
+
+    2026-09-04 只寫了四條：往後看三條、往前看一條。往前看那一條的描述是「塌向
+    **它的安慰劑**」，程式卻只比 obs/exp 的**絕對**水位，於是 obs/exp 1.6 配上
+    安慰劑 1.4 會過關——條件沒有測它自己宣稱要測的東西。2026-09-08 補上往前看
+    的 placebo-relative 與 lag retention 兩條（往後看本來就有的那兩條的鏡像，
+    共用同一份實作），絕對門檻維持不變。當日的資料兩種讀法一致（2.40 對 0.91），
+    所以沒有任何既有判定因此改變。
+    """
+    forward_flagged = directions["forward"]["evaluation"]["unlagged"]
+    forward_lag = directions["forward"]["evaluation"]["lag"]
+    forward_placebo = directions["forward"]["placebo"]["unlagged"]
+    backward_flagged = directions["backward"]["evaluation"]["unlagged"]
+    backward_lag = directions["backward"]["evaluation"]["lag"]
+    backward_placebo = directions["backward"]["placebo"]["unlagged"]
+    verdicts: list[dict[str, Any]] = []
+
+    # ① 往後看 vs 張數配對安慰劑。
+    verdicts.append(_placebo_verdict(
+        direction="forward", flagged=forward_flagged, placebo=forward_placebo,
+    ))
+
+    # ② lag 測試：往後看的 obs/exp 掉超過一半。
+    verdicts.append(_lag_verdict(
+        direction="forward", flagged=forward_flagged, lag=forward_lag,
+    ))
+    unlagged_obs_exp = forward_flagged["obs_exp"]
 
     # ③ 往後看弱、往前看強。
     backward_obs_exp = backward_flagged["obs_exp"]
@@ -634,7 +687,9 @@ def build_verdicts(directions: dict[str, dict[str, Any]]) -> list[dict[str, Any]
             ),
         ))
 
-    # ④ 往前看塌向安慰劑 —— 這一條決定已上線的面板要不要下架。
+    # ④ 往前看的**絕對**水位 —— 這一條決定已上線的面板要不要下架。
+    # 名字保留原樣（下架決策的紀錄靠它對得起來），但它測的一直只是絕對水位；
+    # 真正對應「塌向安慰劑」的是下面 ⑤。
     if backward_obs_exp is None:
         verdicts.append(_verdict(
             criterion="backward_collapse_toward_placebo",
@@ -664,7 +719,70 @@ def build_verdicts(directions: dict[str, dict[str, Any]]) -> list[dict[str, Any]
                 f"{backward_placebo['obs_exp']}"
             ),
         ))
+
+    # ⑤ 往前看 vs 它自己的張數配對安慰劑（2026-09-08 補上；④ 沒測到的那半）。
+    verdicts.append(_placebo_verdict(
+        direction="backward", flagged=backward_flagged, placebo=backward_placebo,
+    ))
+
+    # ⑥ 往前看的 lag 測試（往後看本來就有的那條的鏡像）。
+    verdicts.append(_lag_verdict(
+        direction="backward", flagged=backward_flagged, lag=backward_lag,
+    ))
     return verdicts
+
+
+def build_review_triggers(directions: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    """**不是**撤回條件：命中時要有人重看一次，判定仍然只由 verdicts 做。
+
+    輸出的 ``line`` 一律以 ``[REVIEW]`` 起頭，與 ``WITHDRAW`` ／ ``KEEP`` ／
+    ``NOT EVALUABLE`` 三種判決字面上就不會混淆——一個「要不要再看一眼」的提示被
+    讀成判決，正是這支模組存在的理由的反面。``re_flag`` 依然不是條件，也不在這裡。
+    """
+    backward = directions["backward"]
+    survivors = backward["survivorship"]["survivors"]
+    obs_exp = backward["evaluation"]["unlagged"]["obs_exp"]
+    triggers: list[dict[str, Any]] = []
+
+    low_survivors = survivors < REVIEW_MIN_SURVIVORS
+    triggers.append({
+        "trigger": "backward_survivors_below_review_floor",
+        "applies_to": "backward",
+        "is_withdrawal_criterion": False,
+        "threshold": f"review (never withdraw) if backward survivors < {REVIEW_MIN_SURVIVORS}",
+        "triggered": low_survivors,
+        "observed": {
+            "survivors": survivors, "survivors_threshold": REVIEW_MIN_SURVIVORS,
+        },
+        "line": (
+            f"[REVIEW{'' if low_survivors else ' NOT TRIGGERED'}] "
+            "backward_survivors_below_review_floor: "
+            f"survivors = {survivors} (review floor {REVIEW_MIN_SURVIVORS}); "
+            "this is a prompt to look again, not a verdict"
+        ),
+    })
+
+    low_obs_exp = obs_exp is not None and obs_exp < REVIEW_MIN_BACKWARD_OBS_EXP
+    triggers.append({
+        "trigger": "backward_obs_exp_below_review_floor",
+        "applies_to": "backward",
+        "is_withdrawal_criterion": False,
+        "threshold": (
+            f"review (never withdraw) if backward obs/exp < {REVIEW_MIN_BACKWARD_OBS_EXP}"
+        ),
+        "triggered": low_obs_exp,
+        "observed": {
+            "backward_obs_exp": obs_exp,
+            "backward_obs_exp_threshold": REVIEW_MIN_BACKWARD_OBS_EXP,
+        },
+        "line": (
+            f"[REVIEW{'' if low_obs_exp else ' NOT TRIGGERED'}] "
+            "backward_obs_exp_below_review_floor: "
+            f"backward obs/exp = {obs_exp} (review floor {REVIEW_MIN_BACKWARD_OBS_EXP}); "
+            "this is a prompt to look again, not a verdict"
+        ),
+    })
+    return triggers
 
 
 def _pair_half_dates(dates: Iterable[str], date_from: str, date_to: str) -> list[str]:
@@ -712,12 +830,24 @@ def build_pair_counts(
     return accum
 
 
+def _validate_flag_min_known(flag_min_known: int) -> int:
+    if (
+        not isinstance(flag_min_known, int)
+        or isinstance(flag_min_known, bool)
+        or flag_min_known < 1
+    ):
+        raise ValueError("flag-min-known must be an integer >= 1")
+    return flag_min_known
+
+
 def build_branch_window_direction_battery(
     *, as_of: str, window_days: int = DEFAULT_WINDOW_DAYS, seed: int = DEFAULT_SEED,
+    flag_min_known: int = FLAG_MIN_KNOWN_PER_SIDE,
 ) -> dict[str, Any]:
     """跑完整個 battery 並回傳可序列化的結果。全程唯讀。"""
     as_of = _validate_date(as_of, "as-of")
     window_days = _validate_window_days(window_days)
+    flag_min_known = _validate_flag_min_known(flag_min_known)
     started = time.monotonic()
     rng = random.Random(seed)
 
@@ -797,25 +927,29 @@ def build_branch_window_direction_battery(
                 if not accums:
                     continue
                 stocks_streamed += 1
-                _accumulate_stock(accums, aggregates=aggregates, rng=rng)
+                _accumulate_stock(
+                    accums, aggregates=aggregates, rng=rng, flag_min_known=flag_min_known,
+                )
     finally:
         engine.dispose()
 
     directions_json = {
-        direction: _direction_json(aggregates[direction]) for direction in DIRECTIONS
+        direction: _direction_json(aggregates[direction], flag_min_known=flag_min_known)
+        for direction in DIRECTIONS
     }
     return {
         "metadata": {
             "report": REPORT_NAME,
             "as_of": as_of,
             "seed": seed,
+            "flag_min_known_per_side": flag_min_known,
             "read_only": True,
             "schema_changes": False,
             "database_writes": False,
             "ranking_or_score_changes": False,
             "elapsed_sec": round(time.monotonic() - started, 3),
         },
-        "definitions": _definitions(),
+        "definitions": _definitions(flag_min_known=flag_min_known),
         "split": split,
         "coverage": {
             "universe_branch_count": len(universe),
@@ -838,7 +972,11 @@ def build_branch_window_direction_battery(
         },
         "directions": directions_json,
         "verdicts": build_verdicts(directions_json),
+        "review_triggers": build_review_triggers(directions_json),
         "notes": [
+            "review_triggers are NOT verdicts: nothing in that list can withdraw "
+            "anything by itself. Their lines are prefixed [REVIEW] precisely so they "
+            "are never read as a WITHDRAW or a KEEP.",
             "Re-flag rate is reported for information only and is NOT a withdrawal "
             "criterion: the counts-not-badges design already absorbed the 2026-09-03 "
             "finding that labels do not persist across years. Do not re-litigate it.",
@@ -855,6 +993,7 @@ def _accumulate_stock(
     accums: dict[str, _PairAccum], *,
     aggregates: dict[str, _DirectionAggregate],
     rng: random.Random,
+    flag_min_known: int = FLAG_MIN_KNOWN_PER_SIDE,
 ) -> None:
     """把一檔股票的結果併進全域計數，然後這一檔的所有 accum 就可以丟掉。"""
     for direction in DIRECTIONS:
@@ -870,7 +1009,7 @@ def _accumulate_stock(
 
         flagged = [
             name for name in sorted(accums)
-            if is_flagged(accums[name].formation, direction)
+            if is_flagged(accums[name].formation, direction, flag_min_known)
         ]
         if not flagged:
             continue
@@ -878,7 +1017,8 @@ def _accumulate_stock(
         aggregate.flagged_pairs += len(flagged)
         aggregate.flagged_stocks += 1
         aggregate.re_flagged_pairs += sum(
-            is_flagged(accums[name].evaluation, direction) for name in flagged
+            is_flagged(accums[name].evaluation, direction, flag_min_known)
+            for name in flagged
         )
 
         matched = match_placebo(
@@ -898,13 +1038,16 @@ def _accumulate_stock(
                 )
 
 
-def _direction_json(aggregate: _DirectionAggregate) -> dict[str, Any]:
+def _direction_json(
+    aggregate: _DirectionAggregate, *, flag_min_known: int = FLAG_MIN_KNOWN_PER_SIDE,
+) -> dict[str, Any]:
     flagged_unlagged = aggregate.arms[("flagged", False)]
     return {
         "formation": {
             "flagged_pairs": aggregate.flagged_pairs,
             "flagged_stocks": aggregate.flagged_stocks,
-            "min_known_per_side": FLAG_MIN_KNOWN_PER_SIDE,
+            "min_known_per_side": flag_min_known,
+            "protocol_min_known_per_side": FLAG_MIN_KNOWN_PER_SIDE,
             "min_rate_per_side": FLAG_MIN_RATE,
             "measurable": aggregate.flagged_pairs > 0,
             "note": (
@@ -951,7 +1094,7 @@ def _direction_json(aggregate: _DirectionAggregate) -> dict[str, Any]:
     }
 
 
-def _definitions() -> dict[str, str]:
+def _definitions(*, flag_min_known: int = FLAG_MIN_KNOWN_PER_SIDE) -> dict[str, str]:
     return {
         "split": (
             "the last N market trading days at or before as_of, halved by trading day: "
@@ -986,8 +1129,10 @@ def _definitions() -> dict[str, str]:
             f"known percentile >= {HIGH_SELL_MIN_PCTILE}"
         ),
         "flagged": (
-            f"formation half, per direction: >= {FLAG_MIN_KNOWN_PER_SIDE} known episodes on "
-            f"each side and both hit rates >= {FLAG_MIN_RATE}"
+            f"formation half, per direction: >= {flag_min_known} known episodes on "
+            f"each side and both hit rates >= {FLAG_MIN_RATE} (the protocol value is "
+            f"{FLAG_MIN_KNOWN_PER_SIDE} known episodes per side; a run at any other "
+            "value is instrumentation and is not a validated reading)"
         ),
         "survivor": (
             f"a flagged pair with >= {EVAL_MIN_KNOWN_PER_SIDE} known episodes per side in "
@@ -1018,12 +1163,13 @@ def _definitions() -> dict[str, str]:
 
 def write_branch_window_direction_battery(
     *, as_of: str, window_days: int = DEFAULT_WINDOW_DAYS,
-    seed: int = DEFAULT_SEED, out: str | Path,
+    seed: int = DEFAULT_SEED, flag_min_known: int = FLAG_MIN_KNOWN_PER_SIDE,
+    out: str | Path,
 ) -> dict[str, Any]:
     """Build and deterministically write the JSON battery result."""
     out_path = safe_report_output_path(out, report_name=REPORT_NAME)
     report = build_branch_window_direction_battery(
-        as_of=as_of, window_days=window_days, seed=seed,
+        as_of=as_of, window_days=window_days, seed=seed, flag_min_known=flag_min_known,
     )
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(

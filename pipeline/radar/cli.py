@@ -366,7 +366,8 @@ def cmd_branch_window_direction_battery(args):
     )
 
     report = write_branch_window_direction_battery(
-        as_of=args.as_of, window_days=args.window_days, seed=args.seed, out=args.out,
+        as_of=args.as_of, window_days=args.window_days, seed=args.seed,
+        flag_min_known=args.flag_min_known, out=args.out,
     )
     split = report["split"]
     print(
@@ -396,6 +397,9 @@ def cmd_branch_window_direction_battery(args):
         )
     for verdict in report["verdicts"]:
         print(f"  {verdict['line']}")
+    # 覆核觸發與判決分開印，前綴也不同：它們不能下架任何東西。
+    for trigger in report["review_triggers"]:
+        print(f"  {trigger['line']}")
 
 
 def cmd_branch_ranking_v2_shadow(args):
@@ -771,6 +775,14 @@ def main(argv=None):
     bwdb.add_argument("--seed", type=int, default=20260904,
                       help="seed for the flow-matched placebo draw (default 20260904); "
                            "the same seed and database reproduce the same placebo set")
+    bwdb.add_argument("--flag-min-known", dest="flag_min_known", type=int, default=10,
+                      help="known percentile episodes required per side in the formation "
+                           "half to flag a pair (default 10, the protocol value the "
+                           "battery was validated at). The shipped panel displays pairs "
+                           "at >= 5 per side, a band with no out-of-sample reading; this "
+                           "flag exists so 5, 8 and 10 can be read side by side. Any "
+                           "value other than the default is instrumentation, not a "
+                           "validated result")
     bwdb.add_argument("--out", required=True, help="JSON output path")
     bwdb.set_defaults(fn=cmd_branch_window_direction_battery)
 

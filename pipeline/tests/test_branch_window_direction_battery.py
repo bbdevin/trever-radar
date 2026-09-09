@@ -2,8 +2,13 @@
 
 這裡驗的是**協定本身有沒有被正確執行**:切分落在交易日、episode 在各半段獨立
 重建、消失的 pair 不被靜默丟掉、安慰劑同時吃兩個帶寬、lag 用的是次一*市場*日,
-以及四條事先寫死的撤回條件在**邊界上**的行為。不驗「誰是關鍵分點」——那是資料
+以及六條事先寫死的撤回條件在**邊界上**的行為。不驗「誰是關鍵分點」——那是資料
 的事,不是程式的事。
+
+2026-09-08 補進來的兩條(往前看的 placebo-relative 與 lag retention)在這裡跟
+既有四條受同一種待遇:各自都有一個**真的把那一行點著**的構造案例,不是只驗
+它出現在清單裡。往前看原本那條的描述說「塌向安慰劑」而程式只比絕對水位,正是
+「條件看起來存在、其實沒測到自己宣稱的東西」這個缺陷的樣本。
 """
 import json
 import tracemalloc
@@ -26,10 +31,13 @@ from radar.compute.branch_window_direction_battery import (
     LAG_MIN_RETAINED_RATIO,
     PLACEBO_BAND,
     PLACEBO_MAX_OBS_EXP,
+    REVIEW_MIN_BACKWARD_OBS_EXP,
+    REVIEW_MIN_SURVIVORS,
     _HalfCounts,
     _PairAccum,
     build_branch_window_direction_battery,
     build_pair_counts,
+    build_review_triggers,
     build_verdicts,
     is_flagged,
     match_placebo,
@@ -276,7 +284,7 @@ class FlaggingAndNullTests(unittest.TestCase):
 
 
 def _direction_stub(*, obs_exp, lag_obs_exp, placebo_obs_exp,
-                    both, compared, placebo_both, placebo_compared):
+                    both, compared, placebo_both, placebo_compared, survivors=None):
     def arm(both_count, compared_count, ratio):
         return {
             "pairs": compared_count, "with_evaluation_activity": compared_count,
@@ -297,6 +305,9 @@ def _direction_stub(*, obs_exp, lag_obs_exp, placebo_obs_exp,
         }
 
     return {
+        "survivorship": {
+            "survivors": compared if survivors is None else survivors,
+        },
         "evaluation": {
             "unlagged": arm(both, compared, obs_exp),
             "lag": arm(both, compared, lag_obs_exp),
@@ -390,6 +401,65 @@ class VerdictBoundaryTests(unittest.TestCase):
             "WITHDRAW backward", collapsed["backward_collapse_toward_placebo"]["line"],
         )
 
+    def test_backward_has_all_three_criteria_forward_has(self):
+        """六條,不是四條:兩個方向現在問的是同一組問題。"""
+        verdicts = self._base()
+        self.assertEqual(len(verdicts), 6)
+        for direction in ("forward", "backward"):
+            self.assertIn(f"{direction}_vs_flow_matched_placebo", verdicts)
+            self.assertIn(f"{direction}_lag_test", verdicts)
+
+    def test_backward_collapsing_toward_its_placebo_fires_where_the_level_test_passes(self):
+        """**這一條就是 2026-09-08 補上的缺口**,構造一個真的把它點著的案例。
+
+        obs/exp 1.6 高於 1.5 的絕對門檻,所以原本那條(只比水位)是 KEEP;但它的
+        安慰劑在 1.4,exceeds-both 0.60 對 0.58 落在 2 sigma 之內——描述裡的
+        「塌向它的安慰劑」就是這個情況,而 2026-09-08 之前沒有任何一行測得到它。
+        """
+        verdicts = self._base(backward={
+            "obs_exp": 1.6, "lag_obs_exp": 1.6, "placebo_obs_exp": 1.4,
+            "both": 60, "compared": 100, "placebo_both": 58, "placebo_compared": 100,
+        })
+        level = verdicts["backward_collapse_toward_placebo"]
+        self.assertFalse(level["triggered"])
+        self.assertIn("KEEP backward", level["line"])
+
+        relative = verdicts["backward_vs_flow_matched_placebo"]
+        self.assertTrue(relative["observed"]["within_sigma_band"])
+        self.assertFalse(relative["observed"]["placebo_obs_exp_exceeded"])
+        self.assertTrue(relative["triggered"])
+        self.assertIn("WITHDRAW backward", relative["line"])
+
+    def test_backward_placebo_obs_exp_above_the_cap_also_withdraws(self):
+        above = self._base(backward={"placebo_obs_exp": PLACEBO_MAX_OBS_EXP + 0.01})
+        criterion = above["backward_vs_flow_matched_placebo"]
+        # 這裡兩個率差很開,sigma 那半沒有觸發:點著它的是安慰劑自己太高。
+        self.assertFalse(criterion["observed"]["within_sigma_band"])
+        self.assertTrue(criterion["observed"]["placebo_obs_exp_exceeded"])
+        self.assertTrue(criterion["triggered"])
+        self.assertIn("WITHDRAW backward", criterion["line"])
+
+    def test_backward_lag_retention_triggers_only_below_half(self):
+        exactly_half = self._base(backward={"obs_exp": 3.0, "lag_obs_exp": 1.5})
+        self.assertFalse(exactly_half["backward_lag_test"]["triggered"])
+        self.assertIn("KEEP backward", exactly_half["backward_lag_test"]["line"])
+        below = self._base(backward={"obs_exp": 3.0, "lag_obs_exp": 1.4999})
+        self.assertTrue(below["backward_lag_test"]["triggered"])
+        self.assertIn("WITHDRAW backward", below["backward_lag_test"]["line"])
+
+    def test_both_directions_share_one_sigma_computation(self):
+        """同一組數字餵給兩個方向,sigma 必須逐位元相同(不是兩份實作)。"""
+        arm = dict(
+            obs_exp=3.0, lag_obs_exp=3.0, placebo_obs_exp=1.0,
+            both=61, compared=97, placebo_both=44, placebo_compared=89,
+        )
+        verdicts = self._base(forward=arm, backward=arm)
+        forward = verdicts["forward_vs_flow_matched_placebo"]["observed"]
+        backward = verdicts["backward_vs_flow_matched_placebo"]["observed"]
+        self.assertEqual(forward["sigma"], backward["sigma"])
+        self.assertEqual(forward["difference"], backward["difference"])
+        self.assertEqual(forward["within_sigma_band"], backward["within_sigma_band"])
+
     def test_undefined_numbers_are_reported_as_not_evaluable_never_as_pass(self):
         verdicts = self._base(
             forward={"obs_exp": None, "lag_obs_exp": None, "compared": 0,
@@ -400,6 +470,52 @@ class VerdictBoundaryTests(unittest.TestCase):
             self.assertIsNone(verdicts[criterion]["triggered"], criterion)
             self.assertFalse(verdicts[criterion]["evaluable"], criterion)
             self.assertIn("NOT EVALUABLE", verdicts[criterion]["line"], criterion)
+
+
+class ReviewTriggerTests(unittest.TestCase):
+    """覆核觸發:會印出來、可被程式讀到,但**永遠不是判決**。"""
+
+    @staticmethod
+    def _triggers(**backward):
+        base = dict(
+            obs_exp=3.0, lag_obs_exp=3.0, placebo_obs_exp=1.0,
+            both=90, compared=100, placebo_both=10, placebo_compared=100,
+        )
+        base.update(backward)
+        directions = {
+            "forward": _direction_stub(**base), "backward": _direction_stub(**base),
+        }
+        return {item["trigger"]: item for item in build_review_triggers(directions)}
+
+    def test_neither_trigger_fires_on_a_healthy_reading(self):
+        triggers = self._triggers()
+        self.assertEqual(REVIEW_MIN_SURVIVORS, 100)
+        self.assertEqual(REVIEW_MIN_BACKWARD_OBS_EXP, 2.0)
+        for item in triggers.values():
+            self.assertFalse(item["triggered"])
+            self.assertIn("[REVIEW NOT TRIGGERED]", item["line"])
+
+    def test_low_survivors_and_low_obs_exp_each_fire_their_own_line(self):
+        thin = self._triggers(survivors=REVIEW_MIN_SURVIVORS - 1)
+        self.assertTrue(thin["backward_survivors_below_review_floor"]["triggered"])
+        self.assertIn("[REVIEW]", thin["backward_survivors_below_review_floor"]["line"])
+        self.assertFalse(thin["backward_obs_exp_below_review_floor"]["triggered"])
+
+        weak = self._triggers(obs_exp=REVIEW_MIN_BACKWARD_OBS_EXP - 0.0001)
+        self.assertTrue(weak["backward_obs_exp_below_review_floor"]["triggered"])
+        self.assertIn("[REVIEW]", weak["backward_obs_exp_below_review_floor"]["line"])
+        self.assertFalse(weak["backward_survivors_below_review_floor"]["triggered"])
+
+        at_floor = self._triggers(obs_exp=REVIEW_MIN_BACKWARD_OBS_EXP)
+        self.assertFalse(at_floor["backward_obs_exp_below_review_floor"]["triggered"])
+
+    def test_a_review_line_can_never_be_read_as_a_verdict(self):
+        for item in self._triggers(survivors=1, obs_exp=1.0).values():
+            self.assertTrue(item["triggered"])
+            self.assertFalse(item["is_withdrawal_criterion"])
+            self.assertNotIn("WITHDRAW", item["line"])
+            self.assertNotIn("KEEP", item["line"])
+            self.assertIn("not a verdict", item["line"])
 
 
 class BatteryEndToEndTests(unittest.TestCase):
@@ -539,12 +655,26 @@ class BatteryEndToEndTests(unittest.TestCase):
 
     def test_json_carries_every_number_needed_to_recompute_the_verdicts(self):
         report = self._report()
-        self.assertEqual(len(report["verdicts"]), 4)
+        # 2026-09-04 的四條 + 2026-09-08 補上的往前看兩條。覆核觸發不算判決,
+        # 所以它們在另一個 key 底下,不會混進這個數字。
+        self.assertEqual(len(report["verdicts"]), 6)
+        self.assertEqual(
+            {verdict["criterion"] for verdict in report["verdicts"]},
+            {
+                "forward_vs_flow_matched_placebo", "forward_lag_test",
+                "forward_weak_while_backward_strong", "backward_collapse_toward_placebo",
+                "backward_vs_flow_matched_placebo", "backward_lag_test",
+            },
+        )
         for verdict in report["verdicts"]:
             self.assertIn(verdict["outcome"].split()[0],
                           {"WITHDRAW", "KEEP", "NOT"})
             self.assertTrue(verdict["threshold"])
             self.assertIsInstance(verdict["observed"], dict)
+        self.assertEqual(len(report["review_triggers"]), 2)
+        for trigger in report["review_triggers"]:
+            self.assertFalse(trigger["is_withdrawal_criterion"])
+            self.assertTrue(trigger["line"].startswith("[REVIEW"))
         self.assertEqual(report["metadata"]["database_writes"], False)
         json.dumps(report, ensure_ascii=False)  # 必須可序列化
 
@@ -622,8 +752,46 @@ class BatteryEndToEndTests(unittest.TestCase):
             "--seed", "7", "--out", str(out),
         ])
         report = json.loads(out.read_text(encoding="utf-8"))
-        self.assertEqual(len(report["verdicts"]), 4)
+        self.assertEqual(len(report["verdicts"]), 6)
         self.assertEqual(report["metadata"]["read_only"], True)
+        # --flag-min-known 沒給時就是協定值,行為與加這個參數之前完全一樣。
+        self.assertEqual(
+            report["metadata"]["flag_min_known_per_side"], FLAG_MIN_KNOWN_PER_SIDE,
+        )
+
+    def test_flag_min_known_defaults_to_the_protocol_value_and_can_be_lowered(self):
+        """匯出端顯示每側 ≥5,battery 只在 10 驗過;這個參數是為了讀 5–9 那一段。
+
+        預設值必須讓報表**逐位元**等同沒有這個參數的時候,否則它就不是儀器而是
+        改門檻了。
+        """
+        default = build_branch_window_direction_battery(as_of=self.as_of, window_days=80)
+        explicit = build_branch_window_direction_battery(
+            as_of=self.as_of, window_days=80, flag_min_known=FLAG_MIN_KNOWN_PER_SIDE,
+        )
+        for report in (default, explicit):
+            report["metadata"].pop("elapsed_sec")
+        self.assertEqual(default, explicit)
+        self.assertEqual(
+            default["directions"]["backward"]["formation"]["min_known_per_side"],
+            FLAG_MIN_KNOWN_PER_SIDE,
+        )
+
+        # 放寬到 5 只影響「誰被標記」,協定值仍原樣記在報表裡。
+        loosened = build_branch_window_direction_battery(
+            as_of=self.as_of, window_days=80, flag_min_known=5,
+        )
+        formation = loosened["directions"]["backward"]["formation"]
+        self.assertEqual(formation["min_known_per_side"], 5)
+        self.assertEqual(formation["protocol_min_known_per_side"], FLAG_MIN_KNOWN_PER_SIDE)
+        self.assertGreaterEqual(
+            formation["flagged_pairs"],
+            default["directions"]["backward"]["formation"]["flagged_pairs"],
+        )
+        with self.assertRaisesRegex(ValueError, "flag-min-known"):
+            build_branch_window_direction_battery(
+                as_of=self.as_of, window_days=80, flag_min_known=0,
+            )
 
 
 class StreamingMemoryTests(unittest.TestCase):
