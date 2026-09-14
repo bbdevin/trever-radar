@@ -83,6 +83,11 @@ function StockView() {
     if (tabParam === "basic") {
       setView("basic");
     }
+    // tech 先前漏了。margin/holders/basic 都接受 ?tab=,只有它不行——不是刻意的
+    // 取捨,是少寫一條。分頁順序調動時補上,順序與可否用網址直達本來就無關。
+    if (tabParam === "tech") {
+      setView("tech");
+    }
   }, [data, tabParam]);
 
   useEffect(() => {
@@ -235,10 +240,10 @@ function StockView() {
               { key: "chart" as const, label: "K線" },
               { key: "chips" as const, label: "籌碼日報" },
               { key: "insti" as const, label: "三大法人" },
-              { key: "margin" as const, label: "資券" },
+              { key: "tech" as const, label: "技術" },
               { key: "holders" as const, label: "大戶" },
               { key: "basic" as const, label: "基本資料" },
-              { key: "tech" as const, label: "技術" },
+              { key: "margin" as const, label: "資券" },
               { key: "warrant" as const, label: "權證" },
             ] as const
           ).map((t) => (

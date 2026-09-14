@@ -283,7 +283,7 @@ const BranchFlowSection = forwardRef<
             </div>
           </div>
           <span className="text-[11px] leading-relaxed text-muted-foreground">
-            {rangeHint}盤後 T+1、每日前 15 大買賣超裁剪版，僅供籌碼觀察。
+            {rangeHint}盤後 T+1、每日買賣超各取前 15 大，僅供籌碼觀察。15 是上限不是張數：冷清的日子不足 15 家，是當天只有那些分點進出。
           </span>
         </div>
       )}
@@ -449,7 +449,11 @@ const BranchFlowSection = forwardRef<
 
       {!heading && (
         <div className="text-xs leading-relaxed text-muted-foreground">
-          分點資料來自免費公開頁的前15大買賣超裁剪版,不是全市場全量分點;T+1 盤後資料,僅供籌碼觀察。
+          分點資料來自免費公開頁,每日買賣超各只公布前 15 大,不是全市場全量分點;T+1 盤後資料,僅供籌碼觀察。
+          <br />
+          <span className="text-muted-foreground/80">
+            15 是上限不是配額:熱絡的日子看不到第 16 名之後,冷清的日子不足 15 家則是當天真的只有那些分點有進出(實測某檔全日成交 1,023 張時只有 5 家)。兩種情況在這張表上長得一樣,但意思相反。
+          </span>
         </div>
       )}
 
