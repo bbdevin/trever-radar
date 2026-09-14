@@ -158,17 +158,35 @@ db_logical_bytes() {
 
 # 實際落在磁碟上的位元組(含 -wal / -shm)。維運者真正受限的是這個數字,
 # page_count 在 checkpoint 之前會低估。
+#
+# 2026-09-14:原本是 `du -cb 三個檔 2>/dev/null | awk ...`,而 **-wal / -shm 在沒有
+# 活躍寫入者時根本不存在**(checkpoint 後就被移除)。`du` 對缺檔回非零,`2>/dev/null`
+# 藏得掉訊息藏不掉狀態,再加上 lib.sh 的 `set -euo pipefail`,整支腳本就在這裡無聲
+# 中止——第一次正式開跑就是這樣掛的,log 停在前一行、沒有任何錯誤訊息。09-04 那次
+# 沒事只是因為當時 WAL 剛好有 6 MB。
+# 改成逐檔 stat、不存在就跳過:沒有管線、沒有「缺檔即失敗」,而缺檔本來就該當 0。
 db_on_disk_bytes() {
-  du -cb "$REPO/data/radar.db" "$REPO/data/radar.db-wal" "$REPO/data/radar.db-shm" 2>/dev/null \
-    | awk 'END { print $1+0 }'
+  local total=0 f sz
+  for f in "$REPO/data/radar.db" "$REPO/data/radar.db-wal" "$REPO/data/radar.db-shm"; do
+    [ -f "$f" ] || continue
+    sz="$(stat -c %s "$f" 2>/dev/null || echo 0)"
+    total=$(( total + sz ))
+  done
+  echo "$total"
 }
 
-# 分點列數。權證分點與股票分點共用 branch_trades(權證的 stock_id 是權證代號),
+# 分點列數。權證分點與股票分點共用同一張表(權證的 stock_id 是權證代號),
 # 但量測期間 db lock 在我們手上、bf 容器也被 pause,除了本塊之外沒有其他寫者,
 # 所以總列數的差額就是本塊寫進去的權證分點列數——不必為了分辨而付一次
 # JOIN warrants 全表掃描的代價。
+#
+# 2026-09-14:改數 `branch_trades_raw`(實體表)而不是 `branch_trades`。後者是
+#   CREATE VIEW branch_trades AS SELECT … FROM branch_trades_raw r JOIN branch_dim d …
+# 每次 COUNT(*) 都要把 2,800 萬列跑一次 JOIN,實測 **87 秒**,而一塊要量兩次,
+# 等於每塊固定燒掉約三分鐘去數一個只用來相減的數字。實體表的差額完全等價:
+# view 是對 raw 的 1:1 join,本塊寫進去的列同樣進 raw。
 branch_rows() {
-  db_col "SELECT COUNT(*) FROM branch_trades"
+  db_col "SELECT COUNT(*) FROM branch_trades_raw"
 }
 
 echo "=== warrant-backfill start $(taipei_date -Is) days=${DAYS} market=${MARKET} state=${STATE_BASE} ==="
