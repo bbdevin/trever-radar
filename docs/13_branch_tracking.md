@@ -106,6 +106,12 @@
   - **2026-09-03 新增(additive)**:`matured_samples`(勝率與平均報酬的真正分母;`samples` 仍含未成熟事件,實測 831 個分點中有 **819 個**兩者不等)、`daytrade_pairs_determined`、`daytrade_pairs_flagged`(隔日沖比例的分子與分母,讓比例可還原)。舊快照這三欄為 `NULL`,**該 NULL 即版本標記**,用以區分 pooled 比率時代的列。
   - `branch_stock_stats` 同批新增 `daytrade_obs`／`daytrade_paybacks`;`is_daytrade_suspect` 在觀察數不足時改寫 **`NULL` 而非 `False`**(舊行為把「未判定」靜默呈現為「不是隔日沖」)。
 - **`branch_pit_stats`(2026-09-03 新增)**——E2 point-in-time 帳本,PK `(branch_name, as_of, window_market_days)`。**全表無任何 rate 欄位**:每個分子都存對應分母與 unknown 計數,`fwd5_sum_pct` 存總和而非平均,比率一律讀取時再除。理由見 §8。**永不 prune**(約 7.3 MB／年)。
+  - **觀察 vs 重建的判準(2026-09-14 定案,Fable 5.1)**:`computed_at` **就是** provenance 訊號,不另加欄位。
+    > 一列是「觀察」若且唯若 `computed_at` 的日期是 `as_of` 的**次日曆日**(即 00:05 夜間作業的執行時刻);其餘一律是事後重建。
+    >
+    > 要問「日期 D 當時知道什麼」,篩 `computed_at <= D+1`。匯出端若需要旗標,**由這條規則推導,不要存**。
+  - 不加 `is_reconstructed` 欄位是刻意的:`schema.py` 已把 `computed_at` 定義為「資料可得性」,再存一份等於同一件事兩處記錄,兩處會漂。也**不可**拿 `DEFINITIONS_VERSION` 兼差——它是給「定義變了、舊列仍可辨識」用的,塞進 provenance 會破壞那個契約。
+  - **重建不等於失真。** 本表窗口是 60 個交易日,所以 as_of 2026-09-01 讀的是 2026 年 6–9 月;490 日分點回補補的是 2024-08～2025-03,**落在窗口外**,對這類列毫無影響。真正落在窗口內的是 2026-07-16～08-19 那段自家抓取破洞 —— 一列**當時**寫的 09-01 會帶著那個破洞造成的膨脹 unknown 計數,而修好之後重算的那一列用的是 09-01 當天就公開可得的資料。`date <= :as_of` 的上界保證沒有未來資訊。**point-in-time 承諾的是市場資訊,不是我們的停機。**
 - `branch_stock_stats` / `branch_trades_top` / `branch_trades_watch`:照 05 §3,不變
 
 ## 6. 資料前提與成本(2026-07-07 修訂:使用者選擇免費爬蟲先行)
