@@ -3,10 +3,16 @@ import time
 
 import requests
 
-from . import config
+from . import config, tls
 
 _session = requests.Session()
 _session.headers["User-Agent"] = config.USER_AGENT
+# Trust configuration lives in `tls`: certificate verification stays on for
+# every request, and the one host that serves an incomplete certificate chain
+# (www.tpex.org.tw) gets the missing intermediate supplied from a vendored
+# file, scoped to that host alone.  See radar/tls.py for why that is not a
+# downgrade — the trust anchor is unchanged.
+tls.configure_session(_session)
 _last_request_at = 0.0
 
 
