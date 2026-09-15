@@ -60,10 +60,19 @@ class TestDailyBranchesExitCodes(unittest.TestCase):
         """
         imp = self._index("radar import-branch-trades")
         before = self.code[max(0, imp - 400):imp]
-        after = self.code[imp:imp + 200]
         self.assertIn("set +e", before, "取 rc 之前要先關掉 set -e")
-        self.assertIn("branch_rc=$?", after, "要顯式接住離開碼")
         self.assertIn("set -e", self.code[imp:imp + 400], "取完 rc 要立刻恢復 set -e")
+
+        # `$?` 只保留「上一個」指令的離開碼。中間插進任何一行——哪怕是 echo——
+        # 都會把它洗掉,而且洗掉之後腳本照跑、測試照過、只有離開碼靜默變成 0,
+        # 也就是「不合格的一天」會被當成「完全正常」送上線。所以這裡驗的是
+        # **緊鄰**,不是「附近找得到」。
+        idx = next(i for i, ln in enumerate(self.lines)
+                   if "radar import-branch-trades" in ln)
+        following = [ln.strip() for ln in self.lines[idx + 1:] if ln.strip()]
+        self.assertTrue(following, "import 之後應該還有東西")
+        self.assertEqual(following[0], "branch_rc=$?",
+                         "`branch_rc=$?` 必須緊接在 import 之後,中間不可以有任何指令")
 
     def test_all_four_outcomes_are_handled(self):
         case_idx = self._index("case \"$branch_rc\"")
