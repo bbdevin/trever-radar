@@ -279,11 +279,10 @@ def compute_all():
 
         # 只取個股(排除權證與指數)的 distinct stock_id,比照 json_export 的個股判定。
         stock_ids = [r[0] for r in conn.execute(text("""
-            SELECT DISTINCT b.stock_id
-            FROM branch_trades b
-            JOIN stocks s ON s.id = b.stock_id
+            SELECT s.id FROM stocks s
             WHERE s.type = 'stock' AND s.name NOT LIKE '%指%'
-            ORDER BY b.stock_id
+              AND EXISTS (SELECT 1 FROM branch_trades b WHERE b.stock_id = s.id)
+            ORDER BY s.id
         """)).fetchall()]
         if not stock_ids:
             print(f"branch stats @ {as_of}: no individual-stock branch trades.")

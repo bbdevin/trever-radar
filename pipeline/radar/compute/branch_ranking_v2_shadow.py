@@ -181,11 +181,10 @@ def _drift_stats(drifts: list[int]) -> dict[str, Any]:
 def _fetch(conn, as_of: str) -> tuple[dict[str, _BranchAgg], dict[str, list[tuple[float, float]]], dict[str, Any]]:
     """Point-in-time 重算 V1 的分點 pooled 累加器(只讀 as_of 當日與之前的資料)。"""
     stock_ids = [row[0] for row in conn.execute(text("""
-        SELECT DISTINCT b.stock_id
-        FROM branch_trades b
-        JOIN stocks s ON s.id = b.stock_id
-        WHERE s.type = 'stock' AND s.name NOT LIKE '%指%' AND b.date <= :as_of
-        ORDER BY b.stock_id
+        SELECT s.id FROM stocks s
+        WHERE s.type = 'stock' AND s.name NOT LIKE '%指%'
+          AND EXISTS (SELECT 1 FROM branch_trades b WHERE b.stock_id = s.id AND b.date <= :as_of)
+        ORDER BY s.id
     """), {"as_of": as_of}).fetchall()]
 
     as_of_d = date_cls.fromisoformat(as_of)
