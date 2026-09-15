@@ -563,6 +563,8 @@ export default function BranchPage() {
   const [filterSearch, setFilterSearch] = useState("");
   const [filterTrackable, setFilterTrackable] = useState(false);
   const [filterEnough, setFilterEnough] = useState(false);
+  // 出處篩選:只留下 source === "manual",也就是操作者自己挑進追蹤清單的分點。
+  const [filterManual, setFilterManual] = useState(false);
   const [filterDaytrade, setFilterDaytrade] = useState<"all" | "exclude" | "only">("all");
 
   useEffect(() => {
@@ -635,12 +637,58 @@ export default function BranchPage() {
     if (filterSearch && !r.branch_name.includes(filterSearch)) return false;
     if (filterTrackable && !trackNames.has(r.branch_name)) return false;
     if (filterEnough && effectiveSamples(r) < MIN_SAMPLES) return false;
+    if (filterManual && r.source !== "manual") return false;
     if (filterDaytrade === "exclude" && r.is_daytrade === 1) return false;
     if (filterDaytrade === "only" && r.is_daytrade !== 1) return false;
     return true;
   });
   const filteredMain = filteredRankings.filter(r => r.is_daytrade !== 1);
   const filteredDaytrade = filteredRankings.filter(r => r.is_daytrade === 1);
+
+  // 「我的追蹤」＝出處篩選:追蹤清單裡混了兩種來源,source === "manual" 是操作者
+  // 自己挑進去的種子,"auto" 是分數達標後被自動納入的。這裡只分「誰是我挑的」,
+  // 不對分點的好壞下任何判斷——那是排行榜自己的分數在講的事。
+  //
+  // 同一顆按鈕同時作用在「排行榜」與「最近動向」兩個分頁:使用者說「把我自己追蹤
+  // 的分點另外列出來」,可能是問「誰在我的名單上」,也可能是問「我名單上的那些人
+  // 最近做了什麼」,一個篩選兩邊都答得到,不必為此開第四個分頁。
+  //
+  // 舊 payload 相容:rankings.json 從一開始就帶 source,所以舊檔案照樣能篩;但
+  // source 若缺漏或是沒見過的值,一律退成「不是我挑的」(篩選開啟時不顯示),
+  // 寧可少給也不要把來歷不明的分點算進使用者的名單。
+  const manualCount = allRankings.filter(r => r.source === "manual").length;
+  const sourceByBranch = new Map(allRankings.map(r => [r.branch_name, r.source]));
+  const todayGroups = Object.entries(today.movements);
+  // 最近動向的 payload 沒有 source(也不該為此加一個欄位),改用排行榜資料查表。
+  // 有出現在動向、卻查不到排行列的分點:排除,但在下面明說排除了幾個——留著會
+  // 宣稱一個查不到的出處,無聲丟掉則是把資料藏起來。
+  const todayVisible = filterManual
+    ? todayGroups.filter(([name]) => sourceByBranch.get(name) === "manual")
+    : todayGroups;
+  const todayUnknownSource = filterManual
+    ? todayGroups.filter(([name]) => !sourceByBranch.has(name)).length
+    : 0;
+
+  const anyFilterActive = tab === "today"
+    ? filterManual
+    : Boolean(filterSearch) || filterTrackable || filterEnough || filterManual || filterDaytrade !== "all";
+  const clearFilters = () => {
+    setFilterSearch("");
+    setFilterTrackable(false);
+    setFilterEnough(false);
+    setFilterManual(false);
+    setFilterDaytrade("all");
+  };
+  const manualFilterButton = (
+    <button
+      onClick={() => setFilterManual(v => !v)}
+      className={cn(filterChipClass(filterManual, "warn"), "min-h-11")}
+      aria-pressed={filterManual}
+      title={"只顯示手動加入追蹤清單的分點；這是來源篩選，與排行分數無關"}
+    >
+      {"我的追蹤"} {manualCount}
+    </button>
+  );
 
   return (
     <>
@@ -681,20 +729,24 @@ export default function BranchPage() {
         </Alert>
       )}
 
-      {/* IA-3: Filter UI */}
-      {tab === "rankings" && (
+      {/* IA-3: Filter UI —— 「我的追蹤」兩個分頁共用,其餘只屬於排行榜 */}
+      {(tab === "rankings" || tab === "today") && (
         <div className="mb-3 flex flex-wrap items-center gap-2">
-          <div className="relative flex items-center">
-            <Search size={13} className="absolute left-2.5 text-muted-foreground" />
-            <input
-              type="text"
-              value={filterSearch}
-              onChange={e => setFilterSearch(e.target.value)}
-              placeholder={"搜尋分點"}
-              aria-label={"分點名稱搜尋"}
-              className="min-h-11 rounded-md border border-border bg-card pl-7 pr-2.5 text-[12.5px] text-foreground placeholder:text-muted-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            />
-          </div>
+          {tab === "rankings" && (
+            <div className="relative flex items-center">
+              <Search size={13} className="absolute left-2.5 text-muted-foreground" />
+              <input
+                type="text"
+                value={filterSearch}
+                onChange={e => setFilterSearch(e.target.value)}
+                placeholder={"搜尋分點"}
+                aria-label={"分點名稱搜尋"}
+                className="min-h-11 rounded-md border border-border bg-card pl-7 pr-2.5 text-[12.5px] text-foreground placeholder:text-muted-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              />
+            </div>
+          )}
+          {manualFilterButton}
+          {tab === "rankings" && (<>
           <button
             onClick={() => setFilterTrackable(v => !v)}
             className={cn(filterChipClass(filterTrackable, "accent"), "min-h-11 disabled:cursor-not-allowed disabled:opacity-50")}
@@ -723,16 +775,19 @@ export default function BranchPage() {
           >
             {"排除隔日沖"}
           </button>
-          {(filterSearch || filterTrackable || filterEnough || filterDaytrade !== "all") && (
+          </>)}
+          {anyFilterActive && (
             <button
-              onClick={() => { setFilterSearch(""); setFilterTrackable(false); setFilterEnough(false); setFilterDaytrade("all"); }}
+              onClick={clearFilters}
               className="min-h-11 rounded-full px-3 py-1 text-[12px] text-muted-foreground hover:bg-secondary"
             >
               {"清除"}
             </button>
           )}
           <span className="ml-auto text-[11.5px] text-muted-foreground">
-            {"顯示"} {filteredRankings.length} {"個"}
+            {tab === "today"
+              ? `顯示 ${todayVisible.length} 個有進出紀錄的分點`
+              : `顯示 ${filteredRankings.length} 個`}
           </span>
         </div>
       )}
@@ -793,7 +848,11 @@ export default function BranchPage() {
             <div className={cn("flex flex-col gap-4 w-full md:max-h-[85vh] md:overflow-y-auto pr-1 md:scrollbar-thin", trackOpen && "hidden md:flex")}>
               {filteredRankings.length === 0 && (
                 <div className="py-[46px] text-center text-sm text-muted-foreground">
-                  {"沒有符合篩選條件的分點。調整篩選條件或清除搜尋。"}
+                  {filterManual && manualCount === 0
+                    ? "這份排行資料裡沒有任何手動加入的分點，你的追蹤清單是空的。"
+                    : filterManual
+                      ? "沒有符合其他篩選條件的手動追蹤分點。放寬其他條件，或關閉「我的追蹤」。"
+                      : "沒有符合篩選條件的分點。調整篩選條件或清除搜尋。"}
                 </div>
               )}
               {filteredMain.length > 0 && (
@@ -994,9 +1053,23 @@ export default function BranchPage() {
           <div className="mb-[-12px] flex items-baseline gap-2">
             <h2 className="text-[15px] font-semibold text-foreground">分點最近交易日進出</h2>
             {today.as_of && <span className="text-[11.5px] text-muted-foreground">資料日 {today.as_of}</span>}
+            {filterManual && <span className="text-[11.5px] text-muted-foreground">只顯示手動加入的分點</span>}
           </div>
-          {Object.entries(today.movements).length === 0 && <div className="py-[46px] text-center text-sm text-muted-foreground">目前無追蹤分點的最近交易日進出紀錄</div>}
-          {Object.entries(today.movements).map(([branchName, trades]) => (
+          {todayVisible.length === 0 && (
+            <div className="py-[46px] text-center text-sm text-muted-foreground">
+              {!filterManual
+                ? "目前無追蹤分點的最近交易日進出紀錄"
+                : manualCount === 0
+                  ? "這份排行資料裡沒有任何手動加入的分點，你的追蹤清單是空的。"
+                  : "你手動加入的分點在最近交易日沒有進出紀錄；關閉「我的追蹤」可看到自動納入的分點。"}
+            </div>
+          )}
+          {todayUnknownSource > 0 && (
+            <p className="text-[11.5px] text-muted-foreground">
+              另有 {todayUnknownSource} 個分點有進出紀錄，但不在這份排行資料裡，無從得知是手動或自動加入，因此未列入。
+            </p>
+          )}
+          {todayVisible.map(([branchName, trades]) => (
             <div key={branchName} className="rounded-[var(--r-lg)] border border-border bg-card p-4 shadow-[var(--shadow-card)]">
               <div className="mb-3 flex items-center justify-between border-b border-border pb-3">
                 <span className="text-lg font-semibold text-foreground">{branchName}</span>
