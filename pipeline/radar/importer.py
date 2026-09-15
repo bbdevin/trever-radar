@@ -1329,11 +1329,17 @@ def backfill_warrant_branches(top: int = 200, days: int = 120,
     )
 
 
-# 分點覆蓋率的基準窗:最近幾個**交易日**。交易日曆取自 `daily_prices`,不是
-# 「有分點列的日期」——後者會把「分點來源壞掉的那幾天」自動排除在自己的基準之外,
-# 等於讓壞掉的日子定義什麼叫正常。60 沿用 `_market_reference` docstring 裡真的
-# 推算過的那個窗長:它對「25 個連續壞日」那種真實事故仍留得住足夠的好樣本。
-_BRANCH_COVERAGE_BASELINE_DAYS = 60
+# 分點覆蓋率的**警報**門檻(不是上線閘門,上線閘門是共用的
+# `min_market_fraction=0.5`,見 `_branch_date_fit` docstring)。
+#
+# 這個數字可以、也應該照觀測資料調,因為它調錯的代價是「操作者收到一則不準的
+# 通知」,不是「少掉一整天的 publish」。設法不是從觀測到的幾個 session 反推,
+# 而是從**基準率**推:合法的「沒有分點資料」大約是被請求股票的 2%(冷門股當天
+# 根本沒有分點成交;production 實測約 1,950 / 1,988 ≈ 98%),所以警報設在
+# 「缺漏率比基準率高一個數量級」= 20% 缺漏 = 0.8 覆蓋。
+#
+# 0.75~0.9 之間任何值都做同一件事,這是一顆設計上就打算讓人轉的旋鈕。
+_BRANCH_ALARM_FRACTION = 0.8
 
 
 def _branch_coverage(conn, d_iso: str) -> int:
@@ -1354,62 +1360,61 @@ def _branch_coverage(conn, d_iso: str) -> int:
     ), {"d": d_iso}).scalar() or 0)
 
 
-def _branch_date_fit(conn, d_iso: str, min_market_fraction: float) -> dict:
+def _branch_date_fit(conn, d_iso: str, expected: int,
+                     min_market_fraction: float) -> dict:
     """這個日期的分點資料夠不夠完整到可以拿去算籌碼、上線?
 
-    判準和 `_market_reference` 同一個形狀,而且刻意重用它的 `_quantile` /
-    `_REFERENCE_QUANTILE` / `_MIN_MARKET_SAMPLES` / `min_market_fraction`,不另
-    立門檻:基準是「最近交易日的同一個統計量」的高分位數,不是中位數。理由完全
-    是 `_market_reference` docstring 講過的那條——這是**短缺**偵測器,統計量有
-    上界(全市場普通股檔數),沒有「太多」這種故障要防;而中位數假設壞日是窗內
-    的少數,它要抓的那次事故是 25 個連續交易日,窗一短中位數就會落在壞值上,
-    每個壞日都會被判成健康。
+    分母不是歷史基準,是**這一輪自己要的股票檔數**。歷史基準存在的理由是「這一天
+    *應該*有幾列?匯入端不知道」——對 `_market_reference` 的上櫃/融資呼叫者那確實
+    未知(交易所決定公布幾列)。但分點匯入是自己建目標清單的:夜間設定
+    (`vps/scripts/daily-branches.sh`,`--top 0`)下,股票目標就是當日 `daily_prices`
+    的整個宇宙。分母因此是同一天、精確已知、完全不涉及歷史。
 
-    基準只由「當天有分點資料」的交易日組成(0 覆蓋的日期不進樣本),所以一段
-    全滅的停擺無法把自己的基準拉下來遮住自己;代價是樣本數也跟著被餓死,低於
-    `_MIN_MARKET_SAMPLES` 時退回只做地板檢查(覆蓋 > 0),而不是靜默跳過。
+    這一步同時消掉了舊版的每個弱點:沒有 60 天窗、沒有 regime shift 跨騎(目標池
+    變動時分子分母一起動)、沒有冷啟動的 `_MIN_MARKET_SAMPLES` 退路、沒有會漂的
+    分位數。這個比例的意思從「佔某個會漂的 60 天分位數多少」變成「我們真的要的
+    股票裡,有多少檔帶著資料回來」——可解釋,而且讓門檻可以用結構理由辯護,而不是
+    靠「觀測到的 26 天剛好符合」。
+
+    `min(1.0, ...)` 是刻意的:累積覆蓋率可以超過單輪的目標數,因為同一個交易日會被
+    匯入兩次(17:40 與 22:00),前一輪可能已經覆蓋了這一輪沒有請求的股票。
+
+    ``min_market_fraction``(0.5)是**扣留**閘門,和上櫃/融資呼叫者共用,因為在三處
+    意思相同。它的高度由代價不對稱決定,不是由這個統計量的離散程度決定:誤扣留的
+    代價是整天不上線,而在 80% 覆蓋率下誤上線的代價是 20% 的股票當晚少一個分點
+    訊號。兩者不對稱,所以閘門壓得很低,實際上只有它當初要抓的那種故障(來源死掉
+    /佔位頁,落點在 0 或接近 0)構得到。**對這個統計量它是一條地板,不是一條窄
+    帶**——不要有人後來把它當成窄帶來「修好」。
+
+    警報(`_BRANCH_ALARM_FRACTION`,0.8)是另一回事,見該常數。
+
+    兩個已知的盲點,都是刻意留的:
+
+    1. ``ids`` 模式(明確 --ids):比例只替被指定的那幾檔說話,不代表市場。夜間流程
+       從不使用這個模式。
+    2. 若上游缺了上櫃報價,``--top 0`` 會建出一份半個宇宙的目標清單,分子分母一起
+       縮,分點比例看起來很健康。那是 `daily_prices` 完整性閘門的職責,而它正是對
+       這種故障開火。**不要**在這裡再加一道檢查——重複扣留不是額外的安全。
     """
-    from sqlalchemy import text
-
     coverage = _branch_coverage(conn, d_iso)
-    baseline = [
-        int(r[1]) for r in conn.execute(text(
-            "SELECT b.date, COUNT(DISTINCT b.stock_id) FROM branch_trades_raw b "
-            "JOIN stocks s ON s.id = b.stock_id AND s.type = 'stock' "
-            "WHERE b.date IN ("
-            "  SELECT DISTINCT date FROM daily_prices WHERE date < :d "
-            "  ORDER BY date DESC LIMIT :cap) "
-            "GROUP BY b.date"
-        ), {"d": d_iso, "cap": _BRANCH_COVERAGE_BASELINE_DAYS}).fetchall()
-    ]
-    samples = len(baseline)
-    if samples < _MIN_MARKET_SAMPLES:
-        # 冷啟動/新 DB:沒有足夠歷史可以說什麼叫正常。仍然做地板檢查——
-        # 「量不出來」不可以變成「不檢查」。
-        return {
-            "coverage": coverage,
-            "reference": None,
-            "samples": samples,
-            "fit": coverage > 0,
-            "reason": None if coverage > 0 else (
-                f"branch coverage 0 stocks on {d_iso}; only {samples} baseline "
-                f"trading date(s) carry branch data, below the "
-                f"{_MIN_MARKET_SAMPLES} needed for a reference, so only the "
-                f"floor test (coverage > 0) applied"
-            ),
-        }
-    reference = _quantile(baseline, _REFERENCE_QUANTILE)
-    fit = coverage > 0 and coverage >= min_market_fraction * reference
+    ratio = min(1.0, coverage / expected) if expected else 0.0
+    fit = coverage > 0 and ratio >= min_market_fraction
+    alarm = fit and ratio < _BRANCH_ALARM_FRACTION
     return {
         "coverage": coverage,
-        "reference": reference,
-        "samples": samples,
+        "expected": expected,
+        "ratio": ratio,
         "fit": fit,
+        "alarm": alarm,
         "reason": None if fit else (
-            f"branch coverage {coverage} stocks on {d_iso}, below "
-            f"{min_market_fraction:.0%} of the reference {reference} "
-            f"({_REFERENCE_QUANTILE:g}-quantile over {samples} recent trading dates)"
+            f"branch coverage {coverage} stocks on {d_iso}, "
+            f"{ratio:.0%} of the {expected} stock target(s) this run requested, "
+            f"below the {min_market_fraction:.0%} publish floor"
         ),
+        "alarm_reason": (
+            f"branch coverage {coverage}/{expected} stock target(s) = {ratio:.0%}, "
+            f"below the {_BRANCH_ALARM_FRACTION:.0%} alarm level"
+        ) if alarm else None,
     }
 
 
@@ -1432,9 +1437,10 @@ def import_branch_trades(date: str | None = None, top: int = 80,
 
     狀態欄講的是**這個日期夠不夠格上線**,不是「這一輪有沒有小失誤」:
 
-    - ``ok``         一檔都沒失敗,而且日期合格(見 :func:`_branch_date_fit`)
-    - ``incomplete`` 有個別標的失敗,但日期仍然合格
-    - ``error``      日期不合格,不管 failed 是幾
+    - ``ok``         一檔都沒失敗,覆蓋率也在警報線之上(見 :func:`_branch_date_fit`)
+    - ``incomplete`` 日期仍然合格,但有個別標的失敗、或覆蓋率低於
+                     ``_BRANCH_ALARM_FRACTION``。兩個成因獨立,理由字串分開寫。
+    - ``error``      日期不合格(覆蓋率低於 ``min_market_fraction``),不管 failed 是幾
 
     兩個訊號走兩條路。日期覆蓋率是**跨輪累積**的:同一個交易日 17:40 與 22:00
     各匯入一次、upsert 同一組 key,14:39 那種「來源還沒公布」的空跑因此無害
@@ -1479,6 +1485,10 @@ def import_branch_trades(date: str | None = None, top: int = 80,
                     "JOIN stocks s ON s.id = p.stock_id AND s.type = 'stock' "
                     "WHERE p.date = :d ORDER BY p.turnover DESC LIMIT :n"),
                     {"d": iso_d, "n": top})]
+        # 合格判準的分母:**這一輪要的股票檔數**,必須在權證目標被接上去之前量。
+        # 接在後面的權證不進 `_branch_coverage` 的分子(那邊 JOIN 了
+        # `type='stock'`),所以把它們算進分母會靜默灌水,讓比例永遠偏低。
+        expected = len(targets)
         if not ids and warrant_turnover_min is not None:
             # The threshold pool deliberately replaces (rather than augments)
             # legacy --warrants, so one warrant can never be queued twice.
@@ -1544,12 +1554,19 @@ def import_branch_trades(date: str | None = None, top: int = 80,
 
     # 合格與否在這一輪的寫入都 commit 之後才量(每檔各自 commit,上面已完成)。
     with engine.connect() as conn:
-        fitness = _branch_date_fit(conn, iso_d, min_market_fraction)
+        fitness = _branch_date_fit(conn, iso_d, expected, min_market_fraction)
     coverage = fitness["coverage"]
+    ratio = fitness["ratio"]
     if not fitness["fit"]:
         status, err = "error", fitness["reason"]
-    elif failed:
-        status, err = "incomplete", f"{failed} stocks failed"
+    elif fitness["alarm"] or failed:
+        # 兩個互相獨立的 `incomplete` 成因,各自帶自己的理由字串:操作者要能從
+        # 日誌一眼分辨「覆蓋率低到該看一下」和「有幾檔抓失敗」。
+        status = "incomplete"
+        err = "; ".join([r for r in (
+            fitness["alarm_reason"],
+            f"{failed} stocks failed" if failed else None,
+        ) if r])
     else:
         status, err = "ok", None
     with engine.begin() as conn:
@@ -1558,7 +1575,12 @@ def import_branch_trades(date: str | None = None, top: int = 80,
         # 用既有的通用欄位,不需要 schema migration;`dataset='branch_coverage'`
         # 不落在 JSON export 的 `dataset IN ('quotes','insti','margin')` 裡,也不
         # 等於 shell 端查的 `dataset='branch'`,而 prune 是按 date 砍的,一體適用。
-        _log(conn, "fubon", "branch_coverage", date, coverage, "ok")
+        #
+        # 分母(`expected`)寫進**同一列**的 error 欄,不另開一列:同一個交易日一晚
+        # 會跑兩輪,兩列的話讀日誌的人得自己把 coverage 和 expected 按時間配對,
+        # 配錯就得到一個不存在的比例。一列自帶分子分母,比例永遠可重建。
+        _log(conn, "fubon", "branch_coverage", date, coverage, "ok",
+             error=f"expected={expected} ratio={ratio:.4f}")
 
     # 單輪的死來源警報,獨立於上線判斷:這一輪一檔都沒抓到,但日期可能早已由
     # 前一輪填滿而完全合格。
@@ -1566,9 +1588,8 @@ def import_branch_trades(date: str | None = None, top: int = 80,
 
     print(f"branch trades {iso_d}: {done} stocks ok, {empty} empty, "
           f"{failed} failed, {written} rows", flush=True)
-    print(f"branch coverage {iso_d}: {coverage} stocks vs reference "
-          f"{fitness['reference'] if fitness['reference'] is not None else 'UNVERIFIED'} "
-          f"from {fitness['samples']} trading date(s) → {status}", flush=True)
+    print(f"branch coverage {iso_d}: {coverage} stocks of {expected} requested "
+          f"= {ratio:.1%} → {status}", flush=True)
     if err:
         print(f"branch trades {iso_d}: {err}", flush=True)
     if dead_feed:
@@ -1576,8 +1597,8 @@ def import_branch_trades(date: str | None = None, top: int = 80,
               f"({len(targets)} targets)", flush=True)
     return {"done": done, "empty": empty, "failed": failed, "rows": written,
             "status": status, "fit": fitness["fit"], "dead_feed": dead_feed,
-            "coverage": coverage, "reference": fitness["reference"],
-            "baseline_samples": fitness["samples"], "targets": len(targets)}
+            "coverage": coverage, "expected": expected, "ratio": ratio,
+            "targets": len(targets)}
 
 
 # 一個抓得到、解析成功、但沒有成分股的分類是「已觀測到的事實」，不是抓取不完整：
