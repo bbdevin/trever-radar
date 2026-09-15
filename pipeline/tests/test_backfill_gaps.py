@@ -113,6 +113,94 @@ def _fake_import_daily(calls):
     return fake
 
 
+class BackfillOutcomeIsMeasuredNotAssumedTests(_BaseSqliteTest):
+    """「試過了」不等於「補好了」,而在這支程式裡差別是看不見的。
+
+    `importer._run` 的 docstring 明講 "never raise":每一次抓取失敗都被轉成
+    import_logs 裡的一列然後正常返回。`backfill()` 對任何日期都不拋出,而
+    `cmd_backfill` 在本次改動之前沒有 `sys.exit`。三者合起來的後果是:**25 個
+    日期全部抓取失敗,指令仍會印出「N market-gaps repaired」並 exit 0**,而那個
+    N 是在呼叫 import_daily **之前**就累加的——它數的是嘗試,不是成果。
+
+    這很重要,因為 `repair-window.sh` 把後面三個步驟(帳本補寫、
+    compute-performance --all、融資券)全部鏈在這個離開碼上。鏈在一個永遠為零的
+    離開碼上,等於沒有閘門:報價沒補成,後面照跑,而且都是對正式資料庫的寫入。
+
+    這裡的 fake import 刻意**不寫任何列**——正是「跑完了但沒補到」的形狀。
+    """
+
+    def test_a_failed_repair_is_reported_as_still_incomplete(self):
+        self._seed_full_history()
+        self._seed_quotes(TARGET, TWSE_N, 0)      # tpex 全缺
+        calls = []
+        with patch("radar.importer.import_daily", side_effect=_fake_import_daily(calls)), \
+             patch("radar.importer.datetime") as mock_dt:
+            mock_dt.now.return_value = _tz_now(TARGET)
+            result = backfill(1, ["quotes"])
+
+        self.assertIn("20260819", calls, "先決條件:它必須真的試過重抓")
+        self.assertTrue(
+            any(r["date"] == TARGET and r["market"] == "tpex"
+                for r in result["still_incomplete"]),
+            "重抓之後 tpex 仍然是 0 列,必須出現在 still_incomplete;"
+            f"實際為 {result['still_incomplete']}",
+        )
+        self.assertEqual(
+            result["attempted"], result["repaired"],
+            "`repaired` 是保留給既有讀者的舊鍵名,語意等同 attempted",
+        )
+
+    def test_a_successful_repair_leaves_nothing_still_incomplete(self):
+        self._seed_full_history()
+        self._seed_quotes(TARGET, TWSE_N, 0)
+
+        seeded = []
+
+        def repairing_import(ds, datasets=None):
+            # 這一版的 fake 真的把缺的列補上,模擬抓取成功。
+            iso = f"{ds[:4]}-{ds[4:6]}-{ds[6:8]}"
+            with db.get_engine().begin() as conn:
+                conn.execute(schema.daily_prices.insert(), [
+                    {"stock_id": f"TP{i:04d}", "date": iso, "close": 10,
+                     "volume": 100, "turnover": 1000}
+                    for i in range(TPEX_N)
+                ])
+            seeded.append(ds)
+            return [{"source": "tpex", "dataset": "quotes", "status": "ok", "rows": TPEX_N}]
+
+        with patch("radar.importer.import_daily", side_effect=repairing_import), \
+             patch("radar.importer.datetime") as mock_dt:
+            mock_dt.now.return_value = _tz_now(TARGET)
+            result = backfill(1, ["quotes"])
+
+        self.assertEqual(seeded, ["20260819"])
+        self.assertEqual(
+            result["still_incomplete"], [],
+            "缺的列補回來之後就不該再列為未完成——否則這個判準只會永遠說失敗",
+        )
+
+    def test_the_cli_exit_code_reports_the_outcome(self):
+        """離開碼必須講結果,不是「跑完了」。
+
+        `repair-window.sh` 的步驟一就是靠這個碼決定要不要往下做。
+        """
+        from radar import cli
+
+        self._seed_full_history()
+        self._seed_quotes(TARGET, TWSE_N, 0)
+        calls = []
+        with patch("radar.importer.import_daily", side_effect=_fake_import_daily(calls)), \
+             patch("radar.importer.datetime") as mock_dt:
+            mock_dt.now.return_value = _tz_now(TARGET)
+            with self.assertRaises(SystemExit) as ctx:
+                cli.main(["backfill", "--days", "1", "--datasets", "quotes"])
+        self.assertEqual(
+            ctx.exception.code, 1,
+            "補不成必須非零。改動前這裡是 exit 0,而後續三個正式資料庫寫入"
+            "全部鏈在它上面",
+        )
+
+
 class BackfillQuotesGapTests(_BaseSqliteTest):
     """backfill(): a date needs every market adequately represented, not just one row."""
 

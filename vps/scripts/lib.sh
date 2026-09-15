@@ -35,6 +35,7 @@ job_zh() {
     manual-catchup.sh) echo "手動追補" ;;
     adjust-backfill.sh) echo "還原因子回補" ;;
     warrant-backfill.sh) echo "權證分點回補" ;;
+    repair-window.sh) echo "正式修復窗" ;;
     *) echo "${SCRIPT_NAME%.sh}" ;;
   esac
 }

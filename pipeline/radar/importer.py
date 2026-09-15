@@ -453,7 +453,7 @@ def backfill(days: int, datasets: list[str] | None = None, *,
 
     cur = today
     done = imported = probes = 0
-    repaired: list[dict] = []
+    attempted: list[dict] = []
     for _ in range(scan_calendar_days):
         if done >= days:
             break
@@ -473,7 +473,7 @@ def backfill(days: int, datasets: list[str] | None = None, *,
                 continue
             print(f"backfill {d_iso} incomplete: {','.join(missing)} below "
                   f"{min_market_fraction:.0%} of reference; re-importing", flush=True)
-            repaired.extend({"date": d_iso, "market": m} for m in missing)
+            attempted.extend({"date": d_iso, "market": m} for m in missing)
         results = import_daily(ds, datasets or ["quotes"])
         probes += 1
         if any(r["dataset"] == "quotes" and r["status"] == "ok" for r in results):
@@ -481,11 +481,45 @@ def backfill(days: int, datasets: list[str] | None = None, *,
             imported += 1
             print(f"backfill {d_iso} ok ({done}/{days})", flush=True)
         cur -= timedelta(days=1)
+
+    # 重新量測,而不是相信「跑完了」。
+    #
+    # 這條存在的理由:`_run` 的 docstring 明講 "never raise",每一次抓取失敗都被
+    # 轉成 import_logs 裡的 empty/error 紀錄然後正常返回;`backfill()` 對任何日期
+    # 都不會拋出;而 `cmd_backfill` 沒有 sys.exit。所以在本次改動之前,**25 個
+    # 日期全部抓取失敗時,這支指令會印出「N market-gaps repaired」然後 exit 0**,
+    # 而那個 N 是在呼叫 import_daily **之前**就累加的——它數的是嘗試,不是成果。
+    # 任何把後續步驟鏈在這個離開碼上的流程,都鏈在一個不存在的閘門上。
+    #
+    # 對照用的參考值刻意沿用跑之前那一份:修復會把列數推上去,若在這裡重算
+    # 參考值,門檻會跟著上移,變成拿修好之後的標準去評判修好之後的結果。
+    still_incomplete: list[dict] = []
+    if strict_markets and attempted:
+        attempted_dates = sorted({a["date"] for a in attempted})
+        with get_engine().connect() as conn:
+            after_counts, _, _ = _market_reference(conn, "daily_prices", window_start)
+        for d_iso in attempted_dates:
+            for m in _incomplete_markets(d_iso, after_counts, reference, min_market_fraction):
+                still_incomplete.append({
+                    "date": d_iso,
+                    "market": m,
+                    "rows": after_counts.get(d_iso, {}).get(m, 0),
+                    "reference": reference.get(m),
+                })
+        for row in still_incomplete:
+            print(f"backfill {row['date']} STILL INCOMPLETE: {row['market']} has "
+                  f"{row['rows']} rows against a reference of {row['reference']}",
+                  flush=True)
+
     return {
         "trading_days": done,
         "imported": imported,
         "probes": probes,
-        "repaired": repaired,
+        # `repaired` 保留原鍵名給既有讀者,但語意是「嘗試修復的 (日期, 市場)」。
+        # 真正回答「修好了沒有」的是 still_incomplete。
+        "repaired": attempted,
+        "attempted": attempted,
+        "still_incomplete": still_incomplete,
         "reference": dict(reference),
         "samples": dict(samples),
         "unverified_markets": unverified,

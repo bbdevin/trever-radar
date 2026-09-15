@@ -68,10 +68,21 @@ def _warn_unverified_markets(info, cmd: str) -> None:
 def cmd_backfill(args):
     from .importer import backfill
     info = backfill(args.days, args.datasets.split(","))
+    still = info.get("still_incomplete") or []
     print(f"backfill done: {info['trading_days']} trading days present "
           f"({info['imported']} newly imported, {info['probes']} probes, "
-          f"{len(info['repaired'])} market-gaps repaired)")
+          f"{len(info.get('attempted') or [])} market-gaps attempted, "
+          f"{len(still)} still incomplete)")
     _warn_unverified_markets(info, "backfill")
+    if still:
+        # 非零,因為「試過了」不等於「補好了」。importer._run 的 docstring 明講
+        # "never raise":每一次抓取失敗都變成 import_logs 裡的一列然後正常返回,
+        # 所以在本次改動之前,25 個日期全部失敗也會 exit 0 並印出「repaired」。
+        # 任何把後續步驟鏈在這個離開碼上的流程(repair-window.sh 就是)會鏈在一個
+        # 不存在的閘門上。現在退出碼講的是結果,不是「跑完了」。
+        print(f"backfill: {len(still)} (date, market) still below the completeness "
+              f"floor after re-importing — the gap was NOT closed", file=sys.stderr)
+        raise SystemExit(1)
 
 
 def cmd_backfill_margin(args):
