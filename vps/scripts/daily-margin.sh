@@ -33,6 +33,24 @@ if [ -n "$PRICE_D" ] && { [ -z "$MARGIN_D" ] || [ "$PRICE_D" != "$MARGIN_D" ]; }
   MARGIN_D="$PRICE_D"
 fi
 
+# 個股期貨(TAIFEX)。刻意掛在本輪、不新增 cron、不新增第二個寫入者:
+# 這一輪已經握著 db lock 且做完 import → compute → export → deploy。
+# exit 75 = 只有一般時段落地;盤後約 05:00 才公布,21:20 跑到這裡看到一個時段
+# 是正常的,所以 75 是 warn-and-continue,不是失敗。其餘非 0 照本檔慣例中止。
+futures_rc=0
+if radar import-futures; then
+  :
+else
+  futures_rc=$?
+fi
+if [ "$futures_rc" -ne 0 ] && [ "$futures_rc" -ne 75 ]; then
+  notify "個股期貨匯入失敗（exit ${futures_rc}），請查看 ~/radar-cron.log" high "失敗"
+  exit "$futures_rc"
+fi
+if [ "$futures_rc" -eq 75 ]; then
+  notify_warn "個股期貨僅一般時段已公布（盤後約 05:00），本輪照常續跑"
+fi
+
 radar compute-scores
 radar compute-performance
 radar export-json

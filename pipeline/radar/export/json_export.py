@@ -203,6 +203,83 @@ def _active_buybacks_by_stock(conn, as_of: str) -> dict[str, dict]:
     return active
 
 
+def _futures_by_stock(conn, as_of: str) -> tuple[dict[str, dict], str] | None:
+    """個股期貨標的「存在與否」這個事實,外加(若當日有列)今天的成交量/未平倉。
+
+    回傳 None = futures_contracts 整張表是空的(第一次 import-futures 之前)。
+    呼叫端在那個情況下**整個 futures 鍵都不輸出**:
+      * 沒有 futures 鍵      = 「我們不知道」
+      * "contracts": []      = 「我們知道,而且答案是沒有」
+    兩者不可以塌成同一種表示。
+
+    這個專案在別處的預設是「沒有資料 ≠ 沒有這件事」(absence is not evidence of
+    absence),空陣列在這裡之所以可以當成一個**正面主張**,只因為來源是 TAIFEX
+    的**完整**官方標的清單而且帶日期:那份清單裡沒有這檔股票,就等於「截至
+    list_as_of 這天,它不是個股期貨標的」。換成任何非窮舉的來源,這個空陣列
+    就不合法。
+
+    這裡刻意不算任何比率、均值、名次:量能異常排行是後面的切片,需要 60 個交易日
+    的歷史與事先登記的否決條件;沒有基準的數字正是這個功能要小心避免的東西。
+    """
+    contract_rows = list(conn.execute(text("""
+        SELECT contract_code, stock_id, stock_name, is_stock_future,
+               is_stock_option, is_weekly_option, last_seen
+        FROM futures_contracts
+        ORDER BY contract_code
+    """)).mappings())
+    if not contract_rows:
+        return None
+    # 清單本身最後一次刷新的日期。非標的股票用它當 list_as_of——空陣列的主張
+    # 是「這份清單截至這天不含這檔」,主張的日期就是清單的日期。
+    list_refreshed = max(row["last_seen"] for row in contract_rows)
+
+    # 價差組合列(ContractMonth(Week) 形如 '202609/202610')必須排除:那是轉倉
+    # 的一筆對敲,不是一個部位,計進去會灌大後面那個切片要拿來排名的數字。
+    # (那些列的 OpenInterest 來源本來就給 '-' → NULL,但量是實數,不濾就會進總和。)
+    daily_rows = conn.execute(text("""
+        SELECT contract_code, session,
+               SUM(volume) AS volume,
+               SUM(open_interest) AS open_interest
+        FROM futures_daily
+        WHERE date = :d AND contract_month NOT LIKE '%/%'
+        GROUP BY contract_code, session
+    """), {"d": as_of}).mappings()
+    daily_by_contract: dict[str, dict] = {}
+    for row in daily_rows:
+        entry = daily_by_contract.setdefault(row["contract_code"], {
+            "date": as_of, "volume": None, "open_interest": None, "session_volume": {},
+        })
+        if row["volume"] is not None:
+            entry["session_volume"][row["session"]] = row["volume"]
+            entry["volume"] = (entry["volume"] or 0) + row["volume"]
+        # 未平倉是存量不是流量:同一到期月的一般/盤後相加會重複計算。實務上
+        # 盤後列的 OpenInterest 來源就是 '-'(NULL),所以這裡的加總等於只取
+        # 有給數字的那個時段,跨到期月相加則是正確的。
+        if row["open_interest"] is not None:
+            entry["open_interest"] = (entry["open_interest"] or 0) + row["open_interest"]
+
+    by_stock: dict[str, dict] = {}
+    for row in contract_rows:
+        entry = by_stock.setdefault(row["stock_id"], {
+            "version": 1, "list_as_of": row["last_seen"], "contracts": [],
+        })
+        entry["list_as_of"] = max(entry["list_as_of"], row["last_seen"])
+        contract = {
+            "code": row["contract_code"],
+            "is_futures": bool(row["is_stock_future"]),
+            "is_option": bool(row["is_stock_option"]),
+            "is_weekly_option": bool(row["is_weekly_option"]),
+        }
+        # 沒有當日列就整個 daily 省略。session_volume 只列出**真的有列**的時段:
+        # 21:20 那一輪通常只有一般時段落地(盤後約 05:00 才公布),寫一個
+        # "盤後": 0 會把「還沒公布」謊報成「盤後沒人交易」。
+        today = daily_by_contract.get(row["contract_code"])
+        if today is not None:
+            contract["daily"] = today
+        entry["contracts"].append(contract)
+    return by_stock, list_refreshed
+
+
 def _company_group_payloads(conn, as_of: str) -> tuple[list[dict], dict[str, list[dict]]]:
     """Build group pages from the versioned mapping, never from the radar pool."""
     mappings = load_company_groups()
@@ -714,6 +791,7 @@ def export_json(out_dir: Path | None = None) -> dict:
         m_date = latest("daily_margins")
         w_date = latest("warrant_stock_daily")
         b_date = latest("branch_trades")
+        f_date = latest("futures_daily")
         # A warrant batch can be current for some underlyings while others
         # retain an older latest row. Do not label that mixed state as fresh.
         w_stale_stock_count = conn.execute(text("""
@@ -738,6 +816,8 @@ def export_json(out_dir: Path | None = None) -> dict:
                 "stale_stock_count": w_stale_stock_count,
             },
             "branch": {"date": b_date, "stale": b_date != d},
+            # TAIFEX 落後一天就要看得見,不然期貨量會安靜地配上錯的現貨日。
+            "futures": {"date": f_date, "stale": f_date != d},
         }
 
         rows = conn.execute(text("""
@@ -1324,7 +1404,8 @@ def export_json(out_dir: Path | None = None) -> dict:
             )
         # Stale warning
         stale_labels = [
-            {"insti": "法人", "margin": "融資券", "warrant": "權證", "branch": "分點", "themes": "題材分類"}.get(k, k)
+            {"insti": "法人", "margin": "融資券", "warrant": "權證", "branch": "分點",
+             "themes": "題材分類", "futures": "個股期貨"}.get(k, k)
             for k, v in (freshness or {}).items()
             if k != "quotes" and (v.get("stale") if isinstance(v, dict) else False)
         ]
@@ -1423,6 +1504,7 @@ def export_json(out_dir: Path | None = None) -> dict:
         """)).mappings()
         company_profiles = {row["stock_id"]: dict(row) for row in profile_rows}
         active_buybacks = _active_buybacks_by_stock(conn, d)
+        futures_result = _futures_by_stock(conn, d)
         branch_pctile_exists = _branch_pctile_table_exists(conn)
         branch_pctile_meta = (
             _branch_pctile_snapshot_meta(conn) if branch_pctile_exists else None
@@ -1571,6 +1653,13 @@ def export_json(out_dir: Path | None = None) -> dict:
                 "holders_meta": holders_meta,
                 "directors_latest": directors_latest,
             }
+            # futures_contracts 還是空的(第一次 import-futures 之前)→ 整個鍵不輸出。
+            # 有清單了才給答案,而「不是標的」的答案是 contracts: []。
+            if futures_result is not None:
+                futures_by_stock, futures_list_as_of = futures_result
+                payload["futures"] = futures_by_stock.get(sid, {
+                    "version": 1, "list_as_of": futures_list_as_of, "contracts": [],
+                })
             (stock_dir / f"{sid}.json").write_text(
                 json.dumps(payload, ensure_ascii=False), encoding="utf-8")
 
