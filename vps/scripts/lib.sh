@@ -227,6 +227,20 @@ deploy_data() {
 
 taipei_date() { TZ=Asia/Taipei date "$@"; }
 
+# 「那一輪 daily-branches 真的整條跑完(含 deploy_data)」的完成標記。
+#
+# 為什麼夜間作業不能只看 import_logs 的 status:那一列只講「匯入」這一段。
+# 匯入寫下 status=ok 之後,compute-branch-stats 仍可能 OOM(crontab 註記這支是
+# 1.7GB OOM 風險最高的一步)而整輪什麼都沒算出來也沒上線。這時夜間作業正是
+# 唯一的補救,絕不能因為看到 ok 就跳過——那會把備援本身關掉。
+#
+# 標記內容是完成時間(ISO)。夜間作業比較「標記時間」與「最新一筆分點匯入的
+# run_at」:只有標記晚於匯入,才代表那批匯入確實有人算過並上線。17:40 跑完、
+# 22:00 匯入成功但算到一半死掉的情況,標記停在 18:xx 早於 22:54,判斷為未完成。
+#
+# 放 /tmp:重開機後自然消失,而重開機之後我們本來就無從保證上一輪算完了。
+branch_round_marker() { echo "/tmp/radar-branch-round-$1.done"; }
+
 # 安靜窗(docs/35):daily-* / deep / 週六備份+TDCC / mid 期間不應開新 bf 寫者。
 # 回傳 0 = 在窗內(應 pause / 勿啟動回補)。
 # 單一真相:bf-cron-guard / mid-publish / safe-stats / margin-bf / bf-supervisor 共用。

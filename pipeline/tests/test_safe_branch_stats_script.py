@@ -109,15 +109,55 @@ class TestSafeBranchStatsScript(unittest.TestCase):
         self.assertIn("ORDER BY id DESC LIMIT 1", self.code,
                       "同一天 17:40/22:00 都可能各寫一列,要挑最新的一列")
 
-    def test_evening_ok_flag_only_set_on_exact_status_ok(self):
-        line = _first_line(r'EVENING_BRANCH_OK=1', self.lines)
+    def test_skip_requires_both_a_fit_import_and_a_later_completion_marker(self):
+        """跳過重算需要兩個條件,只看 import_logs 的 status 不夠。
+
+        status 那一列只講「匯入」這一段。匯入寫下 ok 之後,compute-branch-stats
+        仍可能 OOM 而整輪什麼都沒算出來、也沒上線;那時跳過等於把備援關掉,
+        正好在最需要它的那一晚。所以還要有一個 deploy_data 之後才寫的完成標記,
+        而且標記時間必須**晚於**那筆匯入的 run_at——否則「17:40 跑完、22:00 匯入
+        成功但算到一半死掉」會被誤判成完成。
+        """
+        line = _first_line(r"^\s*EVENING_BRANCH_OK=1\s*$", self.lines)
         self.assertIsNotNone(line, "找不到 EVENING_BRANCH_OK 的設定")
-        guard = self.lines[line - 1]
-        self.assertIn('"$BRANCH_STATUS" = "ok"', guard,
-                      "只有精確等於 'ok' 才算晚上那輪成功,其餘一律不算")
+        window = "\n".join(self.lines[max(0, line - 8):line])
+        self.assertIn('"$MARKER_AT" > "$BRANCH_RUN_AT"', window,
+                      "必須比較完成標記時間與匯入 run_at,只存在標記還不夠")
+        self.assertIn('-n "$MARKER_AT"', window, "標記缺失要落在保守路徑")
         default_line = _first_line(r"^\s*EVENING_BRANCH_OK=0\s*$", self.lines)
-        self.assertIsNotNone(default_line, "EVENING_BRANCH_OK 應該預設為 0(缺列/非 ok 都保守走完整路徑)")
-        self.assertLess(default_line, line, "預設值要先設,再由 ok 分支覆寫成 1")
+        self.assertIsNotNone(default_line, "預設 0:缺列/缺標記/查詢失敗都保守走完整路徑")
+        self.assertLess(default_line, line, "預設值要先設,再由通過的分支覆寫成 1")
+
+    def test_incomplete_counts_as_fit_but_error_never_does(self):
+        """`incomplete` = 有個別標的沒抓到但當日覆蓋率仍在帶內 → 資料可用。
+
+        把它跟 `error` 一起擋掉,等於為了 1 檔抓失敗而 withhold 一整天 1,987 檔
+        正確的資料;方向剛好錯了。只有 error(覆蓋率掉出帶狀範圍)才是不合格。
+        """
+        line = _first_line(r"^\s*EVENING_BRANCH_OK=1\s*$", self.lines)
+        window = "\n".join(self.lines[max(0, line - 8):line])
+        self.assertIn('"$BRANCH_STATUS" = "ok"', window)
+        self.assertIn('"$BRANCH_STATUS" = "incomplete"', window,
+                      "incomplete 也算合格,否則一檔失敗就白跑一整輪")
+        self.assertNotIn('"$BRANCH_STATUS" = "error"', window,
+                         "error 不該出現在「可以跳過」這個判斷裡")
+
+    def test_publish_gate_reads_status_not_parsed_output(self):
+        """上線與否只看 status 欄位,不解析任何 Python 印出來的文字。
+
+        覆蓋率警戒的理由字串(「branch coverage 9/12 ... below the 80% alarm level」)
+        是給人看的,shell 的控制流不可以掛在上面——這是本專案反覆踩過的坑。
+        """
+        idx = self.code.index('"$BRANCH_STATUS" = "error"')
+        self.assertGreater(idx, 0, "拒絕上線的閘門應該存在")
+        for forbidden in ("coverage", "alarm level", "stocks failed", "below the"):
+            with self.subTest(token=forbidden):
+                self.assertNotIn(forbidden, self.code,
+                                 f"控制流不可以依賴 Python 輸出文字:{forbidden}")
+        # `skip_or_alarm` 裡的 grep 讀的是本腳本自己寫的 state 檔,合法;
+        # 不合法的是把任何 radar 子指令的輸出接進管線去比對文字。
+        self.assertNotRegex(self.code, r"radar [a-z-]+[^\n]*\|\s*(grep|awk|sed)",
+                            "不可以解析 radar 指令的輸出來決定控制流")
 
     def test_the_three_redundant_steps_are_gated_on_evening_ok(self):
         for label in ("compute-branch-stats", "compute-scores", "export-json"):

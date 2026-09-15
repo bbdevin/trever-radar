@@ -167,23 +167,45 @@ fi
 # 唯讀連線(?mode=ro):只問狀態,不跟本腳本或其他寫入者搶鎖。
 BRANCH_IMPORT_DATE="${BRANCH_IMPORT_DATE:-$(TZ=Asia/Taipei date -d 'yesterday' +%Y-%m-%d)}"
 
-branch_import_status() {
+branch_import_row() {
   docker run --rm -v "$REPO/data":/app/data radar-pipeline \
     python -c "import sqlite3,sys
 conn = sqlite3.connect('file:/app/data/radar.db?mode=ro', uri=True)
 row = conn.execute(
-    \"SELECT status FROM import_logs WHERE dataset='branch' AND date=? ORDER BY id DESC LIMIT 1\",
+    \"SELECT status, run_at FROM import_logs WHERE dataset='branch' AND date=? \"
+    \"ORDER BY id DESC LIMIT 1\",
     (sys.argv[1],)).fetchone()
-print(row[0] if row else '')" "$BRANCH_IMPORT_DATE"
+print('%s\t%s' % (row[0], row[1]) if row else '\t')" "$BRANCH_IMPORT_DATE"
 }
 
-BRANCH_STATUS="$(branch_import_status 2>/dev/null || true)"
-echo "22:00 branch import_logs status for ${BRANCH_IMPORT_DATE}: '${BRANCH_STATUS:-<missing>}'"
+BRANCH_ROW="$(branch_import_row 2>/dev/null || true)"
+BRANCH_STATUS="${BRANCH_ROW%%	*}"
+BRANCH_RUN_AT="${BRANCH_ROW#*	}"
+MARKER="$(branch_round_marker "$BRANCH_IMPORT_DATE")"
+MARKER_AT="$(cat "$MARKER" 2>/dev/null || true)"
+echo "22:00 branch import_logs for ${BRANCH_IMPORT_DATE}: status='${BRANCH_STATUS:-<missing>}' run_at='${BRANCH_RUN_AT:-<missing>}'"
+echo "evening round marker: ${MARKER_AT:-<missing>}"
 
-# row 缺失、或 status 不是 'ok'(含查詢本身失敗、空字串)一律當「未確認完成」,
-# 走原本就存在的完整補跑路徑——這正是本腳本存在的理由(fallback)。
+# 跳過重算需要兩個條件同時成立,少一個都要走完整補跑路徑:
+#
+#   1. 那一輪的匯入本身合格 —— status 是 ok 或 incomplete。
+#      incomplete 也算合格是刻意的:它代表「有個別標的沒抓到,但當日覆蓋率仍在
+#      帶內」,資料可用。只有 error(覆蓋率掉出帶狀範圍)才是不合格。
+#   2. 有完成標記,而且標記時間晚於那筆匯入的 run_at。
+#      只看 status 不夠 —— 匯入 ok 之後 compute-branch-stats 仍可能 OOM,整輪
+#      什麼都沒算出來也沒上線;那時跳過等於把備援關掉,正好在最需要它的那晚。
+#      比時間則連「17:40 跑完、22:00 匯入成功但算到一半死掉」都能判對。
+#
+# 查詢失敗、空字串、標記缺失一律落在「未確認完成」這邊——這支腳本存在的理由
+# 就是 fallback,判斷不出來的時候多跑一次的代價遠低於漏跑。
 EVENING_BRANCH_OK=0
-[ "$BRANCH_STATUS" = "ok" ] && EVENING_BRANCH_OK=1
+if [ "$BRANCH_STATUS" = "ok" ] || [ "$BRANCH_STATUS" = "incomplete" ]; then
+  if [ -n "$MARKER_AT" ] && [ -n "$BRANCH_RUN_AT" ] && [[ "$MARKER_AT" > "$BRANCH_RUN_AT" ]]; then
+    EVENING_BRANCH_OK=1
+  else
+    echo "完成標記不晚於匯入 run_at（或缺失）：那批匯入沒有被算完並上線,本輪照常補跑"
+  fi
+fi
 
 STATS_NOTE="ok"
 SCORES_NOTE="skipped"
@@ -192,7 +214,7 @@ PAIR_PCTILE_NOTE="skipped"
 
 if [ "$EVENING_BRANCH_OK" = "1" ]; then
   STATS_NOTE="skipped_evening_ok"
-  echo "skip compute-branch-stats：22:00 那輪 ${BRANCH_IMPORT_DATE} 的分點匯入已 status=ok"
+  echo "skip compute-branch-stats：${BRANCH_IMPORT_DATE} 那輪已整條跑完並上線（status=${BRANCH_STATUS}，標記 ${MARKER_AT}）"
 elif run_step "compute-branch-stats" radar compute-branch-stats; then
   STATS_NOTE="ok"
 else
@@ -248,7 +270,7 @@ fi
 
 if [ "$EVENING_BRANCH_OK" = "1" ]; then
   SCORES_NOTE="skipped_evening_ok"
-  echo "skip compute-scores：22:00 那輪 ${BRANCH_IMPORT_DATE} 的分點匯入已 status=ok"
+  echo "skip compute-scores：${BRANCH_IMPORT_DATE} 那輪已整條跑完並上線（status=${BRANCH_STATUS}，標記 ${MARKER_AT}）"
 elif [ "${SKIP_SCORES:-0}" != "1" ]; then
   if run_step "compute-scores" radar compute-scores; then
     SCORES_NOTE="ok"
@@ -266,7 +288,7 @@ fi
 # (rule 2,evening ok 就跳過),後者是「這批資料能不能上線」(rule 3,22:00
 # 那輪 status=error 就不上線)——兩條規則彼此獨立,不能合併成同一個 if。
 if [ "$EVENING_BRANCH_OK" = "1" ]; then
-  echo "skip export-json：22:00 那輪 ${BRANCH_IMPORT_DATE} 的分點匯入已 status=ok"
+  echo "skip export-json：${BRANCH_IMPORT_DATE} 那輪已整條跑完並上線（status=${BRANCH_STATUS}，標記 ${MARKER_AT}）"
 elif [ "${SKIP_EXPORT:-0}" != "1" ]; then
   run_step "export-json" radar export-json
 fi
@@ -286,6 +308,9 @@ fi
   echo "scores=$SCORES_NOTE"
   echo "branch_import_date=$BRANCH_IMPORT_DATE"
   echo "branch_import_status=${BRANCH_STATUS:-missing}"
+  echo "branch_import_run_at=${BRANCH_RUN_AT:-missing}"
+  echo "evening_round_marker=${MARKER_AT:-missing}"
+  echo "evening_round_complete=$EVENING_BRANCH_OK"
   echo "mem_before=$MEM"
   echo "mem_after_pause=$MEM2"
   echo "free_gb_before=$FREE"
