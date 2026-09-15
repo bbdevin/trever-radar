@@ -8,6 +8,12 @@
 同樣刻意不刪的還有 ``branch_stock_pctile_counts``(分點 × 個股 的價格分位計數)。
 它**只有一份最新快照**,每次重算就整份被取代,所以沒有可以 prune 的歷史;
 在這裡刪它只會讓個股頁短暫變空,不會省下任何長期空間。
+
+``futures_daily``(TAIFEX 期貨日行情)**也永不 prune**。它一年約 40 MB,而它的
+上游回補成本不對稱:當日端點只供應最新一天(``?date=`` 參數被忽略),歷史只能走
+Big5 CSV 的 futDataDown 一個月一次請求慢慢撈回來。刪掉一年份,要重抓大約 12 次
+請求;省下的 40 MB 換來的是一段再也不保證抓得回來的歷史。``futures_contracts``
+同理不刪:它記的是「哪一天還看得到這檔標的」,刪列等於改寫那段歷史。
 """
 from sqlalchemy import text
 from .db import get_engine, init_db

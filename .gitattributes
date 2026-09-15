@@ -7,3 +7,15 @@
 # changes nothing about history — it only stops fresh clones and git worktrees
 # from producing scripts that cannot run.
 *.sh text eol=lf
+
+# Captured upstream payloads, committed verbatim as parser fixtures. `-text`
+# turns off both end-of-line conversion and the whitespace linting, because
+# neither is a courtesy here: the stockLists capture carries the site's own CRLF
+# and tab indentation (its trailing whitespace is part of the cells the marker
+# parser has to tolerate), and the futDataDown capture is Big5 bytes, not UTF-8.
+# Either file "helpfully" normalised stops being the thing the parser was
+# verified against.
+# The HTML stays diffable, only its whitespace rules are relaxed; the CSV is
+# `binary` because Big5 bytes are not reviewable as a text diff in the first place.
+pipeline/tests/fixtures/taifex_stock_lists.html -text whitespace=-trailing-space,-space-before-tab,-tab-in-indent,-indent-with-non-tab
+pipeline/tests/fixtures/taifex_fut_history.csv binary

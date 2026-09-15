@@ -214,6 +214,70 @@ def cmd_backfill_warrant_branches(args):
     raise SystemExit(WARRANT_BACKFILL_INCOMPLETE_EXIT if resumable else 1)
 
 
+# 個股期貨當日匯入的離開碼。沿用本檔既有的紀律:離開碼講的是**結果**,
+# 不是「指令跑完了」(`cmd_import_daily` 的 75 是預期內的不完整,`cmd_backfill`
+# 的 1 是「補過了但沒補好」)。
+#
+#   0  對照表refresh 成功,而且當天的一般與盤後兩個時段都寫進去了 = 這一天完整。
+#   75 抓到也寫進去了,但 payload 只有一般時段。盤後掛在**同一個日期**上、
+#      約次日清晨才公布,所以下午跑的排程看到的一天本來就只有一半。這是預期內的
+#      不完整,不是失敗:重跑一次就補齊。與 `cmd_import_daily` 的 TPEx 520 同義,
+#      `daily-insti.sh` 之類的驅動腳本也是靠 75 判斷「等一下再來」。
+#   1  其他一切:抓取或解析失敗,或 '+F' join 對不到任何契約(importer 會丟例外)。
+#      join 壞掉時安靜寫 0 列比失敗更糟,所以那條路也走 1。
+#
+# 刻意**沒有**「今天這個日期我已經有了 → 特別的碼」這一格:這個端點只供應最新一天,
+# 假日重跑本來就會拿到同一天,而重寫同一天是冪等的,那不是一個需要通報的結果。
+FUTURES_AFTER_HOURS_PENDING_EXIT = 75
+
+
+def cmd_import_futures(_args):
+    from .importer import import_futures
+
+    info = import_futures()
+    print(
+        f"futures {info['date']}: contracts={info['contracts']} "
+        f"rows={info['stock_futures_rows']} (of {info['feed_rows']} feed rows; "
+        f"{info['leftover_codes']} non-stock contract codes ignored) "
+        f"sessions={'一般' if info['has_regular'] else '-'}"
+        f"/{'盤後' if info['has_after_hours'] else '-'}"
+    )
+    if not info["has_after_hours"]:
+        print(
+            "import-futures: the after-hours session for this date has not been "
+            "published yet — re-run after it closes to complete the date",
+            file=sys.stderr,
+        )
+        raise SystemExit(FUTURES_AFTER_HOURS_PENDING_EXIT)
+
+
+def cmd_backfill_futures(args):
+    from .importer import backfill_futures
+
+    info = backfill_futures(args.days, args.sleep, args.dry_run)
+    print(
+        f"backfill-futures: range={info['date_from']}..{info['date_to']} "
+        f"market_days={info['market_days']} chunks={info['chunks_planned']} "
+        f"dates_covered={info['dates_written']} rows={info['rows_written']} "
+        f"still_missing={len(info['still_missing'])} errors={len(info['errors'])}"
+        + (" (dry-run)" if info["dry_run"] else "")
+    )
+    for e in info["errors"][:10]:
+        print(f"  err: {e}", file=sys.stderr)
+    if info["dry_run"]:
+        return
+    if info["still_missing"]:
+        # 同 `cmd_backfill`:「試過了」不等於「補好了」。每個失敗的月份都只是
+        # 一行 stderr 然後繼續,所以沒有這一關的話 12 個月全掛也會 exit 0。
+        print(
+            f"backfill-futures: {len(info['still_missing'])} market day(s) in the "
+            f"window still have no futures_daily rows (first: "
+            f"{info['still_missing'][0]}) — the gap was NOT closed",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+
+
 def cmd_import_tdcc(args):
     from .importer import import_tdcc_shareholding
 
@@ -634,6 +698,25 @@ def main(argv=None):
                      help="skip dates newer than N calendar days "
                           "(the mirror may not have published them yet)")
     bwb.set_defaults(fn=cmd_backfill_warrant_branches)
+
+    sub.add_parser(
+        "import-futures",
+        help="TAIFEX single-stock futures: latest day's market report + the "
+             "contract→stock mapping, refreshed in the same run (the feed has no "
+             "usable date parameter, so 'latest' is all it can be asked for)",
+    ).set_defaults(fn=cmd_import_futures)
+
+    bff = sub.add_parser(
+        "backfill-futures",
+        help="backfill single-stock futures history via the Big5 CSV endpoint, "
+             "chunked by calendar month (one request covers ~a month); resumable "
+             "and polite",
+    )
+    bff.add_argument("--days", type=int, default=250,
+                     help="market trading days of depth, taken from daily_prices")
+    bff.add_argument("--sleep", type=float, default=1.2, help="seconds between requests")
+    bff.add_argument("--dry-run", action="store_true", help="list the month chunks only")
+    bff.set_defaults(fn=cmd_backfill_futures)
 
     tdcc = sub.add_parser(
         "import-tdcc",

@@ -1802,3 +1802,243 @@ def import_directors(ym: str | None = None) -> dict:
             "ok",
         )
     return {"rows": n, "stocks": stocks, "months": months}
+
+
+# --------------------------------------------------------------------------- 個股期貨
+#
+# 資料層而已:抓取、解析、落地。這裡沒有任何指標、分數或匯出。
+
+
+def _futures_daily_payload(rows) -> list[dict]:
+    return [
+        {
+            "contract_code": r.contract_code,
+            "date": r.date,
+            "contract_month": r.contract_month,
+            "session": r.session,
+            "open": r.open,
+            "high": r.high,
+            "low": r.low,
+            "last": r.last,
+            "change": r.change,
+            "volume": r.volume,
+            "settlement_price": r.settlement_price,
+            "open_interest": r.open_interest,
+        }
+        for r in rows
+    ]
+
+
+def _upsert_futures_contracts(conn, contracts, seen_on: str) -> int:
+    """寫入/更新標的對照,但**永遠不動 first_seen**,也永遠不刪列。
+
+    不能用 `upsert()`:它會把 row dict 裡的每個非主鍵欄都寫進 ON CONFLICT 的
+    SET,first_seen 會被每天的 refresh 覆蓋成今天,「第一次看到是哪天」就沒了。
+    """
+    from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+
+    if not contracts:
+        return 0
+    values = [
+        {
+            "contract_code": c.contract_code,
+            "stock_id": c.stock_id,
+            "stock_name": c.stock_name,
+            "is_stock_future": c.is_stock_future,
+            "is_stock_option": c.is_stock_option,
+            "is_weekly_option": c.is_weekly_option,
+            "market": c.market,
+            "first_seen": seen_on,
+            "last_seen": seen_on,
+        }
+        for c in contracts
+    ]
+    stmt = sqlite_insert(schema.futures_contracts).values(values)
+    conn.execute(
+        stmt.on_conflict_do_update(
+            index_elements=["contract_code"],
+            set_={
+                name: stmt.excluded[name]
+                for name in (
+                    "stock_id", "stock_name", "is_stock_future", "is_stock_option",
+                    "is_weekly_option", "market", "last_seen",
+                )
+            },
+        )
+    )
+    return len(values)
+
+
+def import_futures() -> dict:
+    """當日期貨行情 + 標的對照,同一次執行內一起更新。
+
+    兩者必須同一次跑:行情的「哪些是個股期貨」完全由對照表決定
+    (join 規則 = 商品代碼 + 'F'),對照表落後一天,新掛牌的契約就會被當成
+    指數期貨丟掉,而且丟得無聲無息。
+
+    回傳的 `stock_futures_rows` 是**寫進 futures_daily 的列數**(只有個股期貨),
+    `leftover_codes` 是行情裡對不到對照表的契約代碼數(指數期貨等,不入庫)。
+    """
+    from .providers.taifex import (
+        SESSION_AFTER_HOURS,
+        SESSION_REGULAR,
+        fetch_daily_report,
+        fetch_stock_list,
+        split_stock_futures,
+    )
+
+    init_db()
+    t0 = time.monotonic()
+    contracts = fetch_stock_list()
+    daily_rows = fetch_daily_report()
+
+    dates = sorted({r.date for r in daily_rows})
+    if len(dates) != 1:
+        # 這個端點只供應最新一天;一次回傳多個日期代表它的行為變了,
+        # 而「多個日期」會讓下面的 import_logs 日期欄變成謊言。
+        raise RuntimeError(f"taifex daily report carried {len(dates)} dates: {dates[:5]}")
+    data_date = dates[0]
+
+    kept, leftover = split_stock_futures(daily_rows, contracts)
+    if not kept:
+        # +F 的 join 規則是「個股期貨」這個集合的唯一定義。它對不到任何一列時,
+        # 正確的行為是炸掉:靜靜寫 0 列會讓排程看起來一切正常。
+        raise RuntimeError(
+            f"taifex {data_date}: the '+F' join matched 0 of {len(contracts)} "
+            f"mapping rows against {len({r.contract_code for r in daily_rows})} feed "
+            "codes — the contract-code join rule no longer holds"
+        )
+
+    sessions = {r.session for r in kept}
+    with get_engine().begin() as conn:
+        n_contracts = _upsert_futures_contracts(conn, contracts, data_date)
+        n_rows = upsert(conn, schema.futures_daily, _futures_daily_payload(kept), chunk=2000)
+        _log(
+            conn, "taifex", "futures", data_date.replace("-", ""), n_rows, "ok",
+            duration_ms=int((time.monotonic() - t0) * 1000),
+        )
+    return {
+        "date": data_date,
+        "contracts": n_contracts,
+        "stock_futures_rows": n_rows,
+        "feed_rows": len(daily_rows),
+        "leftover_codes": len(leftover),
+        "has_regular": SESSION_REGULAR in sessions,
+        "has_after_hours": SESSION_AFTER_HOURS in sessions,
+    }
+
+
+def _month_chunks(date_from: str, date_to: str) -> list[tuple[str, str]]:
+    """把 [date_from, date_to] 切成日曆月區塊,**新到舊**。
+
+    一次請求可以涵蓋約一個月(實測 29 天 → 3.9 MB),所以 250 個交易日約 12 次
+    請求。由新往舊走,是因為中斷後最有價值的是最近的資料已經到手。
+    """
+    start = date_cls.fromisoformat(date_from)
+    end = date_cls.fromisoformat(date_to)
+    chunks: list[tuple[str, str]] = []
+    cursor = end
+    while cursor >= start:
+        first = cursor.replace(day=1)
+        lo = max(first, start)
+        chunks.append((lo.isoformat(), cursor.isoformat()))
+        cursor = first - timedelta(days=1)
+    return chunks
+
+
+def backfill_futures(days: int = 250, sleep_s: float = 1.2, dry_run: bool = False) -> dict:
+    """用 futDataDown 的 Big5 CSV 按月回補歷史行情。
+
+    可續跑:每個月區塊先比對「這段期間的市場交易日(取自 daily_prices)」與
+    futures_daily 已有的日期,全部到齊就跳過,連請求都不發。中斷後重跑只會去撈
+    真正還缺的月份。
+
+    禮貌:區塊之間 sleep。富邦那支爬蟲用 1.0–1.2 秒,而這裡一年只有十幾次請求,
+    沿用同一個節奏綽綽有餘。
+    """
+    from sqlalchemy import text as sql_text
+
+    from .providers.taifex import fetch_history
+
+    init_db()
+    engine = get_engine()
+    with engine.connect() as conn:
+        market_days = [
+            r[0]
+            for r in conn.execute(sql_text(
+                "SELECT DISTINCT date FROM daily_prices ORDER BY date DESC LIMIT :n"
+            ), {"n": days}).fetchall()
+        ]
+        have = {
+            r[0]
+            for r in conn.execute(sql_text("SELECT DISTINCT date FROM futures_daily")).fetchall()
+        }
+    if not market_days:
+        raise RuntimeError(
+            "backfill-futures: daily_prices is empty, so there is no market calendar "
+            "to say which dates are missing; import price history first"
+        )
+    date_from, date_to = market_days[-1], market_days[0]
+    wanted = set(market_days)
+
+    chunks = _month_chunks(date_from, date_to)
+    planned = []
+    for lo, hi in chunks:
+        missing = {d for d in wanted if lo <= d <= hi} - have
+        if missing:
+            planned.append((lo, hi, len(missing)))
+    print(
+        f"backfill-futures: range={date_from}..{date_to} market_days={len(wanted)} "
+        f"already={len(wanted & have)} chunks={len(chunks)} todo={len(planned)}"
+        f"{' dry-run' if dry_run else ''}",
+        flush=True,
+    )
+
+    rows_written = 0
+    dates_written: set[str] = set()
+    errors: list[str] = []
+    for i, (lo, hi, n_missing) in enumerate(planned):
+        if dry_run:
+            print(f"  would fetch {lo}..{hi} ({n_missing} market days missing)", flush=True)
+            continue
+        try:
+            rows = fetch_history(lo, hi)
+            with engine.begin() as conn:
+                contract_codes = {
+                    r[0]
+                    for r in conn.execute(sql_text(
+                        "SELECT contract_code FROM futures_contracts"
+                    )).fetchall()
+                }
+                kept = [r for r in rows if r.contract_code in contract_codes]
+                n = upsert(conn, schema.futures_daily, _futures_daily_payload(kept), chunk=2000)
+                chunk_dates = {r.date for r in kept}
+                _log(conn, "taifex", "futures-history", lo.replace("-", ""), n, "ok")
+            rows_written += n
+            dates_written |= chunk_dates
+            print(
+                f"  [{i + 1}/{len(planned)}] {lo}..{hi} dates={len(chunk_dates)} rows={n}",
+                flush=True,
+            )
+        except Exception as e:  # noqa: BLE001 - one bad month must not lose the rest
+            errors.append(f"{lo}..{hi}: {e}")
+            print(f"  [{i + 1}/{len(planned)}] {lo}..{hi} ERROR {e}", flush=True)
+        if sleep_s > 0 and i + 1 < len(planned):
+            time.sleep(sleep_s)
+
+    with engine.connect() as conn:
+        have_after = {
+            r[0]
+            for r in conn.execute(sql_text("SELECT DISTINCT date FROM futures_daily")).fetchall()
+        }
+    return {
+        "date_from": date_from,
+        "date_to": date_to,
+        "market_days": len(wanted),
+        "chunks_planned": len(planned),
+        "dates_written": len(dates_written),
+        "rows_written": rows_written,
+        "still_missing": sorted(wanted - have_after),
+        "errors": errors,
+        "dry_run": dry_run,
+    }

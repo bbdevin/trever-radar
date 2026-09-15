@@ -445,6 +445,61 @@ shareholding_dispersion = Table(
     Index("ix_shareholding_dispersion_as_of", "as_of"),
 )
 
+# TAIFEX 個股期貨標的對照(來源:https://www.taifex.com.tw/cht/2/stockLists)。
+#
+# 主鍵是**契約代碼**而不是 stock_id:同一檔股票可以同時有 2,000 股的標準型與
+# 100 股的小型契約(實測:1565 精華同時是 MYF 與 OMF,6510 精測是 OXF 與 OYF),
+# 所以 stock_id 不唯一,契約代碼才唯一。契約代碼 = 官網商品代碼 + 'F',
+# 這就是與 futures_daily 對得起來的 join 鍵(見 providers/taifex.py)。
+#
+# **列永不刪除**。一檔標的被下架時,記錄的方式是 last_seen 停止更新而變舊,
+# 不是把列刪掉:刪掉會讓 futures_daily 裡的歷史行情變成對不到任何標的的孤兒,
+# 等於安靜地改寫歷史。first_seen 只在第一次看到時寫入,之後的 refresh 不動它。
+futures_contracts = Table(
+    "futures_contracts",
+    metadata,
+    Column("contract_code", Text, primary_key=True),   # 例 'CCF'
+    Column("stock_id", Text, nullable=False),          # 證券代號,例 '2303'
+    Column("stock_name", Text),                        # 標的證券簡稱
+    Column("is_stock_future", Boolean),                # 是否為股票期貨標的
+    Column("is_stock_option", Boolean),                # 是否為股票選擇權標的
+    Column("is_weekly_option", Boolean),               # 是否為股票選擇權週契約標的
+    Column("market", Text),                            # twse / tpex
+    Column("first_seen", Text, nullable=False),        # YYYY-MM-DD
+    Column("last_seen", Text, nullable=False),         # YYYY-MM-DD;變舊 = 已下架
+    Index("ix_futures_contracts_stock", "stock_id"),
+)
+
+# TAIFEX 期貨日行情(來源:DailyMarketReportFut / futDataDown)。
+#
+# 主鍵四欄缺一不可:
+#   * contract_month 在鍵裡,因為同一契約同一天有多個到期月份,還有
+#     '202609/202610' 這種價差組合列。
+#   * session 在鍵裡,因為**盤後時段掛在與一般時段相同的 Date 上**(2026-09-15
+#     實測:2,158 列一般 + 174 列盤後,同一個 Date),不是次日。少了 session,
+#     盤後那一列會覆蓋掉一般時段那一列,而且看起來像正常寫入。
+#
+# 數值欄允許 NULL,而且 NULL 與 0 是不同的事實:volume = 0 是「今天沒有成交」,
+# NULL 是「來源沒有給這個數字」(盤後列的結算價就是 NULL / '-')。
+# 約 2,300 列/日 ≈ 一年 40 MB。
+futures_daily = Table(
+    "futures_daily",
+    metadata,
+    Column("contract_code", Text, primary_key=True),
+    Column("date", Text, primary_key=True),            # YYYY-MM-DD
+    Column("contract_month", Text, primary_key=True),  # '202609' 或 '202609/202610'
+    Column("session", Text, primary_key=True),         # 一般 / 盤後
+    Column("open", Float),
+    Column("high", Float),
+    Column("low", Float),
+    Column("last", Float),
+    Column("change", Float),
+    Column("volume", Integer),                         # 口
+    Column("settlement_price", Float),
+    Column("open_interest", Integer),                  # 未沖銷契約數(口)
+    Index("ix_futures_daily_date", "date"),
+)
+
 # docs/34 §4.6 D1:董監事持股餘額明細(月更 OpenAPI)
 director_holdings = Table(
     "director_holdings",
