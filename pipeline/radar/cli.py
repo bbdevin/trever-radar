@@ -152,15 +152,43 @@ def cmd_seed_branches(_args):
     run()
 
 
+# 分點當日匯入的離開碼。沿用本檔的紀律:離開碼講的是**結果**。
+#
+#   0  日期合格、沒有標的失敗、而且這一輪真的抓到東西了。
+#   75 日期合格,但有個別標的兩次都失敗(import_logs status='incomplete')。
+#      資料可以上線,只是這一天少了幾檔。
+#   76 這一輪一檔都沒抓到(done == 0 而目標清單非空)——來源在這一輪是死的。
+#      但**日期仍然可能合格**:同一天 17:40 跑過一輪了。所以這個碼的意思是
+#      「叫醒人,但不要扣住資料」,它蓋過 0 與 75,永遠不蓋過 1。
+#   1  日期不合格(status='error'):覆蓋率掉出帶狀範圍,這一天不可以上線。
+#
+# 注意 `incomplete` 這個字在本檔出現兩次而來源不同:這裡指「單輪內的個別標的
+# 失敗但仍在帶內」,`_WARRANT_RESUMABLE_STOPS` 指的是權證爬蟲可續跑的分塊停點。
+# 共用詞彙、各自推導,不要把分點匯入接到那個 tuple 上。
+BRANCH_IMPORT_INCOMPLETE_EXIT = 75
+BRANCH_FEED_DEAD_EXIT = 76
+
+
 def cmd_import_branch_trades(args):
     from .importer import import_branch_trades
     ids = args.ids.split(",") if args.ids else None
-    import_branch_trades(
+    info = import_branch_trades(
         args.date, args.top, ids,
         warrants=args.warrants,
         sleep_s=args.sleep,
         warrant_turnover_min=args.warrant_turnover_min,
     )
+    if not info["fit"]:
+        print(f"import-branch-trades: {info['status']}", file=sys.stderr)
+        raise SystemExit(1)
+    if info["dead_feed"]:
+        print("import-branch-trades: this round fetched nothing from the feed; "
+              "the date itself is still fit to publish", file=sys.stderr)
+        raise SystemExit(BRANCH_FEED_DEAD_EXIT)
+    if info["failed"]:
+        print(f"import-branch-trades: {info['failed']} stock(s) failed twice; "
+              "the date is still fit to publish", file=sys.stderr)
+        raise SystemExit(BRANCH_IMPORT_INCOMPLETE_EXIT)
 
 
 def cmd_import_warrant_branch_trades(args):

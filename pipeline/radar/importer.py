@@ -1303,10 +1303,95 @@ def backfill_warrant_branches(top: int = 200, days: int = 120,
     )
 
 
+# 分點覆蓋率的基準窗:最近幾個**交易日**。交易日曆取自 `daily_prices`,不是
+# 「有分點列的日期」——後者會把「分點來源壞掉的那幾天」自動排除在自己的基準之外,
+# 等於讓壞掉的日子定義什麼叫正常。60 沿用 `_market_reference` docstring 裡真的
+# 推算過的那個窗長:它對「25 個連續壞日」那種真實事故仍留得住足夠的好樣本。
+_BRANCH_COVERAGE_BASELINE_DAYS = 60
+
+
+def _branch_coverage(conn, d_iso: str) -> int:
+    """當天有分點資料的**普通股**檔數(distinct stock_id)。
+
+    `JOIN stocks ... type='stock'` 是承重的,不可以拿掉:權證的分點資料和個股
+    共用 `branch_trades_raw`,一個被權證回補掃過的日期會多帶最多約 18,000 個
+    distinct stock_id,沒被掃到的日期一個都不多。少了這個 JOIN,這個統計量會隨
+    「另一支不相干的爬蟲跑到哪一天」上下跳一個數量級,量到的就不是分點來源的
+    健康度,而是權證回補的進度。
+    """
+    from sqlalchemy import text
+
+    return int(conn.execute(text(
+        "SELECT COUNT(DISTINCT b.stock_id) FROM branch_trades_raw b "
+        "JOIN stocks s ON s.id = b.stock_id AND s.type = 'stock' "
+        "WHERE b.date = :d"
+    ), {"d": d_iso}).scalar() or 0)
+
+
+def _branch_date_fit(conn, d_iso: str, min_market_fraction: float) -> dict:
+    """這個日期的分點資料夠不夠完整到可以拿去算籌碼、上線?
+
+    判準和 `_market_reference` 同一個形狀,而且刻意重用它的 `_quantile` /
+    `_REFERENCE_QUANTILE` / `_MIN_MARKET_SAMPLES` / `min_market_fraction`,不另
+    立門檻:基準是「最近交易日的同一個統計量」的高分位數,不是中位數。理由完全
+    是 `_market_reference` docstring 講過的那條——這是**短缺**偵測器,統計量有
+    上界(全市場普通股檔數),沒有「太多」這種故障要防;而中位數假設壞日是窗內
+    的少數,它要抓的那次事故是 25 個連續交易日,窗一短中位數就會落在壞值上,
+    每個壞日都會被判成健康。
+
+    基準只由「當天有分點資料」的交易日組成(0 覆蓋的日期不進樣本),所以一段
+    全滅的停擺無法把自己的基準拉下來遮住自己;代價是樣本數也跟著被餓死,低於
+    `_MIN_MARKET_SAMPLES` 時退回只做地板檢查(覆蓋 > 0),而不是靜默跳過。
+    """
+    from sqlalchemy import text
+
+    coverage = _branch_coverage(conn, d_iso)
+    baseline = [
+        int(r[1]) for r in conn.execute(text(
+            "SELECT b.date, COUNT(DISTINCT b.stock_id) FROM branch_trades_raw b "
+            "JOIN stocks s ON s.id = b.stock_id AND s.type = 'stock' "
+            "WHERE b.date IN ("
+            "  SELECT DISTINCT date FROM daily_prices WHERE date < :d "
+            "  ORDER BY date DESC LIMIT :cap) "
+            "GROUP BY b.date"
+        ), {"d": d_iso, "cap": _BRANCH_COVERAGE_BASELINE_DAYS}).fetchall()
+    ]
+    samples = len(baseline)
+    if samples < _MIN_MARKET_SAMPLES:
+        # 冷啟動/新 DB:沒有足夠歷史可以說什麼叫正常。仍然做地板檢查——
+        # 「量不出來」不可以變成「不檢查」。
+        return {
+            "coverage": coverage,
+            "reference": None,
+            "samples": samples,
+            "fit": coverage > 0,
+            "reason": None if coverage > 0 else (
+                f"branch coverage 0 stocks on {d_iso}; only {samples} baseline "
+                f"trading date(s) carry branch data, below the "
+                f"{_MIN_MARKET_SAMPLES} needed for a reference, so only the "
+                f"floor test (coverage > 0) applied"
+            ),
+        }
+    reference = _quantile(baseline, _REFERENCE_QUANTILE)
+    fit = coverage > 0 and coverage >= min_market_fraction * reference
+    return {
+        "coverage": coverage,
+        "reference": reference,
+        "samples": samples,
+        "fit": fit,
+        "reason": None if fit else (
+            f"branch coverage {coverage} stocks on {d_iso}, below "
+            f"{min_market_fraction:.0%} of the reference {reference} "
+            f"({_REFERENCE_QUANTILE:g}-quantile over {samples} recent trading dates)"
+        ),
+    }
+
+
 def import_branch_trades(date: str | None = None, top: int = 80,
                          ids: list[str] | None = None, warrants: int = 200,
                          sleep_s: float = 1.2,
-                         warrant_turnover_min: int | None = None) -> dict:
+                         warrant_turnover_min: int | None = None,
+                         min_market_fraction: float = 0.5) -> dict:
     """富邦公開頁抓分點進出(每筆一請求,節流)。
 
     池選擇:
@@ -1318,6 +1403,18 @@ def import_branch_trades(date: str | None = None, top: int = 80,
     active 普通股且當日成交金額 ``>= warrant_turnover_min`` 的池（``0`` 合法），
     且不會再疊加 legacy Top-N。
     上市＋上櫃全市場權證仍由可續跑的 ``import_warrant_branch_trades`` 獨立處理。
+
+    狀態欄講的是**這個日期夠不夠格上線**,不是「這一輪有沒有小失誤」:
+
+    - ``ok``         一檔都沒失敗,而且日期合格(見 :func:`_branch_date_fit`)
+    - ``incomplete`` 有個別標的失敗,但日期仍然合格
+    - ``error``      日期不合格,不管 failed 是幾
+
+    兩個訊號走兩條路。日期覆蓋率是**跨輪累積**的:同一個交易日 17:40 與 22:00
+    各匯入一次、upsert 同一組 key,14:39 那種「來源還沒公布」的空跑因此無害
+    (實測 2026-08-14 14:39 記了 rows=0,當天最後仍以 1,964 檔收尾)。但累積性
+    會把「來源死掉」對操作者藏起來,所以死來源警報是**單輪**、結構性的:
+    ``done == 0`` 而目標清單非空。它由 CLI 用獨立離開碼表達,和上線與否無關。
     """
     from sqlalchemy import text
 
@@ -1381,27 +1478,80 @@ def import_branch_trades(date: str | None = None, top: int = 80,
     )
     print(f"branch trades pool: {len(targets)} targets "
           f"(top={top}, {warrant_pool if not ids else 'warrants=0 (ids override)'})", flush=True)
-    done = empty = failed = written = 0
-    for sid in targets:
+    done = empty = written = 0
+    failed_ids: list[str] = []
+
+    def _fetch_one(sid: str) -> str:
+        nonlocal written
         try:
             rows = fubon.fetch_branch_trades(sid, date, throttle=sleep_s)
         except NoDataError:
-            empty += 1
-            continue
+            return "empty"
         except Exception as e:  # noqa: BLE001
-            failed += 1
             print(f"branch {sid} FAILED: {str(e)[:100]}", flush=True)
-            continue
+            return "failed"
         with engine.begin() as conn:
             written += upsert_branch_trades(conn, rows)
-        done += 1
+        return "done"
+
+    def _tally(sid: str, sink: list[str]) -> None:
+        nonlocal done, empty
+        outcome = _fetch_one(sid)
+        if outcome == "done":
+            done += 1
+        elif outcome == "empty":
+            empty += 1
+        else:
+            sink.append(sid)
+
+    for sid in targets:
+        _tally(sid, failed_ids)
+
+    # 剛好一次的重試,不是重試框架。1,988 檔裡的單一次失誤,第二次請求成功的
+    # 機率遠高於它是真的壞掉;而同一個標的連兩次都失敗,才值得寫進狀態欄。
+    if failed_ids:
+        print(f"branch trades retry pass: {len(failed_ids)} target(s)", flush=True)
+        retry, failed_ids = failed_ids, []
+        for sid in retry:
+            _tally(sid, failed_ids)
+    failed = len(failed_ids)
+
+    # 合格與否在這一輪的寫入都 commit 之後才量(每檔各自 commit,上面已完成)。
+    with engine.connect() as conn:
+        fitness = _branch_date_fit(conn, iso_d, min_market_fraction)
+    coverage = fitness["coverage"]
+    if not fitness["fit"]:
+        status, err = "error", fitness["reason"]
+    elif failed:
+        status, err = "incomplete", f"{failed} stocks failed"
+    else:
+        status, err = "ok", None
     with engine.begin() as conn:
-        _log(conn, "fubon", "branch", date, written,
-             "ok" if failed == 0 else "error",
-             error=None if failed == 0 else f"{failed} stocks failed")
+        _log(conn, "fubon", "branch", date, written, status, error=err)
+        # 判準看到的輸入要每晚留痕,否則這條帶狀判斷可能悄悄啟用而從沒被驗證過。
+        # 用既有的通用欄位,不需要 schema migration;`dataset='branch_coverage'`
+        # 不落在 JSON export 的 `dataset IN ('quotes','insti','margin')` 裡,也不
+        # 等於 shell 端查的 `dataset='branch'`,而 prune 是按 date 砍的,一體適用。
+        _log(conn, "fubon", "branch_coverage", date, coverage, "ok")
+
+    # 單輪的死來源警報,獨立於上線判斷:這一輪一檔都沒抓到,但日期可能早已由
+    # 前一輪填滿而完全合格。
+    dead_feed = done == 0 and bool(targets)
+
     print(f"branch trades {iso_d}: {done} stocks ok, {empty} empty, "
           f"{failed} failed, {written} rows", flush=True)
-    return {"done": done, "empty": empty, "failed": failed, "rows": written}
+    print(f"branch coverage {iso_d}: {coverage} stocks vs reference "
+          f"{fitness['reference'] if fitness['reference'] is not None else 'UNVERIFIED'} "
+          f"from {fitness['samples']} trading date(s) → {status}", flush=True)
+    if err:
+        print(f"branch trades {iso_d}: {err}", flush=True)
+    if dead_feed:
+        print(f"branch trades {iso_d}: this round fetched nothing from the feed "
+              f"({len(targets)} targets)", flush=True)
+    return {"done": done, "empty": empty, "failed": failed, "rows": written,
+            "status": status, "fit": fitness["fit"], "dead_feed": dead_feed,
+            "coverage": coverage, "reference": fitness["reference"],
+            "baseline_samples": fitness["samples"], "targets": len(targets)}
 
 
 # 一個抓得到、解析成功、但沒有成分股的分類是「已觀測到的事實」，不是抓取不完整：

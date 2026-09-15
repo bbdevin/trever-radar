@@ -313,12 +313,14 @@ class WarrantBranchImportTests(unittest.TestCase):
         self.assertEqual(imp.call_args.kwargs["top"], 9)
         self.assertTrue(imp.call_args.kwargs["dry_run"])
 
-        with patch("radar.importer.import_branch_trades", return_value={}) as legacy:
+        # 合格、沒失敗、有抓到東西 = 離開碼 0(見 test_branch_coverage_gate.py)。
+        clean = {"fit": True, "dead_feed": False, "failed": 0, "status": "ok"}
+        with patch("radar.importer.import_branch_trades", return_value=clean) as legacy:
             cli.main(["import-branch-trades", "--top", "0", "--warrants", "0"])
         self.assertEqual(legacy.call_args.kwargs["warrants"], 0)
         self.assertIsNone(legacy.call_args.kwargs["warrant_turnover_min"])
 
-        with patch("radar.importer.import_branch_trades", return_value={}) as threshold:
+        with patch("radar.importer.import_branch_trades", return_value=clean) as threshold:
             cli.main(["import-branch-trades", "--top", "0", "--warrant-turnover-min", "1000000"])
         self.assertEqual(threshold.call_args.kwargs["warrant_turnover_min"], 1_000_000)
 
