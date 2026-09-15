@@ -11,7 +11,7 @@ import {
   useReactTable,
   type SortingState,
 } from "@tanstack/react-table";
-import { Building2, ChevronDown, ChevronUp, Flame, MapPin, Phone, ShieldCheck, Tags } from "lucide-react";
+import { Building2, ChevronDown, ChevronUp, Flame, Layers, MapPin, Phone, ShieldCheck, Tags } from "lucide-react";
 import { IconArrowLeft } from "@/components/Icons";
 import KChart from "@/components/KChart";
 import BranchFlowSection from "@/components/BranchFlowSection";
@@ -22,6 +22,7 @@ import MarginPanel from "@/components/MarginPanel";
 import HoldersPanel from "@/components/HoldersPanel";
 import WarrantBranchPanel from "@/components/WarrantBranchPanel";
 import ReasonPill, { isChipStrategyCode } from "@/components/ReasonPill";
+import { futuresState } from "@/lib/futures";
 import PocketBadges from "@/components/PocketBadges";
 import { Skeleton } from "@/components/ui/skeleton";
 import WatchlistButton from "@/components/WatchlistButton";
@@ -191,6 +192,7 @@ function StockView() {
                   <span data-testid="stock-market-label" className="font-semibold text-[color:var(--accent-2)]">{marketLabel}</span>
                   {data.industry ? <span className="text-muted-foreground"> · {data.industry}</span> : null}
                 </p>
+                <FuturesBadge futures={data.futures} />
               </div>
             </div>
             {activeThemes.length > 0 && (
@@ -560,6 +562,39 @@ function StockDecisionHeader({
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * 個股期貨「有沒有」的三態徽章。放在股名下方的 metadata 那一行,因為這是一個
+ * 恆常事實(不像題材/理由會有沒有),不能掛在 hasPills 那種會整塊消失的區塊裡。
+ *
+ * unknown 故意不畫任何東西:程式會比 JSON 早好幾小時上線(code 走 Pages,
+ * payload 要等 VPS 下一輪 export-json),所以「還沒 import 過」就是現在線上
+ * 每一檔的真實狀態。此時畫「無期貨」等於告訴使用者一件假的事。
+ * none 則相反——那是 TAIFEX 官方完整清單截至 asOf 的正面主張,要畫,而且要帶日期。
+ */
+function FuturesBadge({ futures }: { futures: StockJson["futures"] }) {
+  const state = futuresState(futures);
+  if (state.kind === "unknown") return null;
+  if (state.kind === "none") {
+    return (
+      <p className="mt-1 min-w-0 text-[11px] text-muted-foreground" title={`台灣期交所個股期貨標的清單（清單日 ${state.asOf}）不含本檔`}>
+        無個股期貨（{state.asOf}）
+      </p>
+    );
+  }
+  return (
+    <p className="mt-1 flex min-w-0 flex-wrap items-center gap-1 text-[11px]" aria-label="個股期貨標的">
+      <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-[color:var(--accent-2)]/35 bg-[color:var(--accent-2)]/8 px-1.5 py-0.5 font-semibold text-[color:var(--accent-2)]">
+        <Layers size={11} aria-hidden="true" />有個股期貨
+      </span>
+      {state.contracts.map((c) => (
+        <span key={c.code} className="num shrink-0 text-muted-foreground" title={`契約代碼 ${c.code}（清單日 ${state.asOf}）`}>
+          {c.code}
+        </span>
+      ))}
+    </p>
   );
 }
 

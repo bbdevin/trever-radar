@@ -246,6 +246,34 @@ export interface StockJson {
   holders_meta?: HoldersMeta;
   /** 董監最新月明細(docs/34 §4.6 D1) */
   directors_latest?: DirectorsLatest | null;
+  /**
+   * 個股期貨標的存在事實(docs 個股期貨切片)。缺鍵 = 尚未 import-futures 過,
+   * 「不知道」;有鍵但 contracts 是空陣列 = TAIFEX 完整官方清單截至
+   * list_as_of 確實不含這檔,是一個正面主張,不是缺資料。兩者不得混同。
+   */
+  futures?: FuturesInfo;
+}
+
+/** 個股期貨:存在與否的事實,外加(若當日已公布)原始量/未平倉,無比率無名次。 */
+export interface FuturesInfo {
+  version: number;
+  /** 標的清單最後一次刷新日(TAIFEX 官方清單日),不是報價日。 */
+  list_as_of: string;
+  contracts: FuturesContract[];
+}
+
+export interface FuturesContract {
+  code: string;
+  is_futures: boolean;
+  is_option: boolean;
+  is_weekly_option: boolean;
+  /** 當日沒有列時整個省略,不可補 0——0 代表「沒人交易」,省略代表「還沒公布」。 */
+  daily?: {
+    date: string;
+    volume: number | null;
+    open_interest: number | null;
+    session_volume: Record<string, number>;
+  };
 }
 
 /** 單一分點在這檔股票的兩側計數;known 是分母,unknown 分位不可知另計。 */
