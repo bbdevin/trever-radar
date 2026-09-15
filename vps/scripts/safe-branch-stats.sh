@@ -29,6 +29,25 @@ mem_available_mb() {
   awk '/MemAvailable:/ {printf "%d", $2/1024}' /proc/meminfo
 }
 
+# 統一的計時 wrapper:鎖等待之外,每一個主要步驟(radar 子指令、deploy)都套
+# 這個,單一格式才追得出 93→138 分鐘是哪一步在長。用 if/then 取得結果而不是
+# set +e/-e 切換,是為了不論成功失敗都印得出 done/elapsed 這行,呼叫端仍可用
+# `if run_step ...; then ... else rc=$?; ... fi` 讀到原始離開碼(set -e 對
+# if 的測試式免疫,不會在這裡提早中止)。
+run_step() {
+  local label="$1"; shift
+  local t0 rc
+  t0="$(date +%s)"
+  echo "step ${label} start $(taipei_date -Is)"
+  if "$@"; then
+    rc=0
+  else
+    rc=$?
+  fi
+  echo "step ${label} done rc=${rc} elapsed=$(( $(date +%s) - t0 ))s"
+  return "$rc"
+}
+
 # 唯一決定「這次略過該用 default 還是 high 優先權」的地方,五個 skip 出口都呼叫它。
 # 邏輯:讀 $STATE_FILE 的 finished= 時間戳,離現在超過 $STALE_HOURS 小時(或
 # state 檔不存在、或時間戳解析失敗)就視為「已經連續失敗/被擋一段時間」,
@@ -79,12 +98,16 @@ fi
 LOCK_WAIT_SECS="${LOCK_WAIT_SECS:-3000}"   # 50 分鐘:00:05 起算,最晚 00:55 放棄
 exec 9>/tmp/radar-db.lock
 _lock_t0="$(date +%s)"
+echo "step lock-wait start $(taipei_date -Is)"
 if flock -w "$LOCK_WAIT_SECS" 9; then
   # 這行秒數就是「22:00 那輪的尾巴還在不在長」的唯一量測值;沒有它,這次改動
-  # 無法被驗證,下次是要再加時間還是要搬時段也就沒有依據。
+  # 無法被驗證,下次是要再加時間還是要搬時段也就沒有依據。保留這行原文,
+  # 下面的 `step lock-wait done` 只是併入其他步驟共用的計時格式,不取代它。
   echo "waited $(( $(date +%s) - _lock_t0 ))s for radar-db.lock"
+  echo "step lock-wait done rc=0 elapsed=$(( $(date +%s) - _lock_t0 ))s"
 else
   echo "radar-db.lock held — gave up after $(( $(date +%s) - _lock_t0 ))s"
+  echo "step lock-wait done rc=1 elapsed=$(( $(date +%s) - _lock_t0 ))s"
   # 刻意不走 skip_or_alarm:STALE_HOURS 是 30,而週三漏到週六只隔約 24 小時,
   # 走 staleness 判斷會判成 default 優先權,損失又一次靜默。等到 00:55 還拿不到,
   # 代表 22:00 那輪已經跑了 175 分鐘——這是要叫人起來看的事故,不是例行略過。
@@ -136,17 +159,44 @@ if [ "${SAFE_STATS_SYNC:-0}" = "1" ]; then
   sync_code
 fi
 
-echo "compute-branch-stats"
-set +e
-radar compute-branch-stats
-rc=$?
-set -e
+# 22:00 那輪(daily-branches.sh)寫的是同一張 import_logs,dataset='branch'。
+# date 欄是它抓資料當下的交易日(import_branch_trades 沒給 --date 時預設
+# MAX(date) FROM daily_prices),不是本腳本自己執行的日曆日;本腳本 00:05
+# 起跑,對應的正是「台北現在的昨天」——22:00 還沒跨過午夜,run_at 與 date
+# 兩欄都停在那個日曆日,只有本腳本自己的「現在」翻到了下一天。
+# 唯讀連線(?mode=ro):只問狀態,不跟本腳本或其他寫入者搶鎖。
+BRANCH_IMPORT_DATE="${BRANCH_IMPORT_DATE:-$(TZ=Asia/Taipei date -d 'yesterday' +%Y-%m-%d)}"
+
+branch_import_status() {
+  docker run --rm -v "$REPO/data":/app/data radar-pipeline \
+    python -c "import sqlite3,sys
+conn = sqlite3.connect('file:/app/data/radar.db?mode=ro', uri=True)
+row = conn.execute(
+    \"SELECT status FROM import_logs WHERE dataset='branch' AND date=? ORDER BY id DESC LIMIT 1\",
+    (sys.argv[1],)).fetchone()
+print(row[0] if row else '')" "$BRANCH_IMPORT_DATE"
+}
+
+BRANCH_STATUS="$(branch_import_status 2>/dev/null || true)"
+echo "22:00 branch import_logs status for ${BRANCH_IMPORT_DATE}: '${BRANCH_STATUS:-<missing>}'"
+
+# row 缺失、或 status 不是 'ok'(含查詢本身失敗、空字串)一律當「未確認完成」,
+# 走原本就存在的完整補跑路徑——這正是本腳本存在的理由(fallback)。
+EVENING_BRANCH_OK=0
+[ "$BRANCH_STATUS" = "ok" ] && EVENING_BRANCH_OK=1
 
 STATS_NOTE="ok"
 SCORES_NOTE="skipped"
 PIT_NOTE="skipped"
 PAIR_PCTILE_NOTE="skipped"
-if [ "$rc" -ne 0 ]; then
+
+if [ "$EVENING_BRANCH_OK" = "1" ]; then
+  STATS_NOTE="skipped_evening_ok"
+  echo "skip compute-branch-stats：22:00 那輪 ${BRANCH_IMPORT_DATE} 的分點匯入已 status=ok"
+elif run_step "compute-branch-stats" radar compute-branch-stats; then
+  STATS_NOTE="ok"
+else
+  rc=$?
   STATS_NOTE="failed_rc_${rc}"
   echo "compute-branch-stats failed rc=$rc"
   notify "分點統計失敗（碼 ${rc}），本輪中止" high "失敗"
@@ -166,17 +216,13 @@ fi
 # 在 compute-scores 之前(順序固定,便於對照 state 檔)。
 # 失敗不中止本輪:這張帳本次要於分數/匯出/上線,不能因為它而擋住當天的價格上線。
 if [ "${SKIP_PIT:-0}" != "1" ]; then
-  echo "branch-point-in-time-persist"
-  set +e
-  radar branch-point-in-time-persist
-  prc=$?
-  set -e
-  if [ "$prc" -ne 0 ]; then
+  if run_step "branch-point-in-time-persist" radar branch-point-in-time-persist; then
+    PIT_NOTE="ok"
+  else
+    prc=$?
     PIT_NOTE="failed_rc_${prc}"
     echo "branch-point-in-time-persist failed rc=$prc (continue to scores)"
     notify_warn "分點 point-in-time 帳本落地失敗（碼 ${prc}），仍繼續分數與匯出"
-  else
-    PIT_NOTE="ok"
   fi
 else
   PIT_NOTE="skipped_env"
@@ -188,43 +234,48 @@ fi
 # 整張表每輪被取代,失敗只是舊快照留著,所以**同樣不中止本輪**:它次要於
 # 分數、匯出與上線,不能因為它擋住當天的價格上線。
 if [ "${SKIP_PAIR_PCTILE:-0}" != "1" ]; then
-  echo "branch-stock-pctile-counts"
-  set +e
-  radar branch-stock-pctile-counts
-  qrc=$?
-  set -e
-  if [ "$qrc" -ne 0 ]; then
+  if run_step "branch-stock-pctile-counts" radar branch-stock-pctile-counts; then
+    PAIR_PCTILE_NOTE="ok"
+  else
+    qrc=$?
     PAIR_PCTILE_NOTE="failed_rc_${qrc}"
     echo "branch-stock-pctile-counts failed rc=$qrc (continue to scores)"
     notify_warn "分點×個股價格分位計數失敗（碼 ${qrc}），仍繼續分數與匯出"
-  else
-    PAIR_PCTILE_NOTE="ok"
   fi
 else
   PAIR_PCTILE_NOTE="skipped_env"
 fi
 
-if [ "${SKIP_SCORES:-0}" != "1" ]; then
-  echo "compute-scores"
-  set +e
-  radar compute-scores
-  src=$?
-  set -e
-  if [ "$src" -ne 0 ]; then
+if [ "$EVENING_BRANCH_OK" = "1" ]; then
+  SCORES_NOTE="skipped_evening_ok"
+  echo "skip compute-scores：22:00 那輪 ${BRANCH_IMPORT_DATE} 的分點匯入已 status=ok"
+elif [ "${SKIP_SCORES:-0}" != "1" ]; then
+  if run_step "compute-scores" radar compute-scores; then
+    SCORES_NOTE="ok"
+  else
+    src=$?
     SCORES_NOTE="failed_rc_${src}"
     echo "compute-scores failed rc=$src (continue to export)"
     notify_warn "綜合分數重算失敗（碼 ${src}），仍繼續匯出"
-  else
-    SCORES_NOTE="ok"
   fi
 else
   SCORES_NOTE="skipped_env"
 fi
 
-if [ "${SKIP_EXPORT:-0}" != "1" ]; then
-  echo "export-json + deploy"
-  radar export-json
-  deploy_data
+# 匯出(export-json)與上線(deploy_data)分開判斷:前者是「今晚是否需要重算」
+# (rule 2,evening ok 就跳過),後者是「這批資料能不能上線」(rule 3,22:00
+# 那輪 status=error 就不上線)——兩條規則彼此獨立,不能合併成同一個 if。
+if [ "$EVENING_BRANCH_OK" = "1" ]; then
+  echo "skip export-json：22:00 那輪 ${BRANCH_IMPORT_DATE} 的分點匯入已 status=ok"
+elif [ "${SKIP_EXPORT:-0}" != "1" ]; then
+  run_step "export-json" radar export-json
+fi
+
+if [ "$BRANCH_STATUS" = "error" ]; then
+  echo "publish withheld：22:00 那輪 ${BRANCH_IMPORT_DATE} 的分點匯入 status=error，本輪不上線"
+  notify_warn "22:00 分點匯入回報 status=error（${BRANCH_IMPORT_DATE}），本輪重算但不上線，待人工確認後再補發"
+elif [ "${SKIP_EXPORT:-0}" != "1" ]; then
+  run_step "deploy" deploy_data
 fi
 
 {
@@ -233,6 +284,8 @@ fi
   echo "pit=$PIT_NOTE"
   echo "pair_pctile=$PAIR_PCTILE_NOTE"
   echo "scores=$SCORES_NOTE"
+  echo "branch_import_date=$BRANCH_IMPORT_DATE"
+  echo "branch_import_status=${BRANCH_STATUS:-missing}"
   echo "mem_before=$MEM"
   echo "mem_after_pause=$MEM2"
   echo "free_gb_before=$FREE"
@@ -259,5 +312,8 @@ if ! pgrep -f 'vps/scripts/bf-supervisor.sh' >/dev/null 2>&1; then
   nohup bash "$REPO/vps/scripts/bf-supervisor.sh" >> "${BF_SUPERVISOR_LOG:-$HOME/bf-supervisor.log}" 2>&1 &
 fi
 
-notify_ok "分點排行與分數夜間重算完成（統計=${STATS_NOTE}，帳本=${PIT_NOTE}，分位計數=${PAIR_PCTILE_NOTE}，分數=${SCORES_NOTE}）"
+PUBLISH_NOTE="ok"
+[ "${SKIP_EXPORT:-0}" = "1" ] && PUBLISH_NOTE="skipped_env"
+[ "$BRANCH_STATUS" = "error" ] && PUBLISH_NOTE="withheld_evening_error"
+notify_ok "分點排行與分數夜間重算完成（統計=${STATS_NOTE}，帳本=${PIT_NOTE}，分位計數=${PAIR_PCTILE_NOTE}，分數=${SCORES_NOTE}，22:00分點=${BRANCH_STATUS:-missing}，上線=${PUBLISH_NOTE}）"
 echo "=== safe-branch-stats done $(taipei_date -Is) ==="
