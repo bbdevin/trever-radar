@@ -223,13 +223,8 @@ def cmd_backfill_branches(args):
 # `manual-catchup.sh` 與 `vps_mega_finalize.sh` 都只看「非零就停」。
 WARRANT_BACKFILL_INCOMPLETE_EXIT = 75
 
-# 可續跑的停止理由(對照 `_backfill_warrant_branches_with_state` 寫進 `stopped`
-# 的三種字串)。剩下那個 "too many failures at ..." 是真失敗,不列在這裡。
-_WARRANT_RESUMABLE_STOPS = ("time budget reached", "resume required")
-
-
 def cmd_backfill_warrant_branches(args):
-    from .importer import backfill_warrant_branches
+    from .importer import WARRANT_RESUMABLE_STOPS, backfill_warrant_branches
     info = backfill_warrant_branches(
         args.top, args.days, args.sleep, args.max_minutes, args.market,
         state_file=args.state_file, min_age_days=args.min_age_days,
@@ -238,7 +233,9 @@ def cmd_backfill_warrant_branches(args):
     if not stopped:
         return
     print(f"warrant branch backfill incomplete: {stopped}", file=sys.stderr)
-    resumable = stopped.startswith(_WARRANT_RESUMABLE_STOPS)
+    # 可續跑的判斷與 importer 寫進 import_logs 的狀態出自同一個 tuple,
+    # 否則離開碼說「可續跑」而資料庫說「失敗」這種漂移遲早會發生。
+    resumable = stopped.startswith(WARRANT_RESUMABLE_STOPS)
     raise SystemExit(WARRANT_BACKFILL_INCOMPLETE_EXIT if resumable else 1)
 
 

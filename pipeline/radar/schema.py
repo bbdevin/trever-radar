@@ -223,7 +223,10 @@ import_logs = Table(
     Column("dataset", Text, nullable=False),       # quotes / insti / margin / ...
     Column("date", Text, nullable=False),          # data date
     Column("rows", Integer, nullable=False, default=0),
-    Column("status", Text, nullable=False),        # ok / empty / error
+    # ok / empty / error / incomplete。`incomplete` = 「跑完了、結果可用、但不完整」:
+    # 分點匯入指個別標的失敗而當日覆蓋率仍在帶內,權證爬蟲指分塊乾淨停止可續跑。
+    # 兩者來源不同、各自推導,共用這個字只是詞彙一致,不是同一個判斷。
+    Column("status", Text, nullable=False),
     Column("error", Text),
     Column("duration_ms", Integer),
 )

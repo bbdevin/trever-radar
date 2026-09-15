@@ -1078,6 +1078,32 @@ def import_warrant_branch_trades(date: str | None = None, market: str = "all",
 #: 預設把爬取的頭部往回壓一個日曆日(見 `_warrant_branch_trade_dates`)。
 WARRANT_BRANCH_MIN_AGE_DAYS = 1
 
+#: 可續跑的停止理由。權證爬蟲是分塊跑的,每一塊都在時間預算用完時「乾淨地停下」
+#: 並把進度留在各日 state 檔裡等下一次續跑——那是設計上的正常路徑,不是故障。
+#: 真正的故障只有 "too many failures at ...",不列在這裡。
+#:
+#: 這個 tuple 定義在本模組而不是 cli,因為寫出這些字串的是本模組的四個迴圈;
+#: cli 匯入它來決定離開碼,兩層因此不可能各自漂移。
+WARRANT_RESUMABLE_STOPS = ("time budget reached", "resume required")
+
+
+def _warrant_backfill_status(stopped: str | None) -> str:
+    """把 `stopped` 轉成 import_logs 的狀態。
+
+    在此之前兩個呼叫點都寫 `"ok" if not stopped else "error"`,於是每一塊乾淨的
+    分塊停止都被記成一次失敗——實測 import_logs 裡 warrant_branch_hist 連三列
+    `error`,理由全是 "time budget reached",這條訊號 100% 是雜訊,真的壞掉時
+    反而看不出來。cli 早就用 `WARRANT_RESUMABLE_STOPS` 分出 75 與 1 了,資料庫
+    卻把兩者壓成同一個字;這裡把那個區別補回去。
+
+    注意 `incomplete` 一詞在本專案有兩個來源不同的用法:這裡是「分塊乾淨停止、
+    可續跑」,分點匯入那邊是「單輪內個別標的失敗但覆蓋率仍在帶內」。共用詞彙、
+    各自推導——不要把任何一邊接到另一邊的判斷上。
+    """
+    if not stopped:
+        return "ok"
+    return "incomplete" if stopped.startswith(WARRANT_RESUMABLE_STOPS) else "error"
+
 
 def _warrant_branch_trade_dates(engine, days: int, min_age_days: int) -> list[str]:
     """最新在前的交易日清單,但**排除**還太新的日期。
@@ -1165,7 +1191,7 @@ def _backfill_warrant_branches_legacy(top: int = 200, days: int = 120,
     with engine.begin() as conn:
         _log(conn, "fubon", "warrant_branch_hist",
              datetime.now(ZoneInfo(config.TZ)).strftime("%Y%m%d"),
-             fetched, "ok" if not stopped else "error", error=stopped)
+             fetched, _warrant_backfill_status(stopped), error=stopped)
     print(f"backfill-warrant-branches: fetched={fetched}, complete_dates={skipped_dates}/"
           f"{len(trade_dates)}, empty={empty}, failed={failed}, stopped={stopped}", flush=True)
     return {"fetched": fetched, "empty": empty, "failed": failed, "stopped": stopped}
@@ -1267,7 +1293,7 @@ def _backfill_warrant_branches_with_state(
     with engine.begin() as conn:
         _log(conn, "fubon", "warrant_branch_hist",
              datetime.now(ZoneInfo(config.TZ)).strftime("%Y%m%d"),
-             fetched, "ok" if not stopped else "error", error=stopped)
+             fetched, _warrant_backfill_status(stopped), error=stopped)
     # `empty=` 是「終端 empty 中毒」這一類故障唯一看得見的訊號(鏡像回錯誤頁／
     # 佔位頁會解析成零列 → NoDataError → 永久 empty,而整塊仍回報成功),
     # 所以它必須出現在摘要行上,不能只躺在各日 state 檔裡。

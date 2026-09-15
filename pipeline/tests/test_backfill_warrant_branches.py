@@ -126,7 +126,13 @@ class BackfillWarrantBranchesDateScopedTests(unittest.TestCase):
             )
         self.assertFalse((self.tmp_path / "resume-2026-01-06-all.json").exists())
 
-    def test_timeout_is_failure_and_import_log_is_error(self):
+    def test_timeout_is_incomplete_not_error(self):
+        """時間預算用完是設計上的正常分塊停止,不是故障。
+
+        以前這裡記成 `error`,於是每一塊都在 import_logs 留下一列假失敗——實測
+        production 連三列 `error`,理由全是 "time budget reached"。那條訊號因此
+        100% 是雜訊,真的壞掉時反而看不出來。
+        """
         with patch("radar.importer.time.monotonic", side_effect=[0.0, 61.0]), \
              patch("radar.providers.fubon.fetch_branch_trades") as fetch:
             result = backfill_warrant_branches(
@@ -140,8 +146,36 @@ class BackfillWarrantBranchesDateScopedTests(unittest.TestCase):
                 "SELECT status, error FROM import_logs "
                 "WHERE dataset='warrant_branch_hist' ORDER BY id DESC LIMIT 1"
             ).fetchone()
-        self.assertEqual(row[0], "error")
+        self.assertEqual(row[0], "incomplete")
+        # 停止理由不可以因為降級成 incomplete 就被丟掉——那是唯一記得「為什麼停」的地方。
         self.assertIn("time budget reached", row[1])
+
+    def test_real_failure_still_records_error(self):
+        """`too many failures at ...` 是真故障,必須留在 `error`。
+
+        這是三態拆分唯一真正有風險的地方:若把它一起降級成 incomplete,就等於
+        把「來源壞了」與「時間到了」再次壓成同一個字,只是換個方向壞掉。
+        """
+        from radar.importer import _warrant_backfill_status
+
+        self.assertEqual(_warrant_backfill_status(None), "ok")
+        self.assertEqual(_warrant_backfill_status("time budget reached at 2026-01-06"), "incomplete")
+        self.assertEqual(_warrant_backfill_status("resume required: 3 date(s) remain incomplete"), "incomplete")
+        self.assertEqual(_warrant_backfill_status("too many failures at 2026-01-06"), "error")
+
+    def test_cli_exit_code_and_db_status_come_from_one_tuple(self):
+        """離開碼與 import_logs 狀態必須出自同一份可續跑理由清單。
+
+        兩層各留一份 tuple 時,漂移的結果是離開碼說「可續跑、75、繼續」而資料庫
+        說「失敗」——比原本的 bug 更難查。
+        """
+        from radar import cli
+        from radar.importer import WARRANT_RESUMABLE_STOPS, _warrant_backfill_status
+
+        self.assertFalse(hasattr(cli, "_WARRANT_RESUMABLE_STOPS"),
+                         "cli 不可以再自己留一份")
+        for stopped in WARRANT_RESUMABLE_STOPS:
+            self.assertEqual(_warrant_backfill_status(stopped), "incomplete")
 
     def _state_path(self, date, market="twse"):
         return self.tmp_path / f"resume-{date}-{market}.json"
@@ -172,7 +206,8 @@ class BackfillWarrantBranchesDateScopedTests(unittest.TestCase):
                 "SELECT status, error FROM import_logs "
                 "WHERE dataset='warrant_branch_hist' ORDER BY id DESC LIMIT 1"
             ).fetchone()
-        self.assertEqual(first_log[0], "error")
+        # 「還有日期沒跑完、下次續跑」同樣是可續跑停點,不是故障。
+        self.assertEqual(first_log[0], "incomplete")
         self.assertIn("resume required", first_log[1])
         with patch("radar.providers.fubon.fetch_branch_trades", return_value=[]) as second:
             retry = backfill_warrant_branches(top=200, days=1, sleep_s=0, state_file=self.state_base)
