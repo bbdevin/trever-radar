@@ -52,27 +52,36 @@ class TestDailyBranchesExitCodes(unittest.TestCase):
         self.assertNotEqual(idx, -1, f"找不到 {needle!r}")
         return idx
 
-    def test_exit_code_is_captured_explicitly_not_left_to_set_e(self):
-        """必須 set +e 取 rc 再 set -e。
+    def test_exit_code_is_taken_via_if_so_the_err_trap_stays_quiet(self):
+        """取離開碼要用 if/then/else,不可以用 `set +e; …; rc=$?; set -e`。
 
-        靠 `set -e` 是不行的:它對 75 跟對 1 一樣直接中止,於是「可以上線」被
-        當成「不可以上線」——方向剛好相反,而且是靜默的。
+        兩種寫法都拿得到碼,差別在 ERR trap。lib.sh 在 source 時就呼叫了
+        install_fail_trap,而 `set +e` **不會**讓 ERR trap 安靜下來——實測:
+
+            set -euo pipefail; trap '...' ERR
+            set +e; bash -c 'exit 75'; rc=$?; set -e   -> ERR TRAP FIRED
+            if bash -c 'exit 75'; then …; else rc=$?; fi -> 不觸發
+
+        用錯的那一種,每一個「個別標的失敗但仍可上線」的日子都會多送一則 high
+        優先權的「執行到第 N 行失敗」,把正常結果講成故障,也就把 75(一般)與
+        76(high)的分級整個抵銷掉。這正是這個專案一直在對抗的警報疲勞。
         """
-        imp = self._index("radar import-branch-trades")
-        before = self.code[max(0, imp - 400):imp]
-        self.assertIn("set +e", before, "取 rc 之前要先關掉 set -e")
-        self.assertIn("set -e", self.code[imp:imp + 400], "取完 rc 要立刻恢復 set -e")
-
-        # `$?` 只保留「上一個」指令的離開碼。中間插進任何一行——哪怕是 echo——
-        # 都會把它洗掉,而且洗掉之後腳本照跑、測試照過、只有離開碼靜默變成 0,
-        # 也就是「不合格的一天」會被當成「完全正常」送上線。所以這裡驗的是
-        # **緊鄰**,不是「附近找得到」。
-        idx = next(i for i, ln in enumerate(self.lines)
+        imp = next(i for i, ln in enumerate(self.lines)
                    if "radar import-branch-trades" in ln)
-        following = [ln.strip() for ln in self.lines[idx + 1:] if ln.strip()]
-        self.assertTrue(following, "import 之後應該還有東西")
-        self.assertEqual(following[0], "branch_rc=$?",
-                         "`branch_rc=$?` 必須緊接在 import 之後,中間不可以有任何指令")
+        self.assertTrue(self.lines[imp].strip().startswith("if radar import-branch-trades"),
+                        "匯入要寫成 `if radar import-branch-trades …; then`")
+
+        # `set +e` 不可以在匯入附近重新出現——那是被實測否決的寫法。
+        window = self.code[max(0, self._index("radar import-branch-trades") - 300):
+                           self._index("case \"$branch_rc\"")]
+        self.assertNotIn("set +e", window,
+                         "不可以退回 set +e 取碼:ERR trap 仍會誤報失敗")
+
+        # then/else 兩支都要把碼接住:少了 then 那支,成功時 branch_rc 會沿用
+        # 上一輪的舊值(或在 set -u 下直接炸掉)。
+        block = "\n".join(self.lines[imp:imp + 6])
+        self.assertIn("branch_rc=0", block, "成功那支要明確設 0")
+        self.assertIn("branch_rc=$?", block, "失敗那支要接住真正的碼")
 
     def test_all_four_outcomes_are_handled(self):
         case_idx = self._index("case \"$branch_rc\"")

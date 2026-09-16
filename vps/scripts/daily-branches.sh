@@ -57,12 +57,19 @@ radar seed-branches
 #
 # 75 與 76 都「繼續」是刻意的:withhold 一整天 1,987 檔正確的資料,只因為 1 檔
 # 抓失敗,比讓那 1 檔的分點面板晚一天還糟;次日 17:40 會冪等重抓補齊。
-# 這裡必須顯式 set +e 取 rc,不能靠 set -e —— set -e 對 75 跟對 1 一樣是直接中止,
-# 那等於把「可上線」判成「不可上線」,方向剛好相反。
-set +e
-radar import-branch-trades --top 0 --warrant-turnover-min 1000000 --sleep 1.0
-branch_rc=$?
-set -e
+#
+# 用 if/then/else 取離開碼,不用 `set +e; …; rc=$?; set -e`。兩者都拿得到碼,
+# 差別在 ERR trap:lib.sh 在 source 時就裝了 install_fail_trap,而 `set +e`
+# **不會**讓 ERR trap 安靜下來(實測:set +e 之下回 75 仍然觸發)。那會讓每一個
+# 「個別標的失敗但可上線」的日子都多送一則 high 優先權的「執行到第 N 行失敗」,
+# 把一個正常結果講成故障,也就把 75(一般)與 76(high)的分級整個抵銷掉——
+# 正是這個專案一直在對抗的警報疲勞。if 的測試式對 set -e 與 ERR trap 都免疫,
+# safe-branch-stats.sh 的 run_step 用的就是這個形狀,理由相同。
+if radar import-branch-trades --top 0 --warrant-turnover-min 1000000 --sleep 1.0; then
+  branch_rc=0
+else
+  branch_rc=$?
+fi
 case "$branch_rc" in
   0) ;;
   75) notify_warn "分點匯入有個別標的失敗（碼 75），當日覆蓋率仍在帶內，照常上線；次日 17:40 會重抓" ;;
