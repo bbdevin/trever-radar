@@ -4,6 +4,14 @@
 # 第二輪改 22:00,讓 21:20 資券先上線、避免搶 lock。
 source "$(dirname "$0")/lib.sh"
 
+# 這一輪屬於哪一天,在**開跑時**就定下來,不能等收工才算。
+# 22:00 那輪的 compute-branch-stats 要跑一個多小時,實測 2026-09-15 那輪的
+# deploy 收在隔天 00:25 —— 用收工當下的日曆日命名完成標記,會得到 09-16 這個
+# 名字,而夜間作業找的是 09-15,於是標記永遠對不上。偏偏「跨過午夜」正是這個
+# 標記存在的理由(夜間作業 00:05 起跑,撞上的就是還沒收工的那一輪),等於在
+# 唯一需要它的情況下失效。開跑日是資料日:17:40 與 22:00 兩輪都在當天交易日內。
+ROUND_DATE="$(taipei_date +%F)"
+
 acquire_db_lock
 acquire_branch_source_lock
 sync_code
@@ -51,5 +59,5 @@ radar prune
 deploy_data
 # 只有走到這裡才算「整輪跑完」。夜間備援作業讀這個標記決定今晚要不要重算,
 # 所以它必須在 deploy_data 之後——在之前寫就等於承諾了一件還沒發生的事。
-taipei_date -Is > "$(branch_round_marker "$(taipei_date +%F)")"
+taipei_date -Is > "$(branch_round_marker "$ROUND_DATE")"
 notify_ok "分點籌碼已更新並上線（含法人補抓）"

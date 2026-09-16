@@ -125,10 +125,38 @@ class TestDailyBranchesExitCodes(unittest.TestCase):
         self.assertNotIn("/tmp/radar-branch-round-", "\n".join(self.lines),
                          "daily-branches 不該自己寫死標記路徑")
 
-    def test_marker_content_is_a_timestamp(self):
-        """標記內容要是時間,不能只是空檔案——夜間作業靠它跟 run_at 比大小。"""
+    def test_marker_is_named_for_the_round_date_captured_at_start(self):
+        """標記檔名用的日期必須在**開跑時**取,不能等收工才算。
+
+        實測 2026-09-15 那輪:22:00 起跑,compute-branch-stats 跑了 74 分鐘,
+        deploy 收在隔天 00:25。用收工當下的日曆日命名會得到 `2026-09-16`,
+        而夜間作業找的是 `2026-09-15`,標記永遠對不上 —— 而「跨過午夜」正是
+        這個標記存在的理由(夜間作業 00:05 撞上的就是還沒收工的那一輪)。
+        它在容易的情況下能動,在唯一需要它的情況下失效。
+        """
+        capture = next((i for i, ln in enumerate(self.lines)
+                        if ln.strip().startswith("ROUND_DATE=")), None)
+        self.assertIsNotNone(capture, "應該在開頭就把本輪日期定下來")
+        self.assertIn("taipei_date +%F", self.lines[capture])
+
+        imp = next(i for i, ln in enumerate(self.lines)
+                   if "radar import-branch-trades" in ln)
+        self.assertLess(capture, imp, "日期要在任何長工作之前就取好")
+
         marker_line = next(ln for ln in self.lines if "branch_round_marker" in ln)
-        self.assertIn("taipei_date", marker_line,
+        self.assertIn("$ROUND_DATE", marker_line,
+                      "標記必須用開跑時定下的日期")
+        self.assertNotIn("$(taipei_date +%F)", marker_line,
+                         "不可以在寫標記的當下才算日曆日 —— 跨午夜就會錯")
+
+    def test_marker_content_is_a_timestamp(self):
+        """標記內容要是時間,不能只是空檔案——夜間作業靠它跟 run_at 比大小。
+
+        注意這裡跟上一個測試要的是兩件不同的事:檔**名**用開跑日(資料日),
+        檔**內容**用收工當下的時刻(才能跟匯入的 run_at 比先後)。
+        """
+        marker_line = next(ln for ln in self.lines if "branch_round_marker" in ln)
+        self.assertIn("taipei_date -Is", marker_line,
                       "標記內容應該是台北時區的 ISO 時間")
 
 
