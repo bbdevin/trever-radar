@@ -191,19 +191,32 @@ echo "evening round marker: ${MARKER_AT:-<missing>}"
 #   1. 那一輪的匯入本身合格 —— status 是 ok 或 incomplete。
 #      incomplete 也算合格是刻意的:它代表「有個別標的沒抓到,但當日覆蓋率仍在
 #      帶內」,資料可用。只有 error(覆蓋率掉出帶狀範圍)才是不合格。
-#   2. 有完成標記,而且標記時間晚於那筆匯入的 run_at。
+#   2. 當天有完成標記 —— **只看存在,不比時間**。
 #      只看 status 不夠 —— 匯入 ok 之後 compute-branch-stats 仍可能 OOM,整輪
 #      什麼都沒算出來也沒上線;那時跳過等於把備援關掉,正好在最需要它的那晚。
-#      比時間則連「17:40 跑完、22:00 匯入成功但算到一半死掉」都能判對。
+#
+#      這裡以前比的是「標記時間是否晚於那筆匯入的 run_at」。22:00 那輪改成
+#      只匯入(daily-branches.sh 的 BRANCH_ROUND_MODE=import)之後,這個比較
+#      必然為假:當天最新的那筆分點匯入是 22:00 那輪寫的(約 23:00),而標記
+#      是 17:40 那輪寫的(約 20:30),標記永遠比匯入舊,於是每一夜都會重算,
+#      省下來的 74 分鐘全部吐回去。
+#
+#      只看存在就夠了,因為標記只在 deploy_data 成功之後才寫(見
+#      daily-branches.sh 結尾與 lib.sh 的 branch_round_marker):它存在本身
+#      就證明當天有一輪完整鏈算完並上線了。17:40 那輪若算到一半 OOM,
+#      根本不會有標記,夜間作業照常補跑——這正是我們要的 fallback 行為。
 #
 # 查詢失敗、空字串、標記缺失一律落在「未確認完成」這邊——這支腳本存在的理由
 # 就是 fallback,判斷不出來的時候多跑一次的代價遠低於漏跑。
+#
+# BRANCH_RUN_AT 不再參與這個判斷,但保留:它會寫進 state 檔與上面那行 log,
+# 是事後對照「當晚最後一次匯入是幾點」的唯一紀錄。
 EVENING_BRANCH_OK=0
 if [ "$BRANCH_STATUS" = "ok" ] || [ "$BRANCH_STATUS" = "incomplete" ]; then
-  if [ -n "$MARKER_AT" ] && [ -n "$BRANCH_RUN_AT" ] && [[ "$MARKER_AT" > "$BRANCH_RUN_AT" ]]; then
+  if [ -n "$MARKER_AT" ]; then
     EVENING_BRANCH_OK=1
   else
-    echo "完成標記不晚於匯入 run_at（或缺失）：那批匯入沒有被算完並上線,本輪照常補跑"
+    echo "找不到完成標記：當天沒有任何一輪算完並上線,本輪照常補跑"
   fi
 fi
 
@@ -234,8 +247,14 @@ fi
 #   2. 這個 DB 是單一寫入者。多一條 cron 就是多一個寫入者,會跟本腳本
 #      與回補容器搶鎖;折進這裡則沿用同一把鎖、同一個時間窗。
 #   3. 成本 31~50 秒,對一支本來就跑好幾分鐘的工作可忽略。
-# 必須在 compute-branch-stats 成功之後(帳本讀的是它剛更新的資料),
-# 在 compute-scores 之前(順序固定,便於對照 state 檔)。
+# 位置在 compute-branch-stats 之後、compute-scores 之前(順序固定,便於對照
+# state 檔)。這是排版慣例,不是資料相依:
+# branch_point_in_time_persist.py 讀的是 `branch_trades WHERE date <= as_of`
+# 與 daily_prices,branch_stock_pctile_counts.py 同樣直接讀 branch_trades,
+# 兩者都**不讀** branch_stats / branch_stock_stats。所以即使今晚因為
+# EVENING_BRANCH_OK=1 而跳過 compute-branch-stats,帳本一樣看得到 22:00 那輪
+# 剛匯入的分點資料,算出來的東西不會少一天。以前這裡寫「帳本讀的是它剛更新
+# 的資料」是錯的,而且會讓人以為跳過 compute 就得連帳本一起跳過。
 # 失敗不中止本輪:這張帳本次要於分數/匯出/上線,不能因為它而擋住當天的價格上線。
 if [ "${SKIP_PIT:-0}" != "1" ]; then
   if run_step "branch-point-in-time-persist" radar branch-point-in-time-persist; then
@@ -252,7 +271,7 @@ fi
 
 # branch-stock-pctile-counts:同一批原料的 pair 粒度快照(分點 × 個股 的低買/
 # 高賣計數),個股頁要用。折在這裡的理由與上面那段完全相同(共用五道守衛、
-# 單一寫入者、成本可忽略),而且它讀的也是 compute-branch-stats 剛更新的資料。
+# 單一寫入者、成本可忽略),而且它讀的原料同樣是 branch_trades,不是 stats 表。
 # 整張表每輪被取代,失敗只是舊快照留著,所以**同樣不中止本輪**:它次要於
 # 分數、匯出與上線,不能因為它擋住當天的價格上線。
 if [ "${SKIP_PAIR_PCTILE:-0}" != "1" ]; then

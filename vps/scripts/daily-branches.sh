@@ -1,8 +1,28 @@
 #!/usr/bin/env bash
 # 17:40 + 22:00 台北(週一–五,同一支跑兩次,冪等)— 法人補抓 + 分點全量。
+# 17:40 跑完整鏈並上線;22:00 由 crontab 設 BRANCH_ROUND_MODE=import,只匯入(見下)。
 # 融資融券不在此輪:交由 21:20 daily-margin(TWSE ~21:00 產製)。
 # 第二輪改 22:00,讓 21:20 資券先上線、避免搶 lock。
 source "$(dirname "$0")/lib.sh"
+
+# ── 本輪模式:環境變數 BRANCH_ROUND_MODE ────────────────────────────────
+#   未設(或任何其他值) = full:完整鏈,與改動前完全相同。手動執行不受影響。
+#   import             = 只匯入:import-daily / compute-indicators / seed-branches /
+#                        import-branch-trades 照跑,compute-branch-stats、
+#                        compute-scores、compute-performance、export-json、prune、
+#                        deploy_data 全部不跑,**也不寫完成標記**。
+#
+# 設定它的是 22:00 那一條 crontab(`BRANCH_ROUND_MODE=import /...daily-branches.sh`);
+# 17:40 那條不設,維持完整鏈。
+#
+# 為什麼 22:00 只匯入:compute-branch-stats 要 ~74 分鐘,而它在 22:00 算出來的
+# 東西幾乎就是 17:40 已經算過的。production 實測 stock_stats 列數 17:40→22:00
+# 的差是 +326/+48/+170/+119/+0/+105 列(基數約 1,136,000,約 0.011%),而 22:00
+# 那輪要到隔天 00:25 才上線。17:40 那輪 20:30 左右就上線,使用者還醒著;為了
+# 0.011% 的差異讓第二輪再跑一次 74 分鐘、並在深夜佔住 DB 鎖,不划算。
+# 22:00 仍然匯入,是因為當晚較晚才補齊的分點資料要進 DB,供 00:05 夜間作業
+# 與隔天使用。
+BRANCH_ROUND_MODE="${BRANCH_ROUND_MODE:-full}"
 
 # 這一輪屬於哪一天,在**開跑時**就定下來,不能等收工才算。
 # 22:00 那輪的 compute-branch-stats 要跑一個多小時,實測 2026-09-15 那輪的
@@ -50,6 +70,19 @@ case "$branch_rc" in
   *)  notify "分點匯入不合格（碼 ${branch_rc}），本輪不重算也不上線" high "失敗"
       exit "$branch_rc" ;;
 esac
+
+# 以上(匯入 + 上面那個 case)是兩個模式共用的**同一份**實作:離開碼 0/75/76/其他
+# 的分級只寫在上面那一個 case 裡,絕不為了 import 模式複製第二份——兩份遲早會漂移,
+# 而漂移的後果是某一個模式悄悄把不合格的一天當成正常。
+#
+# import 模式到此為止:不重算、不匯出、不上線。
+# 而且**不寫完成標記**。標記的意思是「算完而且上線了」,這一輪兩件都沒做;
+# 寫了就會讓 00:05 的夜間備援作業以為今天已經有人算過而整夜略過,
+# 於是這一天從頭到尾沒有任何一輪算過分點統計。
+if [ "$BRANCH_ROUND_MODE" = "import" ]; then
+  notify_ok "本輪僅匯入分點與法人資料（BRANCH_ROUND_MODE=import）：未重算、未匯出、未上線,網站仍是 17:40 那輪的內容"
+  exit 0
+fi
 
 radar compute-branch-stats
 radar compute-scores

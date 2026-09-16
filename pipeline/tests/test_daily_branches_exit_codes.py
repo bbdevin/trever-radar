@@ -149,6 +149,105 @@ class TestDailyBranchesExitCodes(unittest.TestCase):
         self.assertNotIn("$(taipei_date +%F)", marker_line,
                          "不可以在寫標記的當下才算日曆日 —— 跨午夜就會錯")
 
+    # ── BRANCH_ROUND_MODE:22:00 那輪只匯入 ────────────────────────────
+    def _mode_guard(self) -> int:
+        """import 模式那道守衛在原始碼裡的位置。"""
+        return self._index('if [ "$BRANCH_ROUND_MODE" = "import" ]')
+
+    def test_mode_defaults_to_the_full_chain_when_unset(self):
+        """未設環境變數(手動執行、17:40 那輪)必須跟改動前一模一樣。
+
+        預設值寫成 `:-full`,而守衛比的是 `= "import"`:兩邊都要求「只有明確
+        設成 import 才縮短」,任何拼錯、空字串、其他值都落回完整鏈——縮短是
+        要明講的決定,不能因為變數沒傳到就靜默發生(那會讓網站整天不更新)。
+        """
+        decl = next((ln for ln in self.lines
+                     if ln.strip().startswith("BRANCH_ROUND_MODE=")), None)
+        self.assertIsNotNone(decl, "應該在開頭把模式定下來")
+        self.assertIn('${BRANCH_ROUND_MODE:-full}', decl,
+                      "未設時的預設必須是完整鏈")
+        guard_line = next(ln for ln in self.lines if "BRANCH_ROUND_MODE" in ln
+                          and "if" in ln)
+        self.assertIn('= "import"', guard_line,
+                      "守衛要是『等於 import 才縮短』,不能是『不等於 full 就縮短』")
+
+    def test_import_only_mode_does_not_write_the_completion_marker(self):
+        """這是整組改動裡最重要的一條。
+
+        標記的意思是「算完**而且**上線了」。只匯入的那一輪兩件都沒做;若它也
+        寫標記,00:05 的夜間備援作業會看到標記而整夜略過,於是這一天從頭到尾
+        沒有任何一輪算過分點統計——備援在唯一需要它的情況下被自己關掉。
+        """
+        guard = self._mode_guard()
+        marker = self._index("branch_round_marker")
+        self.assertGreater(marker, guard,
+                           "寫標記必須在 import 模式離開之後,只匯入的那輪不得寫")
+        # 守衛與離開之間不可以夾帶寫標記的動作。
+        block = self.code[guard:self.code.index("fi", guard)]
+        self.assertIn("exit 0", block, "import 模式要在這裡結束本輪")
+        self.assertNotIn("branch_round_marker", block)
+
+    def test_import_only_mode_skips_every_compute_and_publish_step(self):
+        """只匯入的那一輪不得重算、不得匯出、不得上線。"""
+        guard = self._mode_guard()
+        for step in (
+            "radar compute-branch-stats",
+            "radar compute-scores",
+            "radar compute-performance",
+            "radar export-json",
+            "radar prune",
+            "deploy_data",
+        ):
+            with self.subTest(step=step):
+                self.assertGreater(
+                    self._index(step), guard,
+                    f"{step} 必須落在 import 模式離開之後",
+                )
+
+    def test_import_only_mode_still_runs_the_imports(self):
+        """只匯入不等於什麼都不做:22:00 這一輪存在的理由就是把當晚較晚才
+        補齊的分點與法人資料寫進 DB。"""
+        guard = self._mode_guard()
+        for step in (
+            "radar import-daily --datasets quotes,insti",
+            "radar compute-indicators",
+            "radar seed-branches",
+            "radar import-branch-trades",
+        ):
+            with self.subTest(step=step):
+                self.assertLess(
+                    self._index(step), guard,
+                    f"{step} 在兩個模式都要跑,必須在模式守衛之前",
+                )
+
+    def test_exit_code_branching_is_one_implementation_shared_by_both_modes(self):
+        """0/75/76/其他 的分級只能有一份,而且要在模式分岔**之前**。
+
+        複製成兩份(完整鏈一份、import 一份)是最容易發生也最難發現的退化:
+        兩份會漂移,漂移的後果是某一個模式悄悄把不合格的一天當成正常照跑。
+        """
+        self.assertEqual(self.code.count('case "$branch_rc"'), 1,
+                         "離開碼分級只能有一份實作")
+        self.assertEqual(self.code.count("branch_rc=$?"), 1,
+                         "取離開碼也只能有一處")
+        case_idx = self._index('case "$branch_rc"')
+        guard = self._mode_guard()
+        self.assertLess(case_idx, guard,
+                        "case 必須在模式分岔之前,兩個模式才走得到同一份")
+        # 匯入到 case 收尾之間不得出現任何模式判斷,否則就是把分級藏進某一個模式裡。
+        imp = self._index("radar import-branch-trades")
+        esac = self.code.index("esac", case_idx)
+        self.assertNotIn("BRANCH_ROUND_MODE", self.code[imp:esac],
+                         "離開碼分級不得被模式條件包住")
+
+    def test_import_only_success_notification_says_nothing_was_published(self):
+        """通知要講清楚「只匯入、沒上線」,否則值班的人會以為網站更新了。"""
+        guard = self._mode_guard()
+        block = self.code[guard:self.code.index("fi", guard)]
+        self.assertIn("notify_ok", block, "只匯入也算本輪成功,要發成功通知")
+        self.assertRegex(block, r"僅匯入|只匯入", "通知要說明本輪只做了匯入")
+        self.assertIn("未上線", block, "通知要明講沒有上線")
+
     def test_marker_content_is_a_timestamp(self):
         """標記內容要是時間,不能只是空檔案——夜間作業靠它跟 run_at 比大小。
 

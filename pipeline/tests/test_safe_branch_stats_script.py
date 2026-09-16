@@ -109,24 +109,84 @@ class TestSafeBranchStatsScript(unittest.TestCase):
         self.assertIn("ORDER BY id DESC LIMIT 1", self.code,
                       "同一天 17:40/22:00 都可能各寫一列,要挑最新的一列")
 
-    def test_skip_requires_both_a_fit_import_and_a_later_completion_marker(self):
+    def test_skip_requires_a_fit_import_and_the_mere_existence_of_the_marker(self):
         """跳過重算需要兩個條件,只看 import_logs 的 status 不夠。
 
         status 那一列只講「匯入」這一段。匯入寫下 ok 之後,compute-branch-stats
         仍可能 OOM 而整輪什麼都沒算出來、也沒上線;那時跳過等於把備援關掉,
-        正好在最需要它的那一晚。所以還要有一個 deploy_data 之後才寫的完成標記,
-        而且標記時間必須**晚於**那筆匯入的 run_at——否則「17:40 跑完、22:00 匯入
-        成功但算到一半死掉」會被誤判成完成。
+        正好在最需要它的那一晚。所以還要有一個 deploy_data 之後才寫的完成標記。
+
+        標記只驗**存在**,不比時間——見下一個測試。
         """
         line = _first_line(r"^\s*EVENING_BRANCH_OK=1\s*$", self.lines)
         self.assertIsNotNone(line, "找不到 EVENING_BRANCH_OK 的設定")
         window = "\n".join(self.lines[max(0, line - 8):line])
-        self.assertIn('"$MARKER_AT" > "$BRANCH_RUN_AT"', window,
-                      "必須比較完成標記時間與匯入 run_at,只存在標記還不夠")
         self.assertIn('-n "$MARKER_AT"', window, "標記缺失要落在保守路徑")
         default_line = _first_line(r"^\s*EVENING_BRANCH_OK=0\s*$", self.lines)
         self.assertIsNotNone(default_line, "預設 0:缺列/缺標記/查詢失敗都保守走完整路徑")
         self.assertLess(default_line, line, "預設值要先設,再由通過的分支覆寫成 1")
+
+    def test_marker_gate_is_existence_only_never_a_timestamp_comparison(self):
+        """標記只驗存在,絕不可以再跟 run_at 比先後。
+
+        22:00 那輪已改成只匯入(daily-branches.sh 的 BRANCH_ROUND_MODE=import),
+        當天最新的分點匯入是那一輪寫的(約 23:00),而標記是 17:40 那輪寫的
+        (約 20:30)。標記因此**永遠**比最新匯入舊,比時間會讓這支腳本每一夜
+        都重算,74 分鐘的節省全部吐回去。
+
+        存在就夠:標記只在 deploy_data 成功之後才寫,存在本身即證明當天有一輪
+        完整鏈算完並上線;17:40 那輪算到一半 OOM 就不會有標記,夜間照常補跑。
+        """
+        line = _first_line(r"^\s*EVENING_BRANCH_OK=1\s*$", self.lines)
+        window = "\n".join(self.lines[max(0, line - 8):line])
+        self.assertNotIn("BRANCH_RUN_AT", window,
+                         "跳過判斷不得再引用匯入的 run_at")
+        for op in (">", "<"):
+            with self.subTest(op=op):
+                self.assertNotIn(op, window,
+                                 "跳過判斷裡不得有任何時間先後比較")
+        # 全檔範圍:MARKER_AT 與 BRANCH_RUN_AT 不得再出現在同一行(那就是比大小)。
+        for i, ln in enumerate(self.lines, 1):
+            if "MARKER_AT" in ln and "BRANCH_RUN_AT" in ln:
+                self.fail(f"第 {i} 行又把標記與 run_at 放在一起比較:{ln.strip()}")
+
+    def test_branch_run_at_survives_only_as_a_record(self):
+        """BRANCH_RUN_AT 退出判斷,但保留在 log 與 state 檔:它是事後唯一
+        能回答「當晚最後一次匯入是幾點」的紀錄,拿掉就查不回來了。"""
+        self.assertIn("BRANCH_RUN_AT=", self.code, "仍要解析出 run_at")
+        self.assertIn("branch_import_run_at=${BRANCH_RUN_AT:-missing}", self.code,
+                      "run_at 要寫進 state 檔")
+
+    def test_the_two_nightly_gates_stay_independent(self):
+        """兩道閘門互不相干,不可以混進彼此的判斷式:
+        (a) EVENING_BRANCH_OK 決定「今晚要不要重算」;
+        (b) status=error 決定「這批資料能不能上線」。
+        合併之後,任何一邊的修改都會悄悄改到另一邊。
+        """
+        skip_line = _first_line(r"^\s*EVENING_BRANCH_OK=1\s*$", self.lines)
+        skip_window = "\n".join(self.lines[max(0, skip_line - 8):skip_line])
+        self.assertNotIn('"$BRANCH_STATUS" = "error"', skip_window,
+                         "跳過判斷裡不該出現 error 這個上線閘門的條件")
+
+        idx = self.code.index('if [ "$BRANCH_STATUS" = "error" ]')
+        publish_gate = self.code[idx:self.code.index("\n", idx)]
+        self.assertNotIn("EVENING_BRANCH_OK", publish_gate,
+                         "上線閘門不該看今晚有沒有重算")
+
+    def test_pit_comment_no_longer_claims_it_reads_the_stats_tables(self):
+        """帳本與 pair-pctile 都直接讀 branch_trades(見
+        radar/compute/branch_point_in_time_persist.py 與
+        branch_stock_pctile_counts.py),不讀 branch_stats / branch_stock_stats。
+
+        這件事在 22:00 只匯入之後才真正要緊:即使今晚跳過 compute-branch-stats,
+        帳本一樣看得到當晚匯入的分點資料。舊註解寫反了,會讓人以為跳過 compute
+        就得連帳本一起跳過。
+        """
+        raw = SCRIPT.read_text(encoding="utf-8")
+        self.assertFalse("帳本讀的是它剛更新的資料" in raw,
+                         "這句註解是錯的:帳本讀的是 branch_trades,不是 stats 表")
+        self.assertIn("branch_trades", raw,
+                      "註解應該講明帳本讀的是 branch_trades")
 
     def test_incomplete_counts_as_fit_but_error_never_does(self):
         """`incomplete` = 有個別標的沒抓到但當日覆蓋率仍在帶內 → 資料可用。
