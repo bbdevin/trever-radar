@@ -159,6 +159,23 @@ class TestSafeBranchStatsScript(unittest.TestCase):
         self.assertNotRegex(self.code, r"radar [a-z-]+[^\n]*\|\s*(grep|awk|sed)",
                             "不可以解析 radar 指令的輸出來決定控制流")
 
+    def test_tripwire_is_a_clock_time_not_a_duration(self):
+        """警戒線量的是「幾點收工」,不是「跑了幾分鐘」。
+
+        要保護的是鎖的下一個主人(週六 05:00 weekly-backup)。用時長會把撞車
+        跟變慢混為一談:2026-09-15 那晚 start-to-done 138 分鐘,其中 28 分鐘
+        只是在等 22:00 那輪放鎖 —— 用 180 分鐘的門檻那晚看起來沒事,實際上
+        它離 05:00 比帳面更近。收工時刻把兩者都算進去,而且算得對。
+        """
+        self.assertIn("0330", self.code, "應該有 03:30 的收工警戒線")
+        idx = self.code.index("0330")
+        window = self.code[max(0, idx - 300):idx + 400]
+        self.assertIn("FINISHED_HHMM", window, "比較的應該是收工時刻")
+        self.assertIn("high", window, "超過警戒線要 high 等級,不能只寫進 log")
+        # 時長門檻(180 分鐘之類)是被明確否決的做法,不該偷偷回來。
+        self.assertNotRegex(self.code, r"\b180\b",
+                            "不可以退回用時長當警戒線")
+
     def test_the_three_redundant_steps_are_gated_on_evening_ok(self):
         for label in ("compute-branch-stats", "compute-scores", "export-json"):
             with self.subTest(step=label):

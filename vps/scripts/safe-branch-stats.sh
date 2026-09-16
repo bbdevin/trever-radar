@@ -300,8 +300,26 @@ elif [ "${SKIP_EXPORT:-0}" != "1" ]; then
   run_step "deploy" deploy_data
 fi
 
+# 警戒線是「幾點收工」,不是「跑了幾分鐘」。
+#
+# 要保護的是鎖的下一個主人:週六 05:00 的 weekly-backup。用時長當警戒線會把
+# 「撞車」跟「變慢」混為一談 —— 2026-09-15 那晚 start-to-done 是 138 分鐘,
+# 其中 28 分鐘只是在等 22:00 那輪放鎖;用 180 分鐘的時長門檻,那晚看起來還好,
+# 但它離 05:00 其實比帳面近。收工時刻則兩者都算進去,而且算得對。
+#
+# 每晚同一個 03:30,所以週六那次違規會提前四個晚上先叫。
+FINISHED_AT="$(taipei_date -Is)"
+FINISHED_HHMM="$(taipei_date +%H%M)"
+# 00:05 起跑,收工必然在同一個日曆日的凌晨;>= 0330 且 < 1200 才算超時,
+# 免得極端情況下跨到下午的時刻被當成「沒超過」。
+if [ "$FINISHED_HHMM" \> "0330" ] && [ "$FINISHED_HHMM" \< "1200" ]; then
+  echo "TRIPWIRE: 夜間作業收在 ${FINISHED_AT}，晚於 03:30"
+  notify "夜間分點作業收在 ${FINISHED_HHMM}（晚於 03:30 警戒線）；週六 05:00 週備份會被擠到，請看每步耗時" high "注意"
+fi
+
 {
-  echo "finished=$(taipei_date -Is)"
+  echo "finished=$FINISHED_AT"
+  echo "tripwire_hhmm=$FINISHED_HHMM"
   echo "stats=$STATS_NOTE"
   echo "pit=$PIT_NOTE"
   echo "pair_pctile=$PAIR_PCTILE_NOTE"
