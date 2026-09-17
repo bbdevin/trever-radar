@@ -468,6 +468,12 @@ futures_contracts = Table(
     Column("is_stock_option", Boolean),                # 是否為股票選擇權標的
     Column("is_weekly_option", Boolean),               # 是否為股票選擇權週契約標的
     Column("market", Text),                            # twse / tpex
+    # 契約乘數(股/口):標準型 2,000、小型 100、ETF 期貨另計(來源:TAIFEX 契約規格)。
+    # **NULL = 未知,不是 2,000**。docs/38 §2 R2b 的實質性閘門要把口數換成股當量,
+    # 不知道乘數就換不出股數,那一天只能否決;拿 2,000 當預設等於替小型契約與 ETF
+    # 期貨憑空放大 20 倍以上的股當量,而且錯得很安靜。本欄目前沒有任何寫入端,
+    # 既有列一律維持 NULL,填值是另一個決定(§4)。
+    Column("contract_multiplier", Integer),            # 股/口;NULL = 未知
     Column("first_seen", Text, nullable=False),        # YYYY-MM-DD
     Column("last_seen", Text, nullable=False),         # YYYY-MM-DD;變舊 = 已下架
     Index("ix_futures_contracts_stock", "stock_id"),

@@ -132,6 +132,16 @@ def _migrate_sqlite(conn):
                 conn.exec_driver_sql(
                     f"ALTER TABLE branch_stock_pctile_counts ADD COLUMN {name} {sql_type}")
 
+    # 契約乘數(股/口)。既有列一律維持 NULL,而 NULL 是「未知」不是 2,000:
+    # docs/38 §2 R2b 規定乘數未知就否決該契約該日,不得假設標準型。
+    fut_cols = {
+        r[1] for r in
+        conn.exec_driver_sql("PRAGMA table_info(futures_contracts)").fetchall()
+    }
+    if fut_cols and "contract_multiplier" not in fut_cols:
+        conn.exec_driver_sql(
+            "ALTER TABLE futures_contracts ADD COLUMN contract_multiplier INTEGER")
+
     view_check = conn.exec_driver_sql("SELECT type FROM sqlite_master WHERE name='branch_trades'").scalar()
     if view_check == 'table':
         conn.exec_driver_sql("ALTER TABLE branch_trades RENAME TO branch_trades_old")

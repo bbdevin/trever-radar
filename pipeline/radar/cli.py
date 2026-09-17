@@ -502,6 +502,45 @@ def cmd_branch_window_direction_battery(args):
         print(f"  {trigger['line']}")
 
 
+def cmd_futures_volume_battery(args):
+    from .compute.futures_volume_battery import write_futures_volume_battery
+
+    report = write_futures_volume_battery(
+        as_of=args.as_of, run_number=args.run_number, out=args.out,
+    )
+    coverage, sets_ = report["coverage"], report["sets"]
+    print(
+        "futures-volume-battery "
+        f"as_of={report['metadata']['as_of']} "
+        f"run={report['metadata']['run_number']} "
+        f"preregistration={report['metadata']['preregistration_commit']} "
+        f"futures_days={coverage['futures_trading_days']} "
+        f"rows={coverage['futures_daily_rows']} "
+        f"contracts={coverage['contracts']}"
+        f"(multiplier_known={coverage['contracts_with_known_multiplier']}) "
+        f"-> {args.out}"
+    )
+    print(
+        f"  |F|={sets_['f']} |F_only|={sets_['f_only']} "
+        f"immature={sets_['f_immature']} "
+        f"spot_flag_unknown={sets_['f_with_unknown_spot_flag']}"
+    )
+    print(f"  refusals: " + " ".join(
+        f"{code}={report['refusals'][code]}"
+        for code in ("R1_window_gap", "R2a_zero_median", "R2b_multiplier_unknown",
+                     "R2b_spot_history_gap", "R2b_immaterial")
+    ))
+    for seed in report["tests"]["B"]["seeds"]:
+        print(
+            f"  seed={seed['seed']} n={seed['n']} h_F={seed['h_f']} "
+            f"h_P={seed['h_p']} sigma_P={seed['sigma_p']} "
+            f"{'pass' if seed['passed'] else 'fail'}"
+        )
+    print(f"  {report['tests']['A']['line']}")
+    print(f"  {report['tests']['B']['line']}")
+    print(f"  {report['verdict']['line']}")
+
+
 def cmd_branch_ranking_v2_shadow(args):
     from .compute.branch_ranking_v2_shadow import write_branch_ranking_v2_shadow_report
 
@@ -914,6 +953,23 @@ def main(argv=None):
                            "validated result")
     bwdb.add_argument("--out", required=True, help="JSON output path")
     bwdb.set_defaults(fn=cmd_branch_window_direction_battery)
+
+    fvb = sub.add_parser(
+        "futures-volume-battery",
+        help="read-only pre-registered battery for the per-stock futures volume "
+             "anomaly slice (docs/38, committed at c70f1c2 before its data existed): "
+             "60-day regular-session new high, the R1-R5 refusals, and the two "
+             "kill tests. Writes a JSON report and nothing else — no table, no "
+             "export, no panel, and the slice ships only if both tests pass",
+    )
+    fvb.add_argument("--as-of", dest="as_of", required=True,
+                     help="YYYY-MM-DD inclusive knowledge cutoff for both calendars")
+    fvb.add_argument("--run-number", dest="run_number", type=int, default=1,
+                     help="which run this is (docs/38 §3.4 requires the count to be "
+                          "recorded; §3.5 allows a re-run only after >= 60 new futures "
+                          "trading days)")
+    fvb.add_argument("--out", required=True, help="JSON output path")
+    fvb.set_defaults(fn=cmd_futures_volume_battery)
 
     v2s = sub.add_parser(
         "branch-ranking-v2-shadow",
