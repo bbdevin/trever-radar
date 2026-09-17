@@ -939,6 +939,15 @@ def _definitions() -> dict[str, str]:
             f"greater than the max over that stock's previous {WINDOW_DAYS} spot "
             "trading days. Spot does not roll over, so R4 is NOT applied to it"
         ),
+        "sets.f": (
+            "|F| as §3.1 defines it: every mature flagged contract-day, INCLUDING days "
+            "whose spot comparison S is unknown. Recorded because §3.4 requires |F| be "
+            "recorded. It is NOT the input to test A. Comparing sets.f against the "
+            "threshold of 30 reproduces the pre-amendment behaviour that §6 ruling 4 "
+            "removed — test A reads sets.f_with_established_spot_flag "
+            "(= |F_only| + |F_(S=1)|), because the REDUNDANT verdict is a claim about "
+            "days where S = 1 and an unknown S cannot support it"
+        ),
         "F_only": (
             "flagged contract-days where the underlying did NOT make a spot volume new "
             "high the same day: what the futures volume says that the spot volume does "

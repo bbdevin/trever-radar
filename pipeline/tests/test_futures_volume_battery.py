@@ -243,6 +243,23 @@ class FrozenConstantTests(unittest.TestCase):
         self.assertEqual(LOW_SAMPLE_SURVIVORS, 30)
         self.assertEqual(PREREGISTRATION_COMMIT, "c70f1c2")
 
+    def test_sets_f_is_documented_as_not_being_test_a_input(self):
+        """`sets.f` 與檢定 A 的輸入不是同一個數,這件事必須寫在 JSON 自己身上。
+
+        §3.4 要求記錄 |F|,所以 `sets.f` 這個鍵不能改名;但修訂之後檢定 A 讀的是
+        `sets.f_with_established_spot_flag`。讀 JSON 的人若拿 `sets.f` 去跟 30 比,
+        得到的是修訂前的答案——而規則凍結之後,這扇門就關上了。所以把區別寫進
+        `_definitions()`,並用這條測試釘住:拿掉說明就要先刪掉這條測試。
+        """
+        from radar.compute.futures_volume_battery import _definitions
+
+        d = _definitions()
+        self.assertIn("sets.f", d, "sets.f 必須有自己的說明,不能只靠讀者推敲")
+        text = d["sets.f"]
+        self.assertIn("NOT the input to test A", text)
+        self.assertIn("f_with_established_spot_flag", text,
+                      "說明要指出真正的輸入是哪一個鍵,不能只說『不是這個』")
+
     def test_the_amendment_is_named_and_claims_v1_standing(self):
         """§6 修訂沒有動任何一個數字,但它必須在 JSON 裡指認得出來。
 
