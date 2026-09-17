@@ -20,7 +20,12 @@
 §2 否決(命中任一條 → 該契約該日不產生旗標,也不進檢定樣本)
     R1 窗口湊不滿 60 天,或窗口內任一天該契約沒有一般時段非價差列(**缺列 ≠ 0 口**)。
     R2a ``window_median == 0``——窗口內過半日子沒有成交,沒有「日常」可比。
-    R2b 實質性:``100 × (today − window_median) × multiplier ≥ spot_median_shares``。
+    R2b 實質性:``100 × (today − window_median) × multiplier ≥ spot_median_shares``,
+        **只在 ``today > window_max`` 的那一天評估**(§6 修訂 1)。它是候選日的篩子,
+        不是安慰劑資格的閘門:平靜日的 ``today − window_median ≤ 0``,這條不等式
+        永遠不可能成立,拿它當資格條件等於把對照組從「沒有訊號的日子」偷換成
+        「接近創高的日子」。前置條件(乘數已知、現貨窗口完整)仍然先判,因為那兩
+        件事是**脈絡**,不是訊號強弱。
         乘數未知(``futures_contracts.contract_multiplier`` 為 NULL)→ **否決**,
         不假設 2,000;窗口內任一天標的股沒有 ``daily_prices`` 列 → 沒有尺 → 否決。
     R3 統計量永遠只用一般時段——這條在**查詢層**就執行了:盤後列從來沒有被讀進來。
@@ -30,10 +35,15 @@
         歷史,所以這是一個誠實記錄下來的盲點,不是一條有在跑的檢查。
 
 §3 全案否決
-    檢定 A(區辨性,純計數):``|F_only| ≥ LOW_SAMPLE_SURVIVORS``。
+    檢定 A(區辨性,純計數):``|F_only| ≥ LOW_SAMPLE_SURVIVORS``。「冗餘」這個
+        結局只在 ``|F_only| + |F_{S=1}| ≥ 30`` 時成立(§6 修訂 4):它宣稱的是
+        「期貨創高幾乎都是現貨創高的回聲」,而那是一句關於 ``S = 1`` 的話;靠
+        ``S`` 不知道的日子湊到 30 的,是檢定力不足,不是冗餘。
     檢定 B(資訊性,唯一的往後看量):F_only 成熟成員在其後 5 個現貨交易日內,
     現貨量是否創其 60 日新高;對照組是**每檔股票逐檔計數配對**的安慰劑,
     種子固定 0..9 共 10 組,**每一組**都要滿足 ``h_F − h_P ≥ 2 σ_P``。
+    成熟性要求 t+1..t+5 的 ``S`` **五個都算得出來**(§6 修訂 2):§3.1 寫的是
+    不進分母**也不算未命中**,而把未知讀成未命中正是後半句擋的事。
 
 寫入
 ----
@@ -72,6 +82,13 @@ REQUIRED_TABLES = ("futures_contracts", "futures_daily", "daily_prices")
 PREREGISTRATION_DOC = "docs/38_futures_volume_anomaly_preregistration.md"
 PREREGISTRATION_COMMIT = "c70f1c2"
 
+# §6 的修訂案。它與 v1 同等地位:凍結規則的觸發點是**資料可見**,不是某一個 hash
+# ——回補尚未執行、沒有人對回補資料下過查詢,所以這六條修訂與 v1 一起被凍結。
+PREREGISTRATION_AMENDMENT = (
+    "§6 amendment (rulings 1-6), committed before any backfilled futures data was "
+    "queried and therefore carrying v1's standing"
+)
+
 # §0:比較日的長度。60 是 json_export.py 與 commit 訊息一路引用的同一個 60。
 WINDOW_DAYS = 60
 
@@ -90,6 +107,9 @@ MATERIALITY_INVERSE_FRACTION = 100
 # ——§5 明文不做跨契約排序——只是讓覆核的人不必再開一次資料庫就能抽查幾筆。
 F_ONLY_SAMPLE_LIMIT = 200
 
+# ``R2b_immaterial`` 數的是**創高日**被實質性擋下來的次數(§6 修訂 1);它不再數
+# 平靜日。被它擋下的那一天兩臂都不進(§2 標頭:否決把該日從旗標與 §3 樣本一起
+# 移除),所以這個計數不是「順便記一下」,是安慰劑池為什麼不是全部平靜日的差額。
 REFUSAL_CODES = (
     "R1_window_gap",
     "R2a_zero_median",
@@ -153,8 +173,14 @@ def evaluate_contract_day(
     ``spot_window_volumes`` 是同一組比較日上標的股的日成交股數,同樣以 ``None``
     表示缺列。
 
-    否決一旦命中就回傳,順序是 R1 → R2a → R2b,與文件列舉的順序相同;
-    ``flag`` 只有在完全沒有否決時才可能為真。
+    否決一旦命中就回傳,順序是 R1 → R2a → R2b **前置條件** → (創高才問的)R2b
+    實質性,與文件列舉的順序相同;``flag`` 只有在完全沒有否決時才可能為真。
+
+    §6 修訂 1:實質性不等式**只在 ``today > window_max`` 時評估**。它是候選日的
+    篩子,不是「這一天有沒有被規則看過」的條件——平靜日的 ``today − window_median``
+    非正,不等式結構上不可能成立,拿它當安慰劑資格會把對照組換成「接近創高的
+    日子」,那是另一個假設。乘數與現貨窗口這兩個**前置條件**留在原位:它們描述的
+    是脈絡有沒有辦法被讀出來,與這一天量大不大無關。
     """
     if window_volumes is None or len(window_volumes) != WINDOW_DAYS:
         return _refused("R1_window_gap", today=today_volume)
@@ -181,7 +207,8 @@ def evaluate_contract_day(
 
     spot_median_shares = lower_median(list(spot_window_volumes))
     excess_shares = (today_volume - window_median) * multiplier
-    if MATERIALITY_INVERSE_FRACTION * excess_shares < spot_median_shares:
+    new_high = today_volume > window_max
+    if new_high and MATERIALITY_INVERSE_FRACTION * excess_shares < spot_median_shares:
         return _refused(
             "R2b_immaterial",
             spot_median_shares=spot_median_shares,
@@ -190,7 +217,7 @@ def evaluate_contract_day(
         )
     return {
         "refusal": None,
-        "flag": today_volume > window_max,
+        "flag": new_high,
         "spot_median_shares": spot_median_shares,
         "excess_shares": excess_shares,
         **facts,
@@ -246,13 +273,23 @@ class _StockCalendar:
         return self._flags[day]
 
     def is_mature(self, day: str) -> bool:
-        return len(forward_spot_days(stock_days=self.days, day=day)) == FORWARD_SPOT_DAYS
+        """成熟 = t 之後有 5 個現貨交易日,**而且那 5 天的 ``S`` 全部算得出來**。
+
+        §6 修訂 2。§3.1 寫的是「不進分母、**也不算未命中**」;只數「有沒有 5 天」
+        的話,窗口裡某天 ``S`` 是 ``None`` 的日子會照樣進分母,而 ``forward_hit``
+        把那天讀成沒命中——那正是後半句禁止的事。要嘛五個都知道,要嘛這一天兩臂
+        與安慰劑池都不進。
+        """
+        forwards = forward_spot_days(stock_days=self.days, day=day)
+        if len(forwards) != FORWARD_SPOT_DAYS:
+            return False
+        return all(self.new_high(forward) is not None for forward in forwards)
 
     def forward_hit(self, day: str) -> bool:
         """t 之後 5 個現貨交易日內任一天現貨量創其 60 日新高。
 
-        只在 ``is_mature`` 為真時才該被問;窗口內某天答案是 ``None``(讀不到)的
-        話它不能算成命中,這與「未知不進分母」是同一個原則的下游。
+        只在 ``is_mature`` 為真時才該被問,而 ``is_mature`` 已經保證這五天沒有一個
+        是 ``None``:未知的日子從來不會走到這裡被讀成「沒命中」。
         """
         return any(
             self.new_high(forward) is True
@@ -277,6 +314,11 @@ def placebo_pool(
     而那兩者的往後窗口**逐日相同**——抽到它就等於拿旗標臂的同一個觀測當對照,
     正是那條規則要擋的事。這是對文字的一個收緊(只會讓安慰劑池變小、檢定更難過),
     已在報告的 ``choices`` 裡寫明。
+
+    F 日**之前**的日子則**刻意不排除**(§6 修訂 6):t−1 的安慰劑與 t 的 F 共用四個
+    往後日,這個滲漏讓 ``h_P`` 跟著 ``h_F`` 走,方向是**更難過關**。它事前登記成一個
+    「不可用來補救」的已知滲漏,所以檢定 B 失敗之後不能再拿「池子被 F 前日汙染了」
+    當理由。
     """
     blocked = set(flagged_days)
     for flagged in flagged_days:
@@ -303,24 +345,34 @@ def draw_placebo(
     return drawn
 
 
-def discriminability_verdict(*, f_count: int, f_only_count: int) -> dict[str, Any]:
-    """檢定 A:區辨性,純計數。三種結局的文字互不相同,因為它們意思不同。"""
+def discriminability_verdict(
+    *, f_established_count: int, f_only_count: int,
+) -> dict[str, Any]:
+    """檢定 A:區辨性,純計數。三種結局的文字互不相同,因為它們意思不同。
+
+    ``f_established_count`` = ``|F_only| + |F_{S=1}|``,也就是**成熟且現貨旗標算得
+    出來**的旗標日數。§6 修訂 4:「冗餘」宣稱的是「期貨創高多半是現貨創高的回聲」
+    ——一句只關於 ``S = 1`` 的話。若 ``|F|`` 是靠 ``S`` 未知的日子才湊到 30,那些
+    日子對這句話一個字都沒說,結局是檢定力不足,不是冗餘。
+    """
     threshold = LOW_SAMPLE_SURVIVORS
     if f_only_count >= threshold:
         outcome, statement = "PASS", (
             f"|F_only| = {f_only_count} >= {threshold}: futures-only new highs are a "
             "set large enough to be about something"
         )
-    elif f_count >= threshold:
+    elif f_established_count >= threshold:
         outcome, statement = "REDUNDANT WITH SPOT", (
-            f"|F| = {f_count} >= {threshold} but |F_only| = {f_only_count} < {threshold}: "
-            "a futures new high is almost always an echo of a spot new high, so the "
-            "slice carries no independent content"
+            f"|F_only| + |F_(S=1)| = {f_established_count} >= {threshold} but |F_only| = "
+            f"{f_only_count} < {threshold}: a futures new high is almost always an echo "
+            "of a spot new high, so the slice carries no independent content"
         )
     else:
         outcome, statement = "UNDERPOWERED", (
-            f"|F| = {f_count} < {threshold}: this is an inconclusive result for want of "
-            "power, NOT a refutation; re-run under the rules of §3.5"
+            f"|F_only| + |F_(S=1)| = {f_established_count} < {threshold}: this is an "
+            "inconclusive result for want of power, NOT a refutation; days whose spot "
+            "flag is unknown are not counted here, because REDUNDANT is a claim about "
+            "days where S = 1; re-run under the rules of §3.5"
         )
     return {
         "test": "A_discriminability",
@@ -328,7 +380,9 @@ def discriminability_verdict(*, f_count: int, f_only_count: int) -> dict[str, An
         "passed": outcome == "PASS",
         "outcome": outcome,
         "observed": {
-            "f": f_count, "f_only": f_only_count, "threshold": threshold,
+            "f_with_established_spot_flag": f_established_count,
+            "f_only": f_only_count,
+            "threshold": threshold,
         },
         "line": f"[{outcome}] A_discriminability: {statement}",
     }
@@ -380,6 +434,12 @@ def informativeness_verdict(*, seeds: list[dict[str, Any]]) -> dict[str, Any]:
             "evaluable": False,
             "outcome": "NOT EVALUABLE",
             "seeds": seeds,
+            "means": (
+                "NOT EVALUABLE is a DO NOT SHIP, and for §3.5's re-run rule it counts as "
+                "無結果 (no result) rather than a refutation: the test was never scored, "
+                "so there is nothing to refute. The re-run rule applies unchanged - "
+                "accumulate 60 new futures trading days, then run again"
+            ),
             "line": (
                 "[NOT EVALUABLE] B_informativeness: the count-matched placebo could not "
                 "be drawn at the required size on at least one seed"
@@ -503,7 +563,12 @@ def _load_spot(conn, as_of: str, stock_ids: Sequence[str]) -> dict[str, _StockCa
 
 
 def build_futures_volume_battery(*, as_of: str, run_number: int = 1) -> dict[str, Any]:
-    """跑完整個 battery 並回傳可序列化的結果。全程唯讀。"""
+    """跑完整個 battery 並回傳可序列化的結果。全程唯讀。
+
+    ``as_of``(§6 修訂 6 的定義):**期貨與現貨都已匯入的最後一天**。成熟性數的是
+    ``<= as_of`` 的現貨交易日——§3.1 的字面是「在 as_of 之前」,兩者只在 as_of 當天
+    有沒有算進那 5 天上不同,所以這裡把它定死,而不是留著一個文字與程式的落差。
+    """
     as_of = _validate_date(as_of, "as-of")
     if not isinstance(run_number, int) or isinstance(run_number, bool) or run_number < 1:
         raise ValueError("run-number must be an integer >= 1")
@@ -714,6 +779,19 @@ def _score(
     n = len(f_only)
     h_f = sum(spot[entry["stock_id"]].forward_hit(entry["date"]) for entry in f_only)
 
+    # §6 修訂 5(ii):抽不滿的是哪幾檔、差多少,是**與 seed 無關**的結構事實
+    # (每個 seed 都抽 min(k, |pool|) 天)。把它逐檔寫出來,讀者才分得出「這檔
+    # 結構性餓死」與「再等幾個月就補得滿」——那是兩件完全不同的事。
+    short_pools = [
+        {
+            "stock_id": stock_id,
+            "k": counts[stock_id],
+            "pool_size": len(pools.get(stock_id, [])),
+        }
+        for stock_id in sorted(counts)
+        if len(pools.get(stock_id, [])) < counts[stock_id]
+    ]
+
     seeds: list[dict[str, Any]] = []
     shortfall_total = 0
     for seed in PLACEBO_SEEDS:
@@ -728,7 +806,12 @@ def _score(
             seed=seed, n=n, h_f=h_f, h_p=h_p, matched=drawn_count == n,
         ))
 
-    test_a = discriminability_verdict(f_count=len(mature_flagged), f_only_count=n)
+    f_with_spot_new_high = sum(
+        1 for entry in mature_flagged if entry["spot_new_high"] is True
+    )
+    test_a = discriminability_verdict(
+        f_established_count=n + f_with_spot_new_high, f_only_count=n,
+    )
     test_b = informativeness_verdict(seeds=seeds)
     decision = overall_verdict(test_a=test_a, test_b=test_b)
     return {
@@ -738,6 +821,7 @@ def _score(
             "run_number": run_number,
             "preregistration": PREREGISTRATION_DOC,
             "preregistration_commit": PREREGISTRATION_COMMIT,
+            "preregistration_amendment": PREREGISTRATION_AMENDMENT,
             "seeds": list(PLACEBO_SEEDS),
             "read_only": True,
             "schema_changes": False,
@@ -771,13 +855,13 @@ def _score(
             "f_all_including_immature": len(flagged),
             "f_immature": len(flagged) - len(mature_flagged),
             "f_only": n,
-            "f_with_spot_new_high": sum(
-                1 for entry in mature_flagged if entry["spot_new_high"] is True
-            ),
+            "f_with_spot_new_high": f_with_spot_new_high,
             "f_with_unknown_spot_flag": spot_flag_unknown,
+            "f_with_established_spot_flag": n + f_with_spot_new_high,
             "placebo_pool_days": sum(len(pool) for pool in pools.values()),
             "placebo_stocks": len(counts),
             "placebo_day_shortfall_across_seeds": shortfall_total,
+            "placebo_short_stocks": short_pools,
         },
         "f_only_sample": [
             {
@@ -811,6 +895,9 @@ def _score(
             "Every threshold here comes from the pre-registration committed at "
             f"{PREREGISTRATION_COMMIT}, before its data was queried. Loosening any of "
             "them after seeing a reading is the exact move that document exists to stop.",
+            "The §6 amendment carries the same standing as v1: the freeze triggers on "
+            "DATA VISIBILITY, not on a commit hash, and the 250-day backfill had still "
+            "not run when it was written. It changes no pre-registered number.",
         ],
     }
 
@@ -837,7 +924,15 @@ def _definitions() -> dict[str, str]:
             "median daily_prices.volume over the same W, i.e. the part of the futures "
             "volume above its own median, converted to shares, is at least 1% of the "
             "underlying's ordinary daily share volume; the 1% is docs/04 §2's existing "
-            "materiality bar, not a number picked from futures data"
+            "materiality bar, not a number picked from futures data. The inequality is "
+            "a CANDIDATE filter: it is evaluated only on days where today > window_max. "
+            "Its prerequisites (a known multiplier, a complete spot window on W) are "
+            "context and still gate every contract-day"
+        ),
+        "spot_median_shares": (
+            "lower median of daily_prices.volume over the same W, the same convention as "
+            "window_median and for the same reason: integers only, no floats. The "
+            "direction is one rank in sixty, toward the easier side of R2b"
         ),
         "S": (
             "the same rule moved to the spot side: daily_prices.volume(s, t) strictly "
@@ -854,14 +949,22 @@ def _definitions() -> dict[str, str]:
             "spot volume new high; binary and counted, never a forward return"
         ),
         "mature": (
-            f"t has {FORWARD_SPOT_DAYS} spot trading days after it at or before as_of; "
-            "immature days enter no denominator and are never counted as misses"
+            f"t has {FORWARD_SPOT_DAYS} spot trading days after it at or before as_of "
+            "AND all five of their S values are known; immature days enter no "
+            "denominator, no placebo pool, and are never counted as misses"
+        ),
+        "as_of": (
+            "the last date with both futures and spot data imported; maturity is counted "
+            "on spot trading days <= as_of"
         ),
         "placebo": (
             "per stock with k members of F_only, k days drawn without replacement from "
-            "that stock's eligible days: mature, seen by the rule and not flagged "
-            "(R1-R5 all pass with flag = 0), not a spot new high, and not sharing a "
-            "forward window with any F day of that stock"
+            "that stock's eligible days: mature, seen by the rule and not flagged (R1, "
+            "R2a, a known multiplier, a complete spot window on W, outside the R4 "
+            "settlement window, and today <= window_max), S established false, and not "
+            "sharing a forward window with any F day of that stock. The R2b materiality "
+            "inequality is NOT an eligibility condition: a quiet day cannot satisfy it, "
+            "so using it would replace 'no signal' with 'nearly a signal'"
         ),
         "sigma_p": (
             "max(1, sqrt(n * p_hat * (1 - p_hat))) with p_hat = h_P / n; the floor of 1 "
@@ -879,50 +982,84 @@ def _choices() -> list[dict[str, str]]:
     """
     return [
         {
-            "where": "§3.1 maturity vs §3.2 test A",
+            "where": "§3.1 maturity vs §3.2 test A (§6 ruling 3)",
             "choice": (
-                "test A counts the MATURE members of F and F_only. §3.1 says an "
-                "immature t enters no denominator; A is a count of the same sample B "
-                "uses, so one definition is used for both"
+                "test A counts the MATURE members of F and F_only. §3.1 is the sample "
+                "section and governs all of §3; §3.3 writes n = |F_only|, which only "
+                "makes sense if F_only is already mature-only. One definition for both "
+                "tests"
             ),
             "both_reported": "sets.f_all_including_immature and sets.f_immature",
         },
         {
-            "where": "§2 R2b applied to days that do not flag",
+            "where": "§2 R2b on days that do not flag (§6 ruling 1)",
             "choice": (
-                "R2b is evaluated on EVERY contract-day, not only on candidates that "
-                "clear the window max, because §3.3 defines the placebo pool as days "
-                "where R1-R5 all passed and flag = 0. A day below its own window median "
-                "therefore fails R2b and is not placebo-eligible"
+                "the R2b materiality inequality is a CANDIDATE filter, evaluated only "
+                "where today > window_max. A quiet day has today - window_median <= 0 "
+                "and can never satisfy it, so evaluating it everywhere would make the "
+                "placebo pool 'elevated but not a record' instead of 'no signal' - a "
+                "different hypothesis, not a stricter one. Its prerequisites (multiplier "
+                "known, spot window complete) stay where they are: those are context"
             ),
-            "both_reported": "refusals.R2b_immaterial counts them",
+            "both_reported": "refusals.R2b_immaterial counts new-high days only",
         },
         {
-            "where": "§3.3 placebo pool vs the flagged day itself",
+            "where": "§3.3 placebo pool vs the flagged day itself (§6 ruling 5)",
             "choice": (
                 "a stock's own F dates are excluded from its placebo pool, not only the "
                 "5 days after them: two contracts on one stock can disagree on the same "
-                "date, and that date's forward window is identical to the flagged arm's"
+                "date (1565's MYF/OMF), and that date's forward window is identical to "
+                "the flagged arm's"
             ),
             "both_reported": "sets.placebo_pool_days",
         },
         {
-            "where": "§3.3 placebo drawn short",
+            "where": "§3.3 days BEFORE an F day (§6 ruling 6)",
+            "choice": (
+                "days before an F day are deliberately NOT excluded, even though a "
+                "placebo at t-1 shares four forward days with an F day at t. That leak "
+                "makes h_P co-move with h_F, i.e. it works AGAINST passing; it is "
+                "pre-registered here as a NON-rescue so it cannot be raised after a "
+                "test B failure"
+            ),
+            "both_reported": "sets.placebo_pool_days",
+        },
+        {
+            "where": "§3.3 placebo drawn short (§6 ruling 5)",
             "choice": (
                 "if any stock's eligible pool is smaller than its k, test B is reported "
                 "NOT EVALUABLE rather than scored on fewer placebo days; a short draw "
-                "lowers h_P and so biases the comparison toward passing"
+                "lowers h_P and so biases the comparison toward passing. NOT EVALUABLE "
+                "is a DO NOT SHIP and counts as 無結果 for §3.5's re-run rule"
             ),
-            "both_reported": "sets.placebo_day_shortfall_across_seeds",
+            "both_reported": (
+                "sets.placebo_short_stocks lists (stock_id, k, pool_size) per short "
+                "stock - the shortfall is seed-independent, and a reader must be able to "
+                "tell structural starvation from one that time will cure"
+            ),
         },
         {
-            "where": "§3.1 S(s, t) that cannot be computed",
+            "where": "§3.1 S(s, t) that cannot be computed (§6 rulings 4 and 5)",
             "choice": (
                 "a flagged day whose spot flag is unknown (fewer than 60 spot days of "
                 "history, or a missing spot volume) is counted but kept OUT of F_only; "
-                "reading unknown as 'no spot new high' would inflate the headline set"
+                "unknown is not no, and F_only needs an established negative. Such days "
+                "also cannot carry the REDUNDANT verdict, which is a claim about days "
+                "where S = 1: test A reads |F_only| + |F_(S=1)|, not |F|"
             ),
-            "both_reported": "sets.f_with_unknown_spot_flag",
+            "both_reported": (
+                "sets.f_with_unknown_spot_flag and sets.f_with_established_spot_flag"
+            ),
+        },
+        {
+            "where": "§3.1 maturity when a forward S is unknown (§6 ruling 2)",
+            "choice": (
+                "a day is mature only if ALL FIVE of t+1..t+5 have a known S. §3.1 says "
+                "an unscorable day enters no denominator AND is not counted as a miss; "
+                "counting an unknown forward day as a non-hit violates the second half, "
+                "so such a t is excluded from both arms and from the placebo pool"
+            ),
+            "both_reported": "sets.f_immature",
         },
     ]
 

@@ -27,6 +27,7 @@ from radar.compute.futures_volume_battery import (
     MATERIALITY_INVERSE_FRACTION,
     PLACEBO_SEEDS,
     PLACEBO_SIGMA_MULTIPLE,
+    PREREGISTRATION_AMENDMENT,
     PREREGISTRATION_COMMIT,
     WINDOW_DAYS,
     _StockCalendar,
@@ -71,20 +72,26 @@ _SPIKE_INDEXES = (84, 105, 126, 147, 168)
 _SPIKE_LOTS = (500, 600, 700, 800, 900)
 _SPIKES = dict(zip(_SPIKE_INDEXES, _SPIKE_LOTS))
 
-# 現貨爆量日:尖峰日 + 2。量嚴格遞增,所以每一個都是它自己的 60 日新高。
+# 現貨爆量日:尖峰日 **+ 5**。量嚴格遞增,所以每一個都是它自己的 60 日新高。
+# 為什麼是第 5 天而不是第 2 天:命中一個爆量日的日子是它前面那 5 天,而爆量放在
+# 尖峰 + 5 時,那 5 天恰好是 {尖峰, 尖峰+1..+4}——全部都因為共用往後窗口而不在
+# 安慰劑池裡。於是 ``h_P = 0`` 是**構造出來的**,不是跑出來之後抄回來的。
 _BUMPS_AFTER_SPIKES = {
-    index + 2: 2_000_000 + 1_000_000 * order
+    index + FORWARD_SPOT_DAYS: 2_000_000 + 1_000_000 * order
     for order, index in enumerate(_SPIKE_INDEXES)
 }
 _BUMPS_ON_SPIKES = {
     index: 2_000_000 + 1_000_000 * order
     for order, index in enumerate(_SPIKE_INDEXES)
 }
-# 「每個中量日之後也爆量」:安慰劑臂與旗標臂的命中率會一樣高,檢定 B 因此必敗。
-_BUMPS_EVERYWHERE = {
-    **{index: 2_000_000 + 10_000 * index
-       for index in range(_DAY_COUNT) if index % _PERIOD == 5},
-    **{index + 2: 2_000_000 + 10_000 * (index + 2) for index in _SPIKE_INDEXES},
+# 「每 5 天就爆一次量,只有尖峰日不爆」:任何一天的往後 5 天裡都一定有一個爆量日,
+# 所以安慰劑臂與旗標臂的命中率都是 100%,檢定 B 因此必敗;而尖峰日自己維持底量,
+# 所以它們是 ¬S,進得了 F_only。尖峰另取一組,避開 index % 5 == 0 的爆量日。
+_FAIL_SPIKE_INDEXES = (84, 106, 127, 148, 169)
+_FAIL_SPIKES = dict(zip(_FAIL_SPIKE_INDEXES, _SPIKE_LOTS))
+_BUMPS_EVERY_FIVE = {
+    index: 2_000_000 + 10_000 * index
+    for index in range(_DAY_COUNT) if index % FORWARD_SPOT_DAYS == 0
 }
 
 # 5 月結算日與其前 3 個市場日(手算:2026-05-20 是五月第三個星期三,且是工作日)。
@@ -106,6 +113,18 @@ def _pattern_lots(*, base: int = _BASE_LOTS, medium: int | None = _MEDIUM_LOTS,
 def _spot_volumes(bumps: dict[int, int] | None = None) -> dict[int, int]:
     volumes = {index: _SPOT_BASE for index in range(_DAY_COUNT)}
     volumes.update(bumps or {})
+    return volumes
+
+
+def _rising_spot() -> dict[int, int]:
+    """每天都比昨天多一點,只有尖峰日凹下去。
+
+    於是**每一個非尖峰日都是它自己的現貨 60 日新高**(S = 1),而尖峰日是 ¬S。
+    安慰劑合格日要的是 ¬S,所以這份現貨序列把池子餓死到一天不剩——但餓死的理由
+    是現貨天天創高,不是「期貨那天不夠大」。
+    """
+    volumes = {index: 1_000_000 + 1_000 * index for index in range(_DAY_COUNT)}
+    volumes.update({index: 500_000 for index in _SPIKE_INDEXES})
     return volumes
 
 
@@ -224,6 +243,16 @@ class FrozenConstantTests(unittest.TestCase):
         self.assertEqual(LOW_SAMPLE_SURVIVORS, 30)
         self.assertEqual(PREREGISTRATION_COMMIT, "c70f1c2")
 
+    def test_the_amendment_is_named_and_claims_v1_standing(self):
+        """§6 修訂沒有動任何一個數字,但它必須在 JSON 裡指認得出來。
+
+        修訂的地位來自「回補資料當時還看不見」,不來自某一個 hash——凍結規則的
+        觸發點是資料可見性。這條測試鎖住那句宣稱會被寫出去。
+        """
+        self.assertIn("§6", PREREGISTRATION_AMENDMENT)
+        self.assertIn("before any backfilled futures data was queried",
+                      PREREGISTRATION_AMENDMENT)
+
 
 class PureRuleTests(unittest.TestCase):
     """§1 與 §2 的算術層:沒有資料庫,沒有日曆,只有手算的數字。"""
@@ -310,14 +339,46 @@ class PureRuleTests(unittest.TestCase):
         self.assertIsNone(known["refusal"])
         self.assertTrue(known["flag"])
 
+    def test_a_quiet_day_is_seen_by_the_rule_and_not_refused(self):
+        """§6 修訂 1 的迴歸:平靜日**不**撞 R2b,所以它進得了安慰劑池。
+
+        今天等於自己的中位數 → 超出量 0 口 → 實質性不等式結構上不可能成立。
+        舊版把那條不等式套在每一個契約-日上,於是「安慰劑 = R1–R5 全過且
+        flag = 0」把所有平靜日都排掉了,對照組變成「接近創高的日子」——那是
+        另一個假設,不是比較嚴格的同一個假設。
+        """
+        quiet = evaluate_contract_day(
+            today_volume=100, window_volumes=[100] * WINDOW_DAYS,
+            multiplier=_MULTIPLIER, spot_window_volumes=[_SPOT_BASE] * WINDOW_DAYS,
+        )
+        self.assertIsNone(quiet["refusal"])
+        self.assertFalse(quiet["flag"])
+        # 薄契約的平靜日同樣不被否決:那正是舊寫法餓死安慰劑池的地方
+        # (窗口中位數 3 口,對上 5,000,000 股的現貨日常量)。
+        thin = evaluate_contract_day(
+            today_volume=3, window_volumes=[3] * WINDOW_DAYS, multiplier=_MULTIPLIER,
+            spot_window_volumes=[5_000_000] * WINDOW_DAYS,
+        )
+        self.assertIsNone(thin["refusal"])
+        self.assertFalse(thin["flag"])
+        # 低於中位數的日子(超出量是負的)也一樣只是「看過、沒舉旗」。
+        below = evaluate_contract_day(
+            today_volume=1, window_volumes=[3] * WINDOW_DAYS, multiplier=_MULTIPLIER,
+            spot_window_volumes=[5_000_000] * WINDOW_DAYS,
+        )
+        self.assertIsNone(below["refusal"])
+        self.assertFalse(below["flag"])
+
     def test_r2b_materiality_is_the_three_times_two_lots_case(self):
         # 文件的例子:中位數 2 口的契約,6 口就是 3 倍。
         # 100 × (6 − 2) × 2,000 = 800,000 股 < 現貨日常量 1,000,000 股 → 否決。
+        # 6 口同時也創了 60 日新高(窗口全是 2 口),所以實質性這關才會被問到。
         outcome = evaluate_contract_day(
             today_volume=6, window_volumes=[2] * WINDOW_DAYS, multiplier=_MULTIPLIER,
             spot_window_volumes=[_SPOT_BASE] * WINDOW_DAYS,
         )
         self.assertEqual(outcome["refusal"], "R2b_immaterial")
+        self.assertFalse(outcome["flag"])
         # 邊界:7 口剛好等於 1%,「≥」所以通過,而且它確實創了新高。
         boundary = evaluate_contract_day(
             today_volume=7, window_volumes=[2] * WINDOW_DAYS, multiplier=_MULTIPLIER,
@@ -397,6 +458,21 @@ class SpotSideTests(unittest.TestCase):
         self.assertFalse(calendar.is_mature(self.days[-FORWARD_SPOT_DAYS]))
         self.assertFalse(calendar.is_mature(self.days[-1]))
 
+    def test_maturity_needs_all_five_forward_flags_to_be_known(self):
+        """§6 修訂 2:五個往後日的 S 有一個算不出來,這一天就不成熟。
+
+        §3.1 寫的是不進分母**也不算未命中**。只數「有沒有 5 天」的話,答案是
+        ``None`` 的那一天會被 ``forward_hit`` 讀成「沒命中」,後半句就被違反了。
+        index 105 的量抽掉之後,S(105) 變成不知道:以它為第 5 天的 index 100
+        因此不成熟,而往後窗口停在 104 的 index 99 照樣成熟。
+        """
+        self.volumes[self.days[105]] = None
+        calendar = _StockCalendar(self.days, self.volumes)
+        self.assertTrue(calendar.is_mature(self.days[99]))
+        self.assertFalse(calendar.is_mature(self.days[100]))
+        # 只缺了往後窗口,這一天自己的 S 仍然算得出來——不成熟不是因為讀不到 t。
+        self.assertIs(calendar.new_high(self.days[100]), False)
+
     def test_the_forward_window_is_five_spot_days_not_five_calendar_days(self):
         self.volumes[self.days[105]] = 9_000_000
         calendar = _StockCalendar(self.days, self.volumes)
@@ -444,18 +520,42 @@ class VerdictArithmeticTests(unittest.TestCase):
 
     def test_test_a_tells_the_three_outcomes_apart(self):
         self.assertEqual(
-            discriminability_verdict(f_count=40, f_only_count=LOW_SAMPLE_SURVIVORS)["outcome"],
+            discriminability_verdict(
+                f_established_count=40, f_only_count=LOW_SAMPLE_SURVIVORS,
+            )["outcome"],
             "PASS",
         )
         redundant = discriminability_verdict(
-            f_count=LOW_SAMPLE_SURVIVORS, f_only_count=LOW_SAMPLE_SURVIVORS - 1,
+            f_established_count=LOW_SAMPLE_SURVIVORS,
+            f_only_count=LOW_SAMPLE_SURVIVORS - 1,
         )
         self.assertEqual(redundant["outcome"], "REDUNDANT WITH SPOT")
         underpowered = discriminability_verdict(
-            f_count=LOW_SAMPLE_SURVIVORS - 1, f_only_count=0,
+            f_established_count=LOW_SAMPLE_SURVIVORS - 1, f_only_count=0,
         )
         self.assertEqual(underpowered["outcome"], "UNDERPOWERED")
         self.assertIn("NOT a refutation", underpowered["line"])
+
+    def test_redundant_needs_thirty_days_whose_spot_flag_is_established(self):
+        """§6 修訂 4:冗餘是一句關於 S = 1 的話,湊不出 30 天就不能講。
+
+        檢定 A 讀的是 ``|F_only| + |F_{S=1}|``。少一天(現貨旗標不知道的那種)
+        就從「冗餘」掉回「檢定力不足」——兩者不是同一種紀錄:前者是一個結論,
+        後者明說自己不是否證。
+        """
+        borderline = discriminability_verdict(
+            f_established_count=LOW_SAMPLE_SURVIVORS, f_only_count=2,
+        )
+        self.assertEqual(borderline["outcome"], "REDUNDANT WITH SPOT")
+        one_short = discriminability_verdict(
+            f_established_count=LOW_SAMPLE_SURVIVORS - 1, f_only_count=2,
+        )
+        self.assertEqual(one_short["outcome"], "UNDERPOWERED")
+        self.assertIn("unknown", one_short["line"])
+        self.assertEqual(
+            one_short["observed"]["f_with_established_spot_flag"],
+            LOW_SAMPLE_SURVIVORS - 1,
+        )
 
     def test_sigma_has_a_floor_of_one(self):
         result = seed_result(seed=0, n=40, h_f=40, h_p=0, matched=True)
@@ -480,14 +580,18 @@ class VerdictArithmeticTests(unittest.TestCase):
         verdict = informativeness_verdict(seeds=seeds)
         self.assertFalse(verdict["evaluable"])
         self.assertEqual(verdict["outcome"], "NOT EVALUABLE")
+        # §6 修訂 5(i):不可評估 = 不上線,而且對 §3.5 的重跑規則算「無結果」。
+        self.assertIn("DO NOT SHIP", verdict["means"])
+        self.assertIn("無結果", verdict["means"])
         decision = overall_verdict(
-            test_a=discriminability_verdict(f_count=40, f_only_count=40), test_b=verdict,
+            test_a=discriminability_verdict(f_established_count=40, f_only_count=40),
+            test_b=verdict,
         )
         self.assertEqual(decision["decision"], "DO NOT SHIP")
         self.assertEqual(decision["reason"], "not_evaluable")
 
     def test_shipping_needs_both_tests(self):
-        passing_a = discriminability_verdict(f_count=40, f_only_count=40)
+        passing_a = discriminability_verdict(f_established_count=40, f_only_count=40)
         passing_b = informativeness_verdict(seeds=[
             seed_result(seed=s, n=40, h_f=40, h_p=0, matched=True) for s in PLACEBO_SEEDS
         ])
@@ -496,13 +600,15 @@ class VerdictArithmeticTests(unittest.TestCase):
         )
         self.assertEqual(
             overall_verdict(
-                test_a=discriminability_verdict(f_count=40, f_only_count=1), test_b=passing_b,
+                test_a=discriminability_verdict(f_established_count=40, f_only_count=1),
+                test_b=passing_b,
             )["reason"],
             "redundant_with_spot",
         )
         self.assertEqual(
             overall_verdict(
-                test_a=discriminability_verdict(f_count=1, f_only_count=1), test_b=passing_b,
+                test_a=discriminability_verdict(f_established_count=1, f_only_count=1),
+                test_b=passing_b,
             )["reason"],
             "underpowered",
         )
@@ -687,8 +793,15 @@ class VerdictEndToEndTests(_FixtureDB):
         self.assertIn("NOT a refutation", report["tests"]["A"]["line"])
 
     def test_a_placebo_that_hits_just_as_often_fails_test_b(self):
-        self.write_fixture(contracts=_standard_contracts(8),
-                           spot=_spot_volumes(_BUMPS_EVERYWHERE))
+        # 每 5 天一個現貨爆量日,所以**任何**一天的往後 5 天裡都有一個新高:
+        # 旗標臂與安慰劑臂的命中率都是 100%,差距 0,檢定 B 必敗。
+        contracts = [
+            _contract(f"S{index}F", f"100{index}",
+                      lots=_pattern_lots(overrides=_FAIL_SPIKES))
+            for index in range(1, 9)
+        ]
+        self.write_fixture(contracts=contracts,
+                           spot=_spot_volumes(_BUMPS_EVERY_FIVE))
         report = self.report()
         self.assertEqual(report["tests"]["A"]["outcome"], "PASS")
         self.assertEqual(report["tests"]["B"]["outcome"], "FAIL")
@@ -699,15 +812,13 @@ class VerdictEndToEndTests(_FixtureDB):
         self.assertEqual(report["verdict"]["decision"], "DO NOT SHIP")
 
     def test_an_empty_placebo_pool_is_not_evaluable_rather_than_a_pass(self):
-        # 沒有中量日的契約:任何一天都撞 R2b(今天等於自己的中位數),於是「規則
-        # 看過但沒舉旗」的合格日一天都不存在,安慰劑抽不滿 k。這種情況下 h_P 會
-        # 被少抽的日子系統性壓低,所以裁決是「不可評估」,不是「過」。
+        # 現貨天天創高(只有尖峰日凹下去),所以「¬S」的日子只剩尖峰日自己,而尖峰日
+        # 正是旗標日 → 合格日一天都不剩,安慰劑抽不滿 k。h_P 會被少抽的日子系統性
+        # 壓低,所以裁決是「不可評估」,不是「過」。
         contracts = [
-            _contract(f"N{index}F", f"200{index}",
-                      lots=_pattern_lots(medium=None, overrides=_SPIKES))
-            for index in range(1, 9)
+            _contract(f"N{index}F", f"200{index}") for index in range(1, 9)
         ]
-        self.write_fixture(contracts=contracts, spot=_spot_volumes(_BUMPS_AFTER_SPIKES))
+        self.write_fixture(contracts=contracts, spot=_rising_spot())
         report = self.report()
         self.assertEqual(report["sets"]["f_only"], 40)
         self.assertEqual(report["sets"]["placebo_pool_days"], 0)
@@ -718,6 +829,29 @@ class VerdictEndToEndTests(_FixtureDB):
         self.assertEqual(report["tests"]["B"]["outcome"], "NOT EVALUABLE")
         self.assertEqual(report["verdict"]["reason"], "not_evaluable")
         self.assertEqual(report["verdict"]["decision"], "DO NOT SHIP")
+
+    def test_a_short_draw_names_the_stocks_and_their_pool_sizes(self):
+        """§6 修訂 5(ii):抽不滿時,JSON 要逐檔寫出 (stock_id, k, pool_size)。
+
+        差額與 seed 無關(每個 seed 都抽 ``min(k, |pool|)`` 天),而讀者必須能分辨
+        「這檔結構性餓死、再多資料也救不了」與「再等幾個月就補得滿」。一個總數
+        辦不到這件事,所以這是報告義務,不是規則。
+        """
+        contracts = [_contract(f"N{index}F", f"200{index}") for index in range(1, 9)]
+        self.write_fixture(contracts=contracts, spot=_rising_spot())
+        report = self.report()
+        self.assertEqual(
+            report["sets"]["placebo_short_stocks"],
+            [{"stock_id": f"200{index}", "k": len(_SPIKE_INDEXES), "pool_size": 0}
+             for index in range(1, 9)],
+        )
+        self.assertIn("DO NOT SHIP", report["tests"]["B"]["means"])
+        self.assertIn("無結果", report["tests"]["B"]["means"])
+
+    def test_a_pool_that_is_large_enough_names_no_short_stock(self):
+        self.write_fixture(contracts=_standard_contracts(8),
+                           spot=_spot_volumes(_BUMPS_AFTER_SPIKES))
+        self.assertEqual(self.report()["sets"]["placebo_short_stocks"], [])
 
     def test_immature_flags_are_reported_but_never_counted_as_misses(self):
         late = _pattern_lots(overrides={**_SPIKES, _DAY_COUNT - 2: 5_000})
@@ -732,25 +866,171 @@ class VerdictEndToEndTests(_FixtureDB):
         self.assertNotIn(("AAF", _DAYS[_DAY_COUNT - 2]), self.flagged_pairs(report))
 
 
+# 現貨量缺一天,會在兩個地方同時留下洞,而那兩個洞的半徑不一樣:
+#   * 該日之後 60 個現貨交易日的 S 全部變成「不知道」(它落在人家的比較窗口裡);
+#   * 以那些日子為往後窗口成員的更早的日子,因此**不成熟**(§6 修訂 2)。
+# 洞挖在 R4 排除日上,期貨比較窗口跳過它,所以 R2b 的尺不會因此破掉——這是唯一
+# 能讓「旗標日的 S 未知、但它仍然成熟」同時成立的位置。
+_SPOT_HOLE_INDEX = 94                       # 2026-05-15,五月結算窗口第一天
+_UNKNOWN_FLAG_INDEX = _SPOT_HOLE_INDEX + WINDOW_DAYS     # 154 = 2026-08-07
+_UNKNOWN_FLAG_LOTS = 850                    # > 前四個尖峰的最高 800 口
+
+
 class UnknownSpotFlagTests(_FixtureDB):
-    """S(s, t) 算不出來的旗標日:計進 F,但**不**進 F_only。"""
+    """S(s, t) 算不出來的旗標日:計進 F,但**不**進 F_only,也不能撐起「冗餘」。"""
 
     def test_an_unknown_spot_flag_keeps_the_day_out_of_f_only(self):
-        # 2026-04-13(index 70)是四月結算窗口裡的一天,所以它被 R4 排除在**期貨**
-        # 比較窗口之外(R2b 因此讀不到它),但它仍在**現貨**的 60 日窗口裡——現貨
-        # 不套 R4。把那一天的現貨量設成 NULL,S 就對其後 60 個交易日全部變成
-        # 「不知道」,而那正好蓋掉前三個尖峰。
-        self.assertEqual(_DAYS[70], "2026-04-13")
+        # index 94 是五月結算窗口裡的一天,被 R4 排除在**期貨**比較窗口之外(R2b
+        # 因此讀不到它),但它仍在**現貨**的 60 日窗口裡——現貨不套 R4。
+        # index 154 = 94 + 60 是最後一個把它含進 S 窗口的日子,而 155..159 的窗口
+        # 都已經越過它,所以 154 是「S 未知但成熟」;105/126/147 則連往後窗口都被
+        # 蓋住,依 §6 修訂 2 不成熟。
+        self.assertEqual(_DAYS[_SPOT_HOLE_INDEX], "2026-05-15")
+        self.assertEqual(_DAYS[_UNKNOWN_FLAG_INDEX], "2026-08-07")
         spot = _spot_volumes(_BUMPS_AFTER_SPIKES)
-        spot[70] = None
-        self.write_fixture(contracts=[_contract("AAF", "1001")], spot=spot)
+        spot[_SPOT_HOLE_INDEX] = None
+        lots = _pattern_lots(overrides={
+            **_SPIKES, _UNKNOWN_FLAG_INDEX: _UNKNOWN_FLAG_LOTS,
+        })
+        self.write_fixture(contracts=[_contract("AAF", "1001", lots=lots)], spot=spot)
         report = self.report()
-        self.assertEqual(report["sets"]["f"], 5)
-        self.assertEqual(report["sets"]["f_with_unknown_spot_flag"], 3)
+        self.assertEqual(report["sets"]["f_all_including_immature"], 6)
+        self.assertEqual(report["sets"]["f_immature"], 3)
+        self.assertEqual(report["sets"]["f"], 3)
+        self.assertEqual(report["sets"]["f_with_unknown_spot_flag"], 1)
+        self.assertEqual(report["sets"]["f_with_established_spot_flag"], 2)
         self.assertEqual(report["sets"]["f_only"], 2)
         self.assertEqual(
             sorted(date for _code, date in self.flagged_pairs(report)),
-            [_DAYS[147], _DAYS[168]],
+            [_DAYS[84], _DAYS[168]],
+        )
+
+
+# §6 修訂 4 的構造:每一檔股票挖兩個現貨洞,洞都在 R4 排除日上,而洞 + 60 天
+# 正好是一個期貨尖峰日。於是每個尖峰都是「S 未知但成熟」,|F| 湊得到 30 以上,
+# |F_only| 與 |F_{S=1}| 卻都是 0。兩個洞相距 85 天 > 64,所以彼此不蓋到對方那
+# 一組往後窗口——否則尖峰會變成不成熟,連 |F| 都湊不出來。
+_UNKNOWN_HOLE_INDEXES = (29, 114)
+_UNKNOWN_SPIKE_INDEXES = tuple(
+    index + WINDOW_DAYS for index in _UNKNOWN_HOLE_INDEXES
+)   # 89、174
+_UNKNOWN_SPIKE_LOTS = (500, 600)
+_UNKNOWN_STOCK_COUNT = 16       # 16 × 2 = 32 面旗標,剛好越過 30
+
+
+class UnknownSpotFlagVerdictTests(_FixtureDB):
+    def test_redundant_is_unreachable_when_f_only_clears_thirty_via_unknown_days(self):
+        """§6 修訂 4:靠 S 未知的日子湊到 30,是檢定力不足,不是冗餘。
+
+        「冗餘」宣稱的是「期貨創高多半是現貨創高的回聲」——一句只關於 S = 1 的
+        話。這裡 32 面旗標的 S 一個都不知道,所以它們對那句話一個字都沒說;
+        把 |F| 直接餵給檢定 A 的舊寫法會在這份 fixture 上輸出「冗餘」,而那是一個
+        **結論**,會被寫進 STATUS 告訴使用者「這個功能沒有獨立內容」。
+        """
+        spot = _spot_volumes()
+        for index in _UNKNOWN_HOLE_INDEXES:
+            spot[index] = None
+        lots = _pattern_lots(overrides=dict(
+            zip(_UNKNOWN_SPIKE_INDEXES, _UNKNOWN_SPIKE_LOTS)
+        ))
+        contracts = [
+            _contract(f"U{index}F", f"300{index}", lots=lots)
+            for index in range(1, _UNKNOWN_STOCK_COUNT + 1)
+        ]
+        self.write_fixture(contracts=contracts, spot=spot)
+        report = self.report()
+        expected = _UNKNOWN_STOCK_COUNT * len(_UNKNOWN_SPIKE_INDEXES)
+        self.assertEqual(report["sets"]["f"], expected)
+        self.assertGreaterEqual(expected, LOW_SAMPLE_SURVIVORS)
+        self.assertEqual(report["sets"]["f_with_unknown_spot_flag"], expected)
+        self.assertEqual(report["sets"]["f_with_established_spot_flag"], 0)
+        self.assertEqual(report["sets"]["f_only"], 0)
+        self.assertEqual(report["tests"]["A"]["outcome"], "UNDERPOWERED")
+        self.assertIn("NOT a refutation", report["tests"]["A"]["line"])
+        self.assertEqual(report["verdict"]["reason"], "underpowered")
+
+
+# 這份 fixture 的安慰劑池大小是**手算**的,不是跑出來抄回來的:
+#   候選日 = index 76..194(76 是第一個湊得滿 60 個非排除日的日子,194 是最後一個
+#   有 5 個往後現貨日的日子)共 119 天,扣掉區間內的 20 個 R4 排除日 = 99 天;
+#   扣掉 5 個現貨爆量日(S = 1)與 5 個旗標日 = 89 天;再扣掉「旗標日 + 其後 5 天」
+#   這 30 天裡尚未被扣掉的 20 天 = **69 天**。
+_ORDINARY_POOL_DAYS = 69
+# 現貨量在 index 190 缺一天:185..189 因為往後窗口有未知的 S 而不成熟(§6 修訂 2),
+# 190..194 的 S 本身就是未知(不是 False),兩段共 10 天離開池子。
+_LATE_SPOT_HOLE_INDEX = 190
+_POOL_DAYS_AFTER_LATE_HOLE = 59
+
+
+class PlaceboPoolShapeTests(_FixtureDB):
+    """安慰劑池裝的是**平常的日子**,不是「差一點就創高的日子」。"""
+
+    def test_the_pool_is_every_ordinary_day_the_rule_looked_at(self):
+        """§6 修訂 1 的迴歸,在報告這一層。
+
+        舊寫法把 R2b 的實質性不等式套在每一個契約-日上,於是只有「超出中位數夠多」
+        的日子進得了池子——這份 fixture 裡就只剩每七天一個的中量日。池子從 69 天
+        縮到十幾天,而且縮的方向是系統性的:對照組被換成了接近創高的日子。
+        """
+        self.write_fixture(contracts=[_contract("AAF", "1001")],
+                           spot=_spot_volumes(_BUMPS_AFTER_SPIKES))
+        report = self.report()
+        self.assertEqual(report["sets"]["f_only"], len(_SPIKE_INDEXES))
+        self.assertEqual(report["sets"]["placebo_pool_days"], _ORDINARY_POOL_DAYS)
+        self.assertEqual(report["refusals"]["R2b_immaterial"], 0)
+
+    def test_a_day_with_an_unknown_forward_flag_leaves_the_pool_too(self):
+        """§6 修訂 2:不成熟的日子兩臂都不進,**安慰劑池也不進**。"""
+        spot = _spot_volumes(_BUMPS_AFTER_SPIKES)
+        spot[_LATE_SPOT_HOLE_INDEX] = None
+        self.write_fixture(contracts=[_contract("AAF", "1001")], spot=spot)
+        report = self.report()
+        self.assertEqual(report["sets"]["f_only"], len(_SPIKE_INDEXES))
+        self.assertEqual(
+            report["sets"]["placebo_pool_days"], _POOL_DAYS_AFTER_LATE_HOLE,
+        )
+
+
+# 薄契約 + 厚契約掛在同一檔股票上。厚契約在 index 126 沒有列,所以那一天的資格
+# 完全由薄契約決定——這是唯一能把「某一天進不進池子」單獨量出來的擺法,因為
+# 合格日是**逐股票**聯集的,同一天只要有任何一個契約合格就會進池子。
+_THIN_PROBE_INDEX = 126
+_THIN_POOL_DAYS = 93            # 99 個候選日 − 「旗標日 + 其後 5 天」6 天
+_THIN_POOL_DAYS_IF_IMMATERIAL = _THIN_POOL_DAYS - 1
+
+
+class ImmaterialNewHighTests(_FixtureDB):
+    """實質性擋下來的創高日:旗標臂不進,安慰劑池也不進。"""
+
+    def _fixture(self, probe_lots: int) -> dict:
+        fat = _pattern_lots(overrides={84: 500, _THIN_PROBE_INDEX: None})
+        thin = _pattern_lots(base=2, medium=None,
+                             overrides={_THIN_PROBE_INDEX: probe_lots})
+        self.write_fixture(contracts=[
+            _contract("FATF", "1001", lots=fat),
+            _contract("THIF", "1001", lots=thin),
+        ])
+        return self.report()
+
+    def test_a_quiet_probe_day_is_in_the_pool(self):
+        report = self._fixture(probe_lots=2)
+        self.assertEqual(report["sets"]["f_only"], 1)
+        self.assertEqual(report["sets"]["placebo_pool_days"], _THIN_POOL_DAYS)
+        self.assertEqual(report["refusals"]["R2b_immaterial"], 0)
+
+    def test_an_immaterial_new_high_enters_neither_arm(self):
+        """§2 標頭:否決把該日從旗標**與** §3 樣本一起移除。
+
+        6 口對上中位數 2 口的窗口是創高,但 100 × (6 − 2) × 2,000 = 800,000 股
+        <  現貨日常量 1,000,000 股,所以它被 R2b 擋下。它不上榜(旗標臂),而池子
+        剛好少一天(安慰劑臂)——少的正是它自己。
+        """
+        report = self._fixture(probe_lots=6)
+        self.assertEqual(report["sets"]["f_only"], 1)
+        self.assertNotIn(("THIF", _DAYS[_THIN_PROBE_INDEX]), self.flagged_pairs(report))
+        self.assertEqual(report["refusals"]["R2b_immaterial"], 1)
+        self.assertEqual(
+            report["sets"]["placebo_pool_days"], _THIN_POOL_DAYS_IF_IMMATERIAL,
         )
 
 

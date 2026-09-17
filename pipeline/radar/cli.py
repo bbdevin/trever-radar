@@ -522,9 +522,17 @@ def cmd_futures_volume_battery(args):
     )
     print(
         f"  |F|={sets_['f']} |F_only|={sets_['f_only']} "
+        f"|F_only|+|F_(S=1)|={sets_['f_with_established_spot_flag']} "
         f"immature={sets_['f_immature']} "
         f"spot_flag_unknown={sets_['f_with_unknown_spot_flag']}"
     )
+    # §6 修訂 5(ii):抽不滿的是哪幾檔,要能直接看到。差額與 seed 無關,一個總數
+    # 分不出「結構性餓死」與「再等幾個月就補得滿」。
+    for short in sets_["placebo_short_stocks"]:
+        print(
+            f"  placebo short: stock={short['stock_id']} k={short['k']} "
+            f"pool={short['pool_size']}"
+        )
     print(f"  refusals: " + " ".join(
         f"{code}={report['refusals'][code]}"
         for code in ("R1_window_gap", "R2a_zero_median", "R2b_multiplier_unknown",
