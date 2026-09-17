@@ -471,8 +471,10 @@ futures_contracts = Table(
     # 契約乘數(股/口):標準型 2,000、小型 100、ETF 期貨另計(來源:TAIFEX 契約規格)。
     # **NULL = 未知,不是 2,000**。docs/38 §2 R2b 的實質性閘門要把口數換成股當量,
     # 不知道乘數就換不出股數,那一天只能否決;拿 2,000 當預設等於替小型契約與 ETF
-    # 期貨憑空放大 20 倍以上的股當量,而且錯得很安靜。本欄目前沒有任何寫入端,
-    # 既有列一律維持 NULL,填值是另一個決定(§4)。
+    # 期貨憑空放大 20 倍以上的股當量,而且錯得很安靜。
+    # 寫入端:`import-futures`,值取自 TAIFEX stockLists 商品表的「標準型證券股數/
+    # 受益權單位」欄(逐列,不推斷;2026-09-17 全表量測 2,000/100/10,000/1,000 四種)。
+    # upsert 用 coalesce(新, 舊):讀不到就保留既有值,不用 NULL 抹掉已知的乘數。
     Column("contract_multiplier", Integer),            # 股/口;NULL = 未知
     Column("first_seen", Text, nullable=False),        # YYYY-MM-DD
     Column("last_seen", Text, nullable=False),         # YYYY-MM-DD;變舊 = 已下架

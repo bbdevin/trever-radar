@@ -2051,8 +2051,17 @@ def _upsert_futures_contracts(conn, contracts, seen_on: str) -> int:
 
     不能用 `upsert()`:它會把 row dict 裡的每個非主鍵欄都寫進 ON CONFLICT 的
     SET,first_seen 會被每天的 refresh 覆蓋成今天,「第一次看到是哪天」就沒了。
+
+    `contract_multiplier` 是唯一一個**不照抄新值**的欄:用 coalesce(新, 舊),
+    也就是「解析得到就更新,解析不到就保留既有值」。理由是兩種錯的代價不對稱——
+    官網改版或某一列缺格時,照抄 NULL 會把一個已知的乘數抹掉,而 `docs/38` R2b
+    對乘數未知的契約一律否決,於是那檔標的會從此安靜地不再產生任何旗標;反過來,
+    保留舊值只在「TAIFEX 真的改了乘數又剛好那次解析失敗」時才會是錯的,而真的改
+    乘數時新值是有數字的,coalesce 照樣蓋過去。TAIFEX 不會公布「乘數未知」,
+    所以 NULL 永遠是我們這邊讀失敗,不是世界上的事實。
     """
     from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+    from sqlalchemy import func
 
     if not contracts:
         return 0
@@ -2065,24 +2074,25 @@ def _upsert_futures_contracts(conn, contracts, seen_on: str) -> int:
             "is_stock_option": c.is_stock_option,
             "is_weekly_option": c.is_weekly_option,
             "market": c.market,
+            "contract_multiplier": c.contract_multiplier,
             "first_seen": seen_on,
             "last_seen": seen_on,
         }
         for c in contracts
     ]
     stmt = sqlite_insert(schema.futures_contracts).values(values)
-    conn.execute(
-        stmt.on_conflict_do_update(
-            index_elements=["contract_code"],
-            set_={
-                name: stmt.excluded[name]
-                for name in (
-                    "stock_id", "stock_name", "is_stock_future", "is_stock_option",
-                    "is_weekly_option", "market", "last_seen",
-                )
-            },
+    set_ = {
+        name: stmt.excluded[name]
+        for name in (
+            "stock_id", "stock_name", "is_stock_future", "is_stock_option",
+            "is_weekly_option", "market", "last_seen",
         )
+    }
+    set_["contract_multiplier"] = func.coalesce(
+        stmt.excluded.contract_multiplier,
+        schema.futures_contracts.c.contract_multiplier,
     )
+    conn.execute(stmt.on_conflict_do_update(index_elements=["contract_code"], set_=set_))
     return len(values)
 
 
@@ -2137,6 +2147,11 @@ def import_futures() -> dict:
     return {
         "date": data_date,
         "contracts": n_contracts,
+        # 乘數涵蓋率:docs/38 R2b 對乘數未知的契約一律否決,所以這個數字少一個,
+        # 就是少一檔標的**永遠**不會上榜。放在摘要裡是為了讓它一眼看得見。
+        "contracts_with_multiplier": sum(
+            1 for c in contracts if c.contract_multiplier is not None
+        ),
         "stock_futures_rows": n_rows,
         "feed_rows": len(daily_rows),
         "leftover_codes": len(leftover),

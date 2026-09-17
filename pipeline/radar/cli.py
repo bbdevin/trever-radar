@@ -262,6 +262,7 @@ def cmd_import_futures(_args):
     info = import_futures()
     print(
         f"futures {info['date']}: contracts={info['contracts']} "
+        f"(multiplier known {info['contracts_with_multiplier']}/{info['contracts']}) "
         f"rows={info['stock_futures_rows']} (of {info['feed_rows']} feed rows; "
         f"{info['leftover_codes']} non-stock contract codes ignored) "
         f"sessions={'一般' if info['has_regular'] else '-'}"

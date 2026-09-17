@@ -19,6 +19,14 @@
    標記欄有 ``●`` / ``◎`` 代表「是」,空白代表「否」。最後一列是
    「標的合計數:」的合計列,沒有商品代碼,必須跳過而不是當成一檔商品。
 
+   **契約乘數**由「標準型證券股數/受益權單位」欄**逐列**給出,不需要從標的型態推。
+   2026-09-17 全表量測(320 列商品):``2,000`` 249 列、``100`` 47 列、
+   ``10,000`` 21 列、``1,000`` 3 列,0 列空白或非數字(唯一的空白是合計列)。
+   所以「個股/小型個股/ETF/小型ETF」四種大小都真的存在,而且**同一檔標的可以有
+   兩個不同乘數的契約**(1565 的 MY=2,000 與 OM=100)——推斷會推錯,讀欄位不會。
+   讀不出數字時一律 ``None``(未知),**不預設 2,000**:見 ``docs/38`` §2 R2b,
+   乘數未知必須否決,拿 2,000 硬填會讓小型契約的股當量憑空放大 20 倍,而且錯得很安靜。
+
    **Join 規則(實測)**:當日行情的 ``Contract`` == 對照表 ``商品代碼`` + ``"F"``。
    2026-09-15 全日量測:對照表 320 列商品(第 321 列是合計列)全部在行情裡找得到,
    0 列落空;行情另有 65 個代碼沒有對照(台指等指數期貨與其他商品)。
@@ -103,6 +111,7 @@ class FuturesContractRow:
     is_stock_option: bool
     is_weekly_option: bool
     market: str | None        # twse / tpex;四個標的證券欄推得,都空白則 None
+    contract_multiplier: int | None   # 股(或受益權單位)/口;None = 未知,不是 2,000
 
 
 # --------------------------------------------------------------------------- 解析工具
@@ -143,6 +152,20 @@ def _iso_from_compact(value) -> str | None:
 def _is_marked(cell: str) -> bool:
     """標記欄:含 ● 或 ◎ 為真,空白(或僅空白字元)為假。"""
     return any(mark in cell for mark in _TRUE_MARKS)
+
+
+def _multiplier(cell: str) -> int | None:
+    """「標準型證券股數/受益權單位」欄 → 正整數,否則 ``None``(未知)。
+
+    千分位逗號去掉;空白、``-``、非數字、以及 0 或負數一律 ``None``。
+    0 特別要擋:它會讓 ``docs/38`` R2b 的股當量恆為 0,結果雖然也是否決,
+    但那是「算出來不夠大」而不是「不知道」,兩者在紀錄上是不同的事實。
+    這裡**沒有預設值**,而且刻意不該有:見模組 docstring。
+    """
+    value = _to_int(cell)
+    if value is None or value <= 0:
+        return None
+    return value
 
 
 # --------------------------------------------------------------------------- 當日行情
@@ -209,6 +232,10 @@ _HEADER_OPTION = "股票選擇權"
 _HEADER_WEEKLY = "週契約"
 _HEADER_TWSE = "上市"
 _HEADER_TPEX = "上櫃"
+# 「標準型證<br>券股數/<br>受益權單位」。認的是整個欄名,而 <br> 正好切在「證|券」中間,
+# 所以比對前一定要先把表頭的空白擠掉(見 _header_index);用「標準型」這種避開斷點的
+# 短片語也能中,但那是在遷就官網現在的換行位置,不是在認這一欄的名字。
+_HEADER_MULTIPLIER = ("標準型證券股數",)
 
 
 def _collect_tables(html: str) -> list[list[list[str]]]:
@@ -240,7 +267,15 @@ def _pick_product_table(tables: list[list[list[str]]]) -> list[list[str]]:
 
 
 def _header_index(header: list[str], *needles: str, without: str | None = None) -> int:
-    for i, cell in enumerate(header):
+    """位置會變,名稱不會,所以認名稱。
+
+    比對前把表頭的空白**全部**擠掉:那些空白是儲存格裡 ``<br>`` 造成的,是排版,
+    不是詞的一部分(「標準型證 券股數/ 受益權單位」中間那一刀正好切在詞中間)。
+    擠掉之後用的是同一條「認名稱」規則,只是不再被官網的換行位置左右;
+    錯誤訊息仍印**原始**表頭,因為出事時要看到的是頁面真正長什麼樣子。
+    """
+    squeezed = ["".join(cell.split()) for cell in header]
+    for i, cell in enumerate(squeezed):
         if all(n in cell for n in needles) and (without is None or without not in cell):
             return i
     raise TaifexParseError(f"stockLists: header column {needles!r} not found in {header!r}")
@@ -266,6 +301,10 @@ def parse_stock_list(html: str) -> list[FuturesContractRow]:
     i_tpex_common = _header_index(header, _HEADER_TPEX, "普通股")
     i_twse_etf = _header_index(header, _HEADER_TWSE, "ETF")
     i_tpex_etf = _header_index(header, _HEADER_TPEX, "ETF")
+    # 表頭少了乘數欄 = 頁面改版,與其他欄一視同仁:大聲失敗,不回傳半套資料。
+    i_multiplier = _header_index(header, *_HEADER_MULTIPLIER)
+    # 乘數欄**不**進 widest:少了它的那一列仍然是一檔真的契約,只是乘數未知。
+    # 把它算進 widest 會讓那一列整個消失,等於用「一個數字讀不到」換掉一整檔標的。
     widest = max(i_product, i_stock_id, i_name, i_future, i_option, i_weekly,
                  i_twse_common, i_tpex_common, i_twse_etf, i_tpex_etf)
 
@@ -291,6 +330,9 @@ def parse_stock_list(html: str) -> list[FuturesContractRow]:
                 is_stock_option=_is_marked(cells[i_option]),
                 is_weekly_option=_is_marked(cells[i_weekly]),
                 market="twse" if twse else ("tpex" if tpex else None),
+                contract_multiplier=_multiplier(
+                    cells[i_multiplier] if len(cells) > i_multiplier else ""
+                ),
             )
         )
     return out

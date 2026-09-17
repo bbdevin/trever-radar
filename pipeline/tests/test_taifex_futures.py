@@ -6,7 +6,7 @@
 import unittest
 from pathlib import Path
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text as sql_text
 from sqlalchemy.exc import IntegrityError
 
 from radar import schema
@@ -28,6 +28,35 @@ HISTORY_CSV = FIXTURES / "taifex_fut_history.csv"
 
 # fixture 只留下這幾個對照商品 + 三個指數期貨,好讓 join 的切分看得見。
 FIXTURE_LEFTOVER = ["MTX", "TE", "TX"]
+
+# 商品表的 14 個表頭,原樣照抄官網(含 <br>)。乘數那一格的 <br> 正好切在詞中間,
+# 「標準型證 券股數/ 受益權單位」這個斷法就是認欄位時真正要處理的東西。
+_HEADERS = [
+    "股票期貨、<br>選擇權<br>商品代碼", "標的證券", "證券代號", "標的證券<br>簡稱",
+    "是否為<br>股票期貨<br>標的", "是否為<br>股票選擇權<br>標的",
+    "是否為<br>股票選擇權週契約<br>標的",
+    "上市普通股<br>標的證券", "上櫃普通股<br>標的證券",
+    "上市ETF<br>標的證券", "上櫃ETF<br>標的證券",
+    "標準型證<br>券股數/<br>受益權單位",
+    "一般交易時段<br>交易時間<br>(期貨、選擇權契約)",
+    "盤後交易時段<br>交易時間<br>(期貨契約)",
+]
+
+
+def _synthetic_page(rows, headers=None):
+    """最小商品表:rows 是 14 格的字串序列(不足的格子自己補)。"""
+    head = "".join(f"<th>{h}</th>" for h in (headers if headers is not None else _HEADERS))
+    body = "".join(
+        "<tr>" + "".join(f"<td>{c}</td>" for c in row) + "</tr>" for row in rows
+    )
+    return f"<html><body><table><tr>{head}</tr>{body}</table></body></html>"
+
+
+def _row(product, stock_id, multiplier, mark_col=7):
+    cells = [product, f"{product} 公司", stock_id, product, "●", "", "", "", "", "", "",
+             multiplier, "8:45~13:45", "-"]
+    cells[mark_col] = "◎"
+    return cells
 
 
 def _daily():
@@ -73,6 +102,61 @@ class StockListParsing(unittest.TestCase):
         # 所以主鍵必須是契約代碼,不是 stock_id。
         rows = [r for r in _contracts() if r.stock_id == "1565"]
         self.assertEqual({r.contract_code for r in rows}, {"MYF", "OMF"})
+
+    def test_multiplier_is_read_per_row_not_inferred(self):
+        by_code = {r.contract_code: r for r in _contracts()}
+        # 標準型 2,000 股。
+        self.assertEqual(by_code["CCF"].contract_multiplier, 2000)
+        # ETF 期貨:受益權單位,官網實測 10,000(2026-09-17 全表:21 列 10,000、3 列 1,000)。
+        self.assertEqual(by_code["NYF"].contract_multiplier, 10000)
+        # 同一檔標的、兩個契約、兩個不同乘數 —— 這一條就是「逐列讀」與「由標的推」
+        # 的分水嶺:任何從 stock_id 推乘數的寫法都過不了。
+        self.assertEqual(by_code["MYF"].stock_id, by_code["OMF"].stock_id)
+        self.assertEqual(by_code["MYF"].contract_multiplier, 2000)
+        self.assertEqual(by_code["OMF"].contract_multiplier, 100)
+
+    def test_multiplier_strips_thousands_separators(self):
+        rows = parse_stock_list(_synthetic_page([_row("ZA", "9999", "1,000")]))
+        self.assertEqual(rows[0].contract_multiplier, 1000)   # 小型 ETF 期貨
+        self.assertIsInstance(rows[0].contract_multiplier, int)
+
+    def test_unknown_multiplier_is_none_never_a_default(self):
+        cases = ["", "-", "N/A", "未定", "0", "&nbsp;"]
+        for cell in cases:
+            with self.subTest(cell=cell):
+                rows = parse_stock_list(_synthetic_page([_row("ZA", "9999", cell)]))
+                # 契約本身仍然要在 —— 讀不到一個數字不該讓一整檔標的消失。
+                self.assertEqual(len(rows), 1)
+                self.assertEqual(rows[0].contract_code, "ZAF")
+                # 而乘數是 None,不是 2,000:docs/38 R2b 要的是「不知道就否決」。
+                self.assertIsNone(rows[0].contract_multiplier)
+
+    def test_row_too_short_to_carry_a_multiplier_keeps_the_contract(self):
+        short = _row("ZA", "9999", "2,000")[:11]   # 乘數欄之前就截斷
+        rows = parse_stock_list(_synthetic_page([short]))
+        self.assertEqual(len(rows), 1)
+        self.assertIsNone(rows[0].contract_multiplier)
+
+    def test_multiplier_header_is_matched_on_normalised_text(self):
+        # 表頭那格的空白是 <br> 造成的排版,不是詞的一部分 —— 官網把 <br> 移到
+        # 別的位置(甚至拿掉)都還是同一欄,認欄位不該被換行位置綁架。
+        for header in ("標準型證<br>券股數/<br>受益權單位",   # 官網現況:切在「證|券」中間
+                       "標準<br>型證券股數/受益權單位",
+                       "標準型證券股數/受益權單位"):
+            with self.subTest(header=header):
+                headers = list(_HEADERS)
+                headers[11] = header
+                rows = parse_stock_list(
+                    _synthetic_page([_row("ZA", "9999", "2,000")], headers=headers))
+                self.assertEqual(rows[0].contract_multiplier, 2000)
+
+    def test_missing_multiplier_header_raises_like_any_other_column(self):
+        # 表頭少一欄 = 頁面改版,與 test_missing_expected_header_raises 同一個處理:
+        # 大聲失敗,不是靜靜地全部回 None。
+        headers = list(_HEADERS)
+        headers[11] = "備註"
+        with self.assertRaises(TaifexParseError):
+            parse_stock_list(_synthetic_page([_row("ZA", "9999", "2,000")], headers=headers))
 
     def test_missing_expected_header_raises(self):
         html = STOCK_LIST_HTML.read_text(encoding="utf-8").replace("證券代號", "XXXXX")
@@ -182,6 +266,87 @@ class FuturesDailyPrimaryKey(unittest.TestCase):
         with self.assertRaises(IntegrityError):
             with engine.begin() as conn:
                 conn.execute(schema.futures_daily.insert().values(row))
+
+
+class ContractMultiplierUpsert(unittest.TestCase):
+    """`import-futures` 的契約 upsert 怎麼處理乘數。"""
+
+    def setUp(self):
+        from radar import importer
+
+        self.importer = importer
+        self.engine = create_engine("sqlite://")
+        schema.metadata.create_all(self.engine)
+
+    def _upsert(self, rows, seen_on):
+        with self.engine.begin() as conn:
+            self.importer._upsert_futures_contracts(conn, rows, seen_on)
+
+    def _stored(self):
+        with self.engine.begin() as conn:
+            return dict(conn.execute(sql_text(
+                "SELECT contract_code, contract_multiplier FROM futures_contracts"
+            )).fetchall())
+
+    def test_multiplier_is_written_and_unknown_stays_null(self):
+        rows = parse_stock_list(_synthetic_page([
+            _row("ZA", "9991", "2,000"),
+            _row("ZB", "9992", "100"),
+            _row("ZC", "9993", "10,000"),
+            _row("ZD", "9994", "-"),
+        ]))
+        self._upsert(rows, "2026-09-17")
+        self.assertEqual(
+            self._stored(),
+            {"ZAF": 2000, "ZBF": 100, "ZCF": 10000, "ZDF": None},
+        )
+
+    def test_unknown_does_not_erase_a_previously_known_multiplier(self):
+        known = parse_stock_list(_synthetic_page([_row("ZA", "9991", "2,000")]))
+        self._upsert(known, "2026-09-17")
+        blank = parse_stock_list(_synthetic_page([_row("ZA", "9991", "")]))
+        self._upsert(blank, "2026-09-18")
+        # 解析失敗不該把已知的乘數抹成 NULL:docs/38 R2b 對 NULL 一律否決,
+        # 抹掉一次就等於那檔標的從此安靜地不再產生任何旗標。
+        self.assertEqual(self._stored(), {"ZAF": 2000})
+
+    def test_a_real_change_of_multiplier_does_overwrite(self):
+        self._upsert(parse_stock_list(_synthetic_page([_row("ZA", "9991", "2,000")])),
+                     "2026-09-17")
+        self._upsert(parse_stock_list(_synthetic_page([_row("ZA", "9991", "100")])),
+                     "2026-09-18")
+        self.assertEqual(self._stored(), {"ZAF": 100})
+
+    def test_first_seen_still_survives_the_refresh(self):
+        rows = parse_stock_list(_synthetic_page([_row("ZA", "9991", "2,000")]))
+        self._upsert(rows, "2026-09-17")
+        self._upsert(rows, "2026-09-18")
+        with self.engine.begin() as conn:
+            got = conn.execute(sql_text(
+                "SELECT first_seen, last_seen FROM futures_contracts"
+            )).fetchone()
+        self.assertEqual(tuple(got), ("2026-09-17", "2026-09-18"))
+
+
+class ImportFuturesSummaryLine(unittest.TestCase):
+    def test_summary_shows_multiplier_coverage(self):
+        import contextlib
+        import io as _io
+        from unittest import mock
+
+        from radar import cli
+
+        info = {
+            "date": "2026-09-17", "contracts": 320, "contracts_with_multiplier": 318,
+            "stock_futures_rows": 1969, "feed_rows": 2332, "leftover_codes": 65,
+            "has_regular": True, "has_after_hours": True,
+        }
+        buf = _io.StringIO()
+        with mock.patch("radar.importer.import_futures", return_value=info):
+            with contextlib.redirect_stdout(buf):
+                cli.cmd_import_futures(None)
+        # 涵蓋率要看得見:少一個乘數 = 少一檔標的永遠不會上榜(docs/38 R2b)。
+        self.assertIn("318/320", buf.getvalue())
 
 
 if __name__ == "__main__":
