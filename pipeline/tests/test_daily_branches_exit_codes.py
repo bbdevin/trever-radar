@@ -52,6 +52,21 @@ class TestDailyBranchesExitCodes(unittest.TestCase):
         self.assertNotEqual(idx, -1, f"找不到 {needle!r}")
         return idx
 
+    def _marker_write_line(self) -> str:
+        """**寫**標記的那一行。
+
+        `branch_round_marker` 現在在腳本裡出現兩次:第二輪用 `-s` **讀**它決定
+        今天要不要接手,收工時才**寫**它。要談「什麼時候寫」就必須指名帶
+        重導向的那一行,不能拿第一個出現的位置當成寫入點。
+        """
+        line = next((ln for ln in self.lines
+                     if "branch_round_marker" in ln and ">" in ln), None)
+        self.assertIsNotNone(line, "找不到寫標記的那一行")
+        return line
+
+    def _marker_write_index(self) -> int:
+        return self.code.index(self._marker_write_line())
+
     def test_exit_code_is_taken_via_if_so_the_err_trap_stays_quiet(self):
         """取離開碼要用 if/then/else,不可以用 `set +e; …; rc=$?; set -e`。
 
@@ -118,7 +133,7 @@ class TestDailyBranchesExitCodes(unittest.TestCase):
     def test_completion_marker_is_written_only_after_deploy(self):
         """完成標記是給夜間備援作業讀的,寫早了就是承諾一件還沒發生的事。"""
         deploy = self._index("deploy_data")
-        marker = self._index("branch_round_marker")
+        marker = self._marker_write_index()
         self.assertGreater(marker, deploy,
                            "標記必須在 deploy_data 之後才寫")
         compute = self._index("radar compute-branch-stats")
@@ -152,11 +167,14 @@ class TestDailyBranchesExitCodes(unittest.TestCase):
                    if "radar import-branch-trades" in ln)
         self.assertLess(capture, imp, "日期要在任何長工作之前就取好")
 
-        marker_line = next(ln for ln in self.lines if "branch_round_marker" in ln)
-        self.assertIn("$ROUND_DATE", marker_line,
-                      "標記必須用開跑時定下的日期")
-        self.assertNotIn("$(taipei_date +%F)", marker_line,
-                         "不可以在寫標記的當下才算日曆日 —— 跨午夜就會錯")
+        for marker_line in [ln for ln in self.lines if "branch_round_marker" in ln]:
+            with self.subTest(line=marker_line.strip()):
+                # 讀與寫都要用同一個開跑日:第二輪查的標記若用「現在」算日曆日,
+                # 跨午夜之後會去找一個明天的、永遠不存在的標記而誤判要接手。
+                self.assertIn("$ROUND_DATE", marker_line,
+                              "標記必須用開跑時定下的日期")
+                self.assertNotIn("$(taipei_date +%F)", marker_line,
+                                 "不可以在用到標記的當下才算日曆日 —— 跨午夜就會錯")
 
     # ── BRANCH_ROUND_MODE:22:00 那輪只匯入 ────────────────────────────
     def _mode_guard(self) -> int:
@@ -188,13 +206,14 @@ class TestDailyBranchesExitCodes(unittest.TestCase):
         沒有任何一輪算過分點統計——備援在唯一需要它的情況下被自己關掉。
         """
         guard = self._mode_guard()
-        marker = self._index("branch_round_marker")
-        self.assertGreater(marker, guard,
+        self.assertGreater(self._marker_write_index(), guard,
                            "寫標記必須在 import 模式離開之後,只匯入的那輪不得寫")
-        # 守衛與離開之間不可以夾帶寫標記的動作。
+        # 守衛與離開之間不可以夾帶寫標記的動作。這裡**讀**標記是新增的備援判斷,
+        # 允許;帶重導向的**寫**才是被禁止的那件事。
         block = self.code[guard:self.code.index("fi", guard)]
         self.assertIn("exit 0", block, "import 模式要在這裡結束本輪")
-        self.assertNotIn("branch_round_marker", block)
+        self.assertNotIn(">", block,
+                         "只匯入那一支不得寫任何東西進標記檔")
 
     def test_import_only_mode_skips_every_compute_and_publish_step(self):
         """只匯入的那一輪不得重算、不得匯出、不得上線。"""
@@ -257,14 +276,122 @@ class TestDailyBranchesExitCodes(unittest.TestCase):
         self.assertRegex(block, r"僅匯入|只匯入", "通知要說明本輪只做了匯入")
         self.assertIn("未上線", block, "通知要明講沒有上線")
 
+    # ── 第二輪備援:17:40 沒上線的日子由 22:00 接手 ──────────────────────
+    def _guard_block(self) -> str:
+        """模式守衛從 `if` 到它自己的 `fi`(含內層的標記判斷)。"""
+        guard = self._mode_guard()
+        return self.code[guard:self.code.index("notify_warn", guard)]
+
+    def test_second_round_publishes_only_when_today_has_not_published(self):
+        """22:00 那輪的早退改成有條件:今天有完成標記才停,沒有就接手完整鏈。
+
+        2026-09-17 是這條規則的來由:17:40 那輪覆蓋率 902/1956 = 46%,掉出 0.5
+        地板而正確地扣留——但那輪的計數是 1412 ok / 1054 empty / 0 failed,來源
+        健康,只是 18:30 太早。22:00 純匯入,於是整天沒有任何一輪上線,第一個
+        發布者變成 00:05 的夜間作業(約 01:30)。資料在 22:00 早就填齊了。
+        """
+        block = self._guard_block()
+        self.assertIn("branch_round_marker", block,
+                      "早退必須以今天的完成標記為條件")
+        self.assertIn("exit 0", block)
+        # 早退包在標記判斷裡:沒有標記就落不到 exit,而是繼續往下跑完整鏈。
+        inner = block.index("branch_round_marker")
+        self.assertLess(inner, block.index("exit 0"),
+                        "exit 0 必須在標記判斷之內,不能無條件執行")
+
+    def test_marker_test_is_non_empty_not_mere_existence(self):
+        """用 `-s` 不用 `-f`:標記內容是完成時刻,空檔案代表寫的過程出了事。
+
+        把空檔案當成「今天上線過」,結果是這一天連備援都被關掉——正是備援唯一
+        要擋的那個情況。
+        """
+        line = next(ln for ln in self._guard_block().splitlines()
+                    if "branch_round_marker" in ln)
+        self.assertIn("-s ", line, "標記判斷要用 -s(非空)")
+        self.assertNotIn("-f ", line, "-f 會把空標記檔當成已上線")
+
+    def test_fallback_is_after_the_exit_code_case_so_an_unfit_round_exits_first(self):
+        """接手的前提是**這一輪自己的資料合格**。
+
+        守衛必須落在離開碼 case 之後:第二輪若自己也掉出地板,要在 case 的 `*)`
+        就 exit,絕不能走到這裡來、帶著一份不合格的資料接手上線。備援的用處是
+        補上一輪的缺,不是繞過閘門。
+        """
+        case_idx = self._index('case "$branch_rc"')
+        esac = self.code.index("esac", case_idx)
+        self.assertLess(esac, self._mode_guard(),
+                        "守衛必須整個落在離開碼 case 收尾之後")
+        self.assertIn('exit "$branch_rc"', self.code[case_idx:esac],
+                      "不合格要在 case 裡就中止,走不到備援")
+
+    def test_the_full_chain_is_not_duplicated_into_the_fallback(self):
+        """備援是「不 exit、繼續往下走」,不是把整條鏈複製一份到 if 裡面。
+
+        複製的下場和離開碼分級複製一模一樣:兩份會漂移,而漂移的結果是某一條
+        路徑悄悄少做了一步(少算一張表、少部署一次),而且不會有人發現。
+        """
+        for step in ("radar compute-branch-stats", "radar compute-scores",
+                     "radar compute-performance", "radar export-json",
+                     "radar prune", "deploy_data"):
+            with self.subTest(step=step):
+                self.assertEqual(self.code.count(step), 1,
+                                 f"{step} 在腳本裡只能出現一次")
+
+    def test_unfit_notification_is_graded_by_round_from_one_case_arm(self):
+        """不合格通知按輪次分級,但仍然只有一份 `*)`。
+
+        第一輪掉到地板以下不需要任何人動手——第二輪會接手——把它報成 high
+        「失敗」,就是 75/76 那段註解一直在對抗的「把一個正常結果講成故障」。
+        第二輪掉到地板以下才要叫醒人:今天沒有任何一輪上線。
+        """
+        case_idx = self._index('case "$branch_rc"')
+        block = self.code[case_idx:self.code.index("esac", case_idx)]
+        arm = block[block.index("*)"):]
+        self.assertEqual(block.count("*)"), 1, "`*)` 只能有一份")
+        self.assertNotIn("high", arm,
+                         "優先權不可以寫死在分支裡,要由變數帶進來")
+        for var in ("unfit_pri", "unfit_kind", "unfit_tail"):
+            with self.subTest(var=var):
+                self.assertRegex(arm, r"\$\{?" + var,
+                                 f"{var} 要在唯一那份 `*)` 裡用到")
+
+        # 選措辭的地方:import(第二輪)= high;其他(第一輪 / 手動)= 不是 high。
+        sel = self._index('case "$BRANCH_ROUND_MODE"')
+        self.assertLess(sel, case_idx, "措辭要在進離開碼 case 之前就選好")
+        sel_block = self.code[sel:self.code.index("esac", sel)]
+        second = sel_block[sel_block.index("import)"):sel_block.index("*)")]
+        first = sel_block[sel_block.index("*)"):]
+        self.assertIn('unfit_pri="high"', second,
+                      "第二輪不合格 = 今天沒有任何一輪上線,要叫醒人")
+        self.assertNotIn("high", first,
+                         "第一輪不合格有備援接手,不可以送 high")
+        self.assertIn('unfit_pri="default"', first)
+
+    def test_header_says_the_mode_name_is_narrower_than_the_behaviour(self):
+        """`BRANCH_ROUND_MODE=import` 有時會跑完整鏈,名字比行為窄。
+
+        沒有改名是因為改名要再動一次正式機 crontab(使用者的決定)。那就必須把
+        真正的意思寫在標題註解裡——讀的人不該從程式碼裡自己發現這件事。
+        """
+        header = SCRIPT.read_text(encoding="utf-8").split('BRANCH_ROUND_MODE="')[0]
+        self.assertIn("第二輪", header, "要講明 import 的意思是『當天第二輪』")
+        self.assertIn("完成標記", header,
+                      "要講明續不續跑完整鏈是看今天有沒有完成標記")
+        # 只說明行為還不夠:改動前的標題註解一樣會提到「第二輪」與「完成標記」。
+        # 真正非講不可的是**名字與行為不一致**這件事本身,以及為什麼不改名——
+        # 沒有這一句,下一個讀 crontab 的人只會看到 `import` 三個字。
+        self.assertRegex(header, r"名字.{0,20}窄|窄.{0,20}名字",
+                         "要直說這個變數名比它的行為窄")
+        self.assertRegex(header, r"(不改名|改名).{0,80}crontab",
+                         "要講明不改名的理由:改名要再動一次正式機 crontab")
+
     def test_marker_content_is_a_timestamp(self):
         """標記內容要是時間,不能只是空檔案——夜間作業靠它跟 run_at 比大小。
 
         注意這裡跟上一個測試要的是兩件不同的事:檔**名**用開跑日(資料日),
         檔**內容**用收工當下的時刻(才能跟匯入的 run_at 比先後)。
         """
-        marker_line = next(ln for ln in self.lines if "branch_round_marker" in ln)
-        self.assertIn("taipei_date -Is", marker_line,
+        self.assertIn("taipei_date -Is", self._marker_write_line(),
                       "標記內容應該是台北時區的 ISO 時間")
 
 

@@ -332,6 +332,22 @@ class BranchDateFitnessTests(_BranchCoverageBase):
         self.assertIn("expected=12", rows[0][3])
         self.assertIn("ratio=0.75", rows[0][3])
 
+    def test_coverage_row_carries_the_tallies_that_separate_late_from_broken(self):
+        """同一列還要帶 `done=` / `empty=`,否則低覆蓋率的成因無法事後重建。
+
+        低覆蓋率有兩個完全不同的成因:來源死掉,和來源還沒公布完。只看
+        coverage/expected 分不出來。2026-09-17 17:40 那輪(902/1956 = 46%)之所以
+        當場判定是後者,靠的是 cron log 裡的 `1412 ok, 1054 empty, 0 failed`——
+        而 `disk-cleanup.sh` 會修剪那份 log。放進 DB,診斷才不依賴一份會被砍的檔案。
+        """
+        # 9 檔有資料、3 檔 NoDataError:健康但「還沒公布完」的形狀。
+        self._run(_missing(STOCKS[9:]))
+        err = self._log_rows("branch_coverage")[0][3]
+        self.assertIn("done=9", err, "抓到資料的檔數要留在同一列")
+        self.assertIn("empty=3", err, "空(NoDataError)的檔數要留在同一列")
+        # 分子分母仍在,新欄位是加上去的,不是取代掉的。
+        self.assertIn("expected=12", err)
+
     def test_branch_coverage_dataset_collides_with_nothing(self):
         """新 dataset 名稱不可以落進既有的 dataset 過濾條件裡。"""
         from radar.export import json_export
