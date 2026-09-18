@@ -5,6 +5,7 @@ entry is the next trading day's open, and forward returns are filled later.
 """
 from __future__ import annotations
 
+from bisect import bisect_right
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -25,15 +26,29 @@ def _norm_date(date: str | None) -> str | None:
 def forward_returns(candles: list[dict], signal_date: str) -> dict | None:
     """Compute forward returns from the first candle after signal_date.
 
-    candles must be sorted ascending and carry adjusted open/close prices. fwd_1d
-    means the entry day's close vs the entry open; fwd_3d means the third trading
-    day's close vs the same entry open.
+    candles must be sorted ascending by "date" and carry adjusted open/close
+    prices. fwd_1d means the entry day's close vs the entry open; fwd_3d means
+    the third trading day's close vs the same entry open.
+
+    The ascending order is load-bearing, not merely documentary: the entry
+    candle is located with a binary search over the dates (bisect_right), so a
+    caller that passes an unsorted list gets a silently wrong entry index —
+    typically an entry that is too late, or None where a valid entry exists —
+    with no exception raised. Every caller in this repo reads its candles
+    straight out of a "ORDER BY date" query; keep it that way.
     """
-    entry_idx = next(
-        (i for i, c in enumerate(candles)
-         if c["date"] > signal_date and c.get("open") and c["open"] > 0),
-        None,
-    )
+    # First index whose date is strictly greater than signal_date. Duplicate
+    # dates are handled by bisect_right landing past the whole run of equals.
+    start = bisect_right(candles, signal_date, key=lambda c: c["date"])
+    # From there, step forward to the first candle with a usable open. This is
+    # usually zero steps, but a stock can have consecutive days with a missing
+    # or zero open and those must be skipped, exactly as the old linear scan did.
+    entry_idx = None
+    for i in range(start, len(candles)):
+        c = candles[i]
+        if c.get("open") and c["open"] > 0:
+            entry_idx = i
+            break
     if entry_idx is None:
         return None
 
