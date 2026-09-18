@@ -53,6 +53,14 @@ awk -v f="$FREE" -v m="$MIN_FREE_GB" 'BEGIN { exit !(f+0 >= m+0) }' || {
 
 # 恢復失敗告警(正式步驟);stats 失敗另處理,不整輪炸掉
 install_fail_trap
+# 這裡的 EXIT trap 只收 flag,**刻意不做 unpause**(第 18 行那版兩件都做)。
+# 看起來像漏掉,其實是分工:中途死掉時不要從一個可能死在寫入中途的腳本裡搶著
+# unpause,而是把「何時安全」交給 bf-cron-guard.sh——而 guard 唯一會「維持
+# pause、不搶 unpause」的條件就是這個 flag 還在(見它的檔頭第 3 行)。所以
+# trap 移除 flag 就等於把恢復權交還給 guard,它每 5 分鐘一次,會在條件允許時
+# unpause。正常路徑照舊在結尾自己 rm flag 再 unpause。
+# 要動這行之前先想清楚:把 unpause 加回來,等於讓一個正在失敗的程序決定
+# 「現在可以讓回補容器繼續寫了」,那正是這個分工要避免的。
 trap 'rm -f "$FLAG" 2>/dev/null || true' EXIT
 
 touch "$FLAG"
