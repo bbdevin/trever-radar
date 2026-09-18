@@ -82,10 +82,23 @@ if [ "$WANT_STATS" = "1" ]; then
     notify_warn "記憶體偏低（${MEM}MB），略過分點統計，仍會匯出上線"
   else
     echo "compute-branch-stats (mem=${MEM}MB)"
-    set +e
-    radar compute-branch-stats
-    rc=$?
-    set -e
+    # 用 if/then/else 取離開碼,不用 `set +e; …; rc=$?; set -e`(同 daily-branches.sh)。
+    # 上面第 55 行的 install_fail_trap 已經把 lib.sh 的 ERR trap **重新武裝**回來,
+    # 而 `set +e` **不會**讓 ERR trap 安靜下來(實測:set +e 之下回 75 仍然觸發)。
+    # 那會讓 stats 的任何一次失敗同時送出 lib 的 high 優先權「執行到第 N 行失敗」
+    # 與下面那則 notify_warn——一次失敗兩則通知,而這一則本來就刻意只用一般等級
+    # (stats 失敗不該炸掉整輪,匯出上線仍會進行)。警報疲勞是這個專案一直在對抗的事。
+    #
+    # warrant-backfill.sh 保留 `set +e` 不是不一致:那裡取碼的對象是一條**管線**
+    # (`radar … | tee`),必須用 `${PIPESTATUS[0]}`,改成 if 會拿到 tee 的離開碼;
+    # 而且那支腳本 `trap - ERR` 之後從不重新武裝,set +e 前後差別為零。
+    # 這裡兩個條件都相反:單一指令 + trap 已武裝,所以 if 才是對的形狀。
+    # 三支腳本的寫法不同各有理由,不要「統一」。
+    if radar compute-branch-stats; then
+      rc=0
+    else
+      rc=$?
+    fi
     if [ "$rc" -eq 0 ]; then
       STATS_NOTE="ok"
     else
