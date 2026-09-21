@@ -16,7 +16,11 @@ from unittest.mock import patch
 import radar.config as config
 import radar.db as db
 from radar import schema
-from radar.compute.futures_volume_anomaly import REASON_CODE, RISK_CODE
+from radar.compute.futures_volume_anomaly import (
+    REASON_CODE,
+    RISK_CODE,
+    futures_volume_anomalies,
+)
 from radar.compute.futures_volume_battery import (
     ANOMALY_FACT_KEYS,
     WINDOW_DAYS,
@@ -351,6 +355,10 @@ class _AnomalyFixture(unittest.TestCase):
             (self.out / "stocks" / f"{sid}.json").read_text(encoding="utf-8"))
         return {c["code"]: c for c in payload["futures"]["contracts"]}
 
+    def radar(self):
+        export_json(self.out)
+        return json.loads((self.out / "radar.json").read_text(encoding="utf-8"))
+
 
 class AnomalyFixtureSanityTests(unittest.TestCase):
     """手算出來的日曆事實。這些若不成立,底下每個測試都在驗錯的東西。"""
@@ -580,6 +588,177 @@ class AnomalyRateGateTests(_AnomalyFixture):
             (self.out / "stocks" / "2303.json").read_text(encoding="utf-8"))
         walk(payload["futures"], "2303.futures")
         self.assertEqual(offenders, [])
+
+
+INDEX_KEY = "futures_volume_anomalies"
+
+# 名次的各種寫法。§5 不做跨契約排序,所以名單有**順序**沒有**名次**:任何一個
+# 這樣的鍵出現在條目裡,都等於偷偷把一份短名單變成一張排行榜。
+RANK_ISH = ("rank", "position", "order", "seq", "index", "score", "top", "place")
+
+
+class AnomalyMarketIndexTests(_AnomalyFixture):
+    """市場層級的今日名單(docs/38 §7.5)。§1「名單短到能逐檔看」要的就是這一份。"""
+
+    def test_the_key_is_absent_when_the_day_was_never_computed(self):
+        """期貨資料還沒跟上 export 日 → 沒有算過。沒有算過就不該有任何主張。"""
+        self.seed([_spec("CCF", "2303", lots={AD: None})])
+        self.assertNotIn(INDEX_KEY, self.radar())
+
+    def test_an_uncomputed_day_is_not_written_as_an_empty_list(self):
+        """塌成 [] 就等於把「不知道」講成「今天沒有異常」——正是三態要擋的那件事。"""
+        self.seed([_spec("CCF", "2303", lots={AD: None})])
+        self.radar()
+        raw = (self.out / "radar.json").read_text(encoding="utf-8")
+        self.assertNotIn(f'"{INDEX_KEY}"', raw)
+
+    def test_a_computed_day_with_nothing_flagged_is_an_empty_list(self):
+        """算過了、今天沒有契約舉旗:這是一個有日期的正面主張,不是沒有鍵。"""
+        self.seed([_spec("CCF", "2303", today=BASE_LOTS)])
+        radar = self.radar()
+        self.assertIn(INDEX_KEY, radar)
+        self.assertEqual(radar[INDEX_KEY], [])
+
+    def test_a_flagged_contract_is_one_entry_with_the_five_fields(self):
+        self.seed([_spec("CCF", "2303")])
+        entries = self.radar()[INDEX_KEY]
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(sorted(entries[0]),
+                         ["anomaly", "code", "reasons", "risks", "stock_id"])
+        self.assertEqual(entries[0]["stock_id"], "2303")
+        self.assertEqual(entries[0]["code"], "CCF")
+
+    def test_the_entries_reuse_the_per_stock_structures_verbatim(self):
+        """條目不是攤平的變體:同一份 anomaly / reasons / risks,逐字相同。"""
+        self.seed([_spec("CCF", "2303")])
+        entry = self.radar()[INDEX_KEY][0]
+        contract = self.contracts("2303")["CCF"]
+        self.assertEqual(entry["anomaly"], contract["anomaly"])
+        self.assertEqual(entry["reasons"], contract["reasons"])
+        self.assertEqual(entry["risks"], contract["risks"])
+        self.assertEqual(entry["anomaly"], EXPECTED_FACTS)
+        self.assertEqual(entry["reasons"],
+                         [{"code": REASON_CODE, "text": EXPECTED_REASON}])
+        self.assertEqual(entry["risks"], [{"code": RISK_CODE, "text": EXPECTED_RISK}])
+
+    def test_the_order_is_today_minus_window_max_descending(self):
+        # window_max 三個都是 100,所以差額就是 today − 100:400 / 200 / 200。
+        self.seed([
+            _spec("AAA", "2303", today=300),
+            _spec("BBB", "1565", today=500),
+            _spec("CCC", "2317", today=300),
+        ])
+        entries = self.radar()[INDEX_KEY]
+        self.assertEqual([e["code"] for e in entries], ["BBB", "AAA", "CCC"])
+        self.assertEqual(
+            [e["anomaly"]["today"] - e["anomaly"]["window_max"] for e in entries],
+            [400, 200, 200],
+        )
+
+    def test_ties_are_broken_by_code_ascending_so_the_file_is_deterministic(self):
+        """AAA 與 CCC 差額相同;若不用 code 收尾,檔案就會隨 dict 順序飄。"""
+        self.seed([
+            _spec("CCC", "2317", today=300),
+            _spec("AAA", "2303", today=300),
+        ])
+        self.assertEqual([e["code"] for e in self.radar()[INDEX_KEY]], ["AAA", "CCC"])
+
+    def test_the_entries_carry_no_rank_or_position_key(self):
+        """§5:不做跨契約排序。順序可以有,名次不可以有。"""
+        self.seed([_spec("AAA", "2303"), _spec("BBB", "1565")])
+        offenders = []
+        for entry in self.radar()[INDEX_KEY]:
+            for key in entry:
+                if any(bad in key.lower() for bad in RANK_ISH):
+                    offenders.append(key)
+            # 而且鍵就是那五個,一個不多:第六個鍵要加,得自己動手並過 review。
+            self.assertEqual(sorted(entry),
+                             ["anomaly", "code", "reasons", "risks", "stock_id"])
+        self.assertEqual(offenders, [])
+
+    def test_the_index_cannot_silently_gain_a_rate(self):
+        self.seed([_spec("CCF", "2303")])
+        offenders = []
+
+        def walk(node, path):
+            if isinstance(node, dict):
+                for key, value in node.items():
+                    if any(bad in key.lower() for bad in RATIO_ISH):
+                        offenders.append(f"{path}.{key}")
+                    walk(value, f"{path}.{key}")
+            elif isinstance(node, list):
+                for i, value in enumerate(node):
+                    walk(value, f"{path}[{i}]")
+
+        walk(self.radar()[INDEX_KEY], INDEX_KEY)
+        self.assertEqual(offenders, [])
+
+    def test_two_contracts_on_one_stock_both_appear(self):
+        """1565 的 MYF(2,000 股/口)與 OMF(100 股/口)可以同一天都舉旗。
+
+        單位是契約不是股票;依股票去重會把其中一個吞掉。
+        """
+        self.seed([_spec("MYF", "1565"), _spec("OMF", "1565", multiplier=100)])
+        entries = self.radar()[INDEX_KEY]
+        self.assertEqual([(e["stock_id"], e["code"]) for e in entries],
+                         [("1565", "MYF"), ("1565", "OMF")])
+
+    def test_a_refused_contract_never_reaches_the_index(self):
+        """否決 = 不是一個異常,市場名單與個股區塊在這件事上必須一致。"""
+        self.seed([_spec("CCF", "2303", multiplier=None), _spec("MYF", "1565")])
+        self.assertEqual([e["code"] for e in self.radar()[INDEX_KEY]], ["MYF"])
+
+    def test_the_index_and_the_per_stock_blocks_come_from_one_computation(self):
+        """整個 export 只呼叫規則一次。有人加第二趟,這裡就是紅的。"""
+        self.seed([_spec("CCF", "2303"), _spec("MYF", "1565")])
+        calls = []
+
+        def counting(conn, as_of):
+            calls.append(as_of)
+            return futures_volume_anomalies(conn, as_of)
+
+        with patch("radar.export.json_export.futures_volume_anomalies", counting):
+            export_json(self.out)
+        self.assertEqual(len(calls), 1, f"rule evaluated {len(calls)} times")
+        radar = json.loads((self.out / "radar.json").read_text(encoding="utf-8"))
+        by_code = {}
+        for sid in ("2303", "1565"):
+            payload = json.loads(
+                (self.out / "stocks" / f"{sid}.json").read_text(encoding="utf-8"))
+            by_code.update({c["code"]: c for c in payload["futures"]["contracts"]})
+        for entry in radar[INDEX_KEY]:
+            self.assertEqual(entry["anomaly"], by_code[entry["code"]]["anomaly"])
+            self.assertEqual(entry["reasons"], by_code[entry["code"]]["reasons"])
+            self.assertEqual(entry["risks"], by_code[entry["code"]]["risks"])
+
+
+class AnomalyIndexOrderingTests(unittest.TestCase):
+    """排序本身,不經過資料庫。
+
+    export 那一條路上 ``load_contracts`` 已經 ORDER BY contract_code,所以同分的
+    兩個契約本來就照代碼進 dict——拿掉 ``code`` 這個收尾,穩定排序照樣給對的答案。
+    也就是說那個 tiebreak 在 export 層級**不可證偽**。這裡直接餵一個相反順序的
+    dict,讓它變成可證偽的。
+    """
+
+    @staticmethod
+    def _entry(today):
+        return {"anomaly": {"today": today, "window_max": 100,
+                            "window_median": 100, "window_days": WINDOW_DAYS},
+                "reasons": [], "risks": []}
+
+    def test_ties_fall_back_to_code_even_when_the_input_is_reverse_ordered(self):
+        from radar.compute.futures_volume_anomaly import anomaly_index
+        ordered = anomaly_index(
+            {"CCC": self._entry(300), "AAA": self._entry(300)},
+            stock_id_by_code={"CCC": "2317", "AAA": "2303"},
+        )
+        self.assertEqual([e["code"] for e in ordered], ["AAA", "CCC"])
+
+    def test_none_stays_none_and_empty_stays_empty(self):
+        from radar.compute.futures_volume_anomaly import anomaly_index
+        self.assertIsNone(anomaly_index(None, stock_id_by_code={}))
+        self.assertEqual(anomaly_index({}, stock_id_by_code={}), [])
 
 
 if __name__ == "__main__":

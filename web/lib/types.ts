@@ -267,13 +267,56 @@ export interface FuturesContract {
   is_futures: boolean;
   is_option: boolean;
   is_weekly_option: boolean;
-  /** 當日沒有列時整個省略,不可補 0——0 代表「沒人交易」,省略代表「還沒公布」。 */
+  /** 當日沒有列時整個省略,不可補 0——0 代表「沒人交易」,省略代表「還沒公布」。
+   *  注意:這裡的 `volume` 是**一般 + 盤後**兩時段之和,與只算一般時段的
+   *  `anomaly.today` 是**不同的數字**,不得當成同一個顯示(docs/38 §7.6)。 */
   daily?: {
     date: string;
     volume: number | null;
     open_interest: number | null;
     session_volume: Record<string, number>;
   };
+  /**
+   * 成交量異常旗標(docs/38 §1)。**沒有這個鍵有三種意思**——被 §2 否決、規則看過
+   * 但沒創高、期貨還沒匯進來——而且刻意不可分辨,三者都不是一個異常。
+   * **不得把任何一種標成「正常」**(§7.7)。
+   */
+  anomaly?: FuturesAnomaly;
+  /** 與 `anomaly` 同生共死;沒有旗標就沒有這兩個鍵(§7.3)。 */
+  reasons?: ReasonItem[];
+  risks?: ReasonItem[];
+}
+
+/** §1 表格的五個整數事實,一個不多。沒有比率、均值、名次、分數。 */
+export interface FuturesAnomaly {
+  /** 一般時段口數(R3;**不是** `daily.volume`)。 */
+  today: number;
+  window_max: number;
+  window_median: number;
+  /** 比較日天數。UI 顯示「N 個比較日」時讀這個,**不要在前端寫死 60**(§7.10)。 */
+  window_days: number;
+  /**
+   * 選填:任一邊的未平倉為 NULL 時**整個省略**。缺鍵時**整列不顯示**——
+   * 不是 0,也不是破折號(§7.1 / §7.4)。所以這個區塊是四個或五個鍵。
+   */
+  oi_change?: number;
+}
+
+/**
+ * `radar.json` 的市場層級今日名單(docs/38 §7.5)。三態,與 `futures` 鍵同一個約定:
+ * 缺鍵 = 今天沒有算過(期貨還沒跟上 export 日),沒有主張;空陣列 = 算過了、今天沒有
+ * 契約舉旗,是一個有日期的正面主張;非空 = 今天舉旗的契約。**兩者不得混同。**
+ *
+ * 順序已由 pipeline 依 `today − window_max` 遞減(同分用 `code`)排好。
+ * 這是**順序不是名次**:§5 不做跨契約排序,所以沒有 rank / position / score。
+ * 單位是**契約**不是股票:1565 的 MYF/OMF 可以同一天都在名單裡,不得依股票去重。
+ */
+export interface FuturesVolumeAnomalyEntry {
+  stock_id: string;
+  code: string;
+  anomaly: FuturesAnomaly;
+  reasons: ReasonItem[];
+  risks: ReasonItem[];
 }
 
 /** 單一分點在這檔股票的兩側計數;known 是分母,unknown 分位不可知另計。 */
@@ -528,6 +571,12 @@ export interface RadarJson {
   /** Additive S4 phase lists. Existing clients may continue using strategies.S4. */
   strategy_phases?: Record<string, Partial<Record<"legacy" | "setup" | "breakout", string[]>>>;
   strategy_meta?: Record<string, StrategyMeta>;
+  /**
+   * 今日期貨成交量異常的契約名單(docs/38 §7.5)。**三態**:缺鍵 = 今天沒有算過
+   * (期貨還沒跟上 export 日),不是「今天沒有異常」;`[]` = 算過了而且今天沒有
+   * 契約舉旗;非空 = 名單本身。把前兩者塌成同一件事就是這個鍵存在要擋的錯。
+   */
+  futures_volume_anomalies?: FuturesVolumeAnomalyEntry[];
   stocks: RadarStock[];
 }
 

@@ -25,7 +25,7 @@ from ..compute.strategy_performance import (
 from ..compute.compute_branch_stats import DAYTRADE_MIN_OBS
 from ..compute.margin_cost import build_margin_cost_series
 from ..compute.display_window import display_window_bounds, window_label
-from ..compute.futures_volume_anomaly import futures_volume_anomalies
+from ..compute.futures_volume_anomaly import anomaly_index, futures_volume_anomalies
 
 # A2 strategy lifecycle export contract.  This is source-controlled metadata,
 # not a database migration and does not alter any score, selector data, or
@@ -204,7 +204,7 @@ def _active_buybacks_by_stock(conn, as_of: str) -> dict[str, dict]:
     return active
 
 
-def _futures_by_stock(conn, as_of: str) -> tuple[dict[str, dict], str] | None:
+def _futures_by_stock(conn, as_of: str) -> tuple[dict[str, dict], str, list | None] | None:
     """個股期貨標的「存在與否」這個事實,外加(若當日有列)今天的成交量/未平倉。
 
     回傳 None = futures_contracts 整張表是空的(第一次 import-futures 之前)。
@@ -224,6 +224,10 @@ def _futures_by_stock(conn, as_of: str) -> tuple[dict[str, dict], str] | None:
     :func:`radar.compute.futures_volume_anomaly.futures_volume_anomalies`,而那個
     模組又只轉述 ``futures_volume_battery`` 那條被 docs/38 §3 檢定過的規則。
     這個函式一個數字都不自己算:掛上去而已。沒有 ``anomaly`` 區塊 = 沒有主張。
+
+    回傳的第三格是市場層級的今日名單(§7.5),由**同一次**計算重新排列而來,
+    給 ``radar.json`` 用。``None`` = 那一天沒有算過(期貨資料還沒跟上 export 日),
+    呼叫端整個鍵不輸出;``[]`` = 算過了、今天沒有契約舉旗。
     """
     contract_rows = list(conn.execute(text("""
         SELECT contract_code, stock_id, stock_name, is_stock_future,
@@ -262,7 +266,11 @@ def _futures_by_stock(conn, as_of: str) -> tuple[dict[str, dict], str] | None:
         if row["open_interest"] is not None:
             entry["open_interest"] = (entry["open_interest"] or 0) + row["open_interest"]
 
+    # 一次計算,兩個出口:個股頁的區塊與市場層級的名單。第二次呼叫就是第二條規則。
     anomalies = futures_volume_anomalies(conn, as_of)
+    market_index = anomaly_index(anomalies, stock_id_by_code={
+        row["contract_code"]: row["stock_id"] for row in contract_rows
+    })
 
     by_stock: dict[str, dict] = {}
     for row in contract_rows:
@@ -284,9 +292,9 @@ def _futures_by_stock(conn, as_of: str) -> tuple[dict[str, dict], str] | None:
             contract["daily"] = today
         # 沒有旗標就整個區塊不輸出:否決與「看過但沒創高」在這裡不可分辨,
         # 兩者都不是一個異常,而 0 或 null 會把「沒有主張」講成一個結論。
-        contract.update(anomalies.get(row["contract_code"], {}))
+        contract.update((anomalies or {}).get(row["contract_code"], {}))
         entry["contracts"].append(contract)
-    return by_stock, list_refreshed
+    return by_stock, list_refreshed, market_index
 
 
 def _company_group_payloads(conn, as_of: str) -> tuple[list[dict], dict[str, list[dict]]]:
@@ -1382,6 +1390,10 @@ def export_json(out_dir: Path | None = None) -> dict:
             GROUP BY source, dataset, date ORDER BY date DESC, source, dataset LIMIT 12
         """)).fetchall()
 
+        # 期貨標的 / 當日量 / 成交量異常:**整個 export 只算這一次**。個股頁的
+        # futures 區塊(下面 stocks/*.json)與 radar.json 的市場層級名單共用它。
+        futures_result = _futures_by_stock(conn, d)
+
     now = datetime.now(ZoneInfo(config.TZ)).isoformat(timespec="seconds")
 
     # F2: auto-generate summary_text (rule-based, ≤3 sentences, no LLM)
@@ -1459,6 +1471,13 @@ def export_json(out_dir: Path | None = None) -> dict:
         "strategy_meta": _build_strategy_meta(),
         "stocks": list(union.values()),
     }
+    # 市場層級的期貨成交量異常名單(docs/38 §7.5)。三態,與個股的 futures 鍵同一個
+    # 約定:沒有鍵 = 今天沒有算過(期貨資料還沒跟上 export 日);[] = 算過了而且
+    # 今天沒有契約舉旗(一個有日期的正面主張);非空 = 今天舉旗的契約。
+    # 順序是 today − window_max 由大到小、同分用 code——是順序不是名次(§5)。
+    futures_anomaly_index = futures_result[2] if futures_result is not None else None
+    if futures_anomaly_index is not None:
+        radar["futures_volume_anomalies"] = futures_anomaly_index
     meta = {
         "generated_at": now,
         "datasets": [
@@ -1513,7 +1532,6 @@ def export_json(out_dir: Path | None = None) -> dict:
         """)).mappings()
         company_profiles = {row["stock_id"]: dict(row) for row in profile_rows}
         active_buybacks = _active_buybacks_by_stock(conn, d)
-        futures_result = _futures_by_stock(conn, d)
         branch_pctile_exists = _branch_pctile_table_exists(conn)
         branch_pctile_meta = (
             _branch_pctile_snapshot_meta(conn) if branch_pctile_exists else None
@@ -1665,7 +1683,7 @@ def export_json(out_dir: Path | None = None) -> dict:
             # futures_contracts 還是空的(第一次 import-futures 之前)→ 整個鍵不輸出。
             # 有清單了才給答案,而「不是標的」的答案是 contracts: []。
             if futures_result is not None:
-                futures_by_stock, futures_list_as_of = futures_result
+                futures_by_stock, futures_list_as_of = futures_result[0], futures_result[1]
                 payload["futures"] = futures_by_stock.get(sid, {
                     "version": 1, "list_as_of": futures_list_as_of, "contracts": [],
                 })

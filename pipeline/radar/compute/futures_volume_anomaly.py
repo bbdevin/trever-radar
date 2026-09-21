@@ -35,6 +35,10 @@ battery 判 SHIP 之後才被寫出來:
 被 §2 否決(R1 窗口缺口、R2a 中位數為 0、R2b 乘數未知/現貨缺口/不實質)與
 「規則看過了但沒創高」在輸出上不可分辨,也不該分辨:兩者都不是一個異常。
 絕不用 0 或 null 去冒充其中任何一種。
+
+另外由 :func:`anomaly_index` 把**同一次**計算的結果排成市場層級的清單(§7.5)。
+那是純粹的重新排列,不是第二次計算:§1 要的是「名單短到能逐檔看」,§5 要的是
+「今天 − 前高」的順序,兩者都不需要、也不允許再跑一次規則。
 """
 from __future__ import annotations
 
@@ -92,19 +96,27 @@ def risk_text(*, spot_new_high_today: bool | None) -> str:
     return head + f";現貨當日{'有' if spot_new_high_today else '無'}同步創高。"
 
 
-def futures_volume_anomalies(conn, as_of: str) -> dict[str, dict[str, Any]]:
+def futures_volume_anomalies(conn, as_of: str) -> dict[str, dict[str, Any]] | None:
     """``{contract_code: {"anomaly": {...}, "reasons": [...], "risks": [...]}}``。
 
     只有**當天真的舉旗**的契約會出現在回傳值裡;被否決的、以及被規則看過但沒創高
     的,一律不出現(呼叫端因此什麼都不加,= 沒有主張)。
 
-    ``as_of`` 不是期貨交易日、落在 R4 結算窗口內、或比較窗口湊不滿 60 天時,整批
-    回傳空字典:那三件事對**每一個**契約同時成立,不必逐檔問一次。
+    回傳 ``None`` 與回傳 ``{}`` 是**兩件不同的事**:
+
+    * ``None`` = 這一天根本沒有算過——``as_of`` 沒有期貨資料(TAIFEX 落後 export
+      日是常態,見 §7.8)。沒有算過就不該有任何主張,連「今天沒有異常」都不該有。
+    * ``{}``   = 算過了,今天沒有契約舉旗。這是一個**有日期的正面主張**。
+
+    ``as_of`` 落在 R4 結算窗口內、或比較窗口湊不滿 60 天時回傳 ``{}``:規則看過了
+    而且對每一個契約同時否決,而 §2 的否決與「看過但沒創高」在輸出上本來就刻意
+    不可分辨(§7.7)。
     """
     futures_days = load_futures_calendar(conn, as_of)
     if not futures_days or futures_days[-1] != as_of:
-        # 期貨資料還沒跟上 export 日。沒有那一天的量就沒有那一天的主張。
-        return {}
+        # 期貨資料還沒跟上 export 日。沒有那一天的量就沒有那一天的主張——
+        # 這是「沒有算」,不是「算過而且沒有」。
+        return None
     market_days = load_market_days(conn, as_of)
     excluded = settlement_exclusion_set(
         date_from=futures_days[0], date_to=as_of, market_days=market_days,
@@ -162,3 +174,34 @@ def futures_volume_anomalies(conn, as_of: str) -> dict[str, dict[str, Any]]:
                        "text": risk_text(spot_new_high_today=today_spot_high)}],
         }
     return anomalies
+
+
+def anomaly_index(
+    anomalies: dict[str, dict[str, Any]] | None,
+    *,
+    stock_id_by_code: dict[str, str],
+) -> list[dict[str, Any]] | None:
+    """市場層級的今日名單(§7.5)。``{stock_id, code, anomaly, reasons, risks}``。
+
+    三態與 ``futures`` 鍵同一個約定,而且三態就是 :func:`futures_volume_anomalies`
+    的三態:``None``(沒算)進來就 ``None``(呼叫端整個鍵不輸出),``{}``(算了、
+    今天沒有)進來就是空陣列——一個有日期的「今日無異常」。
+
+    順序是 ``today − window_max`` 由大到小,同分用 ``code`` 由小到大;後者只為了
+    檔案可重現,不是一條經濟意義。這是**順序,不是名次**:§5 明文不做跨契約排序,
+    所以這裡不輸出 rank / position / score 之類的鍵,讀的人拿到的是一份短名單。
+
+    一檔股票可以有兩個不同乘數的契約(1565 的 MYF 與 OMF),兩個可以同一天都舉旗;
+    單位是契約,所以絕不依股票去重。
+    """
+    if anomalies is None:
+        return None
+    entries = [
+        {"stock_id": stock_id_by_code[code], "code": code, **payload}
+        for code, payload in anomalies.items()
+        if code in stock_id_by_code
+    ]
+    entries.sort(key=lambda entry: (
+        -(entry["anomaly"]["today"] - entry["anomaly"]["window_max"]), entry["code"],
+    ))
+    return entries
