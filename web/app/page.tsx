@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useMemo, useRef, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
-import { Clock, ShieldCheck, Zap, ChevronDown, Briefcase, AlertTriangle, Ban, Percent } from "lucide-react";
+import { Clock, ShieldCheck, Zap, ChevronDown, Briefcase, AlertTriangle, Ban, Percent, Layers } from "lucide-react";
 import { IconFlame, IconTrend, IconZap, IconRadar, IconPulse, IconStar, IconTrendDown } from "@/components/Icons";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -10,6 +10,7 @@ import MoneyFlow from "@/components/MoneyFlow";
 import StockCard from "@/components/StockCard";
 import ThemeGroupedList from "@/components/ThemeGroupedList";
 import MarginUsageRank from "@/components/MarginUsageRank";
+import FuturesAnomalyList from "@/components/FuturesAnomalyList";
 import { useSession, signInWithGoogle } from "@/lib/useSession";
 import { cn, navPillClass, pillTabClass } from "@/lib/utils";
 import { dataFetch } from "@/lib/dataFetch";
@@ -28,6 +29,7 @@ type TabKey =
   | "margin"
   | "scan"
   | "mark"
+  | "futures"
   | "warrant";
 
 // Scan modes within the "scan" tab
@@ -45,6 +47,12 @@ const TABS: { key: TabKey; label: string; hint: string; icon: any }[] = [
     label: "策略",
     hint: "進階規則選股（技術／籌碼等策略標籤）。需登入；績效標籤僅供觀察。",
     icon: IconStar,
+  },
+  {
+    key: "futures",
+    label: "期貨異常",
+    hint: "個股期貨契約的一般時段成交量創其比較窗口新高（docs/38）。只列事實口數,不做跨契約排名、不算倍數;單位是契約不是股票。",
+    icon: Layers,
   },
   {
     key: "armed",
@@ -240,7 +248,8 @@ function RadarView() {
   }, []);
 
   const shown = useMemo(() => {
-    if (!radar || tab === "margin") return [];
+    // margin 與 futures 有自己的資料來源(不是 radar.lists 的股票清單),不走這裡。
+    if (!radar || tab === "margin" || tab === "futures") return [];
     const byId = new Map(radar.stocks.map((s) => [s.id, s]));
     if (tab === "mark") {
       return (radar.strategies?.[strategy] ?? []).map((id) => byId.get(id)!).filter(Boolean);
@@ -250,6 +259,13 @@ function RadarView() {
     }
     return (radar.lists?.[tab as ListKey] ?? []).map((id) => byId.get(id)!).filter(Boolean);
   }, [radar, tab, scanMode, strategy]);
+
+  // 期貨異常名單只有 stock_id;股名從首頁既有的 radar.stocks 取。取不到就顯示 id 本身
+  // (radar.stocks 是評分池,不是全市場,所以取不到是正常的,不可以編一個標籤出來)。
+  const nameById = useMemo(
+    () => new Map((radar?.stocks ?? []).map((s) => [s.id, s.name])),
+    [radar],
+  );
 
   const selectTab = (next: TabKey) => {
     setTab(next);
@@ -357,7 +373,10 @@ function RadarView() {
             const count =
               t.key === "scan"
                 ? radar.lists?.[scanMode]?.length ?? 0
-                : t.key === "mark" || t.key === "margin"
+                : t.key === "futures"
+                  // 缺鍵 = 沒有算過 → 不顯示數字。顯示 0 會把「沒算」講成「今天沒有異常」。
+                  ? radar.futures_volume_anomalies?.length ?? null
+                  : t.key === "mark" || t.key === "margin"
                   ? null
                   : radar.lists?.[t.key as ListKey]?.length ?? 0;
             return (
@@ -602,6 +621,14 @@ function RadarView() {
       {tab === "margin" ? (
         <div className="mb-4 animate-[fadeUp_0.35s_ease_backwards]">
           <MarginUsageRank embedded />
+        </div>
+      ) : tab === "futures" ? (
+        <div className="animate-[fadeUp_0.35s_ease_backwards]">
+          <FuturesAnomalyList
+            entries={radar.futures_volume_anomalies}
+            dataDate={radar.data_date}
+            nameById={nameById}
+          />
         </div>
       ) : tab === "mark" && !loading && !session ? (
         <div className="flex flex-col items-center gap-4 py-[46px] text-center text-sm text-muted-foreground">

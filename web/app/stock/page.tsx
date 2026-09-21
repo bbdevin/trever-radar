@@ -22,7 +22,7 @@ import MarginPanel from "@/components/MarginPanel";
 import HoldersPanel from "@/components/HoldersPanel";
 import WarrantBranchPanel from "@/components/WarrantBranchPanel";
 import ReasonPill, { isChipStrategyCode } from "@/components/ReasonPill";
-import { futuresState } from "@/lib/futures";
+import { anomalyFacts, flaggedContracts, futuresState } from "@/lib/futures";
 import PocketBadges from "@/components/PocketBadges";
 import { Skeleton } from "@/components/ui/skeleton";
 import WatchlistButton from "@/components/WatchlistButton";
@@ -231,6 +231,7 @@ function StockView() {
           </div>
         </section>
       </div>
+      <FuturesAnomalyBlock futures={data.futures} />
       <div className="sticky top-0 z-20 -mx-1 mb-2.5 flex min-w-0 flex-col gap-2 bg-background/95 px-1 py-1.5 backdrop-blur-sm md:static md:mx-0 md:bg-transparent md:px-0 md:py-0 md:backdrop-blur-none md:flex-row md:flex-wrap md:items-center md:gap-2.5">
         <div
           role="tablist"
@@ -595,6 +596,67 @@ function FuturesBadge({ futures }: { futures: StockJson["futures"] }) {
         </span>
       ))}
     </p>
+  );
+}
+
+/**
+ * 契約層級的成交量異常區塊(docs/38 §7)。與上面的 FuturesBadge 是**兩件事**:
+ * 徽章講「有沒有個股期貨」(三態,恆常事實),這一塊講「今天有沒有舉旗」。
+ *
+ * 沒有 `anomaly` 的契約在這裡**什麼都不畫**——不是畫一個「正常」。§7.7 說明
+ * 缺鍵有三種互不可分辨的意思(被否決 / 看過沒創高 / 期貨還沒匯進來),
+ * 把任何一種寫成「正常」都是一個沒人做過的主張。全部契約都沒舉旗時整塊消失,
+ * 這正確地什麼都沒說。
+ *
+ * 同一檔股票的兩個契約(1565 的 MYF/OMF)可以同一天都舉旗,兩張都要畫。
+ */
+function FuturesAnomalyBlock({ futures }: { futures: StockJson["futures"] }) {
+  const state = futuresState(futures);
+  if (state.kind !== "has") return null;
+  const flagged = flaggedContracts(state.contracts);
+  if (flagged.length === 0) return null;
+
+  return (
+    <div className="mb-2.5 flex flex-col gap-2" aria-label="個股期貨成交量異常">
+      {flagged.map((c) => (
+        <div
+          key={c.code}
+          className="min-w-0 rounded-[var(--r-lg)] border border-[color:var(--accent-2)]/30 bg-card p-3 shadow-[var(--shadow-card)]"
+        >
+          <div className="flex min-w-0 flex-wrap items-baseline gap-2">
+            <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-[color:var(--accent-2)]/35 bg-[color:var(--accent-2)]/8 px-1.5 py-0.5 text-[11px] font-semibold text-[color:var(--accent-2)]">
+              <Layers size={11} aria-hidden="true" />
+              <span className="num">{c.code}</span>
+            </span>
+            <span className="text-[12.5px] font-semibold text-foreground">期貨成交量異常</span>
+          </div>
+          <div className="mt-2 grid grid-cols-2 gap-1.5 md:grid-cols-4">
+            {anomalyFacts(c.anomaly).map((f) => (
+              <span
+                key={f.key}
+                className="flex items-baseline justify-between gap-2 rounded-[var(--r-sm)] border border-border bg-secondary px-2.5 py-1.5 text-[11.5px] text-muted-foreground"
+              >
+                {f.label}
+                <b className="num shrink-0 font-bold text-[color:var(--ink-2)]">
+                  {f.value}
+                  <span className="ml-0.5 font-normal">{f.unit}</span>
+                </b>
+              </span>
+            ))}
+          </div>
+          {((c.reasons?.length ?? 0) + (c.risks?.length ?? 0) > 0) && (
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {(c.reasons ?? []).map((r, i) => (
+                <ReasonPill key={`fr-${i}`} code={r.code} text={r.text} />
+              ))}
+              {(c.risks ?? []).map((r, i) => (
+                <ReasonPill key={`fk-${i}`} code={r.code} text={r.text} />
+              ))}
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
   );
 }
 
