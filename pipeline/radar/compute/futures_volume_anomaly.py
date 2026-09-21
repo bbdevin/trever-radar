@@ -1,0 +1,164 @@
+"""個股期貨成交量異常的 **export 切片**(docs/38 §4 步驟 5)。
+
+它為什麼可以存在
+----------------
+``docs/38`` 是一份事前登記,它的 §3 寫著「過不了就整個功能不上線」。這個模組只在
+battery 判 SHIP 之後才被寫出來:
+
+    as_of 2026-09-17,run 1,250 個期貨交易日,485,686 列,320/320 契約乘數已知
+    檢定 A:|F_only| = 680 >= 30                                     PASS
+    檢定 B:十組 seed 全部過 2 sigma(h_F = 141/680;安慰劑 h_P 43-67)  PASS
+    裁決:a_and_b_passed -> SHIP
+
+證據committed 在 ``docs/evidence/futures-volume-battery-20260921.json``。
+
+它為什麼不自己算
+----------------
+**被檢定過的是 battery 那條規則,不是「一條長得很像 battery 的規則」。**
+旗標與那五個事實一律從 :mod:`radar.compute.futures_volume_battery` 取:窗口用它的
+:func:`~radar.compute.futures_volume_battery.comparison_window`,否決與旗標用它的
+:func:`~radar.compute.futures_volume_battery.evaluate_contract_day`,未平倉差用它的
+:func:`~radar.compute.futures_volume_battery.oi_change`,R4 排除日用
+:mod:`radar.compute.settlement_calendar`,連讀資料的那幾句 SQL 都是同一份。
+這個模組自己負責的只有三件 battery 沒有的事:**挑出 as_of 那一天**、把結果掛到
+契約上、以及把 §4 步驟 5 的兩段文字填好。若有人在這裡重寫一次規則,上線的就會是
+一條沒有被 §3 檢定過的規則,而它還穿著 battery 的外衣——事前登記整份文件存在的
+理由正是要擋這件事。
+
+它輸出什麼
+----------
+``futures.contracts[].anomaly`` 底下 §1 表格的**五個整數鍵**,一個不多:
+``today`` / ``window_max`` / ``window_median`` / ``oi_change`` / ``window_days``。
+沒有比率、均值、名次、分數、z——除法由讀的人自己做(§1)。
+
+沒有 ``anomaly`` 區塊 = **沒有主張**,與 ``futures`` 鍵本身的三態約定同一個習慣。
+被 §2 否決(R1 窗口缺口、R2a 中位數為 0、R2b 乘數未知/現貨缺口/不實質)與
+「規則看過了但沒創高」在輸出上不可分辨,也不該分辨:兩者都不是一個異常。
+絕不用 0 或 null 去冒充其中任何一種。
+"""
+from __future__ import annotations
+
+from typing import Any
+
+from .futures_volume_battery import (
+    anomaly_facts,
+    comparison_window,
+    evaluate_contract_day_in_calendar,
+    load_contracts,
+    load_futures_calendar,
+    load_market_days,
+    load_regular_session_volumes,
+    load_spot_daily,
+    spot_new_high,
+)
+from .settlement_calendar import settlement_exclusion_set
+
+# 觸發理由與風險提醒各一個代碼,形狀同 ``indicators.score_technical`` 產出的
+# ``{"code": ..., "text": ...}``。這裡沒有 ``points``:異常旗標不進任何分數,
+# §5 明文不做跨契約排序,給它一個分數等於偷偷建立一個名次。
+REASON_CODE = "F1_FUTURES_VOLUME_60D_HIGH"
+RISK_CODE = "R_FUTURES_VOLUME_NO_DIRECTION"
+
+
+def reason_text(*, code: str, facts: dict[str, int]) -> str:
+    """§4 步驟 5 的觸發理由範本,逐字。
+
+    ``oi_change`` 被省略時(任一邊為 NULL,§1 表格),連同它那個子句一起拿掉,
+    句子在「新高(...)」之後收尾。範本沒有寫這個情況;把未知的未平倉印成
+    ``+0`` 會把「沒公布」講成「一口都沒變」,而那是本專案在每一處都拒絕的塌陷。
+    """
+    head = (
+        f"{code} 期貨一般時段成交 {facts['today']} 口,"
+        f"創 {facts['window_days']} 個比較日新高"
+        f"(前高 {facts['window_max']} 口、中位數 {facts['window_median']} 口)"
+    )
+    if "oi_change" not in facts:
+        return head + "。"
+    return head + f",未平倉較前日 {facts['oi_change']:+} 口。"
+
+
+def risk_text(*, spot_new_high_today: bool | None) -> str:
+    """§4 步驟 5 的風險提醒範本,逐字。
+
+    範本的 ``{有/無}`` 只有兩個選項,但現貨旗標有三態:該股不足 60 個現貨交易日、
+    或窗口內有一天沒有量,答案就是**不知道**(見
+    :func:`~radar.compute.futures_volume_battery.spot_new_high`)。不知道的時候
+    整個子句拿掉,句子在「盤後未計」之後收尾——把未知寫成「無同步創高」是一個
+    憑空的否定主張,比少講一句話糟。
+    """
+    head = "量創高不代表方向;結算週已排除;盤後未計"
+    if spot_new_high_today is None:
+        return head + "。"
+    return head + f";現貨當日{'有' if spot_new_high_today else '無'}同步創高。"
+
+
+def futures_volume_anomalies(conn, as_of: str) -> dict[str, dict[str, Any]]:
+    """``{contract_code: {"anomaly": {...}, "reasons": [...], "risks": [...]}}``。
+
+    只有**當天真的舉旗**的契約會出現在回傳值裡;被否決的、以及被規則看過但沒創高
+    的,一律不出現(呼叫端因此什麼都不加,= 沒有主張)。
+
+    ``as_of`` 不是期貨交易日、落在 R4 結算窗口內、或比較窗口湊不滿 60 天時,整批
+    回傳空字典:那三件事對**每一個**契約同時成立,不必逐檔問一次。
+    """
+    futures_days = load_futures_calendar(conn, as_of)
+    if not futures_days or futures_days[-1] != as_of:
+        # 期貨資料還沒跟上 export 日。沒有那一天的量就沒有那一天的主張。
+        return {}
+    market_days = load_market_days(conn, as_of)
+    excluded = settlement_exclusion_set(
+        date_from=futures_days[0], date_to=as_of, market_days=market_days,
+    )
+    if as_of in excluded:
+        # R4:結算日與其前 3 個市場日不得上榜(候選側的排除)。
+        return {}
+    excluded_frozen = frozenset(excluded)
+    window = comparison_window(
+        candidate=as_of, futures_days=futures_days, excluded=excluded_frozen,
+    )
+    if window is None:
+        # R1:湊不滿 60 個比較日。窗口不縮短,整天沒有人有資格。
+        return {}
+
+    contracts = load_contracts(conn)
+    # 窗口與契約無關(它只看期貨日曆與排除日),所以 window[0] 是每一個契約都夠用的
+    # 讀取下界:期貨側剛好蓋住 W,現貨側蓋住的是該股真實日曆的一段連續尾巴。
+    per_contract = load_regular_session_volumes(conn, as_of, date_from=window[0])
+    spot = load_spot_daily(
+        conn,
+        as_of=as_of,
+        stock_ids=[contract["stock_id"] for contract in contracts],
+        date_from=window[0],
+    )
+
+    anomalies: dict[str, dict[str, Any]] = {}
+    for contract in contracts:
+        code = contract["contract_code"]
+        daily = per_contract.get(code)
+        if daily is None or as_of not in daily["volume"]:
+            # 缺列 ≠ 0 口(R1 的同一條理由):今天沒有一般時段列就沒有 V(c, t)。
+            continue
+        spot_days, spot_volumes = spot.get(contract["stock_id"], (None, None))
+        outcome = evaluate_contract_day_in_calendar(
+            candidate=as_of,
+            futures_days=futures_days,
+            excluded=excluded_frozen,
+            volumes=daily["volume"],
+            open_interest=daily["open_interest"],
+            multiplier=contract["contract_multiplier"],
+            spot_volumes=spot_volumes,
+        )
+        facts = anomaly_facts(outcome)
+        if facts is None:
+            continue
+        today_spot_high = (
+            None if spot_days is None
+            else spot_new_high(stock_days=spot_days, volumes=spot_volumes, day=as_of)
+        )
+        anomalies[code] = {
+            "anomaly": facts,
+            "reasons": [{"code": REASON_CODE, "text": reason_text(code=code, facts=facts)}],
+            "risks": [{"code": RISK_CODE,
+                       "text": risk_text(spot_new_high_today=today_spot_high)}],
+        }
+    return anomalies

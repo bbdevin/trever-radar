@@ -23,6 +23,7 @@ from radar.cli import main
 from radar.compute.branch_window_direction_battery import LOW_SAMPLE_SURVIVORS
 from radar.compute.settlement_calendar import EXCLUSION_MARKET_DAYS_BEFORE
 from radar.compute.futures_volume_battery import (
+    ANOMALY_FACT_KEYS,
     FORWARD_SPOT_DAYS,
     MATERIALITY_INVERSE_FRACTION,
     PLACEBO_SEEDS,
@@ -31,10 +32,12 @@ from radar.compute.futures_volume_battery import (
     PREREGISTRATION_COMMIT,
     WINDOW_DAYS,
     _StockCalendar,
+    anomaly_facts,
     build_futures_volume_battery,
     comparison_window,
     draw_placebo,
     evaluate_contract_day,
+    evaluate_contract_day_in_calendar,
     lower_median,
     overall_verdict,
     placebo_pool,
@@ -436,6 +439,59 @@ class PureRuleTests(unittest.TestCase):
         for key, value in outcome.items():
             if key not in ("refusal", "flag"):
                 self.assertIsInstance(value, int, key)
+
+
+class SharedAnomalyFactTests(unittest.TestCase):
+    """battery 與 export 共用的那兩個函式(docs/38 §4 步驟 5 的來源)。
+
+    這裡驗的不是規則算得對不對(上面那些測試在驗),而是**共用出去的那個形狀**:
+    五個鍵、沒有第六個、否決一律回 ``None``。export 一個數字都不自己算,所以這
+    兩個函式的契約就是匯出去的契約。
+    """
+
+    _CALENDAR = {
+        "candidate": "2026-03-02",
+        "futures_days": ["2026-02-27", "2026-03-02"],
+        "excluded": frozenset(),
+        "open_interest": {"2026-02-27": 1_000, "2026-03-02": 1_210},
+    }
+
+    def test_a_refusal_wins_even_if_a_flag_somehow_rides_along(self):
+        """否決優先於旗標。兩者一起出現是一個不該存在的狀態,而輸出寧可沉默。"""
+        self.assertIsNone(anomaly_facts({
+            "refusal": "R1_window_gap", "flag": True, "today": 500,
+            "window_max": 100, "window_median": 100, "window_days": WINDOW_DAYS,
+            "oi_change": 210,
+        }))
+
+    def test_a_seen_but_unflagged_day_is_also_silent(self):
+        self.assertIsNone(anomaly_facts({
+            "refusal": None, "flag": False, "today": 100, "window_max": 100,
+            "window_median": 100, "window_days": WINDOW_DAYS, "oi_change": 210,
+        }))
+
+    def test_the_calendar_wrapper_builds_the_window_and_the_oi_change(self):
+        """窗口湊不滿 60 天 → R1;未平倉差來自日曆上的前一天,不是窗口的前一天。"""
+        outcome = evaluate_contract_day_in_calendar(
+            volumes={"2026-02-27": 100, "2026-03-02": 500},
+            multiplier=_MULTIPLIER, spot_volumes={}, **self._CALENDAR,
+        )
+        self.assertEqual(outcome["refusal"], "R1_window_gap")
+        self.assertEqual(outcome["oi_change"], 210)
+        self.assertIsNone(anomaly_facts(outcome))
+
+    def test_the_five_keys_come_out_in_the_documents_order(self):
+        outcome = evaluate_contract_day(
+            today_volume=500, window_volumes=[100] * WINDOW_DAYS,
+            multiplier=_MULTIPLIER, spot_window_volumes=[_SPOT_BASE] * WINDOW_DAYS,
+        )
+        outcome["oi_change"] = 210
+        facts = anomaly_facts(outcome)
+        self.assertEqual(list(facts), list(ANOMALY_FACT_KEYS))
+        self.assertEqual(facts, {
+            "today": 500, "window_max": 100, "window_median": 100,
+            "oi_change": 210, "window_days": WINDOW_DAYS,
+        })
 
 
 class SpotSideTests(unittest.TestCase):

@@ -25,6 +25,7 @@ from ..compute.strategy_performance import (
 from ..compute.compute_branch_stats import DAYTRADE_MIN_OBS
 from ..compute.margin_cost import build_margin_cost_series
 from ..compute.display_window import display_window_bounds, window_label
+from ..compute.futures_volume_anomaly import futures_volume_anomalies
 
 # A2 strategy lifecycle export contract.  This is source-controlled metadata,
 # not a database migration and does not alter any score, selector data, or
@@ -218,8 +219,11 @@ def _futures_by_stock(conn, as_of: str) -> tuple[dict[str, dict], str] | None:
     list_as_of 這天,它不是個股期貨標的」。換成任何非窮舉的來源,這個空陣列
     就不合法。
 
-    這裡刻意不算任何比率、均值、名次:量能異常排行是後面的切片,需要 60 個交易日
-    的歷史與事先登記的否決條件;沒有基準的數字正是這個功能要小心避免的東西。
+    這裡刻意不算任何比率、均值、名次。60 個比較日的成交量異常是**另一個**切片,
+    它的旗標、五個事實與兩段文字全部來自
+    :func:`radar.compute.futures_volume_anomaly.futures_volume_anomalies`,而那個
+    模組又只轉述 ``futures_volume_battery`` 那條被 docs/38 §3 檢定過的規則。
+    這個函式一個數字都不自己算:掛上去而已。沒有 ``anomaly`` 區塊 = 沒有主張。
     """
     contract_rows = list(conn.execute(text("""
         SELECT contract_code, stock_id, stock_name, is_stock_future,
@@ -258,6 +262,8 @@ def _futures_by_stock(conn, as_of: str) -> tuple[dict[str, dict], str] | None:
         if row["open_interest"] is not None:
             entry["open_interest"] = (entry["open_interest"] or 0) + row["open_interest"]
 
+    anomalies = futures_volume_anomalies(conn, as_of)
+
     by_stock: dict[str, dict] = {}
     for row in contract_rows:
         entry = by_stock.setdefault(row["stock_id"], {
@@ -276,6 +282,9 @@ def _futures_by_stock(conn, as_of: str) -> tuple[dict[str, dict], str] | None:
         today = daily_by_contract.get(row["contract_code"])
         if today is not None:
             contract["daily"] = today
+        # 沒有旗標就整個區塊不輸出:否決與「看過但沒創高」在這裡不可分辨,
+        # 兩者都不是一個異常,而 0 或 null 會把「沒有主張」講成一個結論。
+        contract.update(anomalies.get(row["contract_code"], {}))
         entry["contracts"].append(contract)
     return by_stock, list_refreshed
 

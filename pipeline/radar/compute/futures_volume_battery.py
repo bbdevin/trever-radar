@@ -228,6 +228,73 @@ def _refused(code: str, **facts: Any) -> dict[str, Any]:
     return {"refusal": code, "flag": False, **facts}
 
 
+def evaluate_contract_day_in_calendar(
+    *,
+    candidate: str,
+    futures_days: Sequence[str],
+    excluded: frozenset[str] | set[str],
+    volumes: dict[str, int],
+    open_interest: dict[str, int],
+    multiplier: int | None,
+    spot_volumes: dict[str, int | None] | None,
+) -> dict[str, Any]:
+    """把 :func:`evaluate_contract_day` 那條純規則接上日曆,並補上 ``oi_change``。
+
+    這是「一個契約-日」的**唯一**入口:窗口由 :func:`comparison_window` 建(R4 排除日
+    跳過、不縮短),否決與旗標由 :func:`evaluate_contract_day` 判,未平倉差由
+    :func:`oi_change` 算。battery 與 export 都走這裡——export 若自己重接一次,
+    上線的就會是一條沒有被 §3 檢定過的規則,而它還穿著 battery 的外衣。
+
+    呼叫端必須先確認 ``candidate`` 不在 ``excluded`` 裡(R4 把結算窗口同時排除於
+    候選日與比較窗口),而且 ``volumes`` 在 ``candidate`` 當天**有列**:缺列不是
+    0 口,那一天根本不該被評估。
+    """
+    window = comparison_window(
+        candidate=candidate, futures_days=futures_days, excluded=excluded,
+    )
+    outcome = evaluate_contract_day(
+        today_volume=volumes[candidate],
+        window_volumes=(
+            None if window is None else [volumes.get(day) for day in window]
+        ),
+        multiplier=multiplier,
+        spot_window_volumes=(
+            None if window is None or spot_volumes is None
+            else [spot_volumes.get(day) for day in window]
+        ),
+    )
+    outcome["oi_change"] = oi_change(open_interest, futures_days, candidate)
+    return outcome
+
+
+# §1 表格的五個鍵,照文件的順序。沒有第六個:沒有比率、均值、名次、分數、z。
+ANOMALY_FACT_KEYS = ("today", "window_max", "window_median", "oi_change", "window_days")
+
+
+def anomaly_facts(outcome: dict[str, Any]) -> dict[str, int] | None:
+    """§1 表格的那五個整數鍵,或 ``None`` = **沒有主張**。
+
+    ``None`` 有兩種來源,而且輸出上不可分辨,也不該分辨:該契約-日被 §2 否決了,
+    或者它被規則看過但沒有創高。兩種情形下 export 都**整個區塊不輸出**——與
+    ``futures`` 鍵本身的三態約定同一個習慣:沒有鍵 = 我們沒有話說,絕不用 0 或
+    null 去冒充一個結論。
+
+    ``oi_change`` 任一邊為 NULL 時**整個欄位省略**(§1 表格),不寫 0、不寫 null。
+    """
+    if outcome["refusal"] is not None or not outcome["flag"]:
+        return None
+    facts: dict[str, int] = {
+        "today": outcome["today"],
+        "window_max": outcome["window_max"],
+        "window_median": outcome["window_median"],
+    }
+    change = outcome.get("oi_change")
+    if change is not None:
+        facts["oi_change"] = change
+    facts["window_days"] = outcome["window_days"]
+    return facts
+
+
 def spot_new_high(
     *, stock_days: Sequence[str], volumes: dict[str, int | None], day: str,
 ) -> bool | None:
@@ -491,19 +558,19 @@ def _decision(decision: str, reason: str, detail: str) -> dict[str, Any]:
     }
 
 
-def _load_futures_calendar(conn, as_of: str) -> list[str]:
+def load_futures_calendar(conn, as_of: str) -> list[str]:
     return [row[0] for row in conn.execute(text("""
         SELECT DISTINCT date FROM futures_daily WHERE date <= :as_of ORDER BY date
     """), {"as_of": as_of}).fetchall()]
 
 
-def _load_market_days(conn, as_of: str) -> list[str]:
+def load_market_days(conn, as_of: str) -> list[str]:
     return [row[0] for row in conn.execute(text("""
         SELECT DISTINCT date FROM daily_prices WHERE date <= :as_of ORDER BY date
     """), {"as_of": as_of}).fetchall()]
 
 
-def _load_contracts(conn) -> list[dict[str, Any]]:
+def load_contracts(conn) -> list[dict[str, Any]]:
     return [dict(row) for row in conn.execute(text("""
         SELECT contract_code, stock_id, contract_multiplier
         FROM futures_contracts
@@ -511,12 +578,19 @@ def _load_contracts(conn) -> list[dict[str, Any]]:
     """)).mappings()]
 
 
-def _load_regular_session_volumes(conn, as_of: str) -> dict[str, dict[str, Any]]:
+def load_regular_session_volumes(
+    conn, as_of: str, *, date_from: str | None = None,
+) -> dict[str, dict[str, Any]]:
     """R3 在查詢層執行:``session = '一般'``,盤後列從來沒有被讀進來。
 
     價差組合列(``'202609/202610'``)一併排除,與 ``json_export._futures_by_stock``
     同一條件。``SUM(volume)`` 為 NULL 代表來源沒有給數字——那是「不知道」,不是
     0 口,所以它與「沒有列」在下游受同樣待遇。
+
+    ``date_from`` 只是一個**讀取範圍**,不是規則的一部分:battery 要整段評估期所以
+    不給它,export 只評估 ``as_of`` 一天,給的是那一天比較窗口的第一天(窗口與契約
+    無關,所以那個下界對每一個契約都夠)。把它做成參數是為了讓兩邊共用同一句 SQL
+    ——兩句 SQL 就是兩個「什麼算一般時段」的定義。
     """
     per_contract: dict[str, dict[str, Any]] = {}
     rows = conn.execute(text("""
@@ -525,10 +599,11 @@ def _load_regular_session_volumes(conn, as_of: str) -> dict[str, dict[str, Any]]
                SUM(open_interest) AS open_interest
         FROM futures_daily
         WHERE date <= :as_of
+          AND (:date_from IS NULL OR date >= :date_from)
           AND session = '一般'
           AND contract_month NOT LIKE '%/%'
         GROUP BY contract_code, date
-    """), {"as_of": as_of}).mappings()
+    """), {"as_of": as_of, "date_from": date_from}).mappings()
     for row in rows:
         entry = per_contract.setdefault(
             row["contract_code"], {"volume": {}, "open_interest": {}},
@@ -540,16 +615,27 @@ def _load_regular_session_volumes(conn, as_of: str) -> dict[str, dict[str, Any]]
     return per_contract
 
 
-def _load_spot(conn, as_of: str, stock_ids: Sequence[str]) -> dict[str, _StockCalendar]:
-    calendars: dict[str, _StockCalendar] = {}
+def load_spot_daily(
+    conn, *, as_of: str, stock_ids: Sequence[str], date_from: str | None = None,
+) -> dict[str, tuple[list[str], dict[str, int | None]]]:
+    """每檔標的股的現貨日曆與日成交股數(遞增排序,``None`` = 該日沒有量)。
+
+    ``date_from`` 與 :func:`load_regular_session_volumes` 的同名參數同義,而且
+    有一個必須寫下來的性質:切出來的是那檔股票真實日曆的一段**連續尾巴**,所以
+    ``stock_days[index - 60:index]`` 取到的仍然是 t 之前真正的 60 個現貨交易日。
+    export 給的下界是比較窗口的第一天,而任何拿得到 anomaly 的契約都已經通過 R2b
+    ——它在那 60 個窗口日上每一天都有現貨列——所以那段尾巴至少有 60 天,
+    :func:`spot_new_high` 不會因為讀取範圍而把「知道」讀成「不知道」。
+    """
+    staged: dict[str, tuple[list[str], dict[str, int | None]]] = {}
     if not stock_ids:
-        return calendars
+        return staged
     wanted = set(stock_ids)
     rows = conn.execute(text("""
         SELECT stock_id, date, volume FROM daily_prices
-        WHERE date <= :as_of ORDER BY stock_id, date
-    """), {"as_of": as_of}).mappings()
-    staged: dict[str, tuple[list[str], dict[str, int | None]]] = {}
+        WHERE date <= :as_of AND (:date_from IS NULL OR date >= :date_from)
+        ORDER BY stock_id, date
+    """), {"as_of": as_of, "date_from": date_from}).mappings()
     for row in rows:
         stock_id = row["stock_id"]
         if stock_id not in wanted:
@@ -557,9 +643,16 @@ def _load_spot(conn, as_of: str, stock_ids: Sequence[str]) -> dict[str, _StockCa
         days, volumes = staged.setdefault(stock_id, ([], {}))
         days.append(row["date"])
         volumes[row["date"]] = None if row["volume"] is None else int(row["volume"])
-    for stock_id, (days, volumes) in staged.items():
-        calendars[stock_id] = _StockCalendar(days, volumes)
-    return calendars
+    return staged
+
+
+def _load_spot(conn, as_of: str, stock_ids: Sequence[str]) -> dict[str, _StockCalendar]:
+    return {
+        stock_id: _StockCalendar(days, volumes)
+        for stock_id, (days, volumes) in load_spot_daily(
+            conn, as_of=as_of, stock_ids=stock_ids,
+        ).items()
+    }
 
 
 def build_futures_volume_battery(*, as_of: str, run_number: int = 1) -> dict[str, Any]:
@@ -579,10 +672,10 @@ def build_futures_volume_battery(*, as_of: str, run_number: int = 1) -> dict[str
     )
     try:
         with engine.connect() as conn:
-            futures_days = _load_futures_calendar(conn, as_of)
-            market_days = _load_market_days(conn, as_of)
-            contracts = _load_contracts(conn)
-            per_contract = _load_regular_session_volumes(conn, as_of)
+            futures_days = load_futures_calendar(conn, as_of)
+            market_days = load_market_days(conn, as_of)
+            contracts = load_contracts(conn)
+            per_contract = load_regular_session_volumes(conn, as_of)
             spot = _load_spot(
                 conn, as_of, [contract["stock_id"] for contract in contracts],
             )
@@ -653,23 +746,18 @@ def _assemble(
                 no_regular_row += 1
                 continue
             evaluated += 1
-            window = comparison_window(
-                candidate=candidate, futures_days=futures_days, excluded=excluded_frozen,
-            )
             if calendar is None:
                 # 標的股一列現貨都沒有:R2b 的尺不存在。R1 仍然先判,否決的順序
                 # 與文件列舉的順序一致,不因為現貨缺席就跳過歷史檢查。
                 no_spot_calendar += 1
-            outcome = evaluate_contract_day(
-                today_volume=today_volume,
-                window_volumes=(
-                    None if window is None else [volumes.get(day) for day in window]
-                ),
+            outcome = evaluate_contract_day_in_calendar(
+                candidate=candidate,
+                futures_days=futures_days,
+                excluded=excluded_frozen,
+                volumes=volumes,
+                open_interest=daily["open_interest"],
                 multiplier=multiplier,
-                spot_window_volumes=(
-                    None if window is None or calendar is None
-                    else [calendar.volumes.get(day) for day in window]
-                ),
+                spot_volumes=None if calendar is None else calendar.volumes,
             )
             if outcome["refusal"] is not None:
                 refusals[outcome["refusal"]] += 1
@@ -684,9 +772,7 @@ def _assemble(
                     "today": outcome["today"],
                     "window_max": outcome["window_max"],
                     "window_median": outcome["window_median"],
-                    "oi_change": _oi_change(
-                        daily["open_interest"], futures_days, candidate,
-                    ),
+                    "oi_change": outcome["oi_change"],
                     "spot_new_high": spot_flag,
                     "mature": mature,
                 })
@@ -721,7 +807,7 @@ def _assemble(
     )
 
 
-def _oi_change(
+def oi_change(
     open_interest: dict[str, int], futures_days: Sequence[str], day: str,
 ) -> int | None:
     """當日總未平倉 − 前一個期貨交易日總未平倉;任一邊為 NULL 則此欄省略。
