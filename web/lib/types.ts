@@ -319,6 +319,15 @@ export interface FuturesVolumeAnomalyEntry {
   risks: ReasonItem[];
 }
 
+/**
+ * 市場層級名單的隨附事實(docs/38 §7.11)。目前只有一個欄位,而且**不是**一個
+ * 名次或評分的落腳處:§5 不做跨契約排序,這裡永遠不會長出 rank / score。
+ */
+export interface FuturesVolumeAnomalyMeta {
+  /** 與 `FuturesAnomaly.window_days` 同一個常數;空名單那一態靠它講出比較窗口。 */
+  window_days: number;
+}
+
 /** 單一分點在這檔股票的兩側計數;known 是分母,unknown 分位不可知另計。 */
 export interface BranchPctileRow {
   branch_name: string;
@@ -577,6 +586,12 @@ export interface RadarJson {
    * 契約舉旗;非空 = 名單本身。把前兩者塌成同一件事就是這個鍵存在要擋的錯。
    */
   futures_volume_anomalies?: FuturesVolumeAnomalyEntry[];
+  /**
+   * 上面那個名單的隨附事實(docs/38 §7.11)。與名單**同生共死**:名單缺鍵時
+   * 這個鍵也不存在。它只為了空陣列那一態而生——那一態沒有任何 `anomaly` 區塊,
+   * 而 §7.10 不准前端寫死 60,所以比較窗口的長度得由這裡供應。
+   */
+  futures_volume_anomalies_meta?: FuturesVolumeAnomalyMeta;
   stocks: RadarStock[];
 }
 

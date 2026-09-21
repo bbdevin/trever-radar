@@ -45,6 +45,7 @@ from __future__ import annotations
 from typing import Any
 
 from .futures_volume_battery import (
+    WINDOW_DAYS,
     anomaly_facts,
     comparison_window,
     evaluate_contract_day_in_calendar,
@@ -205,3 +206,30 @@ def anomaly_index(
         -(entry["anomaly"]["today"] - entry["anomaly"]["window_max"]), entry["code"],
     ))
     return entries
+
+
+def anomaly_index_meta(
+    index: list[dict[str, Any]] | None,
+) -> dict[str, int] | None:
+    """市場層級名單的隨附事實:``{"window_days": WINDOW_DAYS}``(docs/38 §7.11)。
+
+    **為什麼需要它**:§7.10 規定 UI 要講「N 個比較日」時一律讀 payload,不准在前端
+    寫死 60。但 §7.5 的第二態(**有鍵、空陣列**)是一個有日期的正面主張——「算過了,
+    今天沒有契約舉旗」——而那一態裡一個 ``anomaly`` 區塊都沒有,前端無處可讀。
+    沒有這個鍵,那句話就只能少講比較窗口(弱)或在前端寫死 60(§7.10 禁止)。
+
+    **為什麼是平行的鍵而不是把名單包進物件**:``radar.json`` 既有的習慣就是
+    ``strategies`` 與 ``strategy_meta`` 這種「清單 + 同名的隨附事實」兩個平行鍵。
+    更重要的是三態:§7.5 的「**沒有這個鍵**」必須是一個真的不存在的鍵。把陣列包進
+    物件之後,「沒算過」與「算過但是空的」就要靠物件裡面某個欄位去分辨,而那正是
+    §7.5 點名不可以塌掉的那條界線。名單這個鍵的三態因此**一個字都沒有動**。
+
+    ``index is None``(沒有算過)→ ``None``:呼叫端兩個鍵一起不輸出。meta 由名單
+    本身導出,所以結構上不可能在名單缺席時單獨出現一個孤兒 ``window_days``。
+
+    數字來自 :data:`~radar.compute.futures_volume_battery.WINDOW_DAYS` 本人。
+    §3.5 把 60 凍結了;在這裡另寫一個字面的 60,就是造出第二個可以各自漂移的真相。
+    """
+    if index is None:
+        return None
+    return {"window_days": WINDOW_DAYS}

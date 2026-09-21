@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  anomalyEmptyStateText,
   anomalyFacts,
   flaggedContracts,
   futuresAnomalyMarketState,
@@ -52,15 +53,66 @@ const entry = (stock_id: string, code: string, anomaly: typeof ANOMALY_MYF | typ
   risks: RISKS,
 });
 
+const META = { window_days: 60 };
+
 test("§7.5 市場層級鍵的三態:缺鍵 / 空陣列 / 非空,三者互不相同", () => {
-  const notComputed = futuresAnomalyMarketState(undefined, "2026-09-18");
-  const computedEmpty = futuresAnomalyMarketState([], "2026-09-18");
+  const notComputed = futuresAnomalyMarketState(undefined, "2026-09-18", undefined, META);
+  const computedEmpty = futuresAnomalyMarketState([], "2026-09-18", undefined, META);
   const listed = futuresAnomalyMarketState([entry("1565", "MYF", ANOMALY_MYF)], "2026-09-18");
 
   assert.deepEqual(notComputed, { kind: "not-computed" });
-  assert.deepEqual(computedEmpty, { kind: "computed-empty", dataDate: "2026-09-18" });
+  assert.deepEqual(computedEmpty, {
+    kind: "computed-empty",
+    dataDate: "2026-09-18",
+    windowDays: 60,
+  });
   assert.equal(listed.kind, "listed");
   assert.notDeepEqual(notComputed, computedEmpty);
+});
+
+// ---- docs/38 §7.11:空名單那一態自己講得出比較窗口 ----
+
+test("§7.11 空陣列 + meta -> windowDays 從 payload 讀出來,前端不寫死 60", () => {
+  const state = futuresAnomalyMarketState([], "2026-09-18", undefined, { window_days: 20 });
+  if (state.kind !== "computed-empty") throw new Error("expected computed-empty");
+  // 60 寫死的話,餵 20 也會得到 60——這裡就是那把鎖。
+  assert.equal(state.windowDays, 20);
+});
+
+test("§7.10 meta 缺席時是 null:少講一段,不得退回一個寫死的 60", () => {
+  for (const meta of [undefined, null]) {
+    const state = futuresAnomalyMarketState([], "2026-09-18", undefined, meta);
+    if (state.kind !== "computed-empty") throw new Error("expected computed-empty");
+    assert.equal(state.windowDays, null);
+  }
+});
+
+test("§7.11 空名單那句話會講出比較窗口,而且數字來自 payload", () => {
+  assert.equal(
+    anomalyEmptyStateText({ dataDate: "2026-09-18", windowDays: 60 }),
+    "2026-09-18 已完成計算:今日沒有契約的一般時段成交量創 60 個比較日新高。",
+  );
+  // 換一個窗口長度,句子要跟著變——寫死 60 的話這一行就是紅的。
+  assert.equal(
+    anomalyEmptyStateText({ dataDate: "2026-09-18", windowDays: 20 }),
+    "2026-09-18 已完成計算:今日沒有契約的一般時段成交量創 20 個比較日新高。",
+  );
+});
+
+test("§7.10 窗口未知時整段子句拿掉,句子裡不得出現任何數字當比較基準", () => {
+  const text = anomalyEmptyStateText({ dataDate: "2026-09-18", windowDays: null });
+  assert.equal(text, "2026-09-18 已完成計算:今日沒有契約的一般時段成交量創新高。");
+  assert.ok(!text.includes("60"), text);
+  assert.ok(!text.includes("比較日"), text);
+  // 但它仍然是一個帶日期的正面主張(§7.5 第二態),日期不可以掉。
+  assert.ok(text.startsWith("2026-09-18 已完成計算"), text);
+});
+
+test("§7.5 meta 不得把「沒有算過」講成「算過了、今天沒有」", () => {
+  // meta 給了而名單缺鍵(payload 不該出現的組合,但前端不可以因此改口)。
+  const state = futuresAnomalyMarketState(undefined, "2026-09-18", undefined, META);
+  assert.deepEqual(state, { kind: "not-computed" });
+  assert.deepEqual(Object.keys(state), ["kind"]);
 });
 
 test("§7.5 缺鍵不得帶日期:沒有算過就沒有任何主張可以繫在哪一天上", () => {

@@ -3,8 +3,8 @@
 import Link from "next/link";
 import { Layers } from "lucide-react";
 import ReasonPill from "@/components/ReasonPill";
-import { futuresAnomalyMarketState } from "@/lib/futures";
-import type { FuturesVolumeAnomalyEntry } from "@/lib/types";
+import { anomalyEmptyStateText, futuresAnomalyMarketState } from "@/lib/futures";
+import type { FuturesVolumeAnomalyEntry, FuturesVolumeAnomalyMeta } from "@/lib/types";
 
 /**
  * 首頁「期貨異常」分頁的名單(docs/38 §7.5)。
@@ -21,12 +21,15 @@ export default function FuturesAnomalyList({
   entries,
   dataDate,
   nameById,
+  meta,
 }: {
   entries: FuturesVolumeAnomalyEntry[] | undefined;
   dataDate: string;
   nameById: ReadonlyMap<string, string>;
+  /** 與 `entries` 同生共死(§7.11);缺鍵時空名單那句話就少講比較窗口。 */
+  meta?: FuturesVolumeAnomalyMeta;
 }) {
-  const state = futuresAnomalyMarketState(entries, dataDate, nameById);
+  const state = futuresAnomalyMarketState(entries, dataDate, nameById, meta);
 
   // 缺鍵 = 今天沒有算過。不可以說成「今天沒有異常」——那是一個沒人做過的主張。
   if (state.kind === "not-computed") {
@@ -40,10 +43,12 @@ export default function FuturesAnomalyList({
   }
 
   // 空陣列 = 算過了,而且今天真的沒有契約舉旗。這是一個帶日期的正面主張,要說出日期。
+  // 比較窗口的長度從 payload 的 `_meta` 讀(§7.11);讀不到就少講那一段,**不寫死 60**
+  // (§7.10)——一個寫死的 60 會在 v2 改數字的那天變成第二個真相。
   if (state.kind === "computed-empty") {
     return (
       <div className="mx-auto max-w-md py-[46px] text-center text-sm leading-relaxed text-muted-foreground">
-        {`${state.dataDate} 已完成計算:今日沒有契約的一般時段成交量創新高。`}
+        {anomalyEmptyStateText(state)}
       </div>
     );
   }

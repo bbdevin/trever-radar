@@ -591,6 +591,7 @@ class AnomalyRateGateTests(_AnomalyFixture):
 
 
 INDEX_KEY = "futures_volume_anomalies"
+META_KEY = "futures_volume_anomalies_meta"
 
 # 名次的各種寫法。§5 不做跨契約排序,所以名單有**順序**沒有**名次**:任何一個
 # 這樣的鍵出現在條目裡,都等於偷偷把一份短名單變成一張排行榜。
@@ -730,6 +731,68 @@ class AnomalyMarketIndexTests(_AnomalyFixture):
             self.assertEqual(entry["anomaly"], by_code[entry["code"]]["anomaly"])
             self.assertEqual(entry["reasons"], by_code[entry["code"]]["reasons"])
             self.assertEqual(entry["risks"], by_code[entry["code"]]["risks"])
+
+
+class AnomalyIndexMetaTests(_AnomalyFixture):
+    """名單的隨附事實 ``futures_volume_anomalies_meta``(docs/38 §7.11)。
+
+    它存在的唯一理由是 §7.5 的**空陣列**那一態:那一態裡一個 ``anomaly`` 區塊都
+    沒有,而 §7.10 不准 UI 寫死 60。所以「今天沒有契約創 60 個比較日新高」這句話
+    只能靠這個鍵才講得出來。
+    """
+
+    def test_the_meta_key_is_absent_when_the_day_was_never_computed(self):
+        """沒有名單就沒有 meta:一個沒有名單的孤兒 window_days 不主張任何事。"""
+        self.seed([_spec("CCF", "2303", lots={AD: None})])
+        radar = self.radar()
+        self.assertNotIn(INDEX_KEY, radar)
+        self.assertNotIn(META_KEY, radar)
+        raw = (self.out / "radar.json").read_text(encoding="utf-8")
+        self.assertNotIn(META_KEY, raw)
+
+    def test_a_computed_day_with_nothing_flagged_still_carries_the_window(self):
+        """空名單那一態:名單是 [],但比較窗口仍然講得出來。"""
+        self.seed([_spec("CCF", "2303", today=BASE_LOTS)])
+        radar = self.radar()
+        self.assertEqual(radar[INDEX_KEY], [])
+        self.assertEqual(radar[META_KEY], {"window_days": WINDOW_DAYS})
+
+    def test_a_flagged_day_carries_the_same_window_as_every_entry(self):
+        self.seed([_spec("CCF", "2303"), _spec("MYF", "1565")])
+        radar = self.radar()
+        self.assertEqual(radar[META_KEY], {"window_days": WINDOW_DAYS})
+        for entry in radar[INDEX_KEY]:
+            self.assertEqual(entry["anomaly"]["window_days"], radar[META_KEY]["window_days"])
+
+    def test_the_window_comes_from_the_rules_constant_not_a_second_literal(self):
+        """把常數換掉,輸出必須跟著變。
+
+        這裡不是在驗 60 是多少(§3.5 已經凍結了它,``test_futures_volume_battery``
+        也鎖了),而是在驗這個鍵**沒有自己寫一個 60**。若有人在這裡打了字面值,
+        底下的 7 就永遠拿不到,測試紅。
+        """
+        self.seed([_spec("CCF", "2303", today=BASE_LOTS)])
+        with patch("radar.compute.futures_volume_anomaly.WINDOW_DAYS", 7):
+            radar = self.radar()
+        self.assertEqual(radar[META_KEY], {"window_days": 7})
+
+    def test_the_meta_key_is_exactly_one_integer_field(self):
+        """§5:名單有順序沒有名次。meta 也不是名次或評分的落腳處。"""
+        self.seed([_spec("CCF", "2303")])
+        meta = self.radar()[META_KEY]
+        self.assertEqual(sorted(meta), ["window_days"])
+        self.assertIsInstance(meta["window_days"], int)
+        self.assertNotIsInstance(meta["window_days"], bool)
+        for bad in RANK_ISH + RATIO_ISH:
+            for key in meta:
+                self.assertNotIn(bad, key.lower())
+
+    def test_meta_is_derived_from_the_index_so_it_cannot_appear_alone(self):
+        from radar.compute.futures_volume_anomaly import anomaly_index_meta
+        self.assertIsNone(anomaly_index_meta(None))
+        self.assertEqual(anomaly_index_meta([]), {"window_days": WINDOW_DAYS})
+        self.assertEqual(anomaly_index_meta([{"code": "CCF"}]),
+                         {"window_days": WINDOW_DAYS})
 
 
 class AnomalyIndexOrderingTests(unittest.TestCase):

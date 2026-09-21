@@ -25,7 +25,11 @@ from ..compute.strategy_performance import (
 from ..compute.compute_branch_stats import DAYTRADE_MIN_OBS
 from ..compute.margin_cost import build_margin_cost_series
 from ..compute.display_window import display_window_bounds, window_label
-from ..compute.futures_volume_anomaly import anomaly_index, futures_volume_anomalies
+from ..compute.futures_volume_anomaly import (
+    anomaly_index,
+    anomaly_index_meta,
+    futures_volume_anomalies,
+)
 
 # A2 strategy lifecycle export contract.  This is source-controlled metadata,
 # not a database migration and does not alter any score, selector data, or
@@ -1475,9 +1479,15 @@ def export_json(out_dir: Path | None = None) -> dict:
     # 約定:沒有鍵 = 今天沒有算過(期貨資料還沒跟上 export 日);[] = 算過了而且
     # 今天沒有契約舉旗(一個有日期的正面主張);非空 = 今天舉旗的契約。
     # 順序是 today − window_max 由大到小、同分用 code——是順序不是名次(§5)。
+    #
+    # 平行的 ``_meta`` 鍵只帶 window_days(§7.11),習慣同 strategies / strategy_meta。
+    # 它存在的唯一理由是空陣列那一態:那一態裡沒有任何 anomaly 區塊可以讀,而
+    # §7.10 不准前端寫死 60。兩個鍵**同生共死**——meta 由名單導出,名單沒有算過就
+    # 兩個都不輸出,所以不會出現一個沒有名單的孤兒 window_days。
     futures_anomaly_index = futures_result[2] if futures_result is not None else None
     if futures_anomaly_index is not None:
         radar["futures_volume_anomalies"] = futures_anomaly_index
+        radar["futures_volume_anomalies_meta"] = anomaly_index_meta(futures_anomaly_index)
     meta = {
         "generated_at": now,
         "datasets": [

@@ -628,6 +628,7 @@ function RadarView() {
             entries={radar.futures_volume_anomalies}
             dataDate={radar.data_date}
             nameById={nameById}
+            meta={radar.futures_volume_anomalies_meta}
           />
         </div>
       ) : tab === "mark" && !loading && !session ? (

@@ -3,6 +3,7 @@ import type {
   FuturesContract,
   FuturesInfo,
   FuturesVolumeAnomalyEntry,
+  FuturesVolumeAnomalyMeta,
   ReasonItem,
 } from "@/lib/types";
 
@@ -92,19 +93,27 @@ export interface FuturesAnomalyRow {
 /**
  * 市場層級名單的三態(§7.5)。缺鍵與空陣列**不同**:
  * 前者沒有主張,後者是一個帶日期的正面主張。
+ *
+ * `computed-empty` 帶著 `windowDays`(§7.11):空名單裡一個 `anomaly` 區塊都沒有,
+ * 而 §7.10 不准在前端寫死 60,所以那個數字只能來自 payload 的 `_meta` 鍵。
+ * 拿不到時是 `null`——那就少講比較窗口,**不是**退回一個寫死的 60,因為一個寫死
+ * 的 60 會變成第二個不受 §3.5 管束的真相。
  */
 export type FuturesAnomalyMarketState =
   | { kind: "not-computed" }
-  | { kind: "computed-empty"; dataDate: string }
+  | { kind: "computed-empty"; dataDate: string; windowDays: number | null }
   | { kind: "listed"; dataDate: string; rows: FuturesAnomalyRow[] };
 
 export function futuresAnomalyMarketState(
   entries: FuturesVolumeAnomalyEntry[] | null | undefined,
   dataDate: string,
   nameById?: ReadonlyMap<string, string>,
+  meta?: FuturesVolumeAnomalyMeta | null,
 ): FuturesAnomalyMarketState {
   if (!entries) return { kind: "not-computed" };
-  if (entries.length === 0) return { kind: "computed-empty", dataDate };
+  if (entries.length === 0) {
+    return { kind: "computed-empty", dataDate, windowDays: meta?.window_days ?? null };
+  }
   // 順序原封不動(payload 已依 today − window_max 遞減排好);不排序、不去重。
   const rows = entries.map((e) => ({
     stockId: e.stock_id,
@@ -115,6 +124,24 @@ export function futuresAnomalyMarketState(
     risks: e.risks,
   }));
   return { kind: "listed", dataDate, rows };
+}
+
+/**
+ * 「算過了、今天沒有契約舉旗」那一句(§7.5 第二態)。
+ *
+ * 它**不在元件裡**的理由與這個檔案其他函式相同:句子裡有一個數字,而那個數字
+ * 唯一合法的來源是 payload(§7.10)。寫在 JSX 裡沒有東西擋得住有人直接打一個 60;
+ * 寫在這裡,`futures.test.ts` 餵 20 進來就會抓到。
+ * `windowDays` 是 null(payload 沒給)時整段子句拿掉,句子照樣是一個帶日期的
+ * 正面主張,只是少講比較基準——同 §7.1 的習慣:缺值就是缺值,不編一個數字上去。
+ */
+export function anomalyEmptyStateText(
+  state: { dataDate: string; windowDays: number | null },
+): string {
+  const high = state.windowDays === null
+    ? "創新高"
+    : `創 ${state.windowDays} 個比較日新高`;
+  return `${state.dataDate} 已完成計算:今日沒有契約的一般時段成交量${high}。`;
 }
 
 /**
