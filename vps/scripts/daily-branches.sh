@@ -60,19 +60,23 @@ acquire_db_lock
 acquire_branch_source_lock
 sync_code
 
-# 每一步都是 `run_step … || exit "$?"`,**不是**裸的 `run_step …`。差別只有一個,
-# 但不能省:失敗時要不要多送一則 ntfy。
-#   裸呼叫時代:`radar X` 的失敗發生在 radar **函式內部**(lib.sh 的 `( exit "$rc" )`),
-#     而 ERR trap 不繼承進函式,於是 bash 當場帶著原碼結束,一則通知都不發
-#     (lib.sh 的 radar 註解已寫明這件事)。
-#   若改成裸的 `run_step X`:失敗變成在**頂層**回傳非零,set -e 中止時 ERR trap
-#     就會觸發,每一次 OOM/失敗都會多一則「執行到第 N 行失敗」high 通知。
-# 那是行為改變,不是加計時;這次只要能見度,不要順手改通知策略。`|| exit "$?"`
-# 讓失敗留在 `||` 的左邊(ERR trap 與 set -e 都不看),離開碼逐位元照舊。
+# 每一步都是 `run_step_or_fail`(lib.sh),**不是**裸的 `run_step`,也不再是
+# `run_step … || exit "$?"`。三者的離開碼完全相同,差別只有「失敗時誰講話」:
+#   裸的 `radar X`(最早的寫法)與 `run_step … || exit "$?"`:失敗發生在 radar
+#     **函式內部**(lib.sh 的 `( exit "$rc" )`),而 ERR trap 不繼承進函式,於是
+#     bash 當場帶著原碼結束,**一則通知都不發**——整輪靜默死掉,只有 cron log 記得。
+#     22:00 改成只匯入之後,這一輪是當天唯一的重算與上線,靜默失敗等於網站停在
+#     昨天直到 00:05 夜間作業約 01:30 才補上,而沒有任何人被告知。
+#   裸的 `run_step X`:失敗變成在**頂層**回傳非零,ERR trap 於是觸發,送出一則
+#     「執行到第 N 行失敗」——有通知了,但措辭只有行號,而且一旦哪天再包一層就
+#     會與別的通知重複(5cb7649 修過的雙重通知)。
+#   `run_step_or_fail X`:ERR trap 一樣不觸發(實測),但失敗那一步自己送一則
+#     指名步驟與離開碼的 high 通知,然後 `exit "$rc"` 逐位元帶回原碼。
+# 九個步驟共用 lib.sh 裡的**那一份**實作,措辭不會在九個地方漂移。
 # 上櫃日K 若 14:10/16:10 仍 empty,此輪再抓,否則 --top 0 會漏掉無當日報價的上櫃。
-run_step "import-daily" radar import-daily --datasets quotes,insti || exit "$?"
-run_step "compute-indicators" radar compute-indicators --all --days 5 || exit "$?"
-run_step "seed-branches" radar seed-branches || exit "$?"
+run_step_or_fail "import-daily" radar import-daily --datasets quotes,insti
+run_step_or_fail "compute-indicators" radar compute-indicators --all --days 5
+run_step_or_fail "seed-branches" radar seed-branches
 # top=0: 當日有報價的全部 type=stock(不含 ETF)。
 # 全市場權證輪尚未通過容量/時間 PoC；過渡池只含標的是 active 普通股的
 # 上市認購／認售、當日成交金額至少 100 萬的權證。此模式取代 legacy --warrants Top-N，不能疊加。
@@ -119,6 +123,11 @@ esac
 # 逐位元回傳 radar 的離開碼,於是下面的 branch_rc 拿到的還是 0/75/76/其他 原碼。
 # 本輪唯一最貴的那一段(import-branch-trades 與 compute-branch-stats)因此也有了
 # 跟夜間作業同格式的 elapsed,而分級邏輯一個字都沒動。
+#
+# 這一步**刻意不用** run_step_or_fail:它的 0/75/76/其他 分級就是下面那個 case,
+# 每一種結果都已經有自己的通知(75 一般、76 high、不合格按輪次分級)。套上會
+# 自己發通知的 helper,等於每一次非零都先被 helper 報成「本輪中止」再走 case,
+# 同一件事送兩則、而且第一則對 75/76 是錯的(它們本來就繼續上線)。
 if run_step "import-branch-trades" radar import-branch-trades --top 0 --warrant-turnover-min 1000000 --sleep 1.0; then
   branch_rc=0
 else
@@ -164,12 +173,17 @@ if [ "$BRANCH_ROUND_MODE" = "import" ]; then
   notify_warn "17:40 那輪未上線（${ROUND_DATE} 無完成標記），本輪接手完整鏈:重算、匯出、上線"
 fi
 
-run_step "compute-branch-stats" radar compute-branch-stats || exit "$?"
-run_step "compute-scores" radar compute-scores || exit "$?"
-run_step "compute-performance" radar compute-performance || exit "$?"
-run_step "export-json" radar export-json || exit "$?"
-run_step "prune" radar prune || exit "$?"
-run_step "deploy" deploy_data || exit "$?"
+run_step_or_fail "compute-branch-stats" radar compute-branch-stats
+run_step_or_fail "compute-scores" radar compute-scores
+run_step_or_fail "compute-performance" radar compute-performance
+run_step_or_fail "export-json" radar export-json
+# prune 與其他步驟同一個待遇(high + 中止),理由是**順序**:它排在 deploy_data
+# **之前**,所以 prune 失敗的那一輪根本還沒上線——代價與 compute 失敗完全一樣,
+# 是「今天沒有任何一輪上線」,不是「已經上線了只差收尾」。若哪天把 prune 移到
+# deploy_data 之後,這個判斷就要跟著重新做一次:那時它才會變成「資料已經在網站上,
+# 只是 DB 沒瘦身」,而那不值得用跟上線失敗同一級的警報去叫醒人。
+run_step_or_fail "prune" radar prune
+run_step_or_fail "deploy" deploy_data
 # 只有走到這裡才算「整輪跑完」。夜間備援作業讀這個標記決定今晚要不要重算,
 # 所以它必須在 deploy_data 之後——在之前寫就等於承諾了一件還沒發生的事。
 taipei_date -Is > "$(branch_round_marker "$ROUND_DATE")"

@@ -106,27 +106,37 @@ class TestDailyBranchesTiming(unittest.TestCase):
                 line = next((ln for ln in self.lines if cmd in ln), None)
                 self.assertIsNotNone(line, f"找不到 {cmd} 這一步")
                 self.assertRegex(
-                    line.strip(), r'^(if )?run_step "' + re.escape(label) + '" ',
+                    line.strip(),
+                    r'^(if )?run_step(_or_fail)? "' + re.escape(label) + '" ',
                     f"{cmd} 應該經過 run_step「{label}」,才有與夜間同格式的計時",
                 )
 
     def test_labels_match_the_nightly_so_one_grep_compares_both_rounds(self):
         """兩輪都會跑的步驟必須用同一個標籤字面值——這次改動的整個重點就是
-        `grep 'step compute-branch-stats done'` 可以一次拿到兩輪的耗時。"""
+        `grep 'step compute-branch-stats done'` 可以一次拿到兩輪的耗時。
+
+        本輪包的是 `run_step_or_fail`(失敗會自己發通知),夜間是 `run_step`,
+        但印出來的那行由同一個 `run_step` 產生,所以標籤字面值仍然要一致。
+        """
         for label in ("compute-branch-stats", "compute-scores", "export-json", "deploy"):
             with self.subTest(step=label):
-                self.assertIn(f'run_step "{label}"', self.code)
+                self.assertRegex(self.code,
+                                 r'run_step(_or_fail)? "' + re.escape(label) + '"')
                 self.assertIn(f'run_step "{label}"', self.nightly)
 
-    def test_wrapping_does_not_add_a_failure_notification(self):
-        """裸的 `run_step X` 會改變通知行為,所以每個呼叫都必須落在
-        `if` 的測試式裡或 `|| exit "$?"` 的左邊。
+    def test_bare_run_step_is_never_used(self):
+        """裸的 `run_step X` 會讓 ERR trap 觸發,所以不可以出現。
 
-        改動前:`radar X` 的失敗發生在 radar **函式內部**(lib.sh 的
-        `( exit "$rc" )`),而 ERR trap 不繼承進函式,於是 bash 當場帶著原碼結束,
-        一則通知都不發。改成裸的 `run_step X` 之後,失敗變成在**頂層**回傳非零,
-        set -e 中止時 ERR trap 就會觸發,每一次 OOM 都多一則 high「執行到第 N 行
-        失敗」。那是行為改變,不是加計時——這次只要能見度,不順手改通知策略。
+        `radar X` 的失敗發生在 radar **函式內部**(lib.sh 的 `( exit "$rc" )`),
+        而 ERR trap 不繼承進函式,於是 bash 當場帶著原碼結束——一則通知都不發
+        (那正是 run_step_or_fail 要補的洞)。但裸的 `run_step X` 是另一回事:
+        失敗變成在**頂層**回傳非零,set -e 中止時 ERR trap 就會觸發,送出一則
+        只有行號的「執行到第 N 行失敗」;若那一步同時也走 run_step_or_fail,
+        同一次失敗就會送兩則(5cb7649 修掉的雙重通知)。
+
+        允許的形狀只有三種:`if run_step …`(自己接住碼做分級)、
+        `run_step … || exit "$?"`(留在 `||` 左邊)、`run_step_or_fail …`
+        (helper 自己通知並 `exit`,不把非零丟回頂層)。
         """
         for i, ln in enumerate(self.lines, 1):
             s = ln.strip()
@@ -137,6 +147,19 @@ class TestDailyBranchesTiming(unittest.TestCase):
                     s.startswith("if run_step ") or s.endswith('|| exit "$?"'),
                     f'第 {i} 行的 run_step 是裸呼叫,會讓失敗多送一則 ERR 通知:{s}',
                 )
+
+    def test_every_step_uses_one_of_the_sanctioned_shapes(self):
+        """上面那條在所有呼叫都改用 run_step_or_fail 之後會變成空轉,所以另外
+        釘住「每一步都是三種形狀之一」,而且形狀的統計不得為零。"""
+        shaped = [ln.strip() for ln in self.lines
+                  if ln.strip().startswith(("run_step ", "if run_step ", "run_step_or_fail "))]
+        self.assertEqual(len(shaped), len(STEPS),
+                         f"每一步各一行,實際:{shaped}")
+        self.assertTrue(any(s.startswith("if run_step ") for s in shaped),
+                        "分點匯入要保留 `if run_step …` 自己分級")
+        self.assertGreaterEqual(
+            sum(1 for s in shaped if s.startswith("run_step_or_fail ")), 9,
+            "其餘九步都要用會自己通知的 run_step_or_fail")
 
     def test_exit_codes_are_unchanged_by_the_wrapper(self):
         """分點匯入的離開碼是本輪唯一的判斷依據,包 wrapper 不得動到它。
@@ -184,7 +207,7 @@ class TestDailyBranchesTiming(unittest.TestCase):
         self.assertTrue(any(guard < i < early_exit for i in done),
                         "import 模式那支 exit 0 之前要先印結束標記")
         self.assertGreater(done[-1], next(i for i, ln in enumerate(self.lines)
-                                          if 'run_step "deploy"' in ln),
+                                          if re.search(r'run_step(_or_fail)? "deploy"', ln)),
                            "完整鏈的結束標記要在最後一步之後")
 
 

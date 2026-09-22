@@ -255,6 +255,44 @@ run_step() {
   return "$rc"
 }
 
+# run_step 的「失敗會自己講出來」版本:跑一步,失敗就發一則 high 通知,再帶著
+# **原本的離開碼**中止整輪。
+#
+# 為什麼非有不可:`radar` 是 shell **函式**,而 ERR trap 不繼承進函式(沒有 set -E),
+# 所以 `radar X` 失敗時,本檔在 source 時裝好的那個 ERR trap 一則通知都不發——
+# bash 在 radar 內部的 `( exit "$rc" )` 就地帶著原碼結束,只有 cron log 記得這件事。
+# 用本檔的形狀寫成的測量 harness(四種形狀,同一個 radar/run_step):
+#
+#   radar X                        rc=9  ERR trap 不觸發  中止  ← 舊寫法,零通知
+#   run_step "X" radar X           rc=9  ERR trap **觸發** 中止  ← 會與本函式雙重通知
+#   run_step "X" radar X || exit   rc=9  ERR trap 不觸發  中止  ← 與舊寫法逐位元相同
+#   run_step_or_fail "X" radar X   rc=9  ERR trap 不觸發  中止 + **一則通知**
+#
+# 形狀的三個要點都不是可有可無的:
+#   1. 取碼寫在 else 那一支的第一行。失敗與 `$?` 之間不准夾任何指令(連 echo 都不行),
+#      夾一個就把碼換成那個指令的碼。也不可以改成 `if …; then return 0; fi; rc=$?`:
+#      那個 `$?` 讀到的是整個 if 複合指令的碼(不成立時是 0),不是 run_step 的碼。
+#   2. 用 if 取碼,不用 `set +e`:`set +e` **不會**讓 ERR trap 安靜下來(實測,見
+#      run_step 上面那段),那會讓同一次失敗多送一則「執行到第 N 行失敗」。
+#   3. 收尾用 `exit "$rc"`,不是讓非零回到頂層。回到頂層會觸發 ERR trap,於是同一次
+#      失敗送兩則通知——5cb7649 修掉的正是那個雙重通知。
+#
+# 通知只有這一份,所有呼叫點共用;要改措辭改這裡,不要在呼叫端各寫一份。
+# ⚠️ 目前唯一的呼叫者是 daily-branches.sh,下面那句「不寫完成標記,00:05 夜間作業
+# 會重算」講的是**那一輪**的收尾契約(見 branch_round_marker)。別的腳本要用這個
+# helper 之前,先把那半句參數化,不要讓它對一支沒有完成標記的腳本說謊。
+run_step_or_fail() {
+  local label="$1"
+  local rc=0
+  if run_step "$@"; then
+    return 0
+  else
+    rc=$?
+  fi
+  notify "${label} 失敗（碼 ${rc}），本輪中止、未上線，網站仍是前一輪的內容；本輪不寫完成標記，00:05 夜間作業會重算" high "失敗"
+  exit "$rc"
+}
+
 # 「那一輪 daily-branches 真的整條跑完(含 deploy_data)」的完成標記。
 #
 # 為什麼夜間作業不能只看 import_logs 的 status:那一列只講「匯入」這一段。
