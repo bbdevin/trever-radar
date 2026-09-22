@@ -1,0 +1,442 @@
+{
+  "coverage": {
+    "branch_trade_capture_note": "branch_trades is a retrieved top-15 buy/sell slice; every observed event is by construction a day of concentrated flow, which is exactly why the placebo is matched on size as well as on episode count.",
+    "forward_maturity_note": "the forward window needs 19 market days after the event, so events in the final stretch of the evaluation half are immature at as_of. Immature events are excluded from every denominator and are never counted as misses; the forward direction is therefore measured on fewer evaluation events than the backward direction, by construction.",
+    "market_trading_days_through_as_of": 8843,
+    "pairs_streamed": 1328894,
+    "stocks_streamed": 1987,
+    "trade_rows_streamed": 25890061,
+    "universe_branch_count": 832
+  },
+  "definitions": {
+    "backward": "event close's position in the min/max close range of the event day and the preceding 19 market days (the shipped definition of record)",
+    "episode": "buy: net_lots > 0 and pct >= 1%; sell: net_lots < 0 and abs(pct) >= 1%; adjacent market trading days of the same branch-stock-direction are one episode, rebuilt independently inside each half, so a run straddling the boundary becomes one episode in each half",
+    "exceeds_own_stock": "the pair's evaluation-half hits/known is strictly greater than that stock's own pooled hits/known in the evaluation half, same direction, same lag setting; this is a price-percentile comparison and is not profit or a win rate",
+    "flagged": "formation half, per direction: >= 10 known episodes on each side and both hit rates >= 0.7 (the protocol value is 10 known episodes per side; a run at any other value is instrumentation and is not a validated reading)",
+    "forward": "event close's position in the min/max close range of the event day and the following 19 market days; an incomplete forward window is immature, never unknown, and never enters a denominator",
+    "hit": "buy episode with known percentile <= 0.4; sell episode with known percentile >= 0.6",
+    "lag": "identical windows, but the reference price is the next market day's adjusted close instead of the event day's; a branch buying ahead of news is still at a low percentile the next day, a hit created by its own price impact is not. Flagging always uses the unlagged formation half (that is the shipped rule); only the evaluation half is recomputed, and its survivor test uses the lagged known counts, so the lag arm reports its own survivor count",
+    "median_margin_pp": "median over compared pairs of (pair rate - own-stock rate) in percentage points",
+    "obs_exp": "observed exceeds-both count divided by the sum over compared pairs of P(exceeds buy) * P(exceeds sell) under a per-pair binomial null whose p is that stock's own evaluation-half rate",
+    "placebo": "for each flagged pair, one unflagged pair on the same stock whose formation episode count per side is within +/-25% and whose formation median event-day abs(pct) is within +/-25%; the flagged pair itself is never drawn and a placebo is used at most once per stock",
+    "split": "the last N market trading days at or before as_of, halved by trading day: the older half is formation, the newer half is evaluation; an odd count gives the extra day to the evaluation half",
+    "survivor": "a flagged pair with >= 3 known episodes per side in the evaluation half; flagged pairs with no evaluation activity stay in the denominator and are counted as non-surviving"
+  },
+  "directions": {
+    "backward": {
+      "evaluation": {
+        "lag": {
+          "compared_pairs": 160,
+          "evaluation_buy_episodes": 2167,
+          "evaluation_buy_hits": 1375,
+          "evaluation_buy_known": 2113,
+          "evaluation_sell_episodes": 1801,
+          "evaluation_sell_hits": 908,
+          "evaluation_sell_known": 1760,
+          "exceeds_own_stock_both": 84,
+          "exceeds_own_stock_both_rate": 0.525,
+          "exceeds_own_stock_buy": 111,
+          "exceeds_own_stock_sell": 121,
+          "expected_exceeds_own_stock_both": 37.751347,
+          "low_sample": false,
+          "median_margin_pp_buy": 10.152152,
+          "median_margin_pp_sell": 11.202407,
+          "obs_exp": 2.225086,
+          "pairs": 197,
+          "survivors": 160,
+          "with_evaluation_activity": 193,
+          "without_stock_baseline": 0
+        },
+        "unlagged": {
+          "compared_pairs": 160,
+          "evaluation_buy_episodes": 2167,
+          "evaluation_buy_hits": 1406,
+          "evaluation_buy_known": 2118,
+          "evaluation_sell_episodes": 1801,
+          "evaluation_sell_hits": 942,
+          "evaluation_sell_known": 1769,
+          "exceeds_own_stock_both": 90,
+          "exceeds_own_stock_both_rate": 0.5625,
+          "exceeds_own_stock_buy": 115,
+          "exceeds_own_stock_sell": 121,
+          "expected_exceeds_own_stock_both": 38.553474,
+          "low_sample": false,
+          "median_margin_pp_buy": 10.890909,
+          "median_margin_pp_sell": 13.199076,
+          "obs_exp": 2.33442,
+          "pairs": 197,
+          "survivors": 160,
+          "with_evaluation_activity": 193,
+          "without_stock_baseline": 0
+        }
+      },
+      "formation": {
+        "flagged_pairs": 197,
+        "flagged_stocks": 177,
+        "measurable": true,
+        "min_known_per_side": 10,
+        "min_rate_per_side": 0.7,
+        "note": "flagging bar is fixed by protocol and is never loosened to obtain samples",
+        "protocol_min_known_per_side": 10
+      },
+      "placebo": {
+        "band": 0.25,
+        "lag": {
+          "compared_pairs": 120,
+          "evaluation_buy_episodes": 1396,
+          "evaluation_buy_hits": 743,
+          "evaluation_buy_known": 1382,
+          "evaluation_sell_episodes": 1368,
+          "evaluation_sell_hits": 528,
+          "evaluation_sell_known": 1356,
+          "exceeds_own_stock_both": 28,
+          "exceeds_own_stock_both_rate": 0.233333,
+          "exceeds_own_stock_buy": 64,
+          "exceeds_own_stock_sell": 63,
+          "expected_exceeds_own_stock_both": 30.39158,
+          "low_sample": false,
+          "median_margin_pp_buy": 1.541386,
+          "median_margin_pp_sell": 1.693095,
+          "obs_exp": 0.921308,
+          "pairs": 153,
+          "survivors": 120,
+          "with_evaluation_activity": 149,
+          "without_stock_baseline": 0
+        },
+        "matched_on": [
+          "formation buy episodes",
+          "formation sell episodes",
+          "formation median event-day abs(pct)"
+        ],
+        "matched_pairs": 153,
+        "unlagged": {
+          "compared_pairs": 120,
+          "evaluation_buy_episodes": 1396,
+          "evaluation_buy_hits": 753,
+          "evaluation_buy_known": 1386,
+          "evaluation_sell_episodes": 1368,
+          "evaluation_sell_hits": 539,
+          "evaluation_sell_known": 1362,
+          "exceeds_own_stock_both": 34,
+          "exceeds_own_stock_both_rate": 0.283333,
+          "exceeds_own_stock_buy": 65,
+          "exceeds_own_stock_sell": 69,
+          "expected_exceeds_own_stock_both": 29.617512,
+          "low_sample": false,
+          "median_margin_pp_buy": 1.774472,
+          "median_margin_pp_sell": 3.486689,
+          "obs_exp": 1.147969,
+          "pairs": 153,
+          "survivors": 120,
+          "with_evaluation_activity": 149,
+          "without_stock_baseline": 0
+        },
+        "unmatched_flagged_pairs": 44
+      },
+      "re_flag": {
+        "formation_flagged_pairs": 197,
+        "is_withdrawal_criterion": false,
+        "note": "reported only; NOT a withdrawal criterion (counts-not-badges already absorbed this finding)",
+        "rate": 0.040609,
+        "re_flagged_on_evaluation_half": 8
+      },
+      "survivorship": {
+        "activity_rate": 0.979695,
+        "flagged_pairs": 197,
+        "survivor_rate": 0.812183,
+        "survivors": 160,
+        "survivors_min_known_per_side": 3,
+        "with_evaluation_activity": 193,
+        "without_evaluation_activity": 4
+      }
+    },
+    "forward": {
+      "evaluation": {
+        "lag": {
+          "compared_pairs": 19,
+          "evaluation_buy_episodes": 201,
+          "evaluation_buy_hits": 86,
+          "evaluation_buy_known": 190,
+          "evaluation_sell_episodes": 212,
+          "evaluation_sell_hits": 92,
+          "evaluation_sell_known": 203,
+          "exceeds_own_stock_both": 7,
+          "exceeds_own_stock_both_rate": 0.368421,
+          "exceeds_own_stock_buy": 11,
+          "exceeds_own_stock_sell": 11,
+          "expected_exceeds_own_stock_both": 4.370758,
+          "low_sample": true,
+          "median_margin_pp_buy": 2.236205,
+          "median_margin_pp_sell": 3.769387,
+          "obs_exp": 1.601553,
+          "pairs": 31,
+          "survivors": 19,
+          "with_evaluation_activity": 26,
+          "without_stock_baseline": 0
+        },
+        "unlagged": {
+          "compared_pairs": 19,
+          "evaluation_buy_episodes": 201,
+          "evaluation_buy_hits": 85,
+          "evaluation_buy_known": 190,
+          "evaluation_sell_episodes": 212,
+          "evaluation_sell_hits": 97,
+          "evaluation_sell_known": 203,
+          "exceeds_own_stock_both": 6,
+          "exceeds_own_stock_both_rate": 0.315789,
+          "exceeds_own_stock_buy": 10,
+          "exceeds_own_stock_sell": 11,
+          "expected_exceeds_own_stock_both": 4.611754,
+          "low_sample": true,
+          "median_margin_pp_buy": 1.890583,
+          "median_margin_pp_sell": 2.251818,
+          "obs_exp": 1.301023,
+          "pairs": 31,
+          "survivors": 19,
+          "with_evaluation_activity": 26,
+          "without_stock_baseline": 0
+        }
+      },
+      "formation": {
+        "flagged_pairs": 31,
+        "flagged_stocks": 30,
+        "measurable": true,
+        "min_known_per_side": 10,
+        "min_rate_per_side": 0.7,
+        "note": "flagging bar is fixed by protocol and is never loosened to obtain samples",
+        "protocol_min_known_per_side": 10
+      },
+      "placebo": {
+        "band": 0.25,
+        "lag": {
+          "compared_pairs": 19,
+          "evaluation_buy_episodes": 247,
+          "evaluation_buy_hits": 105,
+          "evaluation_buy_known": 221,
+          "evaluation_sell_episodes": 246,
+          "evaluation_sell_hits": 106,
+          "evaluation_sell_known": 231,
+          "exceeds_own_stock_both": 7,
+          "exceeds_own_stock_both_rate": 0.368421,
+          "exceeds_own_stock_buy": 13,
+          "exceeds_own_stock_sell": 11,
+          "expected_exceeds_own_stock_both": 4.599418,
+          "low_sample": true,
+          "median_margin_pp_buy": 4.798915,
+          "median_margin_pp_sell": 2.937158,
+          "obs_exp": 1.521932,
+          "pairs": 27,
+          "survivors": 19,
+          "with_evaluation_activity": 27,
+          "without_stock_baseline": 0
+        },
+        "matched_on": [
+          "formation buy episodes",
+          "formation sell episodes",
+          "formation median event-day abs(pct)"
+        ],
+        "matched_pairs": 27,
+        "unlagged": {
+          "compared_pairs": 19,
+          "evaluation_buy_episodes": 247,
+          "evaluation_buy_hits": 99,
+          "evaluation_buy_known": 221,
+          "evaluation_sell_episodes": 246,
+          "evaluation_sell_hits": 108,
+          "evaluation_sell_known": 231,
+          "exceeds_own_stock_both": 6,
+          "exceeds_own_stock_both_rate": 0.315789,
+          "exceeds_own_stock_buy": 12,
+          "exceeds_own_stock_sell": 8,
+          "expected_exceeds_own_stock_both": 4.505279,
+          "low_sample": true,
+          "median_margin_pp_buy": 2.812676,
+          "median_margin_pp_sell": -0.374912,
+          "obs_exp": 1.331771,
+          "pairs": 27,
+          "survivors": 19,
+          "with_evaluation_activity": 27,
+          "without_stock_baseline": 0
+        },
+        "unmatched_flagged_pairs": 4
+      },
+      "re_flag": {
+        "formation_flagged_pairs": 31,
+        "is_withdrawal_criterion": false,
+        "note": "reported only; NOT a withdrawal criterion (counts-not-badges already absorbed this finding)",
+        "rate": 0.0,
+        "re_flagged_on_evaluation_half": 0
+      },
+      "survivorship": {
+        "activity_rate": 0.83871,
+        "flagged_pairs": 31,
+        "survivor_rate": 0.612903,
+        "survivors": 19,
+        "survivors_min_known_per_side": 3,
+        "with_evaluation_activity": 26,
+        "without_evaluation_activity": 5
+      }
+    }
+  },
+  "metadata": {
+    "as_of": "2026-09-08",
+    "database_writes": false,
+    "elapsed_sec": 1122.98,
+    "flag_min_known_per_side": 10,
+    "ranking_or_score_changes": false,
+    "read_only": true,
+    "report": "branch-window-direction-battery",
+    "schema_changes": false,
+    "seed": 20260904
+  },
+  "notes": [
+    "review_triggers are NOT verdicts: nothing in that list can withdraw anything by itself. Their lines are prefixed [REVIEW] precisely so they are never read as a WITHDRAW or a KEEP.",
+    "Re-flag rate is reported for information only and is NOT a withdrawal criterion: the counts-not-badges design already absorbed the 2026-09-03 finding that labels do not persist across years. Do not re-litigate it.",
+    "Survivorship is stated before any performance number on purpose: a rule whose flagged pairs vanish is unusable however good the survivors look.",
+    "Every number here is a price-percentile count. There is no profit, no return and no win rate; buy and sell episodes are counted independently and are never paired into a trade."
+  ],
+  "review_triggers": [
+    {
+      "applies_to": "backward",
+      "is_withdrawal_criterion": false,
+      "line": "[REVIEW NOT TRIGGERED] backward_survivors_below_review_floor: survivors = 160 (review floor 100); this is a prompt to look again, not a verdict",
+      "observed": {
+        "survivors": 160,
+        "survivors_threshold": 100
+      },
+      "threshold": "review (never withdraw) if backward survivors < 100",
+      "trigger": "backward_survivors_below_review_floor",
+      "triggered": false
+    },
+    {
+      "applies_to": "backward",
+      "is_withdrawal_criterion": false,
+      "line": "[REVIEW NOT TRIGGERED] backward_obs_exp_below_review_floor: backward obs/exp = 2.33442 (review floor 2.0); this is a prompt to look again, not a verdict",
+      "observed": {
+        "backward_obs_exp": 2.33442,
+        "backward_obs_exp_threshold": 2.0
+      },
+      "threshold": "review (never withdraw) if backward obs/exp < 2.0",
+      "trigger": "backward_obs_exp_below_review_floor",
+      "triggered": false
+    }
+  ],
+  "split": {
+    "evaluation_from": "2025-09-04",
+    "evaluation_market_days": 245,
+    "evaluation_to": "2026-09-08",
+    "formation_from": "2024-09-02",
+    "formation_market_days": 245,
+    "formation_to": "2025-09-03",
+    "window_from": "2024-09-02",
+    "window_market_days": 490,
+    "window_market_days_requested": 490,
+    "window_to": "2026-09-08",
+    "window_truncated": false
+  },
+  "verdicts": [
+    {
+      "applies_to": "forward",
+      "criterion": "forward_vs_flow_matched_placebo",
+      "evaluable": true,
+      "line": "[WITHDRAW forward] forward_vs_flow_matched_placebo: exceeds-both 0.3158 (n=19) vs flow-matched placebo 0.3158 (n=19); difference 0.0000, 2.0 sigma = 0.3016; placebo obs/exp = 1.331771",
+      "observed": {
+        "difference": 0.0,
+        "flagged_compared_pairs": 19,
+        "flagged_exceeds_both_rate": 0.315789,
+        "placebo_compared_pairs": 19,
+        "placebo_exceeds_both_rate": 0.315789,
+        "placebo_obs_exp": 1.331771,
+        "placebo_obs_exp_exceeded": false,
+        "placebo_obs_exp_threshold": 1.5,
+        "sigma": 0.150811,
+        "sigma_multiple_threshold": 2.0,
+        "within_sigma_band": true
+      },
+      "outcome": "WITHDRAW forward",
+      "threshold": "withdraw if |rate difference| <= 2.0 sigma or placebo obs/exp > 1.5",
+      "triggered": true
+    },
+    {
+      "applies_to": "forward",
+      "criterion": "forward_lag_test",
+      "evaluable": true,
+      "line": "[KEEP forward] forward_lag_test: obs/exp 1.301023 unlagged -> 1.601553 under next-market-day reference price (threshold 0.5 x = 0.650512)",
+      "observed": {
+        "lagged_obs_exp": 1.601553,
+        "retained_ratio": 1.230995,
+        "retained_ratio_threshold": 0.5,
+        "unlagged_obs_exp": 1.301023
+      },
+      "outcome": "KEEP forward",
+      "threshold": "withdraw if lagged obs/exp < 0.5 x unlagged obs/exp",
+      "triggered": false
+    },
+    {
+      "applies_to": "forward",
+      "criterion": "forward_weak_while_backward_strong",
+      "evaluable": true,
+      "line": "[KEEP forward] forward_weak_while_backward_strong: forward obs/exp = 1.301023 (< 2.0?) while backward obs/exp = 2.33442 (>= 2.5?) on the same data",
+      "observed": {
+        "backward_obs_exp": 2.33442,
+        "backward_obs_exp_threshold": 2.5,
+        "forward_obs_exp": 1.301023,
+        "forward_obs_exp_threshold": 2.0
+      },
+      "outcome": "KEEP forward",
+      "threshold": "withdraw if forward obs/exp < 2.0 and backward obs/exp >= 2.5",
+      "triggered": false
+    },
+    {
+      "applies_to": "backward",
+      "criterion": "backward_collapse_toward_placebo",
+      "evaluable": true,
+      "line": "[KEEP backward] backward_collapse_toward_placebo: backward obs/exp = 2.33442 on adjusted prices (pull threshold 1.5); its flow-matched placebo = 1.147969",
+      "observed": {
+        "backward_obs_exp": 2.33442,
+        "backward_obs_exp_threshold": 1.5,
+        "backward_placebo_obs_exp": 1.147969
+      },
+      "outcome": "KEEP backward",
+      "threshold": "pull the shipped panel if backward obs/exp < 1.5",
+      "triggered": false
+    },
+    {
+      "applies_to": "backward",
+      "criterion": "backward_vs_flow_matched_placebo",
+      "evaluable": true,
+      "line": "[KEEP backward] backward_vs_flow_matched_placebo: exceeds-both 0.5625 (n=160) vs flow-matched placebo 0.2833 (n=120); difference 0.2792, 2.0 sigma = 0.1137; placebo obs/exp = 1.147969",
+      "observed": {
+        "difference": 0.279167,
+        "flagged_compared_pairs": 160,
+        "flagged_exceeds_both_rate": 0.5625,
+        "placebo_compared_pairs": 120,
+        "placebo_exceeds_both_rate": 0.283333,
+        "placebo_obs_exp": 1.147969,
+        "placebo_obs_exp_exceeded": false,
+        "placebo_obs_exp_threshold": 1.5,
+        "sigma": 0.056835,
+        "sigma_multiple_threshold": 2.0,
+        "within_sigma_band": false
+      },
+      "outcome": "KEEP backward",
+      "threshold": "withdraw if |rate difference| <= 2.0 sigma or placebo obs/exp > 1.5",
+      "triggered": false
+    },
+    {
+      "applies_to": "backward",
+      "criterion": "backward_lag_test",
+      "evaluable": true,
+      "line": "[KEEP backward] backward_lag_test: obs/exp 2.33442 unlagged -> 2.225086 under next-market-day reference price (threshold 0.5 x = 1.167210)",
+      "observed": {
+        "lagged_obs_exp": 2.225086,
+        "retained_ratio": 0.953164,
+        "retained_ratio_threshold": 0.5,
+        "unlagged_obs_exp": 2.33442
+      },
+      "outcome": "KEEP backward",
+      "threshold": "withdraw if lagged obs/exp < 0.5 x unlagged obs/exp",
+      "triggered": false
+    }
+  ]
+}
