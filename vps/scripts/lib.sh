@@ -218,11 +218,28 @@ radar_timeout() {
 
 # JSON 上線:wrangler 讀 vps/.env 的 CLOUDFLARE_API_TOKEN/ACCOUNT_ID(已 set -a 載入),
 # 資產 hash 去重只傳變動檔,deploy 完即生效(影子期只掛 /data-preview/*)。
+#
+# 離開碼要**自己**接住,不能靠 set -e——這個函式會被 run_step / run_step_or_fail
+# 包在 `if` 的測試式裡跑,而 if 的測試式整段關掉 set -e(關掉是連同被呼叫函式
+# 內部一起關)。舊寫法的最後一行是 `cd "$REPO"`,於是 `npx wrangler deploy` 失敗
+# 之後函式照樣往下跑,回傳 cd 的 0:整輪把「沒上線」報成成功,還會去寫完成標記、
+# 發 notify_ok,而 00:05 的夜間備援看到標記就整夜略過。實測(stub npx 回 9):
+#   裸 deploy_data              rc=9  中止          ← set -e 在這裡有效
+#   run_step "deploy" deploy_data  rc=0  繼續(!)   ← 舊寫法,失敗被吃掉
+# 修好之後兩者都是 9。收尾 `( exit "$rc" ); return "$rc"` 與 radar() 同一個形狀,
+# 理由也相同:裸呼叫時就地帶著原碼中止(逐位元同於改動前),被 if 包住時忠實回傳。
 deploy_data() {
-  cd "$REPO/cloudflare-data-worker"
-  [ -d node_modules ] || npm install --no-audit --no-fund
-  npx wrangler deploy
-  cd "$REPO"
+  local rc=0
+  cd "$REPO/cloudflare-data-worker" || return $?
+  if [ ! -d node_modules ]; then
+    npm install --no-audit --no-fund || rc=$?
+  fi
+  if [ "$rc" -eq 0 ]; then
+    npx wrangler deploy || rc=$?
+  fi
+  cd "$REPO" || true
+  ( exit "$rc" )
+  return "$rc"
 }
 
 taipei_date() { TZ=Asia/Taipei date "$@"; }
@@ -277,19 +294,41 @@ run_step() {
 #   3. 收尾用 `exit "$rc"`,不是讓非零回到頂層。回到頂層會觸發 ERR trap,於是同一次
 #      失敗送兩則通知——5cb7649 修掉的正是那個雙重通知。
 #
-# 通知只有這一份,所有呼叫點共用;要改措辭改這裡,不要在呼叫端各寫一份。
-# ⚠️ 目前唯一的呼叫者是 daily-branches.sh,下面那句「不寫完成標記,00:05 夜間作業
-# 會重算」講的是**那一輪**的收尾契約(見 branch_round_marker)。別的腳本要用這個
-# helper 之前,先把那半句參數化,不要讓它對一支沒有完成標記的腳本說謊。
+# 通知的**前半句**(哪一步、哪個碼、本輪中止、未上線)只有這一份,所有呼叫點共用;
+# **後半句**(這一輪失敗的真正後果)每一支腳本自己宣告,見 set_round_consequence。
+#
+# 為什麼後半句非參數化不可:這個 helper 最初只服務 daily-branches.sh,句尾寫死
+# 「本輪不寫完成標記,00:05 夜間作業會重算」——那是**那一輪**的收尾契約
+# (見 branch_round_marker)。14:10 / 15:00 / 16:10 / 21:20 四輪都沒有完成標記,
+# 而 00:05 的夜間作業只重算分點統計,不會重抓日K、法人或資券。照抄那半句
+# 等於在最需要準確的那一則通知裡對值班的人說謊:他會以為凌晨會自動補好而不動手。
+#
+# 為什麼用「未宣告就拒跑」而不是預設值:預設值會讓忘記宣告的腳本**靜默**繼承
+# 別人的後果句,而錯的那一句只在真的失敗的那一晚才被讀到——最晚、最貴的發現時機。
+# 這裡改成第一步就檢查:沒宣告的腳本每一次執行(成功的日子也一樣)都會在做任何
+# 工作之前就帶著 high 通知 exit 78,第一次上線當天就會被發現。
+ROUND_FAIL_CONSEQUENCE=""
+
+# 宣告「這一輪失敗會怎樣」。措辭要求:講網站會停在什麼內容,以及**哪一輪、什麼時候**
+# 會補上(沒有人會補就要明講要人工補)。一句話,接在共用的「本輪中止、未上線」之後。
+set_round_consequence() {
+  ROUND_FAIL_CONSEQUENCE="$1"
+}
+
 run_step_or_fail() {
   local label="$1"
   local rc=0
+  if [ -z "${ROUND_FAIL_CONSEQUENCE:-}" ]; then
+    echo "run_step_or_fail: ${SCRIPT_NAME} 未宣告本輪失敗後果（缺 set_round_consequence），拒絕執行 ${label}" >&2
+    notify "${SCRIPT_NAME} 未呼叫 set_round_consequence，拒絕執行步驟 ${label}（這是腳本本身的錯,不是資料問題）" high "失敗"
+    exit 78
+  fi
   if run_step "$@"; then
     return 0
   else
     rc=$?
   fi
-  notify "${label} 失敗（碼 ${rc}），本輪中止、未上線，網站仍是前一輪的內容；本輪不寫完成標記，00:05 夜間作業會重算" high "失敗"
+  notify "${label} 失敗（碼 ${rc}），本輪中止、未上線；${ROUND_FAIL_CONSEQUENCE}" high "失敗"
   exit "$rc"
 }
 

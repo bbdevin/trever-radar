@@ -1,6 +1,7 @@
 """TPEx 520 retry, import metadata, CLI temp-failure, and shell contracts."""
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 from tempfile import TemporaryDirectory
@@ -222,6 +223,23 @@ class ImportDailyHttpResultTests(unittest.TestCase):
                     cli.cmd_import_daily(SimpleNamespace(date="20260901", datasets=datasets))
             self.assertEqual(caught.exception.code, expected)
 
+    @staticmethod
+    def _real_lib_function(name):
+        """Lift one helper verbatim out of the real `vps/scripts/lib.sh`.
+
+        The fake lib below stubs everything that would touch Docker, the DB or
+        ntfy — but `run_step` / `run_step_or_fail` / `set_round_consequence` are
+        exactly what this harness is measuring (which step aborts the round, with
+        which code, and how many notifications come out).  Re-typing them here
+        would let the copy drift from the shipped one, and the harness would then
+        certify a shape that production does not have.  So take the real text.
+        """
+        lib = (Path(__file__).parents[2] / "vps" / "scripts" / "lib.sh").read_text(
+            encoding="utf-8")
+        match = re.search(rf"^{name}\(\) \{{.*?^\}}", lib, re.S | re.M)
+        assert match, f"lib.sh 裡找不到 {name}()"
+        return match.group(0)
+
     def _run_daily_insti_harness(self, quotes_rc=0, insti_rc=0, master_rc=0):
         """Run a copied script with a sibling fake lib; never touch VPS helpers."""
         source = Path(__file__).parents[2] / "vps" / "scripts" / "daily-insti.sh"
@@ -256,7 +274,12 @@ radar() {
   fi
   return 0
 }
-                """,
+SCRIPT_NAME=daily-insti.sh
+ROUND_FAIL_CONSEQUENCE=""
+"""
+                + self._real_lib_function("set_round_consequence") + "\n"
+                + self._real_lib_function("run_step") + "\n"
+                + self._real_lib_function("run_step_or_fail") + "\n",
                 encoding="utf-8",
                 newline="\n",
             )
@@ -308,14 +331,32 @@ radar() {
         self.assertFalse(any("--datasets insti" in event or "warrant-master" in event for event in events))
         self.assertTrue(any(event.startswith("notify:") and ":high:" in event for event in events))
 
-    def test_daily_insti_insti_failure_trips_err_once_and_stops_before_master_or_publish(self):
+    def test_daily_insti_insti_failure_notifies_once_and_stops_before_master_or_publish(self):
+        """法人匯入失敗要送**一則指名步驟**的 high,而不是靠 ERR trap。
+
+        以前這條測的是「ERR trap 剛好觸發一次」——那是這個 harness 的假象:假的
+        lib.sh 裡 `radar` 是普通函式,失敗會回到頂層而觸發 trap。正式機的 `radar`
+        收尾是 `( exit "$rc" )`,失敗發生在**函式內部**,而 ERR trap 沒有 set -E
+        就不繼承進函式,所以那一步在 production 是**零通知**靜默死掉的
+        (實測見 test_daily_rounds_step_notify.py 的說明)。改走 run_step_or_fail
+        之後,ERR trap 依然不觸發(正確,否則會雙重通知),但這一步自己送一則
+        帶步驟名、離開碼與本輪後果的 high,離開碼仍是原本的 42。
+        """
         rc, events = self._run_daily_insti_harness(insti_rc=42)
         self.assertEqual(rc, 42)
         self.assertIn("radar:import-daily --datasets quotes", events)
         self.assertIn("radar:import-daily --datasets insti", events)
         self.assertFalse(any("warrant-master" in event or "aggregate-warrants" in event
                              or event == "deploy" or event.startswith("ok:") for event in events))
-        self.assertEqual(sum(event.startswith("err:") for event in events), 1)
+        self.assertEqual(sum(event.startswith("err:") for event in events), 0,
+                         "ERR trap 不該觸發,否則同一次失敗會送兩則")
+        highs = [e for e in events if e.startswith("notify:") and ":high:" in e]
+        self.assertEqual(len(highs), 1, f"恰好一則 high,實際:{highs}")
+        self.assertIn("import-insti", highs[0], "要指名是哪一步")
+        self.assertIn("42", highs[0], "要帶上離開碼")
+        self.assertIn("17:40", highs[0], "要說誰會接手(16:10 的補救者是 17:40 那輪)")
+        self.assertNotIn("完成標記", highs[0],
+                         "那是 daily-branches 的收尾契約,這一輪沒有完成標記")
 
     def test_daily_insti_master_failure_is_handled_without_err_and_still_publishes(self):
         rc, events = self._run_daily_insti_harness(master_rc=1)

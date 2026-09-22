@@ -133,7 +133,11 @@ class TestStepFailureNotify(unittest.TestCase):
         helper 不得把它壓成 1。"""
         body = self._helper_body()
         self.assertRegex(body, r'exit\s+"\$rc"', "要帶著原碼離開")
-        self.assertNotRegex(body, r"exit\s+\d", "不可以用寫死的離開碼")
+        # 只看「某一步失敗」那條路徑:缺宣告的守衛用一個固定的設定錯誤碼是對的
+        # (它根本沒跑過任何一步,沒有原碼可帶),但真的跑過一步之後不准壓成字面值。
+        step_path = body[body.index("if run_step"):]
+        self.assertNotRegex(step_path, r"exit\s+\d",
+                            "跑過一步之後不可以用寫死的離開碼")
 
     def test_helper_exits_instead_of_returning_non_zero_to_the_top_level(self):
         """收尾必須是 `exit`,不是讓非零回到頂層。
@@ -150,20 +154,68 @@ class TestStepFailureNotify(unittest.TestCase):
         # 成功那一支要早退,否則成功也會走到通知與 exit。
         self.assertRegex(body, r"then\s*\n\s*return 0", "成功要 return 0 早退")
 
+    def _step_notify_line(self) -> str:
+        """真正報告某一步失敗的那一行(不是缺宣告的守衛那一行)。"""
+        return next(ln for ln in self._helper_body().splitlines()
+                    if "notify " in ln and "${label} 失敗" in ln)
+
     def test_notification_names_the_step_the_code_and_the_consequence(self):
         """措辭跟 safe-branch-stats.sh 的同類通知同一個語域:哪一步、哪個碼、
         後果是什麼。只說「失敗了」的通知會讓值班的人得自己去翻 cron log。"""
-        body = self._helper_body()
-        notify_line = next(ln for ln in body.splitlines() if "notify " in ln)
+        notify_line = self._step_notify_line()
         self.assertIn("${label}", notify_line, "要指名是哪一步")
         self.assertIn("${rc}", notify_line, "要帶上離開碼")
         self.assertIn("high", notify_line, "失敗要叫醒人")
         self.assertIn('"失敗"', notify_line, "標題後綴用『失敗』")
         self.assertIn("本輪中止", notify_line, "要說整輪停在這裡")
         self.assertIn("未上線", notify_line, "要說沒有東西上線")
-        self.assertRegex(notify_line, r"完成標記",
-                         "要說不寫完成標記(那是 00:05 夜間作業會接手的依據)")
-        self.assertIn("00:05", notify_line, "要說誰會接手")
+        self.assertIn("${ROUND_FAIL_CONSEQUENCE}", notify_line,
+                     "後果那半句要由呼叫端的 set_round_consequence 帶進來")
+
+    def test_the_branches_specific_consequence_is_no_longer_hardcoded_in_lib(self):
+        """「不寫完成標記,00:05 夜間作業會重算」是 daily-branches 那一輪的收尾契約。
+
+        14:10 / 15:00 / 16:10 / 21:20 四輪都沒有完成標記,而 00:05 的夜間作業只重算
+        分點統計——不會重抓日K、法人或資券。這半句留在共用 helper 裡,就會在最需要
+        準確的那一則通知裡對值班的人說謊:他會以為凌晨自動補得回來而不動手。
+        """
+        body = self._helper_body()
+        self.assertNotIn("完成標記", body,
+                         "完成標記是 daily-branches 專屬的契約,不得寫死在共用 helper")
+        self.assertNotIn("00:05", body,
+                         "00:05 夜間作業只重算分點,不是每一輪的接手者")
+        self.assertIn('set_round_consequence "', self.code,
+                      "daily-branches 要自己宣告那一句")
+        own = next(ln for ln in self.lines if ln.strip().startswith("set_round_consequence "))
+        self.assertIn("完成標記", own)
+        self.assertIn("00:05", own)
+
+    def test_a_caller_that_forgets_to_declare_the_consequence_fails_loudly(self):
+        """忘記宣告不可以靜默繼承別人的後果句。
+
+        預設值的問題是發現時機:錯的那一句只有在真的失敗的那一晚才會被讀到,
+        而那正是最貴的時刻。所以守衛放在**跑任何一步之前**:沒宣告的腳本每一次
+        執行(成功的日子也一樣)都會在第一步就帶著 high 通知離開,第一次上線當天
+        就會被發現。實測:未宣告 → rc=78、恰好一則通知、ERR trap 不觸發。
+        """
+        body = self._helper_body()
+        guard = body[:body.index("if run_step")]
+        self.assertIn("ROUND_FAIL_CONSEQUENCE", guard,
+                      "守衛必須在跑第一步之前就檢查宣告")
+        self.assertRegex(guard, r'-z\s+"\$\{ROUND_FAIL_CONSEQUENCE:-\}"',
+                         "沒宣告(空字串)就要擋下來")
+        self.assertIn("notify ", guard, "擋下來要發通知,不可以只寫 log")
+        self.assertIn("high", guard, "這是腳本本身的錯,要叫醒人")
+        self.assertIn("set_round_consequence", guard,
+                      "通知要指名缺的是哪一個呼叫,讀的人才知道怎麼修")
+        self.assertRegex(guard, r"exit \d+", "要就地結束,不可以帶著沒宣告繼續跑")
+
+    def test_the_setter_is_defined_once_and_lives_in_lib(self):
+        definers = [p.name for p in sorted(SCRIPTS_DIR.glob("*.sh"))
+                    if re.search(r"^set_round_consequence\(\)\s*\{",
+                                 p.read_text(encoding="utf-8"), re.M)]
+        self.assertEqual(["lib.sh"], definers,
+                         f"set_round_consequence 只能定義在 lib.sh,實際:{definers}")
 
     # ── 呼叫端 ────────────────────────────────────────────────────────
     def test_every_step_but_the_branch_import_uses_the_helper(self):
