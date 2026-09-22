@@ -29,24 +29,9 @@ mem_available_mb() {
   awk '/MemAvailable:/ {printf "%d", $2/1024}' /proc/meminfo
 }
 
-# 統一的計時 wrapper:鎖等待之外,每一個主要步驟(radar 子指令、deploy)都套
-# 這個,單一格式才追得出 93→138 分鐘是哪一步在長。用 if/then 取得結果而不是
-# set +e/-e 切換,是為了不論成功失敗都印得出 done/elapsed 這行,呼叫端仍可用
-# `if run_step ...; then ... else rc=$?; ... fi` 讀到原始離開碼(set -e 對
-# if 的測試式免疫,不會在這裡提早中止)。
-run_step() {
-  local label="$1"; shift
-  local t0 rc
-  t0="$(date +%s)"
-  echo "step ${label} start $(taipei_date -Is)"
-  if "$@"; then
-    rc=0
-  else
-    rc=$?
-  fi
-  echo "step ${label} done rc=${rc} elapsed=$(( $(date +%s) - t0 ))s"
-  return "$rc"
-}
+# 計時 wrapper `run_step` 定義在 lib.sh(本檔 source 它):17:40 / 22:00 的
+# daily-branches.sh 也用同一份,兩輪的 log 才是同一個格式,可以用同一個 grep
+# 比較同一步在兩輪的耗時。搬過去時語意逐字未變(見 lib.sh 的註解)。
 
 # 唯一決定「這次略過該用 default 還是 high 優先權」的地方,五個 skip 出口都呼叫它。
 # 邏輯:讀 $STATE_FILE 的 finished= 時間戳,離現在超過 $STALE_HOURS 小時(或

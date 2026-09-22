@@ -227,6 +227,34 @@ deploy_data() {
 
 taipei_date() { TZ=Asia/Taipei date "$@"; }
 
+# 統一的計時 wrapper:鎖等待之外,每一個主要步驟(radar 子指令、deploy)都套
+# 這個,單一格式才追得出 93→138 分鐘是哪一步在長。用 if/then 取得結果而不是
+# set +e/-e 切換,是為了不論成功失敗都印得出 done/elapsed 這行,呼叫端仍可用
+# `if run_step ...; then ... else rc=$?; ... fi` 讀到原始離開碼(set -e 對
+# if 的測試式免疫,不會在這裡提早中止)。
+#
+# 這裡的 if 形狀不是可有可無的實作細節:本檔在 source 時就 install_fail_trap,
+# 而 `set +e` **不會**讓 ERR trap 安靜下來(實測:set +e 之下回 75 仍然觸發)。
+# daily-branches.sh 的分點匯入正是靠 run_step 回傳的原始離開碼做 0/75/76 分級,
+# 改成 set +e 取碼會讓每個「個別標的失敗但可上線」的日子多送一則 high 假故障。
+#
+# 定義放這裡(而不是某一支腳本裡)是因為兩支以上的腳本要用同一份:
+# safe-branch-stats.sh(00:05 夜間補跑)與 daily-branches.sh(17:40 / 22:00),
+# 兩輪的 log 必須是同一個格式,才能用同一個 grep 比較同一步在兩輪的耗時。
+run_step() {
+  local label="$1"; shift
+  local t0 rc
+  t0="$(date +%s)"
+  echo "step ${label} start $(taipei_date -Is)"
+  if "$@"; then
+    rc=0
+  else
+    rc=$?
+  fi
+  echo "step ${label} done rc=${rc} elapsed=$(( $(date +%s) - t0 ))s"
+  return "$rc"
+}
+
 # 「那一輪 daily-branches 真的整條跑完(含 deploy_data)」的完成標記。
 #
 # 為什麼夜間作業不能只看 import_logs 的 status:那一列只講「匯入」這一段。

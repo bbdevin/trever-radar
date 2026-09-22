@@ -23,15 +23,16 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = REPO_ROOT / "vps" / "scripts" / "safe-branch-stats.sh"
+LIB = REPO_ROOT / "vps" / "scripts" / "lib.sh"
 
 FULL_LINE_COMMENT = re.compile(r"^\s*#")
 TRAILING_COMMENT = re.compile(r"(?<=\s)#.*$")
 
 
-def _code_lines() -> list[str]:
+def _code_lines(path: Path = SCRIPT) -> list[str]:
     """逐行的「去註解」版本,行號(index+1)與原檔對得起來。"""
     out = []
-    for line in SCRIPT.read_text(encoding="utf-8").splitlines():
+    for line in path.read_text(encoding="utf-8").splitlines():
         if FULL_LINE_COMMENT.match(line):
             out.append("")
         else:
@@ -62,8 +63,13 @@ class TestSafeBranchStatsScript(unittest.TestCase):
 
     # ── 判準 1:計時 ────────────────────────────────────────────────────
     def test_run_step_helper_logs_start_done_and_elapsed(self):
-        m = re.search(r"run_step\(\)\s*\{(.*?)\n\}", self.code, re.S)
-        self.assertIsNotNone(m, "找不到 run_step 計時 wrapper")
+        """wrapper 本身已搬到 lib.sh(17:40 / 22:00 那輪也要用同一份,兩輪的
+        log 才是同一個格式);本檔仍然驗它的內容,因為這支腳本的每步計時
+        完全靠它。定義只能有一份這件事由 test_daily_branches_timing.py 釘住。"""
+        lib_code = "\n".join(_code_lines(LIB))
+        self.assertNotRegex(self.code, r"(?m)^run_step\(\)", "本檔不該再自己定義一份")
+        m = re.search(r"run_step\(\)\s*\{(.*?)\n\}", lib_code, re.S)
+        self.assertIsNotNone(m, "lib.sh 裡找不到 run_step 計時 wrapper")
         body = m.group(1)
         self.assertRegex(body, r'echo\s+"step\s+\$\{?label\}?\s+start', "run_step 要印出起始時間")
         self.assertRegex(body, r'echo\s+"step\s+\$\{?label\}?\s+done\s+rc=', "run_step 要印出離開碼")

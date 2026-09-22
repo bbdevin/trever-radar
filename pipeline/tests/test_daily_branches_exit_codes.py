@@ -83,8 +83,13 @@ class TestDailyBranchesExitCodes(unittest.TestCase):
         """
         imp = next(i for i, ln in enumerate(self.lines)
                    if "radar import-branch-trades" in ln)
-        self.assertTrue(self.lines[imp].strip().startswith("if radar import-branch-trades"),
-                        "匯入要寫成 `if radar import-branch-trades …; then`")
+        # 允許套上 lib.sh 的計時 wrapper:`run_step` 內部同樣用 if 取碼、收尾
+        # `return "$rc"` 逐位元回傳原碼,所以要守的性質仍然是「呼叫寫在 if 的
+        # 測試式裡」,而不是「第一個字必須是 radar」。
+        self.assertRegex(
+            self.lines[imp].strip(),
+            r'^if (run_step "import-branch-trades" )?radar import-branch-trades .*; then$',
+            "匯入要寫成 `if [run_step …] radar import-branch-trades …; then`")
 
         # `set +e` 不可以在匯入附近重新出現——那是被實測否決的寫法。
         window = self.code[max(0, self._index("radar import-branch-trades") - 300):

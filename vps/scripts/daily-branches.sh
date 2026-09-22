@@ -48,14 +48,31 @@ BRANCH_ROUND_MODE="${BRANCH_ROUND_MODE:-full}"
 # 唯一需要它的情況下失效。開跑日是資料日:17:40 與 22:00 兩輪都在當天交易日內。
 ROUND_DATE="$(taipei_date +%F)"
 
+# 起訖標記 + 每步計時(run_step 在 lib.sh,與 00:05 的 safe-branch-stats.sh 同一份)。
+# 為什麼非有不可:c1616f0 把 compute-branch-stats 的線性掃描換成二分搜尋,profiling
+# 說 20 檔從 95.46s 掉到 13.83s,推得出 77 分鐘 → 約 11 分鐘;但那之後夜間作業每晚
+# 都走跳過路徑,當天唯一真的跑 compute 的就是本輪——而本輪連一行開始/結束都沒有,
+# 於是系統最貴的一步正好在它變成唯一一次的那一刻變成看不見的。
+# 標記格式與其他腳本一致,cron log 裡可以直接用時間定位整輪的邊界。
+echo "=== daily-branches start $(taipei_date -Is) ==="
+
 acquire_db_lock
 acquire_branch_source_lock
 sync_code
 
+# 每一步都是 `run_step … || exit "$?"`,**不是**裸的 `run_step …`。差別只有一個,
+# 但不能省:失敗時要不要多送一則 ntfy。
+#   裸呼叫時代:`radar X` 的失敗發生在 radar **函式內部**(lib.sh 的 `( exit "$rc" )`),
+#     而 ERR trap 不繼承進函式,於是 bash 當場帶著原碼結束,一則通知都不發
+#     (lib.sh 的 radar 註解已寫明這件事)。
+#   若改成裸的 `run_step X`:失敗變成在**頂層**回傳非零,set -e 中止時 ERR trap
+#     就會觸發,每一次 OOM/失敗都會多一則「執行到第 N 行失敗」high 通知。
+# 那是行為改變,不是加計時;這次只要能見度,不要順手改通知策略。`|| exit "$?"`
+# 讓失敗留在 `||` 的左邊(ERR trap 與 set -e 都不看),離開碼逐位元照舊。
 # 上櫃日K 若 14:10/16:10 仍 empty,此輪再抓,否則 --top 0 會漏掉無當日報價的上櫃。
-radar import-daily --datasets quotes,insti
-radar compute-indicators --all --days 5
-radar seed-branches
+run_step "import-daily" radar import-daily --datasets quotes,insti || exit "$?"
+run_step "compute-indicators" radar compute-indicators --all --days 5 || exit "$?"
+run_step "seed-branches" radar seed-branches || exit "$?"
 # top=0: 當日有報價的全部 type=stock(不含 ETF)。
 # 全市場權證輪尚未通過容量/時間 PoC；過渡池只含標的是 active 普通股的
 # 上市認購／認售、當日成交金額至少 100 萬的權證。此模式取代 legacy --warrants Top-N，不能疊加。
@@ -95,8 +112,14 @@ esac
 # 「個別標的失敗但可上線」的日子都多送一則 high 優先權的「執行到第 N 行失敗」,
 # 把一個正常結果講成故障,也就把 75(一般)與 76(high)的分級整個抵銷掉——
 # 正是這個專案一直在對抗的警報疲勞。if 的測試式對 set -e 與 ERR trap 都免疫,
-# safe-branch-stats.sh 的 run_step 用的就是這個形狀,理由相同。
-if radar import-branch-trades --top 0 --warrant-turnover-min 1000000 --sleep 1.0; then
+# lib.sh 的 run_step 內部用的就是這個形狀,理由相同。
+#
+# 包上 run_step 之後這個形狀完全沒變:run_step 內部同樣用 if 取碼(所以 ERR trap
+# 一樣不會被觸發,而且它是函式,ERR trap 本來就不繼承進函式),收尾 `return "$rc"`
+# 逐位元回傳 radar 的離開碼,於是下面的 branch_rc 拿到的還是 0/75/76/其他 原碼。
+# 本輪唯一最貴的那一段(import-branch-trades 與 compute-branch-stats)因此也有了
+# 跟夜間作業同格式的 elapsed,而分級邏輯一個字都沒動。
+if run_step "import-branch-trades" radar import-branch-trades --top 0 --warrant-turnover-min 1000000 --sleep 1.0; then
   branch_rc=0
 else
   branch_rc=$?
@@ -135,18 +158,20 @@ esac
 if [ "$BRANCH_ROUND_MODE" = "import" ]; then
   if [ -s "$(branch_round_marker "$ROUND_DATE")" ]; then
     notify_ok "本輪僅匯入分點與法人資料（BRANCH_ROUND_MODE=import）：未重算、未匯出、未上線,網站仍是 17:40 那輪的內容"
+    echo "=== daily-branches done $(taipei_date -Is) ==="
     exit 0
   fi
   notify_warn "17:40 那輪未上線（${ROUND_DATE} 無完成標記），本輪接手完整鏈:重算、匯出、上線"
 fi
 
-radar compute-branch-stats
-radar compute-scores
-radar compute-performance
-radar export-json
-radar prune
-deploy_data
+run_step "compute-branch-stats" radar compute-branch-stats || exit "$?"
+run_step "compute-scores" radar compute-scores || exit "$?"
+run_step "compute-performance" radar compute-performance || exit "$?"
+run_step "export-json" radar export-json || exit "$?"
+run_step "prune" radar prune || exit "$?"
+run_step "deploy" deploy_data || exit "$?"
 # 只有走到這裡才算「整輪跑完」。夜間備援作業讀這個標記決定今晚要不要重算,
 # 所以它必須在 deploy_data 之後——在之前寫就等於承諾了一件還沒發生的事。
 taipei_date -Is > "$(branch_round_marker "$ROUND_DATE")"
 notify_ok "分點籌碼已更新並上線（含法人補抓）"
+echo "=== daily-branches done $(taipei_date -Is) ==="
