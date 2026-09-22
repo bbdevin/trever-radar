@@ -17,6 +17,7 @@ import { dataFetch } from "@/lib/dataFetch";
 import { OFFLINE_DATA_COPY, isBrowserOffline } from "@/lib/pwa";
 import type { ListKey, MetaJson, RadarJson, StrategyMeta } from "@/lib/types";
 import { SOURCE_LABEL, fmtE8 } from "@/lib/format";
+import { staleAutoFills, staleFreshnessLines } from "@/lib/freshness";
 
 // TabKey for the main task-oriented tabs（資券嵌首頁，手機 BottomNav 不另開第 5 項）
 type TabKey =
@@ -298,15 +299,10 @@ function RadarView() {
   }
   if (!radar) return <LoadingSkeleton />;
 
-  // futures 少了這一行,徽章就會印出原始鍵 "futures"。它的 stale 是
-  // 「連前一個交易日都沒跟上」(§7.12):常態落後一天不算舊。
-  const FRESH_LABEL: Record<string, string> = {
-    insti: "法人", margin: "融資券", warrant: "權證", branch: "分點",
-    futures: "個股期貨",
-  };
-  const stale = Object.entries(radar.freshness ?? {})
-    .filter(([k, v]) => k !== "quotes" && v.stale && v.date)
-    .map(([k, v]) => ({ label: FRESH_LABEL[k] ?? k, date: v.date! }));
+  // 句子與「要不要講自動補齊」都在 lib/freshness.ts,那裡有測試蓋住;期貨的
+  // 措辭與其他資料集不同的理由寫在該檔的 docstring(§7.12)。
+  const stale = staleFreshnessLines(radar.freshness);
+  const showAutoFillNote = staleAutoFills(stale);
   // Retired codes remain in radar.strategies for historic links and old JSON
   // consumers. With lifecycle metadata present, keep them out of the primary
   // selector and expose them only in the explicit historical disclosure.
@@ -358,8 +354,8 @@ function RadarView() {
               {"尚未更新"}
             </span>
             <span>
-              {stale.map((s) => `${s.label}今日尚未公布,暫用 ${s.date}`).join("；")}
-              {"(依交易所公布時間分批自動更新)"}
+              {stale.map((s) => s.text).join("；")}
+              {showAutoFillNote ? "(依交易所公布時間分批自動更新)" : null}
             </span>
           </AlertDescription>
         </Alert>
