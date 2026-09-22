@@ -56,7 +56,7 @@ from .futures_volume_battery import (
     load_spot_daily,
     spot_new_high,
 )
-from .settlement_calendar import settlement_exclusion_set
+from .settlement_calendar import settlement_exclusion_set, settlement_is_determinable
 
 # 觸發理由與風險提醒各一個代碼,形狀同 ``indicators.score_technical`` 產出的
 # ``{"code": ..., "text": ...}``。這裡沒有 ``points``:異常旗標不進任何分數,
@@ -97,7 +97,9 @@ def risk_text(*, spot_new_high_today: bool | None) -> str:
     return head + f";現貨當日{'有' if spot_new_high_today else '無'}同步創高。"
 
 
-def futures_volume_anomalies(conn, as_of: str) -> dict[str, dict[str, Any]] | None:
+def futures_volume_anomalies(
+    conn, as_of: str, *, market_days_as_of: str | None = None,
+) -> dict[str, dict[str, Any]] | None:
     """``{contract_code: {"anomaly": {...}, "reasons": [...], "risks": [...]}}``。
 
     只有**當天真的舉旗**的契約會出現在回傳值裡;被否決的、以及被規則看過但沒創高
@@ -112,13 +114,23 @@ def futures_volume_anomalies(conn, as_of: str) -> dict[str, dict[str, Any]] | No
     ``as_of`` 落在 R4 結算窗口內、或比較窗口湊不滿 60 天時回傳 ``{}``:規則看過了
     而且對每一個契約同時否決,而 §2 的否決與「看過但沒創高」在輸出上本來就刻意
     不可分辨(§7.7)。
+
+    ``market_days_as_of``(§7.13):市場日日曆要讀到哪一天。R4 的排除窗口是往
+    **未來**看的(結算日與其前 3 個市場日),所以日曆多一天就多一天的先見之明;
+    export 的現貨日比期貨日新一天,把那一天給進來是白拿的。預設沿用 ``as_of``。
+    日曆答不出候選日的結算窗口時整個回傳 ``None``——**不可判定就不主張**,
+    絕不當成「沒有被排除」(§7.13)。
     """
     futures_days = load_futures_calendar(conn, as_of)
     if not futures_days or futures_days[-1] != as_of:
         # 期貨資料還沒跟上 export 日。沒有那一天的量就沒有那一天的主張——
         # 這是「沒有算」,不是「算過而且沒有」。
         return None
-    market_days = load_market_days(conn, as_of)
+    market_days = load_market_days(conn, market_days_as_of or as_of)
+    if not settlement_is_determinable(candidate=as_of, market_days=market_days):
+        # R4 的排除窗口在這本日曆上算不出來。算不出來不是「沒有被排除」:
+        # 那會讓上線的規則在日曆邊緣比被檢定過的規則寬鬆(§7.13)。
+        return None
     excluded = settlement_exclusion_set(
         date_from=futures_days[0], date_to=as_of, market_days=market_days,
     )
@@ -209,9 +221,15 @@ def anomaly_index(
 
 
 def anomaly_index_meta(
-    index: list[dict[str, Any]] | None,
-) -> dict[str, int] | None:
-    """市場層級名單的隨附事實:``{"window_days": WINDOW_DAYS}``(docs/38 §7.11)。
+    index: list[dict[str, Any]] | None, *, as_of: str,
+) -> dict[str, Any] | None:
+    """市場層級名單的隨附事實:``{"as_of": ..., "window_days": WINDOW_DAYS}``。
+
+    ``as_of``(docs/38 §7.12)是**這份名單講的是哪一天**——期貨行情日,不是
+    ``radar.json`` 的 ``data_date``。兩者常態差一個交易日(21:20 那一輪拿到的是
+    前一天的完整報告),所以名單自己必須帶日期:少了它,UI 只剩下頁面的現貨日
+    可用,而那句話會把期貨的結果掛在錯的日子上。日期是**明講的**,不是從條目裡
+    推出來的——空名單那一態一個條目都沒有,推不出任何東西。
 
     **為什麼需要它**:§7.10 規定 UI 要講「N 個比較日」時一律讀 payload,不准在前端
     寫死 60。但 §7.5 的第二態(**有鍵、空陣列**)是一個有日期的正面主張——「算過了,
@@ -232,4 +250,4 @@ def anomaly_index_meta(
     """
     if index is None:
         return None
-    return {"window_days": WINDOW_DAYS}
+    return {"as_of": as_of, "window_days": WINDOW_DAYS}

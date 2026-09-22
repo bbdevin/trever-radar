@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from bisect import bisect_left
 from calendar import WEDNESDAY
-from datetime import date as date_cls
+from datetime import date as date_cls, timedelta
 from typing import Sequence
 
 # R4:結算日本身 + 其前 3 個市場日。3 是 docs/38 §2 R4 事前訂下的取捨(排太少
@@ -78,6 +78,61 @@ def settlement_exclusion_days(
     index = bisect_left(market_days, settlement)
     start = max(0, index - EXCLUSION_MARKET_DAYS_BEFORE)
     return list(market_days[start:index + 1])
+
+
+def settlement_is_determinable(*, candidate: str, market_days: Sequence[str]) -> bool:
+    """候選日的 R4 排除窗口**算得出來嗎**(docs/38 §7.13)。
+
+    :func:`settlement_exclusion_days` 在定位不到結算日的時候回傳空清單,而空清單
+    在集合聯集裡與「這個月沒有排除日」**看起來一模一樣**。battery 是帶著事後日曆
+    跑的,任何一天的下個結算日都已經在日曆裡,所以那個塌陷在檢定裡永遠不會發生;
+    export 永遠坐在日曆的尾巴上,它會發生,而且方向是**把該排除的日子放上榜**——
+    上線的規則於是與被檢定過的規則在邊緣不同。
+
+    這裡把那個塌陷變成一個問句:**答不出來就不要主張**(§7.13)。
+
+    答得出來的兩種情形:
+
+    * 該月的結算日落在已知日曆之內 → :func:`settlement_date` 給得出答案,窗口是
+      完整的已知市場日,照 R4 判就好;
+    * 名目日(第三個星期三)還在已知日曆之後,**但它離候選日夠遠**——遠到不論
+      中間開不開市,候選日都不可能是結算日之前的 3 個市場日之一。
+
+    「夠遠」怎麼數:已知日曆之內用真的市場日,已知日曆之後**把每一個平日當成
+    市場日**。後者是一個外推,而且它可能錯——候選日與名目結算日之間若整段連假,
+    真正的市場日會比平日少。那個錯誤的方向與**現在的行為完全相同**(把一個該排
+    除的日子放行),所以這個函式在任何一天都不會比現況更差,而在正常的日曆上它
+    把真正的邊緣案例(結算日前 1–3 個市場日)擋下來。用日曆日或月份去近似都不
+    行:前者把整個月上半段誤判成不可判定,後者更甚。
+    """
+    day = date_cls.fromisoformat(candidate)
+    if settlement_date(
+        year=day.year, month=day.month, market_days=market_days,
+    ) is not None:
+        return True
+    # 名目日不在候選日之後、卻還是定位不到結算日(例如名目日早於日曆第一天,
+    # 或日曆是空的)→ 下面的區間是空的,天數 0,照樣答「不可判定」。不另寫一個
+    # 分支:那個分支與這一行永遠給同一個答案,只會多一條沒有人測得到的路。
+    nominal = third_wednesday(day.year, day.month).isoformat()
+    return _trading_days_between(
+        after=candidate, before=nominal, market_days=market_days,
+    ) >= EXCLUSION_MARKET_DAYS_BEFORE
+
+
+def _trading_days_between(
+    *, after: str, before: str, market_days: Sequence[str],
+) -> int:
+    """``(after, before)`` 開區間內的市場日數;已知日曆之後的平日一律算一天。"""
+    known = [day for day in market_days if after < day < before]
+    count = len(known)
+    tail = max(after, market_days[-1]) if market_days else after
+    cursor = date_cls.fromisoformat(tail) + timedelta(days=1)
+    end = date_cls.fromisoformat(before)
+    while cursor < end:
+        if cursor.weekday() < 5:
+            count += 1
+        cursor += timedelta(days=1)
+    return count
 
 
 def settlement_exclusion_set(

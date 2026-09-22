@@ -68,7 +68,9 @@ export interface FuturesAnomalyFact {
 export function anomalyFacts(a: FuturesAnomaly): FuturesAnomalyFact[] {
   const days = fmtLotsAbs(a.window_days);
   const facts: FuturesAnomalyFact[] = [
-    { key: "today", label: "今日一般時段", value: fmtLotsAbs(a.today), unit: "口" },
+    // 「今日」不可以出現在這裡:這一列講的是期貨行情日,而那一天通常不是使用者
+    // 眼前的今天(§7.12)。日期由外面的標題講,標籤只講它是什麼數字。
+    { key: "today", label: "一般時段成交", value: fmtLotsAbs(a.today), unit: "口" },
     { key: "window_max", label: `前 ${days} 個比較日最高`, value: fmtLotsAbs(a.window_max), unit: "口" },
     { key: "window_median", label: `前 ${days} 個比較日中位數`, value: fmtLotsAbs(a.window_median), unit: "口" },
   ];
@@ -101,8 +103,8 @@ export interface FuturesAnomalyRow {
  */
 export type FuturesAnomalyMarketState =
   | { kind: "not-computed" }
-  | { kind: "computed-empty"; dataDate: string; windowDays: number | null }
-  | { kind: "listed"; dataDate: string; rows: FuturesAnomalyRow[] };
+  | { kind: "computed-empty"; dataDate: string; asOf: string | null; windowDays: number | null }
+  | { kind: "listed"; dataDate: string; asOf: string | null; rows: FuturesAnomalyRow[] };
 
 export function futuresAnomalyMarketState(
   entries: FuturesVolumeAnomalyEntry[] | null | undefined,
@@ -111,8 +113,15 @@ export function futuresAnomalyMarketState(
   meta?: FuturesVolumeAnomalyMeta | null,
 ): FuturesAnomalyMarketState {
   if (!entries) return { kind: "not-computed" };
+  // `asOf` 是期貨行情日,只能來自 payload(§7.12)。讀不到就是 null——
+  // **不可以**退回 `dataDate`:那會把期貨的結果掛到現貨的日子上,而這兩個
+  // 日期常態相差一個交易日,正是這個鍵存在的理由。
+  const asOf = meta?.as_of ?? null;
   if (entries.length === 0) {
-    return { kind: "computed-empty", dataDate, windowDays: meta?.window_days ?? null };
+    return {
+      kind: "computed-empty", dataDate, asOf,
+      windowDays: meta?.window_days ?? null,
+    };
   }
   // 順序原封不動(payload 已依 today − window_max 遞減排好);不排序、不去重。
   const rows = entries.map((e) => ({
@@ -123,7 +132,7 @@ export function futuresAnomalyMarketState(
     reasons: e.reasons,
     risks: e.risks,
   }));
-  return { kind: "listed", dataDate, rows };
+  return { kind: "listed", dataDate, asOf, rows };
 }
 
 /**
@@ -136,12 +145,27 @@ export function futuresAnomalyMarketState(
  * 正面主張,只是少講比較基準——同 §7.1 的習慣:缺值就是缺值,不編一個數字上去。
  */
 export function anomalyEmptyStateText(
-  state: { dataDate: string; windowDays: number | null },
+  state: { asOf: string | null; windowDays: number | null },
 ): string {
   const high = state.windowDays === null
     ? "創新高"
     : `創 ${state.windowDays} 個比較日新高`;
-  return `${state.dataDate} 已完成計算:今日沒有契約的一般時段成交量${high}。`;
+  // 日期是**期貨行情日**,不是頁面的資料日(§7.12)。句子裡也不出現「今日」:
+  // 這份計算講的不是使用者眼前的那一天,寫「今日」會把兩個日子說成同一天。
+  const head = state.asOf === null ? "已完成計算" : `期貨 ${state.asOf} 已完成計算`;
+  return `${head}:沒有契約的一般時段成交量${high}。`;
+}
+
+/**
+ * 「期貨行情日與本頁其他資料不同一天」那一句(§7.12)。
+ *
+ * 兩個**有主張**的狀態(算過了沒有 / 算過了有名單)都要講,而且只在真的不同天
+ * 的時候講;相同就回 `null`,不留一句廢話。這句話**不說「落後一天」**——前端
+ * 沒有交易日曆,數不出兩個日期差幾個交易日,只說得出它們是哪兩天。
+ */
+export function anomalyLagText(asOf: string | null, dataDate: string): string | null {
+  if (asOf === null || asOf === dataDate) return null;
+  return `期貨行情日 ${asOf};本頁其他資料為 ${dataDate}。`;
 }
 
 /**

@@ -15,6 +15,7 @@ from radar.compute.settlement_calendar import (
     settlement_date,
     settlement_exclusion_days,
     settlement_exclusion_set,
+    settlement_is_determinable,
     third_wednesday,
 )
 
@@ -206,6 +207,68 @@ class ExclusionSetTests(unittest.TestCase):
             ),
             set(),
         )
+
+
+class DeterminabilityTests(unittest.TestCase):
+    """「這本日曆答得出候選日的 R4 窗口嗎」(docs/38 §7.13)。
+
+    battery 帶著事後日曆跑,任何一天的下個結算日都已經在日曆裡,所以這個問題
+    在檢定裡永遠是「答得出來」。export 永遠坐在日曆的尾巴上,它會答不出來,
+    而舊行為把「答不出來」當成「沒有被排除」——上線的規則因此在日曆邊緣比
+    被檢定過的規則寬鬆。這裡把那條界線鎖住:**答不出來就不主張**。
+    """
+
+    def test_a_calendar_that_reaches_the_settlement_answers_yes(self):
+        days = _weekday_calendar(date(2026, 1, 1), date(2026, 6, 30))
+        self.assertTrue(settlement_is_determinable(
+            candidate="2026-06-15", market_days=days))
+
+    def test_the_three_market_days_before_an_unreachable_settlement_answer_no(self):
+        # 六月結算日 06-17;日曆只到 06-16,所以 06-15 到底該不該排除是答不出來的。
+        # 舊行為在這裡回「沒有被排除」,於是 06-15 可以上榜——而帶著日曆重跑,
+        # 它是排除窗口裡的一天。
+        days = _weekday_calendar(date(2026, 1, 1), date(2026, 6, 16))
+        self.assertIsNone(settlement_date(year=2026, month=6, market_days=days))
+        for candidate in ("2026-06-12", "2026-06-15", "2026-06-16"):
+            self.assertFalse(
+                settlement_is_determinable(candidate=candidate, market_days=days),
+                candidate,
+            )
+
+    def test_a_candidate_far_enough_from_the_nominal_day_answers_yes(self):
+        """月初的候選日不受影響:名目結算日還很遠,遠到不可能在它的窗口裡。
+
+        這條是這個函式的整個難點。若把「定位不到結算日」一律當成不可判定,
+        每個月從 1 號到第三個星期三的每一天都會停止主張——整整半個月的功能
+        因為一條保守規則而消失,那不是保守,那是關掉。
+        """
+        days = _weekday_calendar(date(2026, 1, 1), date(2026, 6, 5))
+        self.assertIsNone(settlement_date(year=2026, month=6, market_days=days))
+        self.assertTrue(settlement_is_determinable(
+            candidate="2026-06-05", market_days=days))
+
+    def test_the_boundary_is_exactly_the_exclusion_width(self):
+        """邊界剛好落在 R4 的那個 3:排除窗口的第一天開始答不出來,前一天還答得出來。
+
+        06-17 是名目結算日,它之前的三個市場日 06-12 / 15 / 16 就是排除窗口的
+        另外三天。所以候選日 06-11 與結算日之間有 3 個市場日 → 它不可能在窗口裡,
+        答得出來;06-12 之間只剩 2 個 → 它就是窗口裡那一天,而日曆答不出來。
+        """
+        days = _weekday_calendar(date(2026, 1, 1), date(2026, 6, 11))
+        self.assertTrue(settlement_is_determinable(
+            candidate="2026-06-11", market_days=days))
+        days_later = _weekday_calendar(date(2026, 1, 1), date(2026, 6, 12))
+        self.assertFalse(settlement_is_determinable(
+            candidate="2026-06-12", market_days=days_later))
+        self.assertEqual(EXCLUSION_MARKET_DAYS_BEFORE, 3)
+
+    def test_a_candidate_the_calendar_does_not_cover_answers_no(self):
+        """名目日不在候選日之後、卻仍定位不到結算日 = 這本日曆不涵蓋那一段。"""
+        days = _weekday_calendar(date(2026, 8, 1), date(2026, 8, 31))
+        self.assertFalse(settlement_is_determinable(
+            candidate="2026-06-19", market_days=days))
+        self.assertFalse(settlement_is_determinable(
+            candidate="2026-06-19", market_days=[]))
 
 
 if __name__ == "__main__":

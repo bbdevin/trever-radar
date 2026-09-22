@@ -615,6 +615,10 @@ function FuturesAnomalyBlock({ futures }: { futures: StockJson["futures"] }) {
   if (state.kind !== "has") return null;
   const flagged = flaggedContracts(state.contracts);
   if (flagged.length === 0) return null;
+  // 期貨行情日(§7.12)。它與本頁其他資料通常不是同一天,所以標題要自己帶日期;
+  // 讀不到就不編一個出來——標題少一個括號,勝過把現貨日冒充成期貨日。
+  const asOf = futures?.daily_as_of;
+  const heading = asOf ? `期貨成交量異常(${asOf})` : "期貨成交量異常";
 
   return (
     <div className="mb-2.5 flex flex-col gap-2" aria-label="個股期貨成交量異常">
@@ -628,7 +632,7 @@ function FuturesAnomalyBlock({ futures }: { futures: StockJson["futures"] }) {
               <Layers size={11} aria-hidden="true" />
               <span className="num">{c.code}</span>
             </span>
-            <span className="text-[12.5px] font-semibold text-foreground">期貨成交量異常</span>
+            <span className="text-[12.5px] font-semibold text-foreground">{heading}</span>
           </div>
           <div className="mt-2 grid grid-cols-2 gap-1.5 md:grid-cols-4">
             {anomalyFacts(c.anomaly).map((f) => (

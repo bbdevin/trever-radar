@@ -8,6 +8,7 @@ import { test } from "node:test";
 import {
   anomalyEmptyStateText,
   anomalyFacts,
+  anomalyLagText,
   flaggedContracts,
   futuresAnomalyMarketState,
   futuresState,
@@ -53,7 +54,10 @@ const entry = (stock_id: string, code: string, anomaly: typeof ANOMALY_MYF | typ
   risks: RISKS,
 });
 
-const META = { window_days: 60 };
+// 期貨行情日(2026-09-17)刻意**不等於**頁面的資料日(2026-09-18):production
+// 的常態就是差一個交易日,而這個功能上線後從來沒有顯示過,正是因為兩者被當成
+// 同一天(docs/38 §7.12)。
+const META = { as_of: "2026-09-17", window_days: 60 };
 
 test("§7.5 市場層級鍵的三態:缺鍵 / 空陣列 / 非空,三者互不相同", () => {
   const notComputed = futuresAnomalyMarketState(undefined, "2026-09-18", undefined, META);
@@ -64,10 +68,34 @@ test("§7.5 市場層級鍵的三態:缺鍵 / 空陣列 / 非空,三者互不相
   assert.deepEqual(computedEmpty, {
     kind: "computed-empty",
     dataDate: "2026-09-18",
+    asOf: "2026-09-17",
     windowDays: 60,
   });
   assert.equal(listed.kind, "listed");
   assert.notDeepEqual(notComputed, computedEmpty);
+});
+
+test("§7.12 期貨行情日只能來自 payload,不得用頁面的資料日頂替", () => {
+  const listed = futuresAnomalyMarketState(
+    [entry("1565", "MYF", ANOMALY_MYF)], "2026-09-18", undefined, META,
+  );
+  if (listed.kind !== "listed") throw new Error("expected listed");
+  assert.equal(listed.asOf, "2026-09-17");
+  assert.equal(listed.dataDate, "2026-09-18");
+  // meta 沒給日期(舊 payload)→ null,**不是** dataDate。
+  const noMeta = futuresAnomalyMarketState([], "2026-09-18", undefined, { window_days: 60 });
+  if (noMeta.kind !== "computed-empty") throw new Error("expected computed-empty");
+  assert.equal(noMeta.asOf, null);
+});
+
+test("§7.12 兩個日期不同才講落差,而且不說「一天」(前端沒有交易日曆)", () => {
+  const text = anomalyLagText("2026-09-17", "2026-09-18");
+  assert.equal(text, "期貨行情日 2026-09-17;本頁其他資料為 2026-09-18。");
+  assert.ok(!text!.includes("一天"), text!);
+  assert.ok(!text!.includes("落後"), text!);
+  // 同一天就沒有這句話;日期未知時也沒有——沒有日期就沒有落差可講。
+  assert.equal(anomalyLagText("2026-09-18", "2026-09-18"), null);
+  assert.equal(anomalyLagText(null, "2026-09-18"), null);
 });
 
 // ---- docs/38 §7.11:空名單那一態自己講得出比較窗口 ----
@@ -89,23 +117,34 @@ test("§7.10 meta 缺席時是 null:少講一段,不得退回一個寫死的 60"
 
 test("§7.11 空名單那句話會講出比較窗口,而且數字來自 payload", () => {
   assert.equal(
-    anomalyEmptyStateText({ dataDate: "2026-09-18", windowDays: 60 }),
-    "2026-09-18 已完成計算:今日沒有契約的一般時段成交量創 60 個比較日新高。",
+    anomalyEmptyStateText({ asOf: "2026-09-17", windowDays: 60 }),
+    "期貨 2026-09-17 已完成計算:沒有契約的一般時段成交量創 60 個比較日新高。",
   );
   // 換一個窗口長度,句子要跟著變——寫死 60 的話這一行就是紅的。
   assert.equal(
-    anomalyEmptyStateText({ dataDate: "2026-09-18", windowDays: 20 }),
-    "2026-09-18 已完成計算:今日沒有契約的一般時段成交量創 20 個比較日新高。",
+    anomalyEmptyStateText({ asOf: "2026-09-17", windowDays: 20 }),
+    "期貨 2026-09-17 已完成計算:沒有契約的一般時段成交量創 20 個比較日新高。",
   );
 });
 
+test("§7.12 這句話講的是期貨行情日,而且不出現「今日 / 今天」", () => {
+  const text = anomalyEmptyStateText({ asOf: "2026-09-17", windowDays: 60 });
+  assert.ok(text.startsWith("期貨 2026-09-17 已完成計算"), text);
+  assert.ok(!text.includes("今日"), text);
+  assert.ok(!text.includes("今天"), text);
+  // 日期讀不到(舊 payload)時少講日期,不得拿別的日子頂上。
+  const undated = anomalyEmptyStateText({ asOf: null, windowDays: 60 });
+  assert.equal(undated, "已完成計算:沒有契約的一般時段成交量創 60 個比較日新高。");
+  assert.ok(!undated.includes("2026"), undated);
+});
+
 test("§7.10 窗口未知時整段子句拿掉,句子裡不得出現任何數字當比較基準", () => {
-  const text = anomalyEmptyStateText({ dataDate: "2026-09-18", windowDays: null });
-  assert.equal(text, "2026-09-18 已完成計算:今日沒有契約的一般時段成交量創新高。");
+  const text = anomalyEmptyStateText({ asOf: "2026-09-17", windowDays: null });
+  assert.equal(text, "期貨 2026-09-17 已完成計算:沒有契約的一般時段成交量創新高。");
   assert.ok(!text.includes("60"), text);
   assert.ok(!text.includes("比較日"), text);
   // 但它仍然是一個帶日期的正面主張(§7.5 第二態),日期不可以掉。
-  assert.ok(text.startsWith("2026-09-18 已完成計算"), text);
+  assert.ok(text.startsWith("期貨 2026-09-17 已完成計算"), text);
 });
 
 test("§7.5 meta 不得把「沒有算過」講成「算過了、今天沒有」", () => {
@@ -143,6 +182,14 @@ test("§7.10 window_days 從區塊讀,不寫死 60", () => {
   const labels = facts.map((f) => f.label).join(" ");
   assert.ok(labels.includes("前 20 個比較日"), labels);
   assert.ok(!labels.includes("60"), labels);
+});
+
+test("§7.12 事實列的標籤不得出現「今日 / 今天」——那一天不是使用者的今天", () => {
+  for (const f of anomalyFacts(ANOMALY_MYF)) {
+    assert.ok(!f.label.includes("今日"), f.label);
+    assert.ok(!f.label.includes("今天"), f.label);
+  }
+  assert.equal(anomalyFacts(ANOMALY_MYF)[0].label, "一般時段成交");
 });
 
 test("§5 不算比率、不給名次:每個顯示值都是區塊裡原本那個整數", () => {

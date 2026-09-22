@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { Layers } from "lucide-react";
 import ReasonPill from "@/components/ReasonPill";
-import { anomalyEmptyStateText, futuresAnomalyMarketState } from "@/lib/futures";
+import { anomalyEmptyStateText, anomalyLagText, futuresAnomalyMarketState } from "@/lib/futures";
 import type { FuturesVolumeAnomalyEntry, FuturesVolumeAnomalyMeta } from "@/lib/types";
 
 /**
@@ -31,24 +31,32 @@ export default function FuturesAnomalyList({
 }) {
   const state = futuresAnomalyMarketState(entries, dataDate, nameById, meta);
 
-  // 缺鍵 = 今天沒有算過。不可以說成「今天沒有異常」——那是一個沒人做過的主張。
+  // 缺鍵 = 這一版沒有算過。不可以說成「今天沒有異常」——那是一個沒人做過的主張。
+  // 也不解釋原因:缺鍵有好幾種成因(§7.7、§7.13),挑一個講出來就是在猜。
   if (state.kind === "not-computed") {
     return (
       <div className="mx-auto max-w-md py-[46px] text-center text-sm leading-relaxed text-muted-foreground">
-        {"今日尚未計算期貨成交量異常。"}
-        <br />
-        {"期貨資料每日 21:20 匯入,這一版的期貨還停在前一個交易日;這不代表今天沒有異常。"}
+        {"尚未計算期貨成交量異常:這一版沒有可用的期貨行情日。這不代表沒有異常。"}
       </div>
     );
   }
 
-  // 空陣列 = 算過了,而且今天真的沒有契約舉旗。這是一個帶日期的正面主張,要說出日期。
+  // 空陣列 = 算過了,而且那一天真的沒有契約舉旗。這是一個帶日期的正面主張,
+  // 而那個日期是**期貨行情日**(§7.12),不是本頁的資料日;兩者不同時另起一句
+  // 把兩個日子都講清楚,不說「落後一天」——前端沒有交易日曆,數不出那個一。
   // 比較窗口的長度從 payload 的 `_meta` 讀(§7.11);讀不到就少講那一段,**不寫死 60**
   // (§7.10)——一個寫死的 60 會在 v2 改數字的那天變成第二個真相。
+  const lag = anomalyLagText(state.asOf, state.dataDate);
   if (state.kind === "computed-empty") {
     return (
       <div className="mx-auto max-w-md py-[46px] text-center text-sm leading-relaxed text-muted-foreground">
         {anomalyEmptyStateText(state)}
+        {lag && (
+          <>
+            <br />
+            {lag}
+          </>
+        )}
       </div>
     );
   }
@@ -56,7 +64,8 @@ export default function FuturesAnomalyList({
   return (
     <div className="mb-4">
       <p className="mb-2 text-[12px] text-muted-foreground">
-        {`${state.dataDate} 共 ${state.rows.length} 個契約舉旗。單位是契約不是股票——同一檔股票的兩個契約(例如 2,000 股標準型與 100 股小型)可以同一天都在名單上。`}
+        {`${state.asOf === null ? "" : `期貨 ${state.asOf}:`}共 ${state.rows.length} 個契約舉旗。單位是契約不是股票——同一檔股票的兩個契約(例如 2,000 股標準型與 100 股小型)可以同一天都在名單上。`}
+        {lag && <span className="ml-1">{lag}</span>}
       </p>
       <div className="grid grid-cols-1 gap-2.5 pb-4 md:grid-cols-2 xl:grid-cols-3">
         {state.rows.map((row) => (

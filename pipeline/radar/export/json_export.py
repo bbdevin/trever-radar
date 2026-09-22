@@ -208,8 +208,20 @@ def _active_buybacks_by_stock(conn, as_of: str) -> dict[str, dict]:
     return active
 
 
-def _futures_by_stock(conn, as_of: str) -> tuple[dict[str, dict], str, list | None] | None:
+def _futures_by_stock(
+    conn, as_of: str | None, *, spot_date: str | None = None,
+) -> tuple[dict[str, dict], str, list | None] | None:
     """個股期貨標的「存在與否」這個事實,外加(若當日有列)今天的成交量/未平倉。
+
+    ``as_of`` 是**期貨行情日**——``futures_daily`` 裡不晚於 export 日的最後一天,
+    不是 export 日本身(docs/38 §7.12)。這兩者常態相差一個交易日:餵源只給最新
+    一份**完整**報告,而 21:20 那一輪最新的完整報告是前一天的(當天的盤後時段要
+    到隔天 05:00 才收)。以前這裡收到的是現貨日,於是 ``WHERE date = :d`` 永遠撈
+    不到列、``futures_volume_anomalies`` 永遠回傳「沒有算過」——整個切片只有在
+    現貨匯入失敗的那一天才顯示得出來。切片裡的每一個日期因此都從這一個變數來。
+
+    ``spot_date`` 只給 R4 的市場日日曆用(§7.13):它比 ``as_of`` 新一天,而 R4
+    的排除窗口是往未來看的,多一天就是多一天的先見之明。``None`` = 沿用 ``as_of``。
 
     回傳 None = futures_contracts 整張表是空的(第一次 import-futures 之前)。
     呼叫端在那個情況下**整個 futures 鍵都不輸出**:
@@ -271,7 +283,11 @@ def _futures_by_stock(conn, as_of: str) -> tuple[dict[str, dict], str, list | No
             entry["open_interest"] = (entry["open_interest"] or 0) + row["open_interest"]
 
     # 一次計算,兩個出口:個股頁的區塊與市場層級的名單。第二次呼叫就是第二條規則。
-    anomalies = futures_volume_anomalies(conn, as_of)
+    # as_of 為 None(``futures_daily`` 整張表還沒有任何一列)時,規則自己就會在
+    # 「這一天沒有期貨日曆」那一步回傳「沒有算過」,不必在這裡分岔。
+    anomalies = futures_volume_anomalies(
+        conn, as_of, market_days_as_of=spot_date or as_of,
+    )
     market_index = anomaly_index(anomalies, stock_id_by_code={
         row["contract_code"]: row["stock_id"] for row in contract_rows
     })
@@ -279,7 +295,13 @@ def _futures_by_stock(conn, as_of: str) -> tuple[dict[str, dict], str, list | No
     by_stock: dict[str, dict] = {}
     for row in contract_rows:
         entry = by_stock.setdefault(row["stock_id"], {
-            "version": 1, "list_as_of": row["last_seen"], "contracts": [],
+            "version": 1, "list_as_of": row["last_seen"],
+            # 期貨行情日(§7.12)。與 list_as_of **不是**同一件事,所以不叫
+            # 裸的 as_of:list_as_of 是標的清單的刷新日,這個是行情日。
+            # 沒有任何期貨行情日的時候整個鍵不輸出(同 absent-key 慣例)——
+            # 把它寫成 null 等於宣稱「那一天叫做未知」。
+            **({"daily_as_of": as_of} if as_of is not None else {}),
+            "contracts": [],
         })
         entry["list_as_of"] = max(entry["list_as_of"], row["last_seen"])
         contract = {
@@ -289,8 +311,10 @@ def _futures_by_stock(conn, as_of: str) -> tuple[dict[str, dict], str, list | No
             "is_weekly_option": bool(row["is_weekly_option"]),
         }
         # 沒有當日列就整個 daily 省略。session_volume 只列出**真的有列**的時段:
-        # 21:20 那一輪通常只有一般時段落地(盤後約 05:00 才公布),寫一個
-        # "盤後": 0 會把「還沒公布」謊報成「盤後沒人交易」。
+        # 寫一個 "盤後": 0 會把「還沒公布」謊報成「盤後沒人交易」。
+        # (先前這裡寫著「21:20 那一輪通常只有一般時段落地」——那是錯的。
+        #  21:20 拿到的是**前一天**那份完整報告,兩個時段都在裡面;production
+        #  的 2026-09-18 就是一般 1,763 列 + 盤後 39 列。缺時段是例外不是常態。)
         today = daily_by_contract.get(row["contract_code"])
         if today is not None:
             contract["daily"] = today
@@ -837,8 +861,13 @@ def export_json(out_dir: Path | None = None) -> dict:
                 "stale_stock_count": w_stale_stock_count,
             },
             "branch": {"date": b_date, "stale": b_date != d},
-            # TAIFEX 落後一天就要看得見,不然期貨量會安靜地配上錯的現貨日。
-            "futures": {"date": f_date, "stale": f_date != d},
+            # 期貨**正常就落後現貨一個交易日**:餵源只給最新一份完整報告,而
+            # 21:20 那一輪最新的完整報告是前一天的(當天的盤後時段要到隔天
+            # 05:00 才收)。拿 d 去比,``stale`` 於是天天為真,面板天天承諾
+            # 「稍後自動補齊」——而這條管線補不了:餵源沒有日期參數,漏掉的
+            # 那天只能跑 backfill-futures。所以 stale 的意思是「連前一個交易日
+            # 都沒跟上」(§7.12)。f_date == d(期貨反而追上現貨)當然也不是舊。
+            "futures": {"date": f_date, "stale": f_date not in (d, prev)},
         }
 
         rows = conn.execute(text("""
@@ -1396,7 +1425,9 @@ def export_json(out_dir: Path | None = None) -> dict:
 
         # 期貨標的 / 當日量 / 成交量異常:**整個 export 只算這一次**。個股頁的
         # futures 區塊(下面 stocks/*.json)與 radar.json 的市場層級名單共用它。
-        futures_result = _futures_by_stock(conn, d)
+        # 期貨側的每一個日期都錨在 f_date(期貨行情日,見 _futures_by_stock)。
+        # 這裡以前傳的是 d,於是整個切片只有在現貨匯入失敗的那一天才顯示得出來。
+        futures_result = _futures_by_stock(conn, f_date, spot_date=d)
 
     now = datetime.now(ZoneInfo(config.TZ)).isoformat(timespec="seconds")
 
@@ -1428,11 +1459,15 @@ def export_json(out_dir: Path | None = None) -> dict:
                 f"{mkt_label}成交額 {top[1] / 1e8:.0f} 億，漲 {up_n} 跌 {down_n}。"
             )
         # Stale warning
+        # 期貨**不在**這句話裡:這句話承諾「稍後自動補齊」,而期貨補不了——
+        # 餵源沒有日期參數,只給最新一天,漏掉的那天要人去跑 backfill-futures。
+        # 它的落後改由 freshness 徽章講(§7.12)。
         stale_labels = [
             {"insti": "法人", "margin": "融資券", "warrant": "權證", "branch": "分點",
-             "themes": "題材分類", "futures": "個股期貨"}.get(k, k)
+             "themes": "題材分類"}.get(k, k)
             for k, v in (freshness or {}).items()
-            if k != "quotes" and (v.get("stale") if isinstance(v, dict) else False)
+            if k not in ("quotes", "futures")
+            and (v.get("stale") if isinstance(v, dict) else False)
         ]
         if stale_labels:
             out_sentences.append(f"{'、'.join(stale_labels)}資料尚未更新，稍後自動補齊。")
@@ -1487,7 +1522,10 @@ def export_json(out_dir: Path | None = None) -> dict:
     futures_anomaly_index = futures_result[2] if futures_result is not None else None
     if futures_anomaly_index is not None:
         radar["futures_volume_anomalies"] = futures_anomaly_index
-        radar["futures_volume_anomalies_meta"] = anomaly_index_meta(futures_anomaly_index)
+        # meta 的 as_of 是期貨行情日,與 freshness.futures.date 同一個變數(§7.12)。
+        radar["futures_volume_anomalies_meta"] = anomaly_index_meta(
+            futures_anomaly_index, as_of=f_date,
+        )
     meta = {
         "generated_at": now,
         "datasets": [

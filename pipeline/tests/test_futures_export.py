@@ -30,8 +30,14 @@ from radar.compute.futures_volume_battery import (
 from radar.compute.settlement_calendar import settlement_exclusion_set
 from radar.export.json_export import export_json
 
-D = "2026-09-15"      # 價格日 = export 日
-P = "2026-09-14"
+D = "2026-09-15"      # 現貨價格日 = export 日
+P = "2026-09-14"      # 前一個現貨交易日
+# 期貨行情日 = **前一個交易日**,這是 production 的常態形狀(docs/38 §7.12):
+# 餵源只給最新一份完整報告,而 21:20 那一輪最新的完整報告是前一天的。
+# 這份 fixture 以前讓期貨與現貨同一天,於是整份綠色的測試放行了一個
+# 「只有在現貨匯入失敗那天才顯示得出來」的功能。默認形狀從此是落後一天。
+F = P
+OLDER = "2026-09-10"        # 更早的期貨日:用來造「這個契約當天沒有列」
 LIST_AS_OF = "2026-09-11"   # 清單刷新日,刻意早於價格日
 
 RATIO_ISH = ("ratio", "avg", "mean", "rank", "score", "z")
@@ -46,7 +52,7 @@ def _contract(code, stock_id, *, last_seen=LIST_AS_OF, future=1, option=0, weekl
     }
 
 
-def _daily(code, month, session, volume, oi, date=D):
+def _daily(code, month, session, volume, oi, date=F):
     return {"contract_code": code, "date": date, "contract_month": month,
             "session": session, "volume": volume, "open_interest": oi}
 
@@ -131,13 +137,58 @@ class FuturesExportTests(unittest.TestCase):
         self.assertNotEqual(stock["futures"]["list_as_of"], D)
 
     # ── 當日數字 ────────────────────────────────────────────────
-    def test_daily_omitted_when_no_row_for_the_export_date(self):
+    def test_daily_omitted_when_the_contract_has_no_row_on_the_futures_date(self):
+        """期貨行情日由**整張表**的最後一天決定;個別契約那天沒有列就整個 daily 省略。"""
+        self._seed_futures(
+            [_contract("CCF", "2303"), _contract("MYF", "1565")],
+            [
+                _daily("CCF", "202609", "一般", 500, 900),
+                _daily("MYF", "202609", "一般", 300, 400, date=OLDER),
+            ],
+        )
+        export_json(self.out)
+        self.assertIn("daily", self._stock("2303")["futures"]["contracts"][0])
+        self.assertNotIn("daily", self._stock("1565")["futures"]["contracts"][0])
+
+    def test_the_block_is_anchored_on_the_futures_date_not_the_price_date(self):
+        """§7.12:切片的日期是期貨行情日。錨在現貨日的話這裡整個 daily 都不存在。"""
         self._seed_futures(
             [_contract("CCF", "2303")],
-            [_daily("CCF", "202609", "一般", 500, 900, date=P)],
+            [_daily("CCF", "202609", "一般", 500, 900)],
         )
-        contract = self._stock("2303")["futures"]["contracts"][0]
-        self.assertNotIn("daily", contract)
+        futures = self._stock("2303")["futures"]
+        self.assertEqual(futures["daily_as_of"], F)
+        self.assertNotEqual(futures["daily_as_of"], D)
+        self.assertEqual(futures["contracts"][0]["daily"]["date"], F)
+
+    def test_daily_as_of_and_daily_date_are_locked_together(self):
+        """兩個日期一個來源:``daily.date`` 與 ``daily_as_of`` 不得各自漂移。"""
+        self._seed_futures(
+            [_contract("CCF", "2303")],
+            [_daily("CCF", "202609", "一般", 500, 900)],
+        )
+        futures = self._stock("2303")["futures"]
+        self.assertEqual(futures["contracts"][0]["daily"]["date"],
+                         futures["daily_as_of"])
+
+    def test_daily_as_of_is_absent_when_there_is_no_futures_day_at_all(self):
+        """一列行情都沒有 = 沒有行情日。缺鍵,不是 null——null 是「未知的那一天」。"""
+        self._seed_futures([_contract("CCF", "2303")])
+        futures = self._stock("2303")["futures"]
+        self.assertNotIn("daily_as_of", futures)
+        raw = (self.out / "stocks" / "2303.json").read_text(encoding="utf-8")
+        self.assertNotIn("daily_as_of", raw)
+
+    def test_daily_as_of_is_not_the_list_refresh_date(self):
+        """行情日與清單刷新日是兩件事,所以這個鍵不叫裸的 as_of。"""
+        self._seed_futures(
+            [_contract("CCF", "2303")],
+            [_daily("CCF", "202609", "一般", 500, 900)],
+        )
+        futures = self._stock("2303")["futures"]
+        self.assertEqual(futures["list_as_of"], LIST_AS_OF)
+        self.assertEqual(futures["daily_as_of"], F)
+        self.assertNotEqual(futures["list_as_of"], futures["daily_as_of"])
 
     def test_daily_sums_months_and_splits_sessions(self):
         self._seed_futures(
@@ -150,13 +201,14 @@ class FuturesExportTests(unittest.TestCase):
             ],
         )
         daily = self._stock("2303")["futures"]["contracts"][0]["daily"]
-        self.assertEqual(daily["date"], D)
+        self.assertEqual(daily["date"], F)
         self.assertEqual(daily["volume"], 640)
         self.assertEqual(daily["open_interest"], 1000)
         self.assertEqual(daily["session_volume"], {"一般": 600, "盤後": 40})
 
     def test_session_volume_only_lists_sessions_that_actually_have_rows(self):
-        """21:20 那一輪常只有一般時段;寫 盤後: 0 會把「未公布」謊報成「沒成交」。"""
+        """缺時段是例外(21:20 拿到的那份前一日報告兩個時段都在),但缺了就是缺了:
+        寫 盤後: 0 會把「這份報告沒有這個時段」謊報成「盤後沒人交易」。"""
         self._seed_futures(
             [_contract("CCF", "2303")],
             [_daily("CCF", "202609", "一般", 500, 900)],
@@ -178,14 +230,43 @@ class FuturesExportTests(unittest.TestCase):
         self.assertEqual(daily["session_volume"], {"一般": 500})
 
     # ── freshness ──────────────────────────────────────────────
-    def test_freshness_reports_futures_lag(self):
+    def test_the_normal_one_day_lag_is_not_stale(self):
+        """落後一個交易日是**常態**,不是舊資料(§7.12)。
+
+        以前這裡拿 ``d`` 去比,``stale`` 於是天天為真,首頁天天承諾
+        「個股期貨資料尚未更新,稍後自動補齊」——而這條管線補不了:餵源沒有
+        日期參數,漏掉的那天只能跑 backfill-futures。
+        """
         self._seed_futures(
             [_contract("CCF", "2303")],
-            [_daily("CCF", "202609", "一般", 500, 900, date=P)],
+            [_daily("CCF", "202609", "一般", 500, 900)],
         )
         export_json(self.out)
         payload = json.loads((self.out / "radar.json").read_text(encoding="utf-8"))
-        self.assertEqual(payload["freshness"]["futures"], {"date": P, "stale": True})
+        self.assertEqual(payload["freshness"]["futures"], {"date": F, "stale": False})
+        self.assertNotIn("個股期貨", "".join(payload["summary_text"]))
+
+    def test_falling_behind_the_previous_trading_day_is_stale(self):
+        self._seed_futures(
+            [_contract("CCF", "2303")],
+            [_daily("CCF", "202609", "一般", 500, 900, date=OLDER)],
+        )
+        export_json(self.out)
+        payload = json.loads((self.out / "radar.json").read_text(encoding="utf-8"))
+        self.assertEqual(payload["freshness"]["futures"],
+                         {"date": OLDER, "stale": True})
+
+    def test_a_stale_futures_day_is_kept_out_of_the_auto_backfill_sentence(self):
+        """那句話承諾「稍後自動補齊」,而期貨補不了——所以它不在那句話裡。"""
+        self._seed_futures(
+            [_contract("CCF", "2303")],
+            [_daily("CCF", "202609", "一般", 500, 900, date=OLDER)],
+        )
+        export_json(self.out)
+        payload = json.loads((self.out / "radar.json").read_text(encoding="utf-8"))
+        joined = "".join(payload["summary_text"])
+        self.assertNotIn("個股期貨", joined)
+        self.assertNotIn("futures", joined)
 
     # ── 閘門 ────────────────────────────────────────────────────
     def test_payload_cannot_silently_gain_a_rate(self):
@@ -242,11 +323,22 @@ def _weekdays(start: date, count: int) -> list[str]:
 # 工作日,所以 R4 排除日是手算得出的四天一組(六月:06-12、15、16、17)。
 # 120 天扣掉 24 個排除日還有 95 個比較日可用,湊得滿 60。
 _DAYS = _weekdays(date(2026, 1, 5), 120)
-AD = _DAYS[-1]                      # 2026-06-19,異常切片的 export 日(非排除日)
+AD = _DAYS[-1]                      # 2026-06-19,**期貨**行情日(非排除日)
+# 現貨比期貨多一個交易日——這是 production 的常態形狀(docs/38 §7.12),而且是
+# 這份 fixture 唯一最重要的一行。以前兩邊最後一天相同,於是整份綠色的測試放行了
+# 一個結構上不可能顯示的功能:export 拿現貨日去問期貨,而那一天永遠沒有期貨列。
+SPOT_AHEAD = _weekdays(date(2026, 6, 20), 1)[0]     # 2026-06-22(週一)= export 日
+_SPOT_DAYS = _DAYS + [SPOT_AHEAD]
 _JUNE_SETTLEMENT = "2026-06-17"     # 六月結算日,在候選日的比較窗口之內
 _EXCLUDED = settlement_exclusion_set(
-    date_from=_DAYS[0], date_to=AD, market_days=_DAYS,
+    date_from=_DAYS[0], date_to=AD, market_days=_SPOT_DAYS,
 )
+
+
+def _spot_days(days: list[str]) -> list[str]:
+    """期貨日曆 → 現貨日曆:多一個交易日。"""
+    tail = date.fromisoformat(days[-1]) + timedelta(days=1)
+    return days + _weekdays(tail, 1)
 
 BASE_LOTS = 100                     # 每一個比較日的一般時段口數
 SPIKE_LOTS = 500                    # 候選日:嚴格大於 100,所以舉旗
@@ -264,6 +356,11 @@ EXPECTED_REASON = (
     "未平倉較前日 +210 口。"
 )
 EXPECTED_RISK = "量創高不代表方向;結算週已排除;盤後未計;現貨當日無同步創高。"
+
+
+# 「一列期貨行情都沒有」= 真正的「沒有算過」。**不是**「期貨落後 export 日」,
+# 那個是 production 的常態形狀(§7.12)。
+_NO_FUTURES_ROWS = {day: None for day in _DAYS}
 
 
 def _spec(code, stock_id, *, multiplier=MULTIPLIER, today=SPIKE_LOTS,
@@ -300,9 +397,15 @@ class _AnomalyFixture(unittest.TestCase):
         config.DB_URL, config.DATA_DIR = self._old_url, self._old_dir
         self._tmp.cleanup()
 
-    def seed(self, specs, *, days=None, spot_missing=()):
-        """``spot_missing`` = {(stock_id, date)},用來戳出 R2b 的現貨缺口。"""
+    def seed(self, specs, *, days=None, spot_missing=(), spot_ahead=True):
+        """``spot_missing`` = {(stock_id, date)},用來戳出 R2b 的現貨缺口。
+
+        ``spot_ahead`` 預設為真:現貨比期貨多一個交易日,這是 production 的形狀。
+        關掉它是為了測「現貨也停在同一天」那個**例外**(現貨匯入失敗的那一天),
+        不是為了方便——預設不可以是那個例外。
+        """
         days = _DAYS if days is None else days
+        price_days = _spot_days(days) if spot_ahead else list(days)
         stock_ids = sorted({spec["stock_id"] for spec in specs})
         with db.get_engine().begin() as conn:
             conn.execute(schema.stocks.insert(), [
@@ -313,7 +416,7 @@ class _AnomalyFixture(unittest.TestCase):
             conn.execute(schema.daily_prices.insert(), [
                 {"stock_id": sid, "date": day, "close": 50.0, "adj_factor": 1.0,
                  "volume": SPOT_SHARES, "turnover": 50_000_000}
-                for sid in stock_ids for day in days
+                for sid in stock_ids for day in price_days
                 if (sid, day) not in set(spot_missing)
             ])
             conn.execute(schema.futures_contracts.insert(), [
@@ -347,7 +450,8 @@ class _AnomalyFixture(unittest.TestCase):
                         "contract_month": "202612/202701", "session": "一般",
                         "volume": 888_888, "open_interest": None,
                     })
-            conn.execute(schema.futures_daily.insert(), rows)
+            if rows:        # 一列都沒有 = 這份 fixture 根本沒有期貨行情日
+                conn.execute(schema.futures_daily.insert(), rows)
 
     def contracts(self, sid):
         export_json(self.out)
@@ -369,6 +473,17 @@ class AnomalyFixtureSanityTests(unittest.TestCase):
     def test_june_settlement_day_is_excluded_and_sits_inside_the_window(self):
         self.assertIn(_JUNE_SETTLEMENT, _EXCLUDED)
         self.assertLess(_JUNE_SETTLEMENT, AD)
+
+    def test_the_default_shape_is_spot_one_trading_day_ahead_of_futures(self):
+        """這份 fixture 的形狀本身就是一條被守住的事實(§7.12)。
+
+        兩邊最後一天相同時,整個切片只有在現貨匯入失敗那一天才顯示得出來,
+        而那正是上線後從未顯示過的原因。預設形狀退回去,這裡就是紅的。
+        """
+        self.assertEqual(_SPOT_DAYS[-1], SPOT_AHEAD)
+        self.assertNotEqual(_SPOT_DAYS[-1], AD)
+        self.assertEqual(_SPOT_DAYS[:-1], _DAYS)
+        self.assertEqual(_spot_days(_DAYS), _SPOT_DAYS)
 
 
 class AnomalyFactsTests(_AnomalyFixture):
@@ -431,11 +546,81 @@ class AnomalyFactsTests(_AnomalyFixture):
         self.assertEqual(
             self.contracts("2303")["CCF"]["anomaly"]["today"], BASE_LOTS + 200)
 
-    def test_a_contract_with_no_regular_row_today_makes_no_claim(self):
-        self.seed([_spec("CCF", "2303", lots={AD: None})])
+    def test_a_contract_with_no_regular_row_that_day_makes_no_claim(self):
+        """行情日由**整張表**決定(MYF 撐著 AD),CCF 那天沒有列就什麼都不主張。"""
+        self.seed([_spec("CCF", "2303", lots={AD: None}), _spec("MYF", "1565")])
         contract = self.contracts("2303")["CCF"]
         self.assertNotIn("anomaly", contract)
         self.assertNotIn("daily", contract)
+        self.assertIn("daily", self.contracts("1565")["MYF"])   # 對照組
+
+
+class AnomalyDateAnchorTests(_AnomalyFixture):
+    """整個 futures 切片錨在**期貨行情日**,而不是 export 日(docs/38 §7.12)。
+
+    這一組測試是這個 bug 的正身。production 的形狀永遠是「現貨比期貨新一天」,
+    而 export 拿現貨日去問期貨:``contracts[].daily`` 的 ``WHERE date = :d`` 撈不到
+    任何一列,``futures_volume_anomalies`` 的 ``futures_days[-1] != as_of`` 一律
+    回傳「沒有算過」。市場層級的鍵因此**從未**出現過,而閘門唯一會放行的日子是
+    現貨匯入失敗的那一天。整份測試是綠的,因為 fixture 讓兩邊同一天。
+    """
+
+    def test_the_market_key_exists_under_the_production_shape(self):
+        self.seed([_spec("CCF", "2303")])
+        radar = self.radar()
+        self.assertNotEqual(radar["data_date"], AD)     # 現貨真的比期貨新一天
+        self.assertIn(INDEX_KEY, radar)
+        self.assertEqual([e["code"] for e in radar[INDEX_KEY]], ["CCF"])
+
+    def test_the_meta_date_is_the_futures_day_not_the_data_date(self):
+        self.seed([_spec("CCF", "2303")])
+        radar = self.radar()
+        self.assertEqual(radar[META_KEY]["as_of"], AD)
+        self.assertNotEqual(radar[META_KEY]["as_of"], radar["data_date"])
+
+    def test_the_meta_date_and_the_freshness_date_are_one_variable(self):
+        """同一個 f_date 餵兩個地方。分成兩個來源,這個等號就是第一個會斷的。"""
+        self.seed([_spec("CCF", "2303")])
+        radar = self.radar()
+        self.assertEqual(radar[META_KEY]["as_of"], radar["freshness"]["futures"]["date"])
+
+    def test_the_per_stock_daily_is_populated_under_the_production_shape(self):
+        """``contracts[].daily`` 也從來沒有被填過——沒有 UI 讀它,所以沒有症狀。"""
+        self.seed([_spec("CCF", "2303")])
+        contract = self.contracts("2303")["CCF"]
+        self.assertEqual(contract["daily"]["date"], AD)
+        self.assertEqual(contract["daily"]["volume"], SPIKE_LOTS + 999_999)
+        self.assertEqual(contract["daily"]["session_volume"],
+                         {"一般": SPIKE_LOTS, "盤後": 999_999})
+
+    def test_daily_as_of_is_present_and_equals_the_daily_date(self):
+        self.seed([_spec("CCF", "2303")])
+        export_json(self.out)
+        futures = json.loads(
+            (self.out / "stocks" / "2303.json").read_text(encoding="utf-8"))["futures"]
+        self.assertEqual(futures["daily_as_of"], AD)
+        self.assertEqual(futures["contracts"][0]["daily"]["date"],
+                         futures["daily_as_of"])
+
+    def test_a_stock_with_no_daily_row_still_carries_the_futures_day(self):
+        """日期是**明講的**,不是從 daily 推出來的:沒有 daily 的股票也答得出來。"""
+        self.seed([_spec("CCF", "2303"), _spec("MYF", "1565", lots={AD: None})])
+        export_json(self.out)
+        futures = json.loads(
+            (self.out / "stocks" / "1565.json").read_text(encoding="utf-8"))["futures"]
+        self.assertNotIn("daily", futures["contracts"][0])
+        self.assertEqual(futures["daily_as_of"], AD)
+
+    def test_the_slice_still_works_when_spot_import_failed_and_dates_match(self):
+        """現貨也停在同一天(現貨匯入失敗)時照樣算——修的是錨點,不是換一個錯。"""
+        self.seed([_spec("CCF", "2303")], spot_ahead=False)
+        radar = self.radar()
+        self.assertEqual(radar["data_date"], AD)
+        self.assertEqual(radar[META_KEY]["as_of"], AD)
+        self.assertEqual([e["code"] for e in radar[INDEX_KEY]], ["CCF"])
+        # 期貨反而追上現貨當然不是「舊」。stale 的意思是「連前一個交易日都沒
+        # 跟上」,不是「不等於前一個交易日」(§7.12)。
+        self.assertEqual(radar["freshness"]["futures"], {"date": AD, "stale": False})
 
 
 class AnomalyRefusalTests(_AnomalyFixture):
@@ -601,17 +786,63 @@ RANK_ISH = ("rank", "position", "order", "seq", "index", "score", "top", "place"
 class AnomalyMarketIndexTests(_AnomalyFixture):
     """市場層級的今日名單(docs/38 §7.5)。§1「名單短到能逐檔看」要的就是這一份。"""
 
-    def test_the_key_is_absent_when_the_day_was_never_computed(self):
-        """期貨資料還沒跟上 export 日 → 沒有算過。沒有算過就不該有任何主張。"""
-        self.seed([_spec("CCF", "2303", lots={AD: None})])
+    def test_the_key_is_absent_when_there_is_no_futures_day_at_all(self):
+        """一天期貨行情都沒有 → 沒有算過。沒有算過就不該有任何主張。
+
+        (以前這一條寫的是「期貨落後 export 日」,而那是 production 的**常態**,
+        不是「沒有算過」——那個誤解就是這個功能從未顯示過的原因,見 §7.12。)
+        """
+        self.seed([_spec("CCF", "2303", lots=_NO_FUTURES_ROWS)])
         self.assertNotIn(INDEX_KEY, self.radar())
 
     def test_an_uncomputed_day_is_not_written_as_an_empty_list(self):
         """塌成 [] 就等於把「不知道」講成「今天沒有異常」——正是三態要擋的那件事。"""
-        self.seed([_spec("CCF", "2303", lots={AD: None})])
+        self.seed([_spec("CCF", "2303", lots=_NO_FUTURES_ROWS)])
         self.radar()
         raw = (self.out / "radar.json").read_text(encoding="utf-8")
         self.assertNotIn(f'"{INDEX_KEY}"', raw)
+
+    def test_an_undecidable_settlement_window_makes_no_claim_at_all(self):
+        """R4 邊緣:算不出排除窗口時**不主張**,絕不當成「沒有被排除」(§7.13)。
+
+        候選日 06-15 的下一個結算日是 06-17,但日曆只到 06-16,``settlement_date``
+        因此回 ``None``,而舊的 ``settlement_exclusion_days`` 把那個 ``None`` 變成
+        一個空清單——與「這個月沒有排除日」看起來一模一樣。battery 帶著事後日曆
+        跑,那個塌陷永遠不會發生;export 永遠坐在尾巴上,它會發生,方向是把該
+        排除的日子放上榜。這裡的 CCF 在舊行為下會舉旗(它有尖峰、歷史也夠)。
+        """
+        days = _DAYS[:_DAYS.index("2026-06-15") + 1]
+        # 帶著完整日曆,這一天**是**排除日(所以正確答案是「不上榜」);
+        # 而這個 fixture 的日曆停在 06-16,答不出來。
+        self.assertIn(days[-1], _EXCLUDED)
+        self.seed([_spec("CCF", "2303", days=days)], days=days)
+        radar = self.radar()
+        self.assertNotIn(INDEX_KEY, radar)
+        self.assertNotIn(META_KEY, radar)
+        contract = self.contracts("2303")["CCF"]
+        self.assertNotIn("anomaly", contract)
+        # 但 daily 與行情日照舊:那兩個不是 R4 的主張,不受連坐。
+        self.assertEqual(contract["daily"]["date"], days[-1])
+
+    def test_the_market_day_calendar_uses_the_spot_date_not_the_futures_date(self):
+        """R4 的日曆讀到**現貨**日,白拿現貨已經有的那一天先見之明(§7.13)。
+
+        期貨停在 06-16、現貨已經到 06-17(= 六月結算日):讀現貨日答得出來
+        ——06-16 在排除窗口裡,所以是「算過了、沒有人舉旗」;只讀期貨日就答
+        不出來,整個鍵消失。兩者差的就是那一天。
+        """
+        days = _DAYS[:_DAYS.index("2026-06-16") + 1]
+        self.assertEqual(_spot_days(days)[-1], _JUNE_SETTLEMENT)
+        self.seed([_spec("CCF", "2303", days=days)], days=days)
+        self.assertEqual(self.radar()[INDEX_KEY], [])
+
+    def test_the_same_candidate_does_claim_once_the_calendar_reaches_the_settlement(self):
+        """對照組:日曆長到蓋住結算日,同一個候選日就答得出來了——而答案是排除。"""
+        days = _DAYS[:_DAYS.index("2026-06-15") + 1]
+        self.seed([_spec("CCF", "2303", days=days)],
+                  days=_DAYS[:_DAYS.index(_JUNE_SETTLEMENT) + 1], spot_ahead=False)
+        radar = self.radar()
+        self.assertEqual(radar[INDEX_KEY], [])      # 算過了:R4 排除,沒有人舉旗
 
     def test_a_computed_day_with_nothing_flagged_is_an_empty_list(self):
         """算過了、今天沒有契約舉旗:這是一個有日期的正面主張,不是沒有鍵。"""
@@ -714,9 +945,9 @@ class AnomalyMarketIndexTests(_AnomalyFixture):
         self.seed([_spec("CCF", "2303"), _spec("MYF", "1565")])
         calls = []
 
-        def counting(conn, as_of):
+        def counting(conn, as_of, **kwargs):
             calls.append(as_of)
-            return futures_volume_anomalies(conn, as_of)
+            return futures_volume_anomalies(conn, as_of, **kwargs)
 
         with patch("radar.export.json_export.futures_volume_anomalies", counting):
             export_json(self.out)
@@ -743,7 +974,7 @@ class AnomalyIndexMetaTests(_AnomalyFixture):
 
     def test_the_meta_key_is_absent_when_the_day_was_never_computed(self):
         """沒有名單就沒有 meta:一個沒有名單的孤兒 window_days 不主張任何事。"""
-        self.seed([_spec("CCF", "2303", lots={AD: None})])
+        self.seed([_spec("CCF", "2303", lots=_NO_FUTURES_ROWS)])
         radar = self.radar()
         self.assertNotIn(INDEX_KEY, radar)
         self.assertNotIn(META_KEY, radar)
@@ -751,16 +982,16 @@ class AnomalyIndexMetaTests(_AnomalyFixture):
         self.assertNotIn(META_KEY, raw)
 
     def test_a_computed_day_with_nothing_flagged_still_carries_the_window(self):
-        """空名單那一態:名單是 [],但比較窗口仍然講得出來。"""
+        """空名單那一態:名單是 [],但比較窗口與**是哪一天**仍然講得出來。"""
         self.seed([_spec("CCF", "2303", today=BASE_LOTS)])
         radar = self.radar()
         self.assertEqual(radar[INDEX_KEY], [])
-        self.assertEqual(radar[META_KEY], {"window_days": WINDOW_DAYS})
+        self.assertEqual(radar[META_KEY], {"as_of": AD, "window_days": WINDOW_DAYS})
 
     def test_a_flagged_day_carries_the_same_window_as_every_entry(self):
         self.seed([_spec("CCF", "2303"), _spec("MYF", "1565")])
         radar = self.radar()
-        self.assertEqual(radar[META_KEY], {"window_days": WINDOW_DAYS})
+        self.assertEqual(radar[META_KEY], {"as_of": AD, "window_days": WINDOW_DAYS})
         for entry in radar[INDEX_KEY]:
             self.assertEqual(entry["anomaly"]["window_days"], radar[META_KEY]["window_days"])
 
@@ -774,25 +1005,27 @@ class AnomalyIndexMetaTests(_AnomalyFixture):
         self.seed([_spec("CCF", "2303", today=BASE_LOTS)])
         with patch("radar.compute.futures_volume_anomaly.WINDOW_DAYS", 7):
             radar = self.radar()
-        self.assertEqual(radar[META_KEY], {"window_days": 7})
+        self.assertEqual(radar[META_KEY], {"as_of": AD, "window_days": 7})
 
-    def test_the_meta_key_is_exactly_one_integer_field(self):
+    def test_the_meta_key_is_exactly_one_date_and_one_integer(self):
         """§5:名單有順序沒有名次。meta 也不是名次或評分的落腳處。"""
         self.seed([_spec("CCF", "2303")])
         meta = self.radar()[META_KEY]
-        self.assertEqual(sorted(meta), ["window_days"])
+        self.assertEqual(sorted(meta), ["as_of", "window_days"])
         self.assertIsInstance(meta["window_days"], int)
         self.assertNotIsInstance(meta["window_days"], bool)
+        self.assertIsInstance(meta["as_of"], str)
         for bad in RANK_ISH + RATIO_ISH:
             for key in meta:
                 self.assertNotIn(bad, key.lower())
 
     def test_meta_is_derived_from_the_index_so_it_cannot_appear_alone(self):
         from radar.compute.futures_volume_anomaly import anomaly_index_meta
-        self.assertIsNone(anomaly_index_meta(None))
-        self.assertEqual(anomaly_index_meta([]), {"window_days": WINDOW_DAYS})
-        self.assertEqual(anomaly_index_meta([{"code": "CCF"}]),
-                         {"window_days": WINDOW_DAYS})
+        self.assertIsNone(anomaly_index_meta(None, as_of=AD))
+        self.assertEqual(anomaly_index_meta([], as_of=AD),
+                         {"as_of": AD, "window_days": WINDOW_DAYS})
+        self.assertEqual(anomaly_index_meta([{"code": "CCF"}], as_of=AD),
+                         {"as_of": AD, "window_days": WINDOW_DAYS})
 
 
 class AnomalyIndexOrderingTests(unittest.TestCase):

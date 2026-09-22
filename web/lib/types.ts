@@ -259,6 +259,13 @@ export interface FuturesInfo {
   version: number;
   /** 標的清單最後一次刷新日(TAIFEX 官方清單日),不是報價日。 */
   list_as_of: string;
+  /**
+   * 期貨**行情日**(docs/38 §7.12):這個區塊的 `daily` 與 `anomaly` 講的是哪一天。
+   * 與 `list_as_of` 是兩件事(清單刷新日 vs 行情日),所以不叫裸的 `as_of`;
+   * 與頁面的現貨資料日通常也差一個交易日,所以它必須自己帶著日期。
+   * 缺鍵 = 一天期貨行情都還沒有,不是「未知的那一天」。
+   */
+  daily_as_of?: string;
   contracts: FuturesContract[];
 }
 
@@ -324,6 +331,12 @@ export interface FuturesVolumeAnomalyEntry {
  * 名次或評分的落腳處:§5 不做跨契約排序,這裡永遠不會長出 rank / score。
  */
 export interface FuturesVolumeAnomalyMeta {
+  /**
+   * 這份名單講的是哪一天——期貨**行情日**,不是 `radar.json` 的 `data_date`
+   * (docs/38 §7.12)。兩者常態差一個交易日。選填是為了舊 payload:
+   * 讀不到就少講日期,不可以拿 `data_date` 頂替。
+   */
+  as_of?: string;
   /** 與 `FuturesAnomaly.window_days` 同一個常數;空名單那一態靠它講出比較窗口。 */
   window_days: number;
 }

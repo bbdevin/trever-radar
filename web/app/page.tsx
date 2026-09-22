@@ -298,8 +298,11 @@ function RadarView() {
   }
   if (!radar) return <LoadingSkeleton />;
 
+  // futures 少了這一行,徽章就會印出原始鍵 "futures"。它的 stale 是
+  // 「連前一個交易日都沒跟上」(§7.12):常態落後一天不算舊。
   const FRESH_LABEL: Record<string, string> = {
     insti: "法人", margin: "融資券", warrant: "權證", branch: "分點",
+    futures: "個股期貨",
   };
   const stale = Object.entries(radar.freshness ?? {})
     .filter(([k, v]) => k !== "quotes" && v.stale && v.date)
