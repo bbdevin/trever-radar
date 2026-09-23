@@ -278,6 +278,14 @@ class FuturesExportTests(unittest.TestCase):
         self.assertNotIn("futures", joined)
 
     # ── 閘門 ────────────────────────────────────────────────────
+    #
+    # 這一把是**路徑寫死**的:它只走這份 fixture 的 ``stock["futures"]``。通用版
+    # 是底下的 ``FuturesSurfaceRateGateTests``,它會自己找出整個期貨表面,新鍵
+    # 不必有人來改閘門。留著這一把不是重複,而是因為兩者的**輸入**不同:這份
+    # fixture 是「還沒有異常切片」的最小形狀(contracts 空陣列的非標的、沒有
+    # anomaly 的契約、只有 list_as_of 沒有 daily_as_of 的那一天),通用版那份
+    # 120 個交易日的 fixture 造不出它。而且這個函式從很多個 commit 以來刻意逐位元
+    # 不動——它是這條規則最早的那把鎖,改它的 diff 應該永遠值得被讀一次。
     def test_payload_cannot_silently_gain_a_rate(self):
         """後面那個切片要加比率/名次,得自己動手並過 review,不能順手混進來。"""
         self._seed_futures(
@@ -882,30 +890,6 @@ class AnomalyTextTests(_AnomalyFixture):
         self.assertNotIn("risks", contract)
 
 
-class AnomalyRateGateTests(_AnomalyFixture):
-    """新的切片也要過 `test_payload_cannot_silently_gain_a_rate` 的同一把閘門。"""
-
-    def test_the_anomaly_block_cannot_silently_gain_a_rate(self):
-        self.seed([_spec("CCF", "2303")])
-        self.contracts("2303")
-        offenders = []
-
-        def walk(node, path):
-            if isinstance(node, dict):
-                for key, value in node.items():
-                    if any(bad in key.lower() for bad in RATIO_ISH):
-                        offenders.append(f"{path}.{key}")
-                    walk(value, f"{path}.{key}")
-            elif isinstance(node, list):
-                for i, value in enumerate(node):
-                    walk(value, f"{path}[{i}]")
-
-        payload = json.loads(
-            (self.out / "stocks" / "2303.json").read_text(encoding="utf-8"))
-        walk(payload["futures"], "2303.futures")
-        self.assertEqual(offenders, [])
-
-
 INDEX_KEY = "futures_volume_anomalies"
 META_KEY = "futures_volume_anomalies_meta"
 
@@ -1037,23 +1021,6 @@ class AnomalyMarketIndexTests(_AnomalyFixture):
             # 而且鍵就是那五個,一個不多:第六個鍵要加,得自己動手並過 review。
             self.assertEqual(sorted(entry),
                              ["anomaly", "code", "reasons", "risks", "stock_id"])
-        self.assertEqual(offenders, [])
-
-    def test_the_index_cannot_silently_gain_a_rate(self):
-        self.seed([_spec("CCF", "2303")])
-        offenders = []
-
-        def walk(node, path):
-            if isinstance(node, dict):
-                for key, value in node.items():
-                    if any(bad in key.lower() for bad in RATIO_ISH):
-                        offenders.append(f"{path}.{key}")
-                    walk(value, f"{path}.{key}")
-            elif isinstance(node, list):
-                for i, value in enumerate(node):
-                    walk(value, f"{path}[{i}]")
-
-        walk(self.radar()[INDEX_KEY], INDEX_KEY)
         self.assertEqual(offenders, [])
 
     def test_two_contracts_on_one_stock_both_appear(self):
@@ -1301,27 +1268,6 @@ class MarketOpenInterestDirectionTests(_AnomalyFixture):
             self.assertIsInstance(direction[key], int, key)
             self.assertNotIsInstance(direction[key], bool, key)
 
-    def test_the_key_cannot_silently_gain_a_rate_or_a_rank(self):
-        """既有的 ``test_payload_cannot_silently_gain_a_rate`` 只走個股的 futures
-        區塊,``test_the_index_cannot_silently_gain_a_rate`` 只走市場層級的名單
-        ——這個鍵是 radar.json 的第三個入口,兩個閘門都照不到它。所以補這一把。
-        """
-        self.seed([_spec("CCF", "2303")])
-        offenders = []
-
-        def walk(node, path):
-            if isinstance(node, dict):
-                for key, value in node.items():
-                    if any(bad in key.lower() for bad in RANK_ISH + RATIO_ISH):
-                        offenders.append(f"{path}.{key}")
-                    walk(value, f"{path}.{key}")
-            elif isinstance(node, list):
-                for i, value in enumerate(node):
-                    walk(value, f"{path}[{i}]")
-
-        walk(self.radar()[DIRECTION_KEY], DIRECTION_KEY)
-        self.assertEqual(offenders, [])
-
     def test_no_flag_or_verdict_ever_reaches_the_payload(self):
         """描述性 = 只有計數。門檻、旗標、判語是資訊性主張,那需要一份 battery。"""
         self.seed([_spec("AAA", "2303"), _spec("BBB", "1565")])
@@ -1357,6 +1303,168 @@ class MarketOpenInterestDirectionTests(_AnomalyFixture):
         """名單的 meta 仍然只有一個日期與一個整數(§7.11 的鎖原封不動)。"""
         self.seed([_spec("CCF", "2303")])
         self.assertEqual(sorted(self.radar()[META_KEY]), ["as_of", "window_days"])
+
+
+# ══ 通用閘門:整個期貨表面,自己找 ═══════════════════════════════════════
+
+# 合併的詞彙表。`RATIO_ISH` 擋的是「payload 自己做了除法」(§1:發整數,除法由
+# 讀的人做),`RANK_ISH` 擋的是「payload 自己排了名次」(§5:名單有順序沒有
+# 名次)。兩者本來分開是因為它們原本各自只守一個鍵;但在**整個表面**這個尺度上
+# 它們是同一條規則的兩半——payload 只陳述觀測到的整數,任何衍生的判斷都留給讀的
+# 人。合併之後的副作用是新鍵也不准叫 `*_index` / `*_order`,那是想要的:這個切片
+# 不排名,連名字都不該暗示它排名。
+#
+# 分開的那兩個常數仍然留著:`test_the_entries_carry_no_rank_or_position_key` 與
+# `test_the_meta_key_is_exactly_one_date_and_one_integer` 講的是比「不得有比率」
+# 更窄的主張,那裡分開命名讀起來才對得上它們各自引的條文。
+SURFACE_BANNED = RATIO_ISH + RANK_ISH
+
+
+def _futures_surface(out: Path) -> dict[str, object]:
+    """走完整個 export 產物,回傳「每一個名字帶 futures 的鍵」→ 它底下那棵樹。
+
+    這就是「自己發現表面」的全部內容:不是一份已知路徑清單,而是一條命名規則。
+    今天它找到的是 ``stocks/*.json`` 的 ``futures``(以及契約裡的 ``is_futures``)、
+    ``radar.json`` 的 ``futures_volume_anomalies`` / ``…_meta`` /
+    ``futures_open_interest_direction`` / ``freshness.futures``;明天多一個
+    ``futures_*`` 鍵,它會自己被找到,沒有人要改這個函式。
+    """
+    found: dict[str, object] = {}
+
+    def walk(node, path):
+        if isinstance(node, dict):
+            for key, value in node.items():
+                child = f"{path}.{key}"
+                if "futures" in key.lower():
+                    found[child] = value
+                walk(value, child)
+        elif isinstance(node, list):
+            for i, value in enumerate(node):
+                walk(value, f"{path}[{i}]")
+
+    for file in sorted(out.rglob("*.json")):
+        walk(json.loads(file.read_text(encoding="utf-8")),
+             file.relative_to(out).as_posix())
+    return found
+
+
+def _surface_keys(surface: dict[str, object]) -> list[str]:
+    """表面底下每一個鍵的完整路徑(含入口鍵本身)。"""
+    keys: set[str] = set()
+
+    def walk(node, path):
+        if isinstance(node, dict):
+            for key, value in node.items():
+                keys.add(f"{path}.{key}")
+                walk(value, f"{path}.{key}")
+        elif isinstance(node, list):
+            for i, value in enumerate(node):
+                walk(value, f"{path}[{i}]")
+
+    for path, node in surface.items():
+        keys.add(path)
+        walk(node, path)
+    return sorted(keys)
+
+
+def _offenders(surface: dict[str, object]) -> list[str]:
+    return [key for key in _surface_keys(surface)
+            if any(bad in key.rsplit(".", 1)[-1].lower() for bad in SURFACE_BANNED)]
+
+
+class FuturesSurfaceRateGateTests(_AnomalyFixture):
+    """整個期貨表面不得偷偷長出比率、均值、名次或評分——**不列舉已知路徑**。
+
+    背景:這條規則(docs/38 §1「payload 發整數,除法由讀的人做」)原本由三把
+    路徑寫死的閘門守著,各自只走一棵子樹。``futures_open_interest_direction``
+    上線那天,三把**全部**照不到它——閘門是綠的,而那個新鍵完全沒有被守。當時的
+    修法是手動再加第四把,那只是把同一個洞往後推一個鍵:第五個鍵一樣會沒人記得。
+
+    所以這一把改成由**命名規則**發現表面,而不是由一份清單。新的 ``futures_*``
+    鍵明天加進 radar.json,不必有人動這個檔案,它就已經被守住了。
+
+    一把「什麼都沒走到」的閘門比三把窄的更糟——它看起來像覆蓋率。因此底下
+    ``test_the_gate_is_not_vacuous`` 釘住它真的走到了東西,而
+    ``test_the_gate_catches_a_rate_added_anywhere_on_the_surface`` 直接把違規鍵
+    種進 payload,證明它會紅。
+    """
+
+    def _export_a_rich_day(self):
+        """一天之內盡量把表面的每一種形狀都造出來:舉旗的、沒舉旗的、判不出的。"""
+        self.seed([
+            _spec("CCF", "2303"),                           # 舉旗 + 未平倉增加
+            _spec("MYF", "1565", today=BASE_LOTS),          # 沒舉旗,但有 daily
+            _spec("OMF", "1565", multiplier=100),           # 同一檔的第二個契約
+            _spec("DDD", "2330", oi={AD: None}),            # 未平倉判不出
+        ])
+        export_json(self.out)
+        return _futures_surface(self.out)
+
+    def test_the_gate_is_not_vacuous(self):
+        """它真的走到了整個表面,而不是一份空字典。
+
+        這個測試就是在防「閘門靜默地什麼都沒掃」——那種失敗不會有任何症狀,
+        它只會讓後面那條 assertEqual([], offenders) 永遠成立。
+        """
+        surface = self._export_a_rich_day()
+        entries = {path.rsplit(".", 1)[-1] for path in surface}
+        for key in ("futures", "is_futures", INDEX_KEY, META_KEY, DIRECTION_KEY):
+            with self.subTest(entry=key):
+                self.assertIn(key, entries, f"表面上找不到 {key},發現規則壞了")
+        # 三個原本各自有一把窄閘門的入口,現在都由這一把走到。
+        self.assertTrue(any(p.startswith("radar.json.") and p.endswith(INDEX_KEY)
+                            for p in surface))
+        self.assertTrue(any(p.startswith("stocks/") and p.endswith(".futures")
+                            for p in surface))
+        # 而且不是只碰到入口那一層:子樹整棵都在。
+        keys = _surface_keys(surface)
+        self.assertGreater(len(keys), 40, f"只走到 {len(keys)} 個鍵,太少")
+        for tail in (".anomaly.window_median", ".daily.open_interest",
+                     ".reasons[0].text", ".undetermined"):
+            with self.subTest(tail=tail):
+                self.assertTrue(any(k.endswith(tail) for k in keys),
+                                f"表面底下沒有走到 {tail}")
+
+    def test_no_rate_rank_or_score_anywhere_on_the_futures_surface(self):
+        """§1 / §5 的那條規則,一把閘門守全部。
+
+        真要加一個比率,得自己動手改這個檔案並過 review——那正是想要的摩擦:
+        比率、均值、名次都是**判斷**,而這個切片的整個信用建立在「它只陳述
+        觀測到的整數」上面。
+        """
+        self.assertEqual(_offenders(self._export_a_rich_day()), [])
+
+    def test_the_gate_catches_a_rate_added_anywhere_on_the_surface(self):
+        """證明它會紅:把違規鍵種進表面的三個不同深度,三個都要被抓到。
+
+        沒有這一條,上面那個 assertEqual 只是一句沒有被檢驗過的承諾。
+        """
+        self._export_a_rich_day()
+        radar_path = self.out / "radar.json"
+        radar = json.loads(radar_path.read_text(encoding="utf-8"))
+        radar[DIRECTION_KEY]["increase_ratio"] = 0.5            # 新鍵在既有的鍵底下
+        radar["futures_volume_zscore"] = 3.2                    # 明天新增的頂層鍵
+        radar_path.write_text(json.dumps(radar), encoding="utf-8")
+
+        stock_path = self.out / "stocks" / "2303.json"
+        stock = json.loads(stock_path.read_text(encoding="utf-8"))
+        stock["futures"]["contracts"][0]["anomaly"]["volume_rank"] = 1   # 深處
+        stock_path.write_text(json.dumps(stock), encoding="utf-8")
+
+        self.assertEqual(_offenders(_futures_surface(self.out)), [
+            f"radar.json.{DIRECTION_KEY}.increase_ratio",
+            "radar.json.futures_volume_zscore",
+            "stocks/2303.json.futures.contracts[0].anomaly.volume_rank",
+        ])
+
+    def test_a_rate_outside_the_futures_surface_is_none_of_this_gates_business(self):
+        """閘門只管期貨表面。分點、技術指標那些本來就有比率,誤抓等於逼人關掉它。"""
+        self._export_a_rich_day()
+        radar_path = self.out / "radar.json"
+        radar = json.loads(radar_path.read_text(encoding="utf-8"))
+        radar["some_other_slice"] = {"win_ratio": 0.5}
+        radar_path.write_text(json.dumps(radar), encoding="utf-8")
+        self.assertEqual(_offenders(_futures_surface(self.out)), [])
 
 
 class AnomalyIndexOrderingTests(unittest.TestCase):
