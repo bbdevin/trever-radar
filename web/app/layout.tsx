@@ -3,6 +3,7 @@ import { Manrope } from "next/font/google";
 import { Toaster } from "sonner";
 import SearchBox from "@/components/SearchBox";
 import ReloadButton from "@/components/ReloadButton";
+import FontScaleToggle from "@/components/FontScaleToggle";
 import AuthButton from "@/components/AuthButton";
 import AuthGate from "@/components/AuthGate";
 import BottomNav from "@/components/BottomNav";
@@ -76,6 +77,14 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                   <div className="ml-auto flex items-center">
                     <SearchBox />
                     <ReloadButton />
+                    {/* 字級切換。docs/36 把它列為 [x] 已完成,而整套機制確實都在:
+                        UserPrefsProvider 掛好了、globals.css 有三段 data-font-scale
+                        規則、上面的防閃爍腳本本來就在讀 localStorage 的 font_scale
+                        並套用 zoom——**只有這顆按鈕從來沒被放進畫面**。
+                        偏好會被記住、會被套用,但使用者沒有任何方法可以設定它。
+                        這個漏掉是 2026-09-23 掃「元件有沒有真的掛上」時發現的,
+                        同一次也替期貨那五個掛載點補了測試。 */}
+                    <FontScaleToggle />
                     <AuthButton />
                   </div>
                   <DesktopNav />

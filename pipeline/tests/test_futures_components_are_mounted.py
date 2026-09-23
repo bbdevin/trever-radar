@@ -245,5 +245,75 @@ class FuturesComponentsAreMountedTests(unittest.TestCase):
                          "日常事實不得只畫舉旗的契約:310 幾個契約的數字會消失")
 
 
+LAYOUT = WEB / "app" / "layout.tsx"
+
+# 期貨以外、但**同一種失敗**已經實際發生過的掛載點。
+#
+# 這一組是上面那份調查的產物,不是順手加的:掃「元件有沒有真的被掛上」時發現
+# `FontScaleToggle` **在整個 repo 裡沒有任何地方渲染**,而 `docs/36` 把它打勾
+# 列在已完成底下。整套機制其實都在——`UserPrefsProvider` 掛好了、`globals.css`
+# 有三段 `html[data-font-scale]` 規則、`layout.tsx` 的防閃爍腳本本來就在讀
+# localStorage 的 `font_scale` 並套用 `body.zoom`——**只有那顆按鈕從來沒進畫面**。
+# 也就是說偏好會被記住、會被套用,而使用者沒有任何方法設定它。
+#
+# 這正是 a0c7b06 那個 bug 的同一種形狀,只是完全沒有測試壓力去揭發它:
+# 一個被文件記為交付完成的功能,在畫面上不存在,而 CI 全綠。
+NON_FUTURES_MOUNTS = (
+    (
+        "FontScaleToggle",
+        LAYOUT,
+        WEB / "components" / "FontScaleToggle.tsx",
+        "header 不再有字級切換鈕。偏好仍會被記住也仍會被套用(防閃爍腳本與 CSS "
+        "都還在),但使用者沒有任何方法可以設定它——功能在文件上是 [x],在畫面上不存在。",
+    ),
+)
+
+
+class NonFuturesComponentsAreMountedTests(unittest.TestCase):
+    """同一種「寫好了、沒掛上」的失敗,發生在期貨以外的地方。
+
+    與上面那個類別分開,是因為守的東西不同:上面守一個**功能**的五個環節,
+    這裡守的是一份**清單**——調查發現 44 個元件裡有 20 個只有單一呼叫點,刪一行
+    就靜默消失。這裡先放已經真的出過事的那一個;要擴成全站清單是另一件事,
+    不該夾帶在期貨的檔案裡默默長大。
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.code = {
+            path: _strip_comments_and_strings(path.read_text(encoding="utf-8"))
+            for _name, path, *_rest in NON_FUTURES_MOUNTS
+        }
+
+    def test_every_listed_component_is_imported_and_rendered(self):
+        for name, page, module, consequence in NON_FUTURES_MOUNTS:
+            with self.subTest(component=name):
+                self.assertTrue(module.exists(), f"{name} 的元件檔不存在")
+                code = self.code[page]
+                self.assertRegex(
+                    code, rf"import\s+{name}\s+from",
+                    f"{_rel(page)} 沒有 import {name};少了它 → {consequence}")
+                self.assertRegex(
+                    code, rf"<{name}[\s/>]",
+                    f"{_rel(page)} 裡沒有 <{name} …> 這個呼叫點;"
+                    f"少了它 → {consequence}")
+
+    def test_the_font_scale_mechanism_is_still_whole(self):
+        """按鈕只是最後一環;缺任何一環,掛上它也沒有用。
+
+        這條測試存在的理由是:當初缺的**只有**按鈕,其餘三環都好好的。
+        若日後有人反過來拿掉別環,症狀會是「按鈕按了沒反應」,而那比
+        「按鈕不見了」更難查。
+        """
+        layout = LAYOUT.read_text(encoding="utf-8")
+        self.assertIn("UserPrefsProvider", layout, "偏好 provider 不見了")
+        self.assertIn("font_scale", layout, "防閃爍腳本不再讀 localStorage 的 font_scale")
+        css = (WEB / "app" / "globals.css").read_text(encoding="utf-8")
+        for scale in ("md", "lg", "xl"):
+            with self.subTest(scale=scale):
+                self.assertIn(f'html[data-font-scale="{scale}"]', css,
+                              f"globals.css 少了 {scale} 那一段;按鈕會按了沒反應")
+
+
 if __name__ == "__main__":
     unittest.main()
