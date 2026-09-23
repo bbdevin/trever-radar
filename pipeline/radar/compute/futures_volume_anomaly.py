@@ -42,6 +42,7 @@ battery 判 SHIP 之後才被寫出來:
 """
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Any
 
 from .futures_volume_battery import (
@@ -251,3 +252,63 @@ def anomaly_index_meta(
     if index is None:
         return None
     return {"as_of": as_of, "window_days": WINDOW_DAYS}
+
+
+# 四個計數鍵,一個不多。**沒有**總數(相加由讀的人做,同 §1 的五個整數)、
+# 沒有比率、沒有淨額、沒有旗標。
+DIRECTION_COUNT_KEYS = ("increased", "decreased", "unchanged", "undetermined")
+
+
+def open_interest_direction(
+    changes: Iterable[int | None], *, as_of: str | None,
+) -> dict[str, Any] | None:
+    """市場層級的未平倉方向計數(docs/38 §7.15):今天有幾個契約在建倉、幾個在減倉。
+
+    **為什麼這一個不需要 battery,而成交量異常需要**——這是本函式存在的全部條件,
+    寫在這裡是為了日後有人想加一個門檻時,先讀到它:
+
+    * §1 的旗標做的是一個**資訊性**主張:「這一天的量創了新高」這件事**告訴你**
+      一些事(使用者原話是「拿來做判斷籌碼或是技術分析成交量的依據」)。一個
+      「告訴你某件事」的宣稱可以被否證,所以 §3 要求它先被否證看看:區辨性、
+      安慰劑、2σ、十組 seed。過不了就整個不上線。
+    * 這裡的計數做的是一個**描述性**陳述:「今天有 N 個契約的未平倉比前一個期貨
+      交易日高」。它**沒有**主張這件事之後會發生什麼,也沒有主張今天算不算不尋常,
+      所以沒有任何東西可以被否證,也就沒有東西需要被檢定。一份 battery 對它而言
+      不是「更嚴謹」,是**無從執行**:沒有假設,就沒有虛無假設。
+
+    這個豁免**只在它保持描述性的時候成立**。以下任何一項都會讓它變成一個穿著本
+    功能外衣、卻從來沒有被檢定過的訊號,因此一概不做:
+
+    * **不設門檻、不舉旗、不下判語。** 一旦輸出「今天不尋常」,它就是一個資訊性
+      主張,而那個主張沒有被 §3 檢定過。
+    * **不算比率、不算百分比、不算淨額。** 只給計數,除法由讀的人做(§1 同一條
+      紀律)。「增加減去減少」是一個分數的雛形,而分數會排名。
+    * **不排名契約。** §5 明文不做跨契約排序;這裡連契約代碼都不輸出。
+    * **UI 只複述計數。** 沒有「偏多 / 偏空」,沒有解讀。
+
+    三態,與這個切片其他每一個鍵同一個約定:
+
+    * ``as_of`` 為 ``None``(沒有期貨行情日,或那一天定不出來)→ ``None``,
+      呼叫端整個鍵不輸出。**沒有算過**,沒有主張。
+    * 否則 → 四個計數。全部為 0 與「沒有算過」因此分得出來:前者是一個有日期的
+      正面主張(我們數過了),後者什麼都沒說。
+
+    ``changes`` 是**每一個契約**的 ``oi_change()`` 結果,一個契約一項:``None``
+    = 這個契約今天判不出方向(當天或前一日沒有列、或未平倉是 NULL)。它被數進
+    ``undetermined``,**不是**被丟掉——丟掉會讓四個計數的和悄悄變成一個與契約數
+    無關的數字,而讀者無從得知今天有多少契約根本沒有答案。判不出來的成因依 R1
+    有未掛牌 / 未公布 / 匯入失敗三種,三者不可分辨,所以只數,不分類。
+    """
+    if as_of is None:
+        return None
+    counts = dict.fromkeys(DIRECTION_COUNT_KEYS, 0)
+    for change in changes:
+        if change is None:
+            counts["undetermined"] += 1
+        elif change > 0:
+            counts["increased"] += 1
+        elif change < 0:
+            counts["decreased"] += 1
+        else:
+            counts["unchanged"] += 1
+    return {"as_of": as_of, **counts}

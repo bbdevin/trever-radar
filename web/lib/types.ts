@@ -358,6 +358,26 @@ export interface FuturesVolumeAnomalyMeta {
   window_days: number;
 }
 
+/**
+ * 市場層級的未平倉方向計數(docs/38 §7.15)。**四個計數,沒有總數、沒有比率、
+ * 沒有淨額、沒有旗標**——它是一句描述(今天有幾個契約的未平倉比前一個期貨交易日
+ * 高),不是一個訊號,所以不需要也無從套用 §3 的 battery。加一個門檻或一句判語就
+ * 會把它變成一個從來沒有被檢定過的訊號,而它穿著這個功能的外衣。
+ */
+export interface FuturesOpenInterestDirection {
+  /** 這四個計數講的是哪一天——期貨**行情日**,同 `FuturesVolumeAnomalyMeta.as_of`。 */
+  as_of: string;
+  increased: number;
+  decreased: number;
+  unchanged: number;
+  /**
+   * 判不出方向的契約數:當天或前一個期貨交易日沒有列、或未平倉是 NULL。
+   * 它**必須**被數出來而不是從分母消失——成因依 R1 有未掛牌 / 未公布 / 匯入失敗
+   * 三種,三者不可分辨,所以只數,不分類,也不說成「沒有變動」。
+   */
+  undetermined: number;
+}
+
 /** 單一分點在這檔股票的兩側計數;known 是分母,unknown 分位不可知另計。 */
 export interface BranchPctileRow {
   branch_name: string;
@@ -622,6 +642,13 @@ export interface RadarJson {
    * 而 §7.10 不准前端寫死 60,所以比較窗口的長度得由這裡供應。
    */
   futures_volume_anomalies_meta?: FuturesVolumeAnomalyMeta;
+  /**
+   * 市場層級的未平倉方向計數(docs/38 §7.15)。與上面那兩個鍵**平行而不相屬**:
+   * 名單只有舉旗的契約,這裡涵蓋全部約 320 個;名單會因為 R4 算不出結算窗口而
+   * 整個不主張,而未平倉的方向與結算窗口無關。缺鍵 = 沒有算過(沒有期貨行情日),
+   * 有鍵 = 數過了,即使四個數字全是 0——兩者不可塌成同一件事。
+   */
+  futures_open_interest_direction?: FuturesOpenInterestDirection;
   stocks: RadarStock[];
 }
 

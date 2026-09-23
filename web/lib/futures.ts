@@ -3,6 +3,7 @@ import type {
   FuturesContract,
   FuturesDaily,
   FuturesInfo,
+  FuturesOpenInterestDirection,
   FuturesVolumeAnomalyEntry,
   FuturesVolumeAnomalyMeta,
   ReasonItem,
@@ -248,4 +249,74 @@ export type FlaggedContract = FuturesContract & { anomaly: FuturesAnomaly };
 
 export function flaggedContracts(contracts: FuturesContract[]): FlaggedContract[] {
   return contracts.filter((c): c is FlaggedContract => c.anomaly !== undefined);
+}
+
+/**
+ * 個股頁:契約裡**沒有** `daily` 的那些(docs/38 §7.15)。
+ *
+ * 在此之前這種契約在畫面上什麼都沒有,而「什麼都沒有」與「這個功能還沒上線」
+ * 長得一模一樣。§7.7 允許一個「尚未公布」性質的狀態,條件是它的依據必須是
+ * `daily` 這個鍵的有無(那個鍵本身就是三態的),不是 `anomaly` 的有無。
+ */
+export function contractsWithoutDaily(contracts: FuturesContract[]): FuturesContract[] {
+  return contracts.filter((c) => c.daily === undefined);
+}
+
+/**
+ * 沒有 `daily` 的那一句。**它只陳述缺席,不解釋缺席**。
+ *
+ * 不寫「未公布」「未上市」「匯入失敗」:R1 說一個缺席的列恰好有這三種不可分辨的
+ * 成因,挑一個講出來就是替資料做了一個它支持不了的選擇。也不寫「正常」「無交易」
+ * ——§7.7 明文禁止,那是一個沒人做過的主張。剩下講得出口的只有那一天沒有那一列
+ * 這件事本身,所以這句話就只有那麼多。
+ *
+ * 日期是**期貨行情日**(`futures.daily_as_of`),不是本頁的資料日;拿不到那一天
+ * 的時候整句話不存在(呼叫端不畫),因為「沒有列」一定要說是哪一天沒有列。
+ */
+export function noDailyRowText(code: string, dailyAsOf: string): string {
+  return `${code} 在 ${dailyAsOf} 沒有列。`;
+}
+
+/* ------------------------------------------------------------------ *
+ * 市場層級的未平倉方向計數(docs/38 §7.15)。
+ *
+ * **這一塊沒有經過 docs/38 §3 的 battery,而那不是疏漏。** §1 的旗標主張
+ * 「這個旗標告訴你一些事」——一個**資訊性**主張,可以被否證,所以 §3 先拿它去
+ * 否證。這裡的四個計數只說「今天有幾個契約的未平倉比前一個期貨交易日高」,
+ * 沒有說那代表什麼、也沒有說今天算不算不尋常,沒有東西可以被否證,也就沒有
+ * 東西需要被檢定。豁免只在它保持描述性的時候成立,所以這裡的函式:
+ *   - 只複述 payload 裡的四個整數,不算比率、不算淨額、不給總數(加法讀者自己做);
+ *   - 不下任何判語(沒有「偏多」「偏空」「今天不尋常」);
+ *   - 不排名任何契約(§5),連契約代碼都不出現。
+ * ------------------------------------------------------------------ */
+
+/**
+ * 三態,與這個切片其他每一個鍵同一個約定:缺鍵 = 沒有算過(沒有期貨行情日),
+ * 有鍵 = 數過了——**即使四個數字全是 0**。把兩者塌成一種表示,就是把「不知道」
+ * 講成「今天一個契約都沒動」。
+ */
+export type FuturesOpenInterestDirectionState =
+  | { kind: "not-computed" }
+  | { kind: "counted"; counts: FuturesOpenInterestDirection };
+
+export function futuresOpenInterestDirectionState(
+  direction: FuturesOpenInterestDirection | null | undefined,
+): FuturesOpenInterestDirectionState {
+  if (!direction) return { kind: "not-computed" };
+  return { kind: "counted", counts: direction };
+}
+
+/**
+ * 那一句話。四個計數與它們比的是哪一天,句號結束——後面**不接**任何一句解讀。
+ *
+ * 「無法判定」那一項即使是 0 也照樣講:它與另外三項一樣是一個計數,而讀者要能
+ * 看出今天有多少契約根本沒有答案。省略它會讓另外三個數字讀起來像是一個涵蓋全體
+ * 的事實。成因不分類(R1:未掛牌 / 未公布 / 匯入失敗三者不可分辨)。
+ */
+export function openInterestDirectionText(c: FuturesOpenInterestDirection): string {
+  return (
+    `期貨 ${c.as_of} 未平倉較前一個期貨交易日:` +
+    `增加 ${c.increased} 個契約、減少 ${c.decreased} 個、` +
+    `持平 ${c.unchanged} 個、無法判定 ${c.undetermined} 個。`
+  );
 }

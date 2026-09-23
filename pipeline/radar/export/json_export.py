@@ -29,6 +29,7 @@ from ..compute.futures_volume_anomaly import (
     anomaly_index,
     anomaly_index_meta,
     futures_volume_anomalies,
+    open_interest_direction,
 )
 from ..compute.futures_volume_battery import (
     load_futures_calendar,
@@ -215,7 +216,7 @@ def _active_buybacks_by_stock(conn, as_of: str) -> dict[str, dict]:
 
 def _futures_by_stock(
     conn, as_of: str | None, *, spot_date: str | None = None,
-) -> tuple[dict[str, dict], str, list | None] | None:
+) -> tuple[dict[str, dict], str, list | None, dict | None] | None:
     """個股期貨標的「存在與否」這個事實,外加(若當日有列)今天的成交量/未平倉。
 
     ``as_of`` 是**期貨行情日**——``futures_daily`` 裡不晚於 export 日的最後一天,
@@ -249,6 +250,13 @@ def _futures_by_stock(
     回傳的第三格是市場層級的今日名單(§7.5),由**同一次**計算重新排列而來,
     給 ``radar.json`` 用。``None`` = 那一天沒有算過(期貨資料還沒跟上 export 日),
     呼叫端整個鍵不輸出;``[]`` = 算過了、今天沒有契約舉旗。
+
+    第四格是市場層級的未平倉方向計數(§7.15),同樣給 ``radar.json``:那一天有
+    幾個契約在建倉、幾個在減倉、幾個持平、幾個判不出來。它與名單是**兩件事**,
+    所以是兩個平行的鍵:名單講的是旗標(§1 那條被檢定過的規則),計數講的是每
+    一個契約都有的一個描述性事實,兩者的缺席條件也不同(名單會因為 R4 算不出
+    結算窗口而整個不主張,而那與未平倉的方向毫無關係)。``None`` = 沒有期貨
+    行情日,呼叫端整個鍵不輸出。
     """
     contract_rows = list(conn.execute(text("""
         SELECT contract_code, stock_id, stock_name, is_stock_future,
@@ -265,10 +273,10 @@ def _futures_by_stock(
     # 價差組合列(ContractMonth(Week) 形如 '202609/202610')必須排除:那是轉倉
     # 的一筆對敲,不是一個部位,計進去會灌大後面那個切片要拿來排名的數字。
     # (那些列的 OpenInterest 來源本來就給 '-' → NULL,但量是實數,不濾就會進總和。)
+    # 成交量才分時段;未平倉不從這句話來(見下)。
     daily_rows = conn.execute(text("""
         SELECT contract_code, session,
-               SUM(volume) AS volume,
-               SUM(open_interest) AS open_interest
+               SUM(volume) AS volume
         FROM futures_daily
         WHERE date = :d AND contract_month NOT LIKE '%/%'
         GROUP BY contract_code, session
@@ -281,27 +289,44 @@ def _futures_by_stock(
         if row["volume"] is not None:
             entry["session_volume"][row["session"]] = row["volume"]
             entry["volume"] = (entry["volume"] or 0) + row["volume"]
-        # 未平倉是存量不是流量:同一到期月的一般/盤後相加會重複計算。實務上
-        # 盤後列的 OpenInterest 來源就是 '-'(NULL),所以這裡的加總等於只取
-        # 有給數字的那個時段,跨到期月相加則是正確的。
-        if row["open_interest"] is not None:
-            entry["open_interest"] = (entry["open_interest"] or 0) + row["open_interest"]
 
-    # 未平倉的日變化,給**每一個**有 daily 的契約-日,不只舉旗的那些:部位是在
-    # 建還是在減,是這個切片唯一講得出方向的事實,而它與旗標無關。
+    # 未平倉與它的日變化,給**每一個**有 daily 的契約-日,不只舉旗的那些:部位是
+    # 在建還是在減,是這個切片唯一講得出方向的事實,而它與旗標無關。
     #
-    # 「前一個期貨交易日」由 battery 的 :func:`oi_change` 定位,口徑也照 §1 表格
-    # (一般時段、非價差列、跨到期月相加;任一邊為 NULL 則整個欄位省略)。在這裡
-    # 自己再數一次「昨天」,就會有第二個與 ``anomaly.oi_change`` 同名、可以各自
-    # 漂走的數字——而那兩個數字在舉旗的契約上會並排顯示。
-    # 上面那個 daily 加總不篩時段,但盤後列的未平倉來源就是 '-'(NULL),所以
-    # ``daily.open_interest`` 與這裡的一般時段口徑在資料上是同一個數。
+    # 兩者都從 battery 的那一句 SQL(:func:`load_regular_session_volumes`,
+    # ``session = '一般'``、非價差列、跨到期月相加)來,「前一個期貨交易日」由
+    # battery 的 :func:`oi_change` 定位。在這裡自己再數一次「昨天」,就會有第二個
+    # 與 ``anomaly.oi_change`` 同名、可以各自漂走的數字——而那兩個數字在舉旗的
+    # 契約上會並排顯示。
+    #
+    # **未平倉的水位也只讀一般時段**(docs/38 §7.15)。以前這裡跨時段相加,理由是
+    # 「盤後列的來源就是 '-'(NULL),所以加總等於只取有數字的那一個時段」——那是
+    # 一個關於**今天的資料長什麼樣子**的理由,不是一個關於未平倉是什麼的理由。
+    # 未平倉是**存量不是流量**:同一天兩個時段的水位相加沒有意義,即使相加的結果
+    # 今天恰好正確。來源哪天開始給盤後未平倉,這裡就會無聲地翻倍,而 ``oi_change``
+    # (本來就只讀一般時段)仍然是對的——兩個數字會在同一張卡片上互相矛盾。
+    # 改成一般時段之後,水位與它的日變化是同一個口徑、同一句 SQL,R3 也就名副其實。
     futures_days = load_futures_calendar(conn, as_of) if as_of is not None else []
-    # 只讀最後兩個期貨交易日:oi_change 要的就是這兩天,整段歷史是 battery 的事。
-    oi_history = (
-        load_regular_session_volumes(conn, as_of, date_from=futures_days[-2])
-        if len(futures_days) >= 2 else {}
+    # 只讀最後兩個期貨交易日:水位要 as_of 那一天,日變化多要前一天。整段歷史是
+    # battery 的事。(只有一天期貨日曆時就讀那一天:水位照樣講得出來,日變化不行。)
+    regular = (
+        load_regular_session_volumes(
+            conn, as_of, date_from=futures_days[max(len(futures_days) - 2, 0)],
+        ) if futures_days else {}
     )
+    for code, entry in daily_by_contract.items():
+        entry["open_interest"] = (
+            regular.get(code, {}).get("open_interest", {}).get(as_of)
+        )
+    # 每一個契約都算(不只有 daily 列的那些):沒有列的契約 oi_change 是 None,
+    # 而市場層級的計數要把那些數成「判不出來」,不是把它們丟掉。
+    oi_changes = {
+        row["contract_code"]: oi_change(
+            regular.get(row["contract_code"], {}).get("open_interest", {}),
+            futures_days, as_of,
+        )
+        for row in contract_rows
+    }
 
     # 一次計算,兩個出口:個股頁的區塊與市場層級的名單。第二次呼叫就是第二條規則。
     # as_of 為 None(``futures_daily`` 整張表還沒有任何一列)時,規則自己就會在
@@ -312,6 +337,14 @@ def _futures_by_stock(
     market_index = anomaly_index(anomalies, stock_id_by_code={
         row["contract_code"]: row["stock_id"] for row in contract_rows
     })
+    # 市場層級的未平倉方向計數(§7.15)。**描述性**:它只說今天有幾個契約的未平倉
+    # 比前一個期貨交易日高/低/持平/判不出來,不說那代表什麼,所以不需要、也無從
+    # 套用 §3 的 battery(理由寫在 :func:`open_interest_direction` 的 docstring)。
+    # 方向來自上面那一份 oi_changes,與個股卡片上那個數字是同一個函式、同一次計算。
+    direction = open_interest_direction(
+        (oi_changes[row["contract_code"]] for row in contract_rows),
+        as_of=as_of if futures_days else None,
+    )
 
     by_stock: dict[str, dict] = {}
     for row in contract_rows:
@@ -339,10 +372,7 @@ def _futures_by_stock(
         today = daily_by_contract.get(row["contract_code"])
         if today is not None:
             contract["daily"] = today
-            change = oi_change(
-                oi_history.get(row["contract_code"], {}).get("open_interest", {}),
-                futures_days, as_of,
-            )
+            change = oi_changes[row["contract_code"]]
             # 任一邊為 NULL(或前一個期貨交易日根本不存在)→ 整個鍵省略。
             # 0 是一個真的觀測(「一口都沒變」),缺席不是;寫 0 頂替缺值就是
             # 把「不知道」講成一個結論,同 §7.1 的習慣。
@@ -352,7 +382,7 @@ def _futures_by_stock(
         # 兩者都不是一個異常,而 0 或 null 會把「沒有主張」講成一個結論。
         contract.update((anomalies or {}).get(row["contract_code"], {}))
         entry["contracts"].append(contract)
-    return by_stock, list_refreshed, market_index
+    return by_stock, list_refreshed, market_index, direction
 
 
 def _company_group_payloads(conn, as_of: str) -> tuple[list[dict], dict[str, list[dict]]]:
@@ -1556,6 +1586,14 @@ def export_json(out_dir: Path | None = None) -> dict:
         radar["futures_volume_anomalies_meta"] = anomaly_index_meta(
             futures_anomaly_index, as_of=f_date,
         )
+    # 市場層級的未平倉方向計數(docs/38 §7.15)。**平行於**名單而不是包在它的 meta
+    # 裡:meta 是「這份名單的隨附事實」(§7.11),而這四個計數不是名單的事實——
+    # 名單只有舉旗的契約,計數涵蓋全部約 320 個;名單會因為 R4 算不出結算窗口而
+    # 整個不主張(§7.13),而未平倉的方向與結算窗口毫無關係,跟著消失是連坐。
+    # 三態同樣:沒有這個鍵 = 沒有算過;有鍵 = 算過了,即使四個數字全是 0。
+    futures_oi_direction = futures_result[3] if futures_result is not None else None
+    if futures_oi_direction is not None:
+        radar["futures_open_interest_direction"] = futures_oi_direction
     meta = {
         "generated_at": now,
         "datasets": [

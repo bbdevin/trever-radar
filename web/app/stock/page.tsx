@@ -22,7 +22,15 @@ import MarginPanel from "@/components/MarginPanel";
 import HoldersPanel from "@/components/HoldersPanel";
 import WarrantBranchPanel from "@/components/WarrantBranchPanel";
 import ReasonPill, { isChipStrategyCode } from "@/components/ReasonPill";
-import { anomalyFacts, contractsWithDaily, dailyFacts, flaggedContracts, futuresState } from "@/lib/futures";
+import {
+  anomalyFacts,
+  contractsWithDaily,
+  contractsWithoutDaily,
+  dailyFacts,
+  flaggedContracts,
+  futuresState,
+  noDailyRowText,
+} from "@/lib/futures";
 import PocketBadges from "@/components/PocketBadges";
 import { Skeleton } from "@/components/ui/skeleton";
 import WatchlistButton from "@/components/WatchlistButton";
@@ -673,15 +681,22 @@ function FuturesAnomalyBlock({ futures }: { futures: StockJson["futures"] }) {
  * 它對**每一個**帶 `daily` 的契約都畫,不只舉旗的那幾個:一天約 320 個契約有
  * 數字,舉旗的通常個位數,而未平倉的日變化與舉旗與否無關。
  *
- * 沒有 `daily` 的契約在這裡**什麼都不畫**,而不是畫一個「正常」或「無交易」:
- * 缺席有未掛牌 / 未公布 / 匯入失敗三種意思(§7.7 / R1),三者不可分辨。
+ * 沒有 `daily` 的契約只**陳述那個缺席**,不解釋它(§7.15):一句
+ * 「{代碼} 在 {期貨行情日} 沒有列」,沒有第二句。不寫「未公布 / 未上市 /
+ * 匯入失敗」——R1 說缺席恰好有這三種不可分辨的成因,挑一個講就是替資料做了
+ * 一個它支持不了的選擇;更不寫「正常」或「無交易」(§7.7 明文禁止)。
+ * 在此之前那種契約在畫面上什麼都沒有,而那與「這個功能還沒上線」長得一模一樣。
+ * 這個狀態的依據是 `daily` 這個鍵的有無(§7.7 指定的那個三態鍵),不是 `anomaly`。
  * 標題的日期讀 `daily.date`(§7.12 的期貨行情日),絕不用本頁的資料日。
  */
 function FuturesDailyBlock({ futures }: { futures: StockJson["futures"] }) {
   const state = futuresState(futures);
   if (state.kind !== "has") return null;
   const dated = contractsWithDaily(state.contracts);
-  if (dated.length === 0) return null;
+  // 沒有行情日就講不出「哪一天沒有列」,那一句話因此整個不存在(同缺值的慣例)。
+  const dailyAsOf = futures?.daily_as_of;
+  const undated = dailyAsOf === undefined ? [] : contractsWithoutDaily(state.contracts);
+  if (dated.length === 0 && undated.length === 0) return null;
 
   return (
     <div className="mb-2.5 flex flex-col gap-2" aria-label="個股期貨當日成交與未平倉">
@@ -715,6 +730,13 @@ function FuturesDailyBlock({ futures }: { futures: StockJson["futures"] }) {
           </div>
         </div>
       ))}
+      {dailyAsOf !== undefined && undated.length > 0 && (
+        <div className="min-w-0 rounded-[var(--r-lg)] border border-border bg-card px-3 py-2.5 text-[11.5px] leading-relaxed text-muted-foreground">
+          {undated.map((c) => (
+            <div key={c.code}>{noDailyRowText(c.code, dailyAsOf)}</div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

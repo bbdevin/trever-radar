@@ -11,6 +11,7 @@ import StockCard from "@/components/StockCard";
 import ThemeGroupedList from "@/components/ThemeGroupedList";
 import MarginUsageRank from "@/components/MarginUsageRank";
 import FuturesAnomalyList from "@/components/FuturesAnomalyList";
+import FuturesOpenInterestDirection from "@/components/FuturesOpenInterestDirection";
 import { useSession, signInWithGoogle } from "@/lib/useSession";
 import { cn, navPillClass, pillTabClass } from "@/lib/utils";
 import { dataFetch } from "@/lib/dataFetch";
@@ -623,6 +624,11 @@ function RadarView() {
         </div>
       ) : tab === "futures" ? (
         <div className="animate-[fadeUp_0.35s_ease_backwards]">
+          {/* 未平倉方向的計數在名單**上面**(docs/38 §7.15):名單常態是空的,
+              而這四個計數每一天都有內容。 */}
+          <FuturesOpenInterestDirection
+            direction={radar.futures_open_interest_direction}
+          />
           <FuturesAnomalyList
             entries={radar.futures_volume_anomalies}
             dataDate={radar.data_date}

@@ -10,10 +10,14 @@ import {
   anomalyFacts,
   anomalyLagText,
   contractsWithDaily,
+  contractsWithoutDaily,
   dailyFacts,
   flaggedContracts,
   futuresAnomalyMarketState,
+  futuresOpenInterestDirectionState,
   futuresState,
+  noDailyRowText,
+  openInterestDirectionText,
 } from "./futures.ts";
 
 test("futures 鍵不存在 -> unknown(尚未 import,不可讀成沒有)", () => {
@@ -369,4 +373,110 @@ test("個股頁:只有帶 anomaly 的契約進清單,兩個契約都舉旗時兩
   assert.deepEqual(flaggedContracts(contracts).map((c) => c.code), ["MYF", "OMF"]);
   // 沒有 anomaly 的那個被排除,但**沒有**被標成「正常」——它根本不進這個清單(§7.7)。
   assert.equal(flaggedContracts([contracts[2]]).length, 0);
+});
+
+// ---- docs/38 §7.15(一):沒有 daily 的契約,把缺席講成缺席 ----
+
+test("§7.15 沒有 daily 的契約被挑出來(它們在此之前在畫面上完全不存在)", () => {
+  const contracts = [
+    { code: "MYF", is_futures: true, is_option: false, is_weekly_option: false, daily: DAILY_FULL },
+    { code: "OMF", is_futures: true, is_option: false, is_weekly_option: false },
+    { code: "MYO", is_futures: false, is_option: true, is_weekly_option: false, anomaly: ANOMALY_MYF },
+  ];
+  assert.deepEqual(contractsWithoutDaily(contracts).map((c) => c.code), ["OMF", "MYO"]);
+  // 兩個函式是互補的:每一個契約恰好落在其中一邊,沒有契約消失。
+  assert.equal(
+    contractsWithDaily(contracts).length + contractsWithoutDaily(contracts).length,
+    contracts.length,
+  );
+});
+
+test("§7.15 那句話只陳述缺席:代碼、日期、沒有列,沒有第四件事", () => {
+  assert.equal(noDailyRowText("OMF", "2026-09-17"), "OMF 在 2026-09-17 沒有列。");
+});
+
+test("§7.7/R1 那句話不得指名成因,也不得說成「正常」", () => {
+  const text = noDailyRowText("OMF", "2026-09-17");
+  // 未掛牌 / 未公布 / 匯入失敗三者不可分辨,挑一個講就是替資料做一個它支持不了的選擇。
+  for (const forbidden of ["未公布", "未上市", "未掛牌", "匯入", "失敗", "尚未"]) {
+    assert.ok(!text.includes(forbidden), `${forbidden} in ${text}`);
+  }
+  // §7.7 明文:不得把缺席標成「正常」;「無交易」同樣是一個沒人做過的主張。
+  for (const forbidden of ["正常", "無交易", "沒有交易"]) {
+    assert.ok(!text.includes(forbidden), `${forbidden} in ${text}`);
+  }
+  // 也沒有任何一個數字冒充那個缺席的數量(0 口 / 0 張):日期以外一個數字都沒有。
+  assert.equal(text.replace("2026-09-17", ""), "OMF 在  沒有列。");
+});
+
+test("§7.12 那句話的日期是期貨行情日,而且句子裡沒有「今日 / 今天」", () => {
+  const text = noDailyRowText("OMF", "2026-09-17");
+  assert.ok(text.includes("2026-09-17"));
+  assert.ok(!text.includes("今日") && !text.includes("今天"), text);
+});
+
+// ---- docs/38 §7.15(二):市場層級的未平倉方向計數 ----
+
+const DIRECTION = {
+  as_of: "2026-09-17",
+  increased: 118,
+  decreased: 96,
+  unchanged: 14,
+  undetermined: 92,
+};
+
+test("§7.15 三態:缺鍵 = 沒有算過(不是「今天一個契約都沒動」)", () => {
+  assert.deepEqual(futuresOpenInterestDirectionState(undefined), { kind: "not-computed" });
+  assert.deepEqual(futuresOpenInterestDirectionState(null), { kind: "not-computed" });
+});
+
+test("§7.15 三態:四個計數全是 0 仍然是「數過了」,與缺鍵分得出來", () => {
+  const zeros = { as_of: "2026-09-17", increased: 0, decreased: 0, unchanged: 0, undetermined: 0 };
+  const counted = futuresOpenInterestDirectionState(zeros);
+  assert.deepEqual(counted, { kind: "counted", counts: zeros });
+  assert.notDeepEqual(counted, futuresOpenInterestDirectionState(undefined));
+});
+
+test("§7.15 那一句話複述四個計數與它們比的是哪一天,一個字不多", () => {
+  assert.equal(
+    openInterestDirectionText(DIRECTION),
+    "期貨 2026-09-17 未平倉較前一個期貨交易日:增加 118 個契約、減少 96 個、持平 14 個、無法判定 92 個。",
+  );
+});
+
+test("§7.15 每個顯示的數字都是 payload 裡原本那個整數:不算比率、不算淨額、不給總數", () => {
+  const text = openInterestDirectionText(DIRECTION);
+  const numbers = (text.match(/\d+/g) ?? []).filter((n) => !text.includes(`${n}-`));
+  const allowed = new Set(["2026", "09", "17", "118", "96", "14", "92"]);
+  for (const n of numbers) assert.ok(allowed.has(n), `${n} 不是 payload 裡的數字:${text}`);
+  // 總數(118+96+14+92 = 320)、差額(118−96 = 22)、百分比都不得出現。
+  for (const derived of ["320", "22", "%", "成", "倍"]) {
+    assert.ok(!text.includes(derived), `${derived} in ${text}`);
+  }
+});
+
+test("§7.15 描述性:沒有判語、沒有門檻、沒有名次——那需要一份 battery", () => {
+  const text = openInterestDirectionText(DIRECTION);
+  for (const verdict of ["偏多", "偏空", "多方", "空方", "異常", "不尋常", "訊號",
+                         "建議", "第一", "最多", "排名", "門檻"]) {
+    assert.ok(!text.includes(verdict), `${verdict} in ${text}`);
+  }
+  // 契約代碼一個都不出現:§5 不做跨契約排序,連「誰」都不講。
+  assert.ok(!text.includes("MYF") && !text.includes("OMF"), text);
+});
+
+test("§7.15 「無法判定」即使是 0 也照樣講出來(它與另外三項一樣是一個計數)", () => {
+  const text = openInterestDirectionText({ ...DIRECTION, undetermined: 0 });
+  assert.ok(text.includes("無法判定 0 個"), text);
+});
+
+test("§7.15 判不出來的那些不得被說成「持平」——不知道不是沒有變動", () => {
+  const text = openInterestDirectionText({ ...DIRECTION, unchanged: 0, undetermined: 92 });
+  assert.ok(text.includes("持平 0 個"), text);
+  assert.ok(text.includes("無法判定 92 個"), text);
+});
+
+test("§7.15 日期照 payload 走,不編一個出來", () => {
+  assert.ok(openInterestDirectionText({ ...DIRECTION, as_of: "2026-06-19" })
+    .startsWith("期貨 2026-06-19 "));
 });

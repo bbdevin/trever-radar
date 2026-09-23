@@ -794,13 +794,52 @@ class DailyOpenInterestChangeTests(_AnomalyFixture):
         """§1 的口徑是一般時段。這份 fixture 反事實地給盤後列一個未平倉數字
         (來源實際上永遠是 '-' → NULL),差值必須一動也不動。"""
         self.seed([_spec("CCF", "2303", today=BASE_LOTS)])
+        self._give_the_after_hours_rows_an_open_interest()
+        daily = self.contracts("2303")["CCF"]["daily"]
+        self.assertEqual(daily["oi_change"], TODAY_OI - BASE_OI)
+
+    def _give_the_after_hours_rows_an_open_interest(self):
+        """反事實:來源哪天不再對盤後未平倉給 '-'。今天給的一律是 NULL。"""
         with db.get_engine().begin() as conn:
             conn.execute(schema.futures_daily.update().where(
                 (schema.futures_daily.c.contract_code == "CCF")
                 & (schema.futures_daily.c.session == "盤後")
             ).values(open_interest=500_000))
+
+    def test_the_after_hours_session_does_not_reach_the_open_interest_level(self):
+        """未平倉的**水位**也只讀一般時段(docs/38 §7.15)。
+
+        這一條與上面那一條是同一個口徑的兩半,而在今天的資料上兩種寫法答案相同:
+        來源對盤後未平倉一律給 '-'(NULL),所以「跨時段相加」恰好等於「只取一般
+        時段」。恰好相同不是一個理由——未平倉是**存量不是流量**,同一天兩個時段的
+        水位相加沒有意義。來源哪天開始給盤後未平倉,相加的寫法就會無聲地翻倍,而
+        ``oi_change``(本來就只讀一般時段)仍然是對的,同一張卡片上的兩個數字會
+        互相矛盾。這個測試就是那一天:它反事實地給盤後列一個未平倉,水位必須一動
+        也不動。回到相加,這裡會是 501,210。
+        """
+        self.seed([_spec("CCF", "2303", today=BASE_LOTS)])
+        self._give_the_after_hours_rows_an_open_interest()
         daily = self.contracts("2303")["CCF"]["daily"]
+        self.assertEqual(daily["open_interest"], TODAY_OI)
+        # 而且水位與日變化仍然是同一個口徑的兩半,不會一個動一個不動。
         self.assertEqual(daily["oi_change"], TODAY_OI - BASE_OI)
+
+    def test_the_level_and_the_change_read_the_same_session(self):
+        """兩者同一句 SQL:把一般時段的未平倉抽掉,兩個鍵必須一起消失。
+
+        只有水位跨時段相加的寫法會在這裡留下一個 500,000 的水位配上一個缺席的
+        日變化——一個講得出位階、卻講不出位階從哪來的契約。
+        """
+        self.seed([_spec("CCF", "2303", today=BASE_LOTS)])
+        self._give_the_after_hours_rows_an_open_interest()
+        with db.get_engine().begin() as conn:
+            conn.execute(schema.futures_daily.update().where(
+                (schema.futures_daily.c.contract_code == "CCF")
+                & (schema.futures_daily.c.session == "一般")
+            ).values(open_interest=None))
+        daily = self.contracts("2303")["CCF"]["daily"]
+        self.assertIsNone(daily["open_interest"])
+        self.assertNotIn("oi_change", daily)
 
 
 class AnomalyTextTests(_AnomalyFixture):
@@ -1118,6 +1157,206 @@ class AnomalyIndexMetaTests(_AnomalyFixture):
                          {"as_of": AD, "window_days": WINDOW_DAYS})
         self.assertEqual(anomaly_index_meta([{"code": "CCF"}], as_of=AD),
                          {"as_of": AD, "window_days": WINDOW_DAYS})
+
+
+DIRECTION_KEY = "futures_open_interest_direction"
+
+
+class MarketOpenInterestDirectionTests(_AnomalyFixture):
+    """市場層級的未平倉方向計數(docs/38 §7.15)。
+
+    這個鍵**沒有**經過 §3 的 battery,而那不是疏漏:它是**描述性**的——它只說
+    今天有幾個契約的未平倉比前一個期貨交易日高,沒有說那代表什麼、也沒有說今天
+    算不算不尋常,所以沒有東西可以被否證,也就沒有東西需要被檢定。§1 的旗標相反,
+    它主張「這個旗標告訴你一些事」,那是一個資訊性主張,所以 §3 先拿它去否證。
+    豁免只在它保持描述性的時候成立,所以底下有幾個測試守的不是數字而是**形狀**:
+    沒有門檻、沒有旗標、沒有比率、沒有淨額、沒有名次。
+    """
+
+    # ── 三態 ────────────────────────────────────────────────────
+    def test_the_key_is_absent_when_there_is_no_futures_day_at_all(self):
+        self.seed([_spec("CCF", "2303", lots=_NO_FUTURES_ROWS)])
+        self.assertNotIn(DIRECTION_KEY, self.radar())
+
+    def test_an_uncomputed_day_is_not_written_as_zeros(self):
+        """「沒有算過」與「四個都是 0」是兩件事,不可以塌成同一種表示。"""
+        self.seed([_spec("CCF", "2303", lots=_NO_FUTURES_ROWS)])
+        self.radar()
+        raw = (self.out / "radar.json").read_text(encoding="utf-8")
+        self.assertNotIn(DIRECTION_KEY, raw)
+
+    def test_a_computed_day_with_no_direction_at_all_still_carries_the_key(self):
+        """唯一一個契約判不出方向:三個計數是 0,但**我們數過了**。
+
+        這一態與上面那一態在畫面上講的是完全不同的兩句話,分辨它們的只有鍵在不在
+        ——與 §7.1 的 ``oi_change`` 是同一個陷阱,換到市場層級再出現一次。
+        """
+        self.seed([_spec("CCF", "2303", oi={AD: None})])
+        self.assertEqual(self.radar()[DIRECTION_KEY], {
+            "as_of": AD, "increased": 0, "decreased": 0,
+            "unchanged": 0, "undetermined": 1,
+        })
+
+    # ── 計數本身 ────────────────────────────────────────────────
+    def test_the_counts_under_a_mixed_fixture(self):
+        """五個契約、五種命運,手算:增 1 / 減 1 / 平 1 / 判不出 2。"""
+        self.seed([
+            _spec("AAA", "2303"),                               # +210
+            _spec("BBB", "1565", oi={AD: BASE_OI - 50}),        # −50
+            _spec("CCC", "2317", oi={AD: BASE_OI}),             # 0
+            _spec("DDD", "2330", oi={AD: None}),                # 今天沒有數字
+            _spec("EEE", "2454", lots={AD: None}),              # 今天根本沒有列
+        ])
+        self.assertEqual(self.radar()[DIRECTION_KEY], {
+            "as_of": AD, "increased": 1, "decreased": 1,
+            "unchanged": 1, "undetermined": 2,
+        })
+
+    def test_a_zero_change_is_unchanged_not_undetermined(self):
+        """「一口都沒變」是一個觀測,「不知道」不是。兩者絕不同一格。"""
+        self.seed([_spec("CCF", "2303", oi={AD: BASE_OI}),
+                   _spec("MYF", "1565", oi={AD: None})])
+        direction = self.radar()[DIRECTION_KEY]
+        self.assertEqual(direction["unchanged"], 1)
+        self.assertEqual(direction["undetermined"], 1)
+
+    def test_undeterminable_contracts_are_counted_not_silently_dropped(self):
+        """四個計數的和必須等於契約總數——判不出來的那些沒有從分母消失。
+
+        丟掉它們會讓「今天 1 個契約增加」這句話讀起來像是一個近乎全體的事實,
+        而實際上今天有 3 個契約根本沒有答案。判不出來的成因依 R1 有未掛牌 /
+        未公布 / 匯入失敗三種,三者不可分辨,所以只數,不分類。
+        """
+        specs = [
+            _spec("AAA", "2303"),
+            _spec("BBB", "1565", oi={AD: None}),
+            _spec("CCC", "2317", lots={AD: None}),
+            _spec("DDD", "2330", oi={_DAYS[-2]: None}),         # 前一日沒有數字
+        ]
+        self.seed(specs)
+        direction = self.radar()[DIRECTION_KEY]
+        self.assertEqual(direction["undetermined"], 3)
+        self.assertEqual(
+            sum(direction[key] for key in
+                ("increased", "decreased", "unchanged", "undetermined")),
+            len(specs),
+        )
+
+    def test_a_contract_with_no_row_today_is_undetermined_not_unchanged(self):
+        """沒有列 ≠ 沒有變動(R1)。那是「不知道」,不是「一口都沒變」。"""
+        self.seed([_spec("CCF", "2303", lots={AD: None}), _spec("MYF", "1565")])
+        direction = self.radar()[DIRECTION_KEY]
+        self.assertEqual(direction["unchanged"], 0)
+        self.assertEqual(direction["undetermined"], 1)
+
+    def test_the_counts_agree_with_the_per_stock_numbers(self):
+        """市場層級的方向與個股卡片上那個數字是同一次計算,不是第二次。"""
+        self.seed([_spec("AAA", "2303"), _spec("BBB", "1565", oi={AD: BASE_OI - 50})])
+        radar = self.radar()
+        contracts = self.contracts("2303") | self.contracts("1565")
+        self.assertEqual(contracts["AAA"]["daily"]["oi_change"], 210)
+        self.assertEqual(contracts["BBB"]["daily"]["oi_change"], -50)
+        self.assertEqual(radar[DIRECTION_KEY]["increased"], 1)
+        self.assertEqual(radar[DIRECTION_KEY]["decreased"], 1)
+
+    def test_the_direction_comes_from_the_shared_oi_change_function(self):
+        """方向由 battery 的 :func:`oi_change` 本人決定,不是這裡重數一次昨天。"""
+        self.seed([_spec("AAA", "2303"), _spec("BBB", "1565", oi={AD: BASE_OI - 50})])
+        with patch("radar.export.json_export.oi_change", lambda *a, **k: -1):
+            radar = self.radar()
+        self.assertEqual(radar[DIRECTION_KEY]["decreased"], 2)
+        self.assertEqual(radar[DIRECTION_KEY]["increased"], 0)
+
+    def test_the_after_hours_session_does_not_reach_the_direction(self):
+        """口徑與 ``oi_change`` 完全相同:一般時段。盤後給了數字也不動。"""
+        self.seed([_spec("CCF", "2303", oi={AD: BASE_OI})])
+        with db.get_engine().begin() as conn:
+            conn.execute(schema.futures_daily.update().where(
+                schema.futures_daily.c.session == "盤後"
+            ).values(open_interest=500_000))
+        self.assertEqual(self.radar()[DIRECTION_KEY]["unchanged"], 1)
+
+    # ── 形狀(豁免 battery 的條件) ──────────────────────────────
+    def test_the_date_is_the_futures_day_and_matches_the_other_two(self):
+        self.seed([_spec("CCF", "2303")])
+        radar = self.radar()
+        self.assertEqual(radar[DIRECTION_KEY]["as_of"], AD)
+        self.assertNotEqual(radar[DIRECTION_KEY]["as_of"], radar["data_date"])
+        self.assertEqual(radar[DIRECTION_KEY]["as_of"],
+                         radar["freshness"]["futures"]["date"])
+        self.assertEqual(radar[DIRECTION_KEY]["as_of"], radar[META_KEY]["as_of"])
+
+    def test_the_key_is_exactly_one_date_and_four_integers(self):
+        """第五個計數、一個總數、一個比率、一個旗標——任何一個出現,這裡就紅。
+
+        總數刻意不給:相加由讀的人做,同 §1 那五個整數的紀律。
+        """
+        self.seed([_spec("CCF", "2303")])
+        direction = self.radar()[DIRECTION_KEY]
+        self.assertEqual(sorted(direction), [
+            "as_of", "decreased", "increased", "unchanged", "undetermined",
+        ])
+        self.assertIsInstance(direction["as_of"], str)
+        for key in ("increased", "decreased", "unchanged", "undetermined"):
+            self.assertIsInstance(direction[key], int, key)
+            self.assertNotIsInstance(direction[key], bool, key)
+
+    def test_the_key_cannot_silently_gain_a_rate_or_a_rank(self):
+        """既有的 ``test_payload_cannot_silently_gain_a_rate`` 只走個股的 futures
+        區塊,``test_the_index_cannot_silently_gain_a_rate`` 只走市場層級的名單
+        ——這個鍵是 radar.json 的第三個入口,兩個閘門都照不到它。所以補這一把。
+        """
+        self.seed([_spec("CCF", "2303")])
+        offenders = []
+
+        def walk(node, path):
+            if isinstance(node, dict):
+                for key, value in node.items():
+                    if any(bad in key.lower() for bad in RANK_ISH + RATIO_ISH):
+                        offenders.append(f"{path}.{key}")
+                    walk(value, f"{path}.{key}")
+            elif isinstance(node, list):
+                for i, value in enumerate(node):
+                    walk(value, f"{path}[{i}]")
+
+        walk(self.radar()[DIRECTION_KEY], DIRECTION_KEY)
+        self.assertEqual(offenders, [])
+
+    def test_no_flag_or_verdict_ever_reaches_the_payload(self):
+        """描述性 = 只有計數。門檻、旗標、判語是資訊性主張,那需要一份 battery。"""
+        self.seed([_spec("AAA", "2303"), _spec("BBB", "1565")])
+        self.radar()
+        raw = (self.out / "radar.json").read_text(encoding="utf-8")
+        for verdict in ("偏多", "偏空", "異常", "unusual", "net", "pct",
+                        "total", "threshold", "flag", "signal"):
+            self.assertNotIn(verdict, raw.split(f'"{DIRECTION_KEY}"')[1][:200])
+
+    # ── 與名單的獨立性 ──────────────────────────────────────────
+    def test_it_survives_a_day_whose_anomaly_list_makes_no_claim(self):
+        """§7.13:R4 算不出結算窗口 → 名單整個不主張。未平倉的方向與結算窗口
+        毫無關係,跟著消失就是連坐——而這正是它不住在名單的 meta 裡的理由。
+        """
+        days = _DAYS[:_DAYS.index("2026-06-15") + 1]
+        self.seed([_spec("CCF", "2303", days=days)], days=days)
+        radar = self.radar()
+        self.assertNotIn(INDEX_KEY, radar)
+        self.assertNotIn(META_KEY, radar)
+        self.assertEqual(radar[DIRECTION_KEY], {
+            "as_of": days[-1], "increased": 1, "decreased": 0,
+            "unchanged": 0, "undetermined": 0,
+        })
+
+    def test_it_counts_contracts_that_never_reach_the_anomaly_list(self):
+        """計數涵蓋全部契約,名單只有舉旗的那些——兩個鍵的母體不同。"""
+        self.seed([_spec("AAA", "2303"), _spec("BBB", "1565", today=BASE_LOTS)])
+        radar = self.radar()
+        self.assertEqual([e["code"] for e in radar[INDEX_KEY]], ["AAA"])
+        self.assertEqual(radar[DIRECTION_KEY]["increased"], 2)
+
+    def test_the_anomaly_meta_did_not_absorb_the_counts(self):
+        """名單的 meta 仍然只有一個日期與一個整數(§7.11 的鎖原封不動)。"""
+        self.seed([_spec("CCF", "2303")])
+        self.assertEqual(sorted(self.radar()[META_KEY]), ["as_of", "window_days"])
 
 
 class AnomalyIndexOrderingTests(unittest.TestCase):
