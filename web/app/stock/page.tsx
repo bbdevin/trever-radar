@@ -22,7 +22,7 @@ import MarginPanel from "@/components/MarginPanel";
 import HoldersPanel from "@/components/HoldersPanel";
 import WarrantBranchPanel from "@/components/WarrantBranchPanel";
 import ReasonPill, { isChipStrategyCode } from "@/components/ReasonPill";
-import { anomalyFacts, flaggedContracts, futuresState } from "@/lib/futures";
+import { anomalyFacts, contractsWithDaily, dailyFacts, flaggedContracts, futuresState } from "@/lib/futures";
 import PocketBadges from "@/components/PocketBadges";
 import { Skeleton } from "@/components/ui/skeleton";
 import WatchlistButton from "@/components/WatchlistButton";
@@ -232,6 +232,7 @@ function StockView() {
         </section>
       </div>
       <FuturesAnomalyBlock futures={data.futures} />
+      <FuturesDailyBlock futures={data.futures} />
       <div className="sticky top-0 z-20 -mx-1 mb-2.5 flex min-w-0 flex-col gap-2 bg-background/95 px-1 py-1.5 backdrop-blur-sm md:static md:mx-0 md:bg-transparent md:px-0 md:py-0 md:backdrop-blur-none md:flex-row md:flex-wrap md:items-center md:gap-2.5">
         <div
           role="tablist"
@@ -658,6 +659,60 @@ function FuturesAnomalyBlock({ futures }: { futures: StockJson["futures"] }) {
               ))}
             </div>
           )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * 契約層級的每日事實(docs/38 §7.14)。與上面兩塊都是**不同的東西**:
+ * 徽章講「有沒有個股期貨」,異常區塊講「那一天有沒有舉旗」,這一塊講
+ * 「那一天成交了多少、未平倉多少、比前一個期貨交易日多了還是少了」。
+ *
+ * 它對**每一個**帶 `daily` 的契約都畫,不只舉旗的那幾個:一天約 320 個契約有
+ * 數字,舉旗的通常個位數,而未平倉的日變化與舉旗與否無關。
+ *
+ * 沒有 `daily` 的契約在這裡**什麼都不畫**,而不是畫一個「正常」或「無交易」:
+ * 缺席有未掛牌 / 未公布 / 匯入失敗三種意思(§7.7 / R1),三者不可分辨。
+ * 標題的日期讀 `daily.date`(§7.12 的期貨行情日),絕不用本頁的資料日。
+ */
+function FuturesDailyBlock({ futures }: { futures: StockJson["futures"] }) {
+  const state = futuresState(futures);
+  if (state.kind !== "has") return null;
+  const dated = contractsWithDaily(state.contracts);
+  if (dated.length === 0) return null;
+
+  return (
+    <div className="mb-2.5 flex flex-col gap-2" aria-label="個股期貨當日成交與未平倉">
+      {dated.map((c) => (
+        <div
+          key={c.code}
+          className="min-w-0 rounded-[var(--r-lg)] border border-border bg-card p-3 shadow-[var(--shadow-card)]"
+        >
+          <div className="flex min-w-0 flex-wrap items-baseline gap-2">
+            <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-border bg-secondary px-1.5 py-0.5 text-[11px] font-semibold text-muted-foreground">
+              <Layers size={11} aria-hidden="true" />
+              <span className="num">{c.code}</span>
+            </span>
+            <span className="text-[12.5px] font-semibold text-foreground">
+              期貨成交與未平倉({c.daily.date})
+            </span>
+          </div>
+          <div className="mt-2 grid grid-cols-2 gap-1.5 md:grid-cols-3">
+            {dailyFacts(c.daily).map((f) => (
+              <span
+                key={f.key}
+                className="flex items-baseline justify-between gap-2 rounded-[var(--r-sm)] border border-border bg-secondary px-2.5 py-1.5 text-[11.5px] text-muted-foreground"
+              >
+                {f.label}
+                <b className="num shrink-0 font-bold text-[color:var(--ink-2)]">
+                  {f.value}
+                  <span className="ml-0.5 font-normal">{f.unit}</span>
+                </b>
+              </span>
+            ))}
+          </div>
         </div>
       ))}
     </div>

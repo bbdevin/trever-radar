@@ -1,6 +1,7 @@
 import type {
   FuturesAnomaly,
   FuturesContract,
+  FuturesDaily,
   FuturesInfo,
   FuturesVolumeAnomalyEntry,
   FuturesVolumeAnomalyMeta,
@@ -166,6 +167,77 @@ export function anomalyEmptyStateText(
 export function anomalyLagText(asOf: string | null, dataDate: string): string | null {
   if (asOf === null || asOf === dataDate) return null;
   return `期貨行情日 ${asOf};本頁其他資料為 ${dataDate}。`;
+}
+
+/* ------------------------------------------------------------------ *
+ * 每日事實(docs/38 §7.14)。旗標是少數,事實是全部:一天約 320 個契約有
+ * `daily`,其中舉旗的通常個位數。以下三條被測試鎖住:
+ *   §7.6   `daily.volume`(兩時段合計)與 `anomaly.today`(只有一般時段)
+ *          是兩個數字,標籤必須自己講得清楚——兩者可能同時出現在同一頁上。
+ *   §7.1   `oi_change` 缺鍵 → 整列不顯示;`0` 是一個真的觀測,顯示 0。
+ *   §1     不算比率、不算差值、不給名次:每個顯示值都是 payload 裡的整數。
+ * 未平倉是**存量**,沒有時段之分(盤後列的來源是 NULL),所以時段拆分只出現在
+ * 成交量那幾列,未平倉那兩列不帶任何時段字樣。
+ * ------------------------------------------------------------------ */
+
+export interface FuturesDailyFact {
+  /** `session:<名稱>` 是時段列;其餘是 payload 的鍵名本人。 */
+  key: string;
+  label: string;
+  value: string;
+  unit: string;
+}
+
+/** 已知時段的顯示順序;之外的(來源日後多一個時段)照字典序接在後面。 */
+const SESSION_ORDER = ["一般", "盤後"];
+
+function orderedSessions(sessionVolume: Record<string, number>): string[] {
+  const keys = Object.keys(sessionVolume);
+  const known = SESSION_ORDER.filter((s) => keys.includes(s));
+  const rest = keys.filter((s) => !SESSION_ORDER.includes(s)).sort();
+  return [...known, ...rest];
+}
+
+export function dailyFacts(daily: FuturesDaily): FuturesDailyFact[] {
+  const facts: FuturesDailyFact[] = [];
+  // 「合計」兩個字是這一列唯一的工作:旁邊的異常區塊有一列叫「一般時段成交」,
+  // 而那個數字**不含盤後**(R3)。兩個數字同時出現在一頁上,分辨它們的東西
+  // 只有標籤(§7.6)。所以這裡不叫「成交量」,叫它到底加了哪些時段。
+  if (daily.volume !== null) {
+    facts.push({ key: "volume", label: "一般+盤後合計成交", value: fmtLotsAbs(daily.volume), unit: "口" });
+  }
+  // 只列出**真的有列**的時段;沒有的時段不補 0(補 0 = 謊報「沒人交易」)。
+  for (const session of orderedSessions(daily.session_volume)) {
+    facts.push({
+      key: `session:${session}`,
+      label: `${session}時段成交`,
+      value: fmtLotsAbs(daily.session_volume[session]),
+      unit: "口",
+    });
+  }
+  // 未平倉是存量:它沒有時段,所以標籤裡也不出現時段。
+  if (daily.open_interest !== null) {
+    facts.push({ key: "open_interest", label: "未平倉", value: fmtLotsAbs(daily.open_interest), unit: "口" });
+  }
+  // 缺鍵就是缺鍵:不補 0、不補破折號、不加一句「未公布」(§7.1)。而 `0` 會走到
+  // 這裡並顯示成 `0`——「一口都沒變」是一個觀測,與「不知道」在畫面上長得一樣,
+  // 分辨它們的只有這一列在不在。
+  if (daily.oi_change !== undefined) {
+    facts.push({ key: "oi_change", label: "未平倉較前日", value: fmtLotsSigned(daily.oi_change), unit: "口" });
+  }
+  return facts;
+}
+
+/**
+ * 個股頁:契約裡帶 `daily` 的那些(§7.14)。旗標與這件事無關,所以這裡**不**看
+ * `anomaly`;沒有 `daily` 的契約不進清單,也**不會**被標成「正常」——缺席有
+ * 未掛牌 / 未公布 / 匯入失敗三種意思,刻意不可分辨(§7.7)。
+ * 同一檔股票的兩個契約(1565 的 MYF/OMF)各自一列,不依股票去重(§7.10)。
+ */
+export type DatedContract = FuturesContract & { daily: FuturesDaily };
+
+export function contractsWithDaily(contracts: FuturesContract[]): DatedContract[] {
+  return contracts.filter((c): c is DatedContract => c.daily !== undefined);
 }
 
 /**

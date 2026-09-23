@@ -229,6 +229,15 @@ class FuturesExportTests(unittest.TestCase):
         self.assertEqual(daily["volume"], 500)
         self.assertEqual(daily["session_volume"], {"一般": 500})
 
+    def test_daily_carries_no_oi_change_when_there_is_only_one_futures_day(self):
+        """「前一個期貨交易日」不存在 → 沒有差值可算,整個鍵省略(不是 0)。"""
+        self._seed_futures(
+            [_contract("CCF", "2303")],
+            [_daily("CCF", "202609", "一般", 500, 900)],
+        )
+        daily = self._stock("2303")["futures"]["contracts"][0]["daily"]
+        self.assertNotIn("oi_change", daily)
+
     # ── freshness ──────────────────────────────────────────────
     def test_the_normal_one_day_lag_is_not_stale(self):
         """落後一個交易日是**常態**,不是舊資料(§7.12)。
@@ -709,6 +718,89 @@ class AnomalyOpenInterestTests(_AnomalyFixture):
         self.contracts("2303")
         raw = (self.out / "stocks" / "2303.json").read_text(encoding="utf-8")
         self.assertNotIn('"oi_change"', raw)
+
+
+class DailyOpenInterestChangeTests(_AnomalyFixture):
+    """``daily.oi_change``:**每一個**契約-日都給,不只舉旗的那些(docs/38 §7.14)。
+
+    部位是在建還是在減,是這個切片唯一講得出方向的事實,而它與旗標無關——
+    一天約 320 個契約有 ``daily``,其中舉旗的通常只有個位數。
+    """
+
+    def test_a_normal_unflagged_contract_day_still_carries_oi_change(self):
+        """沒有創高 = 沒有 anomaly 區塊,但未平倉的日變化照樣是一個事實。"""
+        self.seed([_spec("CCF", "2303", today=BASE_LOTS)])
+        contract = self.contracts("2303")["CCF"]
+        self.assertNotIn("anomaly", contract)       # 真的沒舉旗
+        self.assertEqual(contract["daily"]["oi_change"], TODAY_OI - BASE_OI)
+
+    def test_a_flagged_contract_has_one_number_in_two_places_not_two_numbers(self):
+        """舉旗時 ``daily.oi_change`` 與 ``anomaly.oi_change`` 必須逐字相同。
+
+        兩個同名的數字並排顯示,任何一邊自己再算一次就是兩個會漂走的真相。
+        """
+        self.seed([_spec("CCF", "2303")])
+        contract = self.contracts("2303")["CCF"]
+        self.assertEqual(contract["daily"]["oi_change"],
+                         contract["anomaly"]["oi_change"])
+
+    def test_oi_change_is_omitted_entirely_when_today_is_null(self):
+        self.seed([_spec("CCF", "2303", oi={AD: None})])
+        daily = self.contracts("2303")["CCF"]["daily"]
+        self.assertNotIn("oi_change", daily)
+        self.assertIsNone(daily["open_interest"])
+
+    def test_oi_change_is_omitted_entirely_when_the_previous_day_is_null(self):
+        self.seed([_spec("CCF", "2303", oi={_DAYS[-2]: None})])
+        self.assertNotIn("oi_change", self.contracts("2303")["CCF"]["daily"])
+
+    def test_an_omitted_oi_change_is_never_written_as_zero_or_null(self):
+        """缺值與 0 在畫面上長得一樣,只靠「那一列在不在」分辨(§7.1)。"""
+        self.seed([_spec("CCF", "2303", oi={AD: None}, today=BASE_LOTS)])
+        self.contracts("2303")
+        raw = (self.out / "stocks" / "2303.json").read_text(encoding="utf-8")
+        self.assertNotIn('"oi_change"', raw)
+
+    def test_a_real_zero_is_written_as_zero(self):
+        """未平倉一口都沒變是一個**觀測**,不是缺值——它必須是 0,不是缺鍵。"""
+        self.seed([_spec("CCF", "2303", oi={AD: BASE_OI}, today=BASE_LOTS)])
+        daily = self.contracts("2303")["CCF"]["daily"]
+        self.assertEqual(daily["oi_change"], 0)
+        raw = (self.out / "stocks" / "2303.json").read_text(encoding="utf-8")
+        self.assertIn('"oi_change": 0', raw)
+
+    def test_the_previous_day_comes_from_the_shared_oi_change_function(self):
+        """不是第二次實作的「前一個期貨交易日」,是 battery 那一個函式本人。"""
+        from radar.compute import futures_volume_battery
+        from radar.export import json_export
+        self.assertIs(json_export.oi_change, futures_volume_battery.oi_change)
+
+        self.seed([_spec("CCF", "2303", today=BASE_LOTS)])
+        with patch("radar.export.json_export.oi_change", lambda *a, **k: 7_777):
+            daily = self.contracts("2303")["CCF"]["daily"]
+        self.assertEqual(daily["oi_change"], 7_777)
+
+    def test_the_previous_day_skips_calendar_gaps_instead_of_counting_back_one_date(self):
+        """前一個**期貨交易日**不是前一個日曆日:週末與停市日都要跳過。
+
+        AD 是週五(2026-06-19),前一個期貨交易日是週四;若有人用日期減一天,
+        這裡拿到的會是缺值而不是 210。
+        """
+        self.assertEqual(date.fromisoformat(AD).weekday(), 4)
+        self.seed([_spec("CCF", "2303", today=BASE_LOTS)])
+        self.assertEqual(self.contracts("2303")["CCF"]["daily"]["oi_change"], 210)
+
+    def test_the_after_hours_session_does_not_reach_the_open_interest_change(self):
+        """§1 的口徑是一般時段。這份 fixture 反事實地給盤後列一個未平倉數字
+        (來源實際上永遠是 '-' → NULL),差值必須一動也不動。"""
+        self.seed([_spec("CCF", "2303", today=BASE_LOTS)])
+        with db.get_engine().begin() as conn:
+            conn.execute(schema.futures_daily.update().where(
+                (schema.futures_daily.c.contract_code == "CCF")
+                & (schema.futures_daily.c.session == "盤後")
+            ).values(open_interest=500_000))
+        daily = self.contracts("2303")["CCF"]["daily"]
+        self.assertEqual(daily["oi_change"], TODAY_OI - BASE_OI)
 
 
 class AnomalyTextTests(_AnomalyFixture):

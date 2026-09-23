@@ -9,6 +9,8 @@ import {
   anomalyEmptyStateText,
   anomalyFacts,
   anomalyLagText,
+  contractsWithDaily,
+  dailyFacts,
   flaggedContracts,
   futuresAnomalyMarketState,
   futuresState,
@@ -244,6 +246,118 @@ test("股名解析不到時是 null(顯示 id 本身,不編一個標籤)", () =>
   const state = futuresAnomalyMarketState([entry("9999", "ZZF", ANOMALY_MYF)], "2026-09-18", new Map());
   if (state.kind !== "listed") throw new Error("expected listed");
   assert.equal(state.rows[0].name, null);
+});
+
+// ---- docs/38 §7.14:每日事實(每一個契約-日,不只舉旗的那些) ----
+
+const DAILY_FULL = {
+  date: "2026-09-17",
+  volume: 640,
+  open_interest: 1000,
+  session_volume: { 一般: 600, 盤後: 40 },
+  oi_change: 210,
+};
+
+test("§7.14 五列:合計成交、兩個時段、未平倉、未平倉較前日", () => {
+  assert.deepEqual(dailyFacts(DAILY_FULL), [
+    { key: "volume", label: "一般+盤後合計成交", value: "640", unit: "口" },
+    { key: "session:一般", label: "一般時段成交", value: "600", unit: "口" },
+    { key: "session:盤後", label: "盤後時段成交", value: "40", unit: "口" },
+    { key: "open_interest", label: "未平倉", value: "1,000", unit: "口" },
+    { key: "oi_change", label: "未平倉較前日", value: "+210", unit: "口" },
+  ]);
+});
+
+test("§7.6 合計成交與異常區塊的「一般時段成交」是兩個數字,光看標籤就分得出來", () => {
+  // 同一頁上並排的兩列:daily 是 640(一般 600 + 盤後 40),anomaly 是 600(只有一般)。
+  const daily = dailyFacts(DAILY_FULL);
+  const anomaly = anomalyFacts({ today: 600, window_max: 140, window_median: 45, window_days: 60 });
+  const total = daily.find((f) => f.key === "volume")!;
+  const regularOnly = anomaly.find((f) => f.key === "today")!;
+  assert.notEqual(total.value, regularOnly.value);
+  assert.notEqual(total.label, regularOnly.label);
+  // 合計那一列的標籤必須自己講出它加了哪些時段——「成交量」三個字擋不住誤讀。
+  assert.ok(total.label.includes("一般") && total.label.includes("盤後"), total.label);
+  // 而 anomaly 那一列的標籤只講一般時段,不含「盤後」「合計」。
+  assert.ok(!regularOnly.label.includes("盤後"), regularOnly.label);
+  assert.ok(!regularOnly.label.includes("合計"), regularOnly.label);
+  // 同一個數字不得在兩塊之間被當成同一列:一般時段那一列的值才等於 anomaly.today。
+  assert.equal(daily.find((f) => f.key === "session:一般")!.value, regularOnly.value);
+});
+
+test("§7.1 oi_change 缺鍵 -> 整列不顯示(不是 0、不是破折號、不是「未公布」)", () => {
+  const { oi_change: _omitted, ...withoutOi } = DAILY_FULL;
+  const keys = dailyFacts(withoutOi).map((f) => f.key);
+  assert.ok(!keys.includes("oi_change"), keys.join(","));
+  for (const f of dailyFacts(withoutOi)) {
+    assert.ok(!f.label.includes("較前日"), f.label);
+    assert.ok(!["—", "-", "未公布", "無變化"].includes(f.value), f.value);
+  }
+});
+
+test("§7.1 oi_change = 0 是一個真的觀測,顯示 0——與缺鍵只差在那一列在不在", () => {
+  const zero = dailyFacts({ ...DAILY_FULL, oi_change: 0 });
+  assert.equal(zero.find((f) => f.key === "oi_change")?.value, "0");
+  const { oi_change: _omitted, ...withoutOi } = DAILY_FULL;
+  assert.equal(zero.length, dailyFacts(withoutOi).length + 1);
+});
+
+test("§7.14 未平倉是存量:它那兩列不帶任何時段字樣", () => {
+  for (const f of dailyFacts(DAILY_FULL)) {
+    if (!f.key.startsWith("open_interest") && f.key !== "oi_change") continue;
+    assert.ok(!f.label.includes("一般"), f.label);
+    assert.ok(!f.label.includes("盤後"), f.label);
+    assert.ok(!f.label.includes("時段"), f.label);
+  }
+});
+
+test("缺席的時段不補 0:只列出真的有列的那些(補 0 = 謊報沒人交易)", () => {
+  const facts = dailyFacts({ ...DAILY_FULL, volume: 600, session_volume: { 一般: 600 } });
+  assert.deepEqual(facts.map((f) => f.key),
+    ["volume", "session:一般", "open_interest", "oi_change"]);
+});
+
+test("時段順序固定:一般在盤後之前,不隨 payload 的鍵序飄", () => {
+  const flipped = dailyFacts({ ...DAILY_FULL, session_volume: { 盤後: 40, 一般: 600 } });
+  assert.deepEqual(
+    flipped.filter((f) => f.key.startsWith("session:")).map((f) => f.key),
+    ["session:一般", "session:盤後"],
+  );
+});
+
+test("volume / open_interest 是 null 時整列不顯示,不是 0", () => {
+  const facts = dailyFacts({
+    date: "2026-09-17", volume: null, open_interest: null, session_volume: {},
+  });
+  assert.deepEqual(facts, []);
+});
+
+test("§1 不算比率、不算差值:每個顯示值都是 payload 裡原本那個整數", () => {
+  const allowed = new Set([640, 600, 40, 1000, 210]);
+  for (const f of dailyFacts(DAILY_FULL)) {
+    const n = Number(f.value.replace(/[,+]/g, ""));
+    assert.ok(allowed.has(n), `${f.key} 的值 ${f.value} 不是 payload 裡的整數`);
+  }
+});
+
+test("§7.12 每日事實的標籤不得出現「今日 / 今天」——那一天不是使用者的今天", () => {
+  for (const f of dailyFacts(DAILY_FULL)) {
+    assert.ok(!f.label.includes("今日"), f.label);
+    assert.ok(!f.label.includes("今天"), f.label);
+  }
+});
+
+test("§7.14 有 daily 就入列,與有沒有舉旗無關;沒有 daily 的不入列也不算「正常」", () => {
+  const contracts = [
+    { code: "MYF", is_futures: true, is_option: false, is_weekly_option: false, daily: DAILY_FULL },
+    // 沒有 anomaly,但有 daily —— 這正是這個功能要補的那 ~248 檔。
+    { code: "OMF", is_futures: true, is_option: false, is_weekly_option: false, daily: { ...DAILY_FULL, volume: 12 } },
+    { code: "MYO", is_futures: false, is_option: true, is_weekly_option: false, anomaly: ANOMALY_MYF },
+  ];
+  assert.deepEqual(contractsWithDaily(contracts).map((c) => c.code), ["MYF", "OMF"]);
+  // 舉旗但沒有 daily 的契約不在這一塊裡(它在異常區塊裡),而且沒有被標成任何狀態。
+  assert.equal(contractsWithDaily([contracts[2]]).length, 0);
+  assert.equal(flaggedContracts(contracts).length, 1);
 });
 
 test("個股頁:只有帶 anomaly 的契約進清單,兩個契約都舉旗時兩個都在", () => {

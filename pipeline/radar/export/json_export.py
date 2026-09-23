@@ -30,6 +30,11 @@ from ..compute.futures_volume_anomaly import (
     anomaly_index_meta,
     futures_volume_anomalies,
 )
+from ..compute.futures_volume_battery import (
+    load_futures_calendar,
+    load_regular_session_volumes,
+    oi_change,
+)
 
 # A2 strategy lifecycle export contract.  This is source-controlled metadata,
 # not a database migration and does not alter any score, selector data, or
@@ -282,6 +287,22 @@ def _futures_by_stock(
         if row["open_interest"] is not None:
             entry["open_interest"] = (entry["open_interest"] or 0) + row["open_interest"]
 
+    # 未平倉的日變化,給**每一個**有 daily 的契約-日,不只舉旗的那些:部位是在
+    # 建還是在減,是這個切片唯一講得出方向的事實,而它與旗標無關。
+    #
+    # 「前一個期貨交易日」由 battery 的 :func:`oi_change` 定位,口徑也照 §1 表格
+    # (一般時段、非價差列、跨到期月相加;任一邊為 NULL 則整個欄位省略)。在這裡
+    # 自己再數一次「昨天」,就會有第二個與 ``anomaly.oi_change`` 同名、可以各自
+    # 漂走的數字——而那兩個數字在舉旗的契約上會並排顯示。
+    # 上面那個 daily 加總不篩時段,但盤後列的未平倉來源就是 '-'(NULL),所以
+    # ``daily.open_interest`` 與這裡的一般時段口徑在資料上是同一個數。
+    futures_days = load_futures_calendar(conn, as_of) if as_of is not None else []
+    # 只讀最後兩個期貨交易日:oi_change 要的就是這兩天,整段歷史是 battery 的事。
+    oi_history = (
+        load_regular_session_volumes(conn, as_of, date_from=futures_days[-2])
+        if len(futures_days) >= 2 else {}
+    )
+
     # 一次計算,兩個出口:個股頁的區塊與市場層級的名單。第二次呼叫就是第二條規則。
     # as_of 為 None(``futures_daily`` 整張表還沒有任何一列)時,規則自己就會在
     # 「這一天沒有期貨日曆」那一步回傳「沒有算過」,不必在這裡分岔。
@@ -318,6 +339,15 @@ def _futures_by_stock(
         today = daily_by_contract.get(row["contract_code"])
         if today is not None:
             contract["daily"] = today
+            change = oi_change(
+                oi_history.get(row["contract_code"], {}).get("open_interest", {}),
+                futures_days, as_of,
+            )
+            # 任一邊為 NULL(或前一個期貨交易日根本不存在)→ 整個鍵省略。
+            # 0 是一個真的觀測(「一口都沒變」),缺席不是;寫 0 頂替缺值就是
+            # 把「不知道」講成一個結論,同 §7.1 的習慣。
+            if change is not None:
+                today["oi_change"] = change
         # 沒有旗標就整個區塊不輸出:否決與「看過但沒創高」在這裡不可分辨,
         # 兩者都不是一個異常,而 0 或 null 會把「沒有主張」講成一個結論。
         contract.update((anomalies or {}).get(row["contract_code"], {}))
