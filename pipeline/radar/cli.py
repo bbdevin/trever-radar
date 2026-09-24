@@ -550,6 +550,48 @@ def cmd_futures_volume_battery(args):
     print(f"  {report['verdict']['line']}")
 
 
+def cmd_next_day_surge_battery(args):
+    from .compute.next_day_surge_battery import write_next_day_surge_battery
+
+    report = write_next_day_surge_battery(
+        as_of=args.as_of, run_number=args.run_number, out=args.out,
+        historical=args.historical,
+    )
+    coverage, sets_ = report["coverage"], report["sets"]
+    print(
+        "next-day-surge-battery "
+        f"as_of={report['metadata']['as_of']} "
+        f"run={report['metadata']['run_number']} "
+        f"preregistration={report['metadata']['preregistration_commit']} "
+        f"scores={coverage['daily_scores_first_date']}..{coverage['daily_scores_last_date']} "
+        f"dates={coverage['daily_scores_dates']} rows={coverage['daily_scores_rows']} "
+        f"-> {args.out}"
+    )
+    print(
+        f"  n={sets_['events']} h_L={sets_['hits']} "
+        f"H1(n={sets_['events_by_half']['H1']},h={sets_['hits_by_half']['H1']}) "
+        f"H2(n={sets_['events_by_half']['H2']},h={sets_['hits_by_half']['H2']}) "
+        f"tie_at_cap={sets_['tie_at_cap']}"
+    )
+    for placebo, shorts in sets_["placebo_short"].items():
+        for short in shorts:
+            print(
+                f"  placebo short: {placebo} key={short['key']} k={short['k']} "
+                f"pool={short['pool_size']}"
+            )
+    for arm, codes in report["refusals"].items():
+        print(f"  refusals[{arm}]: " + " ".join(f"{c}={v}" for c, v in codes.items()))
+    for seed in report["tests"]["B"]["seeds"]:
+        print(
+            f"  {seed['placebo']} seed={seed['seed']} n={seed['n']} h_L={seed['h_f']} "
+            f"h_P={seed['h_p']} sigma_P={seed['sigma_p']} "
+            f"{'pass' if seed['passed'] else 'fail'}"
+        )
+    for test in ("A", "B", "C"):
+        print(f"  {report['tests'][test]['line']}")
+    print(f"  {report['verdict']['line']}")
+
+
 def cmd_branch_ranking_v2_shadow(args):
     from .compute.branch_ranking_v2_shadow import write_branch_ranking_v2_shadow_report
 
@@ -979,6 +1021,26 @@ def main(argv=None):
                           "trading days)")
     fvb.add_argument("--out", required=True, help="JSON output path")
     fvb.set_defaults(fn=cmd_futures_volume_battery)
+
+    nds = sub.add_parser(
+        "next-day-surge-battery",
+        help="read-only pre-registered battery for the next-day surge count "
+             "(docs/39, committed at f8a57b5 before any fwd_* aggregation): list "
+             "events, the R1/R2 refusals, two count-matched placebos and the three "
+             "kill tests. Writes a JSON report and nothing else; the export key "
+             "ships only if A, B and C all pass",
+    )
+    nds.add_argument("--as-of", dest="as_of", required=True,
+                     help="YYYY-MM-DD inclusive cutoff (docs/39 §3.1: the last "
+                          "daily_prices date)")
+    nds.add_argument("--run-number", dest="run_number", type=int, default=1,
+                     help="which run this is (docs/39 §3.5 requires it recorded; "
+                          "§3.7 allows a re-run only after >= 60 new market days)")
+    nds.add_argument("--historical", action="store_true",
+                     help="allow an as-of earlier than the last daily_prices date; "
+                          "only for reproducing an earlier run, recorded in the report")
+    nds.add_argument("--out", required=True, help="JSON output path")
+    nds.set_defaults(fn=cmd_next_day_surge_battery)
 
     v2s = sub.add_parser(
         "branch-ranking-v2-shadow",
