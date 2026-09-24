@@ -108,6 +108,14 @@ class ScoreListGateTests(_ExportFixture):
         self.assertIn("尚未到齊", summary)
         self.assertNotIn("暫無達門檻", summary)
 
+    def test_summary_names_the_market_in_chinese(self):
+        """stocks.market 存 twse / tpex;對照表以前只認 tse / otc,正式站印出
+        「twse成交額 7238 億」(2026-09-24 16:10 那版)。"""
+        self.seed({f"s{i}": {"final": 50, "branch": 20} for i in range(3)})
+        summary = "".join(self.radar()["summary_text"])
+        self.assertIn("上市成交額", summary)
+        self.assertNotIn("twse", summary)
+
     def test_missing_institutional_data_alone_also_withholds(self):
         self.seed({f"s{i}": {"final": 70, "branch": 20, "inst": None if i < 2 else 50}
                    for i in range(10)})

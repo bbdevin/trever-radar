@@ -1552,7 +1552,9 @@ def export_json(out_dir: Path | None = None) -> dict:
         # Market summary: biggest market turnover
         if summary:
             top = max(summary, key=lambda x: x[1])
-            mkt_label = {"tse": "上市", "otc": "上櫃"}.get(str(top[0]), str(top[0]))
+            # stocks.market 存的是 twse / tpex(schema.py)。以前這裡只認 tse / otc,
+            # 於是摘要一直印成「twse成交額 …」。
+            mkt_label = {"twse": "上市", "tpex": "上櫃"}.get(str(top[0]), str(top[0]))
             up_n, down_n = int(top[2]), int(top[3])
             out_sentences.append(
                 f"{mkt_label}成交額 {top[1] / 1e8:.0f} 億，漲 {up_n} 跌 {down_n}。"
