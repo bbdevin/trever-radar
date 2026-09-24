@@ -1,0 +1,767 @@
+{
+  "companion": {
+    "all_days_events": 23,
+    "all_days_hits": 0,
+    "board_hit_not_entry_hit": 0,
+    "board_hits": 0,
+    "board_unknown": 0,
+    "by_final_band": {
+      "65-74": {
+        "events": 21,
+        "hits": 0
+      },
+      "75-84": {
+        "events": 2,
+        "hits": 0
+      }
+    },
+    "by_month": {
+      "2026-07": {
+        "events": 1,
+        "hits": 0
+      },
+      "2026-08": {
+        "events": 18,
+        "hits": 0
+      },
+      "2026-09": {
+        "events": 4,
+        "hits": 0
+      }
+    },
+    "entry_open_at_limit_proxy": 0,
+    "over_cap_days": 0,
+    "tie_at_cap": 0
+  },
+  "coverage": {
+    "daily_scores_dates": 49,
+    "daily_scores_first_date": "2026-07-06",
+    "daily_scores_last_date": "2026-09-23",
+    "daily_scores_rows": 32745,
+    "evaluation_from": "2026-07-06",
+    "evaluation_to": "2026-09-23",
+    "market_days_in_evaluation": 57
+  },
+  "definitions": {
+    "R2": "stored entry_date != e, or stored fwd_1d NULL or more than 0.01 away from 100 x (close/open - 1): refused and counted, never scored on the stored value; the remedy is a whole-table compute-performance --all and a new run number",
+    "board_hits": "report only: close(e) x adj(e) >= 1.07 x close(t) x adj(t); this one DOES depend on adj_factor because it spans two rows",
+    "e": "the first date after t in the market calendar (every date with any daily_prices row); computed from the calendar, never read from the stored entry_date, which is only the R2 cross-check",
+    "entry_open_at_limit_proxy": "report only: open(s, e) x 1000 >= close(s, t) x 1095 on raw prices as §2 R3 writes it; an ex-dividend e understates it",
+    "event": "the first day of a run of consecutive market days on the list; a market day without the stock on the list breaks the run",
+    "hit": "100 x close(s, e) >= 107 x open(s, e) on raw prices of the entry day e, compared in decimal; buy at the next market day's open, mark at its close. The overnight gap is excluded because nobody can buy it",
+    "on_list": "verbatim json_export: close on t, stocks.type='stock', final >= 65, sorted by (final, branch_score with None as -inf, turnover) desc, first 40; full ties at the cap are all included",
+    "pools": "P_stock: same stock, same half, rows not on the list passing R1 and R2; P_date: same date, other stocks, rows not on the list passing R1 and R2. Days whose next day is a list day are deliberately NOT removed (§3.3)"
+  },
+  "facts_if_shipped": {
+    "events": 23,
+    "from": "2026-07-27",
+    "hits": 0,
+    "leg": "entry_open_to_close",
+    "placebo_date_hits": {
+      "max": 2,
+      "min": 0
+    },
+    "placebo_stock_hits": {
+      "max": 2,
+      "min": 0
+    },
+    "threshold_pct": 7,
+    "to": "2026-09-18"
+  },
+  "halves": {
+    "H1": [
+      "2026-07-06",
+      "2026-08-13"
+    ],
+    "H1_market_days": 28,
+    "H2": [
+      "2026-08-14",
+      "2026-09-23"
+    ],
+    "H2_market_days": 29
+  },
+  "metadata": {
+    "as_of": "2026-09-23",
+    "historical_as_of": false,
+    "preregistration_commit": "f8a57b5",
+    "preregistration_doc": "docs/39_next_day_surge_count_preregistration.md",
+    "read_only": true,
+    "report": "next-day-surge-battery",
+    "run_number": 1
+  },
+  "refusals": {
+    "events": {
+      "R1_bad_open": 0,
+      "R1_no_close": 0,
+      "R1_no_entry_day": 0,
+      "R1_no_entry_row": 0,
+      "R2_entry_shifted": 0,
+      "R2_fwd_mismatch": 0
+    },
+    "pool": {
+      "R1_bad_open": 1,
+      "R1_no_close": 0,
+      "R1_no_entry_day": 749,
+      "R1_no_entry_row": 6,
+      "R2_entry_shifted": 0,
+      "R2_fwd_mismatch": 0
+    }
+  },
+  "sets": {
+    "events": 23,
+    "events_by_half": {
+      "H1": 9,
+      "H2": 14
+    },
+    "hits": 0,
+    "hits_by_half": {
+      "H1": 0,
+      "H2": 0
+    },
+    "placebo_short": {
+      "date": [],
+      "stock": []
+    },
+    "tie_at_cap": 0
+  },
+  "tests": {
+    "A": {
+      "line": "[UNDERPOWERED] A_power: n = 23, h_L = 0, threshold 30; this is an inconclusive result for want of power, NOT a refutation; re-run only after >= 60 new market days (§3.7)",
+      "observed": {
+        "h_l": 0,
+        "n": 23,
+        "threshold": 30
+      },
+      "outcome": "UNDERPOWERED",
+      "passed": false,
+      "test": "A_power",
+      "threshold": "n >= 30 and h_L >= 30 (LOW_SAMPLE_SURVIVORS)"
+    },
+    "B": {
+      "evaluable": true,
+      "line": "[FAIL] B_informativeness: ['stock/seed=0', 'stock/seed=1', 'stock/seed=2', 'stock/seed=3', 'stock/seed=4', 'stock/seed=5', 'stock/seed=6', 'stock/seed=7', 'stock/seed=8', 'stock/seed=9', 'date/seed=0', 'date/seed=1', 'date/seed=2', 'date/seed=3', 'date/seed=4', 'date/seed=5', 'date/seed=6', 'date/seed=7', 'date/seed=8', 'date/seed=9'] do not clear the 2-sigma margin; one failure is a failure",
+      "outcome": "FAIL",
+      "passed": false,
+      "seeds": [
+        {
+          "evaluable": true,
+          "h_f": 0,
+          "h_p": 0,
+          "margin": 2.0,
+          "n": 23,
+          "p_hat": 0.0,
+          "passed": false,
+          "placebo": "stock",
+          "seed": 0,
+          "sigma_p": 1.0
+        },
+        {
+          "evaluable": true,
+          "h_f": 0,
+          "h_p": 0,
+          "margin": 2.0,
+          "n": 23,
+          "p_hat": 0.0,
+          "passed": false,
+          "placebo": "stock",
+          "seed": 1,
+          "sigma_p": 1.0
+        },
+        {
+          "evaluable": true,
+          "h_f": 0,
+          "h_p": 1,
+          "margin": 2.0,
+          "n": 23,
+          "p_hat": 0.043478,
+          "passed": false,
+          "placebo": "stock",
+          "seed": 2,
+          "sigma_p": 1.0
+        },
+        {
+          "evaluable": true,
+          "h_f": 0,
+          "h_p": 1,
+          "margin": 2.0,
+          "n": 23,
+          "p_hat": 0.043478,
+          "passed": false,
+          "placebo": "stock",
+          "seed": 3,
+          "sigma_p": 1.0
+        },
+        {
+          "evaluable": true,
+          "h_f": 0,
+          "h_p": 2,
+          "margin": 2.702656,
+          "n": 23,
+          "p_hat": 0.086957,
+          "passed": false,
+          "placebo": "stock",
+          "seed": 4,
+          "sigma_p": 1.351328
+        },
+        {
+          "evaluable": true,
+          "h_f": 0,
+          "h_p": 0,
+          "margin": 2.0,
+          "n": 23,
+          "p_hat": 0.0,
+          "passed": false,
+          "placebo": "stock",
+          "seed": 5,
+          "sigma_p": 1.0
+        },
+        {
+          "evaluable": true,
+          "h_f": 0,
+          "h_p": 1,
+          "margin": 2.0,
+          "n": 23,
+          "p_hat": 0.043478,
+          "passed": false,
+          "placebo": "stock",
+          "seed": 6,
+          "sigma_p": 1.0
+        },
+        {
+          "evaluable": true,
+          "h_f": 0,
+          "h_p": 1,
+          "margin": 2.0,
+          "n": 23,
+          "p_hat": 0.043478,
+          "passed": false,
+          "placebo": "stock",
+          "seed": 7,
+          "sigma_p": 1.0
+        },
+        {
+          "evaluable": true,
+          "h_f": 0,
+          "h_p": 1,
+          "margin": 2.0,
+          "n": 23,
+          "p_hat": 0.043478,
+          "passed": false,
+          "placebo": "stock",
+          "seed": 8,
+          "sigma_p": 1.0
+        },
+        {
+          "evaluable": true,
+          "h_f": 0,
+          "h_p": 1,
+          "margin": 2.0,
+          "n": 23,
+          "p_hat": 0.043478,
+          "passed": false,
+          "placebo": "stock",
+          "seed": 9,
+          "sigma_p": 1.0
+        },
+        {
+          "evaluable": true,
+          "h_f": 0,
+          "h_p": 0,
+          "margin": 2.0,
+          "n": 23,
+          "p_hat": 0.0,
+          "passed": false,
+          "placebo": "date",
+          "seed": 0,
+          "sigma_p": 1.0
+        },
+        {
+          "evaluable": true,
+          "h_f": 0,
+          "h_p": 1,
+          "margin": 2.0,
+          "n": 23,
+          "p_hat": 0.043478,
+          "passed": false,
+          "placebo": "date",
+          "seed": 1,
+          "sigma_p": 1.0
+        },
+        {
+          "evaluable": true,
+          "h_f": 0,
+          "h_p": 0,
+          "margin": 2.0,
+          "n": 23,
+          "p_hat": 0.0,
+          "passed": false,
+          "placebo": "date",
+          "seed": 2,
+          "sigma_p": 1.0
+        },
+        {
+          "evaluable": true,
+          "h_f": 0,
+          "h_p": 0,
+          "margin": 2.0,
+          "n": 23,
+          "p_hat": 0.0,
+          "passed": false,
+          "placebo": "date",
+          "seed": 3,
+          "sigma_p": 1.0
+        },
+        {
+          "evaluable": true,
+          "h_f": 0,
+          "h_p": 0,
+          "margin": 2.0,
+          "n": 23,
+          "p_hat": 0.0,
+          "passed": false,
+          "placebo": "date",
+          "seed": 4,
+          "sigma_p": 1.0
+        },
+        {
+          "evaluable": true,
+          "h_f": 0,
+          "h_p": 1,
+          "margin": 2.0,
+          "n": 23,
+          "p_hat": 0.043478,
+          "passed": false,
+          "placebo": "date",
+          "seed": 5,
+          "sigma_p": 1.0
+        },
+        {
+          "evaluable": true,
+          "h_f": 0,
+          "h_p": 2,
+          "margin": 2.702656,
+          "n": 23,
+          "p_hat": 0.086957,
+          "passed": false,
+          "placebo": "date",
+          "seed": 6,
+          "sigma_p": 1.351328
+        },
+        {
+          "evaluable": true,
+          "h_f": 0,
+          "h_p": 0,
+          "margin": 2.0,
+          "n": 23,
+          "p_hat": 0.0,
+          "passed": false,
+          "placebo": "date",
+          "seed": 7,
+          "sigma_p": 1.0
+        },
+        {
+          "evaluable": true,
+          "h_f": 0,
+          "h_p": 1,
+          "margin": 2.0,
+          "n": 23,
+          "p_hat": 0.043478,
+          "passed": false,
+          "placebo": "date",
+          "seed": 8,
+          "sigma_p": 1.0
+        },
+        {
+          "evaluable": true,
+          "h_f": 0,
+          "h_p": 2,
+          "margin": 2.702656,
+          "n": 23,
+          "p_hat": 0.086957,
+          "passed": false,
+          "placebo": "date",
+          "seed": 9,
+          "sigma_p": 1.351328
+        }
+      ],
+      "test": "B_informativeness",
+      "threshold": "for both placebos and every seed in [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]: h_L - h_P >= 2.0 * sigma_P"
+    },
+    "C": {
+      "entries": [
+        {
+          "evaluable": true,
+          "h_l": 0,
+          "h_p": 0,
+          "half": "H1",
+          "passed": false,
+          "placebo": "stock",
+          "seed": 0
+        },
+        {
+          "evaluable": true,
+          "h_l": 0,
+          "h_p": 0,
+          "half": "H2",
+          "passed": false,
+          "placebo": "stock",
+          "seed": 0
+        },
+        {
+          "evaluable": true,
+          "h_l": 0,
+          "h_p": 0,
+          "half": "H1",
+          "passed": false,
+          "placebo": "stock",
+          "seed": 1
+        },
+        {
+          "evaluable": true,
+          "h_l": 0,
+          "h_p": 0,
+          "half": "H2",
+          "passed": false,
+          "placebo": "stock",
+          "seed": 1
+        },
+        {
+          "evaluable": true,
+          "h_l": 0,
+          "h_p": 1,
+          "half": "H1",
+          "passed": false,
+          "placebo": "stock",
+          "seed": 2
+        },
+        {
+          "evaluable": true,
+          "h_l": 0,
+          "h_p": 0,
+          "half": "H2",
+          "passed": false,
+          "placebo": "stock",
+          "seed": 2
+        },
+        {
+          "evaluable": true,
+          "h_l": 0,
+          "h_p": 0,
+          "half": "H1",
+          "passed": false,
+          "placebo": "stock",
+          "seed": 3
+        },
+        {
+          "evaluable": true,
+          "h_l": 0,
+          "h_p": 1,
+          "half": "H2",
+          "passed": false,
+          "placebo": "stock",
+          "seed": 3
+        },
+        {
+          "evaluable": true,
+          "h_l": 0,
+          "h_p": 1,
+          "half": "H1",
+          "passed": false,
+          "placebo": "stock",
+          "seed": 4
+        },
+        {
+          "evaluable": true,
+          "h_l": 0,
+          "h_p": 1,
+          "half": "H2",
+          "passed": false,
+          "placebo": "stock",
+          "seed": 4
+        },
+        {
+          "evaluable": true,
+          "h_l": 0,
+          "h_p": 0,
+          "half": "H1",
+          "passed": false,
+          "placebo": "stock",
+          "seed": 5
+        },
+        {
+          "evaluable": true,
+          "h_l": 0,
+          "h_p": 0,
+          "half": "H2",
+          "passed": false,
+          "placebo": "stock",
+          "seed": 5
+        },
+        {
+          "evaluable": true,
+          "h_l": 0,
+          "h_p": 1,
+          "half": "H1",
+          "passed": false,
+          "placebo": "stock",
+          "seed": 6
+        },
+        {
+          "evaluable": true,
+          "h_l": 0,
+          "h_p": 0,
+          "half": "H2",
+          "passed": false,
+          "placebo": "stock",
+          "seed": 6
+        },
+        {
+          "evaluable": true,
+          "h_l": 0,
+          "h_p": 1,
+          "half": "H1",
+          "passed": false,
+          "placebo": "stock",
+          "seed": 7
+        },
+        {
+          "evaluable": true,
+          "h_l": 0,
+          "h_p": 0,
+          "half": "H2",
+          "passed": false,
+          "placebo": "stock",
+          "seed": 7
+        },
+        {
+          "evaluable": true,
+          "h_l": 0,
+          "h_p": 0,
+          "half": "H1",
+          "passed": false,
+          "placebo": "stock",
+          "seed": 8
+        },
+        {
+          "evaluable": true,
+          "h_l": 0,
+          "h_p": 1,
+          "half": "H2",
+          "passed": false,
+          "placebo": "stock",
+          "seed": 8
+        },
+        {
+          "evaluable": true,
+          "h_l": 0,
+          "h_p": 1,
+          "half": "H1",
+          "passed": false,
+          "placebo": "stock",
+          "seed": 9
+        },
+        {
+          "evaluable": true,
+          "h_l": 0,
+          "h_p": 0,
+          "half": "H2",
+          "passed": false,
+          "placebo": "stock",
+          "seed": 9
+        },
+        {
+          "evaluable": true,
+          "h_l": 0,
+          "h_p": 0,
+          "half": "H1",
+          "passed": false,
+          "placebo": "date",
+          "seed": 0
+        },
+        {
+          "evaluable": true,
+          "h_l": 0,
+          "h_p": 0,
+          "half": "H2",
+          "passed": false,
+          "placebo": "date",
+          "seed": 0
+        },
+        {
+          "evaluable": true,
+          "h_l": 0,
+          "h_p": 1,
+          "half": "H1",
+          "passed": false,
+          "placebo": "date",
+          "seed": 1
+        },
+        {
+          "evaluable": true,
+          "h_l": 0,
+          "h_p": 0,
+          "half": "H2",
+          "passed": false,
+          "placebo": "date",
+          "seed": 1
+        },
+        {
+          "evaluable": true,
+          "h_l": 0,
+          "h_p": 0,
+          "half": "H1",
+          "passed": false,
+          "placebo": "date",
+          "seed": 2
+        },
+        {
+          "evaluable": true,
+          "h_l": 0,
+          "h_p": 0,
+          "half": "H2",
+          "passed": false,
+          "placebo": "date",
+          "seed": 2
+        },
+        {
+          "evaluable": true,
+          "h_l": 0,
+          "h_p": 0,
+          "half": "H1",
+          "passed": false,
+          "placebo": "date",
+          "seed": 3
+        },
+        {
+          "evaluable": true,
+          "h_l": 0,
+          "h_p": 0,
+          "half": "H2",
+          "passed": false,
+          "placebo": "date",
+          "seed": 3
+        },
+        {
+          "evaluable": true,
+          "h_l": 0,
+          "h_p": 0,
+          "half": "H1",
+          "passed": false,
+          "placebo": "date",
+          "seed": 4
+        },
+        {
+          "evaluable": true,
+          "h_l": 0,
+          "h_p": 0,
+          "half": "H2",
+          "passed": false,
+          "placebo": "date",
+          "seed": 4
+        },
+        {
+          "evaluable": true,
+          "h_l": 0,
+          "h_p": 0,
+          "half": "H1",
+          "passed": false,
+          "placebo": "date",
+          "seed": 5
+        },
+        {
+          "evaluable": true,
+          "h_l": 0,
+          "h_p": 1,
+          "half": "H2",
+          "passed": false,
+          "placebo": "date",
+          "seed": 5
+        },
+        {
+          "evaluable": true,
+          "h_l": 0,
+          "h_p": 1,
+          "half": "H1",
+          "passed": false,
+          "placebo": "date",
+          "seed": 6
+        },
+        {
+          "evaluable": true,
+          "h_l": 0,
+          "h_p": 1,
+          "half": "H2",
+          "passed": false,
+          "placebo": "date",
+          "seed": 6
+        },
+        {
+          "evaluable": true,
+          "h_l": 0,
+          "h_p": 0,
+          "half": "H1",
+          "passed": false,
+          "placebo": "date",
+          "seed": 7
+        },
+        {
+          "evaluable": true,
+          "h_l": 0,
+          "h_p": 0,
+          "half": "H2",
+          "passed": false,
+          "placebo": "date",
+          "seed": 7
+        },
+        {
+          "evaluable": true,
+          "h_l": 0,
+          "h_p": 0,
+          "half": "H1",
+          "passed": false,
+          "placebo": "date",
+          "seed": 8
+        },
+        {
+          "evaluable": true,
+          "h_l": 0,
+          "h_p": 1,
+          "half": "H2",
+          "passed": false,
+          "placebo": "date",
+          "seed": 8
+        },
+        {
+          "evaluable": true,
+          "h_l": 0,
+          "h_p": 1,
+          "half": "H1",
+          "passed": false,
+          "placebo": "date",
+          "seed": 9
+        },
+        {
+          "evaluable": true,
+          "h_l": 0,
+          "h_p": 1,
+          "half": "H2",
+          "passed": false,
+          "placebo": "date",
+          "seed": 9
+        }
+      ],
+      "evaluable": true,
+      "line": "[FAIL] C_consistency: not positive in ['stock/seed=0/H1', 'stock/seed=0/H2', 'stock/seed=1/H1', 'stock/seed=1/H2', 'stock/seed=2/H1', 'stock/seed=2/H2', 'stock/seed=3/H1', 'stock/seed=3/H2', 'stock/seed=4/H1', 'stock/seed=4/H2', 'stock/seed=5/H1', 'stock/seed=5/H2', 'stock/seed=6/H1', 'stock/seed=6/H2', 'stock/seed=7/H1', 'stock/seed=7/H2', 'stock/seed=8/H1', 'stock/seed=8/H2', 'stock/seed=9/H1', 'stock/seed=9/H2', 'date/seed=0/H1', 'date/seed=0/H2', 'date/seed=1/H1', 'date/seed=1/H2', 'date/seed=2/H1', 'date/seed=2/H2', 'date/seed=3/H1', 'date/seed=3/H2', 'date/seed=4/H1', 'date/seed=4/H2', 'date/seed=5/H1', 'date/seed=5/H2', 'date/seed=6/H1', 'date/seed=6/H2', 'date/seed=7/H1', 'date/seed=7/H2', 'date/seed=8/H1', 'date/seed=8/H2', 'date/seed=9/H1', 'date/seed=9/H2']",
+      "outcome": "FAIL",
+      "passed": false,
+      "test": "C_consistency",
+      "threshold": "for every half, placebo and seed: h_L(half) - h_P(half) > 0"
+    }
+  },
+  "verdict": {
+    "decision": "DO NOT SHIP",
+    "line": "[DO NOT SHIP] next-day surge count: underpowered ([UNDERPOWERED] A_power: n = 23, h_L = 0, threshold 30; this is an inconclusive result for want of power, NOT a refutation; re-run only after >= 60 new market days (§3.7))",
+    "note": "numbers stay in this JSON; nothing is written to any table, export or panel unless the decision is SHIP",
+    "reason": "underpowered"
+  }
+}
