@@ -94,6 +94,38 @@ _BRANCH_PCTILE_WINDOW_COLUMNS = (
     "as_of", "window_market_days", "window_from", "computed_at", "definitions_version",
 )
 
+# 綜合榜門檻。上榜那一行與 score_list_meta.min_final 讀的都是它——只有一份 65。
+SCORE_LIST_MIN_FINAL = 65
+
+
+def score_list_gate(scored: list[dict]) -> dict:
+    """綜合榜的資料齊全閘門:分點或法人還沒到齊的評分列超過一成,就不排名。
+
+    為什麼需要它(2026-09-24 查證):分項缺值時 ``combine()`` 把權重重分給其他分項,
+    而題材分平均偏高,於是**缺資料的列反而容易過 65**。歷史上 23 次上榜有 17 次
+    來自缺分點的列;09-24 14:16 那一版 506 列全部缺分點與法人,卻有 7 檔 ≥ 65——
+    資料到齊後就會消失的假上榜。資料齊全時兩者缺值的基準都是 0,所以一成的門檻
+    不會擋到正常日子。權證不列入:約兩成股票本來就沒有權證,那是結構性缺值。
+
+    只輸出整數與布林(``incomplete * 10 > scored`` 由這裡判,不輸出比率)。扣留時
+    榜單是 [],``withheld`` 是分辨「扣留」與「今天沒人達標」的唯一依據。
+    """
+    missing_branch = sum(1 for s in scored if s["scores"]["branch"] is None)
+    missing_inst = sum(1 for s in scored if s["scores"]["inst"] is None)
+    incomplete = sum(
+        1 for s in scored
+        if s["scores"]["branch"] is None or s["scores"]["inst"] is None
+    )
+    return {
+        "min_final": SCORE_LIST_MIN_FINAL,
+        "scored": len(scored),
+        "missing_branch": missing_branch,
+        "missing_inst": missing_inst,
+        # 一列評分都沒有 = 今天沒有算過,是「不知道」,不是「資料齊全而沒人達標」。
+        "withheld": not scored or incomplete * 10 > len(scored),
+        "max_final": max((s["scores"]["final"] for s in scored), default=None),
+    }
+
 
 def _branch_pctile_table_exists(conn) -> bool:
     """舊資料庫還沒跑過這個計算時,匯出照樣要成功,只是內容是誠實的空。"""
@@ -1084,8 +1116,12 @@ def export_json(out_dir: Path | None = None) -> dict:
                 s["turnover"] or 0,
             ),
             reverse=True)
-        score = [s for s in score_all if s["scores"]["final"] >= 65]
+        score = [s for s in score_all if s["scores"]["final"] >= SCORE_LIST_MIN_FINAL]
         score = score[:40]
+        # 資料齊全閘門(2026-09-24):分點或法人還沒到齊時不排名。見 score_list_gate。
+        score_meta = score_list_gate([s for s in all_stocks if s["scores"]])
+        if score_meta["withheld"]:
+            score = []
 
         hot_all = sorted(
             [s for s in all_stocks if s["turnover"] is not None],
@@ -1495,7 +1531,10 @@ def export_json(out_dir: Path | None = None) -> dict:
     def _build_summary_text() -> list[str]:
         out_sentences: list[str] = []
         score_count = len(score)
-        if score_count > 0:
+        if score_meta["withheld"]:
+            # 扣留 ≠ 沒有標的:說「暫無達門檻」就是把「不知道」講成「知道沒有」。
+            out_sentences.append("分點/法人資料尚未到齊,綜合分池暫不排名。")
+        elif score_count > 0:
             branch_triggered = sum(
                 1 for s in score if s.get("scores") and (s["scores"].get("branch") or 0) >= 5
             )
@@ -1560,6 +1599,10 @@ def export_json(out_dir: Path | None = None) -> dict:
             "faded": [s["id"] for s in all_stocks if s.get("state") == "faded"],
             "pocket": pocket_ids,
         },
+        # 綜合榜的平行說明鍵(同 strategies / strategy_meta 的習慣)。lists.score 維持
+        # 陣列——舊前端只認陣列;扣留時它是 [],而分得出「扣留」與「今天沒人達標」
+        # 的是這裡的 withheld。全部是整數與布林,比率由讀的人自己算。
+        "score_list_meta": score_meta,
         "strategies": {code: [s["id"] for s in st_list] for code, st_list in strategies_lists.items()},
         "strategy_phases": {
             "S4_VOLATILITY_CONTRACTION": {

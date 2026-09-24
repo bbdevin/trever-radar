@@ -19,6 +19,7 @@ import { OFFLINE_DATA_COPY, isBrowserOffline } from "@/lib/pwa";
 import type { ListKey, MetaJson, RadarJson, StrategyMeta } from "@/lib/types";
 import { SOURCE_LABEL, fmtE8 } from "@/lib/format";
 import { staleAutoFills, staleFreshnessLines } from "@/lib/freshness";
+import { scoreListEmptyText } from "@/lib/scoreList";
 
 // TabKey for the main task-oriented tabs（資券嵌首頁，手機 BottomNav 不另開第 5 項）
 type TabKey =
@@ -651,6 +652,8 @@ function RadarView() {
           {tab === "pocket"
             ? (radar.pocket_note
               ?? "口袋名單要至少兩個獨立理由(地緣/追蹤分點/題材/未發動或集中度)才入榜。地緣目前僅涵蓋每日評分池,且要等公司住址匯入後才會出現。")
+            : tab === "score" && scoreListEmptyText(radar.score_list_meta)
+            ? scoreListEmptyText(radar.score_list_meta)
             : tab === "score" || tab === "mark"
             ? "今日無達門檻的標的。寧缺勿濫是一大設計原則——沒有符合條件時不硬湊，也可能是盤後分點尚未更新。"
             : "今日此榜無符合條件的標的，或該類資料尚未更新。稍後回來再看，系統會依交易所公佈時間分批更新。"}

@@ -65,7 +65,7 @@ flowchart TB
 | 16:10 | `daily-insti.sh` | quotes 保底 → insti → 權證主檔（失敗不擋）→ **權證當日彙總** → indicators → **scores**；主檔成功即採新 mapping，失敗則沿用舊 mapping 完成彙總。唯一的 TPEx HTTP 520 partial（TWSE quotes ok）回 75：仍跑 insti／主檔，warn 後不做彙總、計算、export/deploy，等 17:40；其他錯誤照 High fail |
 | 17:40 | `daily-branches.sh` | 再補 quotes＋insti → indicators → 全股票分點 `--top 0`（不含 ETF）＋標的是 active 普通股的上市認購／認售、當日成交金額 `>=1,000,000` 元過渡池 → **branch-stats** → **scores** → **performance**（**不含 margin**）。權證 market 以 TWSE 定義，標的可為 TWSE／TPEx 普通股；此閾值取代、不疊加 legacy `--warrants` Top-N，非全市場獨立輪，未改 cron |
 | 21:20 | `daily-margin.sh` | 再補 quotes + **margin 主輪** → **scores** → **performance**（TWSE ~21:00 產製＋約 20 分緩衝） |
-| 22:00 | `daily-branches.sh` | 分點第二輪（排在資券後,避 lock） |
+| 22:00 | `daily-branches.sh` | 分點第二輪（排在資券後,避 lock）;17:40 已上線時不重算分點統計、只重算當日評分並重新上線(2026-09-24 起) |
 
 皆握 `/tmp/radar-db.lock`，結束 export＋deploy。
 

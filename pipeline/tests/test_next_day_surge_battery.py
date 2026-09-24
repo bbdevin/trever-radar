@@ -130,11 +130,30 @@ class PublishedListTests(unittest.TestCase):
     def test_the_numbers_are_the_ones_export_uses(self):
         """絆線:export 的綜合榜改了 65 或 40,這裡要紅,而不是靜靜量另一張榜。"""
         source = (PIPELINE / "radar" / "export" / "json_export.py").read_text(encoding="utf-8")
-        self.assertRegex(source, r'score = \[s for s in score_all if s\["scores"\]\["final"\] >= '
-                         + str(LIST_MIN_FINAL) + r'\]')
+        self.assertIn(f"SCORE_LIST_MIN_FINAL = {LIST_MIN_FINAL}\n", source)
+        self.assertIn('score = [s for s in score_all if s["scores"]["final"] '
+                      '>= SCORE_LIST_MIN_FINAL]', source)
         self.assertIn(f"score = score[:{LIST_CAP}]", source)
         self.assertIn('s["scores"]["branch"] if s["scores"]["branch"] is not None '
                       'else float("-inf")', source)
+
+
+class ListDefinitionDriftTests(unittest.TestCase):
+    def test_v1_deliberately_reconstructs_the_pre_gate_list(self):
+        """export 在 2026-09-24 加了資料齊全閘門(``score_list_gate``),扣留的日子
+        發佈的榜是空的;v1 battery **刻意不套用它**。
+
+        docs/39 §0 的上榜定義在閘門出現之前就凍結了(f8a57b5),第 1 次執行也是依它
+        跑的;把閘門接進 v1 等於事後改 v1 的規則。§3.8 規定上榜規則一改,計數就從
+        改變日重新起算、依 v2 規則重新取得資格——所以任何 v2 的上榜定義必須**含**
+        這道閘門。這條測試存在,是為了讓這個分歧寫在明處:上面那條絆線只比對排序
+        與門檻,單靠它會讓人以為 battery 與 export 仍然是同一張榜(驗證者抓到)。
+        """
+        export = (PIPELINE / "radar" / "export" / "json_export.py").read_text(encoding="utf-8")
+        battery = (PIPELINE / "radar" / "compute" / "next_day_surge_battery.py").read_text(
+            encoding="utf-8")
+        self.assertIn("score_list_gate(", export)
+        self.assertNotIn("score_list_gate", battery)
 
 
 class EventTests(unittest.TestCase):

@@ -203,39 +203,53 @@ class TestDailyBranchesExitCodes(unittest.TestCase):
         self.assertIn('= "import"', guard_line,
                       "守衛要是『等於 import 才縮短』,不能是『不等於 full 就縮短』")
 
-    def test_import_only_mode_does_not_write_the_completion_marker(self):
-        """這是整組改動裡最重要的一條。
+    # 「只刷新評分」那條早退:`if [ "$SCORES_REFRESH" = 1 ]` 裡帶 exit 0 的那一段。
+    def _refresh_exit(self) -> int:
+        start = self._index('if [ "$SCORES_REFRESH" = 1 ]; then\n  notify_ok')
+        return self.code.index("exit 0", start)
 
-        標記的意思是「算完**而且**上線了」。只匯入的那一輪兩件都沒做;若它也
-        寫標記,00:05 的夜間備援作業會看到標記而整夜略過,於是這一天從頭到尾
-        沒有任何一輪算過分點統計——備援在唯一需要它的情況下被自己關掉。
+    def test_scores_refresh_round_does_not_rewrite_the_completion_marker(self):
+        """標記的內容是**第一次**上線的時刻,由 17:40 寫下。
+
+        只刷新評分的那一輪確實也上線了,但重寫標記只會讓那個時刻說謊;夜間作業
+        只看標記存不存在,所以不寫也不會讓它誤判。這一輪要在寫標記之前離開。
         """
         guard = self._mode_guard()
-        self.assertGreater(self._marker_write_index(), guard,
-                           "寫標記必須在 import 模式離開之後,只匯入的那輪不得寫")
-        # 守衛與離開之間不可以夾帶寫標記的動作。這裡**讀**標記是新增的備援判斷,
-        # 允許;帶重導向的**寫**才是被禁止的那件事。
-        block = self.code[guard:self.code.index("fi", guard)]
-        self.assertIn("exit 0", block, "import 模式要在這裡結束本輪")
-        self.assertNotIn(">", block,
-                         "只匯入那一支不得寫任何東西進標記檔")
+        self.assertLess(self._refresh_exit(), self._marker_write_index(),
+                        "刷新評分的那一輪要在寫標記之前 exit")
+        self.assertGreater(self._refresh_exit(), self._index("deploy_data"),
+                           "……但要在 deploy_data 之後:它的工作就是重新上線")
+        # 模式守衛本身只**讀**標記,不寫。
+        block = self.code[guard:self.code.index("\nfi\n", guard)]
+        self.assertNotIn("> \"$(branch_round_marker", block,
+                         "模式守衛不得寫標記檔")
 
-    def test_import_only_mode_skips_every_compute_and_publish_step(self):
-        """只匯入的那一輪不得重算、不得匯出、不得上線。"""
+    def test_scores_refresh_round_recomputes_todays_scores(self):
+        """2026-09-24 的迴歸:第二輪只匯入,當日評分就永久凍結在缺分點的版本。
+
+        compute-scores 只寫最新一個價格日,隔天不會回頭補;09-18/22/23 分別有
+        363/364/227 檔 branch_score 為 NULL,而那些股票的分點 22:00 就已進 DB。
+        所以已上線的那天,第二輪仍要跑 compute-scores → export → deploy,
+        只有 compute-branch-stats(74 分鐘、差 0.011%)可以跳過。
+        """
         guard = self._mode_guard()
-        for step in (
-            "radar compute-branch-stats",
-            "radar compute-scores",
-            "radar compute-performance",
-            "radar export-json",
-            "radar prune",
-            "deploy_data",
-        ):
+        block = self.code[guard:self.code.index("\nfi\n", guard)]
+        self.assertIn("SCORES_REFRESH=1", block,
+                      "今天已有完成標記時要進入只刷新評分的路徑")
+        stats = self._index("radar compute-branch-stats")
+        gate = self.code.rfind('if [ "$SCORES_REFRESH" = 1 ]', 0, stats)
+        self.assertGreater(gate, guard, "compute-branch-stats 要被刷新旗標擋住")
+        self.assertIn("else", self.code[gate:stats],
+                      "compute-branch-stats 只在非刷新路徑(else)執行")
+        refresh_exit = self._refresh_exit()
+        for step in ("radar compute-scores", "radar export-json", "deploy_data"):
             with self.subTest(step=step):
-                self.assertGreater(
-                    self._index(step), guard,
-                    f"{step} 必須落在 import 模式離開之後",
-                )
+                idx = self._index(step)
+                self.assertGreater(idx, stats, f"{step} 在分點統計之後")
+                self.assertLess(idx, refresh_exit, f"{step} 在刷新路徑也要跑到")
+                line = self.code[self.code.rfind("\n", 0, idx) + 1:idx]
+                self.assertFalse(line.startswith(" "),
+                                 f"{step} 不可以被任何條件包住(頂層、無縮排)")
 
     def test_import_only_mode_still_runs_the_imports(self):
         """只匯入不等於什麼都不做:22:00 這一輪存在的理由就是把當晚較晚才
@@ -273,13 +287,51 @@ class TestDailyBranchesExitCodes(unittest.TestCase):
         self.assertNotIn("BRANCH_ROUND_MODE", self.code[imp:esac],
                          "離開碼分級不得被模式條件包住")
 
-    def test_import_only_success_notification_says_nothing_was_published(self):
-        """通知要講清楚「只匯入、沒上線」,否則值班的人會以為網站更新了。"""
+    def test_scores_refresh_notifications_say_what_was_and_was_not_recomputed(self):
+        """值班的人要從通知分得出「分點統計沒重算、評分重算了」。"""
         guard = self._mode_guard()
-        block = self.code[guard:self.code.index("fi", guard)]
-        self.assertIn("notify_ok", block, "只匯入也算本輪成功,要發成功通知")
-        self.assertRegex(block, r"僅匯入|只匯入", "通知要說明本輪只做了匯入")
-        self.assertIn("未上線", block, "通知要明講沒有上線")
+        block = self.code[guard:self.code.index("\nfi\n", guard)]
+        refresh_arm = block[:block.index("else")]
+        # 模式判斷時什麼都還沒做,不可以先發成功通知(實跑時曾經收到兩則,
+        # 第一則在重算之前就說「重新上線」)。成功通知只在 deploy 之後那一則。
+        self.assertNotIn("notify_ok", refresh_arm)
+        self.assertIn("不重算分點統計", refresh_arm)
+        self.assertIn("當日評分", refresh_arm)
+        tail = self.code[self._index('if [ "$SCORES_REFRESH" = 1 ]; then\n  notify_ok'):
+                         self._refresh_exit()]
+        self.assertIn("分點統計仍是 17:40 版本", tail)
+
+    def test_scores_refresh_declares_its_own_failure_consequence(self):
+        """刷新路徑失敗時,沒有任何一輪會再補當日評分——通知要講這句實話,
+        不能沿用完整鏈那句「00:05 夜間作業會重算」(夜間作業看到標記就整夜略過)。
+
+        而且要**從第一步起**就換:匯入階段失敗一樣沒人補。網站那時是 21:20 資券輪
+        上線的內容(daily-margin.sh 也跑 compute-scores 與 deploy),不是 17:40 的——
+        驗證者抓到的第一版就寫錯成 17:40。
+        """
+        decl = next(ln for ln in self.lines if ln.startswith("REFRESH_CONSEQUENCE="))
+        self.assertIn("夜間作業不會補算評分", decl)
+        self.assertIn("21:20", decl)
+        self.assertNotIn("17:40 那輪的內容", decl)
+        early = self._index('set_round_consequence "$REFRESH_CONSEQUENCE"')
+        self.assertLess(early, self._index("radar import-daily"),
+                        "有標記的第二輪,後果句要在第一步之前就換掉")
+        guard = self._mode_guard()
+        block = self.code[guard:self.code.index("\nfi\n", guard)]
+        self.assertIn('set_round_consequence "$REFRESH_CONSEQUENCE"', block)
+
+    def test_the_refresh_flag_is_read_exactly_twice(self):
+        """刷新旗標只准在兩處被讀:擋 compute-branch-stats、以及 deploy 之後離開。
+
+        驗證者的變異:在 deploy 前插一行 ``if [ "$SCORES_REFRESH" = 1 ]; then exit 0; fi``,
+        刷新輪就會靜靜略過上線、回 0、不發任何通知——而那時整份測試全綠。任何第三處
+        讀取都是在旗標上長出新的分岔,必須有人刻意改這條測試。
+        """
+        reads = [m.start() for m in re.finditer(r'"\$SCORES_REFRESH"', self.code)]
+        self.assertEqual(len(reads), 2, "旗標只能被讀兩次")
+        self.assertLess(reads[0], self._index("radar compute-branch-stats"))
+        self.assertGreater(reads[1], self._index("deploy_data"),
+                           "第二次讀取(離開)必須在 deploy_data 之後")
 
     # ── 第二輪備援:17:40 沒上線的日子由 22:00 接手 ──────────────────────
     def _guard_block(self) -> str:
@@ -297,12 +349,13 @@ class TestDailyBranchesExitCodes(unittest.TestCase):
         """
         block = self._guard_block()
         self.assertIn("branch_round_marker", block,
-                      "早退必須以今天的完成標記為條件")
-        self.assertIn("exit 0", block)
-        # 早退包在標記判斷裡:沒有標記就落不到 exit,而是繼續往下跑完整鏈。
+                      "刷新路徑必須以今天的完成標記為條件")
+        # 刷新旗標包在標記判斷裡:沒有標記就不會被設,完整鏈(含分點統計)照跑。
         inner = block.index("branch_round_marker")
-        self.assertLess(inner, block.index("exit 0"),
-                        "exit 0 必須在標記判斷之內,不能無條件執行")
+        self.assertLess(inner, block.index("SCORES_REFRESH=1"),
+                        "SCORES_REFRESH=1 必須在標記判斷之內,不能無條件設定")
+        self.assertIn("SCORES_REFRESH=0", self.code[:self._mode_guard()],
+                      "旗標預設為 0,完整鏈是預設")
 
     def test_marker_test_is_non_empty_not_mere_existence(self):
         """用 `-s` 不用 `-f`:標記內容是完成時刻,空檔案代表寫的過程出了事。

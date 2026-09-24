@@ -195,8 +195,8 @@ class TestDailyBranchesTiming(unittest.TestCase):
                         "開始標記要在搶鎖之前:搶不到而略過的那一輪也該看得到起點")
 
     def test_both_rounds_print_a_done_marker(self):
-        """第二輪(BRANCH_ROUND_MODE=import)平常在匯入後就結束,它也要印結束標記,
-        否則只匯入的那些夜晚在 log 裡依舊沒有邊界,兩輪就比不了。"""
+        """第二輪(BRANCH_ROUND_MODE=import)平常走「只刷新評分」那條早退,它也要
+        印結束標記,否則那些夜晚在 log 裡依舊沒有邊界,兩輪就比不了。"""
         done = [i for i, ln in enumerate(self.lines) if "daily-branches done" in ln]
         self.assertGreaterEqual(len(done), 2,
                                 "完整鏈收尾與 import 模式早退各要印一次結束標記")

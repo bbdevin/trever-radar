@@ -16,10 +16,10 @@ set_round_consequence "網站仍是前一輪的內容；本輪不寫完成標記
 # ── 本輪模式:環境變數 BRANCH_ROUND_MODE ────────────────────────────────
 #   未設(或任何其他值) = full:完整鏈,與改動前完全相同。手動執行不受影響。
 #   import             = **這是當天的第二輪**:先匯入,然後
-#                        **只有在今天還沒有任何一輪上線過時**才續跑完整鏈。
-#                        今天已有完成標記 → 到匯入為止:compute-branch-stats、
-#                        compute-scores、compute-performance、export-json、prune、
-#                        deploy_data 全部不跑,**也不寫完成標記**。
+#                        今天已有完成標記 → 跳過 compute-branch-stats,但**重算
+#                        當日評分**並重新匯出上線(compute-scores、
+#                        compute-performance、export-json、prune、deploy_data),
+#                        **不重寫完成標記**。理由見下面「只刷新當日評分」那段。
 #                        今天沒有完成標記 → 下面那條完整鏈原封不動照跑,
 #                        收尾一樣寫標記,由這一輪接手當天的上線。
 #
@@ -38,13 +38,14 @@ set_round_consequence "網站仍是前一輪的內容；本輪不寫完成標記
 # 分不出「還在填」與「死了一半」的那一輪上。所以答案是備援,不是更低的地板:
 # 17:40 寧可扣留,22:00 資料填齊之後再用**同一道**閘門決定要不要接手上線。
 #
-# 為什麼第二輪平常只匯入:compute-branch-stats 要 ~74 分鐘,而它在 22:00 算出來的
+# 為什麼第二輪平常不重算分點統計:compute-branch-stats 要 ~74 分鐘,而它在 22:00 算出來的
 # 東西幾乎就是 17:40 已經算過的。production 實測 stock_stats 列數 17:40→22:00
 # 的差是 +326/+48/+170/+119/+0/+105 列(基數約 1,136,000,約 0.011%),而 22:00
 # 那輪要到隔天 00:25 才上線。17:40 那輪 20:30 左右就上線,使用者還醒著;為了
 # 0.011% 的差異讓第二輪再跑一次 74 分鐘、並在深夜佔住 DB 鎖,不划算。
 # 22:00 仍然匯入,是因為當晚較晚才補齊的分點資料要進 DB,供 00:05 夜間作業
-# 與隔天使用。
+# 與隔天使用——而且**當天的評分**要用它重算一次(compute-scores 不到一分鐘,
+# 加上 export 與 deploy 約 20 分鐘),否則當天評分永久停在缺分點的版本。
 BRANCH_ROUND_MODE="${BRANCH_ROUND_MODE:-full}"
 
 # 這一輪屬於哪一天,在**開跑時**就定下來,不能等收工才算。
@@ -54,6 +55,17 @@ BRANCH_ROUND_MODE="${BRANCH_ROUND_MODE:-full}"
 # 標記存在的理由(夜間作業 00:05 起跑,撞上的就是還沒收工的那一輪),等於在
 # 唯一需要它的情況下失效。開跑日是資料日:17:40 與 22:00 兩輪都在當天交易日內。
 ROUND_DATE="$(taipei_date +%F)"
+
+# 第二輪且今天已有完成標記:失敗後果的那一句**從第一步起**就要換掉。預設那句
+# 「00:05 夜間作業會重算」在這裡不成立——safe-branch-stats.sh 看到標記就整夜略過
+# (分點統計、評分、匯出都不跑),所以匯入階段失敗時也不能拿它安慰值班的人。
+# 網站此時是 21:20 資券輪上線的內容(daily-margin.sh 也跑 compute-scores 與 deploy),
+# 不是 17:40 的。
+REFRESH_CONSEQUENCE="網站維持 21:20 那輪上線的內容,當日評分停在缺晚到分點的版本；完成標記已由 17:40 寫下,夜間作業不會補算評分"
+# (條件順序刻意與下面的模式守衛不同:測試以守衛那一行的字面定位它。)
+if [ -s "$(branch_round_marker "$ROUND_DATE")" ] && [ "$BRANCH_ROUND_MODE" = "import" ]; then
+  set_round_consequence "$REFRESH_CONSEQUENCE"
+fi
 
 # 起訖標記 + 每步計時(run_step 在 lib.sh,與 00:05 的 safe-branch-stats.sh 同一份)。
 # 為什麼非有不可:c1616f0 把 compute-branch-stats 的線性掃描換成二分搜尋,profiling
@@ -171,16 +183,37 @@ esac
 #
 # 這個區塊必須在上面那個離開碼 case **之後**:第二輪若自己也不合格,要在 case 裡
 # 就 exit,不能走到這裡來接手——接手的前提是這一輪的資料合格。
+#
+# ── 今天已上線時:只刷新當日評分(2026-09-24 起)──────────────────────────
+# 以前這裡是「匯入完就 exit 0」,理由是 compute-branch-stats 的 0.011% 差異不值 74
+# 分鐘。那個理由對 stock_stats 成立,但它漏看了 **daily_scores**:compute-scores
+# 只寫最新一個價格日,當天那一列在隔天就再也不會被重算。於是 17:40 匯入不完整的
+# 日子(09-22 涵蓋 983/1964、09-23 1441/1958),當天評分就**永久凍結在缺分點的
+# 版本**——09-18/22/23 分別有 363/364/227 檔 branch_score 為 NULL,而那些股票的
+# 分點在 22:00 就已經進 DB 了。缺分項時 combine() 把權重重分給其他分項,綜合榜
+# 歷史上 23 次上榜有 17 次來自這種列(docs/STATUS.md 2026-09-24)。
+#
+# 所以今天已上線時,本輪仍然跳過 compute-branch-stats(那一步的理由不變),但
+# 重算當日評分並重新匯出上線。compute-scores 只讀原始表(branch_trades 等),
+# 不依賴 compute-branch-stats 的產出。**不重寫完成標記**:標記的內容是「第一次
+# 上線的時刻」,夜間作業只看它存不存在,重寫只會讓那個時刻說謊。
+SCORES_REFRESH=0
 if [ "$BRANCH_ROUND_MODE" = "import" ]; then
   if [ -s "$(branch_round_marker "$ROUND_DATE")" ]; then
-    notify_ok "本輪僅匯入分點與法人資料（BRANCH_ROUND_MODE=import）：未重算、未匯出、未上線,網站仍是 17:40 那輪的內容"
-    echo "=== daily-branches done $(taipei_date -Is) ==="
-    exit 0
+    SCORES_REFRESH=1
+    set_round_consequence "$REFRESH_CONSEQUENCE"
+    # 只寫 log,不發成功通知:此刻什麼都還沒重算,成功通知在 deploy 之後才發。
+    echo "本輪不重算分點統計（BRANCH_ROUND_MODE=import，今天 17:40 已上線）：只以補齊的分點重算當日評分並重新上線"
+  else
+    notify_warn "17:40 那輪未上線（${ROUND_DATE} 無完成標記），本輪接手完整鏈:重算、匯出、上線"
   fi
-  notify_warn "17:40 那輪未上線（${ROUND_DATE} 無完成標記），本輪接手完整鏈:重算、匯出、上線"
 fi
 
-run_step_or_fail "compute-branch-stats" radar compute-branch-stats
+if [ "$SCORES_REFRESH" = 1 ]; then
+  echo "skip compute-branch-stats：今天 17:40 已上線,分點統計不重算(只刷新評分)"
+else
+  run_step_or_fail "compute-branch-stats" radar compute-branch-stats
+fi
 run_step_or_fail "compute-scores" radar compute-scores
 run_step_or_fail "compute-performance" radar compute-performance
 run_step_or_fail "export-json" radar export-json
@@ -193,6 +226,12 @@ run_step_or_fail "prune" radar prune
 run_step_or_fail "deploy" deploy_data
 # 只有走到這裡才算「整輪跑完」。夜間備援作業讀這個標記決定今晚要不要重算,
 # 所以它必須在 deploy_data 之後——在之前寫就等於承諾了一件還沒發生的事。
+# 只刷新評分的那一輪不寫:標記早已由 17:40 寫下,內容是第一次上線的時刻。
+if [ "$SCORES_REFRESH" = 1 ]; then
+  notify_ok "當日評分已用補齊的分點重算並上線（分點統計仍是 17:40 版本）"
+  echo "=== daily-branches done $(taipei_date -Is) ==="
+  exit 0
+fi
 taipei_date -Is > "$(branch_round_marker "$ROUND_DATE")"
 notify_ok "分點籌碼已更新並上線（含法人補抓）"
 echo "=== daily-branches done $(taipei_date -Is) ==="

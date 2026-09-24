@@ -614,6 +614,16 @@ export interface StrategyMeta {
   sufficient_samples: boolean;
 }
 
+/** radar.json `score_list_meta`:全部是整數與一個布林,比率由讀的人自己算。 */
+export interface ScoreListMeta {
+  min_final: number;
+  scored: number;
+  missing_branch: number;
+  missing_inst: number;
+  withheld: boolean;
+  max_final: number | null;
+}
+
 export interface RadarJson {
   data_date: string;
   generated_at: string;
@@ -625,6 +635,11 @@ export interface RadarJson {
   themes?: SectorFlow[]; // 概念股資金流(成分重疊)
   concentration?: ConcentrationRow[]; // 集中度躍升榜(探索頁)
   lists: Record<ListKey, string[]>;
+  /**
+   * 綜合榜的資料齊全閘門(2026-09-24)。`withheld: true` 時 `lists.score` 是 []
+   * 但意思是「分點/法人未到齊、刻意不排名」,不是「今天沒人達標」。缺鍵 = 舊 payload。
+   */
+  score_list_meta?: ScoreListMeta;
   pocket_note?: string;
   strategies?: Record<string, string[]>;
   /** Additive S4 phase lists. Existing clients may continue using strategies.S4. */

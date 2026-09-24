@@ -19,7 +19,7 @@
 | 平日 16:10 | VPS `vps/scripts/daily-insti.sh` | **上櫃日K 保底再抓** → 法人買賣超(16:00 公布) → 權證主檔(失敗不擋後續) → **當日權證重新彙總**（成功用新主檔；失敗沿用既有主檔）→ 指標增量 → 重算分數 → export-json → deploy。唯一例外：quotes 僅 TPEx HTTP 520（TWSE 已成功）時 CLI exit 75；腳本仍跑法人／主檔，但 warn 後跳過彙總／計算／發布並把 75 留給 17:40，不能報成功。非 75 仍 High fail。時間仍為 16:10，不新增 cron。 |
 | 平日 17:40 | VPS `vps/scripts/daily-branches.sh` | **再補日K** + 法人補抓 + 指標增量 + **分點全股票 `--top 0`（不含 ETF）＋標的是 active 普通股的上市認購／認售、當日成交金額 `>=1,000,000` 元權證過渡池** + 分點統計 + 分數 + 績效回填 → export-json → prune → deploy。閾值模式明確取代 legacy `--warrants` Top-N，不疊加重複目標；權證 market 以 TWSE 定義，標的可為 TWSE／TPEx 普通股；全市場獨立輪仍未啟用，未改 cron。(**不含融資**:MI_MARGN 約 21:00 才產製,17:40 必空) |
 | 平日 21:20 | VPS `vps/scripts/daily-margin.sh` | **融資券主輪**(TWSE ~21:00 產製,約 20 分緩衝):再補日K + margin → 分數 → 績效 → export → deploy;若仍落後價格日則對齊再抓 + ntfy warn |
-| 平日 22:00 | VPS `vps/scripts/daily-branches.sh`(第二輪) | 同上分點補抓(冪等);刻意排在資券之後,避免搶 lock |
+| 平日 22:00 | VPS `vps/scripts/daily-branches.sh`(第二輪,`BRANCH_ROUND_MODE=import`) | 同上分點補抓(冪等);刻意排在資券之後,避免搶 lock。17:40 已上線 → 跳過 `compute-branch-stats`,但以補齊的分點**重算當日評分**並重新匯出上線、不重寫完成標記(2026-09-24 起,修當日評分凍結在缺分點版本的迴歸);17:40 未上線 → 接手完整鏈 |
 | 每天 01:10 | VPS `vps/scripts/data-backfill.sh` | 深歷史增量(已拉深自動跳過 → 日常近零請求,只補新上市/缺漏) |
 | 每天 03/09/12/20:00 | VPS `mid-backfill-publish.sh` | 回補中途上線:pause bf → 預設只 export → deploy(docs/33) |
 | 每天 23:30 | VPS `safe-branch-stats.sh` | pause bf → compute-branch-stats → **compute-scores** → export |
