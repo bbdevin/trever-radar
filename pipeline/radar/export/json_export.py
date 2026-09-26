@@ -7,6 +7,7 @@ money-flow panel built from industry sums vs their 20-day averages.
 import hashlib
 import json
 from datetime import date, datetime
+from datetime import date as date_cls  # 函式內有叫 date 的區域名稱時仍拿得到類別
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -96,6 +97,10 @@ _BRANCH_PCTILE_WINDOW_COLUMNS = (
 
 # 綜合榜門檻。上榜那一行與 score_list_meta.min_final 讀的都是它——只有一份 65。
 SCORE_LIST_MIN_FINAL = 65
+
+# 題材分類每週一匯入一次(vps/scripts/daily-market.sh 的 weekly_step)。正常情況下
+# 最新一次匯入距資料日最多 4 天(週五看週一);>= 7 天代表錯過了一次週一。
+THEME_IMPORT_MAX_AGE_DAYS = 7
 
 
 def score_list_gate(scored: list[dict]) -> dict:
@@ -931,16 +936,21 @@ def export_json(out_dir: Path | None = None) -> dict:
         f_date = latest("futures_daily")
         # A warrant batch can be current for some underlyings while others
         # retain an older latest row. Do not label that mixed state as fresh.
+        #
+        # 「批次只進來一半」的訊號是:**前一個交易日還有列、今天沒有**。以前數的是
+        # 「最後一列早於今天」的全部股票,於是權證全數到期、再也不會有列的標的
+        # (2026-09-24 有 31 檔,最後一列散在 07-16..09-08)被永遠算進去,freshness
+        # 天天是 stale,摘要天天承諾「稍後自動補齊」——一個結構上永遠不會發生的補齊。
+        # warrant_stock_daily 每天對每檔有權證的標的都寫一列(零成交也寫),所以
+        # 「昨天有、今天沒有」只會是匯入缺漏或權證剛好在昨天全數到期(一天的誤報)。
         w_stale_stock_count = conn.execute(text("""
-            SELECT COUNT(*) FROM (
-                SELECT p.stock_id, MAX(w.date) AS latest_date
-                FROM daily_prices p
-                JOIN stocks s ON s.id = p.stock_id AND s.type = 'stock'
-                JOIN warrant_stock_daily w ON w.stock_id = p.stock_id AND w.date <= :d
-                WHERE p.date = :d AND p.close IS NOT NULL
-                GROUP BY p.stock_id
-            ) WHERE latest_date < :d
-        """), {"d": d}).scalar() or 0
+            SELECT COUNT(*)
+            FROM daily_prices p
+            JOIN stocks s ON s.id = p.stock_id AND s.type = 'stock'
+            JOIN warrant_stock_daily wp ON wp.stock_id = p.stock_id AND wp.date = :prev
+            LEFT JOIN warrant_stock_daily wd ON wd.stock_id = p.stock_id AND wd.date = :d
+            WHERE p.date = :d AND p.close IS NOT NULL AND wd.stock_id IS NULL
+        """), {"d": d, "prev": prev}).scalar() or 0 if prev else 0
         w_partial_stale = w_date == d and w_stale_stock_count > 0
         freshness = {
             "quotes": {"date": d, "stale": False},
@@ -1378,9 +1388,22 @@ def export_json(out_dir: Path | None = None) -> dict:
             row["data_date"] for row in theme_source_rows
             if row["data_date"] and row["data_date"] <= d
         ]
+        # 資料集層級的新鮮度,與個別題材的 lifecycle 分開。個別題材被降為 stale
+        # (來源端已不再列出,lifecycle 只降級、不自動退休)是對的,它們照舊進不了
+        # 熱門題材;但以前拿「任一個題材不是 active」當整個資料集的 stale,於是
+        # 只要來源曾經下架過一個題材,題材分類就**永遠**是「尚未更新,稍後自動補齊」
+        # (2026-09-24:831 個 active、3 個 stale)。資料集該問的是「每週一的匯入
+        # 有沒有跟上」:沒有任何 active,或最新一次匯入距資料日 >= 7 天(錯過一次
+        # 週一)才算。
+        theme_latest = max(theme_data_dates) if theme_data_dates else None
         freshness["themes"] = {
-            "date": max(theme_data_dates) if theme_data_dates else None,
-            "stale": not bool(theme_source_rows) or any(status != ACTIVE for status in theme_source_statuses),
+            "date": theme_latest,
+            "stale": (
+                not any(status == ACTIVE for status in theme_source_statuses)
+                or theme_latest is None
+                or (date_cls.fromisoformat(d) - date_cls.fromisoformat(theme_latest)).days
+                >= THEME_IMPORT_MAX_AGE_DAYS
+            ),
         }
 
         # Company classification and market heat are intentionally separate. A

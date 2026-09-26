@@ -160,5 +160,53 @@ class ScoreListGateTests(_ExportFixture):
         self.assertEqual(meta["min_final"], 65)
 
 
+class ThemeFreshnessTests(_ExportFixture):
+    """題材分類的**資料集**新鮮度,與個別題材的 lifecycle 分開(2026-09-26)。
+
+    以前「任一個題材不是 active」就把整個資料集標成 stale,而 lifecycle 只降級、
+    不自動退休——來源下架過一個題材,題材分類就永遠「尚未更新,稍後自動補齊」。
+    fixture 的資料日是 2026-08-04(週二)。
+    """
+
+    def seed_themes(self, rows):
+        with db.get_engine().begin() as conn:
+            conn.execute(schema.themes.insert(), [
+                {"id": tid, "name": tid, "source": "fubon", "status": status,
+                 "data_date": day, "source_updated_at": day}
+                for tid, status, day in rows
+            ])
+
+    def freshness(self):
+        return self.radar()["freshness"]["themes"]
+
+    def test_one_delisted_theme_does_not_make_the_dataset_stale(self):
+        self.seed({"s1": {"final": 50, "branch": 20}})
+        self.seed_themes([("A", "active", "2026-08-03"), ("B", "active", "2026-08-03"),
+                          ("GONE", "stale", "2026-07-20")])
+        themes = self.freshness()
+        self.assertFalse(themes["stale"])
+        self.assertEqual(themes["date"], "2026-08-03")
+        self.assertNotIn("題材分類", "".join(self.radar()["summary_text"]))
+
+    def test_a_missed_monday_import_is_stale(self):
+        self.seed({"s1": {"final": 50, "branch": 20}})
+        self.seed_themes([("A", "active", "2026-07-28")])     # 7 天前的週二
+        self.assertTrue(self.freshness()["stale"])
+
+    def test_six_days_is_still_fresh(self):
+        self.seed({"s1": {"final": 50, "branch": 20}})
+        self.seed_themes([("A", "active", "2026-07-29")])
+        self.assertFalse(self.freshness()["stale"])
+
+    def test_no_active_theme_at_all_is_stale(self):
+        self.seed({"s1": {"final": 50, "branch": 20}})
+        self.seed_themes([("A", "stale", "2026-08-03")])
+        self.assertTrue(self.freshness()["stale"])
+
+    def test_no_theme_rows_is_stale(self):
+        self.seed({"s1": {"final": 50, "branch": 20}})
+        self.assertTrue(self.freshness()["stale"])
+
+
 if __name__ == "__main__":
     unittest.main()

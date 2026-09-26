@@ -689,6 +689,26 @@ class ArmedStateExportContractTests(unittest.TestCase):
         self.assertEqual(branch_stale["sources"], ["branch"])
         self.assertEqual(branch_stale["state"], "armed")
 
+    def test_an_underlying_whose_warrants_all_expired_is_not_a_partial_batch(self):
+        """權證全數到期的標的從此沒有列——那不是「批次只進來一半」。
+
+        2026-09-24 正式站:31 檔這種標的(最後一列散在 07-16..09-08)讓 freshness
+        天天是 stale,摘要天天承諾「稍後自動補齊」。批次缺漏的訊號是「前一個交易日
+        有列、今天沒有」,只數那一種。
+        """
+        self._replace_warrants([
+            {"stock_id": "current_only", "date": "2026-08-07", "call_turnover": 10_000_000},
+            {"stock_id": "current_only", "date": self.D, "call_turnover": 20_000_000},
+            {"stock_id": "stale_only", "date": "2026-08-03", "call_turnover": 20_000_000},
+        ])
+        radar = self._export()
+        warrant = radar["freshness"]["warrant"]
+        self.assertEqual(warrant["date"], self.D)
+        self.assertEqual(warrant["stale_stock_count"], 0)
+        self.assertFalse(warrant["partial_stale"])
+        self.assertFalse(warrant["stale"])
+        self.assertNotIn("權證", "".join(radar["summary_text"]))
+
     def test_mixed_warrant_dates_keep_per_stock_stale_payload_honest(self):
         self._replace_warrants([
             {"stock_id": "current_only", "date": "2026-08-07", "call_turnover": 10_000_000},
