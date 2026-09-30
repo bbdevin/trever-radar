@@ -235,5 +235,59 @@ class CredibilityScoreTests(unittest.TestCase):
             credibility_score(None, None, 1.0, 0.0, 0.0), 0.0)
 
 
+class PhaseTimingTests(unittest.TestCase):
+    """compute_all 印出四段計時(2026-09-30)。
+
+    正式機這一步 1,702 秒,兩份 profile 對「時間花在哪」給出相反答案;直接量讀取
+    全市場只要約 3 分鐘,推翻了第二份。從此不再外推,由正式 log 自己說——所以
+    這一行的存在與欄位要釘住,否則下一次效能工作又只能回頭猜。
+    """
+
+    def test_compute_all_prints_the_four_phases(self):
+        import contextlib
+        import io
+        import re
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+
+        import radar.config as config
+        import radar.db as db
+        from radar import schema
+        from radar.compute.compute_branch_stats import compute_all
+
+        with TemporaryDirectory() as tmp:
+            old_url, old_dir = config.DB_URL, config.DATA_DIR
+            config.DB_URL = "sqlite:///" + (Path(tmp) / "t.db").as_posix()
+            config.DATA_DIR = Path(tmp)
+            db._engine = None
+            try:
+                db.init_db()
+                with db.get_engine().begin() as conn:
+                    conn.execute(schema.stocks.insert(), [
+                        {"id": "1101", "name": "台泥", "market": "twse", "type": "stock"}])
+                    conn.execute(schema.daily_prices.insert(), [
+                        {"stock_id": "1101", "date": d, "open": 10, "close": 10, "volume": 1000}
+                        for d in CAL])
+                    conn.execute(schema.branch_dim.insert(), [
+                        {"id": 1, "branch_key": "b1", "branch_name": "分點一"}])
+                    conn.execute(schema.branch_trades_raw.insert(), [
+                        {"stock_id": "1101", "date": CAL[0], "branch_id": 1, "buy_lots": 10,
+                         "sell_lots": 0, "net_lots": 10, "pct": 2.0, "source": "fixture"}])
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    compute_all()
+            finally:
+                if db._engine is not None:
+                    db._engine.dispose()
+                db._engine = None
+                config.DB_URL, config.DATA_DIR = old_url, old_dir
+
+        line = next(ln for ln in out.getvalue().splitlines()
+                    if ln.startswith("branch stats timing:"))
+        for phase in ("read", "per-stock-compute", "aggregate", "write", "total"):
+            self.assertRegex(line, rf"\b{phase}=\d+s\b", phase)
+        self.assertIn("stocks=1", line)
+
+
 if __name__ == "__main__":
     unittest.main()

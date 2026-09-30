@@ -12,6 +12,7 @@ credibility_score 可單元測試;compute_all() 負責取數、彙總與落地�
 from __future__ import annotations
 
 import math
+import time
 from collections import defaultdict
 from datetime import date as date_cls
 from datetime import datetime, timedelta
@@ -263,6 +264,12 @@ def compute_all():
     engine = get_engine()
     now = datetime.now(ZoneInfo(config.TZ)).isoformat(timespec="seconds")
 
+    # 分段計時(2026-09-30)。這一步正式機實測 1,702 秒,而先後兩份 profile 對「時間
+    # 花在哪」給出相反的答案——第二份說讀取(fetchall)約佔 69%,但直接量讀取全市場
+    # 只要約 3 分鐘。不再從 profile 外推:讓正式 log 自己說四段各花多少。
+    t_start = time.monotonic()
+    t_read = 0.0
+
     # 分點層級 pool:增量累加(OOM 修復 2026-08-25:不再保留全事件 list)。
     # stock_stats 用緊湊 tuple,峰值 ≈ 單檔 trades + 累加器。
     branch_aggs: dict[str, _BranchAgg] = {}
@@ -295,6 +302,7 @@ def compute_all():
         # 逐檔處理:載入單股價格序列與其 branch_trades 列 → 算完累加 → 迭代結束即釋放。
         # branch_trades PK 前導為 stock_id,WHERE b.stock_id=:sid 走 PK,不需額外索引。
         for n_done, sid in enumerate(stock_ids, 1):
+            t_q = time.monotonic()
             prows = conn.execute(text(
                 "SELECT date, open, close, adj_factor FROM daily_prices "
                 "WHERE stock_id = :sid AND close IS NOT NULL ORDER BY date"
@@ -314,6 +322,7 @@ def compute_all():
                 "SELECT branch_name, date, net_lots, sell_lots, pct "
                 "FROM branch_trades WHERE stock_id = :sid"
             ), {"sid": sid}).fetchall()
+            t_read += time.monotonic() - t_q
 
             by_branch: dict[str, dict[str, dict]] = defaultdict(dict)
             for br, d, net, sell, pct in strade_rows:
@@ -375,6 +384,8 @@ def compute_all():
 
             if n_done % 400 == 0:
                 print(f"branch stats progress: {n_done}/{len(stock_ids)} stocks", flush=True)
+
+    t_loop_end = time.monotonic()
 
     # 分點彙總(跨個股 pooled)。
     branch_meta: dict[str, dict] = {}
@@ -461,6 +472,7 @@ def compute_all():
         if rec["branch_name"] in auto_in_set:
             rec["source"] = "auto"
 
+    t_write_start = time.monotonic()
     with engine.begin() as conn:
         conn.execute(schema.branch_stock_stats.delete())
         upsert(conn, schema.branch_stock_stats, stat_records)
@@ -477,7 +489,18 @@ def compute_all():
             conn.execute(schema.tracked_branches.delete().where(
                 (schema.tracked_branches.c.branch_name == br)
                 & (schema.tracked_branches.c.source == "auto")))
+    t_end = time.monotonic()
 
+    print(
+        "branch stats timing: "
+        f"read={t_read:.0f}s "
+        f"per-stock-compute={t_loop_end - t_start - t_read:.0f}s "
+        f"aggregate={t_write_start - t_loop_end:.0f}s "
+        f"write={t_end - t_write_start:.0f}s "
+        f"total={t_end - t_start:.0f}s "
+        f"(stocks={len(stock_ids)}, stock-stat rows={len(stat_records)})",
+        flush=True,
+    )
     print(f"branch stats @ {as_of}: {len(branch_meta)} branches evaluated, "
           f"{len(rank_records)} ranked (>= {MIN_RANK_EVENTS} events), "
           f"{len(stat_records)} stock-stat rows, "
