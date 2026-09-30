@@ -235,6 +235,49 @@ class CredibilityScoreTests(unittest.TestCase):
             credibility_score(None, None, 1.0, 0.0, 0.0), 0.0)
 
 
+class CoveringIndexPlanTests(unittest.TestCase):
+    """compute-branch-stats 的逐檔讀取要走覆蓋索引,不回表(2026-09-30)。
+
+    冷讀 526 秒的原因是表按日期存放、一檔的列散在全檔;索引依 stock_id 聚集。
+    這條測試守的是「查詢形狀一改就悄悄失去索引」——例如多選一個不在索引裡的欄位。
+    """
+
+    def test_the_per_stock_read_uses_the_covering_index(self):
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+
+        from sqlalchemy import text
+
+        import radar.config as config
+        import radar.db as db
+
+        with TemporaryDirectory() as tmp:
+            old_url, old_dir = config.DB_URL, config.DATA_DIR
+            config.DB_URL = "sqlite:///" + (Path(tmp) / "t.db").as_posix()
+            config.DATA_DIR = Path(tmp)
+            db._engine = None
+            try:
+                db.init_db()
+                with db.get_engine().connect() as conn:
+                    plan = " | ".join(r[3] for r in conn.execute(text(
+                        "EXPLAIN QUERY PLAN SELECT branch_name, date, net_lots, sell_lots, pct "
+                        "FROM branch_trades WHERE stock_id = :sid"), {"sid": "2330"}))
+            finally:
+                if db._engine is not None:
+                    db._engine.dispose()
+                db._engine = None
+                config.DB_URL, config.DATA_DIR = old_url, old_dir
+        self.assertIn("COVERING INDEX ix_branch_trades_raw_stock_cover", plan, plan)
+
+    def test_the_query_in_compute_all_is_the_one_measured(self):
+        """上面那條只有在 compute_all 真的發這句 SQL 時才有意義。"""
+        from pathlib import Path
+        src = (Path(__file__).resolve().parents[1] / "radar" / "compute"
+               / "compute_branch_stats.py").read_text(encoding="utf-8")
+        self.assertIn('"SELECT branch_name, date, net_lots, sell_lots, pct "', src)
+        self.assertIn('"FROM branch_trades WHERE stock_id = :sid"', src)
+
+
 class PhaseTimingTests(unittest.TestCase):
     """compute_all 印出四段計時(2026-09-30)。
 

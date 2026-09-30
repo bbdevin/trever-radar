@@ -183,6 +183,14 @@ branch_trades_raw = Table(
     Column("source", Text, nullable=False, server_default="fubon"),
     Index("ix_branch_trades_raw_date", "date"),
     Index("ix_branch_trades_raw_branch", "branch_id", "date"),
+    # 覆蓋索引(2026-09-30,使用者核准)。compute-branch-stats 逐檔讀
+    # (branch_id, date, net_lots, sell_lots, pct);表是 rowid 表、按日期附加,
+    # 一檔的列散在整個 7.5 GB 檔案裡,在 1.7 GB 記憶體的機器上冷讀 526 秒。
+    # 這個索引依 stock_id 聚集,讀取只走索引、不回表。約 1.24 GB。
+    # 注意:既有資料庫的 create_all 不會補建索引——正式庫由
+    # vps/scripts/build-branch-cover-index.sh 在選定時段建立。
+    Index("ix_branch_trades_raw_stock_cover",
+          "stock_id", "date", "branch_id", "net_lots", "sell_lots", "pct"),
 )
 
 daily_scores = Table(
