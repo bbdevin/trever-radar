@@ -75,7 +75,7 @@ export default function FuturesAnomalyList({
           >
             <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1">
               <Link
-                href={`/stock?id=${row.stockId}`}
+                href={`/stock?id=${row.stockId}&tab=futures`}
                 className="min-w-0 text-[15px] font-bold text-foreground hover:text-[color:var(--accent-2)]"
               >
                 <span className="num">{row.stockId}</span>

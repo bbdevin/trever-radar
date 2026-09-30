@@ -313,6 +313,58 @@ export function futuresOpenInterestDirectionState(
  * 看出今天有多少契約根本沒有答案。省略它會讓另外三個數字讀起來像是一個涵蓋全體
  * 的事實。成因不分類(R1:未掛牌 / 未公布 / 匯入失敗三者不可分辨)。
  */
+/* ------------------------------------------------------------------ *
+ * 個股頁的「期貨」分頁(2026-09-30,docs/38 §7.16)。
+ *
+ * 期貨資訊原本直接攤在個股頁標頭與 K 線上方,使用者覺得擾人。改成一個分頁,
+ * 只在這檔股票**確實有個股期貨**時出現;標頭只在當天真的舉旗時才放一顆按鈕
+ * ——那是整個期貨切片唯一通過事前檢定的訊號,出現的日子很少,值得打斷。
+ * ------------------------------------------------------------------ */
+
+/** 分頁要不要出現、標頭要不要放按鈕。unknown / none 都不出現分頁。 */
+export function stockFuturesTab(futures: FuturesInfo | null | undefined): {
+  show: boolean;
+  flaggedCodes: string[];
+} {
+  const state = futuresState(futures);
+  if (state.kind !== "has") return { show: false, flaggedCodes: [] };
+  return { show: true, flaggedCodes: flaggedContracts(state.contracts).map((c) => c.code) };
+}
+
+/**
+ * docs/38 第 1 次檢定的結果(`docs/evidence/futures-volume-battery-20260921.json`)。
+ * 這是一份**已凍結的歷史紀錄**,不是每天重算的數字——所以寫死在這裡,並把出處
+ * 與截止日一起講出來。之後若依 §3.5 重跑,這裡要跟著換成新的那一次。
+ */
+export const ANOMALY_EVIDENCE = {
+  asOf: "2026-09-17",
+  tradingDays: 250,
+  forwardDays: 5,
+  windowDays: 60,
+  events: 680,
+  hits: 141,
+  placeboMin: 43,
+  placeboMax: 67,
+} as const;
+
+/**
+ * 「這個訊號歷史上代表什麼」——給想拿它做決策的人的那一句實話。
+ *
+ * 只講檢定**實際證明**的東西:期貨量先創高、而**當天現貨量還沒創高**之後,
+ * 現貨量在 5 個交易日內跟著創高的次數,明顯多於同一批股票的平常日子。它講的是
+ * **量會跟上**,不是價格方向;檢定從來沒有測過漲跌,所以句子明講這一點。
+ * 次數與基準一起給,除法由人做(docs/38 §1)。
+ */
+export function anomalyMeaningText(e: typeof ANOMALY_EVIDENCE = ANOMALY_EVIDENCE): string {
+  return (
+    `回測(至 ${e.asOf},${e.tradingDays} 個期貨交易日):期貨量創 ${e.windowDays} 日新高、` +
+    `而當天現貨量還沒創新高的情況共 ${e.events} 次,之後 ${e.forwardDays} 個交易日內` +
+    `現貨量也創 ${e.windowDays} 日新高的有 ${e.hits} 次;同一批股票平常的日子等量抽樣 10 組,` +
+    `只有 ${e.placeboMin}–${e.placeboMax} 次。` +
+    "它預告的是「現貨量會跟上」,不是漲或跌——方向要搭配籌碼與價格自己判斷。"
+  );
+}
+
 export function openInterestDirectionText(c: FuturesOpenInterestDirection): string {
   return (
     `期貨 ${c.as_of} 未平倉較前一個期貨交易日:` +

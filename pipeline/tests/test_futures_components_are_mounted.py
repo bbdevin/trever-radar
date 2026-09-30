@@ -54,6 +54,13 @@ MOUNTS = (
         "那份名單在畫面上完全不存在。",
     ),
     (
+        "FuturesPanel",
+        STOCK,
+        None,
+        "個股頁的「期貨」分頁點開是一片空白(docs/38 §7.16):下面三塊從 2026-09-30 起"
+        "只住在這個分頁裡,它沒掛上,三塊就一起從畫面上消失。",
+    ),
+    (
         "FuturesBadge",
         STOCK,
         None,
@@ -78,6 +85,10 @@ MOUNTS = (
 )
 
 FUTURES_COMPONENTS = frozenset(name for name, *_ in MOUNTS)
+
+# 2026-09-30 起只住在個股頁「期貨」分頁(FuturesPanel)裡的三塊。使用者的原話:
+# 期貨資訊「直接在個股上面呈現很醜很奇怪」,要收進一個分頁。
+STOCK_TAB_BLOCKS = frozenset({"FuturesBadge", "FuturesAnomalyBlock", "FuturesDailyBlock"})
 
 _TS_TOKEN_RE = re.compile(
     r"/\*.*?\*/"                     # block comment(含 JSX 的 {/* ... */})
@@ -198,6 +209,8 @@ class FuturesComponentsAreMountedTests(unittest.TestCase):
         在畫面上什麼都沒有的狀態——上面那條測試單獨擋不住它。
         """
         for name, page, _module, consequence in MOUNTS:
+            if name in STOCK_TAB_BLOCKS:
+                continue   # 刻意由 FuturesPanel 畫;見下一條測試
             for site in self._render_sites(name, page):
                 owners = _TOP_LEVEL_FN_RE.findall(self.code[page][:site])
                 with self.subTest(component=name, owner=owners[-1] if owners else None):
@@ -206,6 +219,37 @@ class FuturesComponentsAreMountedTests(unittest.TestCase):
                         owners[-1], FUTURES_COMPONENTS,
                         f"<{name}> 只被 {owners[-1]} 畫出來,而那本身就是期貨元件;"
                         f"{owners[-1]} 若沒掛上,後果是:{consequence}")
+
+    # ── 個股頁的期貨只住在「期貨」分頁 ───────────────────────────────
+    def test_stock_futures_blocks_live_only_in_the_futures_tab(self):
+        """三塊只由 FuturesPanel 畫;FuturesPanel 只在 `view === "futures"` 時畫。
+
+        這是使用者要的版面(2026-09-30:「不要直接在各股上面直接呈現」)。把任何一塊
+        搬回標頭或 K 線上方都是這條的紅燈——那不是「多一個入口」,是把使用者明說
+        不要的東西放回去。標頭唯一允許的是「今天舉旗」那顆按鈕,它不是這三塊之一。
+        """
+        code = self.code[STOCK]
+        for name in sorted(STOCK_TAB_BLOCKS):
+            sites = self._render_sites(name, STOCK)
+            with self.subTest(component=name):
+                self.assertTrue(sites, f"{name} 沒有任何呼叫點")
+                for site in sites:
+                    owner = _TOP_LEVEL_FN_RE.findall(code[:site])[-1]
+                    self.assertEqual(owner, "FuturesPanel",
+                                     f"<{name}> 出現在 {owner} 裡,不在期貨分頁裡")
+        panel_sites = self._render_sites("FuturesPanel", STOCK)
+        self.assertEqual(len(panel_sites), 1, "期貨分頁的內容只能有一個呼叫點")
+        # 字串常值在 code 裡已被換成空白(位移不變),所以條件式回原文讀。
+        raw = STOCK.read_text(encoding="utf-8")
+        line = raw[raw.rfind("\n", 0, panel_sites[0]):raw.find("\n", panel_sites[0])]
+        self.assertIn('view === "futures"', line, "FuturesPanel 只在期貨分頁被選中時畫")
+        owner = _TOP_LEVEL_FN_RE.findall(code[:panel_sites[0]])[-1]
+        self.assertNotIn(owner, FUTURES_COMPONENTS, "FuturesPanel 必須由頁面本身畫出來")
+
+    def test_the_tab_appears_only_for_stocks_that_have_futures(self):
+        """沒有個股期貨的股票不出現空分頁:分頁項目由 stockFuturesTab().show 決定。"""
+        raw = STOCK.read_text(encoding="utf-8")
+        self.assertRegex(raw, r"futuresTab\.show\s*\?\s*\[\{\s*key:\s*\"futures\"")
 
     # ── 兩塊不可以合併 ──────────────────────────────────────────────
     def test_the_stock_page_keeps_the_everyday_facts_and_the_flag_apart(self):

@@ -30,6 +30,8 @@ import {
   flaggedContracts,
   futuresState,
   noDailyRowText,
+  stockFuturesTab,
+  anomalyMeaningText,
 } from "@/lib/futures";
 import PocketBadges from "@/components/PocketBadges";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -63,7 +65,7 @@ function StockView() {
   const [data, setData] = useState<StockJson | null>(null);
   const [error, setError] = useState(false);
   const [range, setRange] = useState<(typeof RANGES)[number]["key"]>("6m");
-  const [view, setView] = useState<"chart" | "chips" | "insti" | "margin" | "holders" | "basic" | "tech" | "warrant">("chart");
+  const [view, setView] = useState<"chart" | "chips" | "insti" | "margin" | "holders" | "basic" | "tech" | "warrant" | "futures">("chart");
   const [drillBranch, setDrillBranch] = useState<string | null>(null);
   const activeTabRef = useRef<HTMLButtonElement | null>(null);
 
@@ -94,6 +96,11 @@ function StockView() {
     }
     // tech 先前漏了。margin/holders/basic 都接受 ?tab=,只有它不行——不是刻意的
     // 取捨,是少寫一條。分頁順序調動時補上,順序與可否用網址直達本來就無關。
+    // 首頁「期貨異常」名單點進來時直接開在期貨分頁(docs/38 §7.16)。
+    // 沒有期貨的股票沒有這個分頁;帶著舊連結進來就停在預設的 K 線,不是一片空白。
+    if (tabParam === "futures" && stockFuturesTab(data.futures).show) {
+      setView("futures");
+    }
     if (tabParam === "tech") {
       setView("tech");
     }
@@ -166,6 +173,7 @@ function StockView() {
     if (price < prev.c) return { glyph: "▼", className: "text-down" };
     return { glyph: undefined, className: "text-foreground" };
   };
+  const futuresTab = stockFuturesTab(data.futures);
   const watchPrice = data.scores?.watch_price;
   const stopPrice = data.scores?.stop_price;
   const marketLabel = MARKET_LABEL[data.market] ?? data.market;
@@ -200,7 +208,19 @@ function StockView() {
                   <span data-testid="stock-market-label" className="font-semibold text-[color:var(--accent-2)]">{marketLabel}</span>
                   {data.industry ? <span className="text-muted-foreground"> · {data.industry}</span> : null}
                 </p>
-                <FuturesBadge futures={data.futures} />
+                {/* 期貨資訊收進「期貨」分頁(docs/38 §7.16)。標頭只在當天真的舉旗時
+                    放一顆按鈕:那是唯一通過事前檢定的期貨訊號,少見,值得打斷。 */}
+                {futuresTab.flaggedCodes.length > 0 && (
+                  <button
+                    type="button"
+                    data-testid="stock-futures-alert"
+                    onClick={() => setView("futures")}
+                    className="mt-1 inline-flex min-h-8 items-center gap-1 rounded-full border border-[color:var(--accent-2)]/40 bg-[color:var(--accent-2)]/10 px-2 py-0.5 text-[11px] font-semibold text-[color:var(--accent-2)] transition-colors hover:bg-[color:var(--accent-2)]/18"
+                  >
+                    <Layers size={11} aria-hidden="true" />
+                    期貨量異常 <span className="num">{futuresTab.flaggedCodes.join("、")}</span> →
+                  </button>
+                )}
               </div>
             </div>
             {activeThemes.length > 0 && (
@@ -239,8 +259,6 @@ function StockView() {
           </div>
         </section>
       </div>
-      <FuturesAnomalyBlock futures={data.futures} />
-      <FuturesDailyBlock futures={data.futures} />
       <div className="sticky top-0 z-20 -mx-1 mb-2.5 flex min-w-0 flex-col gap-2 bg-background/95 px-1 py-1.5 backdrop-blur-sm md:static md:mx-0 md:bg-transparent md:px-0 md:py-0 md:backdrop-blur-none md:flex-row md:flex-wrap md:items-center md:gap-2.5">
         <div
           role="tablist"
@@ -257,7 +275,9 @@ function StockView() {
               { key: "basic" as const, label: "基本資料" },
               { key: "margin" as const, label: "資券" },
               { key: "warrant" as const, label: "權證" },
-            ] as const
+              // 只有確實有個股期貨的股票才有這個分頁;沒有或還沒匯入時不出現。
+              ...(futuresTab.show ? [{ key: "futures" as const, label: "期貨" }] : []),
+            ]
           ).map((t) => (
           <button
               key={t.key}
@@ -311,6 +331,7 @@ function StockView() {
       {view === "basic" && <BasicInfoPanel data={data} quoteDate={last.t} />}
       {view === "tech" && <TechnicalPanel data={data} />}
       {view === "warrant" && <WarrantPanel data={data} />}
+      {view === "futures" && futuresTab.show && <FuturesPanel futures={data.futures} />}
 
       {drillBranch && (
         <div className="safe-overlay fixed inset-0 z-50 overflow-y-auto bg-background">
@@ -584,6 +605,35 @@ function StockDecisionHeader({
  * 每一檔的真實狀態。此時畫「無期貨」等於告訴使用者一件假的事。
  * none 則相反——那是 TAIFEX 官方完整清單截至 asOf 的正面主張,要畫,而且要帶日期。
  */
+/**
+ * 「期貨」分頁的內容(docs/38 §7.16)。只在這檔**有**個股期貨時才會被畫(分頁本身
+ * 也只在那時出現),所以這裡不必處理 unknown / none。
+ *
+ * 由上而下:這檔有哪些契約 → 今天有沒有舉旗(有的話放最前面,那是會影響決策的
+ * 部分)→ 這個訊號歷史上代表什麼(一句實話:預告的是現貨量,不是方向)→ 每個
+ * 契約的當日成交與未平倉。說明句只在今天有舉旗時放在旗標下面;沒舉旗的日子它
+ * 仍在分頁底部,讓人知道「舉旗」是什麼意思、值不值得等。
+ */
+function FuturesPanel({ futures }: { futures: StockJson["futures"] }) {
+  const flagged = stockFuturesTab(futures).flaggedCodes.length > 0;
+  const meaning = (
+    <p className="rounded-[var(--r-lg)] border border-border bg-card px-3 py-2.5 text-[12px] leading-relaxed text-muted-foreground">
+      <span className="font-semibold text-foreground">期貨量異常代表什麼?</span>
+      {" "}
+      {anomalyMeaningText()}
+    </p>
+  );
+  return (
+    <div className="flex flex-col gap-2.5" data-testid="stock-futures-panel">
+      <FuturesBadge futures={futures} />
+      <FuturesAnomalyBlock futures={futures} />
+      {flagged && meaning}
+      <FuturesDailyBlock futures={futures} />
+      {!flagged && meaning}
+    </div>
+  );
+}
+
 function FuturesBadge({ futures }: { futures: StockJson["futures"] }) {
   const state = futuresState(futures);
   if (state.kind === "unknown") return null;

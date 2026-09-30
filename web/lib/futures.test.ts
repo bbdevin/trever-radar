@@ -18,6 +18,9 @@ import {
   futuresState,
   noDailyRowText,
   openInterestDirectionText,
+  stockFuturesTab,
+  anomalyMeaningText,
+  ANOMALY_EVIDENCE,
 } from "./futures.ts";
 
 test("futures 鍵不存在 -> unknown(尚未 import,不可讀成沒有)", () => {
@@ -479,4 +482,50 @@ test("§7.15 判不出來的那些不得被說成「持平」——不知道不�
 test("§7.15 日期照 payload 走,不編一個出來", () => {
   assert.ok(openInterestDirectionText({ ...DIRECTION, as_of: "2026-06-19" })
     .startsWith("期貨 2026-06-19 "));
+});
+
+// ── 個股頁「期貨」分頁(docs/38 §7.16)────────────────────────────────
+
+test("沒有個股期貨(none)或還沒匯入(unknown)→ 不出現分頁,也不放按鈕", () => {
+  assert.deepEqual(stockFuturesTab(undefined), { show: false, flaggedCodes: [] });
+  assert.deepEqual(
+    stockFuturesTab({ version: 1, list_as_of: "2026-09-11", contracts: [] }),
+    { show: false, flaggedCodes: [] },
+  );
+});
+
+test("有期貨但今天沒舉旗 → 出現分頁,標頭不放按鈕", () => {
+  const tab = stockFuturesTab({
+    version: 1, list_as_of: "2026-09-11",
+    contracts: [{ code: "CCF" }, { code: "CZF" }],
+  } as never);
+  assert.deepEqual(tab, { show: true, flaggedCodes: [] });
+});
+
+test("舉旗的契約全部列出(一檔可有兩個契約)", () => {
+  const anomaly = { today: 900, window_max: 800, window_median: 100, window_days: 60 };
+  const tab = stockFuturesTab({
+    version: 1, list_as_of: "2026-09-11",
+    contracts: [{ code: "MYF", anomaly }, { code: "OMF", anomaly }, { code: "QQF" }],
+  } as never);
+  assert.deepEqual(tab, { show: true, flaggedCodes: ["MYF", "OMF"] });
+});
+
+test("訊號說明:次數與基準一起給,講清楚是量不是方向,也講清楚適用條件", () => {
+  const text = anomalyMeaningText();
+  assert.match(text, /680 次/);
+  assert.match(text, /141 次/);
+  assert.match(text, /43–67 次/);
+  assert.match(text, /當天現貨量還沒創新高/);
+  assert.match(text, /不是漲或跌/);
+  assert.match(text, /至 2026-09-17/);
+  // 次數,不是比率:畫面上不出現百分比或「機率」(docs/38 §1)。
+  assert.doesNotMatch(text, /%|機率|勝率/);
+});
+
+test("證據數字與檢定紀錄一致(docs/evidence/futures-volume-battery-20260921.json)", () => {
+  assert.equal(ANOMALY_EVIDENCE.events, 680);
+  assert.equal(ANOMALY_EVIDENCE.hits, 141);
+  assert.equal(ANOMALY_EVIDENCE.placeboMin, 43);
+  assert.equal(ANOMALY_EVIDENCE.placeboMax, 67);
 });
