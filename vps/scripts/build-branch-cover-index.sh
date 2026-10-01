@@ -36,9 +36,25 @@ if [ "$exists" = "1" ]; then
   exit 0
 fi
 
-echo "=== cover-index wait start $(taipei_date -Is) (need ${NEED_WINDOW_MIN}min window)"
+# 回補的維運暫停檔(warrant-backfill.sh 看到它就不開新的一段)。第一版沒有這一步,
+# 整晚 12 小時的每一個空檔都被回補先搶走:回補每 3 分鐘試一次、一拿就是 240 分鐘,
+# 這支每 5 分鐘才看一次。暫停檔讓回補跑完手上那一段就讓出空檔;EXIT 時一定移除。
+#
+# 只刪**自己建的**那一份:warrant-backfill.sh 在吞吐塌陷時也會建同一個檔,那是給人
+# 看的告警(「請人工確認來源後刪除該檔」)。開始時檔案已在 → 不建、也絕不刪。
+PAUSE_FILE="${WARRANT_PAUSE_FILE:-/tmp/radar-warrant-backfill.pause}"
+PAUSE_OWNED=0
+if [ ! -e "$PAUSE_FILE" ]; then
+  : > "$PAUSE_FILE"
+  PAUSE_OWNED=1
+fi
+release_pause() { if [ "$PAUSE_OWNED" = 1 ]; then rm -f "$PAUSE_FILE"; fi; }
+trap 'release_pause' EXIT
+
+echo "=== cover-index wait start $(taipei_date -Is) (need ${NEED_WINDOW_MIN}min window; warrant backfill paused via ${PAUSE_FILE})"
 while :; do
   if [ "$(date +%s)" -ge "$WAIT_UNTIL" ]; then
+    echo "--- gave up $(taipei_date -Is): no ${NEED_WINDOW_MIN}-minute window; nothing changed"
     notify_warn "覆蓋索引:等不到 ${NEED_WINDOW_MIN} 分鐘的空檔,本次未建(什麼都沒動)"
     exit 75
   fi
@@ -52,8 +68,8 @@ while :; do
 done
 echo "--- window ok $(taipei_date -Is): ${mins} min until next scheduled writer"
 
-# 本腳本不呼叫 radar(沒有 lib.sh 的密鑰清理 EXIT trap 要串接),直接掛即可。
-trap 'unpause_bf_containers' EXIT
+# 本腳本不呼叫 radar(沒有 lib.sh 的密鑰清理 EXIT trap 要串接);暫停檔的清理要一起保留。
+trap 'unpause_bf_containers; release_pause' EXIT
 pause_bf_containers
 
 free_bytes="$(df --output=avail -B1 "$REPO/data" | tail -1 | tr -d ' ')"
