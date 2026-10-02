@@ -341,6 +341,8 @@ export interface FuturesVolumeAnomalyEntry {
   anomaly: FuturesAnomaly;
   reasons: ReasonItem[];
   risks: ReasonItem[];
+  /** 現貨當日有沒有同步創高(docs/38 §7.17)。可選:舊 payload 沒有 → 無法判定。 */
+  spot_new_high?: boolean | null;
 }
 
 /**

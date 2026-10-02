@@ -54,7 +54,7 @@ const TABS: { key: TabKey; label: string; hint: string; icon: any }[] = [
   {
     key: "futures",
     label: "期貨異常",
-    hint: "個股期貨契約的一般時段成交量創其比較窗口新高（docs/38）。只列事實口數,不做跨契約排名、不算倍數;單位是契約不是股票。",
+    hint: "個股期貨成交量創近期新高的契約。期貨先爆量、現貨還沒跟上的,歷史上之後幾天現貨量常會跟上——它預告的是量,不是漲跌。",
     icon: Layers,
   },
   {

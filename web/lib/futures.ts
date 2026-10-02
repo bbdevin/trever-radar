@@ -63,6 +63,8 @@ export function fmtLotsSigned(n: number): string {
 export interface FuturesAnomalyFact {
   key: "today" | "window_max" | "window_median" | "oi_change";
   label: string;
+  /** 卡片空間小時用的短標籤(§7.17);守同樣的規則——不寫「今日」、天數來自區塊。 */
+  short?: string;
   value: string;
   unit: string;
 }
@@ -72,13 +74,13 @@ export function anomalyFacts(a: FuturesAnomaly): FuturesAnomalyFact[] {
   const facts: FuturesAnomalyFact[] = [
     // 「今日」不可以出現在這裡:這一列講的是期貨行情日,而那一天通常不是使用者
     // 眼前的今天(§7.12)。日期由外面的標題講,標籤只講它是什麼數字。
-    { key: "today", label: "一般時段成交", value: fmtLotsAbs(a.today), unit: "口" },
-    { key: "window_max", label: `前 ${days} 個比較日最高`, value: fmtLotsAbs(a.window_max), unit: "口" },
-    { key: "window_median", label: `前 ${days} 個比較日中位數`, value: fmtLotsAbs(a.window_median), unit: "口" },
+    { key: "today", label: "一般時段成交", short: "成交", value: fmtLotsAbs(a.today), unit: "口" },
+    { key: "window_max", label: `前 ${days} 個比較日最高`, short: `前 ${days} 日最高`, value: fmtLotsAbs(a.window_max), unit: "口" },
+    { key: "window_median", label: `前 ${days} 個比較日中位數`, short: `前 ${days} 日中位`, value: fmtLotsAbs(a.window_median), unit: "口" },
   ];
   // 缺鍵就是缺鍵:不補 0、不補破折號、不加一句「未公布」(§7.1)。
   if (a.oi_change !== undefined) {
-    facts.push({ key: "oi_change", label: "未平倉較前日", value: fmtLotsSigned(a.oi_change), unit: "口" });
+    facts.push({ key: "oi_change", label: "未平倉較前日", short: "未平倉增減", value: fmtLotsSigned(a.oi_change), unit: "口" });
   }
   return facts;
 }
@@ -92,6 +94,8 @@ export interface FuturesAnomalyRow {
   facts: FuturesAnomalyFact[];
   reasons: ReasonItem[];
   risks: ReasonItem[];
+  /** 現貨當日有沒有同步創高(§7.17)。舊 payload 沒有這個鍵 → unknown。 */
+  spot: SpotFollow;
 }
 
 /**
@@ -133,6 +137,7 @@ export function futuresAnomalyMarketState(
     facts: anomalyFacts(e.anomaly),
     reasons: e.reasons,
     risks: e.risks,
+    spot: spotFollow(e.spot_new_high),
   }));
   return { kind: "listed", dataDate, asOf, rows };
 }
@@ -371,4 +376,36 @@ export function openInterestDirectionText(c: FuturesOpenInterestDirection): stri
     `增加 ${c.increased} 個契約、減少 ${c.decreased} 個、` +
     `持平 ${c.unchanged} 個、無法判定 ${c.undetermined} 個。`
   );
+}
+
+/* ------------------------------------------------------------------ *
+ * 現貨有沒有跟上(docs/38 §7.17,2026-10-02)。
+ *
+ * 檢定 B 證明的是 F_only:期貨量創新高、而**當天現貨量還沒創新高**之後,現貨量
+ * 在 5 個交易日內跟著創高的次數明顯多於平常日子。現貨當天已經同步爆量的那一種
+ * 不在檢定裡——它比較像同一個消息的兩個回聲,不是期貨在「預告」。所以這是讀
+ * 每一個旗標時最重要的一個位元,畫面上要先講它。
+ * ------------------------------------------------------------------ */
+export type SpotFollow = "lagging" | "followed" | "unknown";
+
+export function spotFollow(spotNewHigh: boolean | null | undefined): SpotFollow {
+  if (spotNewHigh === false) return "lagging";
+  if (spotNewHigh === true) return "followed";
+  return "unknown";
+}
+
+/** 卡片上的標籤;unknown 不貼標籤(不知道就不講)。 */
+export function spotFollowLabel(s: SpotFollow): string | null {
+  if (s === "lagging") return "現貨尚未跟上";
+  if (s === "followed") return "現貨已同步爆量";
+  return null;
+}
+
+/**
+ * 依檢定條件分組:現貨尚未跟上(符合檢定)→ 無法判定 → 現貨已同步爆量。
+ * **組內維持 payload 原本的順序**——這是分組,不是名次(§5 不做跨契約排名)。
+ */
+export function groupBySpotFollow<T extends { spot: SpotFollow }>(rows: T[]): T[] {
+  const order: SpotFollow[] = ["lagging", "unknown", "followed"];
+  return order.flatMap((s) => rows.filter((r) => r.spot === s));
 }

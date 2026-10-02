@@ -966,12 +966,14 @@ class AnomalyMarketIndexTests(_AnomalyFixture):
         self.assertIn(INDEX_KEY, radar)
         self.assertEqual(radar[INDEX_KEY], [])
 
-    def test_a_flagged_contract_is_one_entry_with_the_five_fields(self):
+    def test_a_flagged_contract_is_one_entry_with_the_six_fields(self):
+        """第六個鍵 spot_new_high 是 2026-10-02 刻意加的(docs/38 §7.17):檢定只對
+        「現貨還沒跟上」成立,這個位元以前只寫在風險句的最後一個子句裡。"""
         self.seed([_spec("CCF", "2303")])
         entries = self.radar()[INDEX_KEY]
         self.assertEqual(len(entries), 1)
         self.assertEqual(sorted(entries[0]),
-                         ["anomaly", "code", "reasons", "risks", "stock_id"])
+                         ["anomaly", "code", "reasons", "risks", "spot_new_high", "stock_id"])
         self.assertEqual(entries[0]["stock_id"], "2303")
         self.assertEqual(entries[0]["code"], "CCF")
 
@@ -987,6 +989,18 @@ class AnomalyMarketIndexTests(_AnomalyFixture):
         self.assertEqual(entry["reasons"],
                          [{"code": REASON_CODE, "text": EXPECTED_REASON}])
         self.assertEqual(entry["risks"], [{"code": RISK_CODE, "text": EXPECTED_RISK}])
+
+    def test_spot_new_high_agrees_with_the_risk_sentence(self):
+        """結構化的位元與風險句講同一件事(同一個值算出來的),三態不塌。"""
+        self.seed([_spec("CCF", "2303")])
+        entry = self.radar()[INDEX_KEY][0]
+        flag, text = entry["spot_new_high"], entry["risks"][0]["text"]
+        self.assertIn(flag, (True, False, None))
+        if flag is None:
+            self.assertNotIn("同步創高", text)
+        else:
+            self.assertIn("有同步創高" if flag else "無同步創高", text)
+        self.assertEqual(self.contracts("2303")["CCF"]["spot_new_high"], flag)
 
     def test_the_order_is_today_minus_window_max_descending(self):
         # window_max 三個都是 100,所以差額就是 today − 100:400 / 200 / 200。
@@ -1018,9 +1032,10 @@ class AnomalyMarketIndexTests(_AnomalyFixture):
             for key in entry:
                 if any(bad in key.lower() for bad in RANK_ISH):
                     offenders.append(key)
-            # 而且鍵就是那五個,一個不多:第六個鍵要加,得自己動手並過 review。
+            # 而且鍵就是那六個,一個不多:第七個鍵要加,得自己動手並過 review。
+            # (第六個 spot_new_high 是 2026-10-02 刻意加的,docs/38 §7.17。)
             self.assertEqual(sorted(entry),
-                             ["anomaly", "code", "reasons", "risks", "stock_id"])
+                             ["anomaly", "code", "reasons", "risks", "spot_new_high", "stock_id"])
         self.assertEqual(offenders, [])
 
     def test_two_contracts_on_one_stock_both_appear(self):

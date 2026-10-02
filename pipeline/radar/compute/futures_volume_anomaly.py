@@ -186,6 +186,11 @@ def futures_volume_anomalies(
             "reasons": [{"code": REASON_CODE, "text": reason_text(code=code, facts=facts)}],
             "risks": [{"code": RISK_CODE,
                        "text": risk_text(spot_new_high_today=today_spot_high)}],
+            # docs/38 §7.17(2026-10-02):現貨當日有沒有同步創高,結構化地給前端。
+            # 檢定 B 證明的是 F_only——期貨創高而**現貨還沒跟上**——所以這是讀這個
+            # 旗標時最重要的一個位元;以前它只寫在風險句的最後一個子句裡。三態:
+            # true / false / null(現貨窗口不足,不知道)。與風險句用的是同一個值。
+            "spot_new_high": today_spot_high,
         }
     return anomalies
 

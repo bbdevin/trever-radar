@@ -18,6 +18,9 @@ import {
   futuresState,
   noDailyRowText,
   openInterestDirectionText,
+  spotFollow,
+  spotFollowLabel,
+  groupBySpotFollow,
   stockFuturesTab,
   anomalyMeaningText,
   ANOMALY_EVIDENCE,
@@ -220,8 +223,52 @@ test("§5 名單列不得帶 rank / position / score / ratio 之類的鍵", () =
   assert.equal(state.kind, "listed");
   if (state.kind !== "listed") return;
   for (const row of state.rows) {
-    assert.deepEqual(Object.keys(row).sort(), ["code", "facts", "name", "reasons", "risks", "stockId"]);
+    // spot(2026-10-02,§7.17)是刻意加的:現貨有沒有跟上,不是名次。
+    assert.deepEqual(Object.keys(row).sort(), ["code", "facts", "name", "reasons", "risks", "spot", "stockId"]);
   }
+});
+
+// ── §7.17 現貨有沒有跟上 ───────────────────────────────────────────────
+
+test("§7.17 短標籤守同樣的規則:不寫今日、天數來自區塊、最高與中位分得出來", () => {
+  const facts = anomalyFacts({ today: 9, window_max: 8, window_median: 2, window_days: 20, oi_change: 1 });
+  const shorts = facts.map((f) => f.short ?? "");
+  assert.deepEqual(shorts, ["成交", "前 20 日最高", "前 20 日中位", "未平倉增減"]);
+  for (const s of shorts) {
+    assert.ok(!s.includes("今日") && !s.includes("今天") && !s.includes("60"), s);
+  }
+  assert.equal(new Set(shorts).size, shorts.length);
+});
+
+test("§7.17 三態:false = 現貨尚未跟上(檢定條件)、true = 已同步、缺 = 不知道", () => {
+  assert.equal(spotFollow(false), "lagging");
+  assert.equal(spotFollow(true), "followed");
+  assert.equal(spotFollow(null), "unknown");
+  assert.equal(spotFollow(undefined), "unknown");   // 舊 payload
+  assert.equal(spotFollowLabel("lagging"), "現貨尚未跟上");
+  assert.equal(spotFollowLabel("followed"), "現貨已同步爆量");
+  assert.equal(spotFollowLabel("unknown"), null);   // 不知道就不貼標籤
+});
+
+test("§7.17 分組:符合檢定條件的排前面,組內維持 payload 順序(分組不是名次)", () => {
+  const rows = [
+    { code: "A", spot: "followed" as const },
+    { code: "B", spot: "lagging" as const },
+    { code: "C", spot: "unknown" as const },
+    { code: "D", spot: "lagging" as const },
+    { code: "E", spot: "followed" as const },
+  ];
+  assert.deepEqual(groupBySpotFollow(rows).map((r) => r.code), ["B", "D", "C", "A", "E"]);
+});
+
+test("§7.17 名單列帶出 payload 的 spot_new_high", () => {
+  const state = futuresAnomalyMarketState(
+    [{ ...entry("1565", "MYF", ANOMALY_MYF), spot_new_high: false }, entry("2330", "CDF", ANOMALY_OMF)],
+    "2026-09-18",
+  );
+  assert.equal(state.kind, "listed");
+  if (state.kind !== "listed") return;
+  assert.deepEqual(state.rows.map((r) => r.spot), ["lagging", "unknown"]);
 });
 
 test("§7.5 順序原封不動照 payload,前端不重排", () => {
