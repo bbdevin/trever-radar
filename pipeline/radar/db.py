@@ -2,7 +2,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from . import config
-from .schema import metadata
+from .schema import BRANCH_STOCK_PCTILE_ADDED_COLUMNS, metadata
 
 _engine = None
 
@@ -158,6 +158,8 @@ def _migrate_sqlite(conn):
         "daytrade_paybacks": "INTEGER",
         "stock_daytrade_obs": "INTEGER",
         "stock_daytrade_paybacks": "INTEGER",
+        # 2026-10-02:張數與長線派(120 日)欄位;欄名清單只有 schema.py 那一份。
+        **{name: "INTEGER" for name in BRANCH_STOCK_PCTILE_ADDED_COLUMNS},
     }
     if bspc_cols:
         for name, sql_type in bspc_additions.items():

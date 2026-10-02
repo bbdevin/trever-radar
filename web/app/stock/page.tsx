@@ -310,6 +310,9 @@ function StockView() {
       {view === "chart" && <KChart candles={cs} visibleDays={visibleDays} mainForce={mainForce} />}
       {view === "chips" && (
         <>
+          {/* 2026-10-02 移到當日/區間進出之上:預設只展開前 5 個分點,長說明收在
+              「怎麼看」裡,所以不再把分點進出擠到很下面。舊 JSON 沒有這個鍵時整節不渲染。 */}
+          <BranchPctilePanel data={data.branch_pctile_counts} />
           <BranchFlowSection
             branches={data.branches}
             branchHistory={data.branch_history}
@@ -320,9 +323,6 @@ function StockView() {
             quoteDate={last.t}
             onOpenBranch={setDrillBranch}
           />
-          {/* 分點進出的長期背景資訊,所以接在同一個籌碼分頁的當日/區間進出之後;
-              舊 JSON 沒有這個鍵時整節不渲染。 */}
-          <BranchPctilePanel data={data.branch_pctile_counts} />
         </>
       )}
       {view === "insti" && <InstiPanel data={data} candles={cs} />}

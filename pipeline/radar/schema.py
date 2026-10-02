@@ -349,6 +349,27 @@ branch_pit_stats = Table(
 #
 # 全部是**進出場價格分位**,不是損益:docs/37 禁止買賣配對與獲利歸因,
 # 因此買方與賣方 episode 各自獨立計數,沒有任何欄位是勝率或報酬。
+#
+# 2026-10-02 增欄(additive;既有檔案由 db._migrate_sqlite 補上,舊列為 NULL =
+# 「這份快照沒算」,不是 0):
+#   * 張數:每個次數分類旁的同分類張數(episode 張數 = 各合格日 |net_lots| 加總)。
+#   * 長線派 ``_120d``:同一批 episode,分位區間改為近 120 個市場交易日。
+#   兩者都附該股 pooled 的同一組欄位當尺(``stock_`` 前綴)。
+_PCTILE_CAMP_LOT_FIELDS = ("buy_lots_known", "low_buy_lots", "sell_lots_known", "high_sell_lots")
+_PCTILE_CAMP_COUNT_FIELDS = (
+    "buy_pctile_known", "buy_pctile_unknown", "low_buy_count",
+    "sell_pctile_known", "sell_pctile_unknown", "high_sell_count",
+)
+_PCTILE_STOCK_COUNT_FIELDS = (
+    "buy_pctile_known", "low_buy_count", "sell_pctile_known", "high_sell_count",
+)
+BRANCH_STOCK_PCTILE_ADDED_COLUMNS: tuple[str, ...] = (
+    *_PCTILE_CAMP_LOT_FIELDS,
+    *(f"stock_{name}" for name in _PCTILE_CAMP_LOT_FIELDS),
+    *(f"{name}_120d" for name in _PCTILE_CAMP_COUNT_FIELDS + _PCTILE_CAMP_LOT_FIELDS),
+    *(f"stock_{name}_120d" for name in _PCTILE_STOCK_COUNT_FIELDS + _PCTILE_CAMP_LOT_FIELDS),
+)
+
 branch_stock_pctile_counts = Table(
     "branch_stock_pctile_counts",
     metadata,
@@ -376,6 +397,7 @@ branch_stock_pctile_counts = Table(
     Column("stock_high_sell_count", Integer),
     Column("stock_daytrade_obs", Integer),
     Column("stock_daytrade_paybacks", Integer),
+    *(Column(name, Integer) for name in BRANCH_STOCK_PCTILE_ADDED_COLUMNS),
     Index("ix_branch_stock_pctile_counts_stock", "stock_id"),
 )
 

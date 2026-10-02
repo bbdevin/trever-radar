@@ -1,356 +1,368 @@
 "use client";
 
-import type { BranchPctileCounts, BranchPctileRow } from "@/lib/types";
+import { useEffect, useMemo, useState } from "react";
+
+import {
+  CAMP_KEYS,
+  CAMP_NAMES,
+  DEFAULT_VISIBLE,
+  baseLegend,
+  campDefinition,
+  campStatus,
+  campTabLabel,
+  campWindowLabel,
+  daytradeSummary,
+  normalizeBranchPctile,
+  searchBranches,
+  sideView,
+  visibleRows,
+  type CampKey,
+  type CampModel,
+  type CampStat,
+  type PctileModel,
+  type SideView,
+} from "@/lib/branchPctile";
+import type { BranchPctileCounts } from "@/lib/types";
 
 /**
- * 個股頁：分點在這檔股票的買點／賣點價格分位計數。
+ * 個股頁：分點在這檔股票的買點／賣點價格分位紀錄(短線派 20 日、長線派 120 日)。
  *
- * 為什麼這裡沒有徽章、沒有名次、沒有分數。2026-09-08 在修好還原因子的資料上重跑
- * 方向 battery,結論有兩半,兩半都必須看:**群體層級的傾向為真**——樣本外的存活
- * pair 以 obs/exp 2.40 勝過該股自身基準,而張數配對安慰劑只有 0.91(比機率還低
- * 一點),兩者相距約 6.8 個 sigma;**但「這一對」這個標籤不可重現**——嚴格旗標在
- * 評估半段只有 2.0% 的 pair 重新賺回來。
+ * 為什麼沒有徽章、沒有分數。2026-09-08 在修好還原因子的資料上重跑方向 battery,
+ * 結論有兩半:**群體層級的傾向為真**(樣本外存活 pair 以 obs/exp 2.40 勝過該股自身
+ * 基準,張數配對安慰劑只有 0.91);**但「這一對」這個標籤不可重現**(嚴格旗標在評估
+ * 半段只有 2.0% 重新賺回來,那個比率把交易量混進了持續性)。所以這一節只呈現
+ * 次數、張數與該股自身同一項比率,由讀的人判斷,不替他下結論。
  *
- * 這兩件事不衝突,因為它們問的不是同一個問題。2.0% **不是**「這個傾向只延續 2%
- * 的時間」:嚴格旗標要求兩側各 10 次已知分位,一個在評估半段單純交易得比較少的
- * 分點,不論行為如何都不可能重新達標——它把交易量混進了持續性。真正回答「這份
- * 紀錄有沒有帶到下一段」的是存活 pair 的 exceeds-both:**57.4%,對上約 22–24%
- * 的機率值**。2% 禁止任何徽章,57 對 24 則足以支持把計數呈現出來。所以這一節只
- * 呈現「數到幾次／共幾次」與該股自身的同側比率,由讀的人自己判斷,不替他下結論。
+ * 2026-10-02 起依**張數加權、向該股基準收縮**排序(見 json_export
+ * `_rank_branch_pctile_rows_by_lots`):次數把「低檔一口氣買 836 張」和「買 5 張」
+ * 記成同樣一次,而原始比率讓 6/8 這種小樣本登頂。此排序方式尚未經過回測檢定,
+ * 畫面上照實講。
  *
- * 為什麼每一列都要把該股自身的比率畫在同一條軸上。兩側基準率差很多(全市場低買
- * 53.4%、高賣 35.4%):一個 60% 的低買率幾乎就是基準值,一個 60% 的高賣率卻是大幅
- * 超出。只給兩個百分比要讀的人自己心算差額,等於把這把尺丟掉。
+ * 顏色刻意中性(不用紅綠):這是計次與張數,不是漲跌,也不是損益。
  */
 
-const CONTRACT_VERSION = 1;
+const CAMP_STORAGE_KEY = "trever.branchPctile.camp";
 
-/** 次日回吐一列的定義,寫在 title 裡,與另外兩側同一種講法。 */
-const DAYTRADE_LABEL = "次日回吐";
+/** 次日回吐的定義,放進卡片的展開說明。 */
 const DAYTRADE_DEFINITION =
   "合格買超日的次日，同一分點又出現在這檔股票的前 15 大賣超，"
   + "且賣出張數達當日淨買的七成以上";
 
-type SideSpec = {
-  key: "buy" | "sell";
-  label: string;
-  /** 這一側「數到的那件事」的定義,講清楚才不會被讀成損益。 */
-  definition: string;
-  hit: (row: BranchPctileRow) => number;
-  known: (row: BranchPctileRow) => number;
-  unknown: (row: BranchPctileRow) => number;
-  stockHit: (payload: BranchPctileCounts) => number | null;
-  stockKnown: (payload: BranchPctileCounts) => number | null;
-};
-
-const SIDES: SideSpec[] = [
-  {
-    key: "buy",
-    label: "買點偏低",
-    definition: "買進當日收盤落在近 20 日區間的低四成",
-    hit: (row) => row.low_buy_count,
-    known: (row) => row.buy_pctile_known,
-    unknown: (row) => row.buy_pctile_unknown,
-    stockHit: (payload) => payload.stock_low_buy_count,
-    stockKnown: (payload) => payload.stock_buy_pctile_known,
-  },
-  {
-    key: "sell",
-    label: "賣點偏高",
-    definition: "賣出當日收盤落在近 20 日區間的高四成",
-    hit: (row) => row.high_sell_count,
-    known: (row) => row.sell_pctile_known,
-    unknown: (row) => row.sell_pctile_unknown,
-    stockHit: (payload) => payload.stock_high_sell_count,
-    stockKnown: (payload) => payload.stock_sell_pctile_known,
-  },
-];
-
-function isCount(value: unknown): value is number {
-  return typeof value === "number" && Number.isFinite(value) && value >= 0;
+function readStoredCamp(): CampKey | null {
+  try {
+    const value = window.localStorage.getItem(CAMP_STORAGE_KEY);
+    return value === "short" || value === "long" ? value : null;
+  } catch {
+    return null;
+  }
 }
 
-function isRow(value: unknown): value is BranchPctileRow {
-  if (!value || typeof value !== "object") return false;
-  const row = value as Record<string, unknown>;
-  return (
-    typeof row.branch_name === "string"
-    && row.branch_name.length > 0
-    && isCount(row.buy_pctile_known)
-    && isCount(row.buy_pctile_unknown)
-    && isCount(row.low_buy_count)
-    && isCount(row.sell_pctile_known)
-    && isCount(row.sell_pctile_unknown)
-    && isCount(row.high_sell_count)
-  );
-}
-
-/** 比率以外都不算數:分母 0 時回 null,絕不用 0/0 充當 0%。 */
-function rate(hit: number | null, known: number | null): number | null {
-  if (!isCount(hit) || !isCount(known) || known <= 0 || hit > known) return null;
-  return (hit / known) * 100;
-}
-
-function fmtPct(value: number): string {
-  return `${value.toFixed(1)}%`;
-}
-
-function fmtPp(value: number): string {
-  return `${value >= 0 ? "+" : "−"}${Math.abs(value).toFixed(1)}pp`;
+function storeCamp(value: CampKey) {
+  try {
+    window.localStorage.setItem(CAMP_STORAGE_KEY, value);
+  } catch {
+    // 私密視窗或封鎖網站資料時寫不進去:下次回到預設的短線派,不影響畫面。
+  }
 }
 
 /**
- * 個股頁「買點／賣點分位計數」。舊版 payload(缺鍵或版本不符)整節不渲染,
- * 因為程式碼會早於下一次 VPS 匯出上線,線上一定會出現新程式碼配舊 JSON。
+ * 舊 JSON(v1)配新程式碼是常態——程式碼會早於下一次 VPS 匯出上線——所以 v1 照樣
+ * 用次數畫出來;其他版本或缺鍵整節不渲染。
  */
 export default function BranchPctilePanel({ data }: { data: BranchPctileCounts | undefined }) {
-  if (!data || typeof data !== "object" || data.version !== CONTRACT_VERSION) return null;
-  if (!Array.isArray(data.branches)) return null;
+  const model = useMemo(() => normalizeBranchPctile(data), [data]);
+  const [camp, setCamp] = useState<CampKey>("short");
+  const [expanded, setExpanded] = useState(false);
+  const [query, setQuery] = useState("");
 
-  const rows = data.branches.filter(isRow);
-  const minPerSide = isCount(data.min_known_episodes_per_side) ? data.min_known_episodes_per_side : null;
-  const windowFrom = typeof data.window_from === "string" ? data.window_from : null;
-  const asOf = typeof data.as_of === "string" ? data.as_of : null;
-  const marketDays = isCount(data.window_market_days) ? data.window_market_days : null;
+  // 上次選的派別只在瀏覽器端讀,避免靜態輸出與水合不一致。
+  useEffect(() => {
+    const stored = readStoredCamp();
+    if (stored) setCamp(stored);
+  }, []);
 
-  // 窗口一定要說出來,舊版 payload 缺欄位時也講清楚缺的是什麼,不留白。
-  const windowLabel = windowFrom && asOf
-    ? `${windowFrom} ～ ${asOf}${marketDays ? `，共 ${marketDays} 個交易日` : ""}`
+  if (!model) return null;
+
+  const hasLong = model.camps.long !== null;
+  const activeKey: CampKey = hasLong ? camp : "short";
+  const active = model.camps[activeKey] as CampModel;
+  const windowLabel = model.windowFrom && model.asOf
+    ? `${model.windowFrom} ～ ${model.asOf}${model.marketDays ? `（${model.marketDays} 個交易日）` : ""}`
     : "區間未提供（舊版資料）";
+  const search = searchBranches(model, query);
+  const searching = query.trim().length > 0;
+
+  const choose = (key: CampKey) => {
+    setCamp(key);
+    setExpanded(false);
+    storeCamp(key);
+  };
 
   return (
     <section
       aria-labelledby="branch-pctile-heading"
-      className="mt-3.5 grid min-w-0 max-w-full gap-3 overflow-hidden rounded-[var(--r-lg)] border border-border bg-card p-3.5 shadow-[var(--shadow-card)]"
+      className="mt-3.5 grid min-w-0 max-w-full gap-2.5 overflow-hidden rounded-[var(--r-lg)] border border-border bg-card p-3 shadow-[var(--shadow-card)]"
     >
-      <div className="flex flex-col gap-1">
+      <div className="grid gap-0.5">
         <h2 id="branch-pctile-heading" className="text-[15px] font-bold text-foreground">
           歷史上在這檔股票買點偏低、賣點偏高的分點
         </h2>
-        <p className="text-[11.5px] leading-relaxed text-muted-foreground">
-          統計窗口 {windowLabel}。這是窗口內累積下來的紀錄，不是今日盤後名單；
-          分點列在這裡是因為它在窗口內的進出，與它今天有沒有交易、有沒有進今天的前 15 大無關。
-        </p>
-        <p className="text-[11.5px] leading-relaxed text-muted-foreground">
-          資料只記錄當日進入這檔股票前 15 大買超或賣超的分點。多數股票淨買賣個幾張就進得了
-          前 15，成交熱絡的個股則要數十張以上，所以下列次數是該分點活動量的下限，
-          不是完整紀錄。
-        </p>
-        <p className="text-[11.5px] leading-relaxed text-muted-foreground">
-          每一列都附上這檔股票自身的同一項比率當作尺——各項的基準本來就不同，
-          只看單一個百分比會誤讀。以下全部是進出場時點的計次（價格分位與次日回吐），
-          不是損益，也不代表之後會延續。
+        <p className="text-[11.5px] leading-snug text-muted-foreground">統計窗口 {windowLabel}</p>
+        <p className="text-[11.5px] leading-snug text-muted-foreground">
+          {model.lotsRanked
+            ? "依張數加權排序（2026-10 起；此排序方式尚未經過回測檢定）"
+            : "依次數排序（舊版資料；下一次夜間計算後改為依張數）"}
         </p>
       </div>
 
-      {rows.length === 0 ? (
-        <p className="rounded-[var(--r-md)] border border-border bg-secondary px-3 py-4 text-[13px] leading-relaxed text-muted-foreground">
-          統計窗口 {windowLabel}。窗口內這檔股票沒有任何分點在買、賣兩側各累積到
-          {minPerSide != null ? ` 至少 ${minPerSide} 次` : "足夠次數"}分位可知的紀錄，
-          所以沒有可以放上這把尺比較的對象。這是窗口內觀察到的次數不足，不是資料載入失敗。
-        </p>
-      ) : (
-        <ul className="flex flex-col gap-2">
-          {rows.map((row) => (
-            <li
-              key={row.branch_name}
-              className="grid gap-2 rounded-[var(--r-md)] border border-border bg-background p-3"
+      {hasLong && (
+        <div role="tablist" aria-label="分位區間" className="grid grid-cols-2 gap-1 rounded-[var(--r-md)] bg-secondary p-1">
+          {CAMP_KEYS.map((key) => (
+            <button
+              key={key}
+              type="button"
+              role="tab"
+              aria-selected={activeKey === key}
+              onClick={() => choose(key)}
+              className={`min-h-11 rounded-[var(--r-sm)] px-2 py-1.5 text-[12.5px] font-semibold leading-tight transition-colors ${
+                activeKey === key
+                  ? "bg-card text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
             >
-              <h3 className="truncate text-[13.5px] font-semibold text-foreground" title={row.branch_name}>
-                {row.branch_name}
-              </h3>
-              <div className="grid gap-2.5 md:grid-cols-2 md:gap-3">
-                {SIDES.map((side) => (
-                  <SideBar key={side.key} side={side} row={row} payload={data} />
-                ))}
-              </div>
-              <DaytradeBar row={row} payload={data} />
-            </li>
+              <span aria-hidden="true" className="block">{CAMP_NAMES[key]}</span>
+              <span aria-hidden="true" className="block text-[11px] font-normal">{campWindowLabel(model, key)}</span>
+              <span className="sr-only">{campTabLabel(model, key)}</span>
+            </button>
           ))}
-        </ul>
+        </div>
+      )}
+      <p className="text-[11.5px] leading-snug text-foreground">
+        {!hasLong && <span className="font-semibold">{CAMP_NAMES.short}：</span>}
+        {campDefinition(model, activeKey)}
+      </p>
+
+      <label className="grid gap-1">
+        <span className="sr-only">搜尋分點名稱</span>
+        <input
+          type="search"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="搜尋分點名稱（含未進排行的分點）"
+          className="h-10 w-full rounded-[var(--r-md)] border border-border bg-background px-3 text-[13px] text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+        />
+      </label>
+
+      {searching ? (
+        <SearchResults model={model} hits={search.results} total={search.total} />
+      ) : (
+        <CampList model={model} camp={active} expanded={expanded} onExpand={() => setExpanded(true)} />
       )}
 
-      <p className="text-[11px] leading-relaxed text-muted-foreground">
-        「低四成／高四成」指當日收盤在該股近 20 日收盤區間中的位置。買、賣兩側各自獨立計數，
-        沒有配對成一筆交易，因此不能讀成賺賠。「次日回吐」數的是{DAYTRADE_DEFINITION}的次數；
-        出場多半落在看不見的成交裡，所以那個次數同樣是下限，不是完整紀錄，也不能當成對某個分點的判定。
-      </p>
+      <HowToRead model={model} />
     </section>
   );
 }
 
-/**
- * 第三列:次日回吐。與上面兩側同一個窗口、同一種視覺語言。
- *
- * 這裡刻意有三種狀態,不是兩種:
- *   1. 缺鍵(舊版 payload)——整列不畫。沒有這項觀察,和觀察到 0 次不是同一件事。
- *   2. 觀察數 < min_daytrade_obs ——明講「無法判定」。這正是這次改版的重點:
- *      未判定不等於「不會回吐」,絕不能退化成 0 或空白。
- *   3. 觀察數足夠 —— 分子/分母 + 百分比 + 該股自身的尺。
- *
- * 門檻不寫死在前端,只讀 payload 帶來的 min_daytrade_obs:定義留在 pipeline 一處。
- * 方向色同樣不用——這是計次,不是判定,更不是「這是隔日沖分點」這種斷言。
- */
-function DaytradeBar({
-  row,
-  payload,
+function CampList({
+  model,
+  camp,
+  expanded,
+  onExpand,
 }: {
-  row: BranchPctileRow;
-  payload: BranchPctileCounts;
+  model: PctileModel;
+  camp: CampModel;
+  expanded: boolean;
+  onExpand: () => void;
 }) {
-  const obs = row.daytrade_obs;
-  const paybacks = row.daytrade_paybacks;
-  const minObs = payload.min_daytrade_obs;
-  // 舊 JSON 配新程式碼是常態(程式碼會早於下一次 VPS 匯出上線),缺任何一項就不畫。
-  if (!isCount(obs) || !isCount(paybacks) || !isCount(minObs) || paybacks > obs) return null;
-
-  const determined = obs >= minObs;
-  const branchRate = determined ? rate(paybacks, obs) : null;
-  const stockObs = payload.stock_daytrade_obs;
-  const stockPaybacks = payload.stock_daytrade_paybacks;
-  const stockRate = rate(
-    isCount(stockPaybacks) ? stockPaybacks : null,
-    isCount(stockObs) ? stockObs : null,
-  );
-  const diff = branchRate != null && stockRate != null ? branchRate - stockRate : null;
-
-  const summary = branchRate != null
-    ? `${DAYTRADE_LABEL}：${obs} 次合格買超中有 ${paybacks} 次，${fmtPct(branchRate)}；`
-      + (stockRate != null
-        ? `此股自身 ${fmtPct(stockRate)}，${diff! >= 0 ? "高於" : "低於"}此股 ${fmtPp(diff!)}`
-        : "此股自身比率未提供")
-    : `${DAYTRADE_LABEL}：窗口內只有 ${obs} 次可觀察的合格買超，未達 ${minObs} 次，無法判定`;
-
-  return (
-    <div className="grid min-w-0 gap-1.5" role="group" aria-label={summary}>
-      <div className="flex flex-wrap items-baseline justify-between gap-x-2 gap-y-0.5">
-        <span className="text-[12px] font-semibold text-foreground" title={DAYTRADE_DEFINITION}>
-          {DAYTRADE_LABEL}
-        </span>
-        {determined ? (
-          <span className="num text-[12.5px] text-foreground">
-            <span className="font-bold">{paybacks}</span>
-            <span className="text-muted-foreground"> / {obs} 次</span>
-            {branchRate != null && <span className="ml-1 font-bold">{fmtPct(branchRate)}</span>}
-          </span>
-        ) : (
-          <span className="text-[12px] font-semibold text-muted-foreground">無法判定</span>
-        )}
-      </div>
-
-      {/* 同一條 0–100% 軸。未判定時不畫實心條——沒有可以畫的比率;但刻度線照畫,
-          因為那把尺(此股自身)本身是已知的。 */}
-      <div className="relative h-2.5 w-full rounded-full bg-secondary" aria-hidden="true">
-        {branchRate != null && (
-          <div
-            className="absolute inset-y-0 left-0 rounded-full bg-primary/70"
-            style={{ width: `${Math.min(100, Math.max(0, branchRate))}%` }}
-          />
-        )}
-        {stockRate != null && (
-          <div
-            className="absolute -top-1 h-4.5 w-0.5 rounded-full bg-[color:var(--ink-2)]"
-            style={{ left: `${Math.min(100, Math.max(0, stockRate))}%`, transform: "translateX(-1px)" }}
-          />
-        )}
-      </div>
-
-      <p className="text-[11px] leading-snug text-muted-foreground">
-        {determined ? (
-          stockRate != null && isCount(stockPaybacks) && isCount(stockObs) ? (
-            <>
-              此股全體分點同項 {stockPaybacks} / {stockObs} 次（{fmtPct(stockRate)}）
-              {diff != null && (
-                <span className="text-foreground">
-                  {" "}· {diff >= 0 ? "高於" : "低於"}此股 {fmtPp(diff)}
-                </span>
-              )}
-            </>
-          ) : (
-            <>此股自身同項比率未提供，這一格沒有可比的尺</>
-          )
-        ) : (
-          <>
-            窗口內只有 {obs} 次可觀察的合格買超，未達 {minObs} 次，無法判定；
-            這是次數不足，不是「沒有回吐」。
-          </>
-        )}
+  if (!camp.available) {
+    return (
+      <p className="rounded-[var(--r-md)] border border-border bg-secondary px-3 py-3 text-[12.5px] leading-relaxed text-muted-foreground">
+        {CAMP_NAMES[camp.key]}的資料尚未產生，下一次夜間計算後會出現。這是還沒算，不是沒有分點。
       </p>
+    );
+  }
+  if (camp.rows.length === 0) {
+    return (
+      <p className="rounded-[var(--r-md)] border border-border bg-secondary px-3 py-3 text-[12.5px] leading-relaxed text-muted-foreground">
+        窗口內這檔股票沒有任何分點累積到至少 {model.minKnown} 次分位可知的買進紀錄
+        {model.lotsRanked ? "" : "（舊版排序：買、賣兩側各要求）"}，
+        所以沒有可以放上這把尺比較的對象。這是次數不足，不是資料載入失敗。可以用上方搜尋查任一分點。
+      </p>
+    );
+  }
+  const legend = baseLegend(camp);
+  const rows = visibleRows(camp.rows, expanded);
+  return (
+    <div className="grid gap-2">
+      {legend && (
+        <p className="text-[11px] leading-snug text-muted-foreground">長條＝該分點的比率；{legend}</p>
+      )}
+      <ol className="grid gap-2">
+        {rows.map((stat, index) => (
+          <BranchCard key={stat.name} model={model} camp={camp} stat={stat} position={index + 1} />
+        ))}
+      </ol>
+      {!expanded && camp.rows.length > DEFAULT_VISIBLE && (
+        <button
+          type="button"
+          onClick={onExpand}
+          className="min-h-11 rounded-[var(--r-md)] border border-border bg-background px-3 text-[13px] font-semibold text-foreground hover:bg-secondary"
+        >
+          顯示全部（{camp.rows.length}）
+        </button>
+      )}
     </div>
   );
 }
 
-/** 一側的證據列:分子/分母、該股自身比率,以及把兩者畫在同一條軸上的對照。 */
-function SideBar({
-  side,
-  row,
-  payload,
+function BranchCard({
+  model,
+  camp,
+  stat,
+  position,
 }: {
-  side: SideSpec;
-  row: BranchPctileRow;
-  payload: BranchPctileCounts;
+  model: PctileModel;
+  camp: CampModel;
+  stat: CampStat;
+  position: number;
 }) {
-  const hit = side.hit(row);
-  const known = side.known(row);
-  const unknown = side.unknown(row);
-  const branchRate = rate(hit, known);
-  const stockHit = side.stockHit(payload);
-  const stockKnown = side.stockKnown(payload);
-  const stockRate = rate(stockHit, stockKnown);
-  const diff = branchRate != null && stockRate != null ? branchRate - stockRate : null;
-
-  const summary = branchRate != null
-    ? `${side.label}：${known} 次分位可知中有 ${hit} 次，${fmtPct(branchRate)}；`
-      + (stockRate != null
-        ? `此股自身 ${fmtPct(stockRate)}，${diff! >= 0 ? "高於" : "低於"}此股 ${fmtPp(diff!)}`
-        : "此股自身比率未提供")
-    : `${side.label}：分位可知次數不足，無法計算比率`;
-
+  const daytrade = camp.key === "short" ? daytradeSummary(model, stat) : null;
   return (
-    <div className="grid min-w-0 gap-1.5" role="group" aria-label={summary}>
-      <div className="flex flex-wrap items-baseline justify-between gap-x-2 gap-y-0.5">
-        <span className="text-[12px] font-semibold text-foreground" title={side.definition}>
-          {side.label}
-        </span>
-        <span className="num text-[12.5px] text-foreground">
-          <span className="font-bold">{hit}</span>
-          <span className="text-muted-foreground"> / {known} 次</span>
-          {branchRate != null && <span className="ml-1 font-bold">{fmtPct(branchRate)}</span>}
-        </span>
-      </div>
+    <li className="grid gap-1 rounded-[var(--r-md)] border border-border bg-background px-3 py-2">
+      <h3 className="flex min-w-0 items-baseline gap-1.5 text-[13.5px] font-semibold text-foreground">
+        <span className="num shrink-0 text-[11px] font-normal text-muted-foreground">{position}.</span>
+        <span className="truncate" title={stat.name}>{stat.name}</span>
+      </h3>
+      <SideRow view={sideView("buy", stat.buy, camp.base.buy, model.minKnown)} />
+      <SideRow view={sideView("sell", stat.sell, camp.base.sell, model.minKnown)} />
+      {daytrade && (
+        <details className="text-[11.5px] text-muted-foreground">
+          <summary className="cursor-pointer select-none py-0.5 text-[11.5px] font-semibold text-muted-foreground hover:text-foreground">
+            更多：次日回吐
+          </summary>
+          <p className="mt-1 leading-snug">{daytrade}</p>
+          <p className="mt-1 leading-snug">次日回吐＝{DAYTRADE_DEFINITION}。出場多半落在看不見的成交裡，這個次數是下限。</p>
+        </details>
+      )}
+    </li>
+  );
+}
 
-      {/* 同一條 0–100% 軸:實心條是這個分點,刻度線是這檔股票自身的同側比率。
-          兩者畫在一起,差額才不必由讀的人心算。方向色刻意不用——這是計數,不是漲跌。 */}
-      <div className="relative h-2.5 w-full rounded-full bg-secondary" aria-hidden="true">
-        {branchRate != null && (
-          <div
-            className="absolute inset-y-0 left-0 rounded-full bg-primary/70"
-            style={{ width: `${Math.min(100, Math.max(0, branchRate))}%` }}
-          />
-        )}
-        {stockRate != null && (
-          <div
-            className="absolute -top-1 h-4.5 w-0.5 rounded-full bg-[color:var(--ink-2)]"
-            style={{ left: `${Math.min(100, Math.max(0, stockRate))}%`, transform: "translateX(-1px)" }}
-          />
-        )}
+/** 一側:主要一行(張數)＋小字(次數)＋一條細長條,刻線是此股全體分點。 */
+function SideRow({ view }: { view: SideView }) {
+  return (
+    <div className="grid min-w-0 gap-1" role="group" aria-label={`${view.label}${view.detail ? `，${view.detail}` : ""}`}>
+      <div className="flex flex-wrap items-baseline justify-between gap-x-2 gap-y-0">
+        <span className={`num text-[12.5px] ${view.insufficient ? "text-muted-foreground" : "font-semibold text-foreground"}`}>
+          {view.label}
+        </span>
+        {view.detail && <span className="num text-[11px] text-muted-foreground">{view.detail}</span>}
       </div>
-
-      <p className="text-[11px] leading-snug text-muted-foreground">
-        {stockRate != null && isCount(stockHit) && isCount(stockKnown) ? (
-          <>
-            此股全體分點同側 {stockHit} / {stockKnown} 次（{fmtPct(stockRate)}）
-            {diff != null && (
-              <span className="text-foreground">
-                {" "}· {diff >= 0 ? "高於" : "低於"}此股 {fmtPp(diff)}
-              </span>
-            )}
-          </>
-        ) : (
-          <>此股自身同側比率未提供，這一格沒有可比的尺</>
-        )}
-        {unknown > 0 && <>；另有 {unknown} 次分位不可知，未計入分母</>}
-      </p>
+      {!view.insufficient && (
+        <div className="relative h-1.5 w-full rounded-full bg-secondary" aria-hidden="true">
+          {view.pct != null && (
+            <div
+              className="absolute inset-y-0 left-0 rounded-full bg-primary/60"
+              style={{ width: `${Math.min(100, Math.max(0, view.pct))}%` }}
+            />
+          )}
+          {view.basePct != null && (
+            <div
+              className="absolute -top-1 h-3.5 w-0.5 rounded-full bg-[color:var(--ink-2)]"
+              style={{ left: `${Math.min(100, Math.max(0, view.basePct))}%`, transform: "translateX(-1px)" }}
+            />
+          )}
+        </div>
+      )}
     </div>
+  );
+}
+
+function SearchResults({
+  model,
+  hits,
+  total,
+}: {
+  model: PctileModel;
+  hits: ReturnType<typeof searchBranches>["results"];
+  total: number;
+}) {
+  if (hits.length === 0) {
+    return (
+      <p className="rounded-[var(--r-md)] border border-border bg-secondary px-3 py-3 text-[12.5px] leading-relaxed text-muted-foreground">
+        找不到符合的分點：窗口內它在這檔股票的可判讀紀錄少於 2 次（或不在可見張數前 150 名），
+        沒有可比較的數字。只記錄進入當日前 15 大買賣超的分點。
+      </p>
+    );
+  }
+  return (
+    <div className="grid gap-2">
+      {total > hits.length && (
+        <p className="text-[11px] text-muted-foreground">共 {total} 個符合，只列前 {hits.length} 個；請輸入更完整的名稱。</p>
+      )}
+      <ul className="grid gap-2">
+        {hits.map((hit) => (
+          <li key={hit.name} className="grid gap-2 rounded-[var(--r-md)] border border-border bg-background px-3 py-2">
+            <h3 className="truncate text-[13.5px] font-semibold text-foreground" title={hit.name}>{hit.name}</h3>
+            {CAMP_KEYS.filter((key) => model.camps[key] !== null).map((key) => {
+              const camp = model.camps[key] as CampModel;
+              const campHit = hit.camps[key];
+              return (
+                <div key={key} className="grid gap-1 border-t border-border pt-1.5 first:border-t-0 first:pt-0">
+                  <p className="text-[11.5px] font-semibold text-muted-foreground">{campStatus(model, key, campHit)}</p>
+                  {campHit?.stat && camp.available && (
+                    <>
+                      <SideRow view={sideView("buy", campHit.stat.buy, camp.base.buy, model.minKnown)} />
+                      <SideRow view={sideView("sell", campHit.stat.sell, camp.base.sell, model.minKnown)} />
+                    </>
+                  )}
+                </div>
+              );
+            })}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/** 原本三段長說明收進一個「怎麼看」,手機上不再佔掉整個畫面。 */
+function HowToRead({ model }: { model: PctileModel }) {
+  const k = (camp: CampModel | null) =>
+    camp && camp.shrinkK.buy != null
+      ? `${CAMP_NAMES[camp.key]}買側 K＝${Math.round(camp.shrinkK.buy).toLocaleString("en-US")} 張`
+        + (camp.shrinkK.sell != null ? `、賣側 K＝${Math.round(camp.shrinkK.sell).toLocaleString("en-US")} 張` : "")
+      : null;
+  const kText = [k(model.camps.short), k(model.camps.long)].filter(Boolean).join("；");
+  return (
+    <details className="rounded-[var(--r-md)] border border-border bg-secondary/60 px-3 py-2 text-[11.5px] leading-relaxed text-muted-foreground">
+      <summary className="cursor-pointer select-none text-[12px] font-semibold text-foreground">怎麼看</summary>
+      <div className="mt-1.5 grid gap-1.5">
+        <p>
+          這是統計窗口內累積下來的紀錄，不是今日盤後名單；分點列在這裡是因為它在窗口內的進出，
+          與它今天有沒有交易無關。
+        </p>
+        <p>
+          資料只記錄當日進入這檔股票前 15 大買超或賣超的分點，所以次數與張數是下限，不是完整紀錄。
+          持股者的出場常是前 15 大以外的小量賣出，看不見，因此賣出紀錄不足時不列比率，也不影響排序。
+        </p>
+        <p>
+          張數＝同一段連續買進（或賣出）每天淨張數的加總；位置只看那一段的第一天收盤。
+          刻線是這檔股票全體分點的同一項比率——買、賣兩側的基準本來就不同，只看單一百分比會誤讀。
+        </p>
+        {model.lotsRanked && (
+          <p>
+            排序：把每個分點的張數比率往此股整體比率拉近，張數越少拉得越多（拉力 K＝此股各分點已知張數的中位數
+            {kText ? `；${kText}` : ""}），再看高出此股多少；買進紀錄至少 {model.minKnown} 次才入選，
+            賣出紀錄達 {model.minKnown} 次才計入賣側。此排序方式尚未經過回測檢定。
+          </p>
+        )}
+        <p>
+          全部是進出場時點的價格位置與張數，買、賣兩側各自獨立計數，沒有配對成一筆交易，
+          不是損益，也不代表之後會延續。
+        </p>
+      </div>
+    </details>
   );
 }

@@ -396,11 +396,66 @@ export interface BranchPctileRow {
    */
   daytrade_obs?: number;
   daytrade_paybacks?: number;
+  /**
+   * v2 起:與上面次數同一個分類的張數(episode 張數 = 各合格日 |淨買賣| 加總)。
+   * v1 payload 缺鍵;v2 但快照尚未重算時為 null(此時排序退回次數)。
+   */
+  buy_lots_known?: number | null;
+  low_buy_lots?: number | null;
+  sell_lots_known?: number | null;
+  high_sell_lots?: number | null;
 }
 
-/** 個股頁的分位計數 payload;`branches` 可能是空陣列(誠實的空,不是錯誤)。 */
-export interface BranchPctileCounts {
-  version: number;
+/** v2 的一派(短線派 20 日／長線派 120 日)。 */
+export interface BranchPctileCamp {
+  /** 這份快照有沒有算這一派;false 時 branches 為空,不是「沒有分點」。 */
+  available: boolean;
+  stock_buy_pctile_known: number | null;
+  stock_low_buy_count: number | null;
+  stock_sell_pctile_known: number | null;
+  stock_high_sell_count: number | null;
+  stock_buy_lots_known: number | null;
+  stock_low_buy_lots: number | null;
+  stock_sell_lots_known: number | null;
+  stock_high_sell_lots: number | null;
+  /** 收縮強度 K(該側已知張數的分點中位數);次數排序時為 null。 */
+  shrink_k_buy_lots: number | null;
+  shrink_k_sell_lots: number | null;
+  branches: BranchPctileRow[];
+}
+
+/**
+ * v2 payload(2026-10-02):兩派各一份排序清單,加上 `lookup`——其餘分點的精簡陣列,
+ * 欄位順序見 `lookup_fields`(`branch_name`, `short.<field>`…, `long.<field>`…)。
+ */
+export interface BranchPctileCountsV2 {
+  version: 2;
+  /** "lots_shrunk_v1"(張數加權＋收縮)或 "counts_v1"(舊快照退路)。 */
+  ranking: string;
+  min_known_episodes_per_side: number;
+  max_branches: number;
+  windows: { short: number; long: number };
+  low_buy_max_pctile: number;
+  high_sell_min_pctile: number;
+  min_daytrade_obs: number;
+  as_of: string | null;
+  window_market_days: number | null;
+  window_from: string | null;
+  computed_at: string | null;
+  definitions_version: string | null;
+  stock_daytrade_obs: number | null;
+  stock_daytrade_paybacks: number | null;
+  short: BranchPctileCamp;
+  long: BranchPctileCamp;
+  lookup_fields: string[];
+  lookup: (string | number | null)[][];
+}
+
+export type BranchPctileCounts = BranchPctileCountsV1 | BranchPctileCountsV2;
+
+/** v1 payload(舊 JSON);`branches` 可能是空陣列(誠實的空,不是錯誤)。 */
+export interface BranchPctileCountsV1 {
+  version: 1;
   /** 窗口結束日;整份快照尚未產生時可能為 null。 */
   as_of: string | null;
   window_market_days: number | null;

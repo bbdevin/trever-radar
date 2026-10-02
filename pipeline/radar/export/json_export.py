@@ -25,6 +25,12 @@ from ..compute.strategy_performance import (
     fetch_strategy_events,
 )
 from ..compute.compute_branch_stats import DAYTRADE_MIN_OBS
+from ..compute.branch_point_in_time_report import (
+    HIGH_SELL_MIN_PCTILE,
+    LOW_BUY_MAX_PCTILE,
+    PRICE_WINDOW_DAYS,
+)
+from ..compute.branch_stock_pctile_counts import LONG_PRICE_WINDOW_DAYS
 from ..compute.margin_cost import build_margin_cost_series
 from ..compute.display_window import display_window_bounds, window_label
 from ..compute.futures_volume_anomaly import (
@@ -73,27 +79,54 @@ _STRATEGY_LIFECYCLE: dict[str, dict[str, str | int]] = {
 # 所以 payload 裡沒有任何旗標、分數或名次,措辭只能是「歷史上數到幾次」;
 # 群體層級的傾向本身是真的(obs/exp 2.40 對安慰劑 0.91),這才是計數可以呈現的理由。
 #
-# 兩側各至少 5 筆已知分位 episode 才輸出:再少下去分母薄到讀不出東西。
+# 已知分位 episode 至少 5 筆才算數:再少下去分母薄到讀不出東西。
+# v2 起只有**買側**是入選條件;賣側不足 5 筆時不扣分也不加分(見下方排序說明)。
 BRANCH_PCTILE_MIN_KNOWN_PER_SIDE = 5
-# 每檔股票最多列 10 個分點。個股頁是給人讀的,不是資料傾印;量測顯示即使
-# 要求兩側各 10 筆仍有 8.6 萬對,不設上限會讓熱門股列出數百列。
-BRANCH_PCTILE_MAX_BRANCHES = 10
-BRANCH_PCTILE_VERSION = 1
+# 每派每檔股票最多列 30 個分點(v1 為 10)。前端預設只展開前 5 個;其餘分點
+# 不進清單,但會以精簡陣列放進 ``lookup`` 供搜尋。
+BRANCH_PCTILE_MAX_BRANCHES = 30
+# lookup 大小上限:任一派任一側已知 episode ≥ 2,依可見張數取前 150 個(見 payload 函式)。
+BRANCH_PCTILE_LOOKUP_MIN_KNOWN = 2
+BRANCH_PCTILE_LOOKUP_MAX = 150
+# v2(2026-10-02):張數加權＋收縮排序、短線派／長線派兩份清單、lookup。
+BRANCH_PCTILE_VERSION = 2
+# 排序方式的名稱跟著 payload 走。舊快照(張數欄位為 NULL)退回 v1 的次數排序。
+BRANCH_PCTILE_RANKING = "lots_shrunk_v1"
+BRANCH_PCTILE_RANKING_FALLBACK = "counts_v1"
 
-_BRANCH_PCTILE_COLUMNS = (
-    "branch_name", "buy_pctile_known", "buy_pctile_unknown", "low_buy_count",
-    "sell_pctile_known", "sell_pctile_unknown", "high_sell_count",
-    # 次日回吐:同一個 window 內算出來的第三組計數,不是入選條件,只是已入選
-    # 分點的額外脈絡。低於 min_daytrade_obs 時是「無法判定」,讀取端不得當 0。
-    "daytrade_obs", "daytrade_paybacks",
+# 兩派:(payload 鍵, 欄位後綴, 收盤區間的市場交易日數)。
+_BRANCH_PCTILE_CAMPS = (
+    ("short", "", PRICE_WINDOW_DAYS),
+    ("long", "_120d", LONG_PRICE_WINDOW_DAYS),
 )
-_BRANCH_PCTILE_STOCK_COLUMNS = (
+# 每派、每列的欄位(不含後綴)。前 6 個是 v1 既有的次數,後 4 個是張數。
+_BRANCH_PCTILE_CAMP_FIELDS = (
+    "buy_pctile_known", "buy_pctile_unknown", "low_buy_count",
+    "sell_pctile_known", "sell_pctile_unknown", "high_sell_count",
+    "buy_lots_known", "low_buy_lots", "sell_lots_known", "high_sell_lots",
+)
+_BRANCH_PCTILE_CAMP_STOCK_FIELDS = (
     "stock_buy_pctile_known", "stock_low_buy_count",
     "stock_sell_pctile_known", "stock_high_sell_count",
-    "stock_daytrade_obs", "stock_daytrade_paybacks",
+    "stock_buy_lots_known", "stock_low_buy_lots",
+    "stock_sell_lots_known", "stock_high_sell_lots",
 )
+# 次日回吐:同一個 window 內算出來的第三組計數,只屬於短線派,不是入選條件。
+# 低於 min_daytrade_obs 時是「無法判定」,讀取端不得當 0。
+_BRANCH_PCTILE_DAYTRADE_COLUMNS = ("daytrade_obs", "daytrade_paybacks")
+_BRANCH_PCTILE_STOCK_DAYTRADE_COLUMNS = ("stock_daytrade_obs", "stock_daytrade_paybacks")
 _BRANCH_PCTILE_WINDOW_COLUMNS = (
     "as_of", "window_market_days", "window_from", "computed_at", "definitions_version",
+)
+# lookup 每個元素的欄位順序(payload 也帶著 ``lookup_fields``,前端照名字取值)。
+_BRANCH_PCTILE_LOOKUP_SIDE_FIELDS = (
+    "buy_pctile_known", "low_buy_count", "sell_pctile_known", "high_sell_count",
+    "buy_lots_known", "low_buy_lots", "sell_lots_known", "high_sell_lots",
+)
+BRANCH_PCTILE_LOOKUP_FIELDS = ("branch_name",) + tuple(
+    f"{camp}.{field}"
+    for camp, _suffix, _days in _BRANCH_PCTILE_CAMPS
+    for field in _BRANCH_PCTILE_LOOKUP_SIDE_FIELDS
 )
 
 # 綜合榜門檻。上榜那一行與 score_list_meta.min_final 讀的都是它——只有一份 65。
@@ -142,16 +175,23 @@ def _branch_pctile_table_exists(conn) -> bool:
 
 
 def _branch_pctile_snapshot_meta(conn) -> dict | None:
-    """整份快照共用同一組 window 中繼資料,取任一列即可。"""
+    """整份快照共用同一組 window 中繼資料,取任一列即可。
+
+    另帶兩個旗標:這份快照有沒有算張數、有沒有算長線派。整張表每次整份取代,
+    所以任一列就代表整份快照(舊快照的新欄位全是 NULL)。
+    """
     row = conn.execute(text(f"""
-        SELECT {", ".join(_BRANCH_PCTILE_WINDOW_COLUMNS)}
+        SELECT {", ".join(_BRANCH_PCTILE_WINDOW_COLUMNS)},
+               buy_lots_known IS NOT NULL AS has_lots,
+               buy_pctile_known_120d IS NOT NULL AS has_long
         FROM branch_stock_pctile_counts LIMIT 1
     """)).mappings().first()
     return dict(row) if row else None
 
 
 def _rank_branch_pctile_rows(rows: list[dict], limit: int, min_known: int) -> list[dict]:
-    """依「超出該檔股票自身基準率多少」排序,不是依原始比率排序。
+    """``counts_v1``:依「超出該檔股票自身基準率多少」排序(v1 的排序,現在只在
+    舊快照沒有張數欄位時當退路)。
 
     排序鍵是買側與賣側各自對**同一檔股票自身 pooled 率**的差額相加。之所以不
     能把兩側合併成一個比率再排,是因為兩側的 null 根本不同(全市場低買 53.35%、
@@ -182,34 +222,210 @@ def _rank_branch_pctile_rows(rows: list[dict], limit: int, min_known: int) -> li
     return qualified[:limit]
 
 
+def _pctile_shrink_k(rows: list[dict], known_lots: str) -> float:
+    """收縮強度 K = 這檔股票中「該側已知張數 > 0」的分點,其已知張數的中位數。
+
+    由資料決定、每檔每側各一個:熱門股的分點動輒上千張,冷門股幾十張,固定的 K
+    在兩者之間必然有一邊失準。中位數的意思是「一個典型分點的張數」——張數只有
+    典型分點一小部分的紀錄會被大幅拉回該股基準,張數遠多於典型的紀錄幾乎不被拉。
+    沒有任何分點有張數時為 0(此時所有差額本來就是 0)。
+    """
+    values = sorted(row[known_lots] for row in rows if (row[known_lots] or 0) > 0)
+    if not values:
+        return 0.0
+    mid = len(values) // 2
+    return float(values[mid]) if len(values) % 2 else (values[mid - 1] + values[mid]) / 2
+
+
+def _pctile_shrunk_margin(hit: int, known: int, base: float, k: float) -> float:
+    """``(hit + K·base) / (known + K) − base``:張數越少,越被拉回該股基準。"""
+    if known + k <= 0:
+        return 0.0
+    return (hit + k * base) / (known + k) - base
+
+
+def _rank_branch_pctile_rows_by_lots(
+    rows: list[dict], limit: int, min_known: int,
+) -> tuple[list[dict], dict]:
+    """``lots_shrunk_v1``:張數加權、向該股基準收縮後,超出基準多少。
+
+    對每一側(買:低檔張數/已知張數;賣:高檔張數/已知張數):
+
+        base   = 該股 pooled 的同側張數比率(stock_low_buy_lots / stock_buy_lots_known)
+        K      = 該股該側已知張數 > 0 的分點之已知張數中位數(見 _pctile_shrink_k)
+        shrunk = (hit_lots + K·base) / (known_lots + K)
+        margin = shrunk − base
+
+    排序鍵 = 買側 margin + (賣側 margin,若賣側已知分位**次數** ≥ min_known;否則 0)。
+    入選條件只有買側已知分位次數 ≥ min_known——持股者的出場多半是前 15 大以外的
+    小量賣出,看不見,要求賣側等於懲罰「買在低檔然後抱著」的分點。同分以名稱排。
+
+    為什麼收縮:原始比率讓 6/8、5/9 這種小樣本登頂;收縮後,只有張數夠多的
+    低檔紀錄才拉得開與基準的距離。此排序方式**尚未經過回測檢定**。
+
+    回傳 (前 limit 名, {"shrink_k_buy_lots": K_buy, "shrink_k_sell_lots": K_sell})。
+    """
+    k_buy = _pctile_shrink_k(rows, "buy_lots_known")
+    k_sell = _pctile_shrink_k(rows, "sell_lots_known")
+
+    def base(row: dict, hit: str, known: str) -> float:
+        return row[hit] / row[known] if row[known] else 0.0
+
+    def key(row: dict) -> float:
+        total = _pctile_shrunk_margin(
+            row["low_buy_lots"], row["buy_lots_known"],
+            base(row, "stock_low_buy_lots", "stock_buy_lots_known"), k_buy,
+        )
+        if (row["sell_pctile_known"] or 0) >= min_known:
+            total += _pctile_shrunk_margin(
+                row["high_sell_lots"], row["sell_lots_known"],
+                base(row, "stock_high_sell_lots", "stock_sell_lots_known"), k_sell,
+            )
+        return total
+
+    qualified = [row for row in rows if (row["buy_pctile_known"] or 0) >= min_known]
+    qualified.sort(key=lambda row: (-key(row), row["branch_name"]))
+    return qualified[:limit], {"shrink_k_buy_lots": k_buy, "shrink_k_sell_lots": k_sell}
+
+
+def _branch_pctile_camp_rows(rows: list[dict], suffix: str) -> list[dict]:
+    """把某一派的欄位(帶後綴)攤成不帶後綴的同一組鍵,兩派因此共用排序與前端。"""
+    return [
+        {
+            "branch_name": row["branch_name"],
+            **{field: row[f"{field}{suffix}"] for field in _BRANCH_PCTILE_CAMP_FIELDS},
+            **{field: row[f"{field}{suffix}"]
+               for field in _BRANCH_PCTILE_CAMP_STOCK_FIELDS},
+            **({column: row[column] for column in _BRANCH_PCTILE_DAYTRADE_COLUMNS}
+               if suffix == "" else {}),
+        }
+        for row in rows
+    ]
+
+
 def _branch_pctile_payload(conn, sid: str, meta: dict | None, table_exists: bool) -> dict:
-    """個股頁的 payload。沒有合格分點時輸出誠實的空清單,不是缺鍵。"""
+    """個股頁的 payload(v2)。沒有合格分點時輸出誠實的空清單,不是缺鍵。
+
+    形狀:
+      * 頂層:version / ranking / windows / 門檻 / window 中繼資料 / 次日回吐的尺。
+      * ``short``、``long``:各一派的 ``available``、該股 pooled 的次數與張數、
+        收縮強度 K、以及排序後前 ``max_branches`` 個分點(``branches``)。
+      * ``lookup``:其餘至少有一次已知分位 episode 的分點,精簡成陣列(欄位順序
+        見 ``lookup_fields``),讓前端搜尋得到任何分點。
+    """
     rows: list[dict] = []
     if table_exists:
+        columns = (
+            ("branch_name",)
+            + tuple(f"{field}{suffix}" for _c, suffix, _d in _BRANCH_PCTILE_CAMPS
+                    for field in _BRANCH_PCTILE_CAMP_FIELDS + _BRANCH_PCTILE_CAMP_STOCK_FIELDS)
+            + _BRANCH_PCTILE_DAYTRADE_COLUMNS + _BRANCH_PCTILE_STOCK_DAYTRADE_COLUMNS
+            + _BRANCH_PCTILE_WINDOW_COLUMNS
+        )
         rows = [dict(row) for row in conn.execute(text(f"""
-            SELECT {", ".join(_BRANCH_PCTILE_COLUMNS + _BRANCH_PCTILE_STOCK_COLUMNS
-                              + _BRANCH_PCTILE_WINDOW_COLUMNS)}
+            SELECT {", ".join(columns)}
             FROM branch_stock_pctile_counts WHERE stock_id = :s
         """), {"s": sid}).mappings()]
     window = dict(rows[0]) if rows else (dict(meta) if meta else {})
     stock_totals = rows[0] if rows else {}
-    payload = {
+    # 整份快照同一個版本:有列就看列,沒有列就看快照中繼資料。
+    if rows:
+        has_lots = all(row["buy_lots_known"] is not None for row in rows)
+        has_long = all(row["buy_pctile_known_120d"] is not None for row in rows)
+    else:
+        has_lots = bool(meta and meta.get("has_lots"))
+        has_long = bool(meta and meta.get("has_long"))
+    payload: dict = {
         "version": BRANCH_PCTILE_VERSION,
+        "ranking": BRANCH_PCTILE_RANKING if has_lots else BRANCH_PCTILE_RANKING_FALLBACK,
         "min_known_episodes_per_side": BRANCH_PCTILE_MIN_KNOWN_PER_SIDE,
         "max_branches": BRANCH_PCTILE_MAX_BRANCHES,
+        # 定義的數字跟著 payload 走,前端文案照這裡讀,不自己寫死。
+        "windows": {camp: days for camp, _suffix, days in _BRANCH_PCTILE_CAMPS},
+        "low_buy_max_pctile": LOW_BUY_MAX_PCTILE,
+        "high_sell_min_pctile": HIGH_SELL_MIN_PCTILE,
         # 判定門檻只有這一份:前端不自己寫死 8,低於它就顯示「無法判定」。
         "min_daytrade_obs": DAYTRADE_MIN_OBS,
     }
     for column in _BRANCH_PCTILE_WINDOW_COLUMNS:
         payload[column] = window.get(column)
-    for column in _BRANCH_PCTILE_STOCK_COLUMNS:
+    for column in _BRANCH_PCTILE_STOCK_DAYTRADE_COLUMNS:
         payload[column] = stock_totals.get(column)
-    payload["branches"] = [
-        {column: row[column] for column in _BRANCH_PCTILE_COLUMNS}
-        for row in _rank_branch_pctile_rows(
-            rows, BRANCH_PCTILE_MAX_BRANCHES, BRANCH_PCTILE_MIN_KNOWN_PER_SIDE,
+
+    ranked_names: dict[str, set[str] | None] = {}
+    camp_views: dict[str, dict[str, dict]] = {}
+    for camp, suffix, _days in _BRANCH_PCTILE_CAMPS:
+        available = has_long if suffix else True
+        camp_rows = _branch_pctile_camp_rows(rows, suffix) if available else []
+        camp_views[camp] = {row["branch_name"]: row for row in camp_rows}
+        if has_lots:
+            ranked, shrink = _rank_branch_pctile_rows_by_lots(
+                camp_rows, BRANCH_PCTILE_MAX_BRANCHES, BRANCH_PCTILE_MIN_KNOWN_PER_SIDE,
+            )
+        else:
+            ranked = _rank_branch_pctile_rows(
+                camp_rows, BRANCH_PCTILE_MAX_BRANCHES, BRANCH_PCTILE_MIN_KNOWN_PER_SIDE,
+            )
+            shrink = {"shrink_k_buy_lots": None, "shrink_k_sell_lots": None}
+        stock_view = camp_rows[0] if camp_rows else {}
+        row_fields = ("branch_name",) + _BRANCH_PCTILE_CAMP_FIELDS + (
+            _BRANCH_PCTILE_DAYTRADE_COLUMNS if suffix == "" else ())
+        payload[camp] = {
+            "available": available,
+            **{field: stock_view.get(field) for field in _BRANCH_PCTILE_CAMP_STOCK_FIELDS},
+            **shrink,
+            "branches": [{field: row[field] for field in row_fields} for row in ranked],
+        }
+        ranked_names[camp] = {row["branch_name"] for row in ranked} if available else None
+
+    # lookup:一個分點只要在任何一個「有資料的派」裡沒進清單,就放進來,並帶兩派
+    # 的數字——搜尋結果要同時顯示兩派。至少一派、一側有已知分位 episode 才放。
+    def has_known(name: str) -> bool:
+        return any(
+            (view.get(name) or {}).get("buy_pctile_known") or (view.get(name) or {}).get("sell_pctile_known")
+            for view in camp_views.values()
         )
-    ]
+
+    # 大小上限(2026-10-02):全收時每檔平均約 470 個分點、單檔 JSON 多 20–50KB,全市場
+    # 匯出多出數十 MB。只有 1 次紀錄的分點搜到也只能顯示「紀錄不足」,所以只收任一派
+    # 任一側已知 episode ≥ LOOKUP_MIN_KNOWN 的分點,再依可見張數取前 LOOKUP_MAX 個。
+    def weight(name: str) -> int:
+        # 舊快照張數欄是 NULL 時改用 episode 數當權重,不讓上限退化成「依名稱取前 150」。
+        best = 0
+        for view in camp_views.values():
+            v = view.get(name) or {}
+            buy_n = v.get("buy_pctile_known") or 0
+            sell_n = v.get("sell_pctile_known") or 0
+            if max(buy_n, sell_n) < BRANCH_PCTILE_LOOKUP_MIN_KNOWN:
+                continue
+            lots = (v.get("buy_lots_known") or 0) + (v.get("sell_lots_known") or 0)
+            best = max(best, lots if v.get("buy_lots_known") is not None else buy_n + sell_n)
+        return best
+
+    must, candidates = [], []
+    for name in {row["branch_name"] for row in rows}:
+        if all(names is None or name in names for names in ranked_names.values()):
+            continue
+        if not has_known(name):
+            continue
+        # 已在某一派清單裡的分點一律收:另一派的數字只能從這裡來,被上限擠掉的話
+        # 畫面會把「有紀錄」講成「沒有紀錄」(2026-10-02 驗證者抓到)。
+        if any(names and name in names for names in ranked_names.values()):
+            must.append(name)
+            continue
+        w = weight(name)
+        if w > 0:
+            candidates.append((w, name))
+    candidates.sort(key=lambda item: (-item[0], item[1]))
+    lookup = []
+    for name in sorted(must + [name for _w, name in candidates[:BRANCH_PCTILE_LOOKUP_MAX]]):
+        entry: list = [name]
+        for camp, _suffix, _days in _BRANCH_PCTILE_CAMPS:
+            view = camp_views[camp].get(name) or {}
+            entry.extend(view.get(field) for field in _BRANCH_PCTILE_LOOKUP_SIDE_FIELDS)
+        lookup.append(entry)
+    payload["lookup_fields"] = list(BRANCH_PCTILE_LOOKUP_FIELDS)
+    payload["lookup"] = lookup
     return payload
 
 
