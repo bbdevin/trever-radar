@@ -10,6 +10,10 @@ source "$(dirname "$0")/lib.sh"
 # 所以本輪掛掉是「上櫃日K晚 70 分鐘」,不是「今天沒有上櫃日K」。
 set_round_consequence "網站停在上一輪（通常是 14:10，只有上市日K），上櫃日K 尚未補上；16:10 三大法人輪會再抓一次上櫃日K並重算上線"
 
+# docs/38 §7.18 期貨發布時間量測(唯讀、≤70 秒、永不失敗,見 lib.sh futures_probe)。
+# 放在拿鎖之前:鎖被占而略過本輪的日子也要量到。
+futures_probe
+
 acquire_db_lock
 sync_code
 

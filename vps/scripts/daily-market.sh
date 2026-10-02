@@ -13,6 +13,10 @@ source "$(dirname "$0")/lib.sh"
 # 講的就是這件事,而且不論死在哪一步都成立。
 set_round_consequence "網站仍是前一交易日的內容；同樣這六步 15:00 上櫃日K輪會整套再跑一次並補上（週一的題材／地緣／產業別補充若還沒跑到，要等下週一）"
 
+# docs/38 §7.18 期貨發布時間量測(唯讀、≤70 秒、永不失敗,見 lib.sh futures_probe)。
+# 放在拿鎖之前:鎖被占而略過本輪的日子也要量到。
+futures_probe
+
 acquire_db_lock
 sync_code
 

@@ -2088,9 +2088,16 @@ def _upsert_futures_contracts(conn, contracts, seen_on: str) -> int:
         name: stmt.excluded[name]
         for name in (
             "stock_id", "stock_name", "is_stock_future", "is_stock_option",
-            "is_weekly_option", "market", "last_seen",
+            "is_weekly_option", "market",
         )
     }
+    # last_seen 只進不退:同一天先由 `import-futures-day`(futDataDown,資料日 t)寫過,
+    # 當晚 21:20 的 `import-futures`(OpenAPI,仍是 t−1)再跑一次時,照抄會把它
+    # 倒退回 t−1。「最後一次看到」本來就是單調的事實,取兩者較大值。
+    # SQLite 的雙參數 MAX() 是純量函式,不是聚合;ISO 日期字串比大小即日期先後。
+    set_["last_seen"] = func.max(
+        schema.futures_contracts.c.last_seen, stmt.excluded.last_seen
+    )
     set_["contract_multiplier"] = func.coalesce(
         stmt.excluded.contract_multiplier,
         schema.futures_contracts.c.contract_multiplier,
@@ -2141,6 +2148,10 @@ def import_futures() -> dict:
 
     sessions = {r.session for r in kept}
     with get_engine().begin() as conn:
+        # 覆寫之前先數:這一天若已經由 `import-futures-day`(futDataDown)寫過,
+        # 官方日報這份與它在量/未平倉/結算價上有幾列不同。照樣覆寫(官方日報為準),
+        # 但數字要印出來,daily-margin.sh 看到 changed>0 會發 warn。
+        revision = _count_futures_revisions(conn, data_date, kept)
         n_contracts = _upsert_futures_contracts(conn, contracts, data_date)
         n_rows = upsert(conn, schema.futures_daily, _futures_daily_payload(kept), chunk=2000)
         _log(
@@ -2160,6 +2171,226 @@ def import_futures() -> dict:
         "leftover_codes": len(leftover),
         "has_regular": SESSION_REGULAR in sessions,
         "has_after_hours": SESSION_AFTER_HOURS in sessions,
+        "revision_compared": revision["compared"],
+        "revision_changed": revision["changed"],
+    }
+
+
+# 修訂偵測比的三個欄位:docs/38 的旗標吃量與未平倉,結算價是官方收盤認定。
+_REVISION_FIELDS = ("volume", "open_interest", "settlement_price")
+
+
+def _count_futures_revisions(conn, data_date: str, rows) -> dict:
+    """已存列與即將寫入列在 ``_REVISION_FIELDS`` 上有幾列不同。
+
+    只比**兩邊都有**的主鍵:futDataDown 有、OpenAPI 沒有的價差組合列不算修訂,
+    新出現的列也不算。比較是 None-aware 的 Python ``!=``:None 與 0 是不同的事實
+    (「未公布」vs「零口」),所以 None→0 或 0→None 都算一次修訂。
+    """
+    from sqlalchemy import text as sql_text
+
+    stored = {
+        (r[0], r[1], r[2]): (r[3], r[4], r[5])
+        for r in conn.execute(sql_text(
+            "SELECT contract_code, contract_month, session, volume, open_interest, "
+            "settlement_price FROM futures_daily WHERE date = :d"
+        ), {"d": data_date}).fetchall()
+    }
+    compared = changed = 0
+    for r in rows:
+        if r.date != data_date:
+            continue
+        old = stored.get((r.contract_code, r.contract_month, r.session))
+        if old is None:
+            continue
+        compared += 1
+        if old != tuple(getattr(r, f) for f in _REVISION_FIELDS):
+            changed += 1
+    return {"compared": compared, "changed": changed}
+
+
+# --------------------------------------------------------------------------- 當日期貨(futDataDown)
+#
+# docs/38 §7.18:futDataDown 在**當天**就給得出當天(t)的完整一般時段
+# (2026-10-02 約 17:00 量測:2,131 列一般 + 207 列盤後,全部標 10/02)。
+# 盤後標 t 的那一段是 t−1 15:00 → t 05:00(TAIFEX 次一營業日慣例),所以
+# 「當天下午抓到的盤後」是前一晚的,本來就完整,不需要等。
+# 對 10-01 的比對:OpenAPI 2,192 列與 futDataDown 對應列在量/未平倉/結算/收盤
+# 全部相同(NULL/-/空白都轉 None 後);futDataDown 多出的 138 列是價差組合。
+
+# 完整性閘門的容差:今天的個股期貨代碼數至少要 >= 前一個期貨日 − 2。
+# 標的清單會增修(下架的契約當天就不會有列),容差吸收那種一兩檔的正常變動;
+# 一次少掉幾十檔就是「官網還在逐檔產製中」,寧可 75 等下一輪,也不要寫半天。
+FUTURES_DAY_CODE_SLACK = 2
+
+
+class FuturesDayPending(RuntimeError):
+    """當天的期貨資料還不能寫:現貨還沒到今天,或 futDataDown 還沒產製完整。
+
+    CLI 把它對應到 exit 75(預期內的「等一下再來」),而且丟出時**什麼都沒寫**。
+    """
+
+    def __init__(self, message: str, missing: list[str] | None = None):
+        super().__init__(message)
+        self.missing = missing or []
+
+
+def _is_spread(row) -> bool:
+    return "/" in row.contract_month
+
+
+def _regular_codes(rows) -> set[str]:
+    """有非價差一般時段列的契約代碼 —— 完整性閘門與 probe 共用的同一個定義。"""
+    from .providers.taifex import SESSION_REGULAR
+
+    return {r.contract_code for r in rows if r.session == SESSION_REGULAR and not _is_spread(r)}
+
+
+def _futures_day_snapshot(rows, contracts, d: str) -> dict:
+    """futDataDown 的回應 → 只留日期 d、只留個股期貨,外加計數與內容指紋。"""
+    from .providers.taifex import SESSION_AFTER_HOURS, SESSION_REGULAR, split_stock_futures
+
+    day_rows = [r for r in rows if r.date == d]
+    kept, leftover = split_stock_futures(day_rows, contracts)
+    payload = sorted(
+        (r.contract_code, r.contract_month, r.session, r.volume, r.open_interest,
+         r.settlement_price)
+        for r in kept
+    )
+    digest = hashlib.sha256(
+        "\n".join("|".join(str(v) for v in t) for t in payload).encode("utf-8")
+    ).hexdigest()[:12]
+    sessions: dict[str, int] = {}
+    for r in kept:
+        sessions[r.session] = sessions.get(r.session, 0) + 1
+    return {
+        "day_rows": day_rows,
+        "kept": kept,
+        "leftover": leftover,
+        "sessions": sessions,
+        "regular_rows": sessions.get(SESSION_REGULAR, 0),
+        "after_hours_rows": sessions.get(SESSION_AFTER_HOURS, 0),
+        "codes": _regular_codes(kept),
+        "sha": digest if kept else "none",
+    }
+
+
+def _taipei_today() -> str:
+    return datetime.now(ZoneInfo(config.TZ)).date().isoformat()
+
+
+def import_futures_day(d: str | None = None) -> dict:
+    """用 futDataDown 在**當天**匯入當天(d)的個股期貨行情。
+
+    * ``d`` 省略 = ``max(daily_prices.date)``,而且那一天必須是台北今天;
+      不是 → :class:`FuturesDayPending`(現貨還沒到,期貨也不該先跑)。
+    * 抓不到 d 的任何列(NoDataError)照原樣往上丟,CLI 一樣當 75。
+    * '+F' join 對不到任何一列 → RuntimeError(規則壞了,不是「還沒好」)。
+    * 完整性閘門:有非價差一般時段列的個股期貨代碼數 < 前一個 futures_daily 日期的
+      同一個數 − ``FUTURES_DAY_CODE_SLACK`` → :class:`FuturesDayPending`,不寫入。
+    * 不要求盤後時段:旗標只讀一般時段(docs/38 R3)。
+
+    寫入走與 ``import-futures`` 相同的 upsert 與契約 refresh。
+    """
+    from sqlalchemy import text as sql_text
+
+    from .providers.taifex import SESSION_REGULAR, fetch_history, fetch_stock_list
+
+    init_db()
+    t0 = time.monotonic()
+    engine = get_engine()
+    with engine.connect() as conn:
+        if d is None:
+            d = conn.execute(sql_text("SELECT MAX(date) FROM daily_prices")).scalar()
+            if d is None:
+                raise RuntimeError(
+                    "import-futures-day: daily_prices is empty, so there is no spot date "
+                    "to anchor the futures day to"
+                )
+            today = _taipei_today()
+            if d != today:
+                raise FuturesDayPending(
+                    f"spot not in yet: max(daily_prices.date)={d}, today={today}"
+                )
+        baseline_date = conn.execute(sql_text(
+            "SELECT MAX(date) FROM futures_daily WHERE date < :d"
+        ), {"d": d}).scalar()
+        baseline_codes: set[str] = set()
+        if baseline_date is not None:
+            baseline_codes = {
+                r[0]
+                for r in conn.execute(sql_text(
+                    "SELECT DISTINCT contract_code FROM futures_daily "
+                    "WHERE date = :b AND session = :s AND contract_month NOT LIKE '%/%'"
+                ), {"b": baseline_date, "s": SESSION_REGULAR}).fetchall()
+            }
+
+    contracts = fetch_stock_list()
+    rows = fetch_history(d, d)        # NoDataError → 呼叫端當 75
+    snap = _futures_day_snapshot(rows, contracts, d)
+    if not snap["day_rows"]:
+        raise NoDataError(f"taifex futDataDown {d}: no rows dated {d}")
+    if not snap["kept"]:
+        raise RuntimeError(
+            f"taifex futDataDown {d}: the '+F' join matched 0 of {len(contracts)} "
+            f"mapping rows against {len({r.contract_code for r in snap['day_rows']})} "
+            "feed codes — the contract-code join rule no longer holds"
+        )
+
+    need = len(baseline_codes) - FUTURES_DAY_CODE_SLACK
+    if len(snap["codes"]) < need:
+        missing = sorted(baseline_codes - snap["codes"])
+        raise FuturesDayPending(
+            f"futDataDown {d} looks incomplete: {len(snap['codes'])} stock-future codes "
+            f"with a regular-session row, need >= {need} "
+            f"({len(baseline_codes)} on {baseline_date} minus {FUTURES_DAY_CODE_SLACK})",
+            missing=missing,
+        )
+
+    with engine.begin() as conn:
+        n_contracts = _upsert_futures_contracts(conn, contracts, d)
+        n_rows = upsert(conn, schema.futures_daily, _futures_daily_payload(snap["kept"]),
+                        chunk=2000)
+        _log(
+            conn, "taifex", "futures-day", d.replace("-", ""), n_rows, "ok",
+            duration_ms=int((time.monotonic() - t0) * 1000),
+        )
+    return {
+        "date": d,
+        "contracts": n_contracts,
+        "rows": n_rows,
+        "sessions": snap["sessions"],
+        "codes": len(snap["codes"]),
+        "baseline_codes": len(baseline_codes),
+        "baseline_date": baseline_date,
+        "leftover_codes": len(snap["leftover"]),
+        "sha": snap["sha"],
+    }
+
+
+def probe_futures_day(d: str | None = None) -> dict:
+    """唯讀量測:futDataDown 此刻對 d(預設台北今天)給了什麼。**不碰資料庫**。
+
+    docs/38 §7.18 的發布時間量測用:各輪開頭跑一次,記下幾點鐘時有幾列、
+    內容指紋是什麼;指紋在後續各輪不再變,就是「已經定稿」的時間點。
+    """
+    from .providers.taifex import fetch_history, fetch_stock_list
+
+    d = d or _taipei_today()
+    at = datetime.now(ZoneInfo(config.TZ)).strftime("%H:%M")
+    try:
+        rows = fetch_history(d, d)
+    except NoDataError:
+        return {"at": at, "date": d, "regular_rows": 0, "after_hours_rows": 0,
+                "stock_codes": 0, "sha": "none"}
+    snap = _futures_day_snapshot(rows, fetch_stock_list(), d)
+    return {
+        "at": at,
+        "date": d,
+        "regular_rows": snap["regular_rows"],
+        "after_hours_rows": snap["after_hours_rows"],
+        "stock_codes": len(snap["codes"]),
+        "sha": snap["sha"],
     }
 
 

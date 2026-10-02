@@ -340,6 +340,7 @@ class ImportFuturesSummaryLine(unittest.TestCase):
             "date": "2026-09-17", "contracts": 320, "contracts_with_multiplier": 318,
             "stock_futures_rows": 1969, "feed_rows": 2332, "leftover_codes": 65,
             "has_regular": True, "has_after_hours": True,
+            "revision_compared": 0, "revision_changed": 0,
         }
         buf = _io.StringIO()
         with mock.patch("radar.importer.import_futures", return_value=info):

@@ -3,6 +3,7 @@
 ## 2026-10-02 補記
 
 - 首頁「尚未更新」區塊整合自動更新時間表、改手機優先版面(`web/lib/freshness.ts` `UPDATE_SCHEDULE`;**改 crontab 時要一起改**)。期貨下午落後 2 個交易日改為常態不報警(`json_export.py`),權證部分未到改顯示「部分未到(N 檔)」。細節見 `docs/STATUS.md` 同日條目。
+- **當日期貨**(`docs/38` §7.18):唯讀 probe 已掛 14:10/15:00/16:10;**10-05 起 3 個交易日讀 VPS `~/futures-probe.log`** 決定 `futures-day.sh` 接 16:10 還是 17:40,接上當天記 Z、改 `web/lib/freshness.ts` 期貨時間表與 `json_export` stale 規則(兩週後收回 `(d, prev)`)。
 - 下一步:`docs/40` battery 實作(§4 步驟 2–4);今晚 17:40 log 看 `branch stats timing` 驗覆蓋索引效果(索引前 read 506–516s);確認停業分點已從排行榜消失;10-05 後裁決 17:40 地板。
 
 ## 2026-09-24 最新交接

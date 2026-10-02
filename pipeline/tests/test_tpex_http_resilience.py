@@ -256,6 +256,7 @@ set -euo pipefail
 trap 'record "err:$?:$BASH_COMMAND"' ERR
 acquire_db_lock() { record lock; }
 sync_code() { record sync; }
+futures_probe() { :; }
 notify() { record \"notify:$1:$2:$3\"; }
 notify_warn() { record \"warn:$1\"; }
 notify_ok() { record \"ok:$1\"; }

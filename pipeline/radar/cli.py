@@ -260,6 +260,11 @@ def cmd_import_futures(_args):
     from .importer import import_futures
 
     info = import_futures()
+    # daily-margin.sh 用 grep 讀這一行的 changed=N(>0 發 warn),格式改了要一起改。
+    print(
+        f"futures revision check: date={info['date']} "
+        f"compared={info['revision_compared']} changed={info['revision_changed']}"
+    )
     print(
         f"futures {info['date']}: contracts={info['contracts']} "
         f"(multiplier known {info['contracts_with_multiplier']}/{info['contracts']}) "
@@ -275,6 +280,67 @@ def cmd_import_futures(_args):
             file=sys.stderr,
         )
         raise SystemExit(FUTURES_AFTER_HOURS_PENDING_EXIT)
+
+
+# `import-futures-day` 的離開碼:
+#   0  當天(d)的個股期貨已寫入。
+#   75 預期內的「等一下再來」,而且**什麼都沒寫**:現貨還沒到今天(未給 --date 時)、
+#      futDataDown 還沒有 d 的列,或完整性閘門沒過(代碼數比前一個期貨日少超過 2)。
+#   1  其他一切(抓取/解析失敗、'+F' join 對不到任何契約)。
+FUTURES_DAY_PENDING_EXIT = 75
+
+
+def _iso_arg(value: str | None) -> str | None:
+    """--date 接受 YYYY-MM-DD 或 YYYYMMDD,一律回 YYYY-MM-DD。"""
+    if value is None:
+        return None
+    s = value.replace("-", "").replace("/", "")
+    try:
+        return datetime.strptime(s, "%Y%m%d").date().isoformat()
+    except ValueError:
+        raise SystemExit(f"bad --date {value!r}: expected YYYY-MM-DD") from None
+
+
+def cmd_import_futures_day(args):
+    from .importer import FuturesDayPending, import_futures_day
+    from .providers import NoDataError
+
+    try:
+        info = import_futures_day(_iso_arg(args.date))
+    except FuturesDayPending as e:
+        print(f"import-futures-day: pending — {e}", file=sys.stderr)
+        if e.missing:
+            print(f"import-futures-day: missing codes ({len(e.missing)}): "
+                  f"{' '.join(e.missing)}", file=sys.stderr)
+        raise SystemExit(FUTURES_DAY_PENDING_EXIT)
+    except NoDataError as e:
+        print(f"import-futures-day: pending — not published yet ({e})", file=sys.stderr)
+        raise SystemExit(FUTURES_DAY_PENDING_EXIT)
+    sessions = " ".join(f"{k}={v}" for k, v in sorted(info["sessions"].items())) or "-"
+    print(
+        f"futures-day {info['date']}: rows={info['rows']} sessions: {sessions} "
+        f"codes={info['codes']} (prev {info['baseline_date'] or '-'}: "
+        f"{info['baseline_codes']}) contracts={info['contracts']} sha={info['sha']}"
+    )
+
+
+def cmd_probe_futures_day(args):
+    """一行量測,不碰資料庫。失敗也印同一個前綴,讓呼叫端的 grep 照樣抓得到。"""
+    from .importer import probe_futures_day
+
+    d = _iso_arg(args.date)
+    try:
+        info = probe_futures_day(d)
+    except Exception as e:  # noqa: BLE001 - a probe reports, it never raises past here
+        at = datetime.now(ZoneInfo(config.TZ)).strftime("%H:%M")
+        msg = " ".join(str(e).split())[:160]
+        print(f"futures-probe at={at} date={d or '-'} error={type(e).__name__}: {msg}")
+        raise SystemExit(1)
+    print(
+        f"futures-probe at={info['at']} date={info['date']} "
+        f"regular_rows={info['regular_rows']} afterhours_rows={info['after_hours_rows']} "
+        f"stock_codes={info['stock_codes']} sha={info['sha']}"
+    )
 
 
 def cmd_backfill_futures(args):
@@ -820,6 +886,25 @@ def main(argv=None):
              "contract→stock mapping, refreshed in the same run (the feed has no "
              "usable date parameter, so 'latest' is all it can be asked for)",
     ).set_defaults(fn=cmd_import_futures)
+
+    ifd = sub.add_parser(
+        "import-futures-day",
+        help="TAIFEX single-stock futures for TODAY via futDataDown (same-day data; "
+             "exit 75 = not ready, nothing written). Not wired into any round yet: "
+             "gated on docs/38 §7.18 publish-time measurement",
+    )
+    ifd.add_argument("--date", default=None,
+                     help="YYYY-MM-DD; default max(daily_prices.date), which must be "
+                          "today (Asia/Taipei) or the command exits 75")
+    ifd.set_defaults(fn=cmd_import_futures_day)
+
+    pfd = sub.add_parser(
+        "probe-futures-day",
+        help="read-only: one line of what futDataDown serves for today right now "
+             "(row counts + content sha); never opens the database",
+    )
+    pfd.add_argument("--date", default=None, help="YYYY-MM-DD; default today (Asia/Taipei)")
+    pfd.set_defaults(fn=cmd_probe_futures_day)
 
     bff = sub.add_parser(
         "backfill-futures",

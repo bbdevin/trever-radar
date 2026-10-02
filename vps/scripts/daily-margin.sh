@@ -46,17 +46,29 @@ fi
 
 # 個股期貨(TAIFEX)。刻意掛在本輪、不新增 cron、不新增第二個寫入者:
 # 這一輪已經握著 db lock 且做完 import → compute → export → deploy。
-# 餵源只給最新一份**完整**的日報,沒有日期參數:21:20 跑到這裡,最新的完整日報
-# 是**前一個交易日**的(當天的盤後時段要到隔天 05:00 才收盤)。所以期貨資料日
-# 常態落後現貨一天,而且那一份兩個時段都在裡面——production 的 2026-09-18 是
-# 一般 1,763 列 + 盤後 39 列。(先前這裡寫著「21:20 只看得到一般時段」,是錯的。)
+# OpenAPI 日報只給最新一份,沒有日期參數,而且**刷新得晚**:2026-10-02 17:07
+# 它仍供應 10/01,所以 21:20 跑到這裡拿到的常態是**前一個交易日**,期貨資料日
+# 因此落後現貨一天。這是這個餵源的限制,不是「當天資料要等隔天 05:00 才完整」——
+# 標 t 的盤後是 t−1 夜盤(TAIFEX 次一營業日慣例),futDataDown 當天約 17:00 就給得出
+# t 的完整一般時段(docs/38 §7.18;`import-futures-day` 量測完發布時間前不排程)。
+# production 的 2026-09-18 是一般 1,763 列 + 盤後 39 列。
 # exit 75 = 這一份少了一個時段,是例外不是常態,但仍然 warn-and-continue:
 # 統計量只讀一般時段(docs/38 R3),少了盤後不影響任何旗標。其餘非 0 照本檔慣例中止。
+#
+# 修訂偵測:import-futures 覆寫前會印 `futures revision check: date=… changed=N`,
+# 也就是這一天若已由 futDataDown 寫過,官方日報與它有幾列在量/未平倉/結算價上不同。
+# 照樣覆寫(官方為準),changed>0 只發 warn——那代表 futDataDown 當天那份不是定稿。
 futures_rc=0
-if radar import-futures; then
+FUTURES_OUT="$(mktemp "${TMPDIR:-/tmp}/radar-futures.XXXXXXXX")"
+if radar import-futures | tee "$FUTURES_OUT"; then
   :
 else
   futures_rc=$?
+fi
+futures_changed="$(sed -n 's/^futures revision check: .* changed=\([0-9][0-9]*\).*$/\1/p' "$FUTURES_OUT" | tail -n 1 || true)"
+rm -f "$FUTURES_OUT"
+if [ -n "$futures_changed" ] && [ "$futures_changed" -gt 0 ]; then
+  notify_warn "個股期貨官方日報與先前寫入的同日資料有 ${futures_changed} 列不同（已以官方日報覆寫）"
 fi
 if [ "$futures_rc" -ne 0 ] && [ "$futures_rc" -ne 75 ]; then
   notify "個股期貨匯入失敗（exit ${futures_rc}），請查看 ~/radar-cron.log" high "失敗"

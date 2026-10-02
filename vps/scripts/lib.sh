@@ -36,6 +36,7 @@ job_zh() {
     adjust-backfill.sh) echo "還原因子回補" ;;
     warrant-backfill.sh) echo "權證分點回補" ;;
     repair-window.sh) echo "正式修復窗" ;;
+    futures-day.sh) echo "個股期貨當日" ;;
     *) echo "${SCRIPT_NAME%.sh}" ;;
   esac
 }
@@ -214,6 +215,32 @@ radar_timeout() {
   radar_secret_env_cleanup
   ( exit "$rc" )
   return "$rc"
+}
+
+# docs/38 §7.18 發布時間量測:各輪開頭問一次 futDataDown「今天的個股期貨此刻有幾列」,
+# 一行寫進 $FUTURES_PROBE_LOG(也印進 cron log)。量 3 個交易日後決定 import-futures-day
+# 排在哪一輪;量完可整段拿掉。
+#
+# 這一步**絕不影響本輪**:
+#   * 不寫資料庫——連 data/ 都不掛進容器(probe-futures-day 本身也不開資料庫),
+#     也不需要金鑰,所以不走 radar()/radar_timeout 的 --env-file 那條路。
+#   * 硬上限 60 秒(+10 秒 kill),拖不住本輪。
+#   * 任何失敗(含逾時、舊程式碼還沒有這個子指令)只記一行 rc,不通知、永遠 return 0;
+#     所有可能非零的指令都在 `|| …` 裡,set -e 與 ERR trap 都不會被觸發
+#     (函式內本來也不繼承 ERR trap)。
+FUTURES_PROBE_LOG="${FUTURES_PROBE_LOG:-${HOME:-/tmp}/futures-probe.log}"
+futures_probe() {
+  local out="" rc=0 line=""
+  out="$(timeout --signal=TERM --kill-after=10s 60s \
+    docker run --rm \
+      -v "$REPO/pipeline":/app/pipeline \
+      radar-pipeline python -m radar probe-futures-day 2>&1)" || rc=$?
+  line="$(printf '%s\n' "$out" | grep -E '^futures-probe ' | tail -n 1 || true)"
+  if [ -z "$line" ]; then
+    line="futures-probe at=$(taipei_date +%H:%M) error=$(printf '%s' "$out" | tail -n 1 | tr -d '\r' | cut -c1-200)"
+  fi
+  echo "${line} round=${SCRIPT_NAME} rc=${rc}" | tee -a "$FUTURES_PROBE_LOG" || true
+  return 0
 }
 
 # JSON 上線:wrangler 讀 vps/.env 的 CLOUDFLARE_API_TOKEN/ACCOUNT_ID(已 set -a 載入),

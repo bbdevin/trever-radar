@@ -11,6 +11,10 @@ source "$(dirname "$0")/lib.sh"
 # 同一個 --date 跑過同一天的彙總(冪等),本輪那一次是刷新而非唯一機會。
 set_round_consequence "網站停在 15:00 那輪的內容，三大法人未上線；17:40 分點輪會再匯入一次三大法人並重算上線"
 
+# docs/38 §7.18 期貨發布時間量測(唯讀、≤70 秒、永不失敗,見 lib.sh futures_probe)。
+# 放在拿鎖之前:鎖被占而略過本輪、或下面 exit 75 提早收場的日子也要量到。
+futures_probe
+
 acquire_db_lock
 sync_code
 
