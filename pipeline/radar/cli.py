@@ -658,6 +658,67 @@ def cmd_next_day_surge_battery(args):
     print(f"  {report['verdict']['line']}")
 
 
+def cmd_next_day_futures_signal_battery(args):
+    from .compute import next_day_futures_signal_battery as nfs
+
+    if args.coverage_only:
+        # docs/40 §4 步驟 2:只印涵蓋度。這條路徑讀不到任何結果價格。
+        coverage = nfs.build_coverage(as_of=args.as_of, historical=args.historical,
+                                      price_horizon=args.price_horizon)
+        print(
+            "next-day-futures-signal-battery --coverage-only "
+            f"as_of={coverage['as_of']} "
+            f"preregistration={coverage['preregistration_commit']} "
+            f"evaluation={coverage['evaluation_from']}..{coverage['evaluation_to']} "
+            f"signal_days={coverage['signal_days']} "
+            f"events={coverage['events_before_outcome_refusals']} "
+            f"(X {coverage['x_from']}..{coverage['x_to']} removed "
+            f"signal_days={coverage['signal_days_removed_by_x']} "
+            f"events={coverage['events_removed_by_x']}; "
+            f"non_stock_signal_days={coverage['non_population_signal_days']})"
+        )
+        return
+    if not args.out:
+        raise SystemExit("--out is required unless --coverage-only")
+    report = nfs.write_next_day_futures_signal_battery(
+        as_of=args.as_of, run_number=args.run_number, out=args.out,
+        historical=args.historical, price_horizon=args.price_horizon,
+    )
+    coverage, sets_ = report["coverage"], report["sets"]
+    print(
+        "next-day-futures-signal-battery "
+        f"as_of={report['metadata']['as_of']} "
+        f"price_horizon={report['metadata']['price_horizon']} "
+        f"run={report['metadata']['run_number']} "
+        f"preregistration={report['metadata']['preregistration_commit']} "
+        f"evaluation={coverage['evaluation_from']}..{coverage['evaluation_to']} "
+        f"-> {args.out}"
+    )
+    print(
+        f"  n={sets_['events']} h={sets_['hits']} d={sets_['drops']} "
+        f"H1={report['halves']['H1']}(n={sets_['events_by_half']['H1']},"
+        f"h={sets_['hits_by_half']['H1']}) "
+        f"H2={report['halves']['H2']}(n={sets_['events_by_half']['H2']},"
+        f"h={sets_['hits_by_half']['H2']})"
+    )
+    for placebo, shorts in sets_["placebo_short"].items():
+        for short in shorts:
+            print(f"  placebo short: {placebo} {short}")
+    for arm, codes in report["refusals"].items():
+        print(f"  refusals[{arm}]: " + " ".join(f"{c}={v}" for c, v in codes.items()))
+    for entry_b, entry_d in zip(report["tests"]["B"]["seeds"], report["tests"]["D"]["seeds"]):
+        print(
+            f"  {entry_b['placebo']} seed={entry_b['seed']} h_P={entry_b['h_p']} "
+            f"d_P={entry_d['d_p']} sigma_P={entry_b['sigma_p']} "
+            f"sigma_N={entry_d['sigma_n']} "
+            f"B={'pass' if entry_b['passed'] else 'fail'} "
+            f"D={'pass' if entry_d['passed'] else 'fail'}"
+        )
+    for test in ("A", "B", "D", "C"):
+        print(f"  {report['tests'][test]['line']}")
+    print(f"  {report['verdict']['line']}")
+
+
 def cmd_branch_ranking_v2_shadow(args):
     from .compute.branch_ranking_v2_shadow import write_branch_ranking_v2_shadow_report
 
@@ -808,7 +869,7 @@ def main(argv=None):
 
     buybacks = sub.add_parser(
         "import-buybacks",
-        help="official MOPS t35sc09 buyback plans (manual only; no scheduler)",
+        help="official MOPS t35sc09 buyback plans (daily in the 16:10 round since 2026-10-02)",
     )
     buybacks.add_argument("--as-of", default=datetime.now(ZoneInfo(config.TZ)).date().isoformat(), help="YYYY-MM-DD")
     buybacks.add_argument("--days", type=int, default=365, help="inclusive lookback, 1..366")
@@ -1126,6 +1187,30 @@ def main(argv=None):
                           "only for reproducing an earlier run, recorded in the report")
     nds.add_argument("--out", required=True, help="JSON output path")
     nds.set_defaults(fn=cmd_next_day_surge_battery)
+
+    nfs = sub.add_parser(
+        "next-day-futures-signal-battery",
+        help="read-only pre-registered battery for the open-to-close >= 3%% count on the "
+             "2nd market day after a futures-only volume signal (docs/40, frozen at "
+             "e9212bd): events, R1/R2 refusals, two count-matched placebos and the "
+             "A/B/D/C kill tests. Writes a JSON report and nothing else",
+    )
+    nfs.add_argument("--as-of", dest="as_of", required=True,
+                     help="YYYY-MM-DD; must equal min(max futures_daily.date, max "
+                          "daily_prices.date) (docs/40 §0), enforced by the program")
+    nfs.add_argument("--run-number", dest="run_number", type=int, default=1,
+                     help="which run this is (docs/40 §3.7 requires it recorded)")
+    nfs.add_argument("--historical", action="store_true",
+                     help="allow an earlier as-of; only for reproducing an earlier run, "
+                          "recorded in the report")
+    nfs.add_argument("--price-horizon", dest="price_horizon", default=None,
+                     help="with --historical only: the metadata.price_horizon of the run "
+                          "being reproduced (default: as-of itself)")
+    nfs.add_argument("--coverage-only", dest="coverage_only", action="store_true",
+                     help="docs/40 §4 step 2: print the evaluation period, signal days and "
+                          "events only; never reads an outcome price")
+    nfs.add_argument("--out", help="JSON output path (required unless --coverage-only)")
+    nfs.set_defaults(fn=cmd_next_day_futures_signal_battery)
 
     v2s = sub.add_parser(
         "branch-ranking-v2-shadow",
