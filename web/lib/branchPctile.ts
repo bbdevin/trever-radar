@@ -308,6 +308,37 @@ export function sideView(
   };
 }
 
+export interface CompactSide {
+  /** 「買低 56%」「賣高 64%」;紀錄不足時為「買進不足」「賣出不足」。 */
+  text: string;
+  insufficient: boolean;
+}
+
+/**
+ * 精簡列(一行一個分點)用的單側標籤。比率規則與 sideView 相同:有張數用張數比率,
+ * 舊資料退回次數比率;已知次數未達門檻就講「不足」,絕不印成 0%。
+ */
+export function compactSide(kind: "buy" | "sell", stat: SideNumbers, minKnown: number): CompactSide {
+  if (stat.known < minKnown) {
+    return { text: kind === "buy" ? "買進不足" : "賣出不足", insufficient: true };
+  }
+  const share = stat.lotsKnown != null && stat.lotsHit != null
+    ? pct(stat.lotsHit, stat.lotsKnown)
+    : pct(stat.hit, stat.known);
+  return { text: `${kind === "buy" ? "買低" : "賣高"} ${fmtPct(share)}`, insufficient: false };
+}
+
+/** 一行版定義(「買低」「賣高」兩個詞的意思);數字全部來自 payload。 */
+export function campShortDefinition(model: PctileModel, key: CampKey): string {
+  const days = model.camps[key]?.windowDays;
+  const low = Math.round(model.lowMax * 100);
+  const high = Math.round(model.highMin * 100);
+  // 與 compactSide 同一個判斷:清單上有張數就是張數佔比,舊快照才是次數佔比。
+  const lots = model.camps[key]?.rows.some((row) => row.buy.lotsKnown != null) ?? false;
+  const unit = lots ? "張數佔比" : "次數佔比";
+  return `買低＝買進日收盤在${days ? `近 ${days} 日` : ""}區間 ≤${low}%，賣高＝賣出日 ≥${high}%（${unit}）`;
+}
+
 /** 刻線圖例:此股全體分點兩側的比率(與長條同一種單位)。 */
 export function baseLegend(camp: CampModel): string | null {
   const parts: string[] = [];

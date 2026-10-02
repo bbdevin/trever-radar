@@ -37,6 +37,7 @@ import {
 import PocketBadges from "@/components/PocketBadges";
 import { Skeleton } from "@/components/ui/skeleton";
 import WatchlistButton from "@/components/WatchlistButton";
+import { normalizeBranchPctile } from "@/lib/branchPctile";
 import { dataFetch } from "@/lib/dataFetch";
 import { OFFLINE_DATA_COPY, isBrowserOffline } from "@/lib/pwa";
 import type { Buyback, CompanyTheme, RecentThemeHeat, StockJson } from "@/lib/types";
@@ -53,6 +54,15 @@ const RANGES = [
   { key: "all", label: "全部", days: Infinity },
 ] as const;
 
+/** 籌碼日報分頁內的三個分段;預設是原本的分點進出(當日買賣超)。 */
+type ChipsSectionKey = "flow" | "acc" | "pctile";
+const CHIPS_SECTIONS: { key: ChipsSectionKey; label: string }[] = [
+  { key: "flow", label: "當日買賣超" },
+  { key: "acc", label: "囤貨／出貨" },
+  { key: "pctile", label: "買低賣高" },
+];
+const CHIPS_SECTION_KEY = "trever.stock.chipsSection";
+
 const CHG_TEXT: Record<string, string> = { up: "text-up", down: "text-down", flat: "text-foreground" };
 const CHG_BADGE: Record<string, string> = {
   up: "text-up bg-up/15",
@@ -68,7 +78,18 @@ function StockView() {
   const [range, setRange] = useState<(typeof RANGES)[number]["key"]>("3m"); // 使用者 2026-10-02:預設 3 月(手機上 K 棒較大)
   const [view, setView] = useState<"chart" | "chips" | "insti" | "margin" | "holders" | "basic" | "tech" | "warrant" | "futures">("chart");
   const [drillBranch, setDrillBranch] = useState<string | null>(null);
+  const [chipsSection, setChipsSection] = useState<ChipsSectionKey>("flow");
   const activeTabRef = useRef<HTMLButtonElement | null>(null);
+
+  // 上次看的籌碼日報分段只在瀏覽器端讀,避免靜態輸出與水合不一致。
+  useEffect(() => {
+    try {
+      const stored = window.localStorage.getItem(CHIPS_SECTION_KEY);
+      if (stored === "flow" || stored === "acc" || stored === "pctile") setChipsSection(stored);
+    } catch {
+      // 私密視窗或封鎖網站資料:維持預設「當日買賣超」。
+    }
+  }, []);
 
   useEffect(() => {
     if (!id) return;
@@ -85,6 +106,7 @@ function StockView() {
     if (typeof window === "undefined") return;
     if (window.location.hash === "#branch") {
       setView("chips");
+      setChipsSection("flow");
     }
     if (tabParam === "margin") {
       setView("margin");
@@ -175,6 +197,20 @@ function StockView() {
     return { glyph: undefined, className: "text-foreground" };
   };
   const futuresTab = stockFuturesTab(data.futures);
+  const chipsSections = CHIPS_SECTIONS.filter((s) =>
+    s.key === "flow"
+    || (s.key === "acc" && (data.branch_history?.length ?? 0) > 0)
+    || (s.key === "pctile" && normalizeBranchPctile(data.branch_pctile_counts) !== null),
+  );
+  const activeChips: ChipsSectionKey = chipsSections.some((s) => s.key === chipsSection) ? chipsSection : "flow";
+  const chooseChips = (key: ChipsSectionKey) => {
+    setChipsSection(key);
+    try {
+      window.localStorage.setItem(CHIPS_SECTION_KEY, key);
+    } catch {
+      // 寫不進去只是下次回到預設,不影響畫面。
+    }
+  };
   const watchPrice = data.scores?.watch_price;
   const stopPrice = data.scores?.stop_price;
   const marketLabel = MARKET_LABEL[data.market] ?? data.market;
@@ -188,7 +224,9 @@ function StockView() {
   ];
 
   return (
-    <div className="min-w-0 max-w-full overflow-x-hidden">
+    // overflow-x-clip 而不是 hidden:hidden 會讓這層變成捲動容器,底下的 sticky 分頁列
+    // 就黏不住(手機上捲下去分頁列跟著捲走)。clip 一樣裁掉橫向溢出,但不建立捲動容器。
+    <div className="min-w-0 max-w-full overflow-x-clip">
       <div data-testid="stock-context-grid" className="mb-2.5 grid min-w-0 grid-cols-[minmax(0,1.2fr)_minmax(8.25rem,0.8fr)] items-stretch gap-2.5 sm:grid-cols-[minmax(0,1fr)_minmax(14rem,0.72fr)]">
         <div className="flex min-h-full min-w-0 flex-col">
           <header data-testid="stock-header" className="shrink-0 pb-1.5">
@@ -260,7 +298,8 @@ function StockView() {
           </div>
         </section>
       </div>
-      <div className="sticky top-0 z-20 -mx-1 mb-2.5 flex min-w-0 flex-col gap-2 bg-background/95 px-1 py-1.5 backdrop-blur-sm md:static md:mx-0 md:bg-transparent md:px-0 md:py-0 md:backdrop-blur-none md:flex-row md:flex-wrap md:items-center md:gap-2.5">
+      {/* top 要讓開站台的 sticky 標頭(與 ThemeGroupedList 同一個 --header-offset),否則分頁列上緣被蓋住。 */}
+      <div className="sticky top-[var(--header-offset)] z-20 -mx-1 mb-2.5 flex min-w-0 flex-col gap-2 bg-background/95 px-1 py-1.5 backdrop-blur-sm md:static md:mx-0 md:bg-transparent md:px-0 md:py-0 md:backdrop-blur-none md:flex-row md:flex-wrap md:items-center md:gap-2.5">
         <div
           role="tablist"
           aria-label="個股內容"
@@ -301,7 +340,7 @@ function StockView() {
             className="flex max-w-full gap-0.5 overflow-x-auto rounded-full border border-border bg-card p-[3px] scrollbar-hide [scrollbar-width:none] max-md:flex-nowrap max-md:[&>*]:shrink-0 [&::-webkit-scrollbar]:hidden"
           >
             {RANGES.map((r) => (
-              <button key={r.key} type="button" role="tab" aria-selected={range === r.key} className={pillTabClass(range === r.key)} onClick={() => setRange(r.key)}>
+              <button key={r.key} type="button" role="tab" aria-selected={range === r.key} className={cn(pillTabClass(range === r.key), "max-md:min-h-9")} onClick={() => setRange(r.key)}>
                 {r.label}
               </button>
             ))}
@@ -311,20 +350,53 @@ function StockView() {
       {view === "chart" && <KChart candles={cs} visibleDays={visibleDays} mainForce={mainForce} />}
       {view === "chips" && (
         <>
-          {/* 2026-10-02 移到當日/區間進出之上:預設只展開前 5 個分點,長說明收在
-              「怎麼看」裡,所以不再把分點進出擠到很下面。舊 JSON 沒有這個鍵時整節不渲染。 */}
-          <AccumulationBranches branchHistory={data.branch_history} candles={cs} onOpenBranch={setDrillBranch} />
-          <BranchPctilePanel data={data.branch_pctile_counts} />
-          <BranchFlowSection
-            branches={data.branches}
-            branchHistory={data.branch_history}
-            score={branchScore}
-            reasons={branchReasons}
-            heading="分點進出"
-            id="branch"
-            quoteDate={last.t}
-            onOpenBranch={setDrillBranch}
-          />
+          {/* 使用者 2026-10-02(手機優先):三節疊在一起要滑很久,當日買賣超被擠到最下面。
+              改成分段切換,一次只畫一節;預設「當日買賣超」(原本的分點進出,完整保留)。
+              另外兩節只在有資料時出現:舊 JSON 沒有囤貨所需的 branch_history、或沒有
+              branch_pctile_counts 時,那一段不顯示。三節點分點都開同一個下鑽畫面。 */}
+          <div
+            role="tablist"
+            aria-label="籌碼日報內容"
+            className={cn(
+              "grid gap-1 rounded-[var(--r-md)] bg-secondary p-1",
+              chipsSections.length === 3 ? "grid-cols-3" : chipsSections.length === 2 ? "grid-cols-2" : "hidden",
+            )}
+          >
+            {chipsSections.map((s) => (
+              <button
+                key={s.key}
+                type="button"
+                role="tab"
+                aria-selected={activeChips === s.key}
+                data-testid={`chips-section-${s.key}`}
+                onClick={() => chooseChips(s.key)}
+                className={cn(
+                  "min-h-11 rounded-[var(--r-sm)] px-1.5 py-1.5 text-[13px] font-semibold leading-tight transition-colors touch-manipulation",
+                  activeChips === s.key ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                {s.label}
+              </button>
+            ))}
+          </div>
+          {activeChips === "flow" && (
+            <BranchFlowSection
+              branches={data.branches}
+              branchHistory={data.branch_history}
+              score={branchScore}
+              reasons={branchReasons}
+              heading="分點進出"
+              id="branch"
+              quoteDate={last.t}
+              onOpenBranch={setDrillBranch}
+            />
+          )}
+          {activeChips === "acc" && (
+            <AccumulationBranches branchHistory={data.branch_history} candles={cs} onOpenBranch={setDrillBranch} />
+          )}
+          {activeChips === "pctile" && (
+            <BranchPctilePanel data={data.branch_pctile_counts} onOpenBranch={setDrillBranch} />
+          )}
         </>
       )}
       {view === "insti" && <InstiPanel data={data} candles={cs} />}
@@ -910,15 +982,17 @@ function WarrantPanel({ data }: { data: StockJson }) {
 
   if (!data.warrant) {
     return (
-      <div className="grid gap-3">
+      <div className="grid min-w-0 grid-cols-1 gap-3">
         <WarrantBranchPanel stockId={data.id} stockName={data.name} candles={data.candles} />
         <div className="py-[46px] text-center text-sm text-muted-foreground">目前沒有可彙總的權證成交資料；權證資料日未提供不代表整批資料未更新。</div>
       </div>
     );
   }
 
+  // grid-cols-1(= minmax(0,1fr)):隱含的 auto 欄寬會被權證分點面板的內容撐到比
+  // 螢幕寬(390px 手機上右邊約 15px 被外層裁掉);固定成 0 起算的單欄才會收在容器內。
   return (
-    <div className="grid gap-3">
+    <div className="grid min-w-0 grid-cols-1 gap-3">
       <WarrantBranchPanel stockId={data.id} stockName={data.name} candles={data.candles} />
       <div className="grid gap-3 rounded-[var(--r-lg)] border border-border bg-card p-3.5 shadow-[var(--shadow-card)]">
       <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
@@ -971,7 +1045,7 @@ function WarrantPanel({ data }: { data: StockJson }) {
                         key={header.id}
                         aria-sort={sorted === "asc" ? "ascending" : sorted === "desc" ? "descending" : canSort ? "none" : undefined}
                         className={cn(
-                          "border-t border-[color:var(--line)] px-1.5 py-2 font-semibold text-muted-foreground select-none",
+                          "border-t border-[color:var(--line)] px-1.5 py-2 font-semibold text-muted-foreground select-none max-md:py-0.5",
                           i < 2 ? "text-left" : "text-right",
                           sorted && "bg-primary/10 text-primary",
                         )}
@@ -980,7 +1054,7 @@ function WarrantPanel({ data }: { data: StockJson }) {
                           <button
                             type="button"
                             onClick={header.column.getToggleSortingHandler()}
-                            className={cn("inline-flex items-center gap-0.5", i >= 2 && "w-full justify-end")}
+                            className={cn("inline-flex items-center gap-0.5 max-md:min-h-9", i >= 2 && "w-full justify-end")}
                           >
                             {flexRender(header.column.columnDef.header, header.getContext())}
                             {sorted === "asc" && <ChevronUp size={12} />}

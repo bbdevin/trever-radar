@@ -328,7 +328,7 @@ function RadarView() {
         <div className="flex snap-start flex-col gap-0.5 rounded-[var(--r-md)] border border-border bg-card px-3 py-2 shadow-[var(--shadow-card)]">
           <span className="text-[10.5px] text-muted-foreground">{"資料日"}</span>
           <span className="num text-[15px] font-bold">
-            {radar.data_date}
+            <span className="whitespace-nowrap">{radar.data_date}</span>
             {stale.length > 0 && <span className="ml-1.5 text-[11px] font-medium text-warn">{"部分待更新"}</span>}
           </span>
         </div>
@@ -372,7 +372,7 @@ function RadarView() {
             </ul>
             {/* showAutoFillNote 為 false(只有期貨落後)時不講「會自動更新」——那是它做不到的承諾。 */}
             <details className="text-[12px] text-muted-foreground">
-              <summary className="min-h-8 cursor-pointer select-none py-1">
+              <summary className="min-h-9 cursor-pointer select-none py-2">
                 {showAutoFillNote ? "更新時間表(週一至週五自動)" : "更新時間表(週一至週五)"}
               </summary>
               <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
@@ -452,7 +452,7 @@ function RadarView() {
                 key={mode.key}
                 onClick={() => setScanMode(mode.key)}
                 className={cn(
-                  "inline-flex cursor-pointer items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[12.5px] font-medium transition-colors duration-200",
+                  "inline-flex cursor-pointer max-md:min-h-9 items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[12.5px] font-medium transition-colors duration-200",
                   scanMode === mode.key
                     ? "bg-[color:var(--accent-2)] text-white shadow-sm"
                     : "border border-border bg-card text-muted-foreground hover:bg-secondary hover:text-foreground",
@@ -487,7 +487,7 @@ function RadarView() {
                   <button
                     onClick={() => toggleGroup(g.key)}
                     aria-expanded={isOpen}
-                    className="flex w-full items-center gap-2 rounded-md px-1 py-1.5 text-left text-[13px] font-semibold text-foreground transition-colors hover:text-[color:var(--ink-2)]"
+                    className="flex w-full items-center max-md:min-h-11 gap-2 rounded-md px-1 py-1.5 text-left text-[13px] font-semibold text-foreground transition-colors hover:text-[color:var(--ink-2)]"
                   >
                     <ChevronDown
                       size={15}

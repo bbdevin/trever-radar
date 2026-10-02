@@ -373,7 +373,7 @@ function TabPill({ active, onClick, title, icon: Icon, label }: { active: boolea
       aria-selected={active}
       onClick={onClick}
       title={title}
-      className={cn("inline-flex items-center gap-1.5", navPillClass(active))}
+      className={cn("inline-flex min-h-11 items-center gap-1.5", navPillClass(active))}
     >
       <Icon size={15} className="opacity-85" />
       {label}
@@ -729,6 +729,17 @@ export default function BranchPage() {
         </Alert>
       )}
 
+      {/* 分頁放在篩選列之上:篩選列的內容依分頁而變,先選分頁再看篩選才對得上
+          (手機上原本要先滑過整排篩選才看得到分頁)。 */}
+      <div className="my-1.5 mb-3 flex items-center gap-2.5">
+        <div role="tablist" className="flex max-w-full gap-0.5 overflow-x-auto rounded-full border border-border bg-card p-[3px] whitespace-nowrap">
+          {TABS.map((t) => (
+            <TabPill key={t.key} active={tab === t.key} onClick={() => { setTab(t.key); setTrackOpen(false); }} title={t.hint} icon={t.icon} label={t.label} />
+          ))}
+        </div>
+        <span className="hidden text-xs text-muted-foreground lg:inline">{TABS.find((t) => t.key === tab)?.hint}</span>
+      </div>
+
       {/* IA-3: Filter UI —— 「我的追蹤」兩個分頁共用,其餘只屬於排行榜 */}
       {(tab === "rankings" || tab === "today") && (
         <div className="mb-3 flex flex-wrap items-center gap-2">
@@ -791,15 +802,6 @@ export default function BranchPage() {
           </span>
         </div>
       )}
-
-      <div className="my-1.5 mb-3 flex items-center gap-2.5">
-        <div role="tablist" className="flex max-w-full gap-0.5 overflow-x-auto rounded-full border border-border bg-card p-[3px] whitespace-nowrap">
-          {TABS.map((t) => (
-            <TabPill key={t.key} active={tab === t.key} onClick={() => { setTab(t.key); setTrackOpen(false); }} title={t.hint} icon={t.icon} label={t.label} />
-          ))}
-        </div>
-        <span className="hidden text-xs text-muted-foreground lg:inline">{TABS.find((t) => t.key === tab)?.hint}</span>
-      </div>
 
       {tab === "rankings" && (() => {
         const renderCard = (r: Ranking) => {

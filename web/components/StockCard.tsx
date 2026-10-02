@@ -94,7 +94,7 @@ export default function StockCard({ s, index = 99 }: { s: RadarStock; index?: nu
           {!!s.themes?.length && (
             <div className="mt-1 flex flex-wrap gap-1">
               {s.themes.slice(0, 3).map((t) => (
-                <span key={t} className="whitespace-nowrap rounded-full bg-muted px-1.5 py-px text-[10px] font-semibold text-warn">
+                <span key={t} className="whitespace-nowrap rounded-full bg-muted px-1.5 py-px text-[11px] font-semibold text-warn md:text-[10px]">
                   {t}
                 </span>
               ))}

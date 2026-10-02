@@ -145,7 +145,7 @@ export default function HoldersPanel({ data }: { data: StockJson }) {
         <span className="text-[12px] text-muted-foreground">檢視</span>
         <button
           type="button"
-          className={cn(pillTabClass(mode === "pct"), "cursor-pointer")}
+          className={cn(pillTabClass(mode === "pct"), "cursor-pointer max-md:min-h-9")}
           onClick={() => setMode("pct")}
           disabled={!hasTdcc}
         >
@@ -153,7 +153,7 @@ export default function HoldersPanel({ data }: { data: StockJson }) {
         </button>
         <button
           type="button"
-          className={cn(pillTabClass(mode === "holders"), "cursor-pointer")}
+          className={cn(pillTabClass(mode === "holders"), "cursor-pointer max-md:min-h-9")}
           onClick={() => setMode("holders")}
           disabled={!hasTdcc}
         >
@@ -161,7 +161,7 @@ export default function HoldersPanel({ data }: { data: StockJson }) {
         </button>
         <button
           type="button"
-          className={cn(pillTabClass(mode === "directors"), "cursor-pointer")}
+          className={cn(pillTabClass(mode === "directors"), "cursor-pointer max-md:min-h-9")}
           onClick={() => setMode("directors")}
         >
           董監持股
@@ -175,7 +175,7 @@ export default function HoldersPanel({ data }: { data: StockJson }) {
             <button
               key={th}
               type="button"
-              className={cn(pillTabClass(threshold === th), "cursor-pointer")}
+              className={cn(pillTabClass(threshold === th), "cursor-pointer max-md:min-h-9")}
               onClick={() => setThreshold(th)}
             >
               {th} 張
@@ -289,14 +289,19 @@ export default function HoldersPanel({ data }: { data: StockJson }) {
             </div>
             <div className="mt-1 flex gap-px" aria-hidden>
               {chartRows.map((r, i) => {
+                // 手機上每根柱子只有十幾 px 寬,8px 字被截成「0…」看不到。改成 11px、
+                // 約 5 個刻度,讓字溢出到旁邊空白的格子裡(首尾各自靠邊,避免被裁掉)。
                 const n = chartRows.length;
-                const step = n <= 12 ? 1 : n <= 24 ? 2 : Math.ceil(n / 10);
+                const step = Math.max(1, Math.ceil(n / 4));
                 const show =
-                  i === 0 || i === n - 1 || i % step === 0;
+                  i === 0 || i === n - 1 || (i % step === 0 && n - 1 - i >= step);
                 return (
                   <div
                     key={`lbl-${r.t}`}
-                    className="num min-w-0 flex-1 truncate text-center text-[8px] leading-tight text-muted-foreground sm:text-[9px]"
+                    className={cn(
+                      "num min-w-0 flex-1 overflow-visible whitespace-nowrap text-[11px] leading-tight text-muted-foreground",
+                      i === 0 ? "text-left" : i === n - 1 ? "flex justify-end" : "flex justify-center",
+                    )}
                     title={fmtMD(r.t)}
                   >
                     {show ? fmtMD(r.t) : "\u00a0"}
@@ -349,7 +354,7 @@ export default function HoldersPanel({ data }: { data: StockJson }) {
                           </div>
                           <div
                             className={cn(
-                              "num text-[10px] leading-tight",
+                              "num text-[11px] leading-tight",
                               r.holdersDelta == null
                                 ? "text-muted-foreground"
                                 : trendClass(r.holdersDelta),
@@ -390,7 +395,7 @@ export default function HoldersPanel({ data }: { data: StockJson }) {
                         </div>
                         <div
                           className={cn(
-                            "num text-[10px] leading-tight",
+                            "num text-[11px] leading-tight",
                             r.majorDelta == null
                               ? "text-muted-foreground"
                               : trendClass(r.majorDelta),
@@ -416,7 +421,7 @@ export default function HoldersPanel({ data }: { data: StockJson }) {
           {history.length > TABLE_PREVIEW && (
             <button
               type="button"
-              className="cursor-pointer text-[12px] font-semibold text-primary hover:underline"
+              className="min-h-11 cursor-pointer text-[12px] font-semibold text-primary hover:underline"
               onClick={() => setShowAll((v) => !v)}
             >
               {showAll ? "收合" : `顯示全部 ${history.length} 週`}

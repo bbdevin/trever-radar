@@ -61,20 +61,22 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <AuthGate>
               <WatchlistProvider>
               <header className="sticky top-0 z-40 border-b border-border bg-background/78 pt-[env(safe-area-inset-top)] backdrop-blur-md backdrop-saturate-150">
-                <div className="container flex h-[58px] items-center gap-5">
-                  <a href="/" className="flex items-center gap-2.5 text-foreground">
+                {/* 手機上標語原本會折成兩行(大字級時連品牌名也折),把 58px 的標頭撐亂;
+                    改成單行、放不下就截斷。 */}
+                <div className="container flex h-[58px] items-center gap-2 md:gap-5">
+                  <a href="/" className="flex min-h-11 min-w-0 items-center gap-2.5 text-foreground">
                     <img
                       src="/icons/trever-radar-mark.svg"
                       alt=""
                       aria-hidden="true"
                       className="size-[34px] shrink-0 rounded-[10px] shadow-[0_2px_10px_rgba(57,135,229,0.35)]"
                     />
-                    <span className="flex flex-col leading-tight">
-                      <span className="text-[16.5px] font-extrabold tracking-tight">Trever Radar</span>
-                      <em className="text-[11px] font-normal not-italic text-muted-foreground">盤後找籌碼,盤中看發動</em>
+                    <span className="flex min-w-0 flex-col leading-tight">
+                      <span className="truncate whitespace-nowrap text-[16.5px] font-extrabold tracking-tight">Trever Radar</span>
+                      <em className="truncate whitespace-nowrap text-[11px] font-normal not-italic text-muted-foreground">盤後找籌碼,盤中看發動</em>
                     </span>
                   </a>
-                  <div className="ml-auto flex items-center">
+                  <div className="ml-auto flex shrink-0 items-center">
                     <SearchBox />
                     <ReloadButton />
                     {/* 字級切換。docs/36 把它列為 [x] 已完成,而整套機制確實都在:

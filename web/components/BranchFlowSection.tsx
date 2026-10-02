@@ -294,7 +294,7 @@ const BranchFlowSection = forwardRef<
         </div>
       )}
 
-      {/* 分點分卡 + 摘要統計：手機 2+2 對稱四格；有分點分時多一格 → 手機 3 格第一列 + 獨佔淨流 */}
+      {/* 分點分卡 + 摘要統計：有分點分時手機 2×2 對稱四格；沒有時手機一列三格 */}
       <div className={cn(
         "grid gap-2.5",
         score != null
@@ -315,10 +315,8 @@ const BranchFlowSection = forwardRef<
           <span className="text-[11px] text-muted-foreground">{activeDays}日賣超</span>
           <span className="num text-base font-bold text-foreground">{agg.sellers.length} 點</span>
         </div>
-        <div className={cn(
-          "flex flex-col gap-0.5 rounded-[var(--r-sm)] border border-border bg-secondary p-2.5",
-          score != null ? "col-span-2 md:col-span-1" : "",
-        )}>
+        {/* 有分點分時手機是對稱 2×2(原本淨流獨佔一列,賣超旁邊空一格,白白多一列高度) */}
+        <div className="flex flex-col gap-0.5 rounded-[var(--r-sm)] border border-border bg-secondary p-2.5">
           <span className="text-[11px] text-muted-foreground">{activeDays}日淨流</span>
           <span className={cn("num text-base font-bold", netTotal > 0 ? "text-up" : netTotal < 0 ? "text-down" : "text-foreground")}>
             {fmtLots(netTotal)} 張
@@ -367,6 +365,7 @@ const BranchFlowSection = forwardRef<
                 }
                 className={cn(
                   pillTabClass(selected),
+                  "max-md:min-h-9",
                   beyond && "cursor-not-allowed opacity-40",
                 )}
                 onClick={() => {
@@ -382,7 +381,7 @@ const BranchFlowSection = forwardRef<
               type="button"
               role="tab"
               aria-selected={days === "custom"}
-              className={pillTabClass(days === "custom")}
+              className={cn(pillTabClass(days === "custom"), "max-md:min-h-9")}
               onClick={() => setDays("custom")}
             >
               自訂
@@ -423,7 +422,10 @@ const BranchFlowSection = forwardRef<
 
       <div className="flex flex-col gap-2.5 rounded-[var(--r-md)] border border-border bg-secondary p-3">
         <h3 className={cn("mb-1 border-b border-[color:var(--line)] pb-2 text-center text-[14.5px] font-bold", sideTab === "buy" ? "text-up" : "text-down")}>
-          {sideTab === "buy" ? "前 13 大買超分點" : "前 13 大賣超分點"}
+          {/* 名單不足 13 家時照實講(與上方「買方 TopN」同一個數字) */}
+          {sideTab === "buy"
+            ? `前 ${agg.top13Buy.length || 13} 大買超分點`
+            : `前 ${agg.top13Sell.length || 13} 大賣超分點`}
         </h3>
         <div className="flex flex-col gap-1.5">
           {(sideTab === "buy" ? buyRows : sellRows).map((b) => (

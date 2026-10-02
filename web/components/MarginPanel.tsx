@@ -101,7 +101,7 @@ export default function MarginPanel({ data, candles }: { data: StockJson; candle
         )}
         <a
           href="/?tab=margin"
-          className="ml-auto text-[12px] font-semibold text-primary hover:underline"
+          className="ml-auto inline-flex min-h-9 items-center text-[12px] font-semibold text-primary hover:underline"
         >
           使用率排行 →
         </a>
@@ -303,7 +303,7 @@ export default function MarginPanel({ data, candles }: { data: StockJson; candle
       {history.length > TABLE_PREVIEW && (
         <button
           type="button"
-          className="cursor-pointer text-[12px] font-semibold text-primary hover:underline"
+          className="min-h-11 cursor-pointer text-[12px] font-semibold text-primary hover:underline"
           onClick={() => setShowAll((v) => !v)}
         >
           {showAll ? "收合" : `顯示窗內全部 ${history.length} 日`}

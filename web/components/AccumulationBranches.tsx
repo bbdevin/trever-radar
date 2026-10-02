@@ -104,7 +104,9 @@ export default function AccumulationBranches({
         ))}
       </div>
 
-      <p className="text-[11.5px] leading-snug text-foreground">{definitionText(win.days, side)}</p>
+      <p className="text-[11.5px] leading-snug text-foreground">
+        {side === "acc" ? "囤貨＝期間持續淨買、多半留倉的分點" : "出貨＝期間持續淨賣、沒有回補的分點"}；點分點看每日進出。
+      </p>
 
       {!result.available ? (
         <p
@@ -186,14 +188,13 @@ export default function AccumulationBranches({
         </>
       )}
 
-      <div className="grid gap-0.5 text-[11px] leading-snug text-muted-foreground">
-        <p>只計入每天淨買賣前 {TOP_N_PER_DAY} 大的分點，小量吃貨的會漏掉，數字是下限。</p>
-        <p>囤貨不代表會漲；同期出貨也一起看。</p>
-      </div>
-
-      <details className="rounded-[var(--r-md)] border border-border bg-secondary/60 px-3 py-2 text-[11.5px] leading-relaxed text-muted-foreground">
-        <summary className="cursor-pointer select-none text-[12px] font-semibold text-foreground">怎麼看</summary>
-        <div className="mt-1.5 grid gap-1.5">
+      <details className="rounded-[var(--r-md)] border border-border bg-secondary/60 px-3 text-[11.5px] leading-relaxed text-muted-foreground">
+        <summary className="cursor-pointer select-none py-2.5 text-[12px] font-semibold text-foreground">
+          怎麼看<span className="font-normal text-muted-foreground">（囤貨不代表會漲；同期出貨也一起看）</span>
+        </summary>
+        <div className="grid gap-1.5 pb-2.5">
+          <p className="text-foreground">{definitionText(win.days, side)}</p>
+          <p>只計入每天淨買賣前 {TOP_N_PER_DAY} 大的分點，小量吃貨的會漏掉，數字是下限。</p>
           <p>
             期間以這檔股票的交易日計算：1週＝{WINDOWS[0].days} 天、1月＝{WINDOWS[1].days} 天、3月＝{WINDOWS[2].days} 天，
             截至最新一天的分點資料。期間內任一天缺分點資料，整個期間就不列名單。

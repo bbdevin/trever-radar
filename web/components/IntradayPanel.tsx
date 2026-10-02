@@ -260,7 +260,12 @@ export default function IntradayPanel() {
         </div>
       </div>
 
-      <div className="border-b border-border px-4 py-3">
+      {/* 手機優先:說明與四格圖例原本佔掉第一屏,訊號清單被推到下面;收進「怎麼看」。 */}
+      <details className="border-b border-border px-4">
+        <summary className="cursor-pointer select-none py-2.5 text-[12.5px] font-semibold text-foreground">
+          怎麼看<span className="font-normal text-muted-foreground">（四種訊號與門檻；觀察提醒，非下單建議）</span>
+        </summary>
+        <div className="pb-3">
         <p className="mb-3 text-[12.5px] leading-relaxed text-muted-foreground">
           監控「今日未發動」與「自選」聯集（排除 ETF）。僅計算 09:00–13:30 連續競價（試搓不計）。Fugle 免費方案最多同時訂閱 {monitorCap}{" "}
           檔。符合門檻才推播；同檔同類型當日只推一次。訊號為觀察提醒，非下單建議。
@@ -297,7 +302,8 @@ export default function IntradayPanel() {
             );
           })}
         </ul>
-      </div>
+        </div>
+      </details>
 
       <div
         className="max-h-[min(70vh,640px)] overflow-y-auto p-2"

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { ChevronDown, Search } from "lucide-react";
 
 import {
   CAMP_KEYS,
@@ -8,9 +9,11 @@ import {
   DEFAULT_VISIBLE,
   baseLegend,
   campDefinition,
+  campShortDefinition,
   campStatus,
   campTabLabel,
   campWindowLabel,
+  compactSide,
   daytradeSummary,
   normalizeBranchPctile,
   searchBranches,
@@ -19,10 +22,12 @@ import {
   type CampKey,
   type CampModel,
   type CampStat,
+  type CompactSide,
   type PctileModel,
   type SideView,
 } from "@/lib/branchPctile";
 import type { BranchPctileCounts } from "@/lib/types";
+import { cn, segBtnClass } from "@/lib/utils";
 
 /**
  * 個股頁：分點在這檔股票的買點／賣點價格分位紀錄(短線派 20 日、長線派 120 日)。
@@ -69,10 +74,18 @@ function storeCamp(value: CampKey) {
  * 舊 JSON(v1)配新程式碼是常態——程式碼會早於下一次 VPS 匯出上線——所以 v1 照樣
  * 用次數畫出來;其他版本或缺鍵整節不渲染。
  */
-export default function BranchPctilePanel({ data }: { data: BranchPctileCounts | undefined }) {
+export default function BranchPctilePanel({
+  data,
+  onOpenBranch,
+}: {
+  data: BranchPctileCounts | undefined;
+  onOpenBranch?: (name: string) => void;
+}) {
   const model = useMemo(() => normalizeBranchPctile(data), [data]);
   const [camp, setCamp] = useState<CampKey>("short");
   const [expanded, setExpanded] = useState(false);
+  const [openRow, setOpenRow] = useState<string | null>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState("");
 
   // 上次選的派別只在瀏覽器端讀,避免靜態輸出與水合不一致。
@@ -95,7 +108,12 @@ export default function BranchPctilePanel({ data }: { data: BranchPctileCounts |
   const choose = (key: CampKey) => {
     setCamp(key);
     setExpanded(false);
+    setOpenRow(null);
     storeCamp(key);
+  };
+  const toggleSearch = () => {
+    if (searchOpen) setQuery("");
+    setSearchOpen((v) => !v);
   };
 
   return (
@@ -103,16 +121,23 @@ export default function BranchPctilePanel({ data }: { data: BranchPctileCounts |
       aria-labelledby="branch-pctile-heading"
       className="mt-3.5 grid min-w-0 max-w-full gap-2.5 overflow-hidden rounded-[var(--r-lg)] border border-border bg-card p-3 shadow-[var(--shadow-card)]"
     >
-      <div className="grid gap-0.5">
-        <h2 id="branch-pctile-heading" className="text-[15px] font-bold text-foreground">
-          歷史上在這檔股票買點偏低、賣點偏高的分點
-        </h2>
-        <p className="text-[11.5px] leading-snug text-muted-foreground">統計窗口 {windowLabel}</p>
-        <p className="text-[11.5px] leading-snug text-muted-foreground">
-          {model.lotsRanked
-            ? "依張數加權排序（2026-10 起；此排序方式尚未經過回測檢定）"
-            : "依次數排序（舊版資料；下一次夜間計算後改為依張數）"}
-        </p>
+      <div className="flex min-w-0 items-start justify-between gap-2">
+        <div className="grid min-w-0 gap-0.5">
+          <h2 id="branch-pctile-heading" className="text-[15px] font-bold text-foreground">
+            買點偏低、賣點偏高的分點
+          </h2>
+          <p className="text-[11.5px] leading-snug text-muted-foreground">統計窗口 {windowLabel}</p>
+        </div>
+        <button
+          type="button"
+          onClick={toggleSearch}
+          aria-expanded={searchOpen}
+          aria-controls="branch-pctile-search"
+          className={cn(segBtnClass(searchOpen), "inline-flex min-h-9 shrink-0 items-center gap-1 border border-border")}
+        >
+          <Search size={13} aria-hidden />
+          {searchOpen ? "收起" : "搜尋"}
+        </button>
       </div>
 
       {hasLong && (
@@ -139,28 +164,53 @@ export default function BranchPctilePanel({ data }: { data: BranchPctileCounts |
       )}
       <p className="text-[11.5px] leading-snug text-foreground">
         {!hasLong && <span className="font-semibold">{CAMP_NAMES.short}：</span>}
-        {campDefinition(model, activeKey)}
+        {campShortDefinition(model, activeKey)}
       </p>
 
-      <label className="grid gap-1">
-        <span className="sr-only">搜尋分點名稱</span>
-        <input
-          type="search"
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          placeholder="搜尋分點名稱（含未進排行的分點）"
-          className="h-10 w-full rounded-[var(--r-md)] border border-border bg-background px-3 text-[13px] text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
-        />
-      </label>
-
-      {searching ? (
-        <SearchResults model={model} hits={search.results} total={search.total} />
-      ) : (
-        <CampList model={model} camp={active} expanded={expanded} onExpand={() => setExpanded(true)} />
+      {searchOpen && (
+        <label id="branch-pctile-search" className="grid gap-1">
+          <span className="sr-only">搜尋分點名稱</span>
+          <input
+            type="search"
+            autoFocus
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="搜尋分點名稱（含未進排行的分點）"
+            className="h-11 w-full rounded-[var(--r-md)] border border-border bg-background px-3 text-[13px] text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+          />
+        </label>
       )}
 
-      <HowToRead model={model} />
+      {searching ? (
+        <SearchResults model={model} hits={search.results} total={search.total} onOpenBranch={onOpenBranch} />
+      ) : (
+        <CampList
+          model={model}
+          camp={active}
+          expanded={expanded}
+          onExpand={() => setExpanded(true)}
+          openRow={openRow}
+          onToggleRow={(name) => setOpenRow((cur) => (cur === name ? null : name))}
+          onOpenBranch={onOpenBranch}
+        />
+      )}
+
+      <HowToRead model={model} camp={activeKey} />
     </section>
+  );
+}
+
+/** 「看進出明細」:開啟與其他兩節同一個分點下鑽畫面。 */
+function DrillButton({ name, onOpenBranch }: { name: string; onOpenBranch?: (name: string) => void }) {
+  if (!onOpenBranch) return null;
+  return (
+    <button
+      type="button"
+      onClick={() => onOpenBranch(name)}
+      className="min-h-11 rounded-[var(--r-md)] border border-border bg-card px-3 text-[13px] font-semibold text-foreground hover:bg-secondary"
+    >
+      看進出明細
+    </button>
   );
 }
 
@@ -169,11 +219,17 @@ function CampList({
   camp,
   expanded,
   onExpand,
+  openRow,
+  onToggleRow,
+  onOpenBranch,
 }: {
   model: PctileModel;
   camp: CampModel;
   expanded: boolean;
   onExpand: () => void;
+  openRow: string | null;
+  onToggleRow: (name: string) => void;
+  onOpenBranch?: (name: string) => void;
 }) {
   if (!camp.available) {
     return (
@@ -191,16 +247,21 @@ function CampList({
       </p>
     );
   }
-  const legend = baseLegend(camp);
   const rows = visibleRows(camp.rows, expanded);
   return (
     <div className="grid gap-2">
-      {legend && (
-        <p className="text-[11px] leading-snug text-muted-foreground">長條＝該分點的比率；{legend}</p>
-      )}
-      <ol className="grid gap-2">
+      <ol className="grid gap-1.5">
         {rows.map((stat, index) => (
-          <BranchCard key={stat.name} model={model} camp={camp} stat={stat} position={index + 1} />
+          <BranchRow
+            key={stat.name}
+            model={model}
+            camp={camp}
+            stat={stat}
+            position={index + 1}
+            open={openRow === stat.name}
+            onToggle={() => onToggleRow(stat.name)}
+            onOpenBranch={onOpenBranch}
+          />
         ))}
       </ol>
       {!expanded && camp.rows.length > DEFAULT_VISIBLE && (
@@ -216,34 +277,77 @@ function CampList({
   );
 }
 
-function BranchCard({
+/** 中性色的小標籤(不用紅綠:這是價格位置的佔比,不是漲跌也不是損益)。 */
+function SideChip({ side }: { side: CompactSide }) {
+  return (
+    <span
+      className={cn(
+        "num shrink-0 whitespace-nowrap rounded-md bg-secondary px-1.5 py-0.5 text-[12px]",
+        side.insufficient ? "text-muted-foreground" : "font-semibold text-foreground",
+      )}
+    >
+      {side.text}
+    </span>
+  );
+}
+
+/**
+ * 一行一個分點(名次 · 名稱 · 買低 · 賣高);點一下在原地展開細節——長條對此股基準、
+ * 張數與次數、次日回吐,以及「看進出明細」。
+ */
+function BranchRow({
   model,
   camp,
   stat,
   position,
+  open,
+  onToggle,
+  onOpenBranch,
 }: {
   model: PctileModel;
   camp: CampModel;
   stat: CampStat;
   position: number;
+  open: boolean;
+  onToggle: () => void;
+  onOpenBranch?: (name: string) => void;
 }) {
   const daytrade = camp.key === "short" ? daytradeSummary(model, stat) : null;
+  const legend = baseLegend(camp);
+  const detailId = `pctile-row-${camp.key}-${position}`;
   return (
-    <li className="grid gap-1 rounded-[var(--r-md)] border border-border bg-background px-3 py-2">
-      <h3 className="flex min-w-0 items-baseline gap-1.5 text-[13.5px] font-semibold text-foreground">
-        <span className="num shrink-0 text-[11px] font-normal text-muted-foreground">{position}.</span>
-        <span className="truncate" title={stat.name}>{stat.name}</span>
-      </h3>
-      <SideRow view={sideView("buy", stat.buy, camp.base.buy, model.minKnown)} />
-      <SideRow view={sideView("sell", stat.sell, camp.base.sell, model.minKnown)} />
-      {daytrade && (
-        <details className="text-[11.5px] text-muted-foreground">
-          <summary className="cursor-pointer select-none py-0.5 text-[11.5px] font-semibold text-muted-foreground hover:text-foreground">
-            更多：次日回吐
-          </summary>
-          <p className="mt-1 leading-snug">{daytrade}</p>
-          <p className="mt-1 leading-snug">次日回吐＝{DAYTRADE_DEFINITION}。出場多半落在看不見的成交裡，這個次數是下限。</p>
-        </details>
+    <li className="min-w-0 rounded-[var(--r-md)] border border-border bg-background">
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={open}
+        aria-controls={detailId}
+        className="flex min-h-11 w-full min-w-0 items-center gap-1.5 px-2.5 py-1.5 text-left"
+      >
+        <span className="num w-4 shrink-0 text-[11.5px] text-muted-foreground">{position}</span>
+        <span className="min-w-0 flex-1 truncate text-[13.5px] font-semibold text-foreground" title={stat.name}>
+          {stat.name}
+        </span>
+        <SideChip side={compactSide("buy", stat.buy, model.minKnown)} />
+        <SideChip side={compactSide("sell", stat.sell, model.minKnown)} />
+        <ChevronDown
+          size={14}
+          aria-hidden
+          className={cn("shrink-0 text-muted-foreground transition-transform", open && "rotate-180")}
+        />
+      </button>
+      {open && (
+        <div id={detailId} className="grid gap-1.5 border-t border-border px-2.5 pt-2 pb-2.5">
+          <SideRow view={sideView("buy", stat.buy, camp.base.buy, model.minKnown)} />
+          <SideRow view={sideView("sell", stat.sell, camp.base.sell, model.minKnown)} />
+          {legend && <p className="text-[11px] leading-snug text-muted-foreground">長條＝該分點的比率；{legend}</p>}
+          {daytrade && (
+            <p className="text-[11.5px] leading-snug text-muted-foreground">
+              <span className="font-semibold text-foreground">次日回吐</span> {daytrade}
+            </p>
+          )}
+          <DrillButton name={stat.name} onOpenBranch={onOpenBranch} />
+        </div>
       )}
     </li>
   );
@@ -283,10 +387,12 @@ function SearchResults({
   model,
   hits,
   total,
+  onOpenBranch,
 }: {
   model: PctileModel;
   hits: ReturnType<typeof searchBranches>["results"];
   total: number;
+  onOpenBranch?: (name: string) => void;
 }) {
   if (hits.length === 0) {
     return (
@@ -320,6 +426,7 @@ function SearchResults({
                 </div>
               );
             })}
+            <DrillButton name={hit.name} onOpenBranch={onOpenBranch} />
           </li>
         ))}
       </ul>
@@ -328,7 +435,7 @@ function SearchResults({
 }
 
 /** 原本三段長說明收進一個「怎麼看」,手機上不再佔掉整個畫面。 */
-function HowToRead({ model }: { model: PctileModel }) {
+function HowToRead({ model, camp }: { model: PctileModel; camp: CampKey }) {
   const k = (camp: CampModel | null) =>
     camp && camp.shrinkK.buy != null
       ? `${CAMP_NAMES[camp.key]}買側 K＝${Math.round(camp.shrinkK.buy).toLocaleString("en-US")} 張`
@@ -336,9 +443,18 @@ function HowToRead({ model }: { model: PctileModel }) {
       : null;
   const kText = [k(model.camps.short), k(model.camps.long)].filter(Boolean).join("；");
   return (
-    <details className="rounded-[var(--r-md)] border border-border bg-secondary/60 px-3 py-2 text-[11.5px] leading-relaxed text-muted-foreground">
-      <summary className="cursor-pointer select-none text-[12px] font-semibold text-foreground">怎麼看</summary>
-      <div className="mt-1.5 grid gap-1.5">
+    <details className="rounded-[var(--r-md)] border border-border bg-secondary/60 px-3 text-[11.5px] leading-relaxed text-muted-foreground">
+      <summary className="cursor-pointer select-none py-2.5 text-[12px] font-semibold text-foreground">怎麼看</summary>
+      <div className="grid gap-1.5 pb-2.5">
+        <p>{campDefinition(model, camp)}每列右側是該分點的佔比；點一列可看長條（刻線＝此股全體分點）、張數與次數，以及它的進出明細。</p>
+        <p>
+          {model.lotsRanked
+            ? "依張數加權排序（2026-10 起；此排序方式尚未經過回測檢定）。"
+            : "依次數排序（舊版資料；下一次夜間計算後改為依張數）。"}
+        </p>
+        {camp === "short" && model.minDaytradeObs != null && (
+          <p>次日回吐＝{DAYTRADE_DEFINITION}。出場多半落在看不見的成交裡，這個次數是下限。</p>
+        )}
         <p>
           這是統計窗口內累積下來的紀錄，不是今日盤後名單；分點列在這裡是因為它在窗口內的進出，
           與它今天有沒有交易無關。

@@ -7,7 +7,9 @@ import { test } from "node:test";
 import {
   baseLegend,
   campDefinition,
+  campShortDefinition,
   campStatus,
+  compactSide,
   campTabLabel,
   daytradeSummary,
   fmtInt,
@@ -218,4 +220,34 @@ test("次日回吐:觀察不足講無法判定,不是 0 次", () => {
   assert.match(ok, /此股全體分點 971 \/ 3388 次/);
   // 長線派沒有次日回吐。
   assert.equal(daytradeSummary(model, model.camps.long!.rows[0]), null);
+});
+
+test("精簡列:張數佔比、賣出不足講不足,不印 0%", () => {
+  const model = normalizeBranchPctile(v2())!;
+  const stat = model.camps.short.rows[0];
+  assert.deepEqual(compactSide("buy", stat.buy, model.minKnown), { text: "買低 56%", insufficient: false });
+  assert.deepEqual(compactSide("sell", stat.sell, model.minKnown), { text: "賣高 20%", insufficient: false });
+  const thin = { ...stat.sell, known: 2, hit: 0, lotsKnown: 900, lotsHit: 0 };
+  assert.deepEqual(compactSide("sell", thin, model.minKnown), { text: "賣出不足", insufficient: true });
+  const thinBuy = { ...stat.buy, known: 1, hit: 1 };
+  assert.equal(compactSide("buy", thinBuy, model.minKnown).text, "買進不足");
+});
+
+test("精簡列:舊快照與 v1 沒有張數時退回次數佔比", () => {
+  const model = normalizeBranchPctile(v2({
+    ranking: "counts_v1",
+    short: camp([row("甲", {
+      buy_lots_known: null, low_buy_lots: null, sell_lots_known: null, high_sell_lots: null,
+    })]),
+  }))!;
+  assert.equal(compactSide("buy", model.camps.short.rows[0].buy, 5).text, "買低 64%");
+  assert.match(campShortDefinition(model, "short"), /次數佔比/);
+});
+
+test("一行定義:數字來自 payload,只講價格位置", () => {
+  const model = normalizeBranchPctile(v2({ low_buy_max_pctile: 0.3, high_sell_min_pctile: 0.7 }))!;
+  const short = campShortDefinition(model, "short");
+  assert.equal(short, "買低＝買進日收盤在近 20 日區間 ≤30%，賣高＝賣出日 ≥70%（張數佔比）");
+  assert.match(campShortDefinition(model, "long"), /近 120 日/);
+  assert.doesNotMatch(short, /勝率|獲利|報酬/);
 });
