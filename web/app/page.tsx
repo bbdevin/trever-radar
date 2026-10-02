@@ -54,7 +54,7 @@ const TABS: { key: TabKey; label: string; hint: string; icon: any }[] = [
   {
     key: "futures",
     label: "期貨異常",
-    hint: "個股期貨成交量創近期新高的契約。期貨先爆量、現貨還沒跟上的,歷史上之後幾天現貨量常會跟上——它預告的是量,不是漲跌。",
+    hint: "期貨成交量創新高的契約;亮色框 = 現貨還沒跟上,歷史上之後幾天現貨量常跟上。預告的是量,不是漲跌。",
     icon: Layers,
   },
   {

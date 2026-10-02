@@ -99,42 +99,76 @@ export default function FuturesAnomalyList({
 
   return (
     <div className="mb-4 grid gap-3">
-      <div className="rounded-[var(--r-lg)] border border-[color:var(--accent-2)]/30 bg-[color:var(--accent-2)]/6 px-3.5 py-3 text-[12.5px] leading-relaxed text-[color:var(--ink-2)]">
-        <p className="font-semibold text-foreground">
-          {state.asOf ? `期貨 ${state.asOf}:` : ""}
-          {`${rows.length} 個契約成交量創新高,其中 ${lagging} 個現貨尚未跟上。`}
-        </p>
-        <p className="mt-1">{anomalyMeaningText()}</p>
-        {lag && <p className="mt-1 text-[11.5px] text-muted-foreground">{lag}</p>}
+      {/* 摘要:日期一顆、兩個大數字;回測依據收進可展開(2026-10-02 使用者:重複資訊整併、
+          文字能用視覺就用視覺、以手機為主)。頁首說明已經講過「預告的是量」,這裡不再重講。 */}
+      <div className="rounded-[var(--r-lg)] border border-[color:var(--accent-2)]/30 bg-[color:var(--accent-2)]/6 px-3 py-2.5">
+        <div className="flex min-w-0 items-center gap-2">
+          <div className="grid flex-1 grid-cols-2 gap-2">
+            <div className="min-w-0">
+              <p className="text-[11px] text-muted-foreground">成交量創新高</p>
+              <p className="num text-[22px] font-extrabold leading-tight text-foreground">
+                {rows.length}
+                <span className="ml-1 text-[11px] font-normal text-muted-foreground">個契約</span>
+              </p>
+            </div>
+            <div className="min-w-0">
+              <p className="flex items-center gap-1 text-[11px] text-muted-foreground">
+                <span className="inline-block size-2 rounded-full bg-[color:var(--accent-2)]" aria-hidden="true" />
+                現貨尚未跟上
+              </p>
+              <p className="num text-[22px] font-extrabold leading-tight text-[color:var(--accent-2)]">
+                {lagging}
+                <span className="ml-1 text-[11px] font-normal text-muted-foreground">個</span>
+              </p>
+            </div>
+          </div>
+          {state.asOf && (
+            <span
+              className="num shrink-0 self-start rounded-full border border-border bg-card px-2 py-0.5 text-[11px] text-muted-foreground"
+              title={lag ?? undefined}
+            >
+              期貨 {state.asOf.slice(5)}
+            </span>
+          )}
+        </div>
+        <details className="group mt-1.5 text-[11.5px] leading-relaxed text-[color:var(--ink-2)]">
+          <summary className="flex min-h-8 cursor-pointer list-none items-center gap-1 text-muted-foreground [&::-webkit-details-marker]:hidden">
+            <span className="transition-transform group-open:rotate-90" aria-hidden="true">▸</span>
+            回測依據
+          </summary>
+          <p className="pb-1">{anomalyMeaningText()}</p>
+          {lag && <p className="text-muted-foreground">{lag}</p>}
+        </details>
       </div>
 
-      <div className="grid grid-cols-1 gap-2.5 pb-4 md:grid-cols-2 xl:grid-cols-3">
+      <div className="grid grid-cols-1 gap-2 pb-4 md:grid-cols-2 xl:grid-cols-3">
         {rows.map((row) => {
           const label = spotFollowLabel(row.spot);
           return (
-            <div
+            <Link
               key={`${row.stockId}-${row.code}`}
+              href={`/stock?id=${row.stockId}&tab=futures`}
               className={cn(
-                "min-w-0 rounded-[var(--r-lg)] border bg-card p-3.5 shadow-[var(--shadow-card)]",
-                row.spot === "lagging" ? "border-[color:var(--accent-2)]/55" : "border-border",
+                "block min-w-0 rounded-[var(--r-lg)] border border-l-4 bg-card px-3 py-2.5 shadow-[var(--shadow-card)] transition-colors hover:bg-secondary/40",
+                // 左邊色條取代一段文字:亮色 = 現貨尚未跟上(檢定成立的那一種)
+                row.spot === "lagging"
+                  ? "border-[color:var(--accent-2)]/45 border-l-[color:var(--accent-2)]"
+                  : "border-border border-l-border",
               )}
             >
-              <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-                <Link
-                  href={`/stock?id=${row.stockId}&tab=futures`}
-                  className="min-w-0 text-[15px] font-bold text-foreground hover:text-[color:var(--accent-2)]"
-                >
+              <div className="flex min-w-0 items-center gap-x-2">
+                <span className="min-w-0 truncate text-[15px] font-bold text-foreground">
                   <span className="num">{row.stockId}</span>
                   {row.name && <span className="ml-1.5">{row.name}</span>}
-                </Link>
-                <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-border px-1.5 py-0.5 text-[11px] text-muted-foreground">
+                </span>
+                <span className="inline-flex shrink-0 items-center gap-0.5 text-[11px] text-muted-foreground">
                   <Layers size={11} aria-hidden="true" />
                   <span className="num">{row.code}</span>
                 </span>
                 {label && (
                   <span
                     className={cn(
-                      "ml-auto shrink-0 rounded-full px-2 py-0.5 text-[11px] font-bold",
+                      "ml-auto shrink-0 rounded-full px-1.5 py-0.5 text-[10.5px] font-bold",
                       row.spot === "lagging"
                         ? "bg-[color:var(--accent-2)] text-white"
                         : "bg-secondary text-muted-foreground",
@@ -144,23 +178,24 @@ export default function FuturesAnomalyList({
                   </span>
                 )}
               </div>
-              <dl className="mt-2.5 grid grid-cols-2 gap-x-3 gap-y-1.5 sm:grid-cols-4">
-                {row.facts.map((f) => (
+              {/* 單位一律是口,寫在第一格就好,不每格重複 */}
+              <dl className="mt-2 grid grid-cols-4 gap-x-2">
+                {row.facts.map((f, i) => (
                   <div key={f.key} className="min-w-0">
                     <dt className="truncate text-[10.5px] text-muted-foreground" title={f.label}>{f.short ?? f.label}</dt>
-                    <dd className="num text-[13.5px] font-bold text-foreground">
+                    <dd className={cn("num truncate font-bold text-foreground", i === 0 ? "text-[15px]" : "text-[13px]")}>
                       {f.value}
-                      <span className="ml-0.5 text-[11px] font-normal text-muted-foreground">{f.unit}</span>
+                      {i === 0 && <span className="ml-0.5 text-[10.5px] font-normal text-muted-foreground">{f.unit}</span>}
                     </dd>
                   </div>
                 ))}
               </dl>
               {row.risks.length > 0 && (
-                <p className="mt-2 text-[11px] leading-snug text-muted-foreground">
+                <p className="mt-1.5 text-[11px] leading-snug text-muted-foreground">
                   {row.risks.map((r) => r.text).join(" ")}
                 </p>
               )}
-            </div>
+            </Link>
           );
         })}
       </div>
