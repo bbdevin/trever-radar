@@ -26,7 +26,7 @@ docker volume prune -f >/dev/null 2>&1 || true
 # 2) 過大 log 截斷(保留尾端)
 for f in "$HOME/radar-cron.log" "$HOME/radar-worker.log" \
          "$HOME/bf-supervisor.log" "$HOME/bf-cron-guard.log" \
-         "$HOME/disk-cleanup.log"; do
+         "$HOME/disk-cleanup.log" "${FUTURES_PROBE_LOG:-$HOME/futures-probe.log}"; do
   [ -f "$f" ] || continue
   sz=$(stat -c%s "$f" 2>/dev/null || echo 0)
   # > 20MB → 只留最後 2MB

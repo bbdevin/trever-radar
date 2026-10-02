@@ -11,7 +11,10 @@ import { FRESH_LABEL, UPDATE_SCHEDULE, scheduleFor, staleAutoFills, staleFreshne
 
 const D = (date: string, stale: boolean) => ({ date, stale });
 
-test("期貨的句子不講「今日」——它結構上永遠沒有今天的資料", () => {
+// 2026-10-02 更正:期貨並非「結構上永遠沒有今天的資料」——t 日資料 t 日收盤後就完整,落後是
+// OpenAPI 更新慢(docs/38 §7.8 事後修正(三))。在當日匯入接上之前,21:20 拿到的仍是前一日,
+// 所以句子照舊不講「今日」。
+test("期貨的句子不講「今日」——21:20 那一輪拿到的是前一交易日", () => {
   const lines = staleFreshnessLines({ futures: D("2026-09-16", true) } as never);
   assert.equal(lines.length, 1);
   assert.equal(lines[0].key, "futures");
