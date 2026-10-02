@@ -74,6 +74,12 @@ function fmtLotsUnit(n: number): string {
   return `${fmtLots(n)}張`;
 }
 
+/** 價格軸小數位依台股升降單位:≥500 元跳 1 元、50–500 跳 0.1/0.5、<50 跳 0.01/0.05。
+ *  固定 2 位時手機價格軸要讓出「1750.00」那麼寬(2026-10-02 使用者:線型要以手機畫面為主)。 */
+export function pricePrecision(close: number): number {
+  return close >= 500 ? 0 : close >= 50 ? 1 : 2;
+}
+
 /** 每日分點淨買賣序列(t 同 candles 的 YYYY-MM-DD) */
 export interface NetPoint {
   t: string;
@@ -249,9 +255,11 @@ export default function KChart({
       chartRef.current = chart;
       const view = bars.slice(start);
 
+      const prec = pricePrecision(view[view.length - 1].c);
       const candleSeries = chart.addSeries(CandlestickSeries, {
         upColor: UP, borderUpColor: UP, wickUpColor: UP,
         downColor: DOWN, borderDownColor: DOWN, wickDownColor: DOWN,
+        priceFormat: { type: "price", precision: prec, minMove: 1 / 10 ** prec },
       }, 0);
       candleSeries.setData(view.map((c) => ({ time: c.t, open: c.o, high: c.h, low: c.l, close: c.c })));
 
@@ -352,7 +360,8 @@ export default function KChart({
       // 手機 compact legend 初始文字(pane 名);游標移動時附加買賣超/累計數值
       if (mobile && mobileLegendRef.current) {
         mobileLegendRef.current.textContent =
-          effPane === "main" ? MF_TITLE : effPane === "sel" ? selLabel : `副圖 · ${settings.sub.toUpperCase()}`;
+          // 副圖已由上方按鈕標明,不再多佔一行(空字串 + empty:hidden)
+          effPane === "main" ? MF_TITLE : effPane === "sel" ? selLabel : "";
       }
 
       // legend:十字游標顯示 OHLC 與均線值;主力/分點數值直接更新在對應 pane 標題(帶正負號)
@@ -368,6 +377,34 @@ export default function KChart({
       ) => {
         const p = t != null ? byT.get(t) : undefined;
         wm?.applyOptions({ lines: [wmLine(p ? `${title} 買賣超 ${fmt(p.net)}/累計 ${fmt(p.cum)}` : title)] });
+      };
+      // 桌機:浮在主圖左上一行;手機:圖上方固定兩行(浮在 390px 寬的圖上會蓋住 K 棒),
+      // 第一行 OHLC、第二行均線,日期只留 MM-DD。
+      const renderLegend = (i: number | undefined) => {
+        const el = legendRef.current;
+        if (!el) return;
+        if (i == null) {
+          el.textContent = "";
+          return;
+        }
+        const c = bars[i];
+        const prev = i > 0 ? bars[i - 1].c : null;
+        const chg = prev ? (((c.c - prev) / prev) * 100).toFixed(2) : "—";
+        const mas = MA_DEFS.filter((m) => settings.ma[m.key])
+          .map((m) => {
+            const v = calc.ma[m.key][i];
+            return v == null ? "" : `<span style="color:${m.color}">${m.label} ${v.toFixed(prec)}</span>`;
+          })
+          .filter(Boolean)
+          .join(" ");
+        const tone = prev != null && c.c >= prev ? "up" : "down";
+        el.innerHTML = mobile
+          ? `<div class="truncate"><b>${c.t.slice(5)}</b> 開${c.o} 高${c.h} 低${c.l} 收<b>${c.c}</b> ` +
+            `<span class="${tone}">${chg}%</span> 量${c.v.toLocaleString()}</div>` +
+            `<div class="truncate">${mas}</div>`
+          : `<b>${c.t}</b> 開${c.o} 高${c.h} 低${c.l} 收<b>${c.c}</b> ` +
+            `<span class="${tone}">${chg}%</span> ` +
+            `量${c.v.toLocaleString()}張 ${mas}`;
       };
       chart.subscribeCrosshairMove((param) => {
         const t = param.time as string | undefined;
@@ -386,27 +423,10 @@ export default function KChart({
           updTitle(mfTitle, mainByTime, MF_TITLE, t, fmtLotsUnit);
           updTitle(selTitle, selByTime, selLabel, t, fmtSel);
         }
-        const el = legendRef.current;
-        if (!el) return;
-        if (i == null) {
-          el.textContent = "";
-          return;
-        }
-        const c = bars[i];
-        const prev = i > 0 ? bars[i - 1].c : null;
-        const chg = prev ? (((c.c - prev) / prev) * 100).toFixed(2) : "—";
-        const mas = MA_DEFS.filter((m) => settings.ma[m.key])
-          .map((m) => {
-            const v = calc.ma[m.key][i];
-            return v == null ? "" : `<span style="color:${m.color}">${m.label} ${v.toFixed(2)}</span>`;
-          })
-          .filter(Boolean)
-          .join(" ");
-        el.innerHTML =
-          `<b>${c.t}</b> 開${c.o} 高${c.h} 低${c.l} 收<b>${c.c}</b> ` +
-          `<span class="${prev != null && c.c >= prev ? "up" : "down"}">${chg}%</span> ` +
-          `量${c.v.toLocaleString()}張 ${mas}`;
+        // 手機沒有 hover:手指離開時回到最新一根,而不是清空(圖上方那兩行永遠有東西可讀)
+        renderLegend(i ?? (mobile ? bars.length - 1 : undefined));
       });
+      renderLegend(mobile ? bars.length - 1 : undefined);
       chart.timeScale().fitContent();
     });
 
@@ -452,30 +472,37 @@ export default function KChart({
           第二層：均線 chip + 布林 + 桌機主力買賣超 — wrap 換行，手機折疊展開
       */}
       {/* ── Row 1：固定可見選項 ── */}
-      <div className="flex min-w-0 flex-wrap items-center gap-1.5 px-0.5 pt-2 pb-1">
+      {/* 手機:兩組 segment 同一行不換行(放不下時橫滑),副圖/主力/分點本來就擇一顯示,
+          所以併成同一組——舊版把主力/分點做成另一種外觀的按鈕,在 390px 上自己掉到第二行。 */}
+      <div
+        className={cn(
+          "flex min-w-0 items-center gap-1.5 px-0.5 pt-2 pb-1",
+          isMobile ? "flex-nowrap overflow-x-auto scrollbar-hide [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" : "flex-wrap",
+        )}
+      >
         {/* 時間框架 */}
-        <span className="inline-flex gap-0.5 rounded-lg border border-border bg-card p-0.5">
+        <span className="inline-flex shrink-0 gap-0.5 rounded-lg border border-border bg-card p-0.5">
           {TF_DEFS.map((t) => (
             <button
               key={t.key}
               type="button"
-              className={segBtnClass(settings.tf === t.key, "accent")}
+              className={cn(segBtnClass(settings.tf === t.key, "accent"), isMobile && "px-2")}
               onClick={() => setSettings((s) => ({ ...s, tf: t.key }))}
             >
               {t.label}
             </button>
           ))}
         </span>
-        <span className="h-[18px] w-px bg-[color:var(--line)]" />
-        {/* 副圖切換 MACD/KD/RSI */}
-        <span className="inline-flex gap-0.5 rounded-lg border border-border bg-card p-0.5">
+        {!isMobile && <span className="h-[18px] w-px bg-[color:var(--line)]" />}
+        {/* 副圖切換 MACD/KD/RSI(手機版再接主力/分點) */}
+        <span className="inline-flex shrink-0 gap-0.5 rounded-lg border border-border bg-card p-0.5">
           {(["macd", "kd", "rsi"] as SubKey[]).map((k) => {
             const subActive = settings.sub === k && (!isMobile || mobilePaneKey === "sub");
             return (
             <button
               key={k}
               type="button"
-              className={segBtnClass(subActive, "warn")}
+              className={cn(segBtnClass(subActive, "warn"), isMobile && "px-2")}
               onClick={() => {
                 setSettings((s) => ({ ...s, sub: k }));
                 if (isMobile) handleMobilePaneChange("sub");
@@ -485,46 +512,37 @@ export default function KChart({
             </button>
             );
           })}
-        </span>
-        {/* 手機版：主力 / 分點切換（桌機用均線列的 checkbox） */}
-        {isMobile && !!mainForce?.length && (
-          <>
-            <span className="h-[18px] w-px bg-[color:var(--line)]" />
+          {isMobile && !!mainForce?.length && (
             <button
-              className={cn(
-                "min-h-9 rounded-lg px-3 py-1 text-xs font-semibold",
-                chipBase,
-                mobilePaneKey === "main" &&
-                  "border-[color:var(--accent-2)] bg-[color:var(--accent-2)]/15 text-[color:var(--accent-2)]",
-              )}
+              type="button"
+              className={cn(segBtnClass(mobilePaneKey === "main", "warn"), "px-2")}
               onClick={() => handleMobilePaneChange("main")}
             >
               主力
             </button>
+          )}
+          {isMobile && !!branchFlow?.length && (
             <button
-              disabled={!branchFlow?.length}
-              aria-disabled={!branchFlow?.length}
-              className={cn(
-                "min-h-9 rounded-lg px-3 py-1 text-xs font-semibold",
-                chipBase,
-                !branchFlow?.length && "cursor-not-allowed opacity-40",
-                mobilePaneKey === "sel" &&
-                  !!branchFlow?.length &&
-                  "border-[color:var(--warn)] bg-[color:var(--warn)]/15 text-[color:var(--warn)]",
-              )}
-              onClick={() => branchFlow?.length && handleMobilePaneChange("sel")}
+              type="button"
+              className={cn(segBtnClass(mobilePaneKey === "sel", "warn"), "px-2")}
+              onClick={() => handleMobilePaneChange("sel")}
             >
               分點
             </button>
-          </>
-        )}
+          )}
+        </span>
       </div>
-      {/* ── Row 2：均線 + 布林 + 桌機主力 ── */}
-      <div className="flex flex-wrap items-center gap-1.5 px-0.5 pb-2">
+      {/* ── Row 2：均線 + 布林 + 桌機主力(手機單行橫滑,不再佔兩行) ── */}
+      <div
+        className={cn(
+          "flex items-center gap-1.5 px-0.5 pb-2",
+          isMobile ? "flex-nowrap overflow-x-auto scrollbar-hide [scrollbar-width:none] [&::-webkit-scrollbar]:hidden [&>*]:shrink-0" : "flex-wrap",
+        )}
+      >
         {MA_DEFS.map((m) => (
           <label
             key={m.key}
-            className={cn(chipBase, "min-h-9")}
+            className={cn(chipBase, isMobile ? "min-h-8 px-2" : "min-h-9")}
             style={settings.ma[m.key] ? { color: m.color, borderColor: m.color } : undefined}
           >
             <input
@@ -537,7 +555,7 @@ export default function KChart({
             {m.label}
           </label>
         ))}
-        <label className={cn(chipBase, "min-h-9")} style={settings.boll ? { color: "#898781", borderColor: "#898781" } : undefined}>
+        <label className={cn(chipBase, isMobile ? "min-h-8 px-2" : "min-h-9")} style={settings.boll ? { color: "#898781", borderColor: "#898781" } : undefined}>
           <input
             type="checkbox"
             checked={settings.boll}
@@ -566,16 +584,25 @@ export default function KChart({
       )}
       {/* 手機版:游標數值改此處一行 compact legend(pane 名 + 買賣超 ±N/累計 ±M);桌機用 pane 內 watermark */}
       {isMobile && (
-        <div
-          ref={mobileLegendRef}
-          className="num truncate px-0.5 pb-1 text-[11px] leading-tight text-[color:var(--ink-2)]"
-        />
+        <>
+          {/* 固定兩行高度:手指滑動時數值變化不會讓圖表上下跳 */}
+          <div
+            ref={legendRef}
+            className="num h-[2.6em] min-w-0 px-0.5 text-[11px] leading-[1.3] text-[color:var(--ink-2)]"
+          />
+          <div
+            ref={mobileLegendRef}
+            className="num truncate px-0.5 pb-1 text-[11px] leading-tight text-[color:var(--ink-2)] empty:hidden"
+          />
+        </>
       )}
       <div className="relative">
-        <div
-          ref={legendRef}
-          className="num pointer-events-none absolute top-1.5 left-2.5 z-[5] max-w-[92%] text-[11.5px] leading-[1.5] text-[color:var(--ink-2)] [text-shadow:0_1px_2px_rgba(0,0,0,0.7)]"
-        />
+        {!isMobile && (
+          <div
+            ref={legendRef}
+            className="num pointer-events-none absolute top-1.5 left-2.5 z-[5] max-w-[92%] text-[11.5px] leading-[1.5] text-[color:var(--ink-2)] [text-shadow:0_1px_2px_rgba(0,0,0,0.7)]"
+          />
+        )}
         <div
           ref={ref}
           className={cn(
