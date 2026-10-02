@@ -6,6 +6,7 @@
 top 依金額排序且只含產業內成分、題材模式不帶 subs。
 """
 import json
+from datetime import date, timedelta
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -708,6 +709,43 @@ class ArmedStateExportContractTests(unittest.TestCase):
         self.assertFalse(warrant["partial_stale"])
         self.assertFalse(warrant["stale"])
         self.assertNotIn("權證", "".join(radar["summary_text"]))
+
+    def _replace_warrant_master(self, rows):
+        with db.get_engine().begin() as conn:
+            conn.execute(schema.warrants.delete())
+            if rows:
+                conn.execute(schema.warrants.insert(), rows)
+
+    def test_last_warrant_past_its_last_trading_day_is_not_a_partial_batch(self):
+        """2026-10-02 誤報:4536、6561 只剩 10-05 到期的權證,10-01 為最後交易日,
+        10-02 起交易所不再列出——「昨天有、今天沒有」,但不是批次缺漏。"""
+        rows = [
+            {"stock_id": "current_only", "date": "2026-08-07", "call_turnover": 10_000_000},
+            {"stock_id": "current_only", "date": self.D, "call_turnover": 20_000_000},
+            {"stock_id": "stale_only", "date": "2026-08-08", "call_turnover": 0},
+            {"stock_id": "stale_only", "date": "2026-08-07", "call_turnover": 0},
+        ]
+        self._replace_warrants(rows)
+        soon = (date.fromisoformat(self.D) + timedelta(days=3)).isoformat()
+        self._replace_warrant_master([
+            {"id": "W1", "name": "x", "market": "twse", "kind": "call",
+             "stock_id": "stale_only", "maturity_date": soon},
+        ])
+        warrant = self._export()["freshness"]["warrant"]
+        self.assertEqual(warrant["stale_stock_count"], 0)
+        self.assertFalse(warrant["partial_stale"])
+
+        # 同一標的還有一檔較遠到期的權證 → 今天沒列就是真的缺漏,照算。
+        later = (date.fromisoformat(self.D) + timedelta(days=60)).isoformat()
+        self._replace_warrant_master([
+            {"id": "W1", "name": "x", "market": "twse", "kind": "call",
+             "stock_id": "stale_only", "maturity_date": soon},
+            {"id": "W2", "name": "y", "market": "twse", "kind": "call",
+             "stock_id": "stale_only", "maturity_date": later},
+        ])
+        warrant = self._export()["freshness"]["warrant"]
+        self.assertEqual(warrant["stale_stock_count"], 1)
+        self.assertTrue(warrant["partial_stale"])
 
     def test_mixed_warrant_dates_keep_per_stock_stale_payload_honest(self):
         self._replace_warrants([

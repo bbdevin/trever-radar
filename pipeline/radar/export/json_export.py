@@ -1186,6 +1186,18 @@ def export_json(out_dir: Path | None = None) -> dict:
             JOIN warrant_stock_daily wp ON wp.stock_id = p.stock_id AND wp.date = :prev
             LEFT JOIN warrant_stock_daily wd ON wd.stock_id = p.stock_id AND wd.date = :d
             WHERE p.date = :d AND p.close IS NOT NULL AND wd.stock_id IS NULL
+              -- 最後一檔權證已到最後交易日(到期前兩個營業日停止交易)的標的,今天沒有列
+              -- 是正常的,不是批次缺漏。2026-10-02 誤報:4536 拓凱、6561 是方 僅剩 10-05
+              -- 到期的權證,10-01 為最後交易日(成交 0),10-02 起交易所不再列出。
+              -- 主檔裡完全沒有該標的權證時(未知)照舊計入,不替它找理由。
+              AND NOT (
+                EXISTS (SELECT 1 FROM warrants w WHERE w.stock_id = p.stock_id)
+                AND NOT EXISTS (
+                  SELECT 1 FROM warrants w
+                  WHERE w.stock_id = p.stock_id
+                    AND (w.maturity_date IS NULL OR w.maturity_date > date(:d, '+7 days'))
+                )
+              )
         """), {"d": d, "prev": prev}).scalar() or 0 if prev else 0
         w_partial_stale = w_date == d and w_stale_stock_count > 0
         freshness = {
