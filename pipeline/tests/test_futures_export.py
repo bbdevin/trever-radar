@@ -265,9 +265,9 @@ class FuturesExportTests(unittest.TestCase):
         self.assertEqual(payload["freshness"]["futures"],
                          {"date": OLDER, "stale": True})
 
-    def test_two_days_behind_in_the_afternoon_is_normal_three_is_stale(self):
-        """14:10 現貨更新到今天、21:20 期貨才抓到昨天——白天停在前天是常態
-        (2026-10-02 下午首頁把停在 09-30 的期貨標成「尚未更新」)。"""
+    def test_two_trading_days_behind_is_stale(self):
+        """當日匯入接上後(2026-10-02),放寬到「落後兩個交易日」的規則收回:
+        只有 (d, prev) 不算舊,落後兩個交易日就是 stale。"""
         from radar import schema
         import radar.db as db
         extra = ["2026-09-11", "2026-09-10"]
@@ -281,7 +281,7 @@ class FuturesExportTests(unittest.TestCase):
                            [_daily("CCF", "202609", "一般", 500, 900, date="2026-09-11")])
         export_json(self.out)
         payload = json.loads((self.out / "radar.json").read_text(encoding="utf-8"))
-        self.assertEqual(payload["freshness"]["futures"], {"date": "2026-09-11", "stale": False})
+        self.assertEqual(payload["freshness"]["futures"], {"date": "2026-09-11", "stale": True})
 
     def test_three_trading_days_behind_is_stale(self):
         from radar import schema

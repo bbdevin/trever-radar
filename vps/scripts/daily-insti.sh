@@ -48,6 +48,15 @@ fi
 if ! radar import-buybacks --days 365; then
   notify_warn "庫藏股公告暫時抓不到，已略過，沿用既有資料"
 fi
+# 個股期貨當日(docs/38 §7.18;2026-10-02 起接上)。資料不齊時 import-futures-day 回 75 且一列都不寫;
+# 16:10 常常還沒公布,所以 75 只記 log 不通知;17:40／22:00 會重試。其他失敗只 warn,不擋法人上線。
+fd_rc=0
+if radar import-futures-day; then :; else fd_rc=$?; fi
+if [ "$fd_rc" -eq 75 ]; then
+  echo "個股期貨當日尚未公布齊全(exit 75),17:40／22:00 重試"
+elif [ "$fd_rc" -ne 0 ]; then
+  notify_warn "個股期貨當日匯入失敗（exit ${fd_rc}），本輪續跑；17:40／22:00 會重試"
+fi
 if [ "$quotes_rc" -eq 75 ]; then
   notify_warn "部分已入庫，因TPEx行情未完整，本輪不發布（不做aggregate/compute/export/deploy），待17:40"
   exit 75

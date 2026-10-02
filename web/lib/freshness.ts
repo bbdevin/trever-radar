@@ -3,14 +3,11 @@ import type { RadarJson } from "@/lib/types";
 /**
  * 首頁「尚未更新」徽章的句子,逐筆生成。
  *
- * 為什麼不是所有資料集共用一句:在**現行排程**下期貨沒有「今日」的資料。
- * 21:20 那輪用的 TAIFEX OpenAPI 日報只供應最新一天,而且刷新得晚(2026-10-02
- * 17:07 仍是 10/01),所以它拿到的是前一個交易日(docs/38 §7.12)。這是餵源與
- * 排程的限制,不是資料本身:futDataDown 當天約 17:00 就有當天完整的一般時段,
- * 標 t 的盤後是 t−1 夜盤、早已收完(「要等隔天 05:00」是舊的錯誤說法;docs/38 §7.18)。
- * 當日匯入在發布時間量測完成前不排程,所以下面的排程字串與 stale 規則暫時不動。
- * 在那之前,對它說「今日尚未公布」仍是錯的——它的 `stale` 意思是「連前一個交易日
- * 都沒跟上」,不是「今天還沒到」。
+ * 為什麼不是所有資料集共用一句:期貨的 `stale` 意思是「連前一個交易日
+ * 都沒跟上」,不是「今天還沒到」。2026-10-02 起 `import-futures-day`(futDataDown)
+ * 接進 16:10／17:40／22:00,當天完整的一般時段約 17:00 就有(標 t 的盤後是 t−1 夜盤,
+ * 早已收完;docs/38 §7.18),所以正常是追上現貨日或落後一天;21:20 的 OpenAPI 日報
+ * 退為官方覆核。對它說「今日尚未公布」仍是錯的——16:10 未到齊時 17:40、22:00 會重試。
  *
  * 這個缺陷是把 `futures` 加進 `FRESH_LABEL` 時漏掉的另一半:`json_export.py`
  * 的摘要句有排除期貨,前端徽章沒有,於是期貨一旦真的落後就會印出一句與
@@ -36,7 +33,7 @@ export type StaleLine = {
  * (docs/08 §0、docs/35):14:10 daily-market、15:00 daily-tpex-quotes、16:10
  * daily-insti、17:40 / 22:00 daily-branches、21:20 daily-margin。改排程時這裡要一起改。
  *
- * 期貨照實寫:21:20 只拿得到前一個交易日,漏掉的日子不會自己補回來。
+ * 期貨照實寫:16:10 抓當日,未到齊 17:40、22:00 重試;21:20 為官方日報覆核。
  */
 // `short` 是手機版一行放得下的寫法(使用者 2026-10-02:要考量手機畫面)。
 export const UPDATE_SCHEDULE: { key: string; label: string; when: string; short: string }[] = [
@@ -45,7 +42,7 @@ export const UPDATE_SCHEDULE: { key: string; label: string; when: string; short:
   { key: "warrant", label: "權證", when: "16:10", short: "16:10" },
   { key: "branch", label: "分點", when: "17:40 第一輪(常未到齊)、22:00 補齊", short: "17:40、22:00 補齊" },
   { key: "margin", label: "融資券", when: "21:20", short: "21:20" },
-  { key: "futures", label: "個股期貨", when: "21:20(只抓得到前一交易日;漏掉的日子要人工補)", short: "21:20 只抓前一交易日" },
+  { key: "futures", label: "個股期貨", when: "16:10（當日；未到齊則 17:40、22:00 重試）", short: "16:10 當日、17:40 補" },
   { key: "themes", label: "題材分類", when: "每週一 14:10", short: "週一 14:10" },
   { key: "scores", label: "評分與榜單", when: "每一輪都重算;資料齊全的版本約 23:10", short: "每輪重算,完整約 23:10" },
 ];
@@ -88,9 +85,8 @@ export function staleFreshnessLines(
       key,
       text:
         key === "futures"
-          // 白天停在前天是常態(14:10 現貨已到今天、21:20 期貨才抓昨天),stale 的
-          // 意思是比那更舊(json_export 的規則,2026-10-02)。
-          ? `個股期貨最新行情日 ${value!.date}，已落後超過兩個交易日`
+          // stale 的意思是落後超過一個交易日(json_export 的規則 (d, prev),2026-10-02 收回)。
+          ? `個股期貨最新行情日 ${value!.date}，已落後超過一個交易日`
           : partial
           ? `權證今日部分標的尚未公布${partialN ? `(${partialN} 檔)` : ""}`
           : `${FRESH_LABEL[key] ?? key}今日尚未公布，暫用 ${value!.date}`,

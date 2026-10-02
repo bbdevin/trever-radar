@@ -1268,23 +1268,19 @@ def export_json(out_dir: Path | None = None) -> dict:
                 "stale_stock_count": w_stale_stock_count,
             },
             "branch": {"date": b_date, "stale": b_date != d},
-            # 期貨**在現行排程下正常就落後現貨一個交易日**:21:20 那一輪用的
-            # OpenAPI 日報只給最新一份,而且刷新得晚(2026-10-02 17:07 仍是 10/01)。
-            # 這是**餵源與排程**的限制,不是資料本身的:futDataDown 當天約 17:00
-            # 就有當天完整的一般時段(標 t 的盤後是 t−1 夜盤,早已收完),見
-            # providers/taifex.py 與 docs/38 §7.18;`import-futures-day` 在發布時間
-            # 量測完成前不排程,所以下面的規則暫時不動。拿 d 去比,``stale`` 於是天天為真,面板天天承諾
+            # 2026-10-02 起 `import-futures-day`(futDataDown)接進 16:10／17:40／22:00,
+            # 當天完整的一般時段約 17:00 就有(標 t 的盤後是 t−1 夜盤,早已收完),見
+            # providers/taifex.py 與 docs/38 §7.18;21:20 的 OpenAPI 日報退為官方覆核。
+            # 所以正常是追上現貨日或落後一個交易日(尚未到齊)。若硬拿 d 去比,``stale`` 可能天天為真,面板天天承諾
             # 「稍後自動補齊」——而這條管線補不了:餵源沒有日期參數,漏掉的
             # 那天只能跑 backfill-futures。所以 stale 的意思是「連前一個交易日
             # 都沒跟上」(§7.12)。f_date == d(期貨反而追上現貨)當然也不是舊。
             #
-            # 2026-10-02 補:白天其實落後**兩個**交易日也是常態。現貨 14:10 就更新到
-            # 今天,期貨要到 21:20 才抓得到「昨天」——所以 14:10 到 21:20 之間期貨
-            # 停在前天,首頁每天下午都把它標成「尚未更新」(10-02 下午停在 09-30)。
-            # 正常 = 落在最近三個現貨交易日內;再舊才是真的沒跟上。
+            # 2026-10-02 晚:當日匯入接上後,先前為「下午落後兩個交易日」放寬的第三格
+            # (dates[2])收回,規則回到 (d, prev)。
             "futures": {
                 "date": f_date,
-                "stale": f_date not in (d, prev, dates[2] if len(dates) > 2 else None),
+                "stale": f_date not in (d, prev),
             },
         }
 

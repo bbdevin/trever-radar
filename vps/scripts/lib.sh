@@ -36,7 +36,6 @@ job_zh() {
     adjust-backfill.sh) echo "還原因子回補" ;;
     warrant-backfill.sh) echo "權證分點回補" ;;
     repair-window.sh) echo "正式修復窗" ;;
-    futures-day.sh) echo "個股期貨當日" ;;
     *) echo "${SCRIPT_NAME%.sh}" ;;
   esac
 }

@@ -5,8 +5,8 @@
 1. 唯讀的 `probe-futures-day` 已掛進 14:10 / 15:00 / 16:10 三輪,而且**絕不影響本輪**:
    走 lib.sh 的 `futures_probe`(有逾時、不掛 data/、所有失敗都被 `||` 接住、永遠 return 0),
    位置在拿鎖之前(鎖被占略過、或 16:10 的 exit 75 提早收場的日子也量得到)。
-2. 會寫資料庫的 `import-futures-day` **還沒有**接進任何輪——發布時間量測做完之前,
-   它只存在於不被 cron、也不被任何腳本呼叫的 `futures-day.sh`。接上的那一天要改這裡。
+2. 會寫資料庫的 `import-futures-day` 自 2026-10-02 起接進 daily-insti.sh(16:10)與
+   daily-branches.sh(17:40／22:00),裸呼叫、75 只記 log、其他非 0 只 warn、不擋本輪。
 """
 import re
 import unittest
@@ -15,8 +15,6 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS_DIR = REPO_ROOT / "vps" / "scripts"
 LIB = SCRIPTS_DIR / "lib.sh"
-CRONTAB = SCRIPTS_DIR / "crontab.example"
-GATED = "futures-day.sh"
 PROBED_ROUNDS = ("daily-market.sh", "daily-tpex-quotes.sh", "daily-insti.sh")
 
 FULL_LINE_COMMENT = re.compile(r"^\s*#")
@@ -91,34 +89,57 @@ class ProbeIsWiredAndHarmless(unittest.TestCase):
         self.assertRegex(lib, r'FUTURES_PROBE_LOG="\$\{FUTURES_PROBE_LOG:-\$\{HOME:-/tmp\}/futures-probe\.log\}"')
 
 
-class ImportFuturesDayIsNotWiredYet(unittest.TestCase):
-    def test_no_script_but_the_gated_one_runs_import_futures_day(self):
-        callers = [p.name for p in sorted(SCRIPTS_DIR.glob("*.sh"))
-                   if any("import-futures-day" in ln for ln in _code_lines(p))]
-        self.assertEqual(callers, [GATED],
-                         "import-futures-day 在 docs/38 §7.18 量測完成前只能出現在 futures-day.sh")
+class ImportFuturesDayIsWired(unittest.TestCase):
+    CALLERS = {"daily-branches.sh", "daily-insti.sh"}
 
-    def test_gated_script_is_not_scheduled_or_called(self):
-        cron_code = "\n".join(_code_lines(CRONTAB))
-        self.assertNotIn(GATED, cron_code, "futures-day.sh 還不能進 crontab")
-        for p in sorted(SCRIPTS_DIR.glob("*.sh")):
-            if p.name == GATED:
-                continue
-            # lib.sh 的 job_zh 有一個 `futures-day.sh)` case 標籤(通知標題用),那不是呼叫。
-            code = [ln for ln in _code_lines(p)
-                    if not re.match(rf"^\s*{re.escape(GATED)}\)", ln)]
-            with self.subTest(script=p.name):
-                self.assertNotIn(GATED, "\n".join(code), f"{p.name} 不得呼叫 {GATED}")
+    def _branch_blocks(self, name: str) -> tuple[str, str, str]:
+        code = "\n".join(_code_lines(SCRIPTS_DIR / name))
+        m = re.search(
+            r'if \[ "\$fd_rc" -eq 75 \]; then\n(.*?)\nelif \[ "\$fd_rc" -ne 0 \]; then\n(.*?)\nfi\n',
+            code, re.S)
+        self.assertIsNotNone(m, f"{name} 找不到 75 / 其他非 0 的分級區塊")
+        return code, m.group(1), m.group(2)
 
-    def test_gated_script_says_so_in_its_header(self):
-        head = "\n".join((SCRIPTS_DIR / GATED).read_text(encoding="utf-8").splitlines()[:6])
-        self.assertIn("GATED", head)
-        self.assertIn("docs/38 §7.18", head)
+    def test_exactly_these_scripts_call_it(self):
+        callers = {p.name for p in sorted(SCRIPTS_DIR.glob("*.sh"))
+                   if any("radar import-futures-day" in ln for ln in _code_lines(p))}
+        self.assertEqual(callers, self.CALLERS)
 
-    def test_gated_script_treats_75_as_pending_not_failure(self):
-        code = "\n".join(_code_lines(SCRIPTS_DIR / GATED))
-        self.assertRegex(code, r"if radar import-futures-day; then")
-        self.assertRegex(code, r'"\$fd_rc" -eq 75 \]; then\s*\n\s*notify_skip')
+    def test_call_is_bare_and_not_wrapped_in_the_failing_helper(self):
+        for name in sorted(self.CALLERS):
+            with self.subTest(script=name):
+                lines = [ln for ln in _code_lines(SCRIPTS_DIR / name)
+                         if "import-futures-day" in ln]
+                self.assertEqual(len(lines), 1)
+                self.assertIn("if radar import-futures-day; then", lines[0])
+                self.assertNotIn("run_step_or_fail", lines[0])
+
+    def test_75_is_quiet_and_other_failures_only_warn(self):
+        for name in sorted(self.CALLERS):
+            with self.subTest(script=name):
+                _, pending, failed = self._branch_blocks(name)
+                self.assertNotIn("notify", pending)
+                self.assertNotRegex(pending, r"(?m)^\s*exit\b")
+                self.assertIn("notify_warn", failed)
+                self.assertNotRegex(failed, r"(?m)^\s*exit\b")
+
+    def test_insti_calls_it_before_the_exit_75(self):
+        lines = _code_lines(SCRIPTS_DIR / "daily-insti.sh")
+        call = next(i for i, ln in enumerate(lines) if "radar import-futures-day" in ln)
+        exit75 = next(i for i, ln in enumerate(lines) if re.search(r"\bexit 75\b", ln))
+        self.assertLess(call, exit75)
+
+    def test_branches_calls_it_after_import_daily(self):
+        lines = _code_lines(SCRIPTS_DIR / "daily-branches.sh")
+        imp = next(i for i, ln in enumerate(lines) if 'run_step_or_fail "import-daily"' in ln)
+        call = next(i for i, ln in enumerate(lines) if "radar import-futures-day" in ln)
+        self.assertGreater(call, imp)
+        compute = next(i for i, ln in enumerate(lines)
+                       if 'run_step_or_fail "compute-indicators"' in ln)
+        self.assertLess(call, compute)
+
+    def test_the_gated_script_is_gone(self):
+        self.assertFalse((SCRIPTS_DIR / "futures-day.sh").exists())
 
 
 class RevisionWarnInMarginRound(unittest.TestCase):

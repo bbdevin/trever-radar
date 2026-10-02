@@ -951,8 +951,8 @@ def main(argv=None):
     ifd = sub.add_parser(
         "import-futures-day",
         help="TAIFEX single-stock futures for TODAY via futDataDown (same-day data; "
-             "exit 75 = not ready, nothing written). Not wired into any round yet: "
-             "gated on docs/38 §7.18 publish-time measurement",
+             "exit 75 = not ready, nothing written). Wired into the 16:10 / 17:40 / "
+             "22:00 rounds (docs/38 §7.18)",
     )
     ifd.add_argument("--date", default=None,
                      help="YYYY-MM-DD; default max(daily_prices.date), which must be "

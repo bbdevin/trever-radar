@@ -3,7 +3,7 @@
 ## 2026-10-02 補記
 
 - 首頁「尚未更新」區塊整合自動更新時間表、改手機優先版面(`web/lib/freshness.ts` `UPDATE_SCHEDULE`;**改 crontab 時要一起改**)。期貨下午落後 2 個交易日改為常態不報警(`json_export.py`),權證部分未到改顯示「部分未到(N 檔)」。細節見 `docs/STATUS.md` 同日條目。
-- **當日期貨**(`docs/38` §7.18):唯讀 probe 已掛 14:10/15:00/16:10;**10-05 起 3 個交易日讀 VPS `~/futures-probe.log`** 決定 `futures-day.sh` 接 16:10 還是 17:40,接上當天記 Z、改 `web/lib/freshness.ts` 期貨時間表與 `json_export` stale 規則(兩週後收回 `(d, prev)`)。
+- **當日期貨**(`docs/38` §7.18):2026-10-02 晚使用者決定不等量測,`import-futures-day` 已接進 16:10 daily-insti 與 17:40/22:00 daily-branches(`futures-day.sh` 已刪、freshness.ts 與 json_export stale `(d, prev)` 已改);probe 留到 10-07 後移除;Z = 首個正式 16:10 輪(預計 10-05)。
 - 🚨 **`docs/40` battery 第 1 次執行:DO NOT SHIP**(B 不過、D 20/20 不過;n 551、漲 81、跌 112)——訊號預告波動不是上漲。收案不重跑;`docs/41` v2(t+1)等當日期貨接上(Z)後累積 60 個市場日。
 - 庫藏股 10-05 16:10 起每日匯入,下週一確認 log。
 - 「買點偏低、賣點偏高」v2(張數加權、短線派/長線派):下一次分點統計重算後確認 ①新欄已建 ②`compute-branch-stats` 耗時沒有明顯變長 ③單檔 JSON 大小(lookup)④4967 群益金鼎-板橋 的實際名次。

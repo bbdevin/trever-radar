@@ -12,17 +12,17 @@ import { FRESH_LABEL, UPDATE_SCHEDULE, scheduleFor, staleAutoFills, staleFreshne
 const D = (date: string, stale: boolean) => ({ date, stale });
 
 // 2026-10-02 更正:期貨並非「結構上永遠沒有今天的資料」——t 日資料 t 日收盤後就完整,落後是
-// OpenAPI 更新慢(docs/38 §7.8 事後修正(三))。在當日匯入接上之前,21:20 拿到的仍是前一日,
-// 所以句子照舊不講「今日」。
-test("期貨的句子不講「今日」——21:20 那一輪拿到的是前一交易日", () => {
+// OpenAPI 更新慢(docs/38 §7.8 事後修正(三))。2026-10-02 起當日匯入已接上(16:10／17:40／22:00),
+// stale 只代表落後超過一個交易日,句子仍不講「今日」。
+test("期貨的句子不講「今日」——stale 是連前一交易日都沒跟上", () => {
   const lines = staleFreshnessLines({ futures: D("2026-09-16", true) } as never);
   assert.equal(lines.length, 1);
   assert.equal(lines[0].key, "futures");
   assert.ok(!lines[0].text.includes("今日"),
     `期貨句子不得出現「今日」:${lines[0].text}`);
   assert.ok(lines[0].text.includes("2026-09-16"), "要講出它實際停在哪一天");
-  assert.ok(lines[0].text.includes("落後超過兩個交易日"),
-    "要講清楚 stale 的意思是比常態(白天停在前天)還舊,不是「今天還沒到」");
+  assert.ok(lines[0].text.includes("落後超過一個交易日"),
+    "要講清楚 stale 的意思是連前一個交易日都沒跟上,不是「今天還沒到」");
 });
 
 test("其他資料集維持原本的「今日尚未公布」措辭", () => {
@@ -69,8 +69,8 @@ test("每一筆待更新都帶出它的排程時間(使用者 2026-10-02 要求)
   assert.equal(by.margin, "21:20");
   assert.equal(by.warrant, "16:10");
   assert.equal(by.themes, "每週一 14:10");
-  // 期貨照實講:漏掉的日子不會自己回來。
-  assert.ok(by.futures?.includes("人工補"), by.futures);
+  // 期貨照實講:16:10 抓當日,未到齊 17:40、22:00 重試。
+  assert.ok(by.futures?.includes("當日"), by.futures);
 });
 
 test("手機精簡欄位:名稱、MM-DD、短排程;期貨不講「今日」也不承諾自動補", () => {
@@ -79,7 +79,7 @@ test("手機精簡欄位:名稱、MM-DD、短排程;期貨不講「今日」也�
   assert.equal(margin.shortDate, "10-01");
   assert.equal(margin.shortSchedule, "21:20");
   const [fut] = staleFreshnessLines({ futures: D("2026-09-30", true) } as never);
-  assert.equal(fut.shortSchedule, "21:20 只抓前一交易日");
+  assert.equal(fut.shortSchedule, "16:10 當日、17:40 補");
   for (const s of UPDATE_SCHEDULE) assert.ok(s.short.length <= 18, `${s.key} 短排程太長:${s.short}`);
 });
 

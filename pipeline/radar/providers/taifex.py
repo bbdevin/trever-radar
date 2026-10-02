@@ -51,7 +51,8 @@
    之後);這裡多出的 138 列都是價差組合(月份含 ``/``)。尚未產製的日期回
    **只有表頭**的 CSV(→ 空 parse → NoDataError),不是錯誤頁。
    `import-futures-day` 與唯讀的 `probe-futures-day` 走這條路;幾點鐘才完整
-   還在量測中(probe 寫 ~/futures-probe.log),量完之前不排進任何一輪。
+   仍由 probe 量測(寫 ~/futures-probe.log,保留到 2026-10-07 後移除);
+   `import-futures-day` 自 2026-10-02 起接進 16:10／17:40／22:00 三輪,資料不齊回 75。
 
 缺值:行情欄位的「沒有這個數字」有**三種**寫法 —— ``-``、空字串,以及
 ``NULL``(2026-09-15 量測:盤後列的 ``SettlementPrice`` 有 157 個 ``NULL``)。

@@ -94,6 +94,16 @@ sync_code
 # 九個步驟共用 lib.sh 裡的**那一份**實作,措辭不會在九個地方漂移。
 # 上櫃日K 若 14:10/16:10 仍 empty,此輪再抓,否則 --top 0 會漏掉無當日報價的上櫃。
 run_step_or_fail "import-daily" radar import-daily --datasets quotes,insti
+# 個股期貨當日(docs/38 §7.18;2026-10-02 起接上)。資料不齊時 import-futures-day 回 75 且一列都不寫;
+# 本輪(17:40／22:00)尚未齊全只記 log 不通知;22:00 是當天最後一次重試,其後 21:20 官方日報會在下個交易日補上。
+# 其他失敗只 warn,不擋本輪。
+fd_rc=0
+if radar import-futures-day; then :; else fd_rc=$?; fi
+if [ "$fd_rc" -eq 75 ]; then
+  echo "個股期貨當日尚未公布齊全(exit 75),22:00 重試;22:00 仍未齊則 21:20 官方日報會在下個交易日補上"
+elif [ "$fd_rc" -ne 0 ]; then
+  notify_warn "個股期貨當日匯入失敗（exit ${fd_rc}），本輪續跑；21:20 官方日報會在下個交易日補上"
+fi
 run_step_or_fail "compute-indicators" radar compute-indicators --all --days 5
 run_step_or_fail "seed-branches" radar seed-branches
 # top=0: 當日有報價的全部 type=stock(不含 ETF)。
