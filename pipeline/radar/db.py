@@ -23,6 +23,39 @@ def init_db():
         with engine.begin() as conn:
             conn.exec_driver_sql("PRAGMA journal_mode=WAL")  # readers don't block the writer
             _migrate_sqlite(conn)
+            _normalize_branch_names(conn)
+
+
+def _normalize_branch_names(conn) -> int:
+    """branch_dim 的名稱套用 radar.branch_names.canonical_name(亂碼、改名)。冪等。
+
+    2026-10-02:「(牛牛牛)亞」→「犇亞」、「台新-營業部」→「台新」。改的是名稱,
+    不是代號或交易列;branch_trades view 讀這一欄,所以全系統同時換名。
+    tracked_branches 以名稱為鍵,舊名在追蹤名單裡的一併改名(新名已在就移除舊名)。
+    回傳改了幾列,0 代表已經是正規名稱(每一輪都會跑,通常是 0)。
+    """
+    from .branch_names import canonical_name
+
+    tables = {r[0] for r in conn.exec_driver_sql(
+        "SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+    if "branch_dim" not in tables:
+        return 0
+    changed = 0
+    for row_id, name in conn.exec_driver_sql("SELECT id, branch_name FROM branch_dim").fetchall():
+        new = canonical_name(name)
+        if new == name:
+            continue
+        conn.exec_driver_sql("UPDATE branch_dim SET branch_name = ? WHERE id = ?", (new, row_id))
+        changed += 1
+        if "tracked_branches" in tables:
+            exists = conn.exec_driver_sql(
+                "SELECT 1 FROM tracked_branches WHERE branch_name = ?", (new,)).fetchone()
+            if exists:
+                conn.exec_driver_sql("DELETE FROM tracked_branches WHERE branch_name = ?", (name,))
+            else:
+                conn.exec_driver_sql(
+                    "UPDATE tracked_branches SET branch_name = ? WHERE branch_name = ?", (new, name))
+    return changed
 
 
 def _migrate_sqlite(conn):

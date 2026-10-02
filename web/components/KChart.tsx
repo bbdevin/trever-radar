@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import type { Candle } from "@/lib/types";
 import { fmtLots } from "@/lib/format";
 import { bollinger, kd, macd, rsi, sma } from "@/lib/indicators";
@@ -109,6 +109,7 @@ export default function KChart({
   branchFlow,
   branchFlowLabel,
   branchFlowFormat,
+  caption,
 }: {
   candles: Candle[];
   visibleDays: number;
@@ -121,6 +122,8 @@ export default function KChart({
   /** 分點進出 pane 的數值格式(含單位)。缺省為張數;權證分點傳金額(萬)。
    *  請傳模組層級的穩定函式,它在 effect 的相依清單裡。 */
   branchFlowFormat?: (n: number) => string;
+  /** 均線列下方、圖表上緣的一行說明(可選;缺省時版面不變)。 */
+  caption?: ReactNode;
 }) {
   const selLabel = branchFlowLabel ?? SEL_TITLE;
   const fmtSel = branchFlowFormat ?? fmtLotsUnit;
@@ -554,6 +557,13 @@ export default function KChart({
           </label>
         )}
       </div>
+      {/* 呼叫端的說明列(例:權證分頁的「代號 券商 · 股票 · 區間金額」),緊接在均線列下方、
+          圖表上緣;使用者 2026-10-02 要求整合到這裡,而不是在 K 線上方另起一行。 */}
+      {caption && (
+        <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5 px-0.5 pb-1.5 text-[12.5px] leading-snug">
+          {caption}
+        </div>
+      )}
       {/* 手機版:游標數值改此處一行 compact legend(pane 名 + 買賣超 ±N/累計 ±M);桌機用 pane 內 watermark */}
       {isMobile && (
         <div

@@ -31,6 +31,14 @@ test("依種類加總淨額", () => {
   assert.equal(kindNet({ branch_name: "x", net_amount: 1 }, "call"), 0);
 });
 
+test("合計(預設):認購＋認售一起算,與匯出的總額一致", () => {
+  assert.equal(kindNet(rows[3], "all"), 2_000_000);
+  assert.deepEqual(rankBranches(rows, "all", "buy").map((r) => r.branch_name),
+    ["看空券商", "兆豐-嘉義", "兩邊都做"]);
+  const daily = { x: [["2026-09-01", 1_000_000, -200_000]] as [string, number, number][] };
+  assert.deepEqual(branchSeries(daily, "x", "all"), [{ t: "2026-09-01", net: 800_000 }]);
+});
+
 test("認購買超排行不含大買認售的券商(那是看空)", () => {
   const buys = rankBranches(rows, "call", "buy");
   assert.deepEqual(buys.map((r) => r.branch_name), ["兆豐-嘉義", "兩邊都做"]);

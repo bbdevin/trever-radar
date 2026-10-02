@@ -715,12 +715,15 @@ def upsert_branch_trades(conn, rows: list[dict]) -> int:
     from sqlalchemy import text
     from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
+    from .branch_names import canonical_name
+
     branches = {}
     for r in rows:
         branches[r["branch_key"]] = {
             "branch_key": r["branch_key"],
             "broker_id": r.get("broker_id"),
-            "branch_name": r["branch_name"]
+            # 新分點落地時就修正亂碼與已知改名(既有的不會被覆寫:on_conflict_do_nothing)。
+            "branch_name": canonical_name(r["branch_name"]),
         }
     
     stmt = sqlite_insert(schema.branch_dim).values(list(branches.values()))

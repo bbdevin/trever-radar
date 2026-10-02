@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import KChart from "@/components/KChart";
 import { dataFetch } from "@/lib/dataFetch";
 import type { Candle } from "@/lib/types";
-import { cn, pillTabClass, segBtnClass } from "@/lib/utils";
+import { cn, pillTabClass } from "@/lib/utils";
 import {
   branchSeries,
   defaultBranch,
@@ -82,7 +82,8 @@ function fmtWan(amt: number, digits = 0): string {
 /**
  * 個股權證分頁(2026-10-02 改版,版面依使用者給的參考圖):左邊「權證買超／賣超金額
  * 最多券商」兩張排行,右邊點選券商後顯示股價 K 線與該券商在這檔權證上的逐日買賣超
- * 金額,下方是它在區間內買賣了哪幾檔權證。認購／認售分開(買認售是看空)。
+ * 金額,下方是它在區間內買賣了哪幾檔權證。金額為認購＋認售合計(使用者 2026-10-02 選擇),
+ * 明細逐檔標「購／售」:買認售是看空,讀合計時要看明細。
  */
 export default function WarrantBranchPanel({
   stockId,
@@ -98,7 +99,8 @@ export default function WarrantBranchPanel({
   const [codes, setCodes] = useState<Record<string, string>>({});
   const [query, setQuery] = useState("");
   const [tf, setTf] = useState<Timeframe>("5d");
-  const [kind, setKind] = useState<WarrantKind>("call");
+  // 使用者 2026-10-02:不分認購／認售,合計顯示;明細逐檔標「購／售」。
+  const kind: WarrantKind = "all";
   const [picked, setPicked] = useState<string | null>(null);
   const [showAllWarrants, setShowAllWarrants] = useState(false);
   const [error, setError] = useState(false);
@@ -208,7 +210,6 @@ export default function WarrantBranchPanel({
   const hits = useMemo(() => (rows ? searchBranches(rows, query, kind, codes) : []), [rows, query, kind, codes]);
   const selectedRow = rows?.find((r) => r.branch_name === selected) ?? null;
   const series = useMemo(() => toWanSeries(branchSeries(daily, selected, kind)), [daily, selected, kind]);
-  const kindLabel = kind === "call" ? "認購" : "認售";
 
   useEffect(() => {
     setPicked(null);
@@ -232,7 +233,6 @@ export default function WarrantBranchPanel({
 
   const threshold = (usingMarketFallback ? LARGE_AMOUNT : DETAIL_MIN_AMOUNT) / 10000;
   const breakdown = (selectedRow?.breakdown ?? [])
-    .filter((b) => b.kind === kind)
     .sort((a, b) => Math.abs(b.net_amount) - Math.abs(a.net_amount));
 
   return (
@@ -242,7 +242,7 @@ export default function WarrantBranchPanel({
           <h3 className="text-sm font-bold text-foreground">權證分點進出</h3>
           <p className="mt-0.5 text-[11.5px] leading-relaxed text-muted-foreground">
             點選左邊的券商,右邊對照股價看它每天在這檔股票權證上的買賣超金額。
-            認購與認售分開看:<b className="font-semibold text-foreground">買認售是看空</b>。
+            金額為認購＋認售合計;下方明細逐檔標示<b className="font-semibold text-foreground">購／售</b>,買認售是看空。
             金額為估計值(張數 × 1000 × 當日權證收盤價);每檔權證只有前 15 大分點,
             區間淨額 ≥ {threshold} 萬才列入。
           </p>
@@ -270,24 +270,11 @@ export default function WarrantBranchPanel({
             </button>
           ))}
         </div>
-        <div className="flex gap-0.5 rounded-md border border-border p-0.5" role="group" aria-label="權證種類">
-          {(["call", "put"] as const).map((k) => (
-            <button
-              key={k}
-              type="button"
-              aria-pressed={kind === k}
-              onClick={() => setKind(k)}
-              className={cn(segBtnClass(kind === k), "min-h-9 px-3")}
-            >
-              {k === "call" ? "認購" : "認售"}
-            </button>
-          ))}
-        </div>
       </div>
 
       {buys.length === 0 && sells.length === 0 ? (
         <p className="py-4 text-center text-[13px] text-muted-foreground">
-          此區間沒有{kindLabel}權證淨買賣超達 {threshold} 萬的券商。涵蓋依已匯入且符合條件的權證池,每檔僅前 15 大分點;沒有資料不代表沒有交易。
+          此區間沒有權證淨買賣超達 {threshold} 萬的券商。涵蓋依已匯入且符合條件的權證池,每檔僅前 15 大分點;沒有資料不代表沒有交易。
         </p>
       ) : (
         <div className="grid min-w-0 gap-3 md:grid-cols-[minmax(0,17rem)_minmax(0,1fr)]">
@@ -327,7 +314,7 @@ export default function WarrantBranchPanel({
               )}
             </div>
             <RankTable
-              title={`${kindLabel}權證買超金額最多券商`}
+              title="權證買超金額最多券商"
               tone="up"
               rows={buys}
               codes={codes}
@@ -335,7 +322,7 @@ export default function WarrantBranchPanel({
               onSelect={setPicked}
             />
             <RankTable
-              title={`${kindLabel}權證賣超金額最多券商`}
+              title="權證賣超金額最多券商"
               tone="down"
               rows={sells}
               codes={codes}
@@ -345,29 +332,34 @@ export default function WarrantBranchPanel({
           </div>
 
           <div className="grid min-w-0 content-start gap-2.5">
-            {selected && (
-              <div className="flex flex-wrap items-baseline gap-2">
-                <span className="rounded-md bg-[color:var(--accent-2)]/15 px-2 py-0.5 text-[15px] font-bold text-foreground">
-                  {codes[selected] && <span className="num mr-1.5 text-muted-foreground">{codes[selected]}</span>}
-                  {selected}
-                </span>
-                <span className="text-[14px] font-semibold text-foreground">
-                  <span className="num mr-1">{stockId}</span>{stockName}
-                </span>
-                {selectedRow && (
-                  <span className={cn("num text-[13px] font-semibold", kindNet(selectedRow, kind) >= 0 ? "text-up" : "text-down")}>
-                    {TIMEFRAMES.find((t) => t.key === tf)?.label}{kindLabel} {fmtWanSigned(kindNet(selectedRow, kind))}
-                  </span>
-                )}
-              </div>
-            )}
             {candles.length > 0 ? (
               <KChart
                 candles={candles}
                 visibleDays={120}
                 branchFlow={series}
-                branchFlowLabel={selected ? `${selected} ${kindLabel}權證進出` : undefined}
+                branchFlowLabel={selected ? `${selected} 權證進出` : undefined}
                 branchFlowFormat={fmtWanValueSigned}
+                // 使用者 2026-10-02:這一行併到均線列下方(圖表上緣),不在 K 線上方另起一行。
+                caption={selected ? (
+                  <>
+                    <span className="font-bold text-foreground">
+                      {codes[selected] && <span className="num mr-1 text-muted-foreground">{codes[selected]}</span>}
+                      {selected}
+                    </span>
+                    <span className="text-muted-foreground">·</span>
+                    <span className="text-foreground">
+                      <span className="num mr-1">{stockId}</span>{stockName}
+                    </span>
+                    {selectedRow && (
+                      <>
+                        <span className="text-muted-foreground">·</span>
+                        <span className={cn("num font-semibold", kindNet(selectedRow, kind) >= 0 ? "text-up" : "text-down")}>
+                          {TIMEFRAMES.find((t) => t.key === tf)?.label}權證 {fmtWanSigned(kindNet(selectedRow, kind))}
+                        </span>
+                      </>
+                    )}
+                  </>
+                ) : undefined}
               />
             ) : (
               <p className="py-6 text-center text-[13px] text-muted-foreground">尚無 K 線資料。</p>
@@ -376,14 +368,14 @@ export default function WarrantBranchPanel({
               <p className="text-[11.5px] text-muted-foreground">
                 {daily === undefined
                   ? "逐日權證進出要等下一次資料匯出後才會出現,目前只能看區間合計。"
-                  : `${selected} 在近 120 個交易日沒有${kindLabel}權證的逐日紀錄(不在任何一檔權證的前 15 大分點)。`}
+                  : `${selected} 在近 120 個交易日沒有權證的逐日紀錄(不在任何一檔權證的前 15 大分點)。`}
               </p>
             )}
 
             {breakdown.length > 0 && (
               <div className="rounded-[var(--r-md)] border border-border bg-background px-2 py-2">
                 <p className="mb-1 px-2 text-[11.5px] font-semibold text-foreground">
-                  {selected} 這段期間的{kindLabel}權證明細
+                  {selected} 這段期間的權證明細
                 </p>
                 <div className="mb-1 grid grid-cols-[1.4fr_1fr_0.6fr] px-2 text-[10.5px] font-semibold text-muted-foreground">
                   <span>權證</span>
@@ -406,6 +398,14 @@ export default function WarrantBranchPanel({
                             {brk.warrant_name}
                           </span>
                           <span className="num text-[10.5px] text-muted-foreground">{brk.warrant_id}</span>
+                          <span
+                            className={cn(
+                              "rounded px-1 py-0.5 text-[9px] font-bold leading-none",
+                              brk.kind === "call" ? "bg-up/10 text-up" : "bg-down/10 text-down",
+                            )}
+                          >
+                            {brk.kind === "call" ? "購" : "售"}
+                          </span>
                         </div>
                         <span className={cn("num text-right text-[13px] font-semibold", brkBuy ? "text-up" : "text-down")}>
                           {brkBuy ? "+" : "−"}

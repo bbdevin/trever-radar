@@ -4,7 +4,8 @@
 // 認購與認售方向相反——買認售是看空。把兩者混成一個「淨買超」,一個大買認售的
 // 券商會被排進「買超最多」、看起來在做多。所以排行與圖都依種類計算,不混。
 
-export type WarrantKind = "call" | "put";
+/** "all" = 認購＋認售合計(使用者 2026-10-02 選擇的預設顯示)。 */
+export type WarrantKind = "call" | "put" | "all";
 
 export type BreakdownLite = { kind: string; net_amount: number };
 export type BranchRowLite = { branch_name: string; net_amount: number; breakdown?: BreakdownLite[] };
@@ -14,6 +15,7 @@ export type DailyEntry = [string, number, number];
 
 /** 某券商在某種權證上的淨額:由逐檔明細依種類加總。 */
 export function kindNet(row: BranchRowLite, kind: WarrantKind): number {
+  if (kind === "all") return row.net_amount;
   return (row.breakdown ?? []).reduce((s, b) => (b.kind === kind ? s + b.net_amount : s), 0);
 }
 
@@ -44,7 +46,7 @@ export function branchSeries(
   const rows = daily[branch];
   if (!rows?.length) return undefined;
   // 缺的日子不補 0:那天該券商不在任何一檔權證的前 15 大,不是確定沒交易。
-  return rows.map(([t, call, put]) => ({ t, net: kind === "call" ? call : put }));
+  return rows.map(([t, call, put]) => ({ t, net: kind === "call" ? call : kind === "put" ? put : call + put }));
 }
 
 /**

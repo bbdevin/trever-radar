@@ -22,6 +22,7 @@ from sqlalchemy import text
 
 from .. import config, schema
 from ..db import get_engine, init_db, upsert
+from ..branch_names import is_closed
 from .performance import forward_returns
 
 # 事件資格
@@ -269,6 +270,7 @@ def compute_all():
     # 只要約 3 分鐘。不再從 profile 外推:讓正式 log 自己說四段各花多少。
     t_start = time.monotonic()
     t_read = 0.0
+    last_seen: dict[str, str] = {}
 
     # 分點層級 pool:增量累加(OOM 修復 2026-08-25:不再保留全事件 list)。
     # stock_stats 用緊湊 tuple,峰值 ≈ 單檔 trades + 累加器。
@@ -329,6 +331,10 @@ def compute_all():
                 by_branch[br][d] = {"net": net, "sell": sell, "pct": pct}
 
             for br, datemap in by_branch.items():
+                # 停業判定用:分點在任一檔股票最後出現的日子(資料已在手上,不另查)。
+                seen = max(datemap)
+                if seen > last_seen.get(br, ""):
+                    last_seen[br] = seen
                 qual_dates = sorted(
                     d for d, row in datemap.items()
                     if (row["net"] or 0) > 0 and row["pct"] is not None and row["pct"] >= QUAL_PCT
@@ -414,8 +420,11 @@ def compute_all():
     # 排行快照:pooled 事件數 >= 5 入榜。
     ranked_names: set[str] = set()
     rank_records: list[dict] = []
+    # 停業分點(名稱有「(停)」,或 120 天內沒有任何一筆交易)不進排行、不自動追蹤。
+    # 它們已經無從追蹤;元大-西門(停)曾以 26 筆樣本排第一。歷史交易保留不刪。
+    closed = {br for br in branch_meta if is_closed(br, last_seen.get(br), as_of)}
     for br, m in branch_meta.items():
-        if m["n_events"] < MIN_RANK_EVENTS:
+        if m["n_events"] < MIN_RANK_EVENTS or br in closed:
             continue
         ranked_names.add(br)
         rank_records.append({
@@ -456,6 +465,11 @@ def compute_all():
     auto_in, auto_out = [], []
     for br, m in branch_meta.items():
         src = tracked.get(br)
+        if br in closed:
+            # 停業:不自動加入;自動加入過的移出;使用者手動加的不動(那是他的決定)。
+            if src == "auto":
+                auto_out.append(br)
+            continue
         if src is None:
             # NULL(未判定)不擋自動入選 —— 見 auto_in_blocked_by_daytrade 的說明。
             blocked_by_daytrade = auto_in_blocked_by_daytrade(m["is_dt"])
@@ -504,7 +518,8 @@ def compute_all():
     print(f"branch stats @ {as_of}: {len(branch_meta)} branches evaluated, "
           f"{len(rank_records)} ranked (>= {MIN_RANK_EVENTS} events), "
           f"{len(stat_records)} stock-stat rows, "
-          f"+{len(auto_in)} auto-in, -{len(auto_out)} auto-out.")
+          f"+{len(auto_in)} auto-in, -{len(auto_out)} auto-out, "
+          f"{len(closed)} closed branches excluded from ranking.")
     for r in sorted(rank_records, key=lambda x: x["rank_score"], reverse=True)[:5]:
         print(f"  {r['branch_name']}: score={r['rank_score']} win={r['win_rate']} "
               f"ret5={r['avg_ret5']} n={r['samples']} "
