@@ -187,6 +187,86 @@ class WarrantBranchDetailExportTests(unittest.TestCase):
         detail = self._export_detail()
         self.assertEqual(detail["branch_codes"]["兩百萬分點"], "two")
 
+    def test_breakdown_is_split_into_one_extra_file_per_stock(self):
+        """排行留在分片、逐檔明細搬到 {id}.breakdown.json(第一屏只需要排行)。"""
+        out = Path(self._tmp.name) / "out"
+        out.mkdir(parents=True, exist_ok=True)
+        export_json(out)
+        detail_dir = out / "branches" / "warrant-stock-details"
+        detail = json.loads((detail_dir / "2330.json").read_text(encoding="utf-8"))
+        split = json.loads((detail_dir / "2330.breakdown.json").read_text(encoding="utf-8"))
+
+        self.assertIs(detail["breakdown_split"], True)
+        for rows in detail["timeframes"].values():
+            for row in rows:
+                self.assertNotIn("breakdown", row)
+        self.assertEqual(split["version"], 1)
+        self.assertEqual(split["data_date"], detail["data_date"])
+        self.assertEqual(split["stock_id"], "2330")
+        self.assertEqual(set(split["timeframes"]), set(detail["timeframes"]))
+        for tf, rows in detail["timeframes"].items():
+            self.assertEqual(set(split["timeframes"][tf]), {r["branch_name"] for r in rows})
+        self.assertEqual(split["timeframes"]["5d"]["六百萬分點"], [{
+            "warrant_id": "123457", "warrant_name": "六百萬購", "kind": "call",
+            "net_lots": 600, "net_amount": 6_000_000,
+        }])
+        # 每檔只多一個明細檔;沒進 index 的股票兩個檔都沒有。
+        self.assertEqual(sorted(p.name for p in detail_dir.glob("*.json")),
+                         ["2330.breakdown.json", "2330.json", "index.json"])
+        # /branch 的全市場檔不拆,明細仍內嵌。
+        market = json.loads((out / "branches" / "warrant_branches.json").read_text(encoding="utf-8"))
+        self.assertIn("breakdown", market["timeframes"]["5d"][0])
+
+    def test_issuer_and_branch_group_parsing(self):
+        from radar.export.json_export import _branch_broker_group, _warrant_issuer_group
+        self.assertEqual(_warrant_issuer_group("環球晶凱基5C購02"), "凱基")
+        self.assertEqual(_warrant_issuer_group("環球晶群益59售01"), "群益金鼎")
+        self.assertEqual(_warrant_issuer_group("台積電永豐5A牛03"), "永豐金")
+        self.assertEqual(_warrant_issuer_group("聯發科中信61購05"), "中國信託")
+        self.assertIsNone(_warrant_issuer_group("兩百萬購"))
+        self.assertIsNone(_warrant_issuer_group(None))
+        self.assertEqual(_branch_broker_group("元大證券"), ("元大", True))
+        self.assertEqual(_branch_broker_group("元大-南京"), ("元大", False))
+        self.assertEqual(_branch_broker_group("凱基"), ("凱基", True))
+        self.assertEqual(_branch_broker_group("群益金鼎-東大"), ("群益金鼎", False))
+        self.assertEqual(_branch_broker_group("永豐金證券"), ("永豐金", True))
+        self.assertEqual(_branch_broker_group("(牛牛牛)亞-鑫豐"), ("亞", False))
+
+    def test_self_issued_share_is_marked_per_branch_and_warrant(self):
+        """發行券商總公司在自家權證上的金額標 self(hq=True);別家券商不標。"""
+        day = self.DATES[-1]
+        with db.get_engine().begin() as conn:
+            conn.execute(schema.warrants.insert(), [
+                {"id": "700001", "name": "台積電凱基5C購02", "market": "twse", "kind": "call", "stock_id": "2330"},
+                {"id": "700002", "name": "台積電元大58購01", "market": "twse", "kind": "call", "stock_id": "2330"},
+            ])
+            conn.execute(schema.warrant_daily.insert(), [
+                {"warrant_id": w, "date": day, "close": 10.0, "volume": 1, "turnover": 1}
+                for w in ("700001", "700002")])
+            # 凱基總公司:賣自家 -900 萬、買元大 +100 萬 → 自家淨 -900 萬、占 90%。
+            upsert_branch_trades(conn, [
+                {"stock_id": "700001", "date": day, "branch_key": "9200", "branch_name": "凱基",
+                 "buy_lots": 0, "sell_lots": 900, "net_lots": -900, "pct": 0},
+                {"stock_id": "700002", "date": day, "branch_key": "9200", "branch_name": "凱基",
+                 "buy_lots": 100, "sell_lots": 0, "net_lots": 100, "pct": 0},
+                {"stock_id": "700001", "date": day, "branch_key": "9268", "branch_name": "凱基-台北",
+                 "buy_lots": 150, "sell_lots": 0, "net_lots": 150, "pct": 0},
+            ])
+        out = Path(self._tmp.name) / "out"
+        out.mkdir(parents=True, exist_ok=True)
+        export_json(out)
+        detail_dir = out / "branches" / "warrant-stock-details"
+        detail = json.loads((detail_dir / "2330.json").read_text(encoding="utf-8"))
+        split = json.loads((detail_dir / "2330.breakdown.json").read_text(encoding="utf-8"))
+        rows = {r["branch_name"]: r for r in detail["timeframes"]["5d"]}
+
+        self.assertEqual(rows["凱基"]["net_amount"], -8_000_000)
+        self.assertEqual(rows["凱基"]["self"], {"net": -9_000_000, "pct": 90, "hq": True})
+        self.assertEqual(rows["凱基-台北"]["self"], {"net": 1_500_000, "pct": 100, "hq": False})
+        self.assertNotIn("self", rows["六百萬分點"])
+        flags = {b["warrant_id"]: b.get("self", False) for b in split["timeframes"]["5d"]["凱基"]}
+        self.assertEqual(flags, {"700001": True, "700002": False})
+
     def test_empty_warrant_branch_pool_reports_null_data_date(self):
         """池內沒有權證分點時報 null,不可拿報價日充當資料日。"""
         with db.get_engine().begin() as conn:

@@ -6,6 +6,7 @@ money-flow panel built from industry sums vs their 20-day averages.
 """
 import hashlib
 import json
+import re
 from datetime import date, datetime
 from datetime import date as date_cls  # 函式內有叫 date 的區域名稱時仍拿得到類別
 from pathlib import Path
@@ -877,6 +878,61 @@ def _branch_code(branch_key: str | None) -> str | None:
         # 來源偶有小寫(永豐金-內湖解出 9A9g);券商代號慣例是大寫。
         return decoded.upper() if decoded.isprintable() and decoded.strip() else None
     return key
+
+
+# 同券商發行(2026-10-02):權證發行商依規定要為自家權證造市,造市／避險單走發行
+# 券商自己的席位,在分點資料裡就是「元大證券」「凱基」這類總公司列——使用者常把它
+# 誤讀成主力買賣。warrants.issuer 欄從未有匯入端填值,所以發行商取自權證簡稱:
+# 命名慣例為「標的簡稱 + 發行商簡稱(2 字) + 序號(2 碼) + 購/售/牛/熊 + 序號(2 碼)」,
+# 例「環球晶凱基5C購02」。簡稱與分點名稱的券商前綴多半相同,不同的列在這裡。
+_WARRANT_ISSUER_RE = re.compile(r"([一-鿿]{2})[0-9A-Z]{2}[購售牛熊][0-9A-Z]{2}$")
+_ISSUER_TO_BROKER = {
+    "群益": "群益金鼎",
+    "永豐": "永豐金",
+    "中信": "中國信託",
+    "第一": "第一金",
+    "華南": "華南永昌",
+}
+
+
+def _warrant_issuer_group(warrant_name: str | None) -> str | None:
+    """權證簡稱 → 發行券商的分點前綴(群益 → 群益金鼎)。解不出來回 None,不猜。"""
+    m = _WARRANT_ISSUER_RE.search((warrant_name or "").strip())
+    if not m:
+        return None
+    return _ISSUER_TO_BROKER.get(m.group(1), m.group(1))
+
+
+def _branch_broker_group(branch_name: str) -> tuple[str, bool]:
+    """分點名稱 → (券商前綴, 是否總公司席位)。
+
+    「元大-南京」→(元大, False);「元大證券」→(元大, True);「凱基」→(凱基, True)。
+    總公司 = 名稱沒有「-分公司」段,發行商的自營／造市席位就在這裡。
+    """
+    name = re.sub(r"^\(.*?\)", "", branch_name.strip())
+    head, sep, _ = name.partition("-")
+    if head.endswith("證券") and len(head) > 2:
+        head = head[:-2]
+    return head, not sep
+
+
+def _self_issued_summary(branch_name: str, breakdown: list[dict]) -> dict | None:
+    """某券商在同券商發行權證上的淨額與占比(依金額絕對值),並標記 breakdown 列。
+
+    沒有任何同券商發行的權證 → None(呼叫端不寫鍵,省體積)。
+    """
+    group, is_hq = _branch_broker_group(branch_name)
+    gross = own_gross = own_net = 0
+    for b in breakdown:
+        amt = b["net_amount"]
+        gross += abs(amt)
+        if _warrant_issuer_group(b["warrant_name"]) == group:
+            b["self"] = True
+            own_gross += abs(amt)
+            own_net += amt
+    if not own_gross:
+        return None
+    return {"net": int(own_net), "pct": round(own_gross * 100 / gross) if gross else 0, "hq": is_hq}
 
 
 def _directors_latest_payload(conn, sid: str) -> dict | None:
@@ -2328,6 +2384,9 @@ def _export_warrant_branches(out: Path, engine, date: str, base20: list[str]):
                         "net_amount": int(total_amt),
                         "breakdown": breakdown
                     }
+                    self_issued = _self_issued_summary(branch_name, breakdown)
+                    if self_issued:
+                        item["self"] = self_issued
                     detail_by_stock.setdefault(
                         underlying_id, {key: [] for key in results}
                     )[tf].append(item)
@@ -2398,12 +2457,31 @@ def _export_warrant_branches(out: Path, engine, date: str, base20: list[str]):
         for stock_id, timeframes in detail_by_stock.items():
             for values in timeframes.values():
                 values.sort(key=lambda x: -abs(x["net_amount"]))
+            # 拆檔(2026-10-02):逐檔權證明細占分片九成以上(6488:754 KB 中 690 KB),
+            # 但分頁第一屏只需要排行。明細搬到每檔一個 {id}.breakdown.json,點選券商
+            # 時才抓;分片本身留排行 + 逐日序列(預設選中的券商一開就要畫圖)。
+            # 每檔只多一個檔,不是每家券商一個——Workers 靜態資產有檔數上限。
+            # breakdown_split 讓前端知道要去抓第二個檔;缺鍵 = 舊分片,明細仍內嵌。
+            summary = {
+                tf: [{k: v for k, v in x.items() if k != "breakdown"} for x in values]
+                for tf, values in timeframes.items()
+            }
+            (detail_dir / f"{stock_id}.breakdown.json").write_text(json.dumps({
+                "version": 1,
+                "data_date": bd1,
+                "stock_id": stock_id,
+                "timeframes": {
+                    tf: {x["branch_name"]: x["breakdown"] for x in values}
+                    for tf, values in timeframes.items()
+                },
+            }, ensure_ascii=False), encoding="utf-8")
             (detail_dir / f"{stock_id}.json").write_text(json.dumps({
                 "version": 1,
                 "threshold": WARRANT_BRANCH_DETAIL_MIN_AMOUNT,
                 "data_date": bd1,
                 "stock_id": stock_id,
-                "timeframes": timeframes,
+                "timeframes": summary,
+                "breakdown_split": True,
                 # 可選鍵:舊前端不讀。缺鍵 = 舊 payload;{} = 算過、沒有可畫的券商。
                 "daily_from": d120,
                 "daily": daily_by_stock.get(stock_id, {}),

@@ -3,8 +3,12 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  branchAmount,
   branchSeries,
   defaultBranch,
+  hasSelfIssued,
+  resolveBreakdown,
+  selfIssuedTag,
   fmtWanSigned,
   kindNet,
   rankBranches,
@@ -101,6 +105,49 @@ test("搜尋券商:名稱或代號都找得到,不限排行前 10", () => {
   assert.deepEqual(searchBranches(rows, "  ", "call", codes), []);
   // 沒有代號對照(舊分片)時只比名稱,不壞
   assert.equal(searchBranches(rows, "兆豐", "call").length, 1);
+});
+
+const selfRows = [
+  // 發行商總公司:總額 -800 萬,其中自家權證 -900 萬(占 90%)。
+  { branch_name: "凱基", net_amount: -8_000_000, self: { net: -9_000_000, pct: 90, hq: true } },
+  { branch_name: "凱基-台北", net_amount: 3_000_000, self: { net: 2_500_000, pct: 80, hq: false } },
+  { branch_name: "元大-南京", net_amount: 2_000_000, self: { net: 100_000, pct: 5, hq: false } },
+  { branch_name: "兆豐-嘉義", net_amount: 1_500_000 },
+];
+
+test("排除同券商發行:扣掉自家權證淨額、再套同一門檻", () => {
+  assert.equal(branchAmount(selfRows[0], "all", true), 1_000_000);
+  assert.equal(branchAmount(selfRows[0], "all", false), -8_000_000);
+  // 單一種類時摘要不分購售,不假裝扣得準。
+  assert.equal(branchAmount({ ...selfRows[0], breakdown: [{ kind: "call", net_amount: -8_000_000 }] }, "call", true), -8_000_000);
+  assert.deepEqual(rankBranches(selfRows, "all", "sell").map((r) => r.branch_name), ["凱基"]);
+  const opts = { excludeSelf: true, minAbs: 1_000_000 };
+  // 凱基扣完剩 +100 萬 → 改到買超邊;凱基-台北剩 50 萬 < 門檻 → 掉出。
+  assert.deepEqual(rankBranches(selfRows, "all", "buy", 10, opts).map((r) => [r.branch_name, r.amount]),
+    [["元大-南京", 1_900_000], ["兆豐-嘉義", 1_500_000], ["凱基", 1_000_000]]);
+  assert.deepEqual(rankBranches(selfRows, "all", "sell", 10, opts), []);
+  assert.equal(searchBranches(selfRows, "凱基", "all", {}, 20, true)[0].amount, 1_000_000);
+});
+
+test("同券商標籤:總公司標發行商、分公司標同券商、未過半不標", () => {
+  assert.deepEqual(selfIssuedTag(selfRows[0].self), { label: "發行商", pct: 90, hq: true });
+  assert.deepEqual(selfIssuedTag(selfRows[1].self), { label: "同券商", pct: 80, hq: false });
+  assert.equal(selfIssuedTag(selfRows[2].self), null);
+  assert.equal(selfIssuedTag(undefined), null);
+  assert.equal(rankBranches(selfRows, "all", "sell")[0].self?.pct, 90);
+  assert.equal(hasSelfIssued(selfRows), true);
+  assert.equal(hasSelfIssued(rows), false);
+});
+
+test("明細:舊分片內嵌優先,新分片查拆檔,未載入回 null", () => {
+  const inline = { branch_name: "a", breakdown: [{ kind: "call", net_amount: 1 }] };
+  const bare = { branch_name: "a" };
+  const split = { "5d": { a: [{ kind: "put", net_amount: 2 }] } };
+  assert.deepEqual(resolveBreakdown(inline, null, "5d"), inline.breakdown);
+  assert.equal(resolveBreakdown(bare, null, "5d"), null);
+  assert.deepEqual(resolveBreakdown(bare, split, "5d"), split["5d"].a);
+  assert.deepEqual(resolveBreakdown(bare, split, "1d"), []);
+  assert.equal(resolveBreakdown(null, split, "5d"), null);
 });
 
 test("預設選買超第一名,沒有就賣超第一名", () => {

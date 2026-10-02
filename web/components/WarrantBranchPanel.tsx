@@ -6,16 +6,20 @@ import { dataFetch } from "@/lib/dataFetch";
 import type { Candle } from "@/lib/types";
 import { cn, pillTabClass } from "@/lib/utils";
 import {
+  branchAmount,
   branchSeries,
   defaultBranch,
   fmtWanSigned,
   fmtWanValueSigned,
-  kindNet,
+  hasSelfIssued,
   rankBranches,
+  resolveBreakdown,
   searchBranches,
+  selfIssuedTag,
   toWanSeries,
   type DailyEntry,
   type RankedBranch,
+  type SelfIssued,
   type WarrantKind,
 } from "@/lib/warrantBranches";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -26,6 +30,8 @@ export type WarrantBreakdown = {
   kind: "call" | "put" | string;
   net_lots: number;
   net_amount: number;
+  /** 可選:這檔權證是該券商同集團發行的。 */
+  self?: boolean;
 };
 
 export type WarrantBranchRow = {
@@ -33,7 +39,19 @@ export type WarrantBranchRow = {
   underlying_id: string;
   underlying_name: string;
   net_amount: number;
+  /** 舊分片內嵌;新分片(breakdown_split)拆到 {id}.breakdown.json。 */
   breakdown?: WarrantBreakdown[];
+  self?: SelfIssued;
+};
+
+/** {id}.breakdown.json:timeframe → 券商 → 逐檔明細。 */
+type SplitBreakdown = Record<string, Record<string, WarrantBreakdown[]>>;
+
+type WarrantBreakdownFile = {
+  version: number;
+  data_date: string | null;
+  stock_id: string;
+  timeframes: SplitBreakdown;
 };
 
 type WarrantBranchDetailIndex = {
@@ -55,6 +73,8 @@ type WarrantBranchDetailShard = {
   daily?: Record<string, DailyEntry[]>;
   /** 可選:券商名稱 → 代號(參考圖的「代號」欄)。 */
   branch_codes?: Record<string, string>;
+  /** 可選:true = 列上沒有 breakdown,點選券商時才抓 {id}.breakdown.json。 */
+  breakdown_split?: boolean;
 };
 
 type Timeframe = "1d" | "2d" | "5d" | "30d" | "120d";
@@ -106,12 +126,20 @@ export default function WarrantBranchPanel({
   const [error, setError] = useState(false);
   const [usingMarketFallback, setUsingMarketFallback] = useState(false);
   const [dataDate, setDataDate] = useState<string | null>(null);
+  // 拆檔明細:breakdownSplit = 分片宣告明細在第二個檔;split 載入後才有值。
+  const [breakdownSplit, setBreakdownSplit] = useState(false);
+  const [split, setSplit] = useState<SplitBreakdown | null>(null);
+  const [splitError, setSplitError] = useState(false);
+  const [excludeSelf, setExcludeSelf] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     setByTf(null);
     setDaily(undefined);
     setCodes({});
+    setBreakdownSplit(false);
+    setSplit(null);
+    setSplitError(false);
     setError(false);
     setUsingMarketFallback(false);
     setDataDate(null);
@@ -141,6 +169,7 @@ export default function WarrantBranchPanel({
               : null,
             daily: undefined,
             codes: {},
+            splitFile: false,
           };
         }
         if (!indexResponse.ok) throw indexResponse.status;
@@ -155,7 +184,7 @@ export default function WarrantBranchPanel({
         // The index is authoritative: never read an old shard for a stock
         // absent from the current snapshot.
         if (!index.stocks.includes(stockId)) {
-          return { rows: {} as Record<string, WarrantBranchRow[]>, fallback: false, dataDate: index.data_date, daily: undefined, codes: {} };
+          return { rows: {} as Record<string, WarrantBranchRow[]>, fallback: false, dataDate: index.data_date, daily: undefined, codes: {}, splitFile: false };
         }
         const shardResponse = await dataFetch(`/data/branches/warrant-stock-details/${encodeURIComponent(stockId)}.json`);
         if (!shardResponse.ok) throw shardResponse.status;
@@ -175,15 +204,20 @@ export default function WarrantBranchPanel({
         const nextCodes = shard.branch_codes && typeof shard.branch_codes === "object" && !Array.isArray(shard.branch_codes)
           ? shard.branch_codes
           : {};
-        return { rows: shard.timeframes, fallback: false, dataDate: index.data_date, daily: nextDaily, codes: nextCodes };
+        return {
+          rows: shard.timeframes, fallback: false, dataDate: index.data_date, daily: nextDaily, codes: nextCodes,
+          // 舊分片沒有這個鍵,明細仍內嵌在列上(程式碼可能先於下一次 VPS 匯出上線)。
+          splitFile: shard.breakdown_split === true,
+        };
       })
-      .then(({ rows, fallback, dataDate: nextDataDate, daily: nextDaily, codes: nextCodes }) => {
+      .then(({ rows, fallback, dataDate: nextDataDate, daily: nextDaily, codes: nextCodes, splitFile }) => {
         if (!cancelled) {
           setUsingMarketFallback(fallback);
           setDataDate(nextDataDate);
           setByTf(rows);
           setDaily(nextDaily);
           setCodes(nextCodes ?? {});
+          setBreakdownSplit(splitFile);
         }
       })
       .catch(() => {
@@ -200,20 +234,59 @@ export default function WarrantBranchPanel({
     return (byTf[tf] ?? []).filter((r) => r.underlying_id === stockId);
   }, [byTf, tf, stockId]);
 
-  const buys = useMemo(() => (rows ? rankBranches(rows, kind, "buy") : []), [rows, kind]);
-  const sells = useMemo(() => (rows ? rankBranches(rows, kind, "sell") : []), [rows, kind]);
+  const minAbs = usingMarketFallback ? LARGE_AMOUNT : DETAIL_MIN_AMOUNT;
+  const canExclude = !!rows && hasSelfIssued(rows);
+  const exclude = excludeSelf && canExclude;
+  const buys = useMemo(
+    () => (rows ? rankBranches(rows, kind, "buy", 10, { excludeSelf: exclude, minAbs }) : []),
+    [rows, kind, exclude, minAbs],
+  );
+  const sells = useMemo(
+    () => (rows ? rankBranches(rows, kind, "sell", 10, { excludeSelf: exclude, minAbs }) : []),
+    [rows, kind, exclude, minAbs],
+  );
 
   // 選中的券商(點排行或搜尋)只要還在這段期間的資料裡就保留;換區間後不在了,
   // 才改回預設(買超第一名)。搜尋到的券商可以不在前 10 名裡。
   const inRows = (name: string | null) => !!name && !!rows?.some((r) => r.branch_name === name);
   const selected = inRows(picked) ? picked : defaultBranch(buys, sells);
-  const hits = useMemo(() => (rows ? searchBranches(rows, query, kind, codes) : []), [rows, query, kind, codes]);
+  const hits = useMemo(
+    () => (rows ? searchBranches(rows, query, kind, codes, 20, exclude) : []),
+    [rows, query, kind, codes, exclude],
+  );
   const selectedRow = rows?.find((r) => r.branch_name === selected) ?? null;
   const series = useMemo(() => toWanSeries(branchSeries(daily, selected, kind)), [daily, selected, kind]);
 
   useEffect(() => {
     setPicked(null);
+    setExcludeSelf(false);
   }, [stockId]);
+
+  // 明細拆檔:有券商被選中(含預設選中的買超第一名)才抓,每檔股票只抓一次。
+  // 排行與 K 線不等它,第一屏只需要分片本身。
+  const needSplit = breakdownSplit && !!selected && split === null && !splitError;
+  useEffect(() => {
+    if (!needSplit) return;
+    let cancelled = false;
+    dataFetch(`/data/branches/warrant-stock-details/${encodeURIComponent(stockId)}.breakdown.json`)
+      .then(async (response) => {
+        if (!response.ok) throw response.status;
+        const file = await response.json() as WarrantBreakdownFile;
+        if (
+          file.version !== DETAIL_CONTRACT_VERSION
+          || file.stock_id !== stockId
+          || file.data_date !== dataDate
+          || !file.timeframes || typeof file.timeframes !== "object"
+        ) throw new Error("權證分點明細格式錯誤");
+        if (!cancelled) setSplit(file.timeframes);
+      })
+      .catch(() => {
+        if (!cancelled) setSplitError(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [needSplit, stockId, dataDate]);
 
   useEffect(() => {
     setShowAllWarrants(false);
@@ -231,9 +304,16 @@ export default function WarrantBranchPanel({
     return <Skeleton className="h-36 w-full rounded-[var(--r-lg)]" />;
   }
 
-  const threshold = (usingMarketFallback ? LARGE_AMOUNT : DETAIL_MIN_AMOUNT) / 10000;
-  const breakdown = (selectedRow?.breakdown ?? [])
+  const threshold = minAbs / 10000;
+  // null = 拆檔明細還沒到(或載入失敗);[] = 真的沒有明細。
+  const resolved = resolveBreakdown(selectedRow, split, tf);
+  const breakdown = [...(resolved ?? [])]
     .sort((a, b) => Math.abs(b.net_amount) - Math.abs(a.net_amount));
+  const selectedAmount = selectedRow ? branchAmount(selectedRow, kind, exclude) : 0;
+  const selectedSelf = selectedRow?.self;
+  const selectedTag = selfIssuedTag(selectedSelf);
+  // 排除模式下列上的金額已不含自家權證,標籤會誤導,所以不標。
+  const anyTag = !exclude && [...buys, ...sells].some((r) => selfIssuedTag(r.self));
 
   return (
     <section className="grid gap-3 rounded-[var(--r-lg)] border border-border bg-card p-3.5 shadow-[var(--shadow-card)]">
@@ -270,7 +350,23 @@ export default function WarrantBranchPanel({
             </button>
           ))}
         </div>
+        {canExclude && (
+          <button
+            type="button"
+            role="switch"
+            aria-checked={exclude}
+            onClick={() => setExcludeSelf((v) => !v)}
+            className={pillTabClass(exclude)}
+          >
+            排除同券商發行
+          </button>
+        )}
       </div>
+      {exclude && (
+        <p className="-mt-1 text-[11px] leading-relaxed text-muted-foreground">
+          排行已扣掉各券商在自家集團發行權證上的金額,扣完仍 ≥ {threshold} 萬才列入;K 線下方的逐日圖仍是合計。
+        </p>
+      )}
 
       {buys.length === 0 && sells.length === 0 ? (
         <p className="py-4 text-center text-[13px] text-muted-foreground">
@@ -318,6 +414,7 @@ export default function WarrantBranchPanel({
               tone="up"
               rows={buys}
               codes={codes}
+              showTags={!exclude}
               selected={selected}
               onSelect={setPicked}
             />
@@ -326,9 +423,18 @@ export default function WarrantBranchPanel({
               tone="down"
               rows={sells}
               codes={codes}
+              showTags={!exclude}
               selected={selected}
               onSelect={setPicked}
             />
+            {anyTag && (
+              <p className="text-[11px] leading-relaxed text-muted-foreground">
+                <SelfBadge label="發行商" /> 發行券商的總公司席位,過半金額在自家發行的權證:發行商依規定要為自家權證造市,
+                這類進出多為造市／避險,不代表看多或看空。
+                <SelfBadge label="同券商" className="ml-1" /> 同集團分公司,過半金額是自家發行的權證,只陳述事實。
+                發行商取自權證簡稱。
+              </p>
+            )}
           </div>
 
           <div className="grid min-w-0 content-start gap-2.5">
@@ -353,8 +459,8 @@ export default function WarrantBranchPanel({
                     {selectedRow && (
                       <>
                         <span className="text-muted-foreground">·</span>
-                        <span className={cn("num font-semibold", kindNet(selectedRow, kind) >= 0 ? "text-up" : "text-down")}>
-                          {TIMEFRAMES.find((t) => t.key === tf)?.label}權證 {fmtWanSigned(kindNet(selectedRow, kind))}
+                        <span className={cn("num font-semibold", selectedAmount >= 0 ? "text-up" : "text-down")}>
+                          {TIMEFRAMES.find((t) => t.key === tf)?.label}權證{exclude ? "(排除同券商)" : ""} {fmtWanSigned(selectedAmount)}
                         </span>
                       </>
                     )}
@@ -372,6 +478,20 @@ export default function WarrantBranchPanel({
               </p>
             )}
 
+            {selectedSelf && selectedSelf.pct > 0 && (
+              <p className="text-[11.5px] leading-relaxed text-muted-foreground">
+                {selected} 這段期間 <b className="num font-semibold text-foreground">{selectedSelf.pct}%</b> 的權證金額是同券商發行的權證
+                (淨 {fmtWanSigned(selectedSelf.net)})
+                {selectedTag?.hq ? ";這是發行商總公司席位,多為發行商造市／避險,不代表看多或看空。" : "。"}
+              </p>
+            )}
+            {selectedRow && resolved === null && breakdownSplit && (
+              splitError ? (
+                <p className="text-[11.5px] text-muted-foreground">權證明細載入失敗,區間合計與排行不受影響。</p>
+              ) : (
+                <Skeleton className="h-24 w-full rounded-[var(--r-md)]" />
+              )
+            )}
             {breakdown.length > 0 && (
               <div className="rounded-[var(--r-md)] border border-border bg-background px-2 py-2">
                 <p className="mb-1 px-2 text-[11.5px] font-semibold text-foreground">
@@ -406,6 +526,7 @@ export default function WarrantBranchPanel({
                           >
                             {brk.kind === "call" ? "購" : "售"}
                           </span>
+                          {brk.self && <SelfBadge label="自家" />}
                         </div>
                         <span className={cn("num text-right text-[13px] font-semibold", brkBuy ? "text-up" : "text-down")}>
                           {brkBuy ? "+" : "−"}
@@ -437,12 +558,28 @@ export default function WarrantBranchPanel({
   );
 }
 
+/** 同券商發行的小標籤(中性色:它不是買賣方向,只是提醒這筆金額的性質)。 */
+function SelfBadge({ label, title, className }: { label: string; title?: string; className?: string }) {
+  return (
+    <span
+      title={title}
+      className={cn(
+        "inline-block shrink-0 rounded border border-border px-1 py-0.5 text-[9.5px] font-semibold leading-none text-muted-foreground",
+        className,
+      )}
+    >
+      {label}
+    </span>
+  );
+}
+
 /** 左邊的排行表:代號、券商、金額(萬)。點列選取,右邊的圖跟著換。 */
 function RankTable({
   title,
   tone,
   rows,
   codes,
+  showTags,
   selected,
   onSelect,
 }: {
@@ -450,6 +587,7 @@ function RankTable({
   tone: "up" | "down";
   rows: RankedBranch[];
   codes: Record<string, string>;
+  showTags: boolean;
   selected: string | null;
   onSelect: (name: string) => void;
 }) {
@@ -469,6 +607,7 @@ function RankTable({
         <ol className="divide-y divide-[color:var(--line)]">
           {rows.map((r) => {
             const active = r.branch_name === selected;
+            const tag = showTags ? selfIssuedTag(r.self) : null;
             return (
               <li key={r.branch_name}>
                 <button
@@ -483,6 +622,12 @@ function RankTable({
                   <span className="flex min-w-0 items-baseline gap-2">
                     <span className="num w-10 shrink-0 text-[11px] text-muted-foreground">{codes[r.branch_name] ?? ""}</span>
                     <span className="min-w-0 truncate text-foreground" title={r.branch_name}>{r.branch_name}</span>
+                    {tag && (
+                      <SelfBadge
+                        label={tag.label}
+                        title={`${tag.pct}% 金額是同券商發行的權證${tag.hq ? ",多為發行商造市／避險" : ""}`}
+                      />
+                    )}
                   </span>
                   <span className={cn("num shrink-0 font-semibold", tone === "up" ? "text-up" : "text-down")}>
                     {fmtWanSigned(r.amount)}

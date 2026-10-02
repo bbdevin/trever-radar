@@ -8,7 +8,21 @@
 export type WarrantKind = "call" | "put" | "all";
 
 export type BreakdownLite = { kind: string; net_amount: number };
-export type BranchRowLite = { branch_name: string; net_amount: number; breakdown?: BreakdownLite[] };
+
+/**
+ * 匯出端算好的「同券商發行」摘要(2026-10-02,可選鍵):該券商在自家集團發行的
+ * 權證上的淨額(元)、占它總成交金額(絕對值)的百分比、是否為總公司席位。
+ * 發行商依規定為自家權證造市,造市／避險單走發行券商總公司,所以 hq 且占比高的
+ * 列多半是造市,不是主力買賣。舊分片沒有這個鍵。
+ */
+export type SelfIssued = { net: number; pct: number; hq: boolean };
+
+export type BranchRowLite = {
+  branch_name: string;
+  net_amount: number;
+  breakdown?: BreakdownLite[];
+  self?: SelfIssued;
+};
 
 /** shard.daily 的一列:[日期, 認購金額, 認售金額](元)。 */
 export type DailyEntry = [string, number, number];
@@ -19,7 +33,53 @@ export function kindNet(row: BranchRowLite, kind: WarrantKind): number {
   return (row.breakdown ?? []).reduce((s, b) => (b.kind === kind ? s + b.net_amount : s), 0);
 }
 
-export type RankedBranch = { branch_name: string; amount: number };
+/** 排行選項:excludeSelf 扣掉同券商發行的金額;minAbs 是扣完後仍要達到的門檻(元)。 */
+export type RankOptions = { excludeSelf?: boolean; minAbs?: number };
+
+/**
+ * 排行用的金額。excludeSelf 只對「合計」有效:匯出端的同券商摘要不分認購／認售,
+ * 單一種類時不假裝扣得準,原值回傳。
+ */
+export function branchAmount(row: BranchRowLite, kind: WarrantKind, excludeSelf = false): number {
+  const net = kindNet(row, kind);
+  return excludeSelf && kind === "all" && row.self ? net - row.self.net : net;
+}
+
+/** 過半金額在自家權證才標(低占比的分公司多半只是客戶剛好買到自家權證)。 */
+export const SELF_TAG_MIN_PCT = 50;
+
+export type SelfTag = { label: "發行商" | "同券商"; pct: number; hq: boolean };
+
+/**
+ * 排行列上的標籤:總公司 →「發行商」(多為發行商造市／避險);分公司 →「同券商」
+ * (只陳述事實:過半金額是同集團發行的權證)。占比未過半或沒有摘要 → null。
+ */
+export function selfIssuedTag(self: SelfIssued | undefined): SelfTag | null {
+  if (!self || self.pct < SELF_TAG_MIN_PCT) return null;
+  return { label: self.hq ? "發行商" : "同券商", pct: self.pct, hq: self.hq };
+}
+
+/** 有沒有任何一列帶同券商摘要(舊分片全無 → 不顯示「排除同券商發行」開關)。 */
+export function hasSelfIssued(rows: BranchRowLite[]): boolean {
+  return rows.some((r) => !!r.self);
+}
+
+/**
+ * 某券商在某區間的逐檔明細:舊分片內嵌在列上;新分片拆到 {id}.breakdown.json。
+ * 回 null = 拆檔還沒載入(或載入失敗),不是「沒有明細」。
+ */
+export function resolveBreakdown<T>(
+  row: { branch_name: string; breakdown?: T[] } | null,
+  split: Record<string, Record<string, T[]>> | null,
+  tf: string,
+): T[] | null {
+  if (!row) return null;
+  if (row.breakdown) return row.breakdown;
+  if (!split) return null;
+  return split[tf]?.[row.branch_name] ?? [];
+}
+
+export type RankedBranch = { branch_name: string; amount: number; self?: SelfIssued };
 
 /**
  * 買超或賣超前 N 名(依該種權證的淨額)。0 元的券商不進任一邊。
@@ -29,8 +89,13 @@ export type RankedBranch = { branch_name: string; amount: number };
  */
 export function rankBranches(
   rows: BranchRowLite[], kind: WarrantKind, side: "buy" | "sell", n = 10,
+  { excludeSelf = false, minAbs = 0 }: RankOptions = {},
 ): RankedBranch[] {
-  const scored = rows.map((r) => ({ branch_name: r.branch_name, amount: kindNet(r, kind) }));
+  const scored = rows.map((r) => ({
+    branch_name: r.branch_name,
+    amount: branchAmount(r, kind, excludeSelf),
+    ...(r.self ? { self: r.self } : {}),
+  })).filter((r) => Math.abs(r.amount) >= minAbs);
   const picked = side === "buy" ? scored.filter((r) => r.amount > 0) : scored.filter((r) => r.amount < 0);
   picked.sort((a, b) => (side === "buy" ? b.amount - a.amount : a.amount - b.amount));
   return picked.slice(0, n);
@@ -78,12 +143,12 @@ export type BranchHit = { branch_name: string; code: string | null; amount: numb
  */
 export function searchBranches(
   rows: BranchRowLite[], query: string, kind: WarrantKind,
-  codes: Record<string, string> = {}, limit = 20,
+  codes: Record<string, string> = {}, limit = 20, excludeSelf = false,
 ): BranchHit[] {
   const q = query.trim().toLowerCase();
   if (!q) return [];
   return rows
-    .map((r) => ({ branch_name: r.branch_name, code: codes[r.branch_name] ?? null, amount: kindNet(r, kind) }))
+    .map((r) => ({ branch_name: r.branch_name, code: codes[r.branch_name] ?? null, amount: branchAmount(r, kind, excludeSelf) }))
     .filter((r) => r.branch_name.toLowerCase().includes(q) || (r.code ?? "").toLowerCase().includes(q))
     .sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount))
     .slice(0, limit);
