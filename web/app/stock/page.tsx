@@ -64,7 +64,7 @@ function StockView() {
   const tabParam = useSearchParams().get("tab");
   const [data, setData] = useState<StockJson | null>(null);
   const [error, setError] = useState(false);
-  const [range, setRange] = useState<(typeof RANGES)[number]["key"]>("6m");
+  const [range, setRange] = useState<(typeof RANGES)[number]["key"]>("3m"); // 使用者 2026-10-02:預設 3 月(手機上 K 棒較大)
   const [view, setView] = useState<"chart" | "chips" | "insti" | "margin" | "holders" | "basic" | "tech" | "warrant" | "futures">("chart");
   const [drillBranch, setDrillBranch] = useState<string | null>(null);
   const activeTabRef = useRef<HTMLButtonElement | null>(null);

@@ -120,6 +120,7 @@ A2 是語意決策關卡，不是單純修 UI。Executor 先產出對照表與�
 2. ✅ `buybacks` 是 additive table；保留同股多計畫的 deterministic `plan_id`、原始 MOPS flag、null、單位、來源、`report_date`／`source_updated_at`／`imported_at`。MOPS 無 `announce_date`，contract 不得冒充有該資料。HTML 多表、重複表頭、20 欄漂移、非官方 redirect、缺出表日／有效表、網路錯誤全部 fail closed。
 3. ✅ `KB1_BUYBACK_WINDOW` 只表示 `N` 且 `start_date ≤ as_of ≤ end_date`（inclusive）的買回期間；`Y`＋合法期間=completed、`N` 且逾期=expired，其他=unknown。它只加既有 BUYBACK family 的 15 分口袋排序，不寫 `daily_scores.final` 或任何分項／H1。
 4. ✅ Export 的可選 `buyback` 只含資料日當下 active plan，且 `report_date` 與 `source_updated_at` 都不得晚於 export data date；缺欄位／舊 JSON 保持 null/不存在。個股頁顯示「庫藏股買回期間」事實：狀態、期間、預定／已執行股數（股）、價區（元/股）、目的、MOPS／出表日；不顯示或推測執行分點。
+6. ✅ **2026-10-02 排程**:使用者決定每日更新(原本 09-03 手動跑一次後就停在那天,之後新公告的計畫都沒有)。`daily-insti.sh`(16:10)在權證主檔之後跑 `import-buybacks --days 365`;失敗只 `notify_warn`、沿用既有資料,不擋法人上線。不改 crontab。
 5. ✅ offline fixture tests 覆蓋 redirect 200/406/缺 URL/network、多表／重複表頭／安全 HTML／欄漂移、ROC／null／數值、Y/N 狀態邊界、atomic zero-write、future leak、多計畫 KB1、舊 JSON fallback 與 runtime code 無 KB2。**`import-buybacks` 與排程尚未執行；16:58 的正式 `export-json` 已發布既有快照，但未更新庫藏股官方來源資料。**
 6. KB2 永不加入實作 backlog；任何 future agent 若看到舊文件的 KB2，必須以本文件與 `docs/27` 的不實作決議為準。
 

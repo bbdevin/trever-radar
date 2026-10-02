@@ -42,6 +42,12 @@ run_step_or_fail "import-insti" radar import-daily --datasets insti
 if ! radar import-warrant-master; then
   notify_warn "權證主檔暫時抓不到，已略過；請在後續輪重試"
 fi
+# 庫藏股(MOPS t35sc09,近一年;docs/37 E1)。2026-10-02 使用者決定每日更新——
+# 原本只在 09-03 手動跑過一次,之後新公告的計畫網站上都沒有。抓不到就 warn
+# 並沿用既有資料,不得擋法人上線;匯入是 atomic,失敗零寫入。
+if ! radar import-buybacks --days 365; then
+  notify_warn "庫藏股公告暫時抓不到，已略過，沿用既有資料"
+fi
 if [ "$quotes_rc" -eq 75 ]; then
   notify_warn "部分已入庫，因TPEx行情未完整，本輪不發布（不做aggregate/compute/export/deploy），待17:40"
   exit 75

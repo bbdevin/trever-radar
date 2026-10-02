@@ -85,6 +85,8 @@ GRADED_EXCLUSIONS = {
         "radar import-daily --datasets quotes",
         # 權證主檔:抓不到就 warn 並略過,不得擋法人上線
         "radar import-warrant-master",
+        # 庫藏股:抓不到就 warn 並沿用既有資料(2026-10-02 起每日)
+        "radar import-buybacks --days 365",
     ),
     "daily-margin.sh": (
         # 個股期貨:75 = 只有一般時段已公布,warn-and-continue(docs/38 R3)
