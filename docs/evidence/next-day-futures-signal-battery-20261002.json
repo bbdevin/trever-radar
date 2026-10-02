@@ -1,0 +1,1540 @@
+{
+  "choices": [
+    {
+      "choice": "a futures day whose settlement window cannot be located (settlement_is_determinable False, docs/38 §7.13) is treated like an R4 day: not a signal day, not a control day, and it breaks runs",
+      "where": "§0 R4 at the calendar edge"
+    },
+    {
+      "choice": "e is checked against max daily_prices.date (the literal R1 text), which can be one market day after as_of; the R4 calendar is read to the same horizon (the docs/38 §7.13 data_date reading). metadata.price_horizon records it",
+      "where": "§2 R1 horizon on a current run"
+    },
+    {
+      "choice": "a historical run cannot know the horizon of the run it reproduces, so by default it uses as_of itself (more R1 refusals, never more events). A run whose horizon was as_of + 1 is therefore NOT guaranteed to reproduce bit-exactly unless its metadata.price_horizon is passed back with --price-horizon (accepted only together with --historical)",
+      "where": "§0 as_of with --historical"
+    },
+    {
+      "choice": "the evaluation period starts at the earliest futures day on which any contract-day of a type='stock' underlying was seen by the rule unrefused (flagged or not); the halves split D's market days in [start, as_of] minus X with split_window (the odd day to H2)",
+      "where": "§3.1 evaluation period and halves"
+    },
+    {
+      "choice": "reads daily_prices.volume on every day (it is the input of S and R2b, not a price) and never open/close; the connection is sealed by a SQLite authorizer whitelist. Its events count is before R1/R2; it also reports what X removed",
+      "where": "§4 step 2 coverage-only"
+    },
+    {
+      "choice": "a control's v-day open-to-close is counted on the same draw; a v-day row that is missing or has a bad open is counted as visible_unknown. entry_open_at_limit_proxy counts scored events only, an unknown close(s, v) counted separately; two_contract_signal_days counts every stock signal day with >= 2 flagging contracts, X included",
+      "where": "§3.6 companion counts"
+    },
+    {
+      "choice": "min/max are over fully drawn seeds only; any short key makes B, D and C NOT EVALUABLE and is listed as (stock_id, half, k, pool_size) or (date, k, pool_size)",
+      "where": "§1 placebo ranges and §3.3 short draws"
+    },
+    {
+      "choice": "the §1 object is 'facts' (docs/39 used facts_if_shipped), produced by signal_facts(), the function §3.9 requires the export to reuse",
+      "where": "§1 naming"
+    }
+  ],
+  "companion": {
+    "all_signal_days": 629,
+    "all_signal_days_drops": 125,
+    "all_signal_days_hits": 94,
+    "all_signal_days_refusals": {
+      "R1_bad_open": 0,
+      "R1_no_close": 0,
+      "R1_no_entry_day": 0,
+      "R1_no_entry_row": 0,
+      "R2_suspended": 0
+    },
+    "all_signal_days_scored": 629,
+    "by_month": {
+      "2025-12": {
+        "drops": 1,
+        "events": 2,
+        "hits": 0
+      },
+      "2026-01": {
+        "drops": 12,
+        "events": 77,
+        "hits": 11
+      },
+      "2026-02": {
+        "drops": 6,
+        "events": 33,
+        "hits": 5
+      },
+      "2026-03": {
+        "drops": 13,
+        "events": 78,
+        "hits": 8
+      },
+      "2026-04": {
+        "drops": 8,
+        "events": 52,
+        "hits": 6
+      },
+      "2026-05": {
+        "drops": 14,
+        "events": 56,
+        "hits": 14
+      },
+      "2026-06": {
+        "drops": 24,
+        "events": 97,
+        "hits": 16
+      },
+      "2026-07": {
+        "drops": 15,
+        "events": 73,
+        "hits": 8
+      },
+      "2026-08": {
+        "drops": 12,
+        "events": 53,
+        "hits": 8
+      },
+      "2026-09": {
+        "drops": 7,
+        "events": 30,
+        "hits": 5
+      }
+    },
+    "entry_open_at_limit_proxy": 9,
+    "entry_open_at_limit_proxy_unknown": 0,
+    "events_removed_by_x": 15,
+    "non_population_signal_days": 30,
+    "signal": {
+      "down_5": 55,
+      "down_7": 22,
+      "drops": 112,
+      "hits": 81,
+      "n": 551,
+      "up_5": 44,
+      "up_7": 18,
+      "visible_drops": 122,
+      "visible_hits": 83,
+      "visible_unknown": 0
+    },
+    "signal_by_half": {
+      "H1": {
+        "down_5": 23,
+        "down_7": 12,
+        "drops": 48,
+        "hits": 40,
+        "n": 277,
+        "up_5": 22,
+        "up_7": 10,
+        "visible_drops": 53,
+        "visible_hits": 42,
+        "visible_unknown": 0
+      },
+      "H2": {
+        "down_5": 32,
+        "down_7": 10,
+        "drops": 64,
+        "hits": 41,
+        "n": 274,
+        "up_5": 22,
+        "up_7": 8,
+        "visible_drops": 69,
+        "visible_hits": 41,
+        "visible_unknown": 0
+      }
+    },
+    "signal_days_removed_by_x": 15,
+    "two_contract_signal_days": 24
+  },
+  "coverage": {
+    "contract_days_evaluated": 63566,
+    "contract_days_in_settlement_window": 16640,
+    "contract_days_settlement_undeterminable": 0,
+    "contract_days_without_regular_session_row": 2034,
+    "contract_refusals": {
+      "R1_window_gap": 19167,
+      "R2a_zero_median": 1118,
+      "R2b_immaterial": 4
+    },
+    "evaluation_from": "2025-12-30",
+    "evaluation_to": "2026-09-30",
+    "events_before_outcome_refusals": 551,
+    "flagged_days_with_unknown_spot_flag": 0,
+    "futures_from": "2025-09-08",
+    "futures_to": "2026-09-30",
+    "market_days_in_halves": 174,
+    "settlement_excluded_days": 56,
+    "settlement_undeterminable_days": 0,
+    "signal_days": 629
+  },
+  "definitions": {
+    "drop": "100 x close(s, e) <= 97 x open(s, e)",
+    "e": "the 2nd market day after t in D (every date with any daily_prices row); computed from the calendar, never read from a stored column",
+    "entry_open_at_limit_proxy": "report only: open(s, e) x 1000 >= close(s, v) x 1095, raw prices; an ex-dividend e understates it",
+    "event": "a signal day whose previous futures trading day (full futures calendar) is not a signal day of the same stock; runs are found on the full calendar BEFORE the exclusion window X = [2026-09-18, 2026-10-02] is applied",
+    "hit": "100 x close(s, e) >= 103 x open(s, e), raw prices, same row, decimal comparison",
+    "pools": "eligible (s, d): s a stock; d a futures day <= as_of, not R4, not in X; some contract seen unrefused with flag False; no contract flagged (any S) and none refused R2b_immaterial; S(s, d) established False; (s, e(d)) passes R1-R2. Days next to events are deliberately NOT removed (§3.1)",
+    "sigma_n": "max(1, sqrt(h_P + d_P - (h_P - d_P)^2 / n))",
+    "sigma_p": "max(1, sqrt(n * p_hat * (1 - p_hat))), p_hat = h_P / n (seed_result)",
+    "signal_day": "t a futures trading day <= as_of, not an R4 settlement-window day; at least one contract on s seen by the docs/38 rule unrefused with flag = True, AND S(s, t) established False; unknown S is not a signal day; one per stock",
+    "visible_day": "report only: v(t) = the 1st market day after t; its open-to-close >= 3% / <= -3% counts can never change the verdict (§3.6)"
+  },
+  "facts": {
+    "drops": 112,
+    "events": 551,
+    "from": "2025-12-30",
+    "hits": 81,
+    "leg": "entry_open_to_close",
+    "placebo_date_drops": {
+      "max": 97,
+      "min": 64
+    },
+    "placebo_date_hits": {
+      "max": 71,
+      "min": 55
+    },
+    "placebo_stock_drops": {
+      "max": 95,
+      "min": 68
+    },
+    "placebo_stock_hits": {
+      "max": 77,
+      "min": 54
+    },
+    "threshold_pct": 3,
+    "to": "2026-09-17"
+  },
+  "halves": {
+    "H1": [
+      "2025-12-30",
+      "2026-05-15"
+    ],
+    "H1_market_days": 87,
+    "H2": [
+      "2026-05-18",
+      "2026-09-17"
+    ],
+    "H2_market_days": 87
+  },
+  "metadata": {
+    "as_of": "2026-09-30",
+    "historical_as_of": false,
+    "preregistration_commit": "e9212bd",
+    "preregistration_doc": "docs/40_futures_signal_next_day_preregistration.md",
+    "price_horizon": "2026-10-02",
+    "read_only": true,
+    "report": "next-day-futures-signal-battery",
+    "run_number": 1,
+    "seeds": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9
+    ],
+    "x_from": "2026-09-18",
+    "x_to": "2026-10-02"
+  },
+  "placebo_counts": {
+    "date": [
+      {
+        "down_5": 23,
+        "down_7": 6,
+        "drops": 77,
+        "hits": 65,
+        "matched": true,
+        "n": 551,
+        "seed": 0,
+        "sigma_n": 11.905405,
+        "sigma_p": 7.571798,
+        "up_5": 29,
+        "up_7": 13,
+        "visible_drops": 75,
+        "visible_hits": 62,
+        "visible_unknown": 0
+      },
+      {
+        "down_5": 22,
+        "down_7": 7,
+        "drops": 82,
+        "hits": 55,
+        "matched": true,
+        "n": 551,
+        "seed": 1,
+        "sigma_n": 11.648045,
+        "sigma_p": 7.036333,
+        "up_5": 23,
+        "up_7": 10,
+        "visible_drops": 80,
+        "visible_hits": 52,
+        "visible_unknown": 0
+      },
+      {
+        "down_5": 22,
+        "down_7": 10,
+        "drops": 64,
+        "hits": 64,
+        "matched": true,
+        "n": 551,
+        "seed": 2,
+        "sigma_n": 11.313708,
+        "sigma_p": 7.521053,
+        "up_5": 25,
+        "up_7": 15,
+        "visible_drops": 86,
+        "visible_hits": 49,
+        "visible_unknown": 0
+      },
+      {
+        "down_5": 29,
+        "down_7": 12,
+        "drops": 67,
+        "hits": 70,
+        "matched": true,
+        "n": 551,
+        "seed": 3,
+        "sigma_n": 11.704002,
+        "sigma_p": 7.817102,
+        "up_5": 34,
+        "up_7": 13,
+        "visible_drops": 82,
+        "visible_hits": 70,
+        "visible_unknown": 0
+      },
+      {
+        "down_5": 29,
+        "down_7": 10,
+        "drops": 77,
+        "hits": 63,
+        "matched": true,
+        "n": 551,
+        "seed": 4,
+        "sigma_n": 11.817118,
+        "sigma_p": 7.469721,
+        "up_5": 33,
+        "up_7": 11,
+        "visible_drops": 83,
+        "visible_hits": 61,
+        "visible_unknown": 0
+      },
+      {
+        "down_5": 28,
+        "down_7": 11,
+        "drops": 83,
+        "hits": 57,
+        "matched": true,
+        "n": 551,
+        "seed": 5,
+        "sigma_n": 11.780201,
+        "sigma_p": 7.148668,
+        "up_5": 26,
+        "up_7": 11,
+        "visible_drops": 69,
+        "visible_hits": 55,
+        "visible_unknown": 1
+      },
+      {
+        "down_5": 30,
+        "down_7": 11,
+        "drops": 76,
+        "hits": 71,
+        "matched": true,
+        "n": 551,
+        "seed": 6,
+        "sigma_n": 12.122484,
+        "sigma_p": 7.864552,
+        "up_5": 30,
+        "up_7": 14,
+        "visible_drops": 75,
+        "visible_hits": 61,
+        "visible_unknown": 0
+      },
+      {
+        "down_5": 24,
+        "down_7": 6,
+        "drops": 70,
+        "hits": 65,
+        "matched": true,
+        "n": 551,
+        "seed": 7,
+        "sigma_n": 11.616997,
+        "sigma_p": 7.571798,
+        "up_5": 23,
+        "up_7": 13,
+        "visible_drops": 62,
+        "visible_hits": 66,
+        "visible_unknown": 0
+      },
+      {
+        "down_5": 31,
+        "down_7": 9,
+        "drops": 97,
+        "hits": 57,
+        "matched": true,
+        "n": 551,
+        "seed": 8,
+        "sigma_n": 12.292119,
+        "sigma_p": 7.148668,
+        "up_5": 25,
+        "up_7": 10,
+        "visible_drops": 80,
+        "visible_hits": 57,
+        "visible_unknown": 0
+      },
+      {
+        "down_5": 33,
+        "down_7": 11,
+        "drops": 89,
+        "hits": 58,
+        "matched": true,
+        "n": 551,
+        "seed": 9,
+        "sigma_n": 12.052215,
+        "sigma_p": 7.2038,
+        "up_5": 27,
+        "up_7": 12,
+        "visible_drops": 79,
+        "visible_hits": 57,
+        "visible_unknown": 0
+      }
+    ],
+    "stock": [
+      {
+        "down_5": 41,
+        "down_7": 17,
+        "drops": 85,
+        "hits": 68,
+        "matched": true,
+        "n": 551,
+        "seed": 0,
+        "sigma_n": 12.348097,
+        "sigma_p": 7.720621,
+        "up_5": 30,
+        "up_7": 10,
+        "visible_drops": 70,
+        "visible_hits": 70,
+        "visible_unknown": 0
+      },
+      {
+        "down_5": 32,
+        "down_7": 16,
+        "drops": 69,
+        "hits": 71,
+        "matched": true,
+        "n": 551,
+        "seed": 1,
+        "sigma_n": 11.831853,
+        "sigma_p": 7.864552,
+        "up_5": 43,
+        "up_7": 26,
+        "visible_drops": 69,
+        "visible_hits": 64,
+        "visible_unknown": 0
+      },
+      {
+        "down_5": 27,
+        "down_7": 14,
+        "drops": 68,
+        "hits": 68,
+        "matched": true,
+        "n": 551,
+        "seed": 2,
+        "sigma_n": 11.661904,
+        "sigma_p": 7.720621,
+        "up_5": 33,
+        "up_7": 17,
+        "visible_drops": 73,
+        "visible_hits": 56,
+        "visible_unknown": 0
+      },
+      {
+        "down_5": 34,
+        "down_7": 10,
+        "drops": 88,
+        "hits": 74,
+        "matched": true,
+        "n": 551,
+        "seed": 3,
+        "sigma_n": 12.713941,
+        "sigma_p": 8.003856,
+        "up_5": 32,
+        "up_7": 17,
+        "visible_drops": 65,
+        "visible_hits": 69,
+        "visible_unknown": 0
+      },
+      {
+        "down_5": 38,
+        "down_7": 17,
+        "drops": 80,
+        "hits": 77,
+        "matched": true,
+        "n": 551,
+        "seed": 4,
+        "sigma_n": 12.529312,
+        "sigma_p": 8.138769,
+        "up_5": 34,
+        "up_7": 18,
+        "visible_drops": 70,
+        "visible_hits": 83,
+        "visible_unknown": 0
+      },
+      {
+        "down_5": 35,
+        "down_7": 14,
+        "drops": 93,
+        "hits": 56,
+        "matched": true,
+        "n": 551,
+        "seed": 5,
+        "sigma_n": 12.104356,
+        "sigma_p": 7.092851,
+        "up_5": 29,
+        "up_7": 17,
+        "visible_drops": 91,
+        "visible_hits": 60,
+        "visible_unknown": 0
+      },
+      {
+        "down_5": 31,
+        "down_7": 13,
+        "drops": 73,
+        "hits": 54,
+        "matched": true,
+        "n": 551,
+        "seed": 6,
+        "sigma_n": 11.240322,
+        "sigma_p": 6.979098,
+        "up_5": 28,
+        "up_7": 14,
+        "visible_drops": 76,
+        "visible_hits": 64,
+        "visible_unknown": 0
+      },
+      {
+        "down_5": 32,
+        "down_7": 13,
+        "drops": 89,
+        "hits": 69,
+        "matched": true,
+        "n": 551,
+        "seed": 7,
+        "sigma_n": 12.540895,
+        "sigma_p": 7.769128,
+        "up_5": 40,
+        "up_7": 18,
+        "visible_drops": 84,
+        "visible_hits": 69,
+        "visible_unknown": 0
+      },
+      {
+        "down_5": 40,
+        "down_7": 12,
+        "drops": 95,
+        "hits": 70,
+        "matched": true,
+        "n": 551,
+        "seed": 8,
+        "sigma_n": 12.801004,
+        "sigma_p": 7.817102,
+        "up_5": 41,
+        "up_7": 17,
+        "visible_drops": 69,
+        "visible_hits": 67,
+        "visible_unknown": 0
+      },
+      {
+        "down_5": 46,
+        "down_7": 18,
+        "drops": 79,
+        "hits": 61,
+        "matched": true,
+        "n": 551,
+        "seed": 9,
+        "sigma_n": 11.807285,
+        "sigma_p": 7.365244,
+        "up_5": 24,
+        "up_7": 12,
+        "visible_drops": 88,
+        "visible_hits": 61,
+        "visible_unknown": 0
+      }
+    ]
+  },
+  "refusals": {
+    "events": {
+      "R1_bad_open": 0,
+      "R1_no_close": 0,
+      "R1_no_entry_day": 0,
+      "R1_no_entry_row": 0,
+      "R2_suspended": 0
+    },
+    "pool": {
+      "R1_bad_open": 4,
+      "R1_no_close": 0,
+      "R1_no_entry_day": 0,
+      "R1_no_entry_row": 5,
+      "R2_suspended": 0
+    }
+  },
+  "sets": {
+    "drops": 112,
+    "drops_by_half": {
+      "H1": 48,
+      "H2": 64
+    },
+    "events": 551,
+    "events_by_half": {
+      "H1": 277,
+      "H2": 274
+    },
+    "hits": 81,
+    "hits_by_half": {
+      "H1": 40,
+      "H2": 41
+    },
+    "placebo_short": {
+      "date": [],
+      "stock": []
+    },
+    "pool_days": 32061
+  },
+  "tests": {
+    "A": {
+      "line": "[PASS] A_power: n = 551, h = 81, threshold 30",
+      "observed": {
+        "h": 81,
+        "n": 551,
+        "threshold": 30
+      },
+      "outcome": "PASS",
+      "passed": true,
+      "test": "A_power",
+      "threshold": "n >= 30 and h >= 30 (LOW_SAMPLE_SURVIVORS)"
+    },
+    "B": {
+      "evaluable": true,
+      "line": "[FAIL] B_informativeness: ['stock/seed=0', 'stock/seed=1', 'stock/seed=2', 'stock/seed=3', 'stock/seed=4', 'stock/seed=7', 'stock/seed=8', 'date/seed=3', 'date/seed=6'] do not clear the 2-sigma margin; one failure is a failure",
+      "outcome": "FAIL",
+      "passed": false,
+      "seeds": [
+        {
+          "evaluable": true,
+          "h_f": 81,
+          "h_p": 68,
+          "margin": 15.441242,
+          "n": 551,
+          "p_hat": 0.123412,
+          "passed": false,
+          "placebo": "stock",
+          "seed": 0,
+          "sigma_p": 7.720621
+        },
+        {
+          "evaluable": true,
+          "h_f": 81,
+          "h_p": 71,
+          "margin": 15.729104,
+          "n": 551,
+          "p_hat": 0.128857,
+          "passed": false,
+          "placebo": "stock",
+          "seed": 1,
+          "sigma_p": 7.864552
+        },
+        {
+          "evaluable": true,
+          "h_f": 81,
+          "h_p": 68,
+          "margin": 15.441242,
+          "n": 551,
+          "p_hat": 0.123412,
+          "passed": false,
+          "placebo": "stock",
+          "seed": 2,
+          "sigma_p": 7.720621
+        },
+        {
+          "evaluable": true,
+          "h_f": 81,
+          "h_p": 74,
+          "margin": 16.007711,
+          "n": 551,
+          "p_hat": 0.134301,
+          "passed": false,
+          "placebo": "stock",
+          "seed": 3,
+          "sigma_p": 8.003856
+        },
+        {
+          "evaluable": true,
+          "h_f": 81,
+          "h_p": 77,
+          "margin": 16.277538,
+          "n": 551,
+          "p_hat": 0.139746,
+          "passed": false,
+          "placebo": "stock",
+          "seed": 4,
+          "sigma_p": 8.138769
+        },
+        {
+          "evaluable": true,
+          "h_f": 81,
+          "h_p": 56,
+          "margin": 14.185701,
+          "n": 551,
+          "p_hat": 0.101633,
+          "passed": true,
+          "placebo": "stock",
+          "seed": 5,
+          "sigma_p": 7.092851
+        },
+        {
+          "evaluable": true,
+          "h_f": 81,
+          "h_p": 54,
+          "margin": 13.958195,
+          "n": 551,
+          "p_hat": 0.098004,
+          "passed": true,
+          "placebo": "stock",
+          "seed": 6,
+          "sigma_p": 6.979098
+        },
+        {
+          "evaluable": true,
+          "h_f": 81,
+          "h_p": 69,
+          "margin": 15.538256,
+          "n": 551,
+          "p_hat": 0.125227,
+          "passed": false,
+          "placebo": "stock",
+          "seed": 7,
+          "sigma_p": 7.769128
+        },
+        {
+          "evaluable": true,
+          "h_f": 81,
+          "h_p": 70,
+          "margin": 15.634203,
+          "n": 551,
+          "p_hat": 0.127042,
+          "passed": false,
+          "placebo": "stock",
+          "seed": 8,
+          "sigma_p": 7.817102
+        },
+        {
+          "evaluable": true,
+          "h_f": 81,
+          "h_p": 61,
+          "margin": 14.730489,
+          "n": 551,
+          "p_hat": 0.110708,
+          "passed": true,
+          "placebo": "stock",
+          "seed": 9,
+          "sigma_p": 7.365244
+        },
+        {
+          "evaluable": true,
+          "h_f": 81,
+          "h_p": 65,
+          "margin": 15.143596,
+          "n": 551,
+          "p_hat": 0.117967,
+          "passed": true,
+          "placebo": "date",
+          "seed": 0,
+          "sigma_p": 7.571798
+        },
+        {
+          "evaluable": true,
+          "h_f": 81,
+          "h_p": 55,
+          "margin": 14.072666,
+          "n": 551,
+          "p_hat": 0.099819,
+          "passed": true,
+          "placebo": "date",
+          "seed": 1,
+          "sigma_p": 7.036333
+        },
+        {
+          "evaluable": true,
+          "h_f": 81,
+          "h_p": 64,
+          "margin": 15.042107,
+          "n": 551,
+          "p_hat": 0.116152,
+          "passed": true,
+          "placebo": "date",
+          "seed": 2,
+          "sigma_p": 7.521053
+        },
+        {
+          "evaluable": true,
+          "h_f": 81,
+          "h_p": 70,
+          "margin": 15.634203,
+          "n": 551,
+          "p_hat": 0.127042,
+          "passed": false,
+          "placebo": "date",
+          "seed": 3,
+          "sigma_p": 7.817102
+        },
+        {
+          "evaluable": true,
+          "h_f": 81,
+          "h_p": 63,
+          "margin": 14.939442,
+          "n": 551,
+          "p_hat": 0.114338,
+          "passed": true,
+          "placebo": "date",
+          "seed": 4,
+          "sigma_p": 7.469721
+        },
+        {
+          "evaluable": true,
+          "h_f": 81,
+          "h_p": 57,
+          "margin": 14.297335,
+          "n": 551,
+          "p_hat": 0.103448,
+          "passed": true,
+          "placebo": "date",
+          "seed": 5,
+          "sigma_p": 7.148668
+        },
+        {
+          "evaluable": true,
+          "h_f": 81,
+          "h_p": 71,
+          "margin": 15.729104,
+          "n": 551,
+          "p_hat": 0.128857,
+          "passed": false,
+          "placebo": "date",
+          "seed": 6,
+          "sigma_p": 7.864552
+        },
+        {
+          "evaluable": true,
+          "h_f": 81,
+          "h_p": 65,
+          "margin": 15.143596,
+          "n": 551,
+          "p_hat": 0.117967,
+          "passed": true,
+          "placebo": "date",
+          "seed": 7,
+          "sigma_p": 7.571798
+        },
+        {
+          "evaluable": true,
+          "h_f": 81,
+          "h_p": 57,
+          "margin": 14.297335,
+          "n": 551,
+          "p_hat": 0.103448,
+          "passed": true,
+          "placebo": "date",
+          "seed": 8,
+          "sigma_p": 7.148668
+        },
+        {
+          "evaluable": true,
+          "h_f": 81,
+          "h_p": 58,
+          "margin": 14.4076,
+          "n": 551,
+          "p_hat": 0.105263,
+          "passed": true,
+          "placebo": "date",
+          "seed": 9,
+          "sigma_p": 7.2038
+        }
+      ],
+      "test": "B_informativeness",
+      "threshold": "for both placebos and every seed in [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]: h_L - h_P >= 2.0 * sigma_P"
+    },
+    "C": {
+      "entries": [
+        {
+          "evaluable": true,
+          "h": 40,
+          "h_p": 33,
+          "half": "H1",
+          "passed": true,
+          "placebo": "stock",
+          "seed": 0
+        },
+        {
+          "evaluable": true,
+          "h": 41,
+          "h_p": 35,
+          "half": "H2",
+          "passed": true,
+          "placebo": "stock",
+          "seed": 0
+        },
+        {
+          "evaluable": true,
+          "h": 40,
+          "h_p": 36,
+          "half": "H1",
+          "passed": true,
+          "placebo": "stock",
+          "seed": 1
+        },
+        {
+          "evaluable": true,
+          "h": 41,
+          "h_p": 35,
+          "half": "H2",
+          "passed": true,
+          "placebo": "stock",
+          "seed": 1
+        },
+        {
+          "evaluable": true,
+          "h": 40,
+          "h_p": 32,
+          "half": "H1",
+          "passed": true,
+          "placebo": "stock",
+          "seed": 2
+        },
+        {
+          "evaluable": true,
+          "h": 41,
+          "h_p": 36,
+          "half": "H2",
+          "passed": true,
+          "placebo": "stock",
+          "seed": 2
+        },
+        {
+          "evaluable": true,
+          "h": 40,
+          "h_p": 34,
+          "half": "H1",
+          "passed": true,
+          "placebo": "stock",
+          "seed": 3
+        },
+        {
+          "evaluable": true,
+          "h": 41,
+          "h_p": 40,
+          "half": "H2",
+          "passed": true,
+          "placebo": "stock",
+          "seed": 3
+        },
+        {
+          "evaluable": true,
+          "h": 40,
+          "h_p": 37,
+          "half": "H1",
+          "passed": true,
+          "placebo": "stock",
+          "seed": 4
+        },
+        {
+          "evaluable": true,
+          "h": 41,
+          "h_p": 40,
+          "half": "H2",
+          "passed": true,
+          "placebo": "stock",
+          "seed": 4
+        },
+        {
+          "evaluable": true,
+          "h": 40,
+          "h_p": 29,
+          "half": "H1",
+          "passed": true,
+          "placebo": "stock",
+          "seed": 5
+        },
+        {
+          "evaluable": true,
+          "h": 41,
+          "h_p": 27,
+          "half": "H2",
+          "passed": true,
+          "placebo": "stock",
+          "seed": 5
+        },
+        {
+          "evaluable": true,
+          "h": 40,
+          "h_p": 28,
+          "half": "H1",
+          "passed": true,
+          "placebo": "stock",
+          "seed": 6
+        },
+        {
+          "evaluable": true,
+          "h": 41,
+          "h_p": 26,
+          "half": "H2",
+          "passed": true,
+          "placebo": "stock",
+          "seed": 6
+        },
+        {
+          "evaluable": true,
+          "h": 40,
+          "h_p": 39,
+          "half": "H1",
+          "passed": true,
+          "placebo": "stock",
+          "seed": 7
+        },
+        {
+          "evaluable": true,
+          "h": 41,
+          "h_p": 30,
+          "half": "H2",
+          "passed": true,
+          "placebo": "stock",
+          "seed": 7
+        },
+        {
+          "evaluable": true,
+          "h": 40,
+          "h_p": 34,
+          "half": "H1",
+          "passed": true,
+          "placebo": "stock",
+          "seed": 8
+        },
+        {
+          "evaluable": true,
+          "h": 41,
+          "h_p": 36,
+          "half": "H2",
+          "passed": true,
+          "placebo": "stock",
+          "seed": 8
+        },
+        {
+          "evaluable": true,
+          "h": 40,
+          "h_p": 29,
+          "half": "H1",
+          "passed": true,
+          "placebo": "stock",
+          "seed": 9
+        },
+        {
+          "evaluable": true,
+          "h": 41,
+          "h_p": 32,
+          "half": "H2",
+          "passed": true,
+          "placebo": "stock",
+          "seed": 9
+        },
+        {
+          "evaluable": true,
+          "h": 40,
+          "h_p": 37,
+          "half": "H1",
+          "passed": true,
+          "placebo": "date",
+          "seed": 0
+        },
+        {
+          "evaluable": true,
+          "h": 41,
+          "h_p": 28,
+          "half": "H2",
+          "passed": true,
+          "placebo": "date",
+          "seed": 0
+        },
+        {
+          "evaluable": true,
+          "h": 40,
+          "h_p": 30,
+          "half": "H1",
+          "passed": true,
+          "placebo": "date",
+          "seed": 1
+        },
+        {
+          "evaluable": true,
+          "h": 41,
+          "h_p": 25,
+          "half": "H2",
+          "passed": true,
+          "placebo": "date",
+          "seed": 1
+        },
+        {
+          "evaluable": true,
+          "h": 40,
+          "h_p": 33,
+          "half": "H1",
+          "passed": true,
+          "placebo": "date",
+          "seed": 2
+        },
+        {
+          "evaluable": true,
+          "h": 41,
+          "h_p": 31,
+          "half": "H2",
+          "passed": true,
+          "placebo": "date",
+          "seed": 2
+        },
+        {
+          "evaluable": true,
+          "h": 40,
+          "h_p": 34,
+          "half": "H1",
+          "passed": true,
+          "placebo": "date",
+          "seed": 3
+        },
+        {
+          "evaluable": true,
+          "h": 41,
+          "h_p": 36,
+          "half": "H2",
+          "passed": true,
+          "placebo": "date",
+          "seed": 3
+        },
+        {
+          "evaluable": true,
+          "h": 40,
+          "h_p": 30,
+          "half": "H1",
+          "passed": true,
+          "placebo": "date",
+          "seed": 4
+        },
+        {
+          "evaluable": true,
+          "h": 41,
+          "h_p": 33,
+          "half": "H2",
+          "passed": true,
+          "placebo": "date",
+          "seed": 4
+        },
+        {
+          "evaluable": true,
+          "h": 40,
+          "h_p": 26,
+          "half": "H1",
+          "passed": true,
+          "placebo": "date",
+          "seed": 5
+        },
+        {
+          "evaluable": true,
+          "h": 41,
+          "h_p": 31,
+          "half": "H2",
+          "passed": true,
+          "placebo": "date",
+          "seed": 5
+        },
+        {
+          "evaluable": true,
+          "h": 40,
+          "h_p": 36,
+          "half": "H1",
+          "passed": true,
+          "placebo": "date",
+          "seed": 6
+        },
+        {
+          "evaluable": true,
+          "h": 41,
+          "h_p": 35,
+          "half": "H2",
+          "passed": true,
+          "placebo": "date",
+          "seed": 6
+        },
+        {
+          "evaluable": true,
+          "h": 40,
+          "h_p": 34,
+          "half": "H1",
+          "passed": true,
+          "placebo": "date",
+          "seed": 7
+        },
+        {
+          "evaluable": true,
+          "h": 41,
+          "h_p": 31,
+          "half": "H2",
+          "passed": true,
+          "placebo": "date",
+          "seed": 7
+        },
+        {
+          "evaluable": true,
+          "h": 40,
+          "h_p": 28,
+          "half": "H1",
+          "passed": true,
+          "placebo": "date",
+          "seed": 8
+        },
+        {
+          "evaluable": true,
+          "h": 41,
+          "h_p": 29,
+          "half": "H2",
+          "passed": true,
+          "placebo": "date",
+          "seed": 8
+        },
+        {
+          "evaluable": true,
+          "h": 40,
+          "h_p": 26,
+          "half": "H1",
+          "passed": true,
+          "placebo": "date",
+          "seed": 9
+        },
+        {
+          "evaluable": true,
+          "h": 41,
+          "h_p": 32,
+          "half": "H2",
+          "passed": true,
+          "placebo": "date",
+          "seed": 9
+        }
+      ],
+      "evaluable": true,
+      "line": "[PASS] C_consistency: positive in both halves for every placebo and seed",
+      "outcome": "PASS",
+      "passed": true,
+      "test": "C_consistency",
+      "threshold": "for every half, placebo and seed: h_L(half) - h_P(half) > 0"
+    },
+    "D": {
+      "evaluable": true,
+      "line": "[FAIL] D_direction: ['stock/seed=0', 'stock/seed=1', 'stock/seed=2', 'stock/seed=3', 'stock/seed=4', 'stock/seed=5', 'stock/seed=6', 'stock/seed=7', 'stock/seed=8', 'stock/seed=9', 'date/seed=0', 'date/seed=1', 'date/seed=2', 'date/seed=3', 'date/seed=4', 'date/seed=5', 'date/seed=6', 'date/seed=7', 'date/seed=8', 'date/seed=9'] do not clear the 2-sigma margin; one failure is a failure",
+      "outcome": "FAIL",
+      "passed": false,
+      "seeds": [
+        {
+          "d": 112,
+          "d_p": 85,
+          "evaluable": true,
+          "excess_net_up": -14,
+          "h": 81,
+          "h_p": 68,
+          "margin": 24.696194,
+          "n": 551,
+          "passed": false,
+          "placebo": "stock",
+          "seed": 0,
+          "sigma_n": 12.348097
+        },
+        {
+          "d": 112,
+          "d_p": 69,
+          "evaluable": true,
+          "excess_net_up": -33,
+          "h": 81,
+          "h_p": 71,
+          "margin": 23.663706,
+          "n": 551,
+          "passed": false,
+          "placebo": "stock",
+          "seed": 1,
+          "sigma_n": 11.831853
+        },
+        {
+          "d": 112,
+          "d_p": 68,
+          "evaluable": true,
+          "excess_net_up": -31,
+          "h": 81,
+          "h_p": 68,
+          "margin": 23.323808,
+          "n": 551,
+          "passed": false,
+          "placebo": "stock",
+          "seed": 2,
+          "sigma_n": 11.661904
+        },
+        {
+          "d": 112,
+          "d_p": 88,
+          "evaluable": true,
+          "excess_net_up": -17,
+          "h": 81,
+          "h_p": 74,
+          "margin": 25.427881,
+          "n": 551,
+          "passed": false,
+          "placebo": "stock",
+          "seed": 3,
+          "sigma_n": 12.713941
+        },
+        {
+          "d": 112,
+          "d_p": 80,
+          "evaluable": true,
+          "excess_net_up": -28,
+          "h": 81,
+          "h_p": 77,
+          "margin": 25.058625,
+          "n": 551,
+          "passed": false,
+          "placebo": "stock",
+          "seed": 4,
+          "sigma_n": 12.529312
+        },
+        {
+          "d": 112,
+          "d_p": 93,
+          "evaluable": true,
+          "excess_net_up": 6,
+          "h": 81,
+          "h_p": 56,
+          "margin": 24.208711,
+          "n": 551,
+          "passed": false,
+          "placebo": "stock",
+          "seed": 5,
+          "sigma_n": 12.104356
+        },
+        {
+          "d": 112,
+          "d_p": 73,
+          "evaluable": true,
+          "excess_net_up": -12,
+          "h": 81,
+          "h_p": 54,
+          "margin": 22.480643,
+          "n": 551,
+          "passed": false,
+          "placebo": "stock",
+          "seed": 6,
+          "sigma_n": 11.240322
+        },
+        {
+          "d": 112,
+          "d_p": 89,
+          "evaluable": true,
+          "excess_net_up": -11,
+          "h": 81,
+          "h_p": 69,
+          "margin": 25.08179,
+          "n": 551,
+          "passed": false,
+          "placebo": "stock",
+          "seed": 7,
+          "sigma_n": 12.540895
+        },
+        {
+          "d": 112,
+          "d_p": 95,
+          "evaluable": true,
+          "excess_net_up": -6,
+          "h": 81,
+          "h_p": 70,
+          "margin": 25.602008,
+          "n": 551,
+          "passed": false,
+          "placebo": "stock",
+          "seed": 8,
+          "sigma_n": 12.801004
+        },
+        {
+          "d": 112,
+          "d_p": 79,
+          "evaluable": true,
+          "excess_net_up": -13,
+          "h": 81,
+          "h_p": 61,
+          "margin": 23.61457,
+          "n": 551,
+          "passed": false,
+          "placebo": "stock",
+          "seed": 9,
+          "sigma_n": 11.807285
+        },
+        {
+          "d": 112,
+          "d_p": 77,
+          "evaluable": true,
+          "excess_net_up": -19,
+          "h": 81,
+          "h_p": 65,
+          "margin": 23.810809,
+          "n": 551,
+          "passed": false,
+          "placebo": "date",
+          "seed": 0,
+          "sigma_n": 11.905405
+        },
+        {
+          "d": 112,
+          "d_p": 82,
+          "evaluable": true,
+          "excess_net_up": -4,
+          "h": 81,
+          "h_p": 55,
+          "margin": 23.29609,
+          "n": 551,
+          "passed": false,
+          "placebo": "date",
+          "seed": 1,
+          "sigma_n": 11.648045
+        },
+        {
+          "d": 112,
+          "d_p": 64,
+          "evaluable": true,
+          "excess_net_up": -31,
+          "h": 81,
+          "h_p": 64,
+          "margin": 22.627417,
+          "n": 551,
+          "passed": false,
+          "placebo": "date",
+          "seed": 2,
+          "sigma_n": 11.313708
+        },
+        {
+          "d": 112,
+          "d_p": 67,
+          "evaluable": true,
+          "excess_net_up": -34,
+          "h": 81,
+          "h_p": 70,
+          "margin": 23.408004,
+          "n": 551,
+          "passed": false,
+          "placebo": "date",
+          "seed": 3,
+          "sigma_n": 11.704002
+        },
+        {
+          "d": 112,
+          "d_p": 77,
+          "evaluable": true,
+          "excess_net_up": -17,
+          "h": 81,
+          "h_p": 63,
+          "margin": 23.634236,
+          "n": 551,
+          "passed": false,
+          "placebo": "date",
+          "seed": 4,
+          "sigma_n": 11.817118
+        },
+        {
+          "d": 112,
+          "d_p": 83,
+          "evaluable": true,
+          "excess_net_up": -5,
+          "h": 81,
+          "h_p": 57,
+          "margin": 23.560402,
+          "n": 551,
+          "passed": false,
+          "placebo": "date",
+          "seed": 5,
+          "sigma_n": 11.780201
+        },
+        {
+          "d": 112,
+          "d_p": 76,
+          "evaluable": true,
+          "excess_net_up": -26,
+          "h": 81,
+          "h_p": 71,
+          "margin": 24.244969,
+          "n": 551,
+          "passed": false,
+          "placebo": "date",
+          "seed": 6,
+          "sigma_n": 12.122484
+        },
+        {
+          "d": 112,
+          "d_p": 70,
+          "evaluable": true,
+          "excess_net_up": -26,
+          "h": 81,
+          "h_p": 65,
+          "margin": 23.233995,
+          "n": 551,
+          "passed": false,
+          "placebo": "date",
+          "seed": 7,
+          "sigma_n": 11.616997
+        },
+        {
+          "d": 112,
+          "d_p": 97,
+          "evaluable": true,
+          "excess_net_up": 9,
+          "h": 81,
+          "h_p": 57,
+          "margin": 24.584238,
+          "n": 551,
+          "passed": false,
+          "placebo": "date",
+          "seed": 8,
+          "sigma_n": 12.292119
+        },
+        {
+          "d": 112,
+          "d_p": 89,
+          "evaluable": true,
+          "excess_net_up": 0,
+          "h": 81,
+          "h_p": 58,
+          "margin": 24.104431,
+          "n": 551,
+          "passed": false,
+          "placebo": "date",
+          "seed": 9,
+          "sigma_n": 12.052215
+        }
+      ],
+      "test": "D_direction",
+      "threshold": "for both placebos and every seed in [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]: (h - d) - (h_P - d_P) >= 2.0 * sigma_N"
+    }
+  },
+  "verdict": {
+    "decision": "DO NOT SHIP",
+    "line": "[DO NOT SHIP] futures signal next-day count: informativeness_failed ([FAIL] B_informativeness: ['stock/seed=0', 'stock/seed=1', 'stock/seed=2', 'stock/seed=3', 'stock/seed=4', 'stock/seed=7', 'stock/seed=8', 'date/seed=3', 'date/seed=6'] do not clear the 2-sigma margin; one failure is a failure)",
+    "note": "numbers stay in this JSON; nothing is written to any table, export or panel unless the decision is SHIP",
+    "reason": "informativeness_failed"
+  },
+  "x_window": {
+    "events_removed": 15,
+    "from": "2026-09-18",
+    "market_days_removed": 7,
+    "signal_days_removed": 15,
+    "to": "2026-10-02"
+  }
+}
