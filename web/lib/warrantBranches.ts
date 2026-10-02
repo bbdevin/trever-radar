@@ -36,17 +36,18 @@ export function kindNet(row: BranchRowLite, kind: WarrantKind): number {
 /** 排行選項:excludeSelf 扣掉同券商發行的金額;minAbs 是扣完後仍要達到的門檻(元)。 */
 export type RankOptions = { excludeSelf?: boolean; minAbs?: number };
 
+/** 過半金額在自家權證才標(低占比的分公司多半只是客戶剛好買到自家權證)。 */
+export const SELF_TAG_MIN_PCT = 50;
+
 /**
- * 排行用的金額。excludeSelf 只對「合計」有效:匯出端的同券商摘要不分認購／認售,
- * 單一種類時不假裝扣得準,原值回傳。
+ * 排行用的金額。excludeSelf 只扣「有標籤」的列(selfIssuedTag 非 null:總公司或
+ * 分公司、過半金額在自家權證);一般分公司客戶剛好買到自家權證不扣,保留全額。
+ * 只對「合計」有效:匯出端的同券商摘要不分認購／認售,單一種類時原值回傳。
  */
 export function branchAmount(row: BranchRowLite, kind: WarrantKind, excludeSelf = false): number {
   const net = kindNet(row, kind);
-  return excludeSelf && kind === "all" && row.self ? net - row.self.net : net;
+  return excludeSelf && kind === "all" && row.self && selfIssuedTag(row.self) ? net - row.self.net : net;
 }
-
-/** 過半金額在自家權證才標(低占比的分公司多半只是客戶剛好買到自家權證)。 */
-export const SELF_TAG_MIN_PCT = 50;
 
 export type SelfTag = { label: "發行商" | "同券商"; pct: number; hq: boolean };
 

@@ -932,7 +932,8 @@ def _self_issued_summary(branch_name: str, breakdown: list[dict]) -> dict | None
             own_net += amt
     if not own_gross:
         return None
-    return {"net": int(own_net), "pct": round(own_gross * 100 / gross) if gross else 0, "hq": is_hq}
+    # 無條件捨去:前端「過半(≥ 50%)才標」要是精確的,49.5% 不可被四捨五入成 50。
+    return {"net": int(own_net), "pct": int(own_gross * 100 // gross) if gross else 0, "hq": is_hq}
 
 
 def _directors_latest_payload(conn, sid: str) -> dict | None:

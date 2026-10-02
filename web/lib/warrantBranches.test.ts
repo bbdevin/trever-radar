@@ -123,10 +123,21 @@ test("排除同券商發行:扣掉自家權證淨額、再套同一門檻", () =
   assert.deepEqual(rankBranches(selfRows, "all", "sell").map((r) => r.branch_name), ["凱基"]);
   const opts = { excludeSelf: true, minAbs: 1_000_000 };
   // 凱基扣完剩 +100 萬 → 改到買超邊;凱基-台北剩 50 萬 < 門檻 → 掉出。
+  // 元大-南京 只有 5% 在自家權證、沒有標籤 → 不扣,保留全額 200 萬。
   assert.deepEqual(rankBranches(selfRows, "all", "buy", 10, opts).map((r) => [r.branch_name, r.amount]),
-    [["元大-南京", 1_900_000], ["兆豐-嘉義", 1_500_000], ["凱基", 1_000_000]]);
+    [["元大-南京", 2_000_000], ["兆豐-嘉義", 1_500_000], ["凱基", 1_000_000]]);
   assert.deepEqual(rankBranches(selfRows, "all", "sell", 10, opts), []);
   assert.equal(searchBranches(selfRows, "凱基", "all", {}, 20, true)[0].amount, 1_000_000);
+});
+
+test("排除只扣有標籤的列:未過半(含 49%)保留全額,50% 起才扣", () => {
+  const row = (pct: number, hq: boolean) => ({ branch_name: "x", net_amount: 3_000_000, self: { net: 2_000_000, pct, hq } });
+  assert.equal(branchAmount(row(49, true), "all", true), 3_000_000);
+  assert.equal(branchAmount(row(49, false), "all", true), 3_000_000);
+  assert.equal(branchAmount(row(50, true), "all", true), 1_000_000);
+  assert.equal(branchAmount(row(50, false), "all", true), 1_000_000);
+  assert.equal(selfIssuedTag({ net: 1, pct: 49, hq: true }), null);
+  assert.deepEqual(selfIssuedTag({ net: 1, pct: 50, hq: false }), { label: "同券商", pct: 50, hq: false });
 });
 
 test("同券商標籤:總公司標發行商、分公司標同券商、未過半不標", () => {

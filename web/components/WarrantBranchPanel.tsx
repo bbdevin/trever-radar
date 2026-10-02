@@ -265,6 +265,10 @@ export default function WarrantBranchPanel({
   // 明細拆檔:有券商被選中(含預設選中的買超第一名)才抓,每檔股票只抓一次。
   // 排行與 K 線不等它,第一屏只需要分片本身。
   const needSplit = breakdownSplit && !!selected && split === null && !splitError;
+  // 載入失敗不卡到換股票:改選別的券商就重試一次。
+  useEffect(() => {
+    setSplitError(false);
+  }, [selected]);
   useEffect(() => {
     if (!needSplit) return;
     let cancelled = false;
@@ -364,7 +368,8 @@ export default function WarrantBranchPanel({
       </div>
       {exclude && (
         <p className="-mt-1 text-[11px] leading-relaxed text-muted-foreground">
-          排行已扣掉各券商在自家集團發行權證上的金額,扣完仍 ≥ {threshold} 萬才列入;K 線下方的逐日圖仍是合計。
+          只扣有「發行商」「同券商」標籤的分點(過半金額在自家集團發行的權證)在自家權證上的金額,其他分點保留全額;
+          扣完仍 ≥ {threshold} 萬才列入。只在原本已上榜的分點中重排;K 線下方的逐日圖仍是合計。
         </p>
       )}
 
@@ -487,7 +492,7 @@ export default function WarrantBranchPanel({
             )}
             {selectedRow && resolved === null && breakdownSplit && (
               splitError ? (
-                <p className="text-[11.5px] text-muted-foreground">權證明細載入失敗,區間合計與排行不受影響。</p>
+                <p className="text-[11.5px] text-muted-foreground">權證明細載入失敗(改選其他券商會重試),區間合計與排行不受影響。</p>
               ) : (
                 <Skeleton className="h-24 w-full rounded-[var(--r-md)]" />
               )

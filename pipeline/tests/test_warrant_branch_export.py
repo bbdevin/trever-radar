@@ -267,6 +267,34 @@ class WarrantBranchDetailExportTests(unittest.TestCase):
         flags = {b["warrant_id"]: b.get("self", False) for b in split["timeframes"]["5d"]["凱基"]}
         self.assertEqual(flags, {"700001": True, "700002": False})
 
+        # /branch 全市場檔:self 只是新增的可選鍵,既有鍵與內嵌明細不變。
+        market = json.loads((out / "branches" / "warrant_branches.json").read_text(encoding="utf-8"))
+        kgi = next(r for r in market["timeframes"]["5d"] if r["branch_name"] == "凱基")
+        self.assertEqual(set(kgi), {"branch_name", "underlying_id", "underlying_name",
+                                    "net_amount", "breakdown", "self"})
+        self.assertEqual(kgi["self"], rows["凱基"]["self"])
+        self.assertEqual(len(kgi["breakdown"]), 2)
+        plain = next(r for r in market["timeframes"]["5d"] if r["branch_name"] == "六百萬分點")
+        self.assertEqual(set(plain), {"branch_name", "underlying_id", "underlying_name",
+                                      "net_amount", "breakdown"})
+
+    def test_self_issued_pct_is_floored_so_the_50_percent_rule_is_exact(self):
+        from radar.export.json_export import _self_issued_summary
+
+        def pct(own, other):
+            breakdown = [
+                {"warrant_name": "台積電凱基5C購02", "net_amount": own},
+                {"warrant_name": "台積電元大58購01", "net_amount": other},
+            ]
+            return _self_issued_summary("凱基", breakdown)["pct"]
+
+        self.assertEqual(pct(495, 505), 49)        # 49.5% 不可四捨五入成 50
+        self.assertEqual(pct(4996, 5004), 49)      # 49.96%
+        self.assertEqual(pct(500, 500), 50)        # 恰 50%
+        self.assertEqual(pct(-500, 500), 50)       # 占比依絕對值
+        self.assertIsNone(_self_issued_summary("元大-南京", [
+            {"warrant_name": "台積電凱基5C購02", "net_amount": 100}]))
+
     def test_empty_warrant_branch_pool_reports_null_data_date(self):
         """池內沒有權證分點時報 null,不可拿報價日充當資料日。"""
         with db.get_engine().begin() as conn:
