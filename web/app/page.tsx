@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useMemo, useRef, Suspense } from "react";
+import { Fragment, useEffect, useState, useMemo, useRef, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { Clock, ShieldCheck, Zap, ChevronDown, Briefcase, AlertTriangle, Ban, Percent, Layers } from "lucide-react";
 import { IconFlame, IconTrend, IconZap, IconRadar, IconPulse, IconStar, IconTrendDown } from "@/components/Icons";
@@ -18,7 +18,7 @@ import { dataFetch } from "@/lib/dataFetch";
 import { OFFLINE_DATA_COPY, isBrowserOffline } from "@/lib/pwa";
 import type { ListKey, MetaJson, RadarJson, StrategyMeta } from "@/lib/types";
 import { SOURCE_LABEL, fmtE8 } from "@/lib/format";
-import { staleAutoFills, staleFreshnessLines } from "@/lib/freshness";
+import { UPDATE_SCHEDULE, staleAutoFills, staleFreshnessLines } from "@/lib/freshness";
 import { scoreListEmptyText } from "@/lib/scoreList";
 
 // TabKey for the main task-oriented tabs（資券嵌首頁，手機 BottomNav 不另開第 5 項）
@@ -350,15 +350,43 @@ function RadarView() {
 
       {stale.length > 0 && (
         <Alert className="mb-3 border-warn/30 bg-warn/5">
-          <AlertDescription className="flex flex-wrap items-baseline gap-2.5 text-[13px] text-foreground">
-            <span className="inline-flex shrink-0 items-center gap-1 rounded-md bg-warn/15 px-2 py-0.5 text-[11.5px] font-bold tracking-[0.3px] text-warn">
+          {/* 手機優先(使用者 2026-10-02):標籤自己一行;每筆一行「名稱 暫用 MM-DD · 短排程」;
+              完整時間表收合。完整句子留在 title,給滑鼠停留與讀屏。 */}
+          <AlertDescription className="grid gap-1.5 text-[13px] text-foreground">
+            <span className="inline-flex w-fit items-center gap-1 rounded-md bg-warn/15 px-2 py-0.5 text-[11.5px] font-bold tracking-[0.3px] text-warn">
               <Clock size={12} strokeWidth={1.8} />
               {"尚未更新"}
             </span>
-            <span>
-              {stale.map((s) => s.text).join("；")}
-              {showAutoFillNote ? "(依交易所公布時間分批自動更新)" : null}
-            </span>
+            <ul className="grid gap-1">
+              {stale.map((s) => (
+                <li key={s.key} title={s.text} className="flex min-w-0 flex-wrap items-baseline gap-x-1.5 leading-snug">
+                  <b className="font-semibold">{s.label}</b>
+                  <span className="num text-[12.5px] text-[color:var(--ink-2)]">
+                    {s.shortState}
+                  </span>
+                  {s.shortSchedule && (
+                    <span className="num text-[12px] text-muted-foreground">{`· ${s.shortSchedule}`}</span>
+                  )}
+                </li>
+              ))}
+            </ul>
+            {/* showAutoFillNote 為 false(只有期貨落後)時不講「會自動更新」——那是它做不到的承諾。 */}
+            <details className="text-[12px] text-muted-foreground">
+              <summary className="min-h-8 cursor-pointer select-none py-1">
+                {showAutoFillNote ? "更新時間表(週一至週五自動)" : "更新時間表(週一至週五)"}
+              </summary>
+              <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
+                {UPDATE_SCHEDULE.map((row) => {
+                  const pending = stale.some((s) => s.key === row.key);
+                  return (
+                    <Fragment key={row.key}>
+                      <dt className={pending ? "font-semibold text-warn" : "text-foreground"}>{row.label}</dt>
+                      <dd className="num">{row.short}</dd>
+                    </Fragment>
+                  );
+                })}
+              </dl>
+            </details>
           </AlertDescription>
         </Alert>
       )}

@@ -7,7 +7,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { staleAutoFills, staleFreshnessLines } from "./freshness.ts";
+import { FRESH_LABEL, UPDATE_SCHEDULE, scheduleFor, staleAutoFills, staleFreshnessLines } from "./freshness.ts";
 
 const D = (date: string, stale: boolean) => ({ date, stale });
 
@@ -18,8 +18,8 @@ test("期貨的句子不講「今日」——它結構上永遠沒有今天的�
   assert.ok(!lines[0].text.includes("今日"),
     `期貨句子不得出現「今日」:${lines[0].text}`);
   assert.ok(lines[0].text.includes("2026-09-16"), "要講出它實際停在哪一天");
-  assert.ok(lines[0].text.includes("落後於前一交易日"),
-    "要講清楚 stale 的意思是落後於前一交易日,不是「今天還沒到」");
+  assert.ok(lines[0].text.includes("落後超過兩個交易日"),
+    "要講清楚 stale 的意思是比常態(白天停在前天)還舊,不是「今天還沒到」");
 });
 
 test("其他資料集維持原本的「今日尚未公布」措辭", () => {
@@ -54,6 +54,51 @@ test("有別的資料集時仍然講那句", () => {
   assert.equal(staleAutoFills(lines), true);
 });
 
+test("每一筆待更新都帶出它的排程時間(使用者 2026-10-02 要求)", () => {
+  const lines = staleFreshnessLines({
+    insti: D("2026-10-01", true), branch: D("2026-10-01", true),
+    margin: D("2026-10-01", true), warrant: D("2026-10-01", true),
+    futures: D("2026-09-29", true), themes: D("2026-09-21", true),
+  } as never);
+  const by = Object.fromEntries(lines.map((l) => [l.key, l.schedule]));
+  assert.equal(by.insti, "16:10(17:40 補抓)");
+  assert.equal(by.branch, "17:40 第一輪(常未到齊)、22:00 補齊");
+  assert.equal(by.margin, "21:20");
+  assert.equal(by.warrant, "16:10");
+  assert.equal(by.themes, "每週一 14:10");
+  // 期貨照實講:漏掉的日子不會自己回來。
+  assert.ok(by.futures?.includes("人工補"), by.futures);
+});
+
+test("手機精簡欄位:名稱、MM-DD、短排程;期貨不講「今日」也不承諾自動補", () => {
+  const [margin] = staleFreshnessLines({ margin: D("2026-10-01", true) } as never);
+  assert.equal(margin.label, "融資券");
+  assert.equal(margin.shortDate, "10-01");
+  assert.equal(margin.shortSchedule, "21:20");
+  const [fut] = staleFreshnessLines({ futures: D("2026-09-30", true) } as never);
+  assert.equal(fut.shortSchedule, "21:20 只抓前一交易日");
+  for (const s of UPDATE_SCHEDULE) assert.ok(s.short.length <= 18, `${s.key} 短排程太長:${s.short}`);
+});
+
+test("時間表涵蓋徽章可能出現的每一種資料", () => {
+  for (const key of Object.keys(FRESH_LABEL)) {
+    assert.ok(scheduleFor(key), `${key} 沒有排程時間`);
+  }
+  assert.ok(UPDATE_SCHEDULE.some((s) => s.key === "quotes"));
+});
+
 test("沒有 freshness 欄位時回空陣列,不炸", () => {
   assert.deepEqual(staleFreshnessLines(undefined), []);
+});
+
+test("權證部分未到:不說「暫用(今天)」,講幾檔沒到", () => {
+  const [w] = staleFreshnessLines({
+    warrant: { date: "2026-10-02", stale: true, partial_stale: true, stale_stock_count: 2 },
+  } as never);
+  assert.equal(w.shortState, "部分未到(2 檔)");
+  assert.ok(!w.text.includes("暫用"), w.text);
+  const [m] = staleFreshnessLines({ margin: D("2026-10-01", true) } as never);
+  assert.equal(m.shortState, "暫用 10-01");
+  const [f] = staleFreshnessLines({ futures: D("2026-09-29", true) } as never);
+  assert.equal(f.shortState, "停在 09-29");
 });

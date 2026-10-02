@@ -265,6 +265,39 @@ class FuturesExportTests(unittest.TestCase):
         self.assertEqual(payload["freshness"]["futures"],
                          {"date": OLDER, "stale": True})
 
+    def test_two_days_behind_in_the_afternoon_is_normal_three_is_stale(self):
+        """14:10 現貨更新到今天、21:20 期貨才抓到昨天——白天停在前天是常態
+        (2026-10-02 下午首頁把停在 09-30 的期貨標成「尚未更新」)。"""
+        from radar import schema
+        import radar.db as db
+        extra = ["2026-09-11", "2026-09-10"]
+        with db.get_engine().begin() as conn:
+            conn.execute(schema.stocks.insert().prefix_with("OR IGNORE"), [
+                {"id": "2303", "name": "聯電", "market": "twse", "type": "stock"}])
+            conn.execute(schema.daily_prices.insert().prefix_with("OR IGNORE"), [
+                {"stock_id": "2303", "date": day, "close": 50, "volume": 1, "turnover": 1}
+                for day in extra])
+        self._seed_futures([_contract("CCF", "2303")],
+                           [_daily("CCF", "202609", "一般", 500, 900, date="2026-09-11")])
+        export_json(self.out)
+        payload = json.loads((self.out / "radar.json").read_text(encoding="utf-8"))
+        self.assertEqual(payload["freshness"]["futures"], {"date": "2026-09-11", "stale": False})
+
+    def test_three_trading_days_behind_is_stale(self):
+        from radar import schema
+        import radar.db as db
+        with db.get_engine().begin() as conn:
+            conn.execute(schema.stocks.insert().prefix_with("OR IGNORE"), [
+                {"id": "2303", "name": "聯電", "market": "twse", "type": "stock"}])
+            conn.execute(schema.daily_prices.insert().prefix_with("OR IGNORE"), [
+                {"stock_id": "2303", "date": day, "close": 50, "volume": 1, "turnover": 1}
+                for day in ("2026-09-11", "2026-09-10")])
+        self._seed_futures([_contract("CCF", "2303")],
+                           [_daily("CCF", "202609", "一般", 500, 900, date="2026-09-10")])
+        export_json(self.out)
+        payload = json.loads((self.out / "radar.json").read_text(encoding="utf-8"))
+        self.assertEqual(payload["freshness"]["futures"], {"date": "2026-09-10", "stale": True})
+
     def test_a_stale_futures_day_is_kept_out_of_the_auto_backfill_sentence(self):
         """那句話承諾「稍後自動補齊」,而期貨補不了——所以它不在那句話裡。"""
         self._seed_futures(

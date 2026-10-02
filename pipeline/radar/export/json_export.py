@@ -989,7 +989,15 @@ def export_json(out_dir: Path | None = None) -> dict:
             # 「稍後自動補齊」——而這條管線補不了:餵源沒有日期參數,漏掉的
             # 那天只能跑 backfill-futures。所以 stale 的意思是「連前一個交易日
             # 都沒跟上」(§7.12)。f_date == d(期貨反而追上現貨)當然也不是舊。
-            "futures": {"date": f_date, "stale": f_date not in (d, prev)},
+            #
+            # 2026-10-02 補:白天其實落後**兩個**交易日也是常態。現貨 14:10 就更新到
+            # 今天,期貨要到 21:20 才抓得到「昨天」——所以 14:10 到 21:20 之間期貨
+            # 停在前天,首頁每天下午都把它標成「尚未更新」(10-02 下午停在 09-30)。
+            # 正常 = 落在最近三個現貨交易日內;再舊才是真的沒跟上。
+            "futures": {
+                "date": f_date,
+                "stale": f_date not in (d, prev, dates[2] if len(dates) > 2 else None),
+            },
         }
 
         rows = conn.execute(text("""
