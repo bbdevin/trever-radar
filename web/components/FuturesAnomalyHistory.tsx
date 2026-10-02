@@ -88,14 +88,15 @@ export default function FuturesAnomalyHistory({
                   href={`/stock?id=${row.stockId}&tab=futures`}
                   className={cn(flagCardClass(row.spot), "py-2")}
                 >
-                  <div className="flex min-w-0 items-center gap-x-2">
-                    <span className="min-w-0 truncate text-[14px] font-bold text-foreground">
+                  {/* flex-wrap:契約名稱長時換行,不擠掉股名(同當日名單)。 */}
+                  <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+                    <span className="min-w-0 max-w-full truncate text-[14px] font-bold text-foreground">
                       <span className="num">{row.stockId}</span>
                       {row.name && <span className="ml-1.5">{row.name}</span>}
                     </span>
                     <ContractTag label={row.label} code={row.code} />
                     <span className="ml-auto flex shrink-0 items-center gap-1.5">
-                      <SpotChip spot={row.spot} />
+                      <SpotChip spot={row.spot} when="flag" />
                       <WatchlistButton stockId={row.stockId} size={15} />
                     </span>
                   </div>

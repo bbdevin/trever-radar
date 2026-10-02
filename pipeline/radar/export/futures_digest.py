@@ -26,11 +26,12 @@ NEXT_DAY_EVIDENCE = {"events": 551, "up3": 81, "down3": 112}
 def contract_label(multiplier: int | None, stock_id: str) -> str:
     """契約代碼的白話名稱(使用者:「REF JFF 這些縮寫都要寫清楚是什麼」)。
 
-    規則與前端 ``contractLabel`` 相同:ETF(代號 00 開頭)→ ETF 期貨;每口 2,000 股
-    → 個股期貨;100 股 → 小型個股期貨;其他已知乘數 → 期貨(每口 N 股);未知 → 期貨。
+    規則與前端 ``contractLabel`` 相同:代號 00 開頭(指數股票型基金)→ 指數基金期貨;
+    每口 2,000 股 → 個股期貨;100 股 → 小型個股期貨;其他已知乘數 → 期貨(每口 N 股);
+    未知 → 期貨。不寫 ETF 這個縮寫(使用者規則:縮寫不解釋就不要寫)。
     """
     if stock_id.startswith("00"):
-        return "ETF 期貨"
+        return "指數基金期貨"
     if multiplier == 2000:
         return "個股期貨"
     if multiplier == 100:
@@ -38,6 +39,33 @@ def contract_label(multiplier: int | None, stock_id: str) -> str:
     if multiplier is not None:
         return f"期貨（每口 {multiplier:,} 股）"
     return "期貨"
+
+
+def contract_labels(entries: list[dict[str, Any]]) -> dict[tuple[str, str], str]:
+    """``(stock_id, code) → 名稱``,同一檔的契約兩兩不同(與前端 ``contractLabelsByCode``
+    同一套補法:先補「每口 N 股」,仍同名再補「第 N 個契約」)。"""
+    by_stock: dict[str, dict[str, int | None]] = {}
+    for e in entries:
+        by_stock.setdefault(e["stock_id"], {}).setdefault(e["code"], e.get("multiplier"))
+    out: dict[tuple[str, str], str] = {}
+    for stock_id, contracts in by_stock.items():
+        codes = list(contracts)
+        labels = [contract_label(contracts[c], stock_id) for c in codes]
+        labels = [
+            f"{label}（每口 {contracts[c]:,} 股）"
+            if labels.count(label) > 1 and contracts[c] is not None and "每口" not in label
+            else label
+            for c, label in zip(codes, labels)
+        ]
+        seen: dict[str, int] = {}
+        final = []
+        for label in labels:
+            if labels.count(label) > 1:
+                seen[label] = seen.get(label, 0) + 1
+                label = f"{label}（第 {seen[label]} 個契約）"
+            final.append(label)
+        out.update({(stock_id, c): label for c, label in zip(codes, final)})
+    return out
 
 
 def _names(out: Path) -> dict[str, str]:
@@ -66,9 +94,10 @@ def build_digest(out: Path) -> tuple[str, str] | None:
         return None
     names = _names(out)
     lagging = [e for e in entries if e.get("spot_new_high") is False]
+    labels = contract_labels(entries)
     listed = "、".join(
         f"{names.get(e['stock_id'], '')} {e['stock_id']}（"
-        f"{contract_label(e.get('multiplier'), e['stock_id'])}）".lstrip()
+        f"{labels[(e['stock_id'], e['code'])]}）".lstrip()
         for e in lagging
     )
     head = (

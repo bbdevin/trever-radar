@@ -239,6 +239,19 @@ class SpotAfterTests(_HistoryFixture):
         self.set_spot("2303", FLAG_FWD[0], adj_factor=0.95)
         self.assertIs(self.entries_on(FLAG)[0]["spot_after"]["ex_rights"], True)
 
+    def test_production_shaped_ex_dividend_gap_is_not_detected(self):
+        """production 的形狀:除息 100 → 95,兩列 adj_factor 都是 1.0(compute-adjustments
+        不在排程裡)。偵測不到 → ex_rights 為假,原始價格照實給;前端因此每一句價格都
+        標「未扣除權息」(futures.test.ts 鎖)。這裡鎖的是「我們不假裝偵測得到」。"""
+        prices = [
+            {"date": "2026-09-01", "close": 100.0, "high": 101.0, "low": 99.0, "adj_factor": 1.0},
+            {"date": "2026-09-02", "close": 95.0, "high": 96.0, "low": 94.5, "adj_factor": 1.0},
+        ]
+        self.assertEqual(spot_after(prices, day="2026-09-01"), {
+            "flag_close": 100.0, "last_close": 95.0, "last_date": "2026-09-02",
+            "high": 96.0, "low": 94.5, "days": 1, "ex_rights": False,
+        })
+
     def test_no_price_row_on_the_flag_day_means_no_key(self):
         self.assertIsNone(spot_after([{"date": "2026-06-09", "close": 1.0, "high": 1.0,
                                        "low": 1.0, "adj_factor": 1.0}], day="2026-06-08"))

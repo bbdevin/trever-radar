@@ -125,8 +125,10 @@ export default function FuturesAnomalyList({
               // 紅 = 現貨已同步爆量(使用者要兩者一眼分得出來;§7.19)。
               className={flagCardClass(row.spot)}
             >
-              <div className="flex min-w-0 items-center gap-x-2">
-                <span className="min-w-0 truncate text-[15px] font-bold text-foreground">
+              {/* flex-wrap:契約名稱長(例「指數基金期貨(每口 10,000 股)」)時換到下一行,
+                  不擠掉股名。 */}
+              <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+                <span className="min-w-0 max-w-full truncate text-[15px] font-bold text-foreground">
                   <span className="num">{row.stockId}</span>
                   {row.name && <span className="ml-1.5">{row.name}</span>}
                 </span>

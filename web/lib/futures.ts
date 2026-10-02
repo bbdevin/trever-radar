@@ -97,32 +97,78 @@ export function anomalyFacts(a: FuturesAnomaly): FuturesAnomalyFact[] {
  * 規則與 pipeline 的 `futures_digest.contract_label` 相同。
  * ------------------------------------------------------------------ */
 export function contractLabel(multiplier: number | null | undefined, stockId: string): string {
-  if (stockId.startsWith("00")) return "ETF 期貨";
+  // ETF 是縮寫,依使用者規則不能裸寫;「ETF(指數股票型基金)期貨」在 390px 的卡片
+  // 標籤放不下,所以用「指數基金期貨」,完整名稱放在 title(見 contractLabelTitle)。
+  if (stockId.startsWith("00")) return ETF_FUTURES_LABEL;
   if (multiplier === 2000) return "個股期貨";
   if (multiplier === 100) return "小型個股期貨";
   if (typeof multiplier === "number") return `期貨（每口 ${multiplier.toLocaleString("zh-TW")} 股）`;
   return "期貨";
 }
 
+export const ETF_FUTURES_LABEL = "指數基金期貨";
+
+/** 標籤的滑鼠提示:代碼只放在這裡;指數基金期貨另外寫出 ETF 的全名。 */
+export function contractLabelTitle(label: string, code: string): string {
+  return label.startsWith(ETF_FUTURES_LABEL)
+    ? `ETF（指數股票型基金）期貨，契約代碼 ${code}`
+    : `契約代碼 ${code}`;
+}
+
 /**
- * 一檔股票的每個契約 → 名稱。兩個契約得到同一個名稱時(例:都是 ETF 期貨),
- * 補上「每口幾股」把它們分開;乘數未知就只能維持原名(舊 payload)。
+ * 一檔股票的每個契約 → 名稱,**保證兩兩不同**。同名時先補「每口幾股」;
+ * 乘數未知(舊 payload)或補了仍同名,再補「第 N 個契約」——絕不讓兩個契約
+ * 在畫面上長得一樣(§7.10)。
  */
 export function contractLabelsByCode(
   contracts: ReadonlyArray<{ code: string; multiplier?: number }>,
   stockId: string,
 ): Map<string, string> {
-  const base = contracts.map((c) => [c.code, contractLabel(c.multiplier, stockId)] as const);
-  const counts = new Map<string, number>();
-  for (const [, label] of base) counts.set(label, (counts.get(label) ?? 0) + 1);
-  return new Map(
-    base.map(([code, label]) => {
-      const c = contracts.find((x) => x.code === code);
-      const dup = (counts.get(label) ?? 0) > 1 && typeof c?.multiplier === "number"
-        && !label.includes("每口");
-      return [code, dup ? `${label}（每口 ${c!.multiplier!.toLocaleString("zh-TW")} 股）` : label];
-    }),
-  );
+  const unique = new Map<string, { code: string; multiplier?: number }>();
+  for (const c of contracts) if (!unique.has(c.code)) unique.set(c.code, c);
+  const list = [...unique.values()];
+  const count = (labels: string[]) => {
+    const m = new Map<string, number>();
+    for (const l of labels) m.set(l, (m.get(l) ?? 0) + 1);
+    return m;
+  };
+  let labels = list.map((c) => contractLabel(c.multiplier, stockId));
+  let counts = count(labels);
+  labels = labels.map((label, i) => {
+    const m = list[i].multiplier;
+    return (counts.get(label) ?? 0) > 1 && typeof m === "number" && !label.includes("每口")
+      ? `${label}（每口 ${m.toLocaleString("zh-TW")} 股）`
+      : label;
+  });
+  counts = count(labels);
+  const seen = new Map<string, number>();
+  labels = labels.map((label) => {
+    if ((counts.get(label) ?? 0) <= 1) return label;
+    const n = (seen.get(label) ?? 0) + 1;
+    seen.set(label, n);
+    return `${label}（第 ${n} 個契約）`;
+  });
+  return new Map(list.map((c, i) => [c.code, labels[i]]));
+}
+
+/**
+ * 一份名單(可能跨很多檔股票、很多天)裡每一筆的名稱:**依股票**把出現過的契約
+ * 收在一起去重,所以同一檔的兩個契約在名單、紀錄、推播裡都分得開。鍵 `${stock}|${code}`。
+ */
+export function entryContractLabels(
+  entries: ReadonlyArray<{ stock_id: string; code: string; multiplier?: number }>,
+): Map<string, string> {
+  const byStock = new Map<string, { code: string; multiplier?: number }[]>();
+  for (const e of entries) {
+    const list = byStock.get(e.stock_id) ?? [];
+    list.push({ code: e.code, multiplier: e.multiplier });
+    byStock.set(e.stock_id, list);
+  }
+  const out = new Map<string, string>();
+  byStock.forEach((list, stockId) => {
+    contractLabelsByCode(list, stockId).forEach((label, code) => out.set(`${stockId}|${code}`, label));
+  });
+  return out;
 }
 
 /** 名單上的一列。刻意沒有 rank / position / score / ratio 這類鍵(§5、§7.5)。 */
@@ -172,11 +218,12 @@ export function futuresAnomalyMarketState(
     };
   }
   // 順序原封不動(payload 已依 today − window_max 遞減排好);不排序、不去重。
+  const labels = entryContractLabels(entries);
   const rows = entries.map((e) => ({
     stockId: e.stock_id,
     name: nameById?.get(e.stock_id) ?? null,
     code: e.code,
-    label: contractLabel(e.multiplier, e.stock_id),
+    label: labels.get(`${e.stock_id}|${e.code}`) ?? contractLabel(e.multiplier, e.stock_id),
     facts: anomalyFacts(e.anomaly),
     reasons: e.reasons,
     risks: e.risks,
@@ -437,8 +484,17 @@ export function spotFollow(spotNewHigh: boolean | null | undefined): SpotFollow 
   return "unknown";
 }
 
-/** 卡片上的標籤;unknown 不貼標籤(不知道就不講)。 */
-export function spotFollowLabel(s: SpotFollow): string | null {
+/**
+ * 卡片上的標籤;unknown 不貼標籤(不知道就不講)。
+ * `when: "flag"` 給近 N 日紀錄用:那是**舉旗當天**的狀態,不是現在——用現在式
+ * 會與同一張卡上「現貨量 09-30 跟上」互相矛盾(§7.19)。
+ */
+export function spotFollowLabel(s: SpotFollow, when: "now" | "flag" = "now"): string | null {
+  if (when === "flag") {
+    if (s === "lagging") return "舉旗時現貨未跟上";
+    if (s === "followed") return "舉旗時現貨同步爆量";
+    return null;
+  }
   if (s === "lagging") return "現貨尚未跟上";
   if (s === "followed") return "現貨已同步爆量";
   return null;
@@ -552,8 +608,13 @@ function fmtPctFrom(base: number, v: number): string {
 
 /**
  * 舉旗之後的現貨價格一句話。缺 → 「—」;之後還沒有交易日 → 「尚無之後交易日」。
- * 最高與最低**永遠一起**給(這個訊號預告的是波動)。價格未經還原,窗內有除權息時
- * 句尾註明。
+ * 最高與最低**永遠一起**給(這個訊號預告的是波動)。
+ *
+ * **每一句都標「未扣除權息」**:production 的日 K 沒有可靠的除權息訊號——
+ * `adj_factor` 只有手動跑 compute-adjustments 才會更新(不在排程裡),新列一律 1.0,
+ * 而 daily_prices 不存漲跌價/參考價、也沒有除權息日表。所以除權息當天的缺口會被
+ * 算成真的跌幅,而我們偵測不到;誠實的作法是每一句都講明沒扣。`ex_rights` 為真
+ * (偵測得到的少數情況)時改講得更確定:「窗內有除權息」。
  */
 export function priceAfterText(after: FuturesSpotAfter | undefined): string {
   if (!after) return "—";
@@ -565,7 +626,7 @@ export function priceAfterText(after: FuturesSpotAfter | undefined): string {
     `現貨收盤 ${fmtPrice(base)} → ${fmtPrice(after.last_close)}` +
     `（${fmtPctFrom(base, after.last_close)}，${after.days} 個交易日後）；` +
     `期間最高 ${fmtPctFrom(base, high)}／最低 ${fmtPctFrom(base, low)}` +
-    (after.ex_rights ? "（窗內有除權息，未調整）" : "")
+    (after.ex_rights ? "（窗內有除權息，未扣除）" : "（未扣除權息）")
   );
 }
 
@@ -621,6 +682,8 @@ export function futuresAnomalyHistoryState(
   nameById?: ReadonlyMap<string, string>,
 ): FuturesAnomalyHistoryState {
   if (!history || !meta) return { kind: "not-computed" };
+  // 名稱依股票跨整份紀錄去重:同一檔的兩個契約在不同天出現也叫不同的名字。
+  const labels = entryContractLabels(history.flatMap((d) => d.entries ?? []));
   return {
     kind: "listed",
     meta,
@@ -634,7 +697,7 @@ export function futuresAnomalyHistoryState(
           stockId: e.stock_id,
           name: nameById?.get(e.stock_id) ?? null,
           code: e.code,
-          label: contractLabel(e.multiplier, e.stock_id),
+          label: labels.get(`${e.stock_id}|${e.code}`) ?? contractLabel(e.multiplier, e.stock_id),
           facts: anomalyFacts(e.anomaly),
           reasons: e.reasons,
           risks: e.risks,

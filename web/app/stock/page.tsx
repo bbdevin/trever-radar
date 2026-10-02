@@ -25,6 +25,7 @@ import WarrantBranchPanel from "@/components/WarrantBranchPanel";
 import ReasonPill, { isChipStrategyCode } from "@/components/ReasonPill";
 import {
   anomalyFacts,
+  contractLabelTitle,
   contractLabelsByCode,
   contractsWithDaily,
   contractsWithoutDaily,
@@ -730,7 +731,7 @@ function FuturesBadge({ futures, labels }: { futures: StockJson["futures"]; labe
         <Layers size={11} aria-hidden="true" />有個股期貨
       </span>
       {state.contracts.map((c) => (
-        <span key={c.code} className="shrink-0 text-muted-foreground" title={`契約代碼 ${c.code}（清單日 ${state.asOf}）`}>
+        <span key={c.code} className="shrink-0 text-muted-foreground" title={`${contractLabelTitle(labels.get(c.code) ?? "期貨", c.code)}（清單日 ${state.asOf}）`}>
           {labels.get(c.code) ?? "期貨"}
         </span>
       ))}
@@ -769,7 +770,7 @@ function FuturesAnomalyBlock({ futures, labels }: { futures: StockJson["futures"
           <div className="flex min-w-0 flex-wrap items-baseline gap-2">
             <span
               className="inline-flex shrink-0 items-center gap-1 rounded-full border border-[color:var(--accent-2)]/35 bg-[color:var(--accent-2)]/8 px-1.5 py-0.5 text-[11px] font-semibold text-[color:var(--accent-2)]"
-              title={`契約代碼 ${c.code}`}
+              title={contractLabelTitle(labels.get(c.code) ?? "期貨", c.code)}
             >
               <Layers size={11} aria-hidden="true" />
               {labels.get(c.code) ?? "期貨"}
@@ -840,7 +841,7 @@ function FuturesDailyBlock({ futures, labels }: { futures: StockJson["futures"];
           <div className="flex min-w-0 flex-wrap items-baseline gap-2">
             <span
               className="inline-flex shrink-0 items-center gap-1 rounded-full border border-border bg-secondary px-1.5 py-0.5 text-[11px] font-semibold text-muted-foreground"
-              title={`契約代碼 ${c.code}`}
+              title={contractLabelTitle(labels.get(c.code) ?? "期貨", c.code)}
             >
               <Layers size={11} aria-hidden="true" />
               {labels.get(c.code) ?? "期貨"}
@@ -868,7 +869,7 @@ function FuturesDailyBlock({ futures, labels }: { futures: StockJson["futures"];
       {dailyAsOf !== undefined && undated.length > 0 && (
         <div className="min-w-0 rounded-[var(--r-lg)] border border-border bg-card px-3 py-2.5 text-[11.5px] leading-relaxed text-muted-foreground">
           {undated.map((c) => (
-            <div key={c.code} title={`契約代碼 ${c.code}`}>{noDailyRowText(labels.get(c.code) ?? "期貨", dailyAsOf)}</div>
+            <div key={c.code} title={contractLabelTitle(labels.get(c.code) ?? "期貨", c.code)}>{noDailyRowText(labels.get(c.code) ?? "期貨", dailyAsOf)}</div>
           ))}
         </div>
       )}

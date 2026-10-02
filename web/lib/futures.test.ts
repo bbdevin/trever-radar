@@ -26,7 +26,9 @@ import {
   ANOMALY_EVIDENCE,
   anomalyHistoryHeaderText,
   contractLabel,
+  contractLabelTitle,
   contractLabelsByCode,
+  entryContractLabels,
   followStatus,
   followStatusLabel,
   futuresAnomalyHistoryState,
@@ -597,7 +599,9 @@ test("證據數字與檢定紀錄一致(docs/evidence/futures-volume-battery-202
 test("§7.19 契約名稱:2,000 股=個股期貨、100 股=小型個股期貨、ETF、其他乘數、未知", () => {
   assert.equal(contractLabel(2000, "2303"), "個股期貨");
   assert.equal(contractLabel(100, "1565"), "小型個股期貨");
-  assert.equal(contractLabel(10000, "0050"), "ETF 期貨");
+  assert.equal(contractLabel(10000, "0050"), "指數基金期貨");
+  assert.equal(contractLabelTitle("指數基金期貨", "NYF"), "ETF（指數股票型基金）期貨，契約代碼 NYF");
+  assert.equal(contractLabelTitle("個股期貨", "CDF"), "契約代碼 CDF");
   assert.equal(contractLabel(1000, "2303"), "期貨（每口 1,000 股）");
   assert.equal(contractLabel(undefined, "2303"), "期貨");
   assert.equal(contractLabel(null, "2303"), "期貨");
@@ -608,8 +612,44 @@ test("§7.19/§7.10 同一檔兩個契約的名稱分得開;同名時補每口�
   assert.equal(labels.get("MYF"), "個股期貨");
   assert.equal(labels.get("OMF"), "小型個股期貨");
   const etf = contractLabelsByCode([{ code: "NYF", multiplier: 10000 }, { code: "NZF", multiplier: 1000 }], "0050");
-  assert.equal(etf.get("NYF"), "ETF 期貨（每口 10,000 股）");
-  assert.equal(etf.get("NZF"), "ETF 期貨（每口 1,000 股）");
+  assert.equal(etf.get("NYF"), "指數基金期貨（每口 10,000 股）");
+  assert.equal(etf.get("NZF"), "指數基金期貨（每口 1,000 股）");
+  // 乘數未知(舊 payload)也不得同名。
+  const old = contractLabelsByCode([{ code: "AAF" }, { code: "BBF" }], "2303");
+  assert.deepEqual([...old.values()], ["期貨（第 1 個契約）", "期貨（第 2 個契約）"]);
+});
+
+test("§7.19 名單與紀錄:同一檔兩個契約的名稱兩兩不同(依股票去重)", () => {
+  const listed = futuresAnomalyMarketState(
+    [{ ...entry("0050", "NYF", ANOMALY_MYF), multiplier: 10000 }, { ...entry("0050", "NZF", ANOMALY_OMF), multiplier: 1000 }],
+    "2026-09-18",
+  );
+  if (listed.kind !== "listed") throw new Error("expected listed");
+  assert.equal(new Set(listed.rows.map((r) => r.label)).size, 2);
+  const labels = entryContractLabels([
+    { stock_id: "2303", code: "AAF" }, { stock_id: "2303", code: "BBF" }, { stock_id: "1565", code: "MYF", multiplier: 2000 },
+  ]);
+  assert.equal(labels.get("2303|AAF"), "期貨（第 1 個契約）");
+  assert.equal(labels.get("2303|BBF"), "期貨（第 2 個契約）");
+  assert.equal(labels.get("1565|MYF"), "個股期貨");
+  const hist = futuresAnomalyHistoryState(
+    [
+      { as_of: "2026-09-30", entries: [hEntry({ stock_id: "0050", code: "NYF", multiplier: 10000 })] as never },
+      { as_of: "2026-09-29", entries: [hEntry({ stock_id: "0050", code: "NZF", multiplier: 1000 })] as never },
+    ],
+    H_META,
+  );
+  if (hist.kind !== "listed") throw new Error("expected listed");
+  assert.notEqual(hist.days[0].rows[0].label, hist.days[1].rows[0].label);
+});
+
+test("§7.19 紀錄裡的狀態標籤用舉旗當時的措辭,當日名單用現在式", () => {
+  assert.equal(spotFollowLabel("lagging", "flag"), "舉旗時現貨未跟上");
+  assert.equal(spotFollowLabel("followed", "flag"), "舉旗時現貨同步爆量");
+  assert.equal(spotFollowLabel("unknown", "flag"), null);
+  assert.equal(spotFollowLabel("lagging"), "現貨尚未跟上");
+  const src = readFileSync(new URL("../components/FuturesAnomalyHistory.tsx", import.meta.url), "utf8");
+  assert.ok(src.includes('<SpotChip spot={row.spot} when="flag" />'), "紀錄卡片要用舉旗當時的措辭");
 });
 
 test("§7.19 名單列帶白話名稱,畫面要用的欄位裡沒有任何拉丁字母", () => {
@@ -701,14 +741,24 @@ test("§7.19 價格區塊的標題與回測句逐字", () => {
 test("§7.19 priceAfterText:最高最低一起給、缺值 —、還沒有之後的交易日、除權息註記", () => {
   assert.equal(
     priceAfterText({ flag_close: 123.5, last_close: 130, last_date: "2026-10-01", high: 135, low: 120, days: 6, ex_rights: false }),
-    "現貨收盤 123.5 → 130.0（+5.3%，6 個交易日後）；期間最高 +9.3%／最低 −2.8%",
+    "現貨收盤 123.5 → 130.0（+5.3%，6 個交易日後）；期間最高 +9.3%／最低 −2.8%（未扣除權息）",
   );
   assert.equal(priceAfterText(undefined), "—");
   assert.equal(priceAfterText({ flag_close: 50, days: 0 }), "尚無之後交易日");
   assert.equal(
     priceAfterText({ flag_close: 50, last_close: 50, last_date: "x", high: 50, low: 50, days: 1, ex_rights: true }),
-    "現貨收盤 50.0 → 50.0（0.0%，1 個交易日後）；期間最高 0.0%／最低 0.0%（窗內有除權息，未調整）",
+    "現貨收盤 50.0 → 50.0（0.0%，1 個交易日後）；期間最高 0.0%／最低 0.0%（窗內有除權息，未扣除）",
   );
+});
+
+test("§7.19 production 形狀的除息缺口(100→95、adj_factor 都是 1.0)偵測不到,句子照樣講明未扣除權息", () => {
+  const text = priceAfterText({ flag_close: 100, last_close: 95, last_date: "2026-09-02", high: 96, low: 94.5, days: 1, ex_rights: false });
+  assert.equal(text, "現貨收盤 100.0 → 95.0（−5.0%，1 個交易日後）；期間最高 −4.0%／最低 −5.5%（未扣除權息）");
+  // 每一句有價格的話都帶這個註記(偵測得到時換成更確定的說法)。
+  for (const ex of [false, true, undefined]) {
+    const t = priceAfterText({ flag_close: 10, last_close: 11, last_date: "x", high: 12, low: 9, days: 2, ex_rights: ex });
+    assert.ok(t.includes("未扣除"), t);
+  }
 });
 
 test("§7.19 「目前高於/低於/持平」是計數:同天同檔兩個契約只算一次、0 個交易日的不算", () => {

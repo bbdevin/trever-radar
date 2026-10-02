@@ -41,16 +41,13 @@ job_zh() {
 }
 
 # $1=內文 $2=priority(預設 high) $3=標題後綴(成功/失敗/略過/注意;可空)
-# $4=整個標題(可空;給不屬於某一輪結果的訊息用,例:期貨量異常摘要)
 notify() {
   [ -n "${NTFY:-}" ] || return 0
   local msg="$1"
   local pri="${2:-high}"
   local kind="${3:-}"
   local title
-  if [ -n "${4:-}" ]; then
-    title="$4"
-  elif [ -n "$kind" ]; then
+  if [ -n "$kind" ]; then
     title="$(job_zh) · ${kind}"
   else
     title="$(job_zh)"
@@ -249,14 +246,30 @@ futures_probe() {
 # 上線的那一份)。讀剛寫好的 web/public/data/radar.json,不開資料庫——容器只唯讀掛
 # web/public/data,連 data/ 都不掛,也不需要金鑰,所以不走 radar()/radar_timeout。
 #
-# 去重:標記檔 $FUTURES_DIGEST_DIR/.futures-digest-<期貨行情日>。16:10 送過之後,
-# 17:40／22:00 只有在期貨行情日往前推進時才會再送(那天標記還不存在)。
+# 去重:標記檔 $FUTURES_DIGEST_DIR/.futures-digest-<期貨行情日>,**只在 ntfy 確認
+# 收到之後**才寫——推送失敗的那一輪不留標記,下一輪(17:40／22:00)會重送。
+# 16:10 送成功之後,後面兩輪只有在期貨行情日往前推進時才會再送。超過 14 天的標記
+# 每次順手刪掉。
 #
 # 這一步**絕不影響本輪**(warn-and-continue):硬上限 60 秒;所有可能非零的指令都在
-# `|| …` 裡;摘要算不出來只 notify_warn 一則;永遠 return 0。
+# `|| …` 或 `if` 裡;摘要算不出來只 notify_warn 一則;永遠 return 0。
+
+# 只給 futures_digest 用:送出並**回傳 curl 的結果**(-f:HTTP 錯誤也算失敗)。
+# 刻意不改 notify():各輪都在 set -e 底下呼叫它,它必須永遠成功。
+# 沒有設定 NTFY → 回 1(沒有送出),標記因此不寫。
+futures_digest_send() {
+  [ -n "${NTFY:-}" ] || return 1
+  curl -sf -m 10 \
+    -H "Priority: default" \
+    -H "Title: $2" \
+    -d "$1" "https://ntfy.sh/${NTFY}" >/dev/null
+}
+
 FUTURES_DIGEST_DIR="${FUTURES_DIGEST_DIR:-${HOME:-/tmp}}"
 futures_digest() {
   local out="" rc=0 title="" as_of="" marker="" body=""
+  find "$FUTURES_DIGEST_DIR" -maxdepth 1 -type f -name '.futures-digest-*' -mtime +14 \
+    -delete 2>/dev/null || true
   out="$(timeout --signal=TERM --kill-after=10s 60s \
     docker run --rm \
       -v "$REPO/pipeline":/app/pipeline \
@@ -279,8 +292,11 @@ futures_digest() {
     return 0
   fi
   body="$(printf '%s\n' "$out" | tail -n +2 || true)"
-  notify "$body" default "" "$title" || true
-  : > "$marker" || true
+  if futures_digest_send "$body" "$title"; then
+    : > "$marker" || true
+  else
+    echo "futures-digest: ${as_of} 推送沒有成功,不寫標記,下一輪重送" || true
+  fi
   return 0
 }
 

@@ -22,6 +22,7 @@ from radar.export.futures_digest import (
     SITE_URL,
     build_digest,
     contract_label,
+    contract_labels,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -173,9 +174,26 @@ class ContractLabelTests(unittest.TestCase):
     def test_labels(self):
         self.assertEqual(contract_label(2000, "2303"), "個股期貨")
         self.assertEqual(contract_label(100, "1565"), "小型個股期貨")
-        self.assertEqual(contract_label(10000, "0050"), "ETF 期貨")
+        self.assertEqual(contract_label(10000, "0050"), "指數基金期貨")
         self.assertEqual(contract_label(1000, "2303"), "期貨（每口 1,000 股）")
         self.assertEqual(contract_label(None, "2303"), "期貨")
+        self.assertNotIn("ETF", contract_label(10000, "0050"))
+
+    def test_two_contracts_of_one_stock_never_share_a_name(self):
+        labels = contract_labels([
+            {"stock_id": "0050", "code": "NYF", "multiplier": 10000},
+            {"stock_id": "0050", "code": "NZF", "multiplier": 1000},
+            {"stock_id": "2303", "code": "AAF"},
+            {"stock_id": "2303", "code": "BBF"},
+            {"stock_id": "1565", "code": "MYF", "multiplier": 2000},
+            {"stock_id": "1565", "code": "OMF", "multiplier": 100},
+        ])
+        self.assertEqual(labels[("0050", "NYF")], "指數基金期貨（每口 10,000 股）")
+        self.assertEqual(labels[("0050", "NZF")], "指數基金期貨（每口 1,000 股）")
+        self.assertEqual(labels[("2303", "AAF")], "期貨（第 1 個契約）")
+        self.assertEqual(labels[("2303", "BBF")], "期貨（第 2 個契約）")
+        self.assertEqual(labels[("1565", "MYF")], "個股期貨")
+        self.assertEqual(labels[("1565", "OMF")], "小型個股期貨")
 
 
 # ── 接線(腳本原始碼) ────────────────────────────────────────────────────────
@@ -238,11 +256,31 @@ class DigestWiringTests(unittest.TestCase):
         lib = LIB.read_text(encoding="utf-8")
         self.assertIn('FUTURES_DIGEST_DIR="${FUTURES_DIGEST_DIR:-${HOME:-/tmp}}"', lib)
 
-    def test_notify_keeps_its_three_argument_contract(self):
+    def test_notify_is_untouched(self):
+        """各輪在 set -e 底下呼叫 notify,它必須永遠成功;推播的確認走另一個 helper。"""
         lib = "\n".join(_code_lines(LIB))
         m = re.search(r"^notify\(\)\s*\{(.*?)\n\}", lib, re.S | re.M)
         self.assertIsNotNone(m)
         self.assertIn('title="$(job_zh) · ${kind}"', m.group(1))
+        self.assertNotIn("$4", m.group(1))
+        self.assertIn('>/dev/null || true', m.group(1))
+
+    def test_the_marker_is_written_only_after_a_confirmed_send(self):
+        body = _digest_body()
+        self.assertRegex(
+            body,
+            r'if futures_digest_send "\$body" "\$title"; then\s*\n\s*: > "\$marker" \|\| true\s*\n\s*else',
+        )
+        self.assertEqual(body.count(': > "$marker"'), 1)
+        lib = "\n".join(_code_lines(LIB))
+        m = re.search(r"^futures_digest_send\(\)\s*\{(.*?)\n\}", lib, re.S | re.M)
+        self.assertIsNotNone(m, "lib.sh 裡找不到 futures_digest_send")
+        self.assertIn("curl -sf", m.group(1))
+        self.assertNotIn("|| true", m.group(1), "它必須回傳 curl 的結果")
+
+    def test_old_markers_are_cleaned_up(self):
+        self.assertRegex(_digest_body(),
+                         r"find \"\$FUTURES_DIGEST_DIR\" .*-name '\.futures-digest-\*' -mtime \+14")
 
 
 BASH = shutil.which("bash")
@@ -270,7 +308,8 @@ class DigestHelperBehaviourTests(unittest.TestCase):
             return "/mnt/" + drive[0].lower() + rest.replace("\\", "/")
         return str(path)
 
-    def _run(self, docker_stdout: str, docker_rc: int, home: Path, runs: int = 1) -> str:
+    def _run(self, docker_stdout: str, docker_rc: int, home: Path, runs: int = 1,
+             curl_rc: int = 0, pre: str = "") -> str:
         (home / "docker.out").write_text(docker_stdout, encoding="utf-8", newline="\n")
         h = self._for_bash(home)
         script = f"""
@@ -278,7 +317,8 @@ source '{self._for_bash(LIB)}' >/dev/null 2>&1
 export HOME='{h}' NTFY=test FUTURES_DIGEST_DIR='{h}'
 docker() {{ cat '{h}/docker.out'; return {docker_rc}; }}
 timeout() {{ shift 3; "$@"; }}
-curl() {{ printf 'CURL %s\\n' "$*" >> '{h}/curl.log'; }}
+curl() {{ printf 'CURL %s\\n' "$*" >> '{h}/curl.log'; return {curl_rc}; }}
+{pre}
 for i in $(seq 1 {runs}); do futures_digest; done
 echo ROUND_CONTINUES
 """
@@ -301,6 +341,20 @@ echo ROUND_CONTINUES
         self.assertEqual(sent.count("CURL"), 1)
         self.assertIn("Title: 期貨量異常 · 2026-10-02", sent)
         self.assertTrue((home / ".futures-digest-2026-10-02").exists())
+
+    def test_a_failed_send_leaves_no_marker_and_is_retried(self):
+        home = self._home()
+        sent = self._run("期貨量異常 · 2026-10-02\n內文\nhttps://x", 0, home, runs=2, curl_rc=22)
+        self.assertEqual(sent.count("Title: 期貨量異常 · 2026-10-02"), 2, "失敗要在下一輪重送")
+        self.assertFalse((home / ".futures-digest-2026-10-02").exists())
+
+    def test_markers_older_than_14_days_are_deleted(self):
+        home = self._home()
+        pre = (f"touch -d '20 days ago' '{self._for_bash(home)}/.futures-digest-2026-09-01'\n"
+               f"touch -d '3 days ago' '{self._for_bash(home)}/.futures-digest-2026-09-29'")
+        self._run("", 0, home, pre=pre)
+        self.assertFalse((home / ".futures-digest-2026-09-01").exists())
+        self.assertTrue((home / ".futures-digest-2026-09-29").exists())
 
     def test_silent_when_there_is_nothing(self):
         self.assertEqual(self._run("", 0, self._home()), "")

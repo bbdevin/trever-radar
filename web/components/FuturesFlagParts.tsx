@@ -2,7 +2,7 @@
 
 import { AlertCircle, Layers } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { spotFollowLabel, type SpotFollow } from "@/lib/futures";
+import { contractLabelTitle, spotFollowLabel, type SpotFollow } from "@/lib/futures";
 
 /**
  * 期貨舉旗卡片(當日與近 N 日共用)的外框與狀態標籤。
@@ -25,8 +25,9 @@ export function flagCardClass(spot: SpotFollow): string {
   );
 }
 
-export function SpotChip({ spot }: { spot: SpotFollow }) {
-  const label = spotFollowLabel(spot);
+/** `when="flag"`:近 N 日紀錄用舉旗當時的措辭(「舉旗時現貨…」),顏色不變。 */
+export function SpotChip({ spot, when = "now" }: { spot: SpotFollow; when?: "now" | "flag" }) {
+  const label = spotFollowLabel(spot, when);
   if (!label) return null;
   return (
     <span
@@ -46,7 +47,7 @@ export function ContractTag({ label, code }: { label: string; code: string }) {
   return (
     <span
       className="inline-flex shrink-0 items-center gap-0.5 text-[11px] text-muted-foreground"
-      title={`契約代碼 ${code}`}
+      title={contractLabelTitle(label, code)}
     >
       <Layers size={11} aria-hidden="true" />
       {label}
