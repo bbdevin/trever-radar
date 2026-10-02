@@ -14,6 +14,7 @@ import {
 import { Building2, ChevronDown, ChevronUp, Flame, Layers, MapPin, Phone, ShieldCheck, Tags } from "lucide-react";
 import { IconArrowLeft } from "@/components/Icons";
 import KChart from "@/components/KChart";
+import AccumulationBranches from "@/components/AccumulationBranches";
 import BranchFlowSection from "@/components/BranchFlowSection";
 import BranchPctilePanel from "@/components/BranchPctilePanel";
 import BranchDrillView from "@/components/BranchDrillView";
@@ -312,6 +313,7 @@ function StockView() {
         <>
           {/* 2026-10-02 移到當日/區間進出之上:預設只展開前 5 個分點,長說明收在
               「怎麼看」裡,所以不再把分點進出擠到很下面。舊 JSON 沒有這個鍵時整節不渲染。 */}
+          <AccumulationBranches branchHistory={data.branch_history} candles={cs} onOpenBranch={setDrillBranch} />
           <BranchPctilePanel data={data.branch_pctile_counts} />
           <BranchFlowSection
             branches={data.branches}
