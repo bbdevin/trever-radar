@@ -7,19 +7,19 @@ import { bollinger, kd, macd, rsi, sma } from "@/lib/indicators";
 import { barsForDays, periodKey, resample, type Timeframe } from "@/lib/resample";
 import { cn, pillTabClass, segBtnClass } from "@/lib/utils";
 
-const TF_DEFS: { key: Timeframe; label: string }[] = [
-  { key: "D", label: "日K" },
-  { key: "W", label: "週K" },
-  { key: "M", label: "月K" },
+const TF_DEFS: { key: Timeframe; label: string; short: string }[] = [
+  { key: "D", label: "日K", short: "日" },
+  { key: "W", label: "週K", short: "週" },
+  { key: "M", label: "月K", short: "月" },
 ];
 
 const MA_DEFS = [
-  { key: "ma5", n: 5, label: "5日", color: "#3987e5" },
-  { key: "ma10", n: 10, label: "10日", color: "#c98500" },
-  { key: "ma20", n: 20, label: "20日", color: "#9085e9" },
-  { key: "ma60", n: 60, label: "季線", color: "#199e70" },
-  { key: "ma120", n: 120, label: "半年線", color: "#d55181" },
-  { key: "ma240", n: 240, label: "年線", color: "#d95926" },
+  { key: "ma5", n: 5, label: "5日", short: "5", color: "#3987e5" },
+  { key: "ma10", n: 10, label: "10日", short: "10", color: "#c98500" },
+  { key: "ma20", n: 20, label: "20日", short: "20", color: "#9085e9" },
+  { key: "ma60", n: 60, label: "季線", short: "季", color: "#199e70" },
+  { key: "ma120", n: 120, label: "半年線", short: "半年", color: "#d55181" },
+  { key: "ma240", n: 240, label: "年線", short: "年", color: "#d95926" },
 ] as const;
 type MaKey = (typeof MA_DEFS)[number]["key"];
 type SubKey = "macd" | "kd" | "rsi";
@@ -241,7 +241,8 @@ export default function KChart({
         layout: {
           background: { type: ColorType.Solid, color: "transparent" },
           textColor: colors.text,
-          fontSize: 11,
+          // 手機字放大一級:11px 在 390px 上讀不清(使用者 2026-10-02:過小)
+          fontSize: mobile ? 12 : 11,
           // 桌機開啟 pane 分隔線可拖曳(v5 內建),讓使用者微調子 pane 高度;手機關閉,垂直拖曳留給頁面捲動
           panes: { separatorColor: colors.separator, enableResize: !mobile },
         },
@@ -328,9 +329,10 @@ export default function KChart({
         else addSub(2);
         titlesRef.current = []; // 手機不建 pane 內 watermark(避免小 pane 壓資料),數值走上方 compact legend
         // 主圖佔比加大;子 pane 於放大後總高仍 ≥120px
-        paneFactor(0, 13);
+        // 主圖再加大(使用者 2026-10-02:手機 K 棒過小),副圖退到約三成
+        paneFactor(0, 16);
         paneFactor(1, 4);
-        paneFactor(2, 11);
+        paneFactor(2, 8);
       } else {
         // 桌機:副圖常駐 pane 2,主力/分點依序接 pane 3/4(逐位元不變)
         addSub(2);
@@ -393,14 +395,15 @@ export default function KChart({
         const mas = MA_DEFS.filter((m) => settings.ma[m.key])
           .map((m) => {
             const v = calc.ma[m.key][i];
-            return v == null ? "" : `<span style="color:${m.color}">${m.label} ${v.toFixed(prec)}</span>`;
+            return v == null ? "" : `<span style="color:${m.color}">${mobile ? m.short : m.label} ${v.toFixed(prec)}</span>`;
           })
           .filter(Boolean)
           .join(" ");
         const tone = prev != null && c.c >= prev ? "up" : "down";
         el.innerHTML = mobile
-          ? `<div class="truncate"><b>${c.t.slice(5)}</b> 開${c.o} 高${c.h} 低${c.l} 收<b>${c.c}</b> ` +
-            `<span class="${tone}">${chg}%</span> 量${c.v.toLocaleString()}</div>` +
+          ? `<div class="truncate"><b>${c.t.slice(5)}</b> 收<b class="${tone}">${c.c}</b> ` +
+            `<span class="${tone}">${prev != null && c.c >= prev ? "+" : ""}${chg}%</span> ` +
+            `開${c.o} 高${c.h} 低${c.l} 量${c.v >= 10000 ? `${(c.v / 10000).toFixed(1)}萬` : c.v.toLocaleString()}</div>` +
             `<div class="truncate">${mas}</div>`
           : `<b>${c.t}</b> 開${c.o} 高${c.h} 低${c.l} 收<b>${c.c}</b> ` +
             `<span class="${tone}">${chg}%</span> ` +
@@ -486,10 +489,11 @@ export default function KChart({
             <button
               key={t.key}
               type="button"
-              className={cn(segBtnClass(settings.tf === t.key, "accent"), isMobile && "px-2")}
+              className={cn(segBtnClass(settings.tf === t.key, "accent"), isMobile && "px-2.5")}
+              aria-label={t.label}
               onClick={() => setSettings((s) => ({ ...s, tf: t.key }))}
             >
-              {t.label}
+              {isMobile ? t.short : t.label}
             </button>
           ))}
         </span>
@@ -542,7 +546,7 @@ export default function KChart({
         {MA_DEFS.map((m) => (
           <label
             key={m.key}
-            className={cn(chipBase, isMobile ? "min-h-8 px-2" : "min-h-9")}
+            className={cn(chipBase, "min-h-9")}
             style={settings.ma[m.key] ? { color: m.color, borderColor: m.color } : undefined}
           >
             <input
@@ -555,7 +559,7 @@ export default function KChart({
             {m.label}
           </label>
         ))}
-        <label className={cn(chipBase, isMobile ? "min-h-8 px-2" : "min-h-9")} style={settings.boll ? { color: "#898781", borderColor: "#898781" } : undefined}>
+        <label className={cn(chipBase, "min-h-9")} style={settings.boll ? { color: "#898781", borderColor: "#898781" } : undefined}>
           <input
             type="checkbox"
             checked={settings.boll}
@@ -588,11 +592,11 @@ export default function KChart({
           {/* 固定兩行高度:手指滑動時數值變化不會讓圖表上下跳 */}
           <div
             ref={legendRef}
-            className="num h-[2.6em] min-w-0 px-0.5 text-[11px] leading-[1.3] text-[color:var(--ink-2)]"
+            className="num h-[2.7em] min-w-0 px-0.5 text-[12px] leading-[1.35] text-[color:var(--ink-2)]"
           />
           <div
             ref={mobileLegendRef}
-            className="num truncate px-0.5 pb-1 text-[11px] leading-tight text-[color:var(--ink-2)] empty:hidden"
+            className="num truncate px-0.5 pb-1 text-[12px] leading-tight text-[color:var(--ink-2)] empty:hidden"
           />
         </>
       )}
