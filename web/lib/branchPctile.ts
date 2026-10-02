@@ -223,7 +223,7 @@ export function normalizeBranchPctile(data: BranchPctileCounts | unknown): Pctil
     if (!d.short || typeof d.short !== "object") return null;
     return {
       version: 2,
-      lotsRanked: d.ranking === "lots_shrunk_v1",
+      lotsRanked: typeof d.ranking === "string" && d.ranking.startsWith("lots_shrunk"),
       minKnown: countOrNull(d.min_known_episodes_per_side) ?? V1_DEFINITION.minKnown,
       maxBranches: countOrNull(d.max_branches),
       lowMax: typeof d.low_buy_max_pctile === "number" ? d.low_buy_max_pctile : V1_DEFINITION.lowMax,

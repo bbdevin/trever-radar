@@ -94,7 +94,7 @@ BRANCH_PCTILE_LOOKUP_MAX = 150
 # v2(2026-10-02):張數加權＋收縮排序、短線派／長線派兩份清單、lookup。
 BRANCH_PCTILE_VERSION = 2
 # 排序方式的名稱跟著 payload 走。舊快照(張數欄位為 NULL)退回 v1 的次數排序。
-BRANCH_PCTILE_RANKING = "lots_shrunk_v1"
+BRANCH_PCTILE_RANKING = "lots_shrunk_v2"
 BRANCH_PCTILE_RANKING_FALLBACK = "counts_v1"
 
 # 兩派:(payload 鍵, 欄位後綴, 收盤區間的市場交易日數)。
@@ -226,18 +226,23 @@ def _rank_branch_pctile_rows(rows: list[dict], limit: int, min_known: int) -> li
 
 
 def _pctile_shrink_k(rows: list[dict], known_lots: str) -> float:
-    """收縮強度 K = 這檔股票中「該側已知張數 > 0」的分點,其已知張數的中位數。
+    """收縮強度 K = 該側已知張數的「張數加權中位數」。
 
-    由資料決定、每檔每側各一個:熱門股的分點動輒上千張,冷門股幾十張,固定的 K
-    在兩者之間必然有一邊失準。中位數的意思是「一個典型分點的張數」——張數只有
-    典型分點一小部分的紀錄會被大幅拉回該股基準,張數遠多於典型的紀錄幾乎不被拉。
+    取該股該側已知張數 > 0 的分點,依已知張數由大到小累加,累計 ≥ 總張數一半
+    的那個分點的已知張數即為 K(此股一半的可見張數來自至少這麼大的分點)。
+    比起分點人數的中位數,加掛大量 1 張小分點不會把 K 拉低。
     沒有任何分點有張數時為 0(此時所有差額本來就是 0)。
     """
-    values = sorted(row[known_lots] for row in rows if (row[known_lots] or 0) > 0)
+    values = sorted((row[known_lots] for row in rows if (row[known_lots] or 0) > 0), reverse=True)
     if not values:
         return 0.0
-    mid = len(values) // 2
-    return float(values[mid]) if len(values) % 2 else (values[mid - 1] + values[mid]) / 2
+    half = 0.5 * sum(values)
+    cumulative = 0
+    for value in values:
+        cumulative += value
+        if cumulative >= half:
+            return float(value)
+    return float(values[-1])
 
 
 def _pctile_shrunk_margin(hit: int, known: int, base: float, k: float) -> float:
@@ -250,16 +255,18 @@ def _pctile_shrunk_margin(hit: int, known: int, base: float, k: float) -> float:
 def _rank_branch_pctile_rows_by_lots(
     rows: list[dict], limit: int, min_known: int,
 ) -> tuple[list[dict], dict]:
-    """``lots_shrunk_v1``:張數加權、向該股基準收縮後,超出基準多少。
+    """``lots_shrunk_v2``:張數加權、向該股基準收縮後,超出基準多少。
 
     對每一側(買:低檔張數/已知張數;賣:高檔張數/已知張數):
 
         base   = 該股 pooled 的同側張數比率(stock_low_buy_lots / stock_buy_lots_known)
-        K      = 該股該側已知張數 > 0 的分點之已知張數中位數(見 _pctile_shrink_k)
+        K      = 該股該側已知張數的張數加權中位數(見 _pctile_shrink_k)
         shrunk = (hit_lots + K·base) / (known_lots + K)
         margin = shrunk − base
 
-    排序鍵 = 買側 margin + (賣側 margin,若賣側已知分位**次數** ≥ min_known;否則 0)。
+    排序鍵 = 買側 margin + w_sell × 賣側 margin。w_sell = min(1, 賣出已知張數 ÷
+    買進已知張數)(買進已知張數為 0 時 1),且賣側已知分位**次數** ≥ min_known
+    才計入,否則 w_sell = 0。看不到出場的長抱不扣分。
     入選條件只有買側已知分位次數 ≥ min_known——持股者的出場多半是前 15 大以外的
     小量賣出,看不見,要求賣側等於懲罰「買在低檔然後抱著」的分點。同分以名稱排。
 
@@ -280,7 +287,10 @@ def _rank_branch_pctile_rows_by_lots(
             base(row, "stock_low_buy_lots", "stock_buy_lots_known"), k_buy,
         )
         if (row["sell_pctile_known"] or 0) >= min_known:
-            total += _pctile_shrunk_margin(
+            buy_known = row["buy_lots_known"] or 0
+            sell_known = row["sell_lots_known"] or 0
+            w_sell = 1.0 if buy_known == 0 else min(1.0, sell_known / buy_known)
+            total += w_sell * _pctile_shrunk_margin(
                 row["high_sell_lots"], row["sell_lots_known"],
                 base(row, "stock_high_sell_lots", "stock_sell_lots_known"), k_sell,
             )

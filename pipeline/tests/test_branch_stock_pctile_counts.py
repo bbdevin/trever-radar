@@ -28,6 +28,7 @@ from radar.export.json_export import (
     BRANCH_PCTILE_MAX_BRANCHES,
     BRANCH_PCTILE_MIN_KNOWN_PER_SIDE,
     _pctile_shrink_k,
+    _pctile_shrunk_margin,
     _rank_branch_pctile_rows,
     _rank_branch_pctile_rows_by_lots,
     export_json,
@@ -604,7 +605,7 @@ def _filler_rows(count: int, lots: int) -> list[dict]:
 
 
 class BranchPctileLotsRankingTests(unittest.TestCase):
-    """lots_shrunk_v1:張數加權、向該股基準收縮,只要求買側。"""
+    """lots_shrunk_v2:張數加權、向該股基準收縮,只要求買側,賣側依可見出場比例計入。"""
 
     def _rank(self, rows):
         return _rank_branch_pctile_rows_by_lots(rows, limit=30, min_known=5)
@@ -660,13 +661,84 @@ class BranchPctileLotsRankingTests(unittest.TestCase):
         ranked, _ = self._rank([plain, seller, *_filler_rows(5, 300)])
         self.assertEqual([row["branch_name"] for row in ranked], ["SELLS_HIGH", "BUY_ONLY"])
 
-    def test_k_is_the_median_of_positive_known_lots_per_side(self):
-        rows = [_lot_row(name, buy_lots_known=lots, sell_lots_known=sell)
-                for name, lots, sell in (("a", 0, 7), ("b", 10, 0), ("c", 20, 0), ("d", 30, 0),
-                                          ("e", 40, 0))]
-        self.assertEqual(_pctile_shrink_k(rows, "buy_lots_known"), 25)
-        self.assertEqual(_pctile_shrink_k(rows, "sell_lots_known"), 7)
-        self.assertEqual(_pctile_shrink_k([_lot_row("x")], "buy_lots_known"), 0)
+    def test_k_is_the_lots_weighted_median_per_side(self):
+        def k(lots):
+            rows = [_lot_row(f"r{i}", buy_lots_known=v) for i, v in enumerate(lots)]
+            return _pctile_shrink_k(rows, "buy_lots_known")
+
+        self.assertEqual(k([400, 300, 200, 100]), 300)
+        self.assertEqual(k([1000, 300, 200, 100]), 1000)
+        self.assertEqual(k([0, 0]), 0)
+        self.assertEqual(_pctile_shrink_k([_lot_row("x")], "sell_lots_known"), 0)
+        self.assertEqual(_pctile_shrink_k([], "buy_lots_known"), 0)
+
+    def test_appending_one_lot_branches_leaves_k_and_order_unchanged(self):
+        a = _lot_row("A", buy_pctile_known=6, buy_lots_known=2000, low_buy_lots=1200)
+        b = _lot_row("B", buy_pctile_known=7, buy_lots_known=3000, low_buy_lots=1300)
+        base_rows = [a, b, *_filler_rows(4, 1000)]
+        ranked0, shrink0 = self._rank(base_rows)
+        tiny = [_lot_row(f"T{i:03d}", buy_pctile_known=1, buy_lots_known=1, low_buy_lots=1,
+                         sell_pctile_known=1, sell_lots_known=1) for i in range(300)]
+        ranked1, shrink1 = self._rank(base_rows + tiny)
+        self.assertEqual(shrink0, shrink1)
+        self.assertEqual([r["branch_name"] for r in ranked0],
+                         [r["branch_name"] for r in ranked1])
+
+    def test_tiny_perfect_loses_to_large_consistent(self):
+        tiny = _lot_row("TINY", buy_pctile_known=5, low_buy_count=5,
+                        buy_lots_known=94, low_buy_lots=94)
+        large = _lot_row("LARGE", buy_pctile_known=11, low_buy_count=7,
+                         buy_lots_known=2089, low_buy_lots=1197)
+        mass = [_lot_row(f"M{i}", buy_pctile_known=2, buy_lots_known=1500,
+                         sell_pctile_known=2, sell_lots_known=1500) for i in range(10)]
+        ranked, _ = self._rank([tiny, large, *mass])
+        self.assertEqual([r["branch_name"] for r in ranked], ["LARGE", "TINY"])
+
+    def test_a_holder_with_few_visible_sells_is_barely_penalised(self):
+        common = dict(buy_pctile_known=11, low_buy_count=7, buy_lots_known=2089,
+                      low_buy_lots=1197)
+        holder = _lot_row("HOLDER", sell_pctile_known=7, sell_lots_known=359,
+                          high_sell_lots=97, **common)
+        twin = _lot_row("TWIN", **common)
+        full_sell = _lot_row("FULLSELL", sell_pctile_known=7, sell_lots_known=2089,
+                             high_sell_lots=565, **common)  # 565/2089 與 97/359 同為 27%
+        mass = _filler_rows(10, 1500)
+        rows = [holder, twin, full_sell, *mass]
+        k_sell = _pctile_shrink_k(rows, "sell_lots_known")
+        base = holder["stock_high_sell_lots"] / holder["stock_sell_lots_known"]
+        holder_margin = _pctile_shrunk_margin(97, 359, base, k_sell)
+        full_margin = _pctile_shrunk_margin(565, 2089, base, k_sell)
+        self.assertLess(holder_margin, 0)
+        self.assertLess(full_margin, 0)
+        # holder 只扣 (359/2089) 倍的賣側差額,full_sell 扣滿權重 1;排序斷言(下方)是真正的檢查。
+        self.assertLess((359 / 2089) * abs(holder_margin), abs(full_margin))
+        ranked, _ = self._rank(rows)
+        names = [r["branch_name"] for r in ranked]
+        self.assertEqual(names[:3], ["TWIN", "HOLDER", "FULLSELL"])
+
+    def test_scaling_all_lots_scales_k_and_keeps_order(self):
+        def build(scale):
+            rows = [
+                _lot_row("A", buy_pctile_known=6, buy_lots_known=600 * scale,
+                         low_buy_lots=400 * scale, sell_pctile_known=6,
+                         sell_lots_known=300 * scale, high_sell_lots=50 * scale),
+                _lot_row("B", buy_pctile_known=8, buy_lots_known=900 * scale,
+                         low_buy_lots=400 * scale),
+                _lot_row("C", buy_pctile_known=5, buy_lots_known=80 * scale,
+                         low_buy_lots=70 * scale),
+                *_filler_rows(5, 300 * scale),
+            ]
+            for r in rows:
+                for f in ("stock_buy_lots_known", "stock_low_buy_lots",
+                          "stock_sell_lots_known", "stock_high_sell_lots"):
+                    r[f] = r[f] * scale
+            return rows
+
+        r1, s1 = self._rank(build(1))
+        r10, s10 = self._rank(build(10))
+        self.assertEqual(s10["shrink_k_buy_lots"], s1["shrink_k_buy_lots"] * 10)
+        self.assertEqual(s10["shrink_k_sell_lots"], s1["shrink_k_sell_lots"] * 10)
+        self.assertEqual([r["branch_name"] for r in r1], [r["branch_name"] for r in r10])
 
     def test_the_cap_holds(self):
         rows = [_lot_row(f"B{index:02d}", buy_pctile_known=5, buy_lots_known=10, low_buy_lots=10)
@@ -843,7 +915,7 @@ class BranchPctileExportTests(unittest.TestCase):
         ])
         payload = self._export("1111")["branch_pctile_counts"]
         self.assertEqual(payload["version"], 2)
-        self.assertEqual(payload["ranking"], "lots_shrunk_v1")
+        self.assertEqual(payload["ranking"], "lots_shrunk_v2")
         self.assertEqual(payload["windows"], {"short": 20, "long": 120})
         self.assertEqual(payload["low_buy_max_pctile"], 0.4)
         self.assertEqual(payload["high_sell_min_pctile"], 0.6)
@@ -867,10 +939,10 @@ class BranchPctileExportTests(unittest.TestCase):
         self.assertEqual(short["stock_low_buy_count"], 572)
         self.assertEqual(long["stock_buy_pctile_known"], 900)
         self.assertEqual(long["stock_high_sell_lots"], 11000)
-        # K = 該側已知張數 > 0 的分點之中位數:短線派買側 [40, 600, 3300] → 600。
-        self.assertEqual(short["shrink_k_buy_lots"], 600)
-        self.assertEqual(short["shrink_k_sell_lots"], (40 + 2000) / 2)
-        self.assertEqual(long["shrink_k_buy_lots"], 300)
+        # K = 張數加權中位數:短線派買側 [3300, 600, 40](總 3940,一半 1970)→ 3300。
+        self.assertEqual(short["shrink_k_buy_lots"], 3300)
+        self.assertEqual(short["shrink_k_sell_lots"], 2000)
+        self.assertEqual(long["shrink_k_buy_lots"], 3000)
 
         self.assertEqual({b["branch_name"] for b in short["branches"]}, {"甲", "丙"})
         self.assertEqual([b["branch_name"] for b in long["branches"]], ["甲"])
@@ -940,7 +1012,7 @@ class BranchPctileExportTests(unittest.TestCase):
             self._full_row("甲", (9, 9, 9, 9, 90, 90, 90, 90), (9, 9, 9, 9, 90, 90, 90, 90)),
         ])
         payload = self._export("2222")["branch_pctile_counts"]
-        self.assertEqual(payload["ranking"], "lots_shrunk_v1")
+        self.assertEqual(payload["ranking"], "lots_shrunk_v2")
         for camp in ("short", "long"):
             with self.subTest(camp=camp):
                 self.assertTrue(payload[camp]["available"])

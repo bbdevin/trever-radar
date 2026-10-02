@@ -56,7 +56,7 @@ function v2(overrides: Record<string, unknown> = {}) {
   shortRows[0] = row("群益金鼎-板橋", { daytrade_obs: 3, daytrade_paybacks: 1 });
   return {
     version: 2,
-    ranking: "lots_shrunk_v1",
+    ranking: "lots_shrunk_v2",
     min_known_episodes_per_side: 5,
     max_branches: 30,
     windows: { short: 20, long: 120 },

@@ -479,7 +479,7 @@ export interface BranchPctileCamp {
  */
 export interface BranchPctileCountsV2 {
   version: 2;
-  /** "lots_shrunk_v1"(張數加權＋收縮)或 "counts_v1"(舊快照退路)。 */
+  /** "lots_shrunk_v2"(張數加權＋收縮；v1 同為 lots_shrunk 系列)或 "counts_v1"(舊快照退路)。 */
   ranking: string;
   min_known_episodes_per_side: number;
   max_branches: number;
