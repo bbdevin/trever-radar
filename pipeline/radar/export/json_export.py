@@ -18,6 +18,7 @@ from ..db import get_engine, init_db
 from .spark_day import attach_spark_day
 from ..pocket import apply_pocket, buyback_status
 from ..theme_lifecycle import ACTIVE, displayed_status, eligible_for_hot_theme
+from ..branch_names import CLOSED_MARKS
 from ..company_groups import is_effective, load_company_groups, validate_company_groups
 from ..compute.strategy_performance import (
     compute_strategy_performance_from_events,
@@ -1917,6 +1918,10 @@ def _export_branches(out: Path, engine, date: str):
             "WHERE as_of = (SELECT MAX(as_of) FROM branch_rankings) "
             "ORDER BY rank_score DESC, samples DESC"
         ))]
+        # 名稱標示停業的分點不輸出(2026-10-02)。compute-branch-stats 已不把它們排進
+        # 新快照,這裡是第二道:舊快照在下一次重算之前仍會被讀到,使用者在那段
+        # 時間差裡看見元大-西門(停)仍在排行上。
+        rows = [r for r in rows if not any(m in (r["branch_name"] or "") for m in CLOSED_MARKS)]
         rankings = {
             "as_of": rows[0]["as_of"] if rows else None,
             # is_daytrade 為 NULL = 未判定 → 走主榜,不進 daytrade 清單。
@@ -2221,6 +2226,7 @@ def _export_tracked_branch_history(out: Path, engine, date: str):
             ORDER BY rank_score DESC, samples DESC, branch_name ASC
             LIMIT :limit
         """), {"limit": TRACK_RANK_DETAIL_LIMIT})]
+        ranked = [r for r in ranked if not any(m in r["branch_name"] for m in CLOSED_MARKS)]
 
         # tracked source wins on a duplicate.  Ranking-only entries retain
         # their candidate/auto/etc. source so the client can label them.  Fill

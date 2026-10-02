@@ -145,5 +145,28 @@ class RankingExcludesClosedTests(_DB):
         self.assertIn("1 closed branches excluded", out.getvalue())
 
 
+class ExportHidesClosedFromOldSnapshotsTests(_DB):
+    def test_an_old_snapshot_with_a_closed_branch_is_filtered_on_export(self):
+        """新快照已不含停業分點;舊快照在下一次重算前仍會被讀到——匯出端再擋一次。"""
+        import json
+        from radar.export.json_export import export_json
+        with db.get_engine().begin() as conn:
+            conn.execute(schema.stocks.insert(), [
+                {"id": "1101", "name": "台泥", "market": "twse", "type": "stock"}])
+            conn.execute(schema.daily_prices.insert(), [
+                {"stock_id": "1101", "date": "2026-10-01", "close": 10, "volume": 1, "turnover": 1}])
+            conn.execute(schema.branch_rankings.insert(), [
+                {"branch_name": "元大-西門(停)", "as_of": "2026-10-01", "rank_score": 48.3,
+                 "samples": 26, "matured_samples": 26, "style": "swing", "source": "candidate"},
+                {"branch_name": "兆豐-嘉義", "as_of": "2026-10-01", "rank_score": 40.0,
+                 "samples": 100, "matured_samples": 100, "style": "swing", "source": "candidate"},
+            ])
+        out = Path(self.tmp.name) / "out"
+        export_json(out)
+        payload = json.loads((out / "branches" / "rankings.json").read_text(encoding="utf-8"))
+        names = [r["branch_name"] for r in payload["rankings"]]
+        self.assertEqual(names, ["兆豐-嘉義"])
+
+
 if __name__ == "__main__":
     unittest.main()
