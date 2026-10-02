@@ -126,6 +126,54 @@ class WarrantBranchDetailExportTests(unittest.TestCase):
             ["七百萬賣超分點", "六百萬分點", "兩百萬分點"],
         )
 
+    def _export_detail(self):
+        out = Path(self._tmp.name) / "out"
+        out.mkdir(parents=True, exist_ok=True)
+        export_json(out)
+        return json.loads((out / "branches" / "warrant-stock-details" / "2330.json")
+                          .read_text(encoding="utf-8"))
+
+    def test_daily_series_sums_to_the_window_total_and_leaves_gaps(self):
+        """逐日序列(2026-10-02):對齊 K 線畫券商每天的權證買賣超金額。
+
+        08-04 再買 100 張(收盤 10 元 → +100 萬);08-05、08-06 沒有列——那兩天
+        該券商不在前 15 大,**不是 0**,序列裡就不該有那兩天。
+        """
+        with db.get_engine().begin() as conn:
+            conn.execute(schema.warrant_daily.insert(), [
+                {"warrant_id": "123456", "date": self.DATES[1], "close": 10.0,
+                 "volume": 1, "turnover": 1}])
+            upsert_branch_trades(conn, [
+                {"stock_id": "123456", "date": self.DATES[1], "branch_key": "two",
+                 "branch_name": "兩百萬分點", "buy_lots": 100, "sell_lots": 0,
+                 "net_lots": 100, "pct": 0}])
+        detail = self._export_detail()
+        # [日期, 認購金額, 認售金額]:方向相反的兩種權證分開放(買認售是看空)。
+        series = detail["daily"]["兩百萬分點"]
+        self.assertEqual(series, [[self.DATES[1], 1_000_000, 0], [self.DATES[-1], 2_000_000, 0]])
+        total_120d = next(r["net_amount"] for r in detail["timeframes"]["120d"]
+                          if r["branch_name"] == "兩百萬分點")
+        self.assertEqual(sum(c + p for _, c, p in series), total_120d)
+        self.assertEqual(detail["daily"]["七百萬賣超分點"], [[self.DATES[-1], 0, -7_000_000]])
+        self.assertEqual(detail["daily_from"], self.DATES[0])
+
+    def test_daily_series_only_for_branches_shown_in_the_rankings(self):
+        """熱門標的有數百個券商;只替買超／賣超各前 10 名輸出,否則手機要下整份。"""
+        with db.get_engine().begin() as conn:
+            upsert_branch_trades(conn, [
+                {"stock_id": "123456", "date": self.DATES[-1], "branch_key": f"x{i}",
+                 "branch_name": f"小買家{i:02d}", "buy_lots": 150 + i, "sell_lots": 0,
+                 "net_lots": 150 + i, "pct": 0}
+                for i in range(12)])
+        detail = self._export_detail()
+        buyers = [name for name, s in detail["daily"].items() if s[-1][1] + s[-1][2] > 0]
+        sellers = [name for name, s in detail["daily"].items() if s[-1][1] + s[-1][2] < 0]
+        self.assertEqual(len(buyers), 10)
+        self.assertEqual(sellers, ["七百萬賣超分點"])
+        self.assertIn("六百萬分點", buyers)
+        self.assertNotIn("小買家00", buyers)      # 最小的兩個買家被擠出前 10
+        self.assertNotIn("小買家01", buyers)
+
     def test_empty_warrant_branch_pool_reports_null_data_date(self):
         """池內沒有權證分點時報 null,不可拿報價日充當資料日。"""
         with db.get_engine().begin() as conn:

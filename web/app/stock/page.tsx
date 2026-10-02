@@ -909,7 +909,7 @@ function WarrantPanel({ data }: { data: StockJson }) {
   if (!data.warrant) {
     return (
       <div className="grid gap-3">
-        <WarrantBranchPanel stockId={data.id} />
+        <WarrantBranchPanel stockId={data.id} candles={data.candles} />
         <div className="py-[46px] text-center text-sm text-muted-foreground">目前沒有可彙總的權證成交資料；權證資料日未提供不代表整批資料未更新。</div>
       </div>
     );
@@ -917,7 +917,7 @@ function WarrantPanel({ data }: { data: StockJson }) {
 
   return (
     <div className="grid gap-3">
-      <WarrantBranchPanel stockId={data.id} />
+      <WarrantBranchPanel stockId={data.id} candles={data.candles} />
       <div className="grid gap-3 rounded-[var(--r-lg)] border border-border bg-card p-3.5 shadow-[var(--shadow-card)]">
       <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
         <h3 className="text-sm font-bold text-foreground">權證成交摘要</h3>

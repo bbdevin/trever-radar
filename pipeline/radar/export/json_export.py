@@ -641,6 +641,8 @@ MIN_WARRANT_TURNOVER = 20_000_000
 # 100–499 萬 observations without widening the exploration result set.
 WARRANT_BRANCH_MARKET_MIN_AMOUNT = 5_000_000
 WARRANT_BRANCH_DETAIL_MIN_AMOUNT = 1_000_000
+# 個股權證分頁的買超／賣超排行各顯示幾名;逐日序列也只替這些券商輸出。
+WARRANT_BRANCH_CHART_TOP_N = 10
 
 
 def _directors_latest_payload(conn, sid: str) -> dict | None:
@@ -2075,6 +2077,57 @@ def _export_warrant_branches(out: Path, engine, date: str, base20: list[str]):
         for k in results:
             results[k].sort(key=lambda x: -abs(x["net_amount"]))
 
+        # 逐日序列(2026-10-02):個股權證分頁要把「某券商在這檔權證上每天的買賣超
+        # 金額」對齊 K 線畫出來。只替**會出現在畫面排行上**的券商輸出——任一時間
+        # 範圍的買超前 N 或賣超前 N——否則熱門標的一檔就有數百個券商、上百天,
+        # 手機要下載整份。金額公式與上面的彙總逐字相同,所以逐日加總 = 區間總額。
+        # 某天沒有列 = 那天該券商不在任何一檔權證的前 15 大,**不是 0**,所以不補。
+        #
+        # 認購與認售方向相反(買認售 = 看空),所以每一天拆成 [日期, 認購, 認售] 兩個
+        # 金額;要畫哪些券商也分三種量各取前 N(總額、認購、認售的買超與賣超)——
+        # 前端的排行可以切換認購／認售,切過去的券商不能沒有序列。
+        def _kind_net(row: dict, kind: str) -> int:
+            return sum(b["net_amount"] for b in row.get("breakdown", []) if b["kind"] == kind)
+
+        measures = (
+            lambda x: x["net_amount"],
+            lambda x: _kind_net(x, "call"),
+            lambda x: _kind_net(x, "put"),
+        )
+        charted: dict[str, set[str]] = {}
+        for stock_id, timeframes in detail_by_stock.items():
+            names: set[str] = set()
+            for values in timeframes.values():
+                for measure in measures:
+                    scored = [(measure(x), x["branch_name"]) for x in values]
+                    buys = sorted((s for s in scored if s[0] > 0), key=lambda s: -s[0])
+                    sells = sorted((s for s in scored if s[0] < 0), key=lambda s: s[0])
+                    names.update(n for _, n in buys[:WARRANT_BRANCH_CHART_TOP_N])
+                    names.update(n for _, n in sells[:WARRANT_BRANCH_CHART_TOP_N])
+            charted[stock_id] = names
+        daily_by_stock: dict[str, dict[str, list[list]]] = {sid: {} for sid in charted}
+        if bd1 and charted:
+            for r in conn.execute(text("""
+                SELECT b.branch_name, w.stock_id AS underlying_id, b.date,
+                       SUM(CASE WHEN w.kind = 'call'
+                                THEN b.net_lots * 1000 * COALESCE(wd.close, 1.0) ELSE 0 END) AS call_amt,
+                       SUM(CASE WHEN w.kind = 'put'
+                                THEN b.net_lots * 1000 * COALESCE(wd.close, 1.0) ELSE 0 END) AS put_amt
+                FROM branch_trades b
+                JOIN warrants w ON w.id = b.stock_id
+                JOIN stocks s ON s.id = w.stock_id
+                LEFT JOIN warrant_daily wd ON wd.warrant_id = b.stock_id AND wd.date = b.date
+                WHERE LENGTH(b.stock_id) = 6 AND b.date >= :d120 AND b.date <= :d1
+                  AND s.type = 'stock'
+                  AND s.name NOT LIKE '%指%'
+                GROUP BY b.branch_name, w.stock_id, b.date
+                ORDER BY b.date
+            """), {"d1": d1, "d120": d120}):
+                names = charted.get(r.underlying_id)
+                if names and r.branch_name in names:
+                    daily_by_stock[r.underlying_id].setdefault(r.branch_name, []).append(
+                        [r.date, int(r.call_amt), int(r.put_amt)])
+
         # 與 warrant-stock-details 同一個誠實性契約:全市場檔也要說出自己的
         # 資料日,否則五個 timeframe 錨在 bd1 卻無處可查。沿用 today.json 的
         # v1 wrapper 形式,舊的裸 mapping 由前端 normalize 續讀。
@@ -2101,6 +2154,9 @@ def _export_warrant_branches(out: Path, engine, date: str, base20: list[str]):
                 "data_date": bd1,
                 "stock_id": stock_id,
                 "timeframes": timeframes,
+                # 可選鍵:舊前端不讀。缺鍵 = 舊 payload;{} = 算過、沒有可畫的券商。
+                "daily_from": d120,
+                "daily": daily_by_stock.get(stock_id, {}),
             }, ensure_ascii=False), encoding="utf-8")
         (detail_dir / "index.json").write_text(json.dumps({
             "version": 1,

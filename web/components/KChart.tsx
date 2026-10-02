@@ -69,6 +69,11 @@ function chartColors(isDark: boolean) {
     : { text: "#6b6a64", separator: "#e6e5e0", grid: "#e6e5e0", border: "#d8d7d2", paneText: "#6b6a64" };
 }
 
+/** 副圖數值的預設格式:張數(帶正負號)。 */
+function fmtLotsUnit(n: number): string {
+  return `${fmtLots(n)}張`;
+}
+
 /** 每日分點淨買賣序列(t 同 candles 的 YYYY-MM-DD) */
 export interface NetPoint {
   t: string;
@@ -103,6 +108,7 @@ export default function KChart({
   mainForce,
   branchFlow,
   branchFlowLabel,
+  branchFlowFormat,
 }: {
   candles: Candle[];
   visibleDays: number;
@@ -112,8 +118,12 @@ export default function KChart({
   branchFlow?: NetPoint[];
   /** 分點進出 pane 標題;下鑽單一分點時傳分點名 */
   branchFlowLabel?: string;
+  /** 分點進出 pane 的數值格式(含單位)。缺省為張數;權證分點傳金額(萬)。
+   *  請傳模組層級的穩定函式,它在 effect 的相依清單裡。 */
+  branchFlowFormat?: (n: number) => string;
 }) {
   const selLabel = branchFlowLabel ?? SEL_TITLE;
+  const fmtSel = branchFlowFormat ?? fmtLotsUnit;
   const ref = useRef<HTMLDivElement>(null);
   const legendRef = useRef<HTMLDivElement>(null);
   const mobileLegendRef = useRef<HTMLDivElement>(null);
@@ -351,9 +361,10 @@ export default function KChart({
         byT: Map<string, { net: number; cum: number }>,
         title: string,
         t: string | undefined,
+        fmt: (n: number) => string,
       ) => {
         const p = t != null ? byT.get(t) : undefined;
-        wm?.applyOptions({ lines: [wmLine(p ? `${title} 買賣超 ${fmtLots(p.net)}張/累計 ${fmtLots(p.cum)}張` : title)] });
+        wm?.applyOptions({ lines: [wmLine(p ? `${title} 買賣超 ${fmt(p.net)}/累計 ${fmt(p.cum)}` : title)] });
       };
       chart.subscribeCrosshairMove((param) => {
         const t = param.time as string | undefined;
@@ -365,11 +376,12 @@ export default function KChart({
             const byT = effPane === "main" ? mainByTime : selByTime;
             const title = effPane === "main" ? MF_TITLE : selLabel;
             const p = t ? byT.get(t) : undefined;
-            ml.textContent = p ? `${title} 買賣超 ${fmtLots(p.net)}張 · 累計 ${fmtLots(p.cum)}張` : title;
+            const fmt = effPane === "main" ? fmtLotsUnit : fmtSel;
+            ml.textContent = p ? `${title} 買賣超 ${fmt(p.net)} · 累計 ${fmt(p.cum)}` : title;
           }
         } else {
-          updTitle(mfTitle, mainByTime, MF_TITLE, t);
-          updTitle(selTitle, selByTime, selLabel, t);
+          updTitle(mfTitle, mainByTime, MF_TITLE, t, fmtLotsUnit);
+          updTitle(selTitle, selByTime, selLabel, t, fmtSel);
         }
         const el = legendRef.current;
         if (!el) return;
@@ -401,7 +413,7 @@ export default function KChart({
       chartRef.current = undefined;
       titlesRef.current = [];
     };
-  }, [bars, calc, flow, settings, visibleDays, mobilePaneKey, isMobile, selLabel]);
+  }, [bars, calc, flow, settings, visibleDays, mobilePaneKey, isMobile, selLabel, fmtSel]);
 
   // 主題切換:就地更新既有 chart 的 grid/軸/水印色(不重建 → 不閃爍)。chart 建立時已用當下主題色,故此處僅處理「建立後」的切換。
   useEffect(() => {
