@@ -8,6 +8,7 @@ import {
   fmtWanSigned,
   kindNet,
   rankBranches,
+  searchBranches,
   toWanSeries,
   fmtWanValueSigned,
 } from "./warrantBranches.ts";
@@ -81,6 +82,17 @@ test("副圖序列以萬為單位(座標軸才會是 800 而不是 8M)", () => {
   assert.equal(toWanSeries(undefined), undefined);
   assert.equal(fmtWanValueSigned(800), "+800萬");
   assert.equal(fmtWanValueSigned(-1234.4), "-1,234萬");
+});
+
+test("搜尋券商:名稱或代號都找得到,不限排行前 10", () => {
+  const codes = { "兆豐-嘉義": "7001", "群益金鼎": "9100", "看空券商": "9A9X" };
+  assert.deepEqual(searchBranches(rows, "7001", "call", codes).map((r) => r.branch_name), ["兆豐-嘉義"]);
+  assert.deepEqual(searchBranches(rows, "9a9x", "put", codes).map((r) => r.code), ["9A9X"]);
+  assert.deepEqual(searchBranches(rows, "金鼎", "call", codes)[0],
+    { branch_name: "群益金鼎", code: "9100", amount: -23_850_000 });
+  assert.deepEqual(searchBranches(rows, "  ", "call", codes), []);
+  // 沒有代號對照(舊分片)時只比名稱,不壞
+  assert.equal(searchBranches(rows, "兆豐", "call").length, 1);
 });
 
 test("預設選買超第一名,沒有就賣超第一名", () => {

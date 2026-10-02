@@ -157,8 +157,12 @@ class WarrantBranchDetailExportTests(unittest.TestCase):
         self.assertEqual(detail["daily"]["七百萬賣超分點"], [[self.DATES[-1], 0, -7_000_000]])
         self.assertEqual(detail["daily_from"], self.DATES[0])
 
-    def test_daily_series_only_for_branches_shown_in_the_rankings(self):
-        """熱門標的有數百個券商;只替買超／賣超各前 10 名輸出,否則手機要下整份。"""
+    def test_every_listed_branch_has_a_series_so_search_can_chart_it(self):
+        """「搜尋券商」要能畫任何一家:分片裡每一家(≥ 100 萬)都有序列。
+
+        實測 6488 共 61 家、逐日資料 60 KB,遠小於既有區間明細(674 KB)。
+        沒進分片的(< 100 萬)就沒有序列——它也不會出現在任何清單裡。
+        """
         with db.get_engine().begin() as conn:
             upsert_branch_trades(conn, [
                 {"stock_id": "123456", "date": self.DATES[-1], "branch_key": f"x{i}",
@@ -166,13 +170,22 @@ class WarrantBranchDetailExportTests(unittest.TestCase):
                  "net_lots": 150 + i, "pct": 0}
                 for i in range(12)])
         detail = self._export_detail()
-        buyers = [name for name, s in detail["daily"].items() if s[-1][1] + s[-1][2] > 0]
-        sellers = [name for name, s in detail["daily"].items() if s[-1][1] + s[-1][2] < 0]
-        self.assertEqual(len(buyers), 10)
-        self.assertEqual(sellers, ["七百萬賣超分點"])
-        self.assertIn("六百萬分點", buyers)
-        self.assertNotIn("小買家00", buyers)      # 最小的兩個買家被擠出前 10
-        self.assertNotIn("小買家01", buyers)
+        listed = {r["branch_name"] for rows in detail["timeframes"].values() for r in rows}
+        self.assertEqual(set(detail["daily"]), listed)
+        self.assertEqual(len(listed), 15)              # 3 家既有 + 12 家小買家
+        self.assertNotIn("五十萬分點", detail["daily"])
+
+    def test_branch_codes_are_decoded_for_the_code_column(self):
+        """參考圖的「代號」欄。含英文字母的代號存成 UTF-16BE 十六進位。"""
+        from radar.export.json_export import _branch_code
+        self.assertEqual(_branch_code("7001"), "7001")
+        self.assertEqual(_branch_code("0039004100390058"), "9A9X")
+        self.assertEqual(_branch_code("0039004200320030"), "9B20")
+        self.assertEqual(_branch_code("0039004100390067"), "9A9G")   # 來源是小寫 g
+        self.assertIsNone(_branch_code(None))
+        self.assertIsNone(_branch_code(""))
+        detail = self._export_detail()
+        self.assertEqual(detail["branch_codes"]["兩百萬分點"], "two")
 
     def test_empty_warrant_branch_pool_reports_null_data_date(self):
         """池內沒有權證分點時報 null,不可拿報價日充當資料日。"""

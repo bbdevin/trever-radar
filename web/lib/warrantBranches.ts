@@ -67,6 +67,26 @@ export function fmtWanSigned(n: number): string {
   return n > 0 ? `+${wan}萬` : n < 0 ? `-${wan}萬` : "0萬";
 }
 
+export type BranchHit = { branch_name: string; code: string | null; amount: number };
+
+/**
+ * 「搜尋券商」:依名稱或代號找這段期間任何一家券商(不只排行前 10)。
+ * 依該種權證淨額的絕對值排序;0 元的也列出(它在另一種權證可能有動作,
+ * 選了之後切種類就看得到)。空查詢回空陣列。
+ */
+export function searchBranches(
+  rows: BranchRowLite[], query: string, kind: WarrantKind,
+  codes: Record<string, string> = {}, limit = 20,
+): BranchHit[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return [];
+  return rows
+    .map((r) => ({ branch_name: r.branch_name, code: codes[r.branch_name] ?? null, amount: kindNet(r, kind) }))
+    .filter((r) => r.branch_name.toLowerCase().includes(q) || (r.code ?? "").toLowerCase().includes(q))
+    .sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount))
+    .slice(0, limit);
+}
+
 /** 預設選中的券商:目前排行的買超第一名,沒有就賣超第一名。 */
 export function defaultBranch(buys: RankedBranch[], sells: RankedBranch[]): string | null {
   return buys[0]?.branch_name ?? sells[0]?.branch_name ?? null;

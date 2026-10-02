@@ -641,8 +641,25 @@ MIN_WARRANT_TURNOVER = 20_000_000
 # 100–499 萬 observations without widening the exploration result set.
 WARRANT_BRANCH_MARKET_MIN_AMOUNT = 5_000_000
 WARRANT_BRANCH_DETAIL_MIN_AMOUNT = 1_000_000
-# 個股權證分頁的買超／賣超排行各顯示幾名;逐日序列也只替這些券商輸出。
-WARRANT_BRANCH_CHART_TOP_N = 10
+
+
+def _branch_code(branch_key: str | None) -> str | None:
+    """branch_dim.branch_key → 券商代號。
+
+    來源給的代號多半直接是 4 碼(7001、9100);含英文字母的代號存成 UTF-16BE 的
+    十六進位(0039004100390058 → 9A9X)。解不出來就回 None,不猜。
+    """
+    if not branch_key:
+        return None
+    key = branch_key.strip()
+    if len(key) % 4 == 0 and len(key) >= 8 and all(c in "0123456789abcdefABCDEF" for c in key):
+        try:
+            decoded = bytes.fromhex(key).decode("utf-16-be")
+        except (ValueError, UnicodeDecodeError):
+            return None
+        # 來源偶有小寫(永豐金-內湖解出 9A9g);券商代號慣例是大寫。
+        return decoded.upper() if decoded.isprintable() and decoded.strip() else None
+    return key
 
 
 def _directors_latest_payload(conn, sid: str) -> dict | None:
@@ -2078,33 +2095,22 @@ def _export_warrant_branches(out: Path, engine, date: str, base20: list[str]):
             results[k].sort(key=lambda x: -abs(x["net_amount"]))
 
         # 逐日序列(2026-10-02):個股權證分頁要把「某券商在這檔權證上每天的買賣超
-        # 金額」對齊 K 線畫出來。只替**會出現在畫面排行上**的券商輸出——任一時間
-        # 範圍的買超前 N 或賣超前 N——否則熱門標的一檔就有數百個券商、上百天,
-        # 手機要下載整份。金額公式與上面的彙總逐字相同,所以逐日加總 = 區間總額。
+        # 金額」對齊 K 線畫出來,而且能「搜尋券商」——所以分片裡**每一家**券商
+        # (任一區間淨額 ≥ 100 萬)都有序列。實測 6488 共 61 家、逐日資料 60 KB,
+        # 遠小於同一分片既有的區間明細(674 KB),不需要再裁成前 N 名。
+        # 金額公式與上面的彙總逐字相同,所以逐日加總 = 區間總額。
         # 某天沒有列 = 那天該券商不在任何一檔權證的前 15 大,**不是 0**,所以不補。
-        #
-        # 認購與認售方向相反(買認售 = 看空),所以每一天拆成 [日期, 認購, 認售] 兩個
-        # 金額;要畫哪些券商也分三種量各取前 N(總額、認購、認售的買超與賣超)——
-        # 前端的排行可以切換認購／認售,切過去的券商不能沒有序列。
-        def _kind_net(row: dict, kind: str) -> int:
-            return sum(b["net_amount"] for b in row.get("breakdown", []) if b["kind"] == kind)
-
-        measures = (
-            lambda x: x["net_amount"],
-            lambda x: _kind_net(x, "call"),
-            lambda x: _kind_net(x, "put"),
-        )
-        charted: dict[str, set[str]] = {}
-        for stock_id, timeframes in detail_by_stock.items():
-            names: set[str] = set()
-            for values in timeframes.values():
-                for measure in measures:
-                    scored = [(measure(x), x["branch_name"]) for x in values]
-                    buys = sorted((s for s in scored if s[0] > 0), key=lambda s: -s[0])
-                    sells = sorted((s for s in scored if s[0] < 0), key=lambda s: s[0])
-                    names.update(n for _, n in buys[:WARRANT_BRANCH_CHART_TOP_N])
-                    names.update(n for _, n in sells[:WARRANT_BRANCH_CHART_TOP_N])
-            charted[stock_id] = names
+        # 認購與認售方向相反(買認售 = 看空),所以每一天拆成 [日期, 認購, 認售]。
+        charted: dict[str, set[str]] = {
+            stock_id: {x["branch_name"] for values in timeframes.values() for x in values}
+            for stock_id, timeframes in detail_by_stock.items()
+        }
+        # 券商代號(參考圖的「代號」欄):branch_key 一般就是 4 碼代號;含英文字母的
+        # 代號在來源端存成 UTF-16 的十六進位(例 0039004100390058 = 9A9X)。
+        codes_by_name = {
+            r.branch_name: _branch_code(r.branch_key)
+            for r in conn.execute(text("SELECT branch_name, branch_key FROM branch_dim"))
+        }
         daily_by_stock: dict[str, dict[str, list[list]]] = {sid: {} for sid in charted}
         if bd1 and charted:
             for r in conn.execute(text("""
@@ -2157,6 +2163,11 @@ def _export_warrant_branches(out: Path, engine, date: str, base20: list[str]):
                 # 可選鍵:舊前端不讀。缺鍵 = 舊 payload;{} = 算過、沒有可畫的券商。
                 "daily_from": d120,
                 "daily": daily_by_stock.get(stock_id, {}),
+                "branch_codes": {
+                    name: codes_by_name[name]
+                    for name in sorted(charted.get(stock_id, ()))
+                    if codes_by_name.get(name)
+                },
             }, ensure_ascii=False), encoding="utf-8")
         (detail_dir / "index.json").write_text(json.dumps({
             "version": 1,

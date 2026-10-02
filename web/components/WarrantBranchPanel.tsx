@@ -12,6 +12,7 @@ import {
   fmtWanValueSigned,
   kindNet,
   rankBranches,
+  searchBranches,
   toWanSeries,
   type DailyEntry,
   type RankedBranch,
@@ -49,9 +50,11 @@ type WarrantBranchDetailShard = {
   data_date: string | null;
   stock_id: string;
   timeframes: Record<string, WarrantBranchRow[]>;
-  /** 可選:[日期, 認購金額, 認售金額],只含排行上的券商;缺的日子不是 0。 */
+  /** 可選:[日期, 認購金額, 認售金額],分片內每一家券商;缺的日子不是 0。 */
   daily_from?: string;
   daily?: Record<string, DailyEntry[]>;
+  /** 可選:券商名稱 → 代號(參考圖的「代號」欄)。 */
+  branch_codes?: Record<string, string>;
 };
 
 type Timeframe = "1d" | "2d" | "5d" | "30d" | "120d";
@@ -81,9 +84,19 @@ function fmtWan(amt: number, digits = 0): string {
  * 最多券商」兩張排行,右邊點選券商後顯示股價 K 線與該券商在這檔權證上的逐日買賣超
  * 金額,下方是它在區間內買賣了哪幾檔權證。認購／認售分開(買認售是看空)。
  */
-export default function WarrantBranchPanel({ stockId, candles }: { stockId: string; candles: Candle[] }) {
+export default function WarrantBranchPanel({
+  stockId,
+  stockName,
+  candles,
+}: {
+  stockId: string;
+  stockName?: string;
+  candles: Candle[];
+}) {
   const [byTf, setByTf] = useState<Record<string, WarrantBranchRow[]> | null>(null);
   const [daily, setDaily] = useState<Record<string, DailyEntry[]> | undefined>(undefined);
+  const [codes, setCodes] = useState<Record<string, string>>({});
+  const [query, setQuery] = useState("");
   const [tf, setTf] = useState<Timeframe>("5d");
   const [kind, setKind] = useState<WarrantKind>("call");
   const [picked, setPicked] = useState<string | null>(null);
@@ -96,6 +109,7 @@ export default function WarrantBranchPanel({ stockId, candles }: { stockId: stri
     let cancelled = false;
     setByTf(null);
     setDaily(undefined);
+    setCodes({});
     setError(false);
     setUsingMarketFallback(false);
     setDataDate(null);
@@ -124,6 +138,7 @@ export default function WarrantBranchPanel({ stockId, candles }: { stockId: stri
               ? wrapper.data_date
               : null,
             daily: undefined,
+            codes: {},
           };
         }
         if (!indexResponse.ok) throw indexResponse.status;
@@ -138,7 +153,7 @@ export default function WarrantBranchPanel({ stockId, candles }: { stockId: stri
         // The index is authoritative: never read an old shard for a stock
         // absent from the current snapshot.
         if (!index.stocks.includes(stockId)) {
-          return { rows: {} as Record<string, WarrantBranchRow[]>, fallback: false, dataDate: index.data_date, daily: undefined };
+          return { rows: {} as Record<string, WarrantBranchRow[]>, fallback: false, dataDate: index.data_date, daily: undefined, codes: {} };
         }
         const shardResponse = await dataFetch(`/data/branches/warrant-stock-details/${encodeURIComponent(stockId)}.json`);
         if (!shardResponse.ok) throw shardResponse.status;
@@ -155,14 +170,18 @@ export default function WarrantBranchPanel({ stockId, candles }: { stockId: stri
         const nextDaily = shard.daily && typeof shard.daily === "object" && !Array.isArray(shard.daily)
           ? shard.daily
           : undefined;
-        return { rows: shard.timeframes, fallback: false, dataDate: index.data_date, daily: nextDaily };
+        const nextCodes = shard.branch_codes && typeof shard.branch_codes === "object" && !Array.isArray(shard.branch_codes)
+          ? shard.branch_codes
+          : {};
+        return { rows: shard.timeframes, fallback: false, dataDate: index.data_date, daily: nextDaily, codes: nextCodes };
       })
-      .then(({ rows, fallback, dataDate: nextDataDate, daily: nextDaily }) => {
+      .then(({ rows, fallback, dataDate: nextDataDate, daily: nextDaily, codes: nextCodes }) => {
         if (!cancelled) {
           setUsingMarketFallback(fallback);
           setDataDate(nextDataDate);
           setByTf(rows);
           setDaily(nextDaily);
+          setCodes(nextCodes ?? {});
         }
       })
       .catch(() => {
@@ -182,10 +201,11 @@ export default function WarrantBranchPanel({ stockId, candles }: { stockId: stri
   const buys = useMemo(() => (rows ? rankBranches(rows, kind, "buy") : []), [rows, kind]);
   const sells = useMemo(() => (rows ? rankBranches(rows, kind, "sell") : []), [rows, kind]);
 
-  // 換區間或種類時,若原本選的券商已不在兩張排行裡,改回預設(買超第一名)。
-  const onBoard = (name: string | null) =>
-    !!name && (buys.some((b) => b.branch_name === name) || sells.some((b) => b.branch_name === name));
-  const selected = onBoard(picked) ? picked : defaultBranch(buys, sells);
+  // 選中的券商(點排行或搜尋)只要還在這段期間的資料裡就保留;換區間後不在了,
+  // 才改回預設(買超第一名)。搜尋到的券商可以不在前 10 名裡。
+  const inRows = (name: string | null) => !!name && !!rows?.some((r) => r.branch_name === name);
+  const selected = inRows(picked) ? picked : defaultBranch(buys, sells);
+  const hits = useMemo(() => (rows ? searchBranches(rows, query, kind, codes) : []), [rows, query, kind, codes]);
   const selectedRow = rows?.find((r) => r.branch_name === selected) ?? null;
   const series = useMemo(() => toWanSeries(branchSeries(daily, selected, kind)), [daily, selected, kind]);
   const kindLabel = kind === "call" ? "認購" : "認售";
@@ -272,10 +292,45 @@ export default function WarrantBranchPanel({ stockId, candles }: { stockId: stri
       ) : (
         <div className="grid min-w-0 gap-3 md:grid-cols-[minmax(0,17rem)_minmax(0,1fr)]">
           <div className="grid min-w-0 content-start gap-3">
+            {/* 搜尋券商:名稱或代號,不限排行前 10(參考圖右上角的「搜尋券商」)。 */}
+            <div className="relative">
+              <input
+                type="search"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="搜尋券商(名稱或代號)"
+                aria-label="搜尋券商"
+                className="min-h-10 w-full rounded-md border border-border bg-background px-3 text-[13px] text-foreground placeholder:text-muted-foreground focus:border-[color:var(--accent-2)] focus:outline-none"
+              />
+              {query.trim() && (
+                <ul className="absolute z-20 mt-1 max-h-72 w-full overflow-y-auto rounded-md border border-border bg-card shadow-[var(--shadow-card)]">
+                  {hits.length === 0 ? (
+                    <li className="px-3 py-2 text-[12px] text-muted-foreground">這段期間沒有符合的券商(淨額 ≥ {threshold} 萬才列入)</li>
+                  ) : hits.map((h) => (
+                    <li key={h.branch_name}>
+                      <button
+                        type="button"
+                        onClick={() => { setPicked(h.branch_name); setQuery(""); }}
+                        className="flex min-h-10 w-full items-center justify-between gap-2 px-3 py-1.5 text-left text-[12.5px] hover:bg-secondary"
+                      >
+                        <span className="min-w-0 truncate">
+                          {h.code && <span className="num mr-2 text-muted-foreground">{h.code}</span>}
+                          {h.branch_name}
+                        </span>
+                        <span className={cn("num shrink-0", h.amount > 0 ? "text-up" : h.amount < 0 ? "text-down" : "text-muted-foreground")}>
+                          {fmtWanSigned(h.amount)}
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
             <RankTable
               title={`${kindLabel}權證買超金額最多券商`}
               tone="up"
               rows={buys}
+              codes={codes}
               selected={selected}
               onSelect={setPicked}
             />
@@ -283,6 +338,7 @@ export default function WarrantBranchPanel({ stockId, candles }: { stockId: stri
               title={`${kindLabel}權證賣超金額最多券商`}
               tone="down"
               rows={sells}
+              codes={codes}
               selected={selected}
               onSelect={setPicked}
             />
@@ -291,7 +347,13 @@ export default function WarrantBranchPanel({ stockId, candles }: { stockId: stri
           <div className="grid min-w-0 content-start gap-2.5">
             {selected && (
               <div className="flex flex-wrap items-baseline gap-2">
-                <span className="text-[15px] font-bold text-foreground">{selected}</span>
+                <span className="rounded-md bg-[color:var(--accent-2)]/15 px-2 py-0.5 text-[15px] font-bold text-foreground">
+                  {codes[selected] && <span className="num mr-1.5 text-muted-foreground">{codes[selected]}</span>}
+                  {selected}
+                </span>
+                <span className="text-[14px] font-semibold text-foreground">
+                  <span className="num mr-1">{stockId}</span>{stockName}
+                </span>
                 {selectedRow && (
                   <span className={cn("num text-[13px] font-semibold", kindNet(selectedRow, kind) >= 0 ? "text-up" : "text-down")}>
                     {TIMEFRAMES.find((t) => t.key === tf)?.label}{kindLabel} {fmtWanSigned(kindNet(selectedRow, kind))}
@@ -375,17 +437,19 @@ export default function WarrantBranchPanel({ stockId, candles }: { stockId: stri
   );
 }
 
-/** 左邊的排行表:券商、金額(萬)。點列選取,右邊的圖跟著換。 */
+/** 左邊的排行表:代號、券商、金額(萬)。點列選取,右邊的圖跟著換。 */
 function RankTable({
   title,
   tone,
   rows,
+  codes,
   selected,
   onSelect,
 }: {
   title: string;
   tone: "up" | "down";
   rows: RankedBranch[];
+  codes: Record<string, string>;
   selected: string | null;
   onSelect: (name: string) => void;
 }) {
@@ -416,7 +480,10 @@ function RankTable({
                     active && "bg-secondary font-bold",
                   )}
                 >
-                  <span className="min-w-0 truncate text-foreground" title={r.branch_name}>{r.branch_name}</span>
+                  <span className="flex min-w-0 items-baseline gap-2">
+                    <span className="num w-10 shrink-0 text-[11px] text-muted-foreground">{codes[r.branch_name] ?? ""}</span>
+                    <span className="min-w-0 truncate text-foreground" title={r.branch_name}>{r.branch_name}</span>
+                  </span>
                   <span className={cn("num shrink-0 font-semibold", tone === "up" ? "text-up" : "text-down")}>
                     {fmtWanSigned(r.amount)}
                   </span>
