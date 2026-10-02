@@ -1,9 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Layers } from "lucide-react";
-import { dataFetch } from "@/lib/dataFetch";
 import { cn } from "@/lib/utils";
 import {
   anomalyEmptyStateText,
@@ -11,8 +8,10 @@ import {
   anomalyMeaningText,
   futuresAnomalyMarketState,
   groupBySpotFollow,
-  spotFollowLabel,
 } from "@/lib/futures";
+import { useStockNames } from "@/lib/useStockNames";
+import WatchlistButton from "@/components/WatchlistButton";
+import { ContractTag, SpotChip, flagCardClass } from "@/components/FuturesFlagParts";
 import type { FuturesVolumeAnomalyEntry, FuturesVolumeAnomalyMeta } from "@/lib/types";
 
 /**
@@ -40,32 +39,7 @@ export default function FuturesAnomalyList({
 }) {
   // 首頁的 radar.stocks 只是評分池,舉旗的股票常常不在裡面(2371、3045 曾只顯示代號)。
   // 缺名稱時才去讀全市場索引(搜尋框用的同一份),讀不到就照舊只顯示代號。
-  const [indexNames, setIndexNames] = useState<ReadonlyMap<string, string> | null>(null);
-  const needsIndex = !!entries?.some((e) => !nameById.get(e.stock_id));
-  useEffect(() => {
-    if (!needsIndex || indexNames) return;
-    let cancelled = false;
-    dataFetch("/data/stocks_index.json")
-      .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
-      .then((rows: unknown) => {
-        if (cancelled || !Array.isArray(rows)) return;
-        const m = new Map<string, string>();
-        for (const row of rows) {
-          if (Array.isArray(row) && typeof row[0] === "string" && typeof row[1] === "string") m.set(row[0], row[1]);
-        }
-        setIndexNames(m);
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
-  }, [needsIndex, indexNames]);
-  const names = useMemo(() => {
-    if (!indexNames) return nameById;
-    const merged = new Map(indexNames);
-    nameById.forEach((v, k) => merged.set(k, v));
-    return merged;
-  }, [nameById, indexNames]);
+  const names = useStockNames(nameById, (entries ?? []).map((e) => e.stock_id));
 
   const state = futuresAnomalyMarketState(entries, dataDate, names, meta);
 
@@ -143,40 +117,26 @@ export default function FuturesAnomalyList({
 
       <div className="grid grid-cols-1 gap-2 pb-4 md:grid-cols-2 xl:grid-cols-3">
         {rows.map((row) => {
-          const label = spotFollowLabel(row.spot);
           return (
             <Link
               key={`${row.stockId}-${row.code}`}
               href={`/stock?id=${row.stockId}&tab=futures`}
-              className={cn(
-                "block min-w-0 rounded-[var(--r-lg)] border border-l-4 bg-card px-3 py-2.5 shadow-[var(--shadow-card)] transition-colors hover:bg-secondary/40",
-                // 左邊色條取代一段文字:亮色 = 現貨尚未跟上(檢定成立的那一種)
-                row.spot === "lagging"
-                  ? "border-[color:var(--accent-2)]/45 border-l-[color:var(--accent-2)]"
-                  : "border-border border-l-border",
-              )}
+              // 左邊色條取代一段文字:accent-2 = 現貨尚未跟上(檢定成立的那一種),
+              // 紅 = 現貨已同步爆量(使用者要兩者一眼分得出來;§7.19)。
+              className={flagCardClass(row.spot)}
             >
               <div className="flex min-w-0 items-center gap-x-2">
                 <span className="min-w-0 truncate text-[15px] font-bold text-foreground">
                   <span className="num">{row.stockId}</span>
                   {row.name && <span className="ml-1.5">{row.name}</span>}
                 </span>
-                <span className="inline-flex shrink-0 items-center gap-0.5 text-[11px] text-muted-foreground">
-                  <Layers size={11} aria-hidden="true" />
-                  <span className="num">{row.code}</span>
+                <ContractTag label={row.label} code={row.code} />
+                <span className="ml-auto flex shrink-0 items-center gap-1.5">
+                  <SpotChip spot={row.spot} />
+                  {/* 自選星號:WatchlistButton 自己 preventDefault + stopPropagation,
+                      點它不會順便打開卡片;未登入時走既有的 Google 登入。 */}
+                  <WatchlistButton stockId={row.stockId} size={15} />
                 </span>
-                {label && (
-                  <span
-                    className={cn(
-                      "ml-auto shrink-0 rounded-full px-1.5 py-0.5 text-[10.5px] font-bold",
-                      row.spot === "lagging"
-                        ? "bg-[color:var(--accent-2)] text-white"
-                        : "bg-secondary text-muted-foreground",
-                    )}
-                  >
-                    {label}
-                  </span>
-                )}
               </div>
               {/* 單位一律是口,寫在第一格就好,不每格重複 */}
               <dl className="mt-2 grid grid-cols-4 gap-x-2">

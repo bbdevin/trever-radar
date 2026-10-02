@@ -35,6 +35,8 @@ from ..compute.branch_stock_pctile_counts import LONG_PRICE_WINDOW_DAYS
 from ..compute.margin_cost import build_margin_cost_series
 from ..compute.display_window import display_window_bounds, window_label
 from ..compute.futures_volume_anomaly import (
+    anomaly_history,
+    anomaly_history_meta,
     anomaly_index,
     anomaly_index_meta,
     futures_volume_anomalies,
@@ -515,7 +517,7 @@ def _futures_by_stock(
     """
     contract_rows = list(conn.execute(text("""
         SELECT contract_code, stock_id, stock_name, is_stock_future,
-               is_stock_option, is_weekly_option, last_seen
+               is_stock_option, is_weekly_option, last_seen, contract_multiplier
         FROM futures_contracts
         ORDER BY contract_code
     """)).mappings())
@@ -589,9 +591,13 @@ def _futures_by_stock(
     anomalies = futures_volume_anomalies(
         conn, as_of, market_days_as_of=spot_date or as_of,
     )
-    market_index = anomaly_index(anomalies, stock_id_by_code={
-        row["contract_code"]: row["stock_id"] for row in contract_rows
-    })
+    market_index = anomaly_index(
+        anomalies,
+        stock_id_by_code={row["contract_code"]: row["stock_id"] for row in contract_rows},
+        multiplier_by_code={
+            row["contract_code"]: row["contract_multiplier"] for row in contract_rows
+        },
+    )
     # 市場層級的未平倉方向計數(§7.15)。**描述性**:它只說今天有幾個契約的未平倉
     # 比前一個期貨交易日高/低/持平/判不出來,不說那代表什麼,所以不需要、也無從
     # 套用 §3 的 battery(理由寫在 :func:`open_interest_direction` 的 docstring)。
@@ -619,6 +625,10 @@ def _futures_by_stock(
             "is_option": bool(row["is_stock_option"]),
             "is_weekly_option": bool(row["is_weekly_option"]),
         }
+        # 契約乘數(股/口;docs/38 §7.19):前端把代碼換成「個股期貨 / 小型個股期貨」
+        # 用的身分事實。未知時整個鍵不輸出,不寫 null、不猜 2,000(R2b 的同一條理由)。
+        if row["contract_multiplier"] is not None:
+            contract["multiplier"] = int(row["contract_multiplier"])
         # 沒有當日列就整個 daily 省略。session_volume 只列出**真的有列**的時段:
         # 寫一個 "盤後": 0 會把「還沒公布」謊報成「盤後沒人交易」。
         # (先前這裡寫著「21:20 那一輪通常只有一般時段落地」——那是錯的。
@@ -1859,6 +1869,14 @@ def export_json(out_dir: Path | None = None) -> dict:
         # 期貨側的每一個日期都錨在 f_date(期貨行情日,見 _futures_by_stock)。
         # 這裡以前傳的是 d,於是整個切片只有在現貨匯入失敗的那一天才顯示得出來。
         futures_result = _futures_by_stock(conn, f_date, spot_date=d)
+        # 近 10 個期貨交易日的舉旗紀錄(docs/38 §7.19)。只在今日名單**有主張**時才算:
+        # 今天的名單都答不出來的那一版,不該冒出一份歷史。每一天都是規則本人重算
+        # (以今天的日曆),不是「那一天頁面上顯示的東西」。
+        futures_history = (
+            anomaly_history(conn, as_of=f_date, spot_date=d)
+            if futures_result is not None and futures_result[2] is not None
+            else None
+        )
 
     now = datetime.now(ZoneInfo(config.TZ)).isoformat(timespec="seconds")
 
@@ -1966,6 +1984,13 @@ def export_json(out_dir: Path | None = None) -> dict:
         radar["futures_volume_anomalies_meta"] = anomaly_index_meta(
             futures_anomaly_index, as_of=f_date,
         )
+        # 舉旗紀錄與它的 meta(§7.19),與今日名單同生共死。沒有價格欄位(理由見
+        # futures_volume_anomaly 的 HISTORY_DAYS 那一段)。
+        if futures_history is not None:
+            radar["futures_volume_anomaly_history"] = futures_history
+            radar["futures_volume_anomaly_history_meta"] = anomaly_history_meta(
+                futures_history, as_of=f_date, observed_through=d,
+            )
     # 市場層級的未平倉方向計數(docs/38 §7.15)。**平行於**名單而不是包在它的 meta
     # 裡:meta 是「這份名單的隨附事實」(§7.11),而這四個計數不是名單的事實——
     # 名單只有舉旗的契約,計數涵蓋全部約 320 個;名單會因為 R4 算不出結算窗口而

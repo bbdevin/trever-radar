@@ -41,13 +41,16 @@ job_zh() {
 }
 
 # $1=內文 $2=priority(預設 high) $3=標題後綴(成功/失敗/略過/注意;可空)
+# $4=整個標題(可空;給不屬於某一輪結果的訊息用,例:期貨量異常摘要)
 notify() {
   [ -n "${NTFY:-}" ] || return 0
   local msg="$1"
   local pri="${2:-high}"
   local kind="${3:-}"
   local title
-  if [ -n "$kind" ]; then
+  if [ -n "${4:-}" ]; then
+    title="$4"
+  elif [ -n "$kind" ]; then
     title="$(job_zh) · ${kind}"
   else
     title="$(job_zh)"
@@ -239,6 +242,45 @@ futures_probe() {
     line="futures-probe at=$(taipei_date +%H:%M) error=$(printf '%s' "$out" | tail -n 1 | tr -d '\r' | cut -c1-200)"
   fi
   echo "${line} round=${SCRIPT_NAME} rc=${rc}" | tee -a "$FUTURES_PROBE_LOG" || true
+  return 0
+}
+
+# docs/38 §7.19 每日期貨量異常摘要:在 deploy_data **之後**呼叫(推播講的必須是已經
+# 上線的那一份)。讀剛寫好的 web/public/data/radar.json,不開資料庫——容器只唯讀掛
+# web/public/data,連 data/ 都不掛,也不需要金鑰,所以不走 radar()/radar_timeout。
+#
+# 去重:標記檔 $FUTURES_DIGEST_DIR/.futures-digest-<期貨行情日>。16:10 送過之後,
+# 17:40／22:00 只有在期貨行情日往前推進時才會再送(那天標記還不存在)。
+#
+# 這一步**絕不影響本輪**(warn-and-continue):硬上限 60 秒;所有可能非零的指令都在
+# `|| …` 裡;摘要算不出來只 notify_warn 一則;永遠 return 0。
+FUTURES_DIGEST_DIR="${FUTURES_DIGEST_DIR:-${HOME:-/tmp}}"
+futures_digest() {
+  local out="" rc=0 title="" as_of="" marker="" body=""
+  out="$(timeout --signal=TERM --kill-after=10s 60s \
+    docker run --rm \
+      -v "$REPO/pipeline":/app/pipeline \
+      -v "$REPO/web/public/data":/app/web/public/data:ro \
+      radar-pipeline python -m radar futures-anomaly-digest --out /app/web/public/data)" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    notify_warn "期貨量異常摘要產生失敗（exit ${rc}），本輪照常；網站已上線" || true
+    return 0
+  fi
+  [ -n "$out" ] || return 0
+  title="$(printf '%s\n' "$out" | head -n 1 || true)"
+  as_of="${title##* }"
+  case "$as_of" in
+    [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) ;;
+    *) echo "futures-digest: 標題讀不出期貨行情日(${title}),略過" || true; return 0 ;;
+  esac
+  marker="${FUTURES_DIGEST_DIR}/.futures-digest-${as_of}"
+  if [ -e "$marker" ]; then
+    echo "futures-digest: ${as_of} 已送過,略過" || true
+    return 0
+  fi
+  body="$(printf '%s\n' "$out" | tail -n +2 || true)"
+  notify "$body" default "" "$title" || true
+  : > "$marker" || true
   return 0
 }
 

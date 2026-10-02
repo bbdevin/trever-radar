@@ -271,6 +271,8 @@ export interface FuturesInfo {
 
 export interface FuturesContract {
   code: string;
+  /** 契約乘數(股/口;docs/38 §7.19)。前端用它把代碼換成「個股期貨 / 小型個股期貨」。缺 = 未知。 */
+  multiplier?: number;
   is_futures: boolean;
   is_option: boolean;
   is_weekly_option: boolean;
@@ -338,11 +340,58 @@ export interface FuturesAnomaly {
 export interface FuturesVolumeAnomalyEntry {
   stock_id: string;
   code: string;
+  /** 契約乘數(股/口;docs/38 §7.19)。舊 payload 沒有 → 標籤退回「期貨」。 */
+  multiplier?: number;
   anomaly: FuturesAnomaly;
   reasons: ReasonItem[];
   risks: ReasonItem[];
   /** 現貨當日有沒有同步創高(docs/38 §7.17)。可選:舊 payload 沒有 → 無法判定。 */
   spot_new_high?: boolean | null;
+}
+
+/**
+ * 舉旗之後的現貨價格,**原始觀測值**(docs/38 §7.19)。payload 裡沒有任何除法;
+ * 百分比只由 `lib/futures.ts` 的 `priceAfterText` 算給人看。之後還沒有交易日時
+ * 只有 `flag_close` 與 `days: 0`。價格未經還原,`ex_rights` 為真表示窗內有除權息。
+ */
+export interface FuturesSpotAfter {
+  flag_close: number;
+  days: number;
+  last_close?: number;
+  last_date?: string;
+  high?: number;
+  low?: number;
+  ex_rights?: boolean;
+}
+
+/**
+ * 近 N 個期貨交易日的舉旗紀錄裡的一筆(docs/38 §7.19)= 當日名單條目 + 事後欄位。
+ * 每一天都是用**今天的資料重算**的,不是「那一天頁面上顯示的東西」。
+ */
+export interface FuturesAnomalyHistoryEntry extends FuturesVolumeAnomalyEntry {
+  /** true = 往後 N 天內現貨量創新高;false = N 天都過去且都算得出來、沒有;null = 觀察中或無法判定。 */
+  spot_followed: boolean | null;
+  /** 只在 `spot_followed === true` 時出現:哪一天跟上。 */
+  spot_followed_on?: string;
+  /** 已經過去的往後現貨交易日數(0..forward_days)。 */
+  forward_days_observed: number;
+  /** 舉旗日沒有現貨價格列時缺鍵。 */
+  spot_after?: FuturesSpotAfter;
+}
+
+/** 一天:`entries` 缺鍵 = 那一天規則答不出來(不主張);`[]` = 算過、沒有契約舉旗。 */
+export interface FuturesAnomalyHistoryDay {
+  as_of: string;
+  entries?: FuturesAnomalyHistoryEntry[];
+}
+
+export interface FuturesAnomalyHistoryMeta {
+  as_of: string;
+  window_days: number;
+  history_days: number;
+  forward_days: number;
+  /** 往後現貨看到哪一天(現貨資料日)。 */
+  observed_through: string;
 }
 
 /**
@@ -714,6 +763,9 @@ export interface RadarJson {
    * 而 §7.10 不准前端寫死 60,所以比較窗口的長度得由這裡供應。
    */
   futures_volume_anomalies_meta?: FuturesVolumeAnomalyMeta;
+  /** 近 N 個期貨交易日的舉旗紀錄,新到舊(docs/38 §7.19)。與名單同生共死。 */
+  futures_volume_anomaly_history?: FuturesAnomalyHistoryDay[];
+  futures_volume_anomaly_history_meta?: FuturesAnomalyHistoryMeta;
   /**
    * 市場層級的未平倉方向計數(docs/38 §7.15)。與上面那兩個鍵**平行而不相屬**:
    * 名單只有舉旗的契約,這裡涵蓋全部約 320 個;名單會因為 R4 算不出結算窗口而

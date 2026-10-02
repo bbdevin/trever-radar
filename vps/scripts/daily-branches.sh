@@ -234,6 +234,9 @@ run_step_or_fail "export-json" radar export-json
 # 只是 DB 沒瘦身」,而那不值得用跟上線失敗同一級的警報去叫醒人。
 run_step_or_fail "prune" radar prune
 run_step_or_fail "deploy" deploy_data
+# 期貨量異常摘要(docs/38 §7.19):上線之後才送;永不失敗;16:10 送過的期貨行情日
+# 不重送,只有期貨日往前推進(16:10 時當日期貨還沒齊)才會在這一輪送出。
+futures_digest
 # 只有走到這裡才算「整輪跑完」。夜間備援作業讀這個標記決定今晚要不要重算,
 # 所以它必須在 deploy_data 之後——在之前寫就等於承諾了一件還沒發生的事。
 # 只刷新評分的那一輪不寫:標記早已由 17:40 寫下,內容是第一次上線的時刻。

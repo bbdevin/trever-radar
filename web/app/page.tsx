@@ -12,6 +12,8 @@ import ThemeGroupedList from "@/components/ThemeGroupedList";
 import MarginUsageRank from "@/components/MarginUsageRank";
 import FuturesAnomalyList from "@/components/FuturesAnomalyList";
 import FuturesOpenInterestDirection from "@/components/FuturesOpenInterestDirection";
+import FuturesAnomalyHistory from "@/components/FuturesAnomalyHistory";
+import { FUTURES_VIEW_KEY, parseFuturesView, type FuturesView } from "@/lib/futures";
 import { useSession, signInWithGoogle } from "@/lib/useSession";
 import { cn, navPillClass, pillTabClass } from "@/lib/utils";
 import { dataFetch } from "@/lib/dataFetch";
@@ -54,7 +56,7 @@ const TABS: { key: TabKey; label: string; hint: string; icon: any }[] = [
   {
     key: "futures",
     label: "期貨異常",
-    hint: "期貨成交量創新高的契約;亮色框 = 現貨還沒跟上,歷史上之後幾天現貨量常跟上。預告的是量,不是漲跌。",
+    hint: "期貨成交量創新高的契約。標「現貨尚未跟上」的是回測驗證過的那一種：之後幾天現貨量跟上的次數比平常多。預告的是量，不是漲跌。",
     icon: Layers,
   },
   {
@@ -195,7 +197,26 @@ function RadarView() {
   const strategyDefaulted = useRef(false);
   const [moneyFlowOpen, setMoneyFlowOpen] = useState(false);
   const [listSort, setListSort] = useState<ListSort>("score");
+  // 期貨分頁「當日｜近 N 日」(docs/38 §7.19)。預設當日;上次的選擇只在瀏覽器端讀。
+  const [futuresView, setFuturesView] = useState<FuturesView>("today");
   const { session, loading } = useSession();
+
+  useEffect(() => {
+    try {
+      setFuturesView(parseFuturesView(localStorage.getItem(FUTURES_VIEW_KEY)));
+    } catch {
+      /* 私密視窗或封鎖網站資料:維持預設「當日」 */
+    }
+  }, []);
+
+  const chooseFuturesView = (next: FuturesView) => {
+    setFuturesView(next);
+    try {
+      localStorage.setItem(FUTURES_VIEW_KEY, next);
+    } catch {
+      /* 寫不進去只是下次回到預設 */
+    }
+  };
 
   useEffect(() => {
     const q = searchParams.get("tab");
@@ -653,17 +674,54 @@ function RadarView() {
         </div>
       ) : tab === "futures" ? (
         <div className="animate-[fadeUp_0.35s_ease_backwards]">
-          {/* 未平倉方向的計數在名單**上面**(docs/38 §7.15):名單常態是空的,
-              而這四個計數每一天都有內容。 */}
-          <FuturesOpenInterestDirection
-            direction={radar.futures_open_interest_direction}
-          />
-          <FuturesAnomalyList
-            entries={radar.futures_volume_anomalies}
-            dataDate={radar.data_date}
-            nameById={nameById}
-            meta={radar.futures_volume_anomalies_meta}
-          />
+          {/* 當日｜近 N 日(docs/38 §7.19)。舊 payload 沒有紀錄時不出現切換,只有當日。
+              樣式同個股頁「籌碼日報」的分段切換。 */}
+          {radar.futures_volume_anomaly_history && radar.futures_volume_anomaly_history_meta && (
+            <div role="tablist" aria-label="期貨異常範圍" className="mb-3 grid grid-cols-2 gap-1 rounded-[var(--r-md)] bg-secondary p-1">
+              {(
+                [
+                  { key: "today" as const, label: "當日" },
+                  { key: "history" as const, label: `近 ${radar.futures_volume_anomaly_history.length} 日` },
+                ]
+              ).map((s) => (
+                <button
+                  key={s.key}
+                  type="button"
+                  role="tab"
+                  aria-selected={futuresView === s.key}
+                  data-testid={`futures-view-${s.key}`}
+                  onClick={() => chooseFuturesView(s.key)}
+                  className={cn(
+                    "min-h-11 rounded-[var(--r-sm)] px-1.5 py-1.5 text-[13px] font-semibold leading-tight transition-colors touch-manipulation",
+                    futuresView === s.key ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  {s.label}
+                </button>
+              ))}
+            </div>
+          )}
+          {futuresView === "history" && radar.futures_volume_anomaly_history ? (
+            <FuturesAnomalyHistory
+              history={radar.futures_volume_anomaly_history}
+              meta={radar.futures_volume_anomaly_history_meta}
+              nameById={nameById}
+            />
+          ) : (
+            <>
+              {/* 未平倉方向的計數在名單**上面**(docs/38 §7.15):名單常態是空的,
+                  而這四個計數每一天都有內容。 */}
+              <FuturesOpenInterestDirection
+                direction={radar.futures_open_interest_direction}
+              />
+              <FuturesAnomalyList
+                entries={radar.futures_volume_anomalies}
+                dataDate={radar.data_date}
+                nameById={nameById}
+                meta={radar.futures_volume_anomalies_meta}
+              />
+            </>
+          )}
         </div>
       ) : tab === "mark" && !loading && !session ? (
         <div className="flex flex-col items-center gap-4 py-[46px] text-center text-sm text-muted-foreground">

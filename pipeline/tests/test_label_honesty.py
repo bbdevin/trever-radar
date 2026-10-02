@@ -124,6 +124,12 @@ ALLOWLIST: list[tuple[str, str, str]] = [
         "一應該出現『保證』『獲利』兩個詞放在一起的地方。",
     ),
     (
+        "web/lib/futures.test.ts",
+        "勝率",
+        "docs/38 §7.19 期貨文案措辭閘門的禁用詞清單本身(`BANNED_COPY`):這個字串"
+        "是拿來斷言期貨文案裡**沒有**它,不是顯示給使用者的標籤。",
+    ),
+    (
         "web/lib/format.ts",
         "融券回補軋空",
         "S13 徽章改名(見 461a2cf)的顯示期轉場常數:VPS 尚未跑過新一輪 export "

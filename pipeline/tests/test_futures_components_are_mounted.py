@@ -54,6 +54,13 @@ MOUNTS = (
         "那份名單在畫面上完全不存在。",
     ),
     (
+        "FuturesAnomalyHistory",
+        HOME,
+        WEB / "components" / "FuturesAnomalyHistory.tsx",
+        "首頁期貨分頁的「近 N 日」舉旗紀錄(docs/38 §7.19)點下去是一片空白:"
+        "使用者看不到之前舉過旗的契約,後來現貨量有沒有跟上。",
+    ),
+    (
         "FuturesPanel",
         STOCK,
         None,

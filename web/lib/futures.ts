@@ -1,6 +1,10 @@
 import type {
   FuturesAnomaly,
+  FuturesAnomalyHistoryDay,
+  FuturesAnomalyHistoryEntry,
+  FuturesAnomalyHistoryMeta,
   FuturesContract,
+  FuturesSpotAfter,
   FuturesDaily,
   FuturesInfo,
   FuturesOpenInterestDirection,
@@ -85,12 +89,50 @@ export function anomalyFacts(a: FuturesAnomaly): FuturesAnomalyFact[] {
   return facts;
 }
 
+/* ------------------------------------------------------------------ *
+ * 契約的白話名稱(docs/38 §7.19,2026-10-03)。使用者原話:「期貨的英文看不懂
+ * 什麼 REF JFF 這些縮寫都要寫清楚是什麼 不然就不要寫」。畫面上一律不顯示
+ * 契約代碼,只顯示這個名稱(代碼最多放在 title 裡)。同一檔股票的兩個契約
+ * (1565 的 MYF 2,000 股/口與 OMF 100 股/口)名稱必須分得開(§7.10)。
+ * 規則與 pipeline 的 `futures_digest.contract_label` 相同。
+ * ------------------------------------------------------------------ */
+export function contractLabel(multiplier: number | null | undefined, stockId: string): string {
+  if (stockId.startsWith("00")) return "ETF 期貨";
+  if (multiplier === 2000) return "個股期貨";
+  if (multiplier === 100) return "小型個股期貨";
+  if (typeof multiplier === "number") return `期貨（每口 ${multiplier.toLocaleString("zh-TW")} 股）`;
+  return "期貨";
+}
+
+/**
+ * 一檔股票的每個契約 → 名稱。兩個契約得到同一個名稱時(例:都是 ETF 期貨),
+ * 補上「每口幾股」把它們分開;乘數未知就只能維持原名(舊 payload)。
+ */
+export function contractLabelsByCode(
+  contracts: ReadonlyArray<{ code: string; multiplier?: number }>,
+  stockId: string,
+): Map<string, string> {
+  const base = contracts.map((c) => [c.code, contractLabel(c.multiplier, stockId)] as const);
+  const counts = new Map<string, number>();
+  for (const [, label] of base) counts.set(label, (counts.get(label) ?? 0) + 1);
+  return new Map(
+    base.map(([code, label]) => {
+      const c = contracts.find((x) => x.code === code);
+      const dup = (counts.get(label) ?? 0) > 1 && typeof c?.multiplier === "number"
+        && !label.includes("每口");
+      return [code, dup ? `${label}（每口 ${c!.multiplier!.toLocaleString("zh-TW")} 股）` : label];
+    }),
+  );
+}
+
 /** 名單上的一列。刻意沒有 rank / position / score / ratio 這類鍵(§5、§7.5)。 */
 export interface FuturesAnomalyRow {
   stockId: string;
   /** 解析不到股名時為 null——顯示 id 本身,不編一個標籤出來。 */
   name: string | null;
   code: string;
+  /** 契約的白話名稱(§7.19);畫面上顯示這個,不顯示 `code`。 */
+  label: string;
   facts: FuturesAnomalyFact[];
   reasons: ReasonItem[];
   risks: ReasonItem[];
@@ -134,6 +176,7 @@ export function futuresAnomalyMarketState(
     stockId: e.stock_id,
     name: nameById?.get(e.stock_id) ?? null,
     code: e.code,
+    label: contractLabel(e.multiplier, e.stock_id),
     facts: anomalyFacts(e.anomaly),
     reasons: e.reasons,
     risks: e.risks,
@@ -408,4 +451,206 @@ export function spotFollowLabel(s: SpotFollow): string | null {
 export function groupBySpotFollow<T extends { spot: SpotFollow }>(rows: T[]): T[] {
   const order: SpotFollow[] = ["lagging", "unknown", "followed"];
   return order.flatMap((s) => rows.filter((r) => r.spot === s));
+}
+
+/* ------------------------------------------------------------------ *
+ * 近 N 個期貨交易日的舉旗紀錄(docs/38 §7.19,2026-10-03,post-data,只動呈現)。
+ *
+ * 每一天都是用今天的資料重算的(規則本人,不是另一條),不是「那一天頁面上顯示
+ * 的東西」——說明句講明這件事。「現貨量跟上」是檢定 B 驗證過的那個問題;價格
+ * 只是事後紀錄,不是預測:docs/40 量過,這個訊號之後第二個交易日的漲跌兩邊都有,
+ * 而且跌 ≥3% 比漲 ≥3% 還多。所以:
+ *   - 不依任何價格排序,順序照 payload(日期新到舊、日內照當日名單順序);
+ *   - 永遠同時講最高與最低;
+ *   - 價格的 % 只在 `priceAfterText` 這一個純函式裡出現;
+ *   - 顏色中性(不用紅綠)。
+ * ------------------------------------------------------------------ */
+
+/**
+ * docs/40 第 1 次執行(`docs/evidence/next-day-futures-signal-battery-20261002.json`,
+ * `companion.signal` 與 `placebo_counts` 的 20 組)。已凍結的歷史紀錄,寫死在這裡並
+ * 附出處;重跑後要跟著換。pipeline 的 `futures_digest.NEXT_DAY_EVIDENCE` 是同一份。
+ */
+export const NEXT_DAY_EVIDENCE = {
+  source: "docs/evidence/next-day-futures-signal-battery-20261002.json",
+  asOf: "2026-09-30",
+  events: 551,
+  up3: 81,
+  down3: 112,
+  placeboUpMin: 54,
+  placeboUpMax: 77,
+  placeboDownMin: 64,
+  placeboDownMax: 97,
+} as const;
+
+/** 「怎麼看」的說明(文字由測試逐字鎖住)。天數全部讀 meta,不寫死。 */
+export function anomalyHistoryHeaderText(
+  meta: Pick<FuturesAnomalyHistoryMeta, "forward_days" | "window_days">,
+  days: ReadonlyArray<{ as_of: string }>,
+  e: typeof NEXT_DAY_EVIDENCE = NEXT_DAY_EVIDENCE,
+): string {
+  const range = days.length > 0
+    ? `（${days[days.length - 1].as_of.slice(5)}–${days[0].as_of.slice(5)}）`
+    : "";
+  return (
+    `近 ${days.length} 個期貨交易日${range}的舉旗紀錄，以今天的資料重算。` +
+    `每筆的「現貨量跟上」只看之後 ${meta.forward_days} 個交易日內現貨量有沒有創 ` +
+    `${meta.window_days} 日新高——這是回測驗證過的事。它不預告漲跌：回測 ${e.events} 次訊號，` +
+    `第二個交易日漲 ≥3% 有 ${e.up3} 次、跌 ≥3% 有 ${e.down3} 次，平常日子抽樣為漲 ` +
+    `${e.placeboUpMin}–${e.placeboUpMax}、跌 ${e.placeboDownMin}–${e.placeboDownMax} 次。`
+  );
+}
+
+/** 價格區塊的標題(逐字鎖)。 */
+export const PRICE_AFTER_HEADING = "之後走勢（事後紀錄，不是預測；量的檢定沒測過漲跌）";
+
+/** 價格區塊下的那句回測(逐字鎖)。 */
+export function nextDayEvidenceText(e: typeof NEXT_DAY_EVIDENCE = NEXT_DAY_EVIDENCE): string {
+  return (
+    `回測 ${e.events} 次：第二個交易日漲 ≥3% ${e.up3} 次、跌 ≥3% ${e.down3} 次；` +
+    `平常日子 ${e.placeboUpMin}–${e.placeboUpMax} / ${e.placeboDownMin}–${e.placeboDownMax} 次。` +
+    "它預告的是波動，不是上漲。"
+  );
+}
+
+/** 舉旗之後「現貨量有沒有跟上」的四種狀態(三態的 null 依天數再分兩種)。 */
+export type FollowStatus =
+  | { kind: "followed"; on: string | null }
+  | { kind: "missed" }
+  | { kind: "watching"; observed: number }
+  | { kind: "unknown" };
+
+export function followStatus(
+  e: Pick<FuturesAnomalyHistoryEntry, "spot_followed" | "spot_followed_on" | "forward_days_observed">,
+  forwardDays: number,
+): FollowStatus {
+  if (e.spot_followed === true) return { kind: "followed", on: e.spot_followed_on ?? null };
+  if (e.spot_followed === false) return { kind: "missed" };
+  if (e.forward_days_observed < forwardDays) return { kind: "watching", observed: e.forward_days_observed };
+  return { kind: "unknown" };
+}
+
+/** 狀態標籤。天數讀 meta(不寫死 5);不說「還沒噴」「尚未發動」——那是在預告價格。 */
+export function followStatusLabel(s: FollowStatus, forwardDays: number): string {
+  if (s.kind === "followed") return s.on ? `現貨量 ${s.on.slice(5)} 跟上` : "現貨量已跟上";
+  if (s.kind === "missed") return `${forwardDays} 日內現貨量未跟上`;
+  if (s.kind === "watching") return `觀察中（${s.observed}/${forwardDays} 日）`;
+  return "無法判定";
+}
+
+function fmtPrice(n: number): string {
+  return n.toLocaleString("zh-TW", { minimumFractionDigits: 1, maximumFractionDigits: 2 });
+}
+
+/** 相對舉旗日收盤的變化,一位小數;負號用「−」。這是整個期貨表面唯一算 % 的地方。 */
+function fmtPctFrom(base: number, v: number): string {
+  const pct = (v / base - 1) * 100;
+  const abs = Math.abs(pct).toFixed(1);
+  if (abs === "0.0") return "0.0%";
+  return `${pct > 0 ? "+" : "−"}${abs}%`;
+}
+
+/**
+ * 舉旗之後的現貨價格一句話。缺 → 「—」;之後還沒有交易日 → 「尚無之後交易日」。
+ * 最高與最低**永遠一起**給(這個訊號預告的是波動)。價格未經還原,窗內有除權息時
+ * 句尾註明。
+ */
+export function priceAfterText(after: FuturesSpotAfter | undefined): string {
+  if (!after) return "—";
+  if (after.days === 0 || after.last_close === undefined) return "尚無之後交易日";
+  const base = after.flag_close;
+  const high = after.high ?? after.last_close;
+  const low = after.low ?? after.last_close;
+  return (
+    `現貨收盤 ${fmtPrice(base)} → ${fmtPrice(after.last_close)}` +
+    `（${fmtPctFrom(base, after.last_close)}，${after.days} 個交易日後）；` +
+    `期間最高 ${fmtPctFrom(base, high)}／最低 ${fmtPctFrom(base, low)}` +
+    (after.ex_rights ? "（窗內有除權息，未調整）" : "")
+  );
+}
+
+/**
+ * 「目前高於 / 低於 / 持平舉旗日收盤」的計數(不是比率)。單位是「檔」:同一天同一檔
+ * 的兩個契約參考的是同一個現貨收盤,只數一次;不同天舉旗各自一個參考點,各數一次。
+ * 只數舉旗後至少有 1 個交易日的。
+ */
+export function priceAfterCounts(days: ReadonlyArray<FuturesAnomalyHistoryDay>): {
+  higher: number;
+  lower: number;
+  flat: number;
+} {
+  const seen = new Set<string>();
+  const counts = { higher: 0, lower: 0, flat: 0 };
+  for (const day of days) {
+    for (const e of day.entries ?? []) {
+      const a = e.spot_after;
+      if (!a || a.days < 1 || a.last_close === undefined) continue;
+      const key = `${day.as_of}|${e.stock_id}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      if (a.last_close > a.flag_close) counts.higher += 1;
+      else if (a.last_close < a.flag_close) counts.lower += 1;
+      else counts.flat += 1;
+    }
+  }
+  return counts;
+}
+
+export function priceAfterCountsText(c: { higher: number; lower: number; flat: number }): string {
+  return `目前高於舉旗日收盤 ${c.higher} 檔、低於 ${c.lower} 檔、持平 ${c.flat} 檔（含舉旗後至少 1 個交易日者）`;
+}
+
+export interface FuturesHistoryRow extends FuturesAnomalyRow {
+  follow: FollowStatus;
+  followLabel: string;
+  priceAfter: string;
+}
+
+export type FuturesAnomalyHistoryState =
+  | { kind: "not-computed" }
+  | {
+      kind: "listed";
+      meta: FuturesAnomalyHistoryMeta;
+      /** 新到舊,照 payload。`computed: false` = 那一天規則答不出來(不主張)。 */
+      days: { asOf: string; computed: boolean; rows: FuturesHistoryRow[] }[];
+    };
+
+export function futuresAnomalyHistoryState(
+  history: FuturesAnomalyHistoryDay[] | null | undefined,
+  meta: FuturesAnomalyHistoryMeta | null | undefined,
+  nameById?: ReadonlyMap<string, string>,
+): FuturesAnomalyHistoryState {
+  if (!history || !meta) return { kind: "not-computed" };
+  return {
+    kind: "listed",
+    meta,
+    days: history.map((day) => ({
+      asOf: day.as_of,
+      computed: day.entries !== undefined,
+      // 順序原封不動:不依價格、不依狀態重排,也不合併同一個契約的多次舉旗。
+      rows: (day.entries ?? []).map((e) => {
+        const follow = followStatus(e, meta.forward_days);
+        return {
+          stockId: e.stock_id,
+          name: nameById?.get(e.stock_id) ?? null,
+          code: e.code,
+          label: contractLabel(e.multiplier, e.stock_id),
+          facts: anomalyFacts(e.anomaly),
+          reasons: e.reasons,
+          risks: e.risks,
+          spot: spotFollow(e.spot_new_high),
+          follow,
+          followLabel: followStatusLabel(follow, meta.forward_days),
+          priceAfter: priceAfterText(e.spot_after),
+        };
+      }),
+    })),
+  };
+}
+
+/** 首頁期貨分頁「當日｜近 N 日」的記憶值;讀不懂就回預設「當日」。 */
+export type FuturesView = "today" | "history";
+export const FUTURES_VIEW_KEY = "trever.home.futuresView.v1";
+export function parseFuturesView(raw: string | null | undefined): FuturesView {
+  return raw === "history" ? "history" : "today";
 }

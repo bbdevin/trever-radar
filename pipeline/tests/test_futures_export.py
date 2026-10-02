@@ -930,6 +930,10 @@ META_KEY = "futures_volume_anomalies_meta"
 # 這樣的鍵出現在條目裡,都等於偷偷把一份短名單變成一張排行榜。
 RANK_ISH = ("rank", "position", "order", "seq", "index", "score", "top", "place")
 
+# 今日名單條目的完整鍵集合(排序後)。
+MARKET_ENTRY_KEYS = ["anomaly", "code", "multiplier", "reasons", "risks",
+                     "spot_new_high", "stock_id"]
+
 
 class AnomalyMarketIndexTests(_AnomalyFixture):
     """市場層級的今日名單(docs/38 §7.5)。§1「名單短到能逐檔看」要的就是這一份。"""
@@ -999,16 +1003,18 @@ class AnomalyMarketIndexTests(_AnomalyFixture):
         self.assertIn(INDEX_KEY, radar)
         self.assertEqual(radar[INDEX_KEY], [])
 
-    def test_a_flagged_contract_is_one_entry_with_the_six_fields(self):
+    def test_a_flagged_contract_is_one_entry_with_the_seven_fields(self):
         """第六個鍵 spot_new_high 是 2026-10-02 刻意加的(docs/38 §7.17):檢定只對
-        「現貨還沒跟上」成立,這個位元以前只寫在風險句的最後一個子句裡。"""
+        「現貨還沒跟上」成立,這個位元以前只寫在風險句的最後一個子句裡。
+        第七個鍵 multiplier 是 2026-10-03 刻意加的(§7.19):前端用它把代碼換成
+        「個股期貨 / 小型個股期貨」,使用者看不懂 CCF 這種代碼。"""
         self.seed([_spec("CCF", "2303")])
         entries = self.radar()[INDEX_KEY]
         self.assertEqual(len(entries), 1)
-        self.assertEqual(sorted(entries[0]),
-                         ["anomaly", "code", "reasons", "risks", "spot_new_high", "stock_id"])
+        self.assertEqual(sorted(entries[0]), MARKET_ENTRY_KEYS)
         self.assertEqual(entries[0]["stock_id"], "2303")
         self.assertEqual(entries[0]["code"], "CCF")
+        self.assertEqual(entries[0]["multiplier"], MULTIPLIER)
 
     def test_the_entries_reuse_the_per_stock_structures_verbatim(self):
         """條目不是攤平的變體:同一份 anomaly / reasons / risks,逐字相同。"""
@@ -1065,10 +1071,9 @@ class AnomalyMarketIndexTests(_AnomalyFixture):
             for key in entry:
                 if any(bad in key.lower() for bad in RANK_ISH):
                     offenders.append(key)
-            # 而且鍵就是那六個,一個不多:第七個鍵要加,得自己動手並過 review。
-            # (第六個 spot_new_high 是 2026-10-02 刻意加的,docs/38 §7.17。)
-            self.assertEqual(sorted(entry),
-                             ["anomaly", "code", "reasons", "risks", "spot_new_high", "stock_id"])
+            # 而且鍵就是那七個,一個不多:第八個鍵要加,得自己動手並過 review。
+            # (spot_new_high 2026-10-02 §7.17、multiplier 2026-10-03 §7.19 刻意加的。)
+            self.assertEqual(sorted(entry), MARKET_ENTRY_KEYS)
         self.assertEqual(offenders, [])
 
     def test_two_contracts_on_one_stock_both_appear(self):

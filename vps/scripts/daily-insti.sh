@@ -66,4 +66,6 @@ run_step_or_fail "compute-indicators" radar compute-indicators --all --days 5
 run_step_or_fail "compute-scores" radar compute-scores
 run_step_or_fail "export-json" radar export-json
 run_step_or_fail "deploy" deploy_data
+# 期貨量異常摘要(docs/38 §7.19):上線之後才送;永不失敗,同一個期貨行情日只送一次。
+futures_digest
 notify_ok "三大法人資料已更新並上線"

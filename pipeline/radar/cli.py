@@ -756,6 +756,23 @@ def cmd_export_json(args):
     print(f"exported {info['stocks']} stocks for {info['date']} -> {info['out']}")
 
 
+def cmd_futures_anomaly_digest(args):
+    """印出期貨量異常摘要:第一行標題、其後內文。沒有名單就什麼都不印,exit 0。
+
+    只讀 ``--out`` 底下剛寫好的 radar.json / stocks_index.json,不開資料庫。
+    """
+    from pathlib import Path
+
+    from .export.futures_digest import build_digest
+
+    digest = build_digest(Path(args.out))
+    if digest is None:
+        return
+    title, body = digest
+    print(title)
+    print(body)
+
+
 def cmd_status(_args):
     init_db()
     with get_engine().connect() as conn:
@@ -1224,6 +1241,15 @@ def main(argv=None):
     exp = sub.add_parser("export-json", help="write web/public/data/*.json for the frontend")
     exp.add_argument("--out", default=None, help="output dir (default web/public/data)")
     exp.set_defaults(fn=cmd_export_json)
+
+    fad = sub.add_parser(
+        "futures-anomaly-digest",
+        help="print the daily futures-volume-anomaly push message (title line, then body) "
+             "from an exported radar.json; prints nothing when the list is absent or empty; "
+             "never opens the database (docs/38 §7.19)",
+    )
+    fad.add_argument("--out", required=True, help="the export dir holding radar.json")
+    fad.set_defaults(fn=cmd_futures_anomaly_digest)
 
     pr = sub.add_parser("prune", help="delete old history to keep DB slim")
     pr.add_argument("--indicators", type=int, default=400, help="days to keep in indicators_daily")

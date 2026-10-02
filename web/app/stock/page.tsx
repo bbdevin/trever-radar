@@ -25,6 +25,7 @@ import WarrantBranchPanel from "@/components/WarrantBranchPanel";
 import ReasonPill, { isChipStrategyCode } from "@/components/ReasonPill";
 import {
   anomalyFacts,
+  contractLabelsByCode,
   contractsWithDaily,
   contractsWithoutDaily,
   dailyFacts,
@@ -197,6 +198,8 @@ function StockView() {
     return { glyph: undefined, className: "text-foreground" };
   };
   const futuresTab = stockFuturesTab(data.futures);
+  // 契約代碼 → 白話名稱(docs/38 §7.19;使用者看不懂 CCF 這種代碼)。
+  const futuresLabels = contractLabelsByCode(data.futures?.contracts ?? [], data.id);
   const chipsSections = CHIPS_SECTIONS.filter((s) =>
     s.key === "flow"
     || (s.key === "acc" && (data.branch_history?.length ?? 0) > 0)
@@ -257,7 +260,7 @@ function StockView() {
                     className="mt-1 inline-flex min-h-8 items-center gap-1 rounded-full border border-[color:var(--accent-2)]/40 bg-[color:var(--accent-2)]/10 px-2 py-0.5 text-[11px] font-semibold text-[color:var(--accent-2)] transition-colors hover:bg-[color:var(--accent-2)]/18"
                   >
                     <Layers size={11} aria-hidden="true" />
-                    期貨量異常 <span className="num">{futuresTab.flaggedCodes.join("、")}</span> →
+                    期貨量異常 {futuresTab.flaggedCodes.map((c) => futuresLabels.get(c) ?? "期貨").join("、")} →
                   </button>
                 )}
               </div>
@@ -405,7 +408,7 @@ function StockView() {
       {view === "basic" && <BasicInfoPanel data={data} quoteDate={last.t} />}
       {view === "tech" && <TechnicalPanel data={data} />}
       {view === "warrant" && <WarrantPanel data={data} />}
-      {view === "futures" && futuresTab.show && <FuturesPanel futures={data.futures} />}
+      {view === "futures" && futuresTab.show && <FuturesPanel futures={data.futures} labels={futuresLabels} />}
 
       {drillBranch && (
         <div className="safe-overlay fixed inset-0 z-50 overflow-y-auto bg-background">
@@ -688,7 +691,10 @@ function StockDecisionHeader({
  * 契約的當日成交與未平倉。說明句只在今天有舉旗時放在旗標下面;沒舉旗的日子它
  * 仍在分頁底部,讓人知道「舉旗」是什麼意思、值不值得等。
  */
-function FuturesPanel({ futures }: { futures: StockJson["futures"] }) {
+/** 契約代碼 → 白話名稱(`contractLabelsByCode`)。畫面上只顯示名稱,代碼放在 title。 */
+type ContractLabels = ReadonlyMap<string, string>;
+
+function FuturesPanel({ futures, labels }: { futures: StockJson["futures"]; labels: ContractLabels }) {
   const flagged = stockFuturesTab(futures).flaggedCodes.length > 0;
   const meaning = (
     <p className="rounded-[var(--r-lg)] border border-border bg-card px-3 py-2.5 text-[12px] leading-relaxed text-muted-foreground">
@@ -699,16 +705,16 @@ function FuturesPanel({ futures }: { futures: StockJson["futures"] }) {
   );
   return (
     <div className="flex flex-col gap-2.5" data-testid="stock-futures-panel">
-      <FuturesBadge futures={futures} />
-      <FuturesAnomalyBlock futures={futures} />
+      <FuturesBadge futures={futures} labels={labels} />
+      <FuturesAnomalyBlock futures={futures} labels={labels} />
       {flagged && meaning}
-      <FuturesDailyBlock futures={futures} />
+      <FuturesDailyBlock futures={futures} labels={labels} />
       {!flagged && meaning}
     </div>
   );
 }
 
-function FuturesBadge({ futures }: { futures: StockJson["futures"] }) {
+function FuturesBadge({ futures, labels }: { futures: StockJson["futures"]; labels: ContractLabels }) {
   const state = futuresState(futures);
   if (state.kind === "unknown") return null;
   if (state.kind === "none") {
@@ -724,8 +730,8 @@ function FuturesBadge({ futures }: { futures: StockJson["futures"] }) {
         <Layers size={11} aria-hidden="true" />有個股期貨
       </span>
       {state.contracts.map((c) => (
-        <span key={c.code} className="num shrink-0 text-muted-foreground" title={`契約代碼 ${c.code}（清單日 ${state.asOf}）`}>
-          {c.code}
+        <span key={c.code} className="shrink-0 text-muted-foreground" title={`契約代碼 ${c.code}（清單日 ${state.asOf}）`}>
+          {labels.get(c.code) ?? "期貨"}
         </span>
       ))}
     </p>
@@ -743,7 +749,7 @@ function FuturesBadge({ futures }: { futures: StockJson["futures"] }) {
  *
  * 同一檔股票的兩個契約(1565 的 MYF/OMF)可以同一天都舉旗,兩張都要畫。
  */
-function FuturesAnomalyBlock({ futures }: { futures: StockJson["futures"] }) {
+function FuturesAnomalyBlock({ futures, labels }: { futures: StockJson["futures"]; labels: ContractLabels }) {
   const state = futuresState(futures);
   if (state.kind !== "has") return null;
   const flagged = flaggedContracts(state.contracts);
@@ -761,9 +767,12 @@ function FuturesAnomalyBlock({ futures }: { futures: StockJson["futures"] }) {
           className="min-w-0 rounded-[var(--r-lg)] border border-[color:var(--accent-2)]/30 bg-card p-3 shadow-[var(--shadow-card)]"
         >
           <div className="flex min-w-0 flex-wrap items-baseline gap-2">
-            <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-[color:var(--accent-2)]/35 bg-[color:var(--accent-2)]/8 px-1.5 py-0.5 text-[11px] font-semibold text-[color:var(--accent-2)]">
+            <span
+              className="inline-flex shrink-0 items-center gap-1 rounded-full border border-[color:var(--accent-2)]/35 bg-[color:var(--accent-2)]/8 px-1.5 py-0.5 text-[11px] font-semibold text-[color:var(--accent-2)]"
+              title={`契約代碼 ${c.code}`}
+            >
               <Layers size={11} aria-hidden="true" />
-              <span className="num">{c.code}</span>
+              {labels.get(c.code) ?? "期貨"}
             </span>
             <span className="text-[12.5px] font-semibold text-foreground">{heading}</span>
           </div>
@@ -781,11 +790,10 @@ function FuturesAnomalyBlock({ futures }: { futures: StockJson["futures"] }) {
               </span>
             ))}
           </div>
-          {((c.reasons?.length ?? 0) + (c.risks?.length ?? 0) > 0) && (
+          {/* 觸發理由那句(§4 步驟 5 範本)以契約代碼開頭、並重述上面四格的數字,
+              所以不畫(同首頁 §7.17 的處理;§7.19)。風險提醒照舊。 */}
+          {(c.risks?.length ?? 0) > 0 && (
             <div className="mt-2 flex flex-wrap gap-1.5">
-              {(c.reasons ?? []).map((r, i) => (
-                <ReasonPill key={`fr-${i}`} code={r.code} text={r.text} />
-              ))}
               {(c.risks ?? []).map((r, i) => (
                 <ReasonPill key={`fk-${i}`} code={r.code} text={r.text} />
               ))}
@@ -813,7 +821,7 @@ function FuturesAnomalyBlock({ futures }: { futures: StockJson["futures"] }) {
  * 這個狀態的依據是 `daily` 這個鍵的有無(§7.7 指定的那個三態鍵),不是 `anomaly`。
  * 標題的日期讀 `daily.date`(§7.12 的期貨行情日),絕不用本頁的資料日。
  */
-function FuturesDailyBlock({ futures }: { futures: StockJson["futures"] }) {
+function FuturesDailyBlock({ futures, labels }: { futures: StockJson["futures"]; labels: ContractLabels }) {
   const state = futuresState(futures);
   if (state.kind !== "has") return null;
   const dated = contractsWithDaily(state.contracts);
@@ -830,9 +838,12 @@ function FuturesDailyBlock({ futures }: { futures: StockJson["futures"] }) {
           className="min-w-0 rounded-[var(--r-lg)] border border-border bg-card p-3 shadow-[var(--shadow-card)]"
         >
           <div className="flex min-w-0 flex-wrap items-baseline gap-2">
-            <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-border bg-secondary px-1.5 py-0.5 text-[11px] font-semibold text-muted-foreground">
+            <span
+              className="inline-flex shrink-0 items-center gap-1 rounded-full border border-border bg-secondary px-1.5 py-0.5 text-[11px] font-semibold text-muted-foreground"
+              title={`契約代碼 ${c.code}`}
+            >
               <Layers size={11} aria-hidden="true" />
-              <span className="num">{c.code}</span>
+              {labels.get(c.code) ?? "期貨"}
             </span>
             <span className="text-[12.5px] font-semibold text-foreground">
               期貨成交與未平倉({c.daily.date})
@@ -857,7 +868,7 @@ function FuturesDailyBlock({ futures }: { futures: StockJson["futures"] }) {
       {dailyAsOf !== undefined && undated.length > 0 && (
         <div className="min-w-0 rounded-[var(--r-lg)] border border-border bg-card px-3 py-2.5 text-[11.5px] leading-relaxed text-muted-foreground">
           {undated.map((c) => (
-            <div key={c.code}>{noDailyRowText(c.code, dailyAsOf)}</div>
+            <div key={c.code} title={`契約代碼 ${c.code}`}>{noDailyRowText(labels.get(c.code) ?? "期貨", dailyAsOf)}</div>
           ))}
         </div>
       )}

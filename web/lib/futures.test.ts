@@ -24,7 +24,21 @@ import {
   stockFuturesTab,
   anomalyMeaningText,
   ANOMALY_EVIDENCE,
+  anomalyHistoryHeaderText,
+  contractLabel,
+  contractLabelsByCode,
+  followStatus,
+  followStatusLabel,
+  futuresAnomalyHistoryState,
+  nextDayEvidenceText,
+  NEXT_DAY_EVIDENCE,
+  parseFuturesView,
+  priceAfterCounts,
+  priceAfterCountsText,
+  priceAfterText,
+  PRICE_AFTER_HEADING,
 } from "./futures.ts";
+import { readFileSync } from "node:fs";
 
 test("futures 鍵不存在 -> unknown(尚未 import,不可讀成沒有)", () => {
   assert.deepEqual(futuresState(undefined), { kind: "unknown" });
@@ -224,7 +238,8 @@ test("§5 名單列不得帶 rank / position / score / ratio 之類的鍵", () =
   if (state.kind !== "listed") return;
   for (const row of state.rows) {
     // spot(2026-10-02,§7.17)是刻意加的:現貨有沒有跟上,不是名次。
-    assert.deepEqual(Object.keys(row).sort(), ["code", "facts", "name", "reasons", "risks", "spot", "stockId"]);
+    // label(2026-10-03,§7.19)是契約的白話名稱,不是名次。
+    assert.deepEqual(Object.keys(row).sort(), ["code", "facts", "label", "name", "reasons", "risks", "spot", "stockId"]);
   }
 });
 
@@ -575,4 +590,233 @@ test("證據數字與檢定紀錄一致(docs/evidence/futures-volume-battery-202
   assert.equal(ANOMALY_EVIDENCE.hits, 141);
   assert.equal(ANOMALY_EVIDENCE.placeboMin, 43);
   assert.equal(ANOMALY_EVIDENCE.placeboMax, 67);
+});
+
+// ══ docs/38 §7.19:白話契約名稱、近 N 日舉旗紀錄、之後走勢 ════════════════════
+
+test("§7.19 契約名稱:2,000 股=個股期貨、100 股=小型個股期貨、ETF、其他乘數、未知", () => {
+  assert.equal(contractLabel(2000, "2303"), "個股期貨");
+  assert.equal(contractLabel(100, "1565"), "小型個股期貨");
+  assert.equal(contractLabel(10000, "0050"), "ETF 期貨");
+  assert.equal(contractLabel(1000, "2303"), "期貨（每口 1,000 股）");
+  assert.equal(contractLabel(undefined, "2303"), "期貨");
+  assert.equal(contractLabel(null, "2303"), "期貨");
+});
+
+test("§7.19/§7.10 同一檔兩個契約的名稱分得開;同名時補每口股數", () => {
+  const labels = contractLabelsByCode([{ code: "MYF", multiplier: 2000 }, { code: "OMF", multiplier: 100 }], "1565");
+  assert.equal(labels.get("MYF"), "個股期貨");
+  assert.equal(labels.get("OMF"), "小型個股期貨");
+  const etf = contractLabelsByCode([{ code: "NYF", multiplier: 10000 }, { code: "NZF", multiplier: 1000 }], "0050");
+  assert.equal(etf.get("NYF"), "ETF 期貨（每口 10,000 股）");
+  assert.equal(etf.get("NZF"), "ETF 期貨（每口 1,000 股）");
+});
+
+test("§7.19 名單列帶白話名稱,畫面要用的欄位裡沒有任何拉丁字母", () => {
+  const state = futuresAnomalyMarketState(
+    [{ ...entry("1565", "MYF", ANOMALY_MYF), multiplier: 2000 }, { ...entry("1565", "OMF", ANOMALY_OMF), multiplier: 100 }],
+    "2026-09-18",
+  );
+  if (state.kind !== "listed") throw new Error("expected listed");
+  assert.deepEqual(state.rows.map((r) => r.label), ["個股期貨", "小型個股期貨"]);
+  for (const r of state.rows) {
+    assert.ok(!/[A-Za-z]/.test(r.label), r.label);
+    for (const f of r.facts) assert.ok(!/[A-Za-z]/.test(`${f.label}${f.short ?? ""}${f.unit}`), f.label);
+  }
+});
+
+const H_META = { as_of: "2026-10-02", window_days: 60, history_days: 10, forward_days: 5, observed_through: "2026-10-03" };
+const hEntry = (over: Record<string, unknown>) => ({
+  ...entry("2303", "CCF", ANOMALY_MYF),
+  multiplier: 2000,
+  spot_new_high: false,
+  spot_followed: null,
+  forward_days_observed: 5,
+  ...over,
+});
+
+test("§7.19 狀態標籤:跟上(含日期)/ N 日內未跟上 / 觀察中 / 無法判定", () => {
+  const label = (o: Record<string, unknown>) =>
+    followStatusLabel(followStatus(hEntry(o) as never, H_META.forward_days), H_META.forward_days);
+  assert.equal(label({ spot_followed: true, spot_followed_on: "2026-09-25" }), "現貨量 09-25 跟上");
+  assert.equal(label({ spot_followed: false }), "5 日內現貨量未跟上");
+  assert.equal(label({ spot_followed: null, forward_days_observed: 2 }), "觀察中（2/5 日）");
+  assert.equal(label({ spot_followed: null, forward_days_observed: 5 }), "無法判定");
+});
+
+test("§7.19 天數讀 meta,不寫死 5", () => {
+  const s = followStatus(hEntry({ spot_followed: null, forward_days_observed: 2 }) as never, 3);
+  assert.equal(followStatusLabel(s, 3), "觀察中（2/3 日）");
+  assert.equal(followStatusLabel({ kind: "missed" }, 3), "3 日內現貨量未跟上");
+  assert.equal(
+    followStatusLabel(followStatus(hEntry({ spot_followed: null, forward_days_observed: 3 }) as never, 3), 3),
+    "無法判定",
+  );
+});
+
+test("§7.19 狀態標籤不講價格預告", () => {
+  for (const s of [
+    { kind: "followed", on: "2026-09-25" }, { kind: "missed" },
+    { kind: "watching", observed: 1 }, { kind: "unknown" },
+  ] as const) {
+    const text = followStatusLabel(s, 5);
+    for (const bad of ["還沒噴", "尚未發動", "噴", "發動", "漲", "跌"]) assert.ok(!text.includes(bad), text);
+  }
+});
+
+const DAYS = Array.from({ length: 10 }, (_, i) => ({ as_of: `2026-09-${String(30 - i).padStart(2, "0")}` }));
+
+test("§7.19 「怎麼看」說明逐字", () => {
+  assert.equal(
+    anomalyHistoryHeaderText(H_META, DAYS),
+    "近 10 個期貨交易日（09-21–09-30）的舉旗紀錄，以今天的資料重算。每筆的「現貨量跟上」只看之後 5 個交易日內現貨量有沒有創 60 日新高——這是回測驗證過的事。它不預告漲跌：回測 551 次訊號，第二個交易日漲 ≥3% 有 81 次、跌 ≥3% 有 112 次，平常日子抽樣為漲 54–77、跌 64–97 次。",
+  );
+  // 天數來自 meta。
+  const other = anomalyHistoryHeaderText({ forward_days: 3, window_days: 20 }, DAYS.slice(0, 2));
+  assert.ok(other.includes("近 2 個期貨交易日") && other.includes("之後 3 個交易日") && other.includes("創 20 日新高"), other);
+});
+
+test("§7.19 回測數字與 docs/evidence/next-day-futures-signal-battery-20261002.json 一致", () => {
+  const ev = JSON.parse(readFileSync(new URL(`../../${NEXT_DAY_EVIDENCE.source}`, import.meta.url), "utf8"));
+  assert.equal(NEXT_DAY_EVIDENCE.events, ev.companion.signal.n);
+  assert.equal(NEXT_DAY_EVIDENCE.up3, ev.companion.signal.hits);
+  assert.equal(NEXT_DAY_EVIDENCE.down3, ev.companion.signal.drops);
+  const placebos = [...ev.placebo_counts.date, ...ev.placebo_counts.stock];
+  assert.equal(placebos.length, 20);
+  assert.equal(NEXT_DAY_EVIDENCE.placeboUpMin, Math.min(...placebos.map((p: { hits: number }) => p.hits)));
+  assert.equal(NEXT_DAY_EVIDENCE.placeboUpMax, Math.max(...placebos.map((p: { hits: number }) => p.hits)));
+  assert.equal(NEXT_DAY_EVIDENCE.placeboDownMin, Math.min(...placebos.map((p: { drops: number }) => p.drops)));
+  assert.equal(NEXT_DAY_EVIDENCE.placeboDownMax, Math.max(...placebos.map((p: { drops: number }) => p.drops)));
+  assert.equal(ev.metadata.as_of, NEXT_DAY_EVIDENCE.asOf);
+});
+
+test("§7.19 價格區塊的標題與回測句逐字", () => {
+  assert.equal(PRICE_AFTER_HEADING, "之後走勢（事後紀錄，不是預測；量的檢定沒測過漲跌）");
+  assert.equal(
+    nextDayEvidenceText(),
+    "回測 551 次：第二個交易日漲 ≥3% 81 次、跌 ≥3% 112 次；平常日子 54–77 / 64–97 次。它預告的是波動，不是上漲。",
+  );
+});
+
+test("§7.19 priceAfterText:最高最低一起給、缺值 —、還沒有之後的交易日、除權息註記", () => {
+  assert.equal(
+    priceAfterText({ flag_close: 123.5, last_close: 130, last_date: "2026-10-01", high: 135, low: 120, days: 6, ex_rights: false }),
+    "現貨收盤 123.5 → 130.0（+5.3%，6 個交易日後）；期間最高 +9.3%／最低 −2.8%",
+  );
+  assert.equal(priceAfterText(undefined), "—");
+  assert.equal(priceAfterText({ flag_close: 50, days: 0 }), "尚無之後交易日");
+  assert.equal(
+    priceAfterText({ flag_close: 50, last_close: 50, last_date: "x", high: 50, low: 50, days: 1, ex_rights: true }),
+    "現貨收盤 50.0 → 50.0（0.0%，1 個交易日後）；期間最高 0.0%／最低 0.0%（窗內有除權息，未調整）",
+  );
+});
+
+test("§7.19 「目前高於/低於/持平」是計數:同天同檔兩個契約只算一次、0 個交易日的不算", () => {
+  const after = (last: number, days = 3) => ({ flag_close: 100, last_close: last, last_date: "x", high: 110, low: 90, days, ex_rights: false });
+  const counts = priceAfterCounts([
+    { as_of: "2026-09-30", entries: [
+      hEntry({ code: "MYF", stock_id: "1565", spot_after: after(105) }),
+      hEntry({ code: "OMF", stock_id: "1565", spot_after: after(105) }),
+      hEntry({ code: "CCF", stock_id: "2303", spot_after: { flag_close: 100, days: 0 } }),
+    ] as never },
+    { as_of: "2026-09-29", entries: [
+      hEntry({ code: "MYF", stock_id: "1565", spot_after: after(95) }),
+      hEntry({ code: "CDF", stock_id: "2330", spot_after: after(100) }),
+      hEntry({ code: "DDF", stock_id: "2454" }),
+    ] as never },
+    { as_of: "2026-09-26" },
+  ]);
+  assert.deepEqual(counts, { higher: 1, lower: 1, flat: 1 });
+  assert.equal(
+    priceAfterCountsText(counts),
+    "目前高於舉旗日收盤 1 檔、低於 1 檔、持平 1 檔（含舉旗後至少 1 個交易日者）",
+  );
+});
+
+test("§7.19 紀錄的三態與順序:缺 entries=不主張、[]=算過沒人、順序照 payload 不重排", () => {
+  assert.deepEqual(futuresAnomalyHistoryState(undefined, H_META), { kind: "not-computed" });
+  assert.deepEqual(futuresAnomalyHistoryState([], undefined), { kind: "not-computed" });
+  const state = futuresAnomalyHistoryState(
+    [
+      { as_of: "2026-09-30", entries: [
+        hEntry({ code: "BBB", stock_id: "1565", spot_after: { flag_close: 100, last_close: 90, last_date: "x", high: 101, low: 89, days: 2 } }),
+        hEntry({ code: "AAA", stock_id: "2303", spot_after: { flag_close: 100, last_close: 130, last_date: "x", high: 131, low: 99, days: 2 } }),
+      ] as never },
+      { as_of: "2026-09-29", entries: [] },
+      { as_of: "2026-09-26" },
+    ],
+    H_META,
+  );
+  if (state.kind !== "listed") throw new Error("expected listed");
+  assert.deepEqual(state.days.map((d) => [d.asOf, d.computed, d.rows.length]), [
+    ["2026-09-30", true, 2], ["2026-09-29", true, 0], ["2026-09-26", false, 0],
+  ]);
+  // 漲得多的 AAA 沒有被排到前面:不依價格排序。
+  assert.deepEqual(state.days[0].rows.map((r) => r.code), ["BBB", "AAA"]);
+  for (const r of state.days[0].rows) {
+    for (const key of Object.keys(r)) {
+      assert.ok(!/rank|position|score|ratio|pct|order|top|hit/i.test(key), key);
+    }
+  }
+});
+
+test("§7.19 當日｜近 N 日 的記憶值:讀不懂就回當日", () => {
+  assert.equal(parseFuturesView("history"), "history");
+  assert.equal(parseFuturesView("today"), "today");
+  assert.equal(parseFuturesView(null), "today");
+  assert.equal(parseFuturesView("garbage"), "today");
+});
+
+// ── 措辭閘門:整個期貨表面(前端文案 + 推播) ────────────────────────────
+
+const BANNED_COPY = ["大漲", "噴", "極品", "機率", "勝率", "看多", "看空", "買進"];
+
+function sampleCopy(): string[] {
+  const after = { flag_close: 123.5, last_close: 130, last_date: "2026-10-01", high: 135, low: 120, days: 6, ex_rights: true };
+  return [
+    anomalyHistoryHeaderText(H_META, DAYS),
+    nextDayEvidenceText(),
+    PRICE_AFTER_HEADING,
+    priceAfterText(after),
+    priceAfterText(undefined),
+    priceAfterText({ flag_close: 1, days: 0 }),
+    priceAfterCountsText({ higher: 1, lower: 2, flat: 3 }),
+    anomalyMeaningText(),
+    anomalyEmptyStateText({ asOf: "2026-10-02", windowDays: 60 }),
+    anomalyLagText("2026-10-01", "2026-10-02")!,
+    openInterestDirectionText({ as_of: "2026-10-02", increased: 1, decreased: 2, unchanged: 3, undetermined: 4 }),
+    noDailyRowText("個股期貨", "2026-10-02"),
+    ...(["followed", "missed", "watching", "unknown"] as const).map((k) =>
+      followStatusLabel(k === "followed" ? { kind: k, on: "2026-09-25" } : k === "watching" ? { kind: k, observed: 2 } : { kind: k }, 5)),
+    ...[2000, 100, 1000, undefined].map((m) => contractLabel(m, "2303")),
+    spotFollowLabel("lagging")!, spotFollowLabel("followed")!,
+  ];
+}
+
+test("§7.19 期貨文案沒有誇大或喊單的詞", () => {
+  for (const text of sampleCopy()) {
+    for (const bad of BANNED_COPY) assert.ok(!text.includes(bad), `「${bad}」出現在:${text}`);
+  }
+});
+
+test("§7.19 % 只出現在 priceAfterText 與鎖住的回測句(而且回測句裡只有「≥3%」)", () => {
+  const priceTexts = new Set([priceAfterText({ flag_close: 123.5, last_close: 130, last_date: "2026-10-01", high: 135, low: 120, days: 6, ex_rights: true })]);
+  const backtest = new Set([anomalyHistoryHeaderText(H_META, DAYS), nextDayEvidenceText()]);
+  for (const text of sampleCopy()) {
+    if (priceTexts.has(text)) continue;
+    if (backtest.has(text)) {
+      assert.equal(text.replace(/≥3%/g, "").includes("%"), false, text);
+      continue;
+    }
+    assert.ok(!text.includes("%"), `% 出現在:${text}`);
+  }
+  // 元件原始碼裡的中文文案也沒有 %(Tailwind 類別不含中文,不受影響)。
+  for (const file of ["FuturesAnomalyList.tsx", "FuturesAnomalyHistory.tsx", "FuturesOpenInterestDirection.tsx", "FuturesFlagParts.tsx"]) {
+    const src = readFileSync(new URL(`../components/${file}`, import.meta.url), "utf8");
+    for (const m of src.matchAll(/[^\n]*[一-鿿][^\n]*/g)) {
+      const line = m[0];
+      if (/^\s*(\/\/|\*|\{\/\*)/.test(line)) continue;      // 註解
+      assert.ok(!line.includes("%"), `${file}: ${line.trim()}`);
+    }
+  }
 });

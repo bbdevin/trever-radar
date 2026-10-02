@@ -42,14 +42,19 @@ battery 判 SHIP 之後才被寫出來:
 """
 from __future__ import annotations
 
-from collections.abc import Iterable
+from bisect import bisect_left
+from collections.abc import Iterable, Sequence
 from typing import Any
 
+from sqlalchemy import text
+
 from .futures_volume_battery import (
+    FORWARD_SPOT_DAYS,
     WINDOW_DAYS,
     anomaly_facts,
     comparison_window,
     evaluate_contract_day_in_calendar,
+    forward_spot_days,
     load_contracts,
     load_futures_calendar,
     load_market_days,
@@ -199,8 +204,14 @@ def anomaly_index(
     anomalies: dict[str, dict[str, Any]] | None,
     *,
     stock_id_by_code: dict[str, str],
+    multiplier_by_code: dict[str, int | None] | None = None,
 ) -> list[dict[str, Any]] | None:
-    """市場層級的今日名單(§7.5)。``{stock_id, code, anomaly, reasons, risks}``。
+    """市場層級的今日名單(§7.5)。``{stock_id, code, multiplier, anomaly, reasons, risks,
+    spot_new_high}``。
+
+    ``multiplier``(docs/38 §7.19)是契約乘數(股/口),給前端把代碼換成白話的
+    「個股期貨 / 小型個股期貨」。舉旗的契約乘數一定已知(R2b 的前置條件),乘數
+    未知時鍵整個不輸出,不寫 null。它只是契約的身分,不是一個排序或比較用的數字。
 
     三態與 ``futures`` 鍵同一個約定,而且三態就是 :func:`futures_volume_anomalies`
     的三態:``None``(沒算)進來就 ``None``(呼叫端整個鍵不輸出),``{}``(算了、
@@ -215,8 +226,14 @@ def anomaly_index(
     """
     if anomalies is None:
         return None
+    multipliers = multiplier_by_code or {}
     entries = [
-        {"stock_id": stock_id_by_code[code], "code": code, **payload}
+        {
+            "stock_id": stock_id_by_code[code], "code": code,
+            **({"multiplier": multipliers[code]}
+               if multipliers.get(code) is not None else {}),
+            **payload,
+        }
         for code, payload in anomalies.items()
         if code in stock_id_by_code
     ]
@@ -257,6 +274,197 @@ def anomaly_index_meta(
     if index is None:
         return None
     return {"as_of": as_of, "window_days": WINDOW_DAYS}
+
+
+# ── 近 N 個期貨交易日的舉旗紀錄(docs/38 §7.19,post-data,只動呈現)─────────────
+#
+# 使用者要的是「之前舉過旗的,後來現貨有沒有跟上」。這一段**不新增任何規則**:
+# 每一天都呼叫上面那個 ``futures_volume_anomalies`` 本人(battery 的規則),之後
+# 補三個「事後才知道」的欄位,而那三個欄位用的也是 battery 自己的
+# ``forward_spot_days`` 與 ``spot_new_high``——與 §3 檢定 B 的「之後 5 個現貨交易日
+# 內現貨量創 60 日新高」是同一個問題、同一套函式。
+#
+# **價格只給原始觀測值,不給任何除法**(使用者 2026-10-03:「用點位看…漲了幾%跌了
+# 幾%」;reviewer 裁定加 ``spot_after``)。docs/40 第 1 次執行量過,F_only 之後第二個
+# 交易日漲 ≥3% 81 次、跌 ≥3% 112 次(共 551 次)——它預告的是**波動**不是上漲。
+# 所以 ``spot_after`` 只有現貨收盤、之後最高/最低與天數,永遠同時給上下兩邊;百分比
+# 由前端在單一個純函式裡算給人看,payload 裡沒有比率、報酬、名次,也不依它排序。
+# 價格是**現貨**(daily_prices),不是期貨結算價;未經還原(窗內有除權息就標出來)。
+#
+# **這是今天重算的,不是「那一天頁面上顯示的東西」**:日曆、R4 結算窗口、比較窗口
+# 都是用今天的資料重算。兩者在絕大多數日子相同,但不保證(例:某天的期貨列是後來
+# 才補進來的)。前端的說明句講明這一點。
+
+HISTORY_DAYS = 10
+
+# 條目的鍵集合,一個不多(``spot_followed_on`` 只在 ``spot_followed`` 為真時出現,
+# ``multiplier`` 只在乘數已知時出現——舉旗的契約乘數一定已知)。
+HISTORY_ENTRY_KEYS = (
+    "stock_id", "code", "multiplier", "anomaly", "reasons", "risks", "spot_new_high",
+    "spot_followed", "forward_days_observed",
+)
+HISTORY_ENTRY_OPTIONAL_KEYS = ("spot_followed_on", "spot_after")
+SPOT_AFTER_KEYS = ("flag_close", "last_close", "last_date", "high", "low", "days", "ex_rights")
+
+
+def load_spot_prices(
+    conn, *, stock_ids: Sequence[str], date_from: str, as_of: str,
+) -> dict[str, list[dict[str, Any]]]:
+    """舉旗股票的現貨日 K(``date_from`` ≤ 日期 ≤ ``as_of``),每檔遞增排序。
+
+    battery 的 :func:`load_spot_daily` 只讀量;價格是呈現用的另一件事,所以另寫一句
+    讀取,不去動被 §3 檢定過的那一句。只讀舉旗的那幾檔。
+    """
+    if not stock_ids:
+        return {}
+    wanted = set(stock_ids)
+    out: dict[str, list[dict[str, Any]]] = {}
+    rows = conn.execute(text("""
+        SELECT stock_id, date, high, low, close, adj_factor FROM daily_prices
+        WHERE date >= :date_from AND date <= :as_of
+        ORDER BY stock_id, date
+    """), {"date_from": date_from, "as_of": as_of}).mappings()
+    for row in rows:
+        if row["stock_id"] in wanted:
+            out.setdefault(row["stock_id"], []).append(dict(row))
+    return out
+
+
+def spot_after(prices: Sequence[dict[str, Any]], *, day: str) -> dict[str, Any] | None:
+    """舉旗日 ``day`` 的現貨收盤,以及之後(不含當天)觀察到的原始價格。
+
+    * 當天沒有價格列(或收盤是 NULL)→ ``None``:沒有參考點,整個鍵不輸出。
+    * 之後還沒有交易日 → ``{"flag_close", "days": 0}``。
+    * 否則七個鍵:``last_close``/``last_date`` 是最後一個有收盤的日子,``high``/``low``
+      是之後最高價的最大值/最低價的最小值(缺高低價時以收盤代替),``days`` 是之後
+      有收盤的交易日數,``ex_rights`` = 舉旗日到最後一天之間 ``adj_factor`` 有變
+      (除權息,價格未經還原)。全部是觀測值,沒有一個除法。
+    """
+    flag = next((p for p in prices if p["date"] == day), None)
+    if flag is None or flag["close"] is None:
+        return None
+    after = [p for p in prices if p["date"] > day and p["close"] is not None]
+    if not after:
+        return {"flag_close": flag["close"], "days": 0}
+    factors = {p["adj_factor"] for p in [flag, *after]}
+    return {
+        "flag_close": flag["close"],
+        "last_close": after[-1]["close"],
+        "last_date": after[-1]["date"],
+        "high": max(p["high"] if p["high"] is not None else p["close"] for p in after),
+        "low": min(p["low"] if p["low"] is not None else p["close"] for p in after),
+        "days": len(after),
+        "ex_rights": len(factors) > 1,
+    }
+
+
+def spot_follow_up(
+    *, stock_days: Sequence[str], volumes: dict[str, int | None], day: str,
+) -> dict[str, Any]:
+    """舉旗日 ``day`` 之後,現貨量有沒有在 5 個現貨交易日內創 60 日新高。
+
+    三態,與 battery 的成熟性規則(§6 修訂 2)同一個紀律:
+
+    * ``True``  = 往後已經過去的日子裡,有一天 ``S`` 為真(附上那一天)。
+    * ``False`` = 往後 5 天**全部**已經過去、**全部**算得出來,而且沒有一天為真。
+    * ``None``  = 還沒滿 5 天(觀察中),或有一天算不出來——未知不是否定。
+
+    ``forward_days_observed`` 是已經過去的往後現貨交易日數(0–5)。
+    """
+    forwards = forward_spot_days(stock_days=stock_days, day=day)
+    all_known = True
+    for forward in forwards:
+        hit = spot_new_high(stock_days=stock_days, volumes=volumes, day=forward)
+        if hit is True:
+            return {"spot_followed": True, "spot_followed_on": forward,
+                    "forward_days_observed": len(forwards)}
+        if hit is None:
+            all_known = False
+    followed = False if (len(forwards) == FORWARD_SPOT_DAYS and all_known) else None
+    return {"spot_followed": followed, "forward_days_observed": len(forwards)}
+
+
+def anomaly_history(conn, *, as_of: str | None, spot_date: str) -> list[dict[str, Any]] | None:
+    """``as_of``(期貨行情日)之前 ``HISTORY_DAYS`` 個期貨交易日的舉旗紀錄,新到舊。
+
+    每一天 ``{"as_of": d, "entries": [...]}``,三態與今日名單同一個約定:
+    ``entries`` 缺鍵 = 那一天規則答不出來(§7.13 不主張);``[]`` = 算過、沒有人舉旗。
+    條目 = 今日名單的條目(同一個 :func:`anomaly_index`,同一個順序)+
+    :func:`spot_follow_up` 的三個欄位。同一個契約連續幾天舉旗就出現幾次,不合併。
+
+    ``spot_date`` 是現貨資料日:R4 的市場日日曆讀到那一天(同今日名單),往後現貨
+    也只看到那一天為止。
+    """
+    if as_of is None:
+        return None
+    futures_days = load_futures_calendar(conn, as_of)
+    prior = [d for d in futures_days if d < as_of][-HISTORY_DAYS:]
+    contracts = load_contracts(conn)
+    stock_id_by_code = {c["contract_code"]: c["stock_id"] for c in contracts}
+    multiplier_by_code = {c["contract_code"]: c["contract_multiplier"] for c in contracts}
+
+    days: list[tuple[str, list[dict[str, Any]] | None]] = []
+    for day in reversed(prior):
+        # 規則本人,一天一次。這裡若改成自己判斷「創不創高」,就是一條沒被檢定過的規則。
+        index = anomaly_index(
+            futures_volume_anomalies(conn, day, market_days_as_of=spot_date),
+            stock_id_by_code=stock_id_by_code,
+            multiplier_by_code=multiplier_by_code,
+        )
+        days.append((day, index))
+
+    flagged_ids = sorted({e["stock_id"] for _, index in days if index for e in index})
+    spot: dict[str, tuple[list[str], dict[str, int | None]]] = {}
+    prices: dict[str, list[dict[str, Any]]] = {}
+    if flagged_ids:
+        oldest = min(day for day, index in days if index)
+        market_days = load_market_days(conn, spot_date)
+        # 讀取下界(不是規則):往後每一天都要它自己前 60 個現貨交易日,所以從最舊的
+        # 舉旗日往前留 2 × 60 個市場日。停牌太久的股票在這個範圍裡湊不滿 60 天,
+        # 答案會變成「不知道」——方向是保守的,絕不會把不知道讀成知道。
+        start = max(0, bisect_left(market_days, oldest) - 2 * WINDOW_DAYS)
+        spot = load_spot_daily(
+            conn, as_of=spot_date, stock_ids=flagged_ids,
+            date_from=market_days[start] if market_days else None,
+        )
+        prices = load_spot_prices(
+            conn, stock_ids=flagged_ids, date_from=oldest, as_of=spot_date,
+        )
+
+    history: list[dict[str, Any]] = []
+    for day, index in days:
+        if index is None:
+            history.append({"as_of": day})
+            continue
+        entries = []
+        for entry in index:
+            stock_days, volumes = spot.get(entry["stock_id"], ([], {}))
+            after = spot_after(prices.get(entry["stock_id"], []), day=day)
+            entries.append({
+                **entry,
+                **spot_follow_up(stock_days=stock_days, volumes=volumes, day=day),
+                **({"spot_after": after} if after is not None else {}),
+            })
+        history.append({"as_of": day, "entries": entries})
+    return history
+
+
+def anomaly_history_meta(
+    history: list[dict[str, Any]] | None, *, as_of: str, observed_through: str,
+) -> dict[str, Any] | None:
+    """紀錄的隨附事實:天數全部來自常數本人,前端不寫死 5 / 10 / 60。
+
+    ``observed_through`` 是往後現貨看到哪一天(現貨資料日)。與紀錄同生共死。
+    """
+    if history is None:
+        return None
+    return {
+        "as_of": as_of,
+        "window_days": WINDOW_DAYS,
+        "history_days": HISTORY_DAYS,
+        "forward_days": FORWARD_SPOT_DAYS,
+        "observed_through": observed_through,
+    }
 
 
 # 四個計數鍵,一個不多。**沒有**總數(相加由讀的人做,同 §1 的五個整數)、

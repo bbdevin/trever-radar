@@ -44,7 +44,7 @@ export default function FuturesOpenInterestDirection({
       title={openInterestDirectionText(c)}
     >
       <p className="mb-1.5 text-[11.5px] text-muted-foreground">
-        未平倉 vs 前一期貨交易日
+        未平倉較前一個期貨交易日（契約數）
       </p>
       <dl className="grid grid-cols-4 gap-1.5">
         {items.map(({ key, icon: Icon, label, n }) => (

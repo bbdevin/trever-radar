@@ -257,6 +257,7 @@ trap 'record "err:$?:$BASH_COMMAND"' ERR
 acquire_db_lock() { record lock; }
 sync_code() { record sync; }
 futures_probe() { :; }
+futures_digest() { record futures-digest; }
 notify() { record \"notify:$1:$2:$3\"; }
 notify_warn() { record \"warn:$1\"; }
 notify_ok() { record \"ok:$1\"; }
@@ -377,3 +378,5 @@ ROUND_FAIL_CONSEQUENCE=""
         self.assertTrue(any("export-json" in event for event in events))
         self.assertIn("deploy", events)
         self.assertTrue(any(event.startswith("ok:") for event in events))
+        # 期貨量異常推播(docs/38 §7.19)在上線之後才送。
+        self.assertLess(events.index("deploy"), events.index("futures-digest"))
