@@ -46,8 +46,11 @@ export default function StockCard({ s, index = 99 }: { s: RadarStock; index?: nu
   return (
     <Link
       href={`/stock?id=${s.id}`}
+      // 預設(auto)預取以 /stock 為快取鍵、不含 ?id=,多張卡互相覆蓋,點下去只能沿用載入骨架、還要再抓一次 RSC。
+      // prefetch 開成 full 才以完整網址為鍵,5 分鐘內點擊直接換頁(靜態輸出下兩者抓的是同一個 .txt,流量不變)。
+      prefetch
       style={index < 6 ? { animationDelay: `${0.02 + index * 0.03}s` } : undefined}
-      className="group relative flex cursor-pointer flex-col gap-2.5 overflow-hidden rounded-[var(--r-lg)] border border-border bg-card p-3.5 shadow-[var(--shadow-card)] transition-[transform,border-color,box-shadow] duration-150 animate-[fadeUp_0.35s_ease_backwards] hover:-translate-y-0.5 hover:border-[color:var(--border-strong)] hover:shadow-[var(--shadow-lift)] active:scale-[0.985]"
+      className="nav-card group relative flex cursor-pointer flex-col gap-2.5 overflow-hidden rounded-[var(--r-lg)] border border-border bg-card p-3.5 shadow-[var(--shadow-card)] transition-[transform,border-color,box-shadow] duration-150 animate-[fadeUp_0.35s_ease_backwards] hover:-translate-y-0.5 hover:border-[color:var(--border-strong)] hover:shadow-[var(--shadow-lift)] active:scale-[0.985]"
     >
       <span aria-hidden className={cn("pointer-events-none absolute inset-y-1.5 left-0 w-[3px] rounded-full", STATUS_BAR[status])} />
       <div className="flex items-center gap-2">
