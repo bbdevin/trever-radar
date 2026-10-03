@@ -54,6 +54,7 @@
 ## 2026-10-03 盤中 worker 自選池只讀已核准使用者
 
 - `pipeline/intraday/worker.py::fetch_watchlist_ids` 原以 service_role 讀全部 `watchlist` 列 → pending/rejected 帳號的自選也會進監控池(耗 Fugle 額度、觸發推播)。改為先讀 `app_profiles.status='approved'` 的 user_id 再 `in_` 過濾(client 端二次驗證);app_profiles 讀取失敗 → fail closed,自選池為空,Armed 池照常。測試 30 pass(`cd pipeline; pytest tests/test_intraday_worker.py`)。
+- ✅ 2026-10-03 已在 VPS 重建 `radar-worker`(映像內 `/app/worker.py` 含 `fetch_approved_user_ids`),下個平日 08:50 生效。
 - **部署注意**:worker 是 Docker 映像(`COPY` 進 image),`sync_code` 只 rebuild `radar-pipeline`,不 rebuild `radar-worker` → 改 worker 後要在 VPS 跑 `docker build -t radar-worker pipeline/intraday`,下個 08:50 生效。部署後看 `~/radar-worker.log` 的 `Loaded N monitor stocks (armed≈, watchlist≈…)`。
 
 ## 2026-10-03 囤貨／出貨加 6月、1年
