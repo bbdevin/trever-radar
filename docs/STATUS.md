@@ -43,7 +43,7 @@
 - 使用者:「分點追蹤要有取消追蹤功能」→ 選「管理員名單全站共用」。Supabase `public.branch_track_list(branch_name, state track|mute)`:approved 可讀、只有 admin(`is_admin()`)可寫;初始種入原本寫死的 30 個分點。**待使用者在 SQL Editor 執行 `docs/sql/20261003181500_create_branch_track_list.sql`**(舊的 `20261003145606_…prefs.sql` 已作廢,勿執行)。
 - 網站(`53309aa`):管理員在分點下鑽標題、/branch 排行卡、追蹤明細選單看到星號;其他人唯讀;追蹤標籤、我的追蹤、口袋徽章以「系統名單 − 取消 ∪ 加入」即時覆寫。
 - 正式機(`seed-branches` 17:40/22:00 改為同步):以公開 publishable key 呼叫唯讀 RPC `branch_track_list_public()`(只回名稱與狀態,不給批次管線特權金鑰);track→manual、mute→`source='muted'`(自動入選與口袋/標籤/today 皆排除,rank≥70 也排除);讀取失敗→WARN、DB 不變、不讓本輪失敗;線上空名單而本機有資料→拒絕清空。不需改 VPS 環境變數、crontab、schema。
-- 取捨(待使用者知悉):名單可被持公開 key 者讀到(低敏感度),換取批次管線不持有特權金鑰。
+- 取捨:名單可被持公開 key 者讀到(低敏感度),換取批次管線不持有特權金鑰——**使用者 2026-10-03 回覆「沒關係」,接受此取捨**。
 
 ## 2026-10-03 UI 美化(Fable 規劃 A)＋權證分點手機一屏(Fable 規劃 B)
 
