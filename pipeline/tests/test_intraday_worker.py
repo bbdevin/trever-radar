@@ -40,6 +40,76 @@ class _DummyResp:
             raise requests.exceptions.HTTPError(f"{self.status_code} error")
 
 
+APPROVED_UID = "11111111-1111-1111-1111-111111111111"
+PENDING_UID = "22222222-2222-2222-2222-222222222222"
+REJECTED_UID = "33333333-3333-3333-3333-333333333333"
+
+
+class _FakeQuery:
+    """模擬 supabase-py 的 table().select().eq()/in_().execute() 鏈。
+
+    apply_filters=False 模擬伺服端過濾失效(回傳全部列),用來驗證 worker 端二次過濾。
+    """
+
+    def __init__(self, fake, name):
+        self._fake = fake
+        self._name = name
+        self._filters = []
+
+    def select(self, cols):
+        self._fake.calls.append((self._name, "select", cols))
+        return self
+
+    def eq(self, col, val):
+        self._fake.calls.append((self._name, "eq", col, val))
+        self._filters.append(lambda r: r.get(col) == val)
+        return self
+
+    def in_(self, col, vals):
+        vals = list(vals)
+        self._fake.calls.append((self._name, "in_", col, vals))
+        self._filters.append(lambda r: r.get(col) in vals)
+        return self
+
+    def execute(self):
+        err = self._fake.errors.get(self._name)
+        if err:
+            raise err
+        rows = list(self._fake.tables.get(self._name, []))
+        if self._fake.apply_filters:
+            for f in self._filters:
+                rows = [r for r in rows if f(r)]
+        return MagicMock(data=rows)
+
+
+class _FakeSupabase:
+    def __init__(self, profiles=None, watchlist=None, errors=None, apply_filters=True):
+        self.tables = {"app_profiles": profiles or [], "watchlist": watchlist or []}
+        self.errors = errors or {}
+        self.apply_filters = apply_filters
+        self.calls = []
+
+    def table(self, name):
+        self.calls.append((name, "table"))
+        return _FakeQuery(self, name)
+
+
+def _profiles():
+    return [
+        {"user_id": APPROVED_UID, "status": "approved"},
+        {"user_id": PENDING_UID, "status": "pending"},
+        {"user_id": REJECTED_UID, "status": "rejected"},
+    ]
+
+
+def _approved_watchlist(*stock_ids):
+    """單一已核准使用者的自選列。"""
+    return _FakeSupabase(
+        profiles=_profiles(),
+        watchlist=[{"user_id": APPROVED_UID, "stock_id": s} for s in stock_ids],
+    )
+
+
 @pytest.fixture(autouse=True)
 def _reset_state(monkeypatch):
     """每個測試前清空模組全域狀態,並讓 time.sleep 變 no-op(避免退避真的睡)。"""
@@ -72,11 +142,7 @@ def test_watchlist_merged_into_monitor_pool(monkeypatch):
     """自選併入監控池:Armed 優先,自選後接;同檔標 both。"""
     monkeypatch.setattr(worker.requests, "get",
                         lambda *a, **k: _DummyResp(200, _radar_payload()))
-    mock_sb = MagicMock()
-    mock_sb.table.return_value.select.return_value.execute.return_value = MagicMock(
-        data=[{"stock_id": "2330"}, {"stock_id": "2303"}],
-    )
-    monkeypatch.setattr(worker, "supabase", mock_sb)
+    monkeypatch.setattr(worker, "supabase", _approved_watchlist("2330", "2303"))
 
     worker.load_armed_list()
 
@@ -102,17 +168,89 @@ def test_monitor_pool_caps_at_fugle_free_ws_limit(monkeypatch):
     }
     monkeypatch.setattr(worker.requests, "get",
                         lambda *a, **k: _DummyResp(200, payload))
-    mock_sb = MagicMock()
-    mock_sb.table.return_value.select.return_value.execute.return_value = MagicMock(
-        data=[{"stock_id": f"200{i}"} for i in range(1, 5)],
+    monkeypatch.setattr(
+        worker, "supabase", _approved_watchlist(*[f"200{i}" for i in range(1, 5)])
     )
-    monkeypatch.setattr(worker, "supabase", mock_sb)
 
     worker.load_armed_list()
 
     assert len(worker.armed_stocks) == 5
     assert set(worker.armed_stocks.keys()) == {"1001", "1002", "1003", "2001", "2002"}
     assert "2003" not in worker.armed_stocks
+
+
+def _mixed_status_watchlist(**kw):
+    return _FakeSupabase(
+        profiles=_profiles(),
+        watchlist=[
+            {"user_id": APPROVED_UID, "stock_id": "2330"},
+            {"user_id": APPROVED_UID, "stock_id": "2303"},
+            {"user_id": PENDING_UID, "stock_id": "1101"},
+            {"user_id": REJECTED_UID, "stock_id": "2603"},
+            {"user_id": REJECTED_UID, "stock_id": "2330"},  # 與核准者重複也只算一次
+            {"user_id": "44444444-4444-4444-4444-444444444444", "stock_id": "3008"},  # 無 profile
+        ],
+        **kw,
+    )
+
+
+def test_watchlist_only_includes_approved_users():
+    """service_role 繞過 RLS:只納入 app_profiles.status='approved' 的自選;pending/rejected/無 profile 排除。"""
+    fake = _mixed_status_watchlist()
+    worker.supabase = fake  # autouse fixture 會還原
+
+    ids = worker.fetch_watchlist_ids()
+
+    assert ids == ["2330", "2303"]
+    # 伺服端過濾條件確實下達
+    assert ("app_profiles", "eq", "status", "approved") in fake.calls
+    assert ("watchlist", "in_", "user_id", [APPROVED_UID]) in fake.calls
+
+
+def test_watchlist_client_side_filter_when_server_filters_ignored():
+    """伺服端過濾失效(回傳全部列)時,worker 端二次過濾仍只留已核准者。"""
+    worker.supabase = _mixed_status_watchlist(apply_filters=False)
+
+    assert worker.fetch_watchlist_ids() == ["2330", "2303"]
+
+
+def test_watchlist_fail_closed_when_app_profiles_read_fails(caplog):
+    """app_profiles 讀取失敗 → 回傳空列表且不查 watchlist(絕不退回讀全部列)。"""
+    fake = _mixed_status_watchlist(errors={"app_profiles": RuntimeError("boom")})
+    worker.supabase = fake
+
+    with caplog.at_level(logging.ERROR):
+        ids = worker.fetch_watchlist_ids()
+
+    assert ids == []
+    assert not any(c[0] == "watchlist" for c in fake.calls)
+    assert "app_profiles" in caplog.text
+
+
+def test_watchlist_empty_when_no_approved_users():
+    fake = _FakeSupabase(
+        profiles=[{"user_id": PENDING_UID, "status": "pending"}],
+        watchlist=[{"user_id": PENDING_UID, "stock_id": "1101"}],
+    )
+    worker.supabase = fake
+
+    assert worker.fetch_watchlist_ids() == []
+    assert not any(c[0] == "watchlist" for c in fake.calls)
+
+
+def test_app_profiles_failure_keeps_armed_pool(monkeypatch):
+    """app_profiles 失敗只停用自選池,Armed 監控照常載入。"""
+    monkeypatch.setattr(worker.requests, "get",
+                        lambda *a, **k: _DummyResp(200, _radar_payload()))
+    monkeypatch.setattr(
+        worker, "supabase",
+        _mixed_status_watchlist(errors={"app_profiles": RuntimeError("boom")}),
+    )
+
+    worker.load_armed_list()
+
+    assert set(worker.armed_stocks.keys()) == {"2330", "2454"}
+    assert all(v["pool"] == "armed" for v in worker.armed_stocks.values())
 
 
 def test_fetch_403_first_time_fatal_with_access_hint(monkeypatch, caplog):
@@ -304,11 +442,7 @@ def test_etf_ids_excluded_from_monitor_pool(monkeypatch):
     }
     monkeypatch.setattr(worker.requests, "get",
                         lambda *a, **k: _DummyResp(200, payload))
-    mock_sb = MagicMock()
-    mock_sb.table.return_value.select.return_value.execute.return_value = MagicMock(
-        data=[{"stock_id": "00878"}, {"stock_id": "2454"}],
-    )
-    monkeypatch.setattr(worker, "supabase", mock_sb)
+    monkeypatch.setattr(worker, "supabase", _approved_watchlist("00878", "2454"))
 
     worker.load_armed_list()
 

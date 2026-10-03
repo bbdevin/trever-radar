@@ -183,19 +183,60 @@ def fetch_radar_data():
     return None
 
 
-def fetch_watchlist_ids() -> list[str]:
-    """以 service_role 讀取所有使用者的自選代號(私人測試版通常一人或少數)。
+def fetch_approved_user_ids() -> set[str] | None:
+    """讀取 app_profiles.status = 'approved' 的 user_id。
 
-    失敗回傳空列表,不中斷 Armed 監控。
+    service_role 繞過 RLS,核准過濾必須在這裡明確做。讀取失敗回傳 None(呼叫端須 fail closed)。
+    """
+    try:
+        res = (
+            supabase.table("app_profiles")
+            .select("user_id,status")
+            .eq("status", "approved")
+            .execute()
+        )
+    except Exception as e:
+        logger.error("Failed to fetch approved app_profiles; watchlist pool disabled: %s", e)
+        return None
+    approved: set[str] = set()
+    for row in res.data or []:
+        row = row or {}
+        # 再驗一次 status:伺服端過濾為主,這裡防查詢條件被改壞時回傳非核准列
+        if row.get("status") == "approved" and row.get("user_id"):
+            approved.add(str(row["user_id"]))
+    return approved
+
+
+def fetch_watchlist_ids() -> list[str]:
+    """以 service_role 讀取「已核准使用者」的自選代號(私人測試版通常一人或少數)。
+
+    只納入 app_profiles.status = 'approved' 的 user_id:pending/rejected 帳號的自選列
+    不得影響盤中監控池(會消耗 Fugle 訂閱額度並觸發推播)。
+    app_profiles 讀取失敗 → fail closed 回傳空列表(絕不退回讀全部列);
+    任一失敗都不中斷 Armed 監控。
     """
     if supabase is None:
         return []
+    approved = fetch_approved_user_ids()
+    if not approved:
+        if approved is not None:
+            logger.info("No approved users; watchlist pool empty.")
+        return []
     try:
-        res = supabase.table("watchlist").select("stock_id").execute()
+        res = (
+            supabase.table("watchlist")
+            .select("stock_id,user_id")
+            .in_("user_id", sorted(approved))
+            .execute()
+        )
         out: list[str] = []
         seen: set[str] = set()
         for row in res.data or []:
-            sid = (row or {}).get("stock_id")
+            row = row or {}
+            # 再驗一次 user_id:伺服端 in_ 過濾為主,這裡防禦性二次確認
+            if str(row.get("user_id") or "") not in approved:
+                continue
+            sid = row.get("stock_id")
             if sid and sid not in seen:
                 seen.add(sid)
                 out.append(str(sid))

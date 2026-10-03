@@ -38,6 +38,11 @@
 
 - 使用者決定不等 3 天量測,`import-futures-day` 直接接進 16:10 `daily-insti.sh` 與 17:40／22:00 `daily-branches.sh`(75 只記 log、其他非 0 只 warn、不擋本輪);probe 保留量到 10-07 後移除;21:20 OpenAPI `import-futures` 改為官方覆核;`futures-day.sh` 已刪;export 期貨 stale 規則收回 `(d, prev)`;首頁時間表改「16:10 當日、17:40 補」。Z = 接上後第一個正式 16:10 輪(預計 2026-10-05)。見 `docs/38` §7.18。
 
+## 2026-10-03 盤中 worker 自選池只讀已核准使用者
+
+- `pipeline/intraday/worker.py::fetch_watchlist_ids` 原以 service_role 讀全部 `watchlist` 列 → pending/rejected 帳號的自選也會進監控池(耗 Fugle 額度、觸發推播)。改為先讀 `app_profiles.status='approved'` 的 user_id 再 `in_` 過濾(client 端二次驗證);app_profiles 讀取失敗 → fail closed,自選池為空,Armed 池照常。測試 30 pass(`cd pipeline; pytest tests/test_intraday_worker.py`)。
+- **部署注意**:worker 是 Docker 映像(`COPY` 進 image),`sync_code` 只 rebuild `radar-pipeline`,不 rebuild `radar-worker` → 改 worker 後要在 VPS 跑 `docker build -t radar-worker pipeline/intraday`,下個 08:50 生效。部署後看 `~/radar-worker.log` 的 `Loaded N monitor stocks (armed≈, watchlist≈…)`。
+
 ## 2026-10-03 囤貨／出貨加 6月、1年
 
 - 使用者要求加長期間。期間 1週5／1月20／3月60／6月120／1年240 交易日,MIN_DAYS 3/5/10/15/20。規模門檻的成交量基準最多取 20 日均量(否則 1 年門檻放大到數萬張、0 檔)。
