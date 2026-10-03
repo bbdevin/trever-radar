@@ -82,6 +82,21 @@ function StockView() {
   const [drillBranch, setDrillBranch] = useState<string | null>(null);
   const [chipsSection, setChipsSection] = useState<ChipsSectionKey>("flow");
   const activeTabRef = useRef<HTMLButtonElement | null>(null);
+  // 大標頭是否已捲出畫面(被站台 sticky 標頭蓋住也算);是的話在分頁列上方顯示精簡摘要。
+  // callback ref:標頭在資料載入後才掛上,要靠 state 觸發 effect 重新觀察。
+  const [headerEl, setHeaderEl] = useState<HTMLElement | null>(null);
+  const [headerHidden, setHeaderHidden] = useState(false);
+  useEffect(() => {
+    const el = headerEl;
+    if (!el || typeof IntersectionObserver === "undefined") return;
+    // 站台標頭約 58px + 安全區;以 -80px 的上緣讓「名稱列被站台標頭蓋住」就算離開。
+    const io = new IntersectionObserver(([entry]) => setHeaderHidden(!entry.isIntersecting), {
+      rootMargin: "-80px 0px 0px 0px",
+      threshold: 0,
+    });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [headerEl]);
 
   // 上次看的籌碼日報分段只在瀏覽器端讀,避免靜態輸出與水合不一致。
   useEffect(() => {
@@ -233,7 +248,7 @@ function StockView() {
     <div className="min-w-0 max-w-full overflow-x-clip">
       <div data-testid="stock-context-grid" className="mb-2.5 grid min-w-0 grid-cols-[minmax(0,1.2fr)_minmax(8.25rem,0.8fr)] items-stretch gap-2.5 sm:grid-cols-[minmax(0,1fr)_minmax(14rem,0.72fr)]">
         <div className="flex min-h-full min-w-0 flex-col">
-          <header data-testid="stock-header" className="shrink-0 pb-1.5">
+          <header ref={setHeaderEl} data-testid="stock-header" className="shrink-0 pb-1.5">
             <div className="grid min-w-0 grid-cols-[2.75rem_minmax(0,1fr)] items-start gap-1">
               <a href="/" className="inline-flex size-11 items-center justify-center rounded-full text-muted-foreground transition-colors duration-200 hover:bg-secondary hover:text-foreground" aria-label="返回雷達"><IconArrowLeft size={17} /></a>
               <div className="min-w-0 pt-1.5">
@@ -304,6 +319,28 @@ function StockView() {
       </div>
       {/* top 要讓開站台的 sticky 標頭(與 ThemeGroupedList 同一個 --header-offset),否則分頁列上緣被蓋住。 */}
       <div className="sticky top-[var(--header-offset)] z-20 -mx-1 mb-2.5 flex min-w-0 flex-col gap-2 bg-background/95 px-1 py-1.5 backdrop-blur-sm md:static md:mx-0 md:bg-transparent md:px-0 md:py-0 md:backdrop-blur-none md:flex-row md:flex-wrap md:items-center md:gap-2.5">
+        {/* 手機往下捲、大標頭離開畫面後,把「代號 名稱 股價 漲跌 / 市場·產業 活躍題材」釘在分頁列上方
+            (使用者 2026-10-03:「往下滑時紅線上方的資訊都要釘在頂端」)。兩行約 44px,只在手機出現。 */}
+        {headerHidden && (
+          <div data-testid="stock-sticky-summary" className="grid min-w-0 gap-0.5 px-1 md:hidden">
+            <div className="flex min-w-0 items-baseline gap-1.5 whitespace-nowrap">
+              <span className="num shrink-0 text-[12px] text-muted-foreground">{data.id}</span>
+              <span className="min-w-0 truncate text-[15px] font-extrabold text-foreground">{data.name}</span>
+              <span className={cn("num shrink-0 text-[15px] font-extrabold", CHG_TEXT[cls])}>{last.c.toLocaleString("zh-TW")}</span>
+              <span className={cn("num shrink-0 rounded-full px-1 py-px text-[10.5px] font-bold", CHG_BADGE[cls])}>{priceChangeCopy}</span>
+            </div>
+            <div className="flex min-w-0 items-center gap-1 overflow-hidden whitespace-nowrap text-[11px]">
+              <span className="shrink-0 font-semibold text-[color:var(--accent-2)]">{marketLabel}</span>
+              {data.industry ? <span className="shrink-0 text-muted-foreground">· {data.industry}</span> : null}
+              {activeThemes.slice(0, 2).map((theme) => (
+                <span key={theme.id} className="max-w-[7rem] shrink truncate rounded-full border border-[color:var(--warn)]/35 bg-[color:var(--warn)]/8 px-1.5 text-[color:var(--ink-2)]">
+                  {theme.name}
+                </span>
+              ))}
+              {activeThemes.length > 2 && <span className="shrink-0 font-semibold text-[color:var(--warn)]">+{activeThemes.length - 2}</span>}
+            </div>
+          </div>
+        )}
         <div
           role="tablist"
           aria-label="個股內容"
