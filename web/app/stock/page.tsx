@@ -55,7 +55,7 @@ import { normalizePnl } from "@/lib/branchPnl";
 import { dataFetch } from "@/lib/dataFetch";
 import { OFFLINE_DATA_COPY, isBrowserOffline } from "@/lib/pwa";
 import type { Buyback, CompanyTheme, RecentThemeHeat, StockJson } from "@/lib/types";
-import { MARKET_LABEL, chgClass, fmtE8, fmtX, legacyReasonText } from "@/lib/format";
+import { MARKET_LABEL, chgClass, fmtE8, fmtX, legacyReasonText, toneClass } from "@/lib/format";
 import { signInWithGoogle, useSession } from "@/lib/useSession";
 import { cn, pillTabClass } from "@/lib/utils";
 
@@ -848,7 +848,7 @@ function FuturesAnomalyBlock({ futures, labels }: { futures: StockJson["futures"
               {anomalyFacts(c.anomaly).map((f, i) => (
                 <div key={f.key} className="min-w-0">
                   <dt className="truncate text-[10.5px] text-muted-foreground" title={f.label}>{f.short ?? f.label}</dt>
-                  <dd className={cn("num truncate font-bold text-foreground", i === 0 ? "text-[15px]" : "text-[13px]")}>
+                  <dd className={cn("num truncate font-bold", toneClass(f.signed) || "text-foreground", i === 0 ? "text-[15px]" : "text-[13px]")}>
                     {f.value}
                     {i === 0 && <span className="ml-0.5 text-[10.5px] font-normal text-muted-foreground">{f.unit}</span>}
                   </dd>
@@ -997,7 +997,7 @@ function FuturesDailyBlock({ futures, labels }: { futures: StockJson["futures"];
                 className="flex items-baseline justify-between gap-2 rounded-[var(--r-sm)] border border-border bg-secondary px-2.5 py-1.5 text-[11.5px] text-muted-foreground"
               >
                 {f.label}
-                <b className="num shrink-0 font-bold text-[color:var(--ink-2)]">
+                <b className={cn("num shrink-0 font-bold", toneClass(f.signed) || "text-[color:var(--ink-2)]")}>
                   {f.value}
                   <span className="ml-0.5 font-normal">{f.unit}</span>
                 </b>

@@ -72,6 +72,8 @@ export interface FuturesAnomalyFact {
   short?: string;
   value: string;
   unit: string;
+  /** 有正負意義的列(未平倉增減)帶原數字,畫面用來上紅增綠減;其餘列沒有。 */
+  signed?: number;
 }
 
 export function anomalyFacts(a: FuturesAnomaly): FuturesAnomalyFact[] {
@@ -85,7 +87,7 @@ export function anomalyFacts(a: FuturesAnomaly): FuturesAnomalyFact[] {
   ];
   // 缺鍵就是缺鍵:不補 0、不補破折號、不加一句「未公布」(§7.1)。
   if (a.oi_change !== undefined) {
-    facts.push({ key: "oi_change", label: "未平倉較前日", short: "未平倉增減", value: fmtLotsSigned(a.oi_change), unit: "口" });
+    facts.push({ key: "oi_change", label: "未平倉較前日", short: "未平倉增減", value: fmtLotsSigned(a.oi_change), unit: "口", signed: a.oi_change });
   }
   return facts;
 }
@@ -283,6 +285,8 @@ export interface FuturesDailyFact {
   label: string;
   value: string;
   unit: string;
+  /** 同 FuturesAnomalyFact.signed:只有未平倉增減帶,畫面上紅增綠減。 */
+  signed?: number;
 }
 
 /** 已知時段的顯示順序;之外的(來源日後多一個時段)照字典序接在後面。 */
@@ -320,7 +324,7 @@ export function dailyFacts(daily: FuturesDaily): FuturesDailyFact[] {
   // 這裡並顯示成 `0`——「一口都沒變」是一個觀測,與「不知道」在畫面上長得一樣,
   // 分辨它們的只有這一列在不在。
   if (daily.oi_change !== undefined) {
-    facts.push({ key: "oi_change", label: "未平倉較前日", value: fmtLotsSigned(daily.oi_change), unit: "口" });
+    facts.push({ key: "oi_change", label: "未平倉較前日", value: fmtLotsSigned(daily.oi_change), unit: "口", signed: daily.oi_change });
   }
   return facts;
 }

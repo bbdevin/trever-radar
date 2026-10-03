@@ -339,8 +339,15 @@ test("§7.14 五列:合計成交、兩個時段、未平倉、未平倉較前日
     { key: "session:一般", label: "一般時段成交", value: "600", unit: "口" },
     { key: "session:盤後", label: "盤後時段成交", value: "40", unit: "口" },
     { key: "open_interest", label: "未平倉", value: "1,000", unit: "口" },
-    { key: "oi_change", label: "未平倉較前日", value: "+210", unit: "口" },
+    { key: "oi_change", label: "未平倉較前日", value: "+210", unit: "口", signed: 210 },
   ]);
+});
+
+test("未平倉增減帶正負數字給畫面上色;其他列不帶", () => {
+  for (const f of [...dailyFacts(DAILY_FULL), ...anomalyFacts(ANOMALY_MYF)]) {
+    if (f.key === "oi_change") assert.equal(f.signed, 210);
+    else assert.equal(f.signed, undefined, f.key);
+  }
 });
 
 test("§7.6 合計成交與異常區塊的「一般時段成交」是兩個數字,光看標籤就分得出來", () => {

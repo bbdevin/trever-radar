@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { cn } from "@/lib/utils";
+import { toneClass } from "@/lib/format";
 import {
   anomalyEmptyStateText,
   anomalyLagText,
@@ -145,7 +146,7 @@ export default function FuturesAnomalyList({
                 {row.facts.map((f, i) => (
                   <div key={f.key} className="min-w-0">
                     <dt className="truncate text-[10.5px] text-muted-foreground" title={f.label}>{f.short ?? f.label}</dt>
-                    <dd className={cn("num truncate font-bold text-foreground", i === 0 ? "text-[15px]" : "text-[13px]")}>
+                    <dd className={cn("num truncate font-bold", toneClass(f.signed) || "text-foreground", i === 0 ? "text-[15px]" : "text-[13px]")}>
                       {f.value}
                       {i === 0 && <span className="ml-0.5 text-[10.5px] font-normal text-muted-foreground">{f.unit}</span>}
                     </dd>
