@@ -698,7 +698,7 @@ function StockDecisionHeader({
         )}
         <span className="flex min-w-0 flex-wrap items-center gap-1 text-[10.5px] text-muted-foreground">
           綜合評分
-          {sourceLabel && <span className="shrink-0 rounded bg-[color:var(--ink-2)]/10 px-1 py-px text-[10px] font-bold text-[color:var(--ink-2)]">{sourceLabel}</span>}
+          {sourceLabel && <span className="max-w-full truncate rounded bg-[color:var(--ink-2)]/10 px-1 py-px text-[10px] font-bold text-[color:var(--ink-2)]">{sourceLabel}</span>}
         </span>
       </div>
       {hasPills && (
@@ -1081,7 +1081,7 @@ function WarrantPanel({ data }: { data: StockJson }) {
       {/* 60 根 × (3px＋3px 間距) 在 390 手機上比卡片內寬多出約 25px,把卡片撐出畫面;手機改 2px 間距 */}
       <div className="flex min-w-0 items-end gap-[2px] px-0.5 pt-2 [height:120px] md:gap-[3px]" aria-label="權證60日成交金額">
         {data.warrant_history.map((p) => (
-          <div key={p.t} className="grid h-full min-w-[3px] flex-1 grid-rows-2 items-end gap-px" title={`${p.t} 認購 ${fmtE8(p.call_turnover)} / 認售 ${fmtE8(p.put_turnover)}`}>
+          <div key={p.t} className="grid h-full min-w-0 flex-1 grid-rows-2 items-end gap-px" title={`${p.t} 認購 ${fmtE8(p.call_turnover)} / 認售 ${fmtE8(p.put_turnover)}`}>
             <span className="min-h-px rounded-t-[3px] bg-up opacity-80 self-end" style={{ height: `${Math.max(2, (p.call_turnover / maxTurnover) * 100)}%` }} />
             <span className="min-h-px rounded-b-[3px] bg-down opacity-75 self-start" style={{ height: `${Math.max(2, (p.put_turnover / maxTurnover) * 100)}%` }} />
           </div>

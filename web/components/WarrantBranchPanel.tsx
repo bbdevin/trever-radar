@@ -435,7 +435,9 @@ export default function WarrantBranchPanel({
         // 手機順序:切換券商 → K 線 → 註記 → 搜尋與排行 → 權證明細。右欄在手機上是
         // display:contents,子元素直接排進這個單欄 grid,再用 order 把左欄與明細排到後面;
         // 桌機(md 以上)左右兩欄與改版前相同。
-        <div className="grid min-w-0 gap-3 max-md:gap-2 md:grid-cols-[minmax(0,17rem)_minmax(0,1fr)]">
+        // 手機必須明寫單欄 minmax(0,1fr):隱式欄寬是 auto,會被最寬的子元素(放大字級時尤其)
+        // 撐開,右側被卡片裁掉(2026-10-03 使用者回報「右邊被截斷」;字級大 +36px、特大 +104px)。
+        <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-3 max-md:gap-2 md:grid-cols-[minmax(0,17rem)_minmax(0,1fr)]">
           <div className="grid min-w-0 content-start gap-3 max-md:order-1 max-md:mt-1">
             {/* 搜尋券商:名稱或代號,不限排行前 10(參考圖右上角的「搜尋券商」)。 */}
             <div className="relative">
@@ -678,11 +680,12 @@ function BrokerSelect({
   const buys = items.filter((i) => i.tone === "up");
   const sells = items.filter((i) => i.tone === "down");
   return (
-    <div ref={rowRef} className="grid gap-1 md:hidden">
+    // min-w-0 / w-full:<select> 的固有寬度是最長那個選項,不限制就會把這列撐出卡片(字級放大時更明顯)。
+    <div ref={rowRef} className="grid min-w-0 gap-1 md:hidden">
       <label htmlFor="warrant-broker-select" className="text-[11px] font-semibold text-muted-foreground">
         切換券商
       </label>
-      <div className="flex items-center gap-1.5">
+      <div className="flex min-w-0 items-center gap-1.5">
         <button
           type="button"
           aria-label="上一家券商"
@@ -696,7 +699,7 @@ function BrokerSelect({
           id="warrant-broker-select"
           value={selected ?? ""}
           onChange={(e) => onSelect(e.target.value)}
-          className="min-h-11 min-w-0 flex-1 rounded-[var(--r-md)] border border-border bg-card px-2.5 text-[13px] text-foreground focus:border-[color:var(--accent-2)] focus:outline-none"
+          className="min-h-11 w-0 min-w-0 flex-1 truncate rounded-[var(--r-md)] border border-border bg-card px-2.5 text-[13px] text-foreground focus:border-[color:var(--accent-2)] focus:outline-none"
         >
           {buys.length > 0 && (
             <optgroup label="買超">
