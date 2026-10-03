@@ -155,11 +155,16 @@ export function searchBranches(
     .slice(0, limit);
 }
 
-/** 手機券商列(BrokerStrip)的一格。tag = 「發行商」「同券商」標籤文字(可選)。 */
+/** 手機「切換券商」下拉選單的一個選項。tag = 「發行商」「同券商」標籤文字(可選)。 */
 export type StripItem = { name: string; code?: string; amount: number; tone: "up" | "down"; tag?: string };
 
+/** 下拉選項文字:「9200 凱基（發行商）　-800萬」;沒有代號、標籤時「台新-台北　+1,334萬」。 */
+export function stripOptionLabel(item: StripItem): string {
+  return `${item.code ? `${item.code} ` : ""}${item.name}${item.tag ? `（${item.tag}）` : ""}　${fmtWanSigned(item.amount)}`;
+}
+
 /**
- * 手機券商列:買超排行接賣超排行,順序與桌機左邊兩張表一致。buys/sells 已是
+ * 手機「切換券商」選單:買超排行接賣超排行,順序與排行表一致。buys/sells 已是
  * 目前區間、目前「排除同券商發行」狀態下的排行;排除模式下金額已扣自家權證,
  * 標籤會誤導,與排行表一樣不標(showTags = false)。
  */
@@ -180,7 +185,7 @@ export function buildStripItems(
 }
 
 /**
- * 券商列的 ‹ › 前後切換,不繞回。current = -1(選中的券商不在列上,例如搜尋選的)
+ * 切換券商選單旁的 ‹ › 前後切換,不繞回。current = -1(選中的券商不在選單上,例如搜尋選的)
  * 時 › 從第一格開始、‹ 不動。回 null = 這個方向沒有下一格(按鈕停用)。
  */
 export function stepIndex(length: number, current: number, delta: -1 | 1): number | null {

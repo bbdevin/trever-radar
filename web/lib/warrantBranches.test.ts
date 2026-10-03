@@ -17,6 +17,7 @@ import {
   fmtWanValueSigned,
   buildStripItems,
   stepIndex,
+  stripOptionLabel,
 } from "./warrantBranches.ts";
 
 const rows = [
@@ -169,7 +170,7 @@ test("預設選買超第一名,沒有就賣超第一名", () => {
   assert.equal(defaultBranch([], []), null);
 });
 
-test("手機券商列:買超在前、賣超在後,帶代號與標籤", () => {
+test("手機切換券商選單:買超在前、賣超在後,帶代號與標籤", () => {
   const buys = rankBranches(selfRows, "all", "buy", 10, { minAbs: 1_000_000 });
   const sells = rankBranches(selfRows, "all", "sell", 10, { minAbs: 1_000_000 });
   const items = buildStripItems(buys, sells, { "凱基": "9200" });
@@ -182,9 +183,11 @@ test("手機券商列:買超在前、賣超在後,帶代號與標籤", () => {
   assert.equal(items[1].tag, undefined);
   assert.equal(items[1].code, undefined);
   assert.equal(items[3].amount, -8_000_000);
+  assert.equal(stripOptionLabel(items[3]), "9200 凱基（發行商）　-800萬");
+  assert.equal(stripOptionLabel(items[1]), "元大-南京　+200萬");
 });
 
-test("手機券商列:排除同券商發行時跟著排行重排,且不標標籤", () => {
+test("手機切換券商選單:排除同券商發行時跟著排行重排,且不標標籤", () => {
   const opts = { excludeSelf: true, minAbs: 1_000_000 };
   const buys = rankBranches(selfRows, "all", "buy", 10, opts);
   const sells = rankBranches(selfRows, "all", "sell", 10, opts);
@@ -196,7 +199,7 @@ test("手機券商列:排除同券商發行時跟著排行重排,且不標標籤
   assert.ok(items.every((i) => i.tag === undefined));
 });
 
-test("券商列前後切換:不繞回,不在列上時 › 從第一格開始", () => {
+test("切換券商前後切換:不繞回,不在選單上時 › 從第一格開始", () => {
   assert.equal(stepIndex(3, 0, 1), 1);
   assert.equal(stepIndex(3, 2, 1), null);
   assert.equal(stepIndex(3, 0, -1), null);

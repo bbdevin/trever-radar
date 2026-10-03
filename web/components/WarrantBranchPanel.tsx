@@ -1,7 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import BrokerStrip from "@/components/BrokerStrip";
+import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import KChart from "@/components/KChart";
 import { dataFetch } from "@/lib/dataFetch";
 import type { Candle } from "@/lib/types";
@@ -18,10 +17,13 @@ import {
   resolveBreakdown,
   searchBranches,
   selfIssuedTag,
+  stepIndex,
+  stripOptionLabel,
   toWanSeries,
   type DailyEntry,
   type RankedBranch,
   type SelfIssued,
+  type StripItem,
   type WarrantKind,
 } from "@/lib/warrantBranches";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -97,13 +99,9 @@ const DETAIL_CONTRACT_VERSION = 1;
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 /**
  * 手機版 K 線高度(2026-10-03):390×844 扣掉頁首、個股摘要列、分頁列與底部導覽約剩
- * 620px,要讓「區間 + 券商列 + 整張圖」同屏,圖只能約 350px。桌機不受影響。
+ * 620px,要讓「切換券商列 + 整張圖」同屏,圖只能約 350px。桌機不受影響。
  */
 export const MOBILE_CHART_HEIGHT = "[height:clamp(300px,42vh,380px)]";
-
-/** 手機折疊區塊的標題列(排行與搜尋、權證明細);桌機隱藏、內容恆展開。 */
-const MOBILE_SUMMARY =
-  "flex min-h-11 cursor-pointer select-none list-none items-center gap-2 rounded-[var(--r-md)] border border-border px-3 text-[12.5px] font-semibold text-foreground md:hidden [&::-webkit-details-marker]:hidden";
 
 function SummaryChevron() {
   return (
@@ -150,19 +148,6 @@ export default function WarrantBranchPanel({
   const [split, setSplit] = useState<SplitBreakdown | null>(null);
   const [splitError, setSplitError] = useState(false);
   const [excludeSelf, setExcludeSelf] = useState(false);
-  // 手機(<768px)把排行與明細折成 <details>;桌機兩者恆展開、標題列隱藏,版面與改版前相同。
-  // 面板只在 client 載入資料後渲染,初值直接讀 matchMedia(同 KChart)。
-  const [isDesktop, setIsDesktop] = useState(
-    () => typeof window !== "undefined" && window.matchMedia("(min-width:768px)").matches,
-  );
-  useEffect(() => {
-    const mq = window.matchMedia("(min-width:768px)");
-    const on = () => setIsDesktop(mq.matches);
-    mq.addEventListener("change", on);
-    return () => mq.removeEventListener("change", on);
-  }, []);
-  const [ranksOpen, setRanksOpen] = useState(false);
-  const [detailOpen, setDetailOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -288,8 +273,28 @@ export default function WarrantBranchPanel({
   );
   const selectedRow = rows?.find((r) => r.branch_name === selected) ?? null;
   const series = useMemo(() => toWanSeries(branchSeries(daily, selected, kind)), [daily, selected, kind]);
-  // 排除模式下金額已不含自家權證,標籤會誤導,所以不標(與排行表一致)。
+  // 手機「切換券商」下拉選單:排行順序;排除模式下金額已不含自家權證,標籤會誤導,所以不標(與排行表一致)。
   const stripItems = useMemo(() => buildStripItems(buys, sells, codes, !exclude), [buys, sells, codes, exclude]);
+  // 手機:點下方排行列或搜尋結果後,把 K 線上方的切換列捲回畫面頂端,直接看到重畫的圖。
+  // 下拉選單與 ‹ › 本身就在圖上方,不捲動。桌機排行就在圖左邊,不捲動。
+  const switcherRef = useRef<HTMLDivElement>(null);
+  const pickAndReveal = (name: string) => {
+    setPicked(name);
+    if (!window.matchMedia("(max-width:767px)").matches) return;
+    const row = switcherRef.current;
+    if (!row) return;
+    // 不能直接 scrollIntoView:頂端有站台標頭＋個股分頁列(sticky,高度隨精簡摘要變),
+    // 會蓋住切換列。量出頂端 sticky/fixed 層的下緣,捲到它下方 8px。
+    const stickyBottom = Math.max(0, ...[...document.querySelectorAll<HTMLElement>("header, .sticky")]
+      .filter((el) => {
+        const pos = getComputedStyle(el).position;
+        const r = el.getBoundingClientRect();
+        return (pos === "sticky" || pos === "fixed") && r.height > 0 && r.top < window.innerHeight / 3;
+      })
+      .map((el) => el.getBoundingClientRect().bottom));
+    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    window.scrollBy({ top: row.getBoundingClientRect().top - stickyBottom - 8, behavior: reduce ? "auto" : "smooth" });
+  };
 
   useEffect(() => {
     setPicked(null);
@@ -347,9 +352,7 @@ export default function WarrantBranchPanel({
   const resolved = resolveBreakdown(selectedRow, split, tf);
   const breakdown = [...(resolved ?? [])]
     .sort((a, b) => Math.abs(b.net_amount) - Math.abs(a.net_amount));
-  // 拆檔明細還沒到(或載入失敗):有選中的列、拆檔模式、resolve 回 null。
-  const breakdownPending = !!selectedRow && resolved === null && breakdownSplit;
-  const selectedAmount = selectedRow ?branchAmount(selectedRow, kind, exclude) : 0;
+  const selectedAmount = selectedRow ? branchAmount(selectedRow, kind, exclude) : 0;
   const selectedSelf = selectedRow?.self;
   const selectedTag = selfIssuedTag(selectedSelf);
   // 排除模式下列上的金額已不含自家權證,標籤會誤導,所以不標。
@@ -359,7 +362,7 @@ export default function WarrantBranchPanel({
     <section className="grid gap-3 max-md:gap-2 rounded-[var(--r-lg)] border border-border bg-card p-3.5 shadow-[var(--shadow-card)]">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <div className="max-md:w-full">
-          {/* 手機:說明折起來、與標題同一行,讓券商列與整張圖留在同一屏;展開時換到下一行全寬。 */}
+          {/* 手機:說明折起來、與標題同一行,讓切換列與整張圖留在同一屏;展開時換到下一行全寬。 */}
           <div className="flex flex-wrap items-center gap-x-2">
             <h3 className="text-sm font-bold text-foreground">權證分點進出</h3>
             {dataDate && <span className="ml-auto text-[11px] text-muted-foreground md:hidden">資料日 {dataDate}</span>}
@@ -368,7 +371,7 @@ export default function WarrantBranchPanel({
                 說明<SummaryChevron />
               </summary>
               <p className="pb-1 text-[11.5px] leading-relaxed text-muted-foreground">
-              點選 K 線上方券商列(或下方「排行與搜尋」)的券商,對照股價看它每天在這檔股票權證上的買賣超金額。
+              用 K 線上方的「切換券商」(或下方排行、搜尋)選券商,對照股價看它每天在這檔股票權證上的買賣超金額。
               金額為認購＋認售合計;明細逐檔標示<b className="font-semibold text-foreground">購／售</b>,買認售是看空。
               金額為估計值(張數 × 1000 × 當日權證收盤價);每檔權證只有前 15 大分點,
               區間淨額 ≥ {threshold} 萬才列入。
@@ -429,21 +432,11 @@ export default function WarrantBranchPanel({
           此區間沒有權證淨買賣超達 {threshold} 萬的券商。涵蓋依已匯入且符合條件的權證池,每檔僅前 15 大分點;沒有資料不代表沒有交易。
         </p>
       ) : (
-        // 手機 DOM 順序:券商列 → K 線 → 註記 → 排行與搜尋(折疊) → 權證明細(折疊)。
-        // 右欄在手機上是 display:contents,子元素直接排進這個單欄 grid,再用 order 把
-        // 兩個折疊區排到最後;桌機(md 以上)左右兩欄與改版前相同。
+        // 手機順序:切換券商 → K 線 → 註記 → 搜尋與排行 → 權證明細。右欄在手機上是
+        // display:contents,子元素直接排進這個單欄 grid,再用 order 把左欄與明細排到後面;
+        // 桌機(md 以上)左右兩欄與改版前相同。
         <div className="grid min-w-0 gap-3 max-md:gap-2 md:grid-cols-[minmax(0,17rem)_minmax(0,1fr)]">
-          <BrokerStrip items={stripItems} selected={selected} onSelect={setPicked} />
-          <details
-            open={isDesktop || ranksOpen}
-            onToggle={(e) => { if (!isDesktop) setRanksOpen(e.currentTarget.open); }}
-            className="group min-w-0 max-md:order-1"
-          >
-            <summary className={MOBILE_SUMMARY}>
-              <SummaryChevron />
-              排行與搜尋（買超 {buys.length} · 賣超 {sells.length}）
-            </summary>
-          <div className="grid min-w-0 content-start gap-3 max-md:mt-2">
+          <div className="grid min-w-0 content-start gap-3 max-md:order-1 max-md:mt-1">
             {/* 搜尋券商:名稱或代號,不限排行前 10(參考圖右上角的「搜尋券商」)。 */}
             <div className="relative">
               <input
@@ -462,7 +455,7 @@ export default function WarrantBranchPanel({
                     <li key={h.branch_name}>
                       <button
                         type="button"
-                        onClick={() => { setPicked(h.branch_name); setQuery(""); }}
+                        onClick={() => { pickAndReveal(h.branch_name); setQuery(""); }}
                         className="flex min-h-10 w-full items-center justify-between gap-2 px-3 py-1.5 text-left text-[12.5px] hover:bg-secondary"
                       >
                         <span className="min-w-0 truncate">
@@ -485,7 +478,7 @@ export default function WarrantBranchPanel({
               codes={codes}
               showTags={!exclude}
               selected={selected}
-              onSelect={setPicked}
+              onSelect={pickAndReveal}
             />
             <RankTable
               title="權證賣超金額最多券商"
@@ -494,7 +487,7 @@ export default function WarrantBranchPanel({
               codes={codes}
               showTags={!exclude}
               selected={selected}
-              onSelect={setPicked}
+              onSelect={pickAndReveal}
             />
             {anyTag && (
               <p className="text-[11px] leading-relaxed text-muted-foreground">
@@ -505,9 +498,21 @@ export default function WarrantBranchPanel({
               </p>
             )}
           </div>
-          </details>
 
           <div className="grid min-w-0 content-start gap-2.5 max-md:contents">
+            {/* 使用者 2026-10-03:手機排行維持原本樣式(全展開),K 線正上方用下拉選單切換券商(桌機不顯示)。 */}
+            <BrokerSelect
+              items={stripItems}
+              selected={selected}
+              searchItem={selectedRow && !stripItems.some((i) => i.name === selected) ? {
+                name: selectedRow.branch_name,
+                amount: selectedAmount,
+                tone: selectedAmount >= 0 ? "up" : "down",
+                ...(codes[selectedRow.branch_name] ? { code: codes[selectedRow.branch_name] } : {}),
+              } : null}
+              onSelect={setPicked}
+              rowRef={switcherRef}
+            />
             {candles.length > 0 ? (
               <KChart
                 candles={candles}
@@ -557,29 +562,16 @@ export default function WarrantBranchPanel({
                 {selectedTag?.hq ? ";這是發行商總公司席位,多為發行商造市／避險,不代表看多或看空。" : "。"}
               </p>
             )}
-            {(breakdownPending || breakdown.length > 0) && (
-            <details
-              open={isDesktop || detailOpen}
-              onToggle={(e) => { if (!isDesktop) setDetailOpen(e.currentTarget.open); }}
-              className="group min-w-0 max-md:order-2"
-            >
-              <summary className={MOBILE_SUMMARY}>
-                <SummaryChevron />
-                <span className="min-w-0 truncate">
-                  {selected} 權證明細（{breakdownPending ? (splitError ? "載入失敗" : "載入中") : `${breakdown.length} 檔`}）
-                </span>
-              </summary>
-              <div className="max-md:mt-2">
-            {breakdownPending && (
+            {selectedRow && resolved === null && breakdownSplit && (
               splitError ? (
-                <p className="text-[11.5px] text-muted-foreground">權證明細載入失敗(改選其他券商會重試),區間合計與排行不受影響。</p>
+                <p className="text-[11.5px] text-muted-foreground max-md:order-2">權證明細載入失敗(改選其他券商會重試),區間合計與排行不受影響。</p>
               ) : (
-                <Skeleton className="h-24 w-full rounded-[var(--r-md)]" />
+                <Skeleton className="h-24 w-full rounded-[var(--r-md)] max-md:order-2" />
               )
             )}
             {breakdown.length > 0 && (
-              <div className="rounded-[var(--r-md)] border border-border bg-background px-2 py-2">
-                <p className="mb-1 px-2 text-[11.5px] font-semibold text-foreground max-md:hidden">
+              <div className="rounded-[var(--r-md)] border border-border bg-background px-2 py-2 max-md:order-2">
+                <p className="mb-1 px-2 text-[11.5px] font-semibold text-foreground">
                   {selected} 這段期間的權證明細
                 </p>
                 <div className="mb-1 grid grid-cols-[1.4fr_1fr_0.6fr] px-2 text-[10.5px] font-semibold text-muted-foreground">
@@ -636,9 +628,6 @@ export default function WarrantBranchPanel({
                 )}
               </div>
             )}
-              </div>
-            </details>
-            )}
           </div>
         </div>
       )}
@@ -658,6 +647,84 @@ function SelfBadge({ label, title, className }: { label: string; title?: string;
     >
       {label}
     </span>
+  );
+}
+
+const STEP_BTN =
+  "flex size-11 shrink-0 items-center justify-center rounded-[var(--r-md)] border border-border bg-card text-lg text-foreground disabled:opacity-35";
+
+/**
+ * 手機版 K 線正上方的「切換券商」下拉選單(桌機隱藏,桌機用左邊排行表)。選項 = 目前區間、
+ * 目前「排除同券商發行」狀態下的買超／賣超排行;搜尋選到、不在排行裡的券商列在最前面。
+ */
+function BrokerSelect({
+  items,
+  selected,
+  searchItem,
+  onSelect,
+  rowRef,
+}: {
+  items: StripItem[];
+  selected: string | null;
+  /** 搜尋選到、不在排行裡的券商(放在「搜尋」群組);null = 選中的券商就在排行裡。 */
+  searchItem: StripItem | null;
+  onSelect: (name: string) => void;
+  rowRef: RefObject<HTMLDivElement | null>;
+}) {
+  if (items.length === 0 && !searchItem) return null;
+  const idx = items.findIndex((i) => i.name === selected);
+  const prev = stepIndex(items.length, idx, -1);
+  const next = stepIndex(items.length, idx, 1);
+  const buys = items.filter((i) => i.tone === "up");
+  const sells = items.filter((i) => i.tone === "down");
+  return (
+    <div ref={rowRef} className="grid gap-1 md:hidden">
+      <label htmlFor="warrant-broker-select" className="text-[11px] font-semibold text-muted-foreground">
+        切換券商
+      </label>
+      <div className="flex items-center gap-1.5">
+        <button
+          type="button"
+          aria-label="上一家券商"
+          disabled={prev === null}
+          onClick={() => prev !== null && onSelect(items[prev].name)}
+          className={STEP_BTN}
+        >
+          ‹
+        </button>
+        <select
+          id="warrant-broker-select"
+          value={selected ?? ""}
+          onChange={(e) => onSelect(e.target.value)}
+          className="min-h-11 min-w-0 flex-1 rounded-[var(--r-md)] border border-border bg-card px-2.5 text-[13px] text-foreground focus:border-[color:var(--accent-2)] focus:outline-none"
+        >
+          {buys.length > 0 && (
+            <optgroup label="買超">
+              {buys.map((i) => <option key={i.name} value={i.name}>{stripOptionLabel(i)}</option>)}
+            </optgroup>
+          )}
+          {sells.length > 0 && (
+            <optgroup label="賣超">
+              {sells.map((i) => <option key={i.name} value={i.name}>{stripOptionLabel(i)}</option>)}
+            </optgroup>
+          )}
+          {searchItem && (
+            <optgroup label="搜尋">
+              <option value={searchItem.name}>{stripOptionLabel(searchItem)}</option>
+            </optgroup>
+          )}
+        </select>
+        <button
+          type="button"
+          aria-label="下一家券商"
+          disabled={next === null}
+          onClick={() => next !== null && onSelect(items[next].name)}
+          className={STEP_BTN}
+        >
+          ›
+        </button>
+      </div>
+    </div>
   );
 }
 
