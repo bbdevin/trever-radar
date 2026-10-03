@@ -36,3 +36,4 @@ YYYYMMDDHHMMSS_snake_case_description.sql
 | `20260826114421_create_user_ui_prefs.sql` | 字級／搜尋歷史／theme |
 | `20260826114857_grant_user_ui_prefs.sql` | prefs 表 GRANT |
 | `20260826115525_add_user_ui_prefs_theme.sql` | 既有表補 theme 欄 |
+| `20261003145606_create_branch_track_prefs.sql` | 分點追蹤／靜音偏好（綁帳號；寫入需 approved） |
