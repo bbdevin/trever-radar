@@ -130,6 +130,22 @@ ALLOWLIST: list[tuple[str, str, str]] = [
         "是拿來斷言期貨文案裡**沒有**它,不是顯示給使用者的標籤。",
     ),
     (
+        "web/lib/branchPnl.test.ts",
+        "勝率",
+        "docs/42 區間損益(估算)文案閘門的禁用詞清單本身:斷言估算文案裡**沒有**"
+        "這個詞,不是顯示給使用者的標籤(同 futures.test.ts 那條)。",
+    ),
+    (
+        "web/lib/branchPnl.test.ts",
+        "獲利能力",
+        "同上:docs/42 鎖定文案禁用詞清單的一項,用來斷言它不出現。",
+    ),
+    (
+        "web/lib/branchPnl.test.ts",
+        "獲利",
+        "同上:docs/42 鎖定文案禁用詞清單的一項,用來斷言它不出現。",
+    ),
+    (
         "web/lib/format.ts",
         "融券回補軋空",
         "S13 徽章改名(見 461a2cf)的顯示期轉場常數:VPS 尚未跑過新一輪 export "

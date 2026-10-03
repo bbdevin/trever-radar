@@ -41,6 +41,7 @@ from ..compute.branch_point_in_time_report import (
 )
 from ..compute.branch_stock_pctile_counts import LONG_PRICE_WINDOW_DAYS
 from ..compute.margin_cost import build_margin_cost_series
+from ..compute.branch_interval_pnl import branch_pnl_payload
 from ..compute.display_window import display_window_bounds, window_label
 from ..compute.futures_volume_anomaly import (
     anomaly_history,
@@ -2286,6 +2287,14 @@ def export_json(out_dir: Path | None = None) -> dict:
                 "holders_meta": holders_meta,
                 "directors_latest": directors_latest,
             }
+            # 區間損益(估算,docs/42):用裁成前 12 名之前的分點列;沒有分點列 → 鍵不輸出。
+            branch_pnl = branch_pnl_payload(
+                ((r[0], r[1], r[4]) for r in branch_history_rows),
+                ((c[0], c[4], c[7]) for c in candles),
+                as_of_limit=d,
+            )
+            if branch_pnl is not None:
+                payload["branch_pnl_est"] = branch_pnl
             # futures_contracts 還是空的(第一次 import-futures 之前)→ 整個鍵不輸出。
             # 有清單了才給答案,而「不是標的」的答案是 contracts: []。
             if futures_result is not None:

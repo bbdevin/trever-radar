@@ -207,6 +207,44 @@ export interface BranchTags {
   tracked: string[];
 }
 
+/** 區間損益(估算)的一列:一個分點在這檔股票、一個窗口內的平均成本法估算。NT$ 為整數。 */
+export interface BranchPnlRow {
+  name: string;
+  est_total: number;
+  realized: number;
+  unrealized: number;
+  pos_lots: number;
+  avg_cost: number;
+  last_close: number;
+  buy_lots: number;
+  sell_lots_attributed: number;
+  sell_lots_unattributed: number;
+  visible_days: number;
+  max_cost: number;
+  ret_pct: number | null;
+  af_adjusted: boolean;
+  first_date: string;
+  last_date: string;
+}
+
+export interface BranchPnlWindow {
+  window_days: number;
+  first_date: string;
+  pairs_considered: number;
+  pairs_skipped_missing_price: number;
+  /** 全部賺／賠的分點數(清單只留前 15);舊 payload 沒有時用清單長度。 */
+  n_gainers?: number;
+  n_losers?: number;
+  gainers: BranchPnlRow[];
+  losers: BranchPnlRow[];
+}
+
+export interface BranchPnlEst {
+  as_of: string;
+  definitions_version: string;
+  windows: Partial<Record<"60" | "240" | "all", BranchPnlWindow>>;
+}
+
 export interface StockJson {
   id: string;
   name: string;
@@ -251,6 +289,8 @@ export interface StockJson {
   branch_pctile_counts?: BranchPctileCounts;
   /** 籌碼日報分點標籤(地緣/隔日沖/追蹤);舊 JSON 沒有這個鍵,缺鍵時不標。 */
   branch_tags?: BranchTags;
+  /** 區間損益(估算,docs/42);舊 JSON 或這檔沒有分點列時缺鍵,分段不出現。 */
+  branch_pnl_est?: BranchPnlEst;
   warrant: WarrantSummary | null;
   warrant_history: WarrantHistoryPoint[];
   active_warrants: ActiveWarrant[];

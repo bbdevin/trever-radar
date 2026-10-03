@@ -4,6 +4,7 @@
  *
  * 規則(台股紅漲綠跌,docs/19 §1;顏色不是唯一訊號——符號與文字照留):
  *   - 有號百分比 `+5.3%` / `−2.8%` / `-2.8%` → up / down;`0.0%` → flat。
+ *   - 有號金額 `+2.7 億` / `−850 萬` → up / down(區間損益估算)。
  *   - 「漲 ≥3%」「跌 ≥3%」這類以動詞表方向的 → up / down。
  *   - 「高於…N 檔」「低於…N 檔」→ up / down。
  *   - 帶小數的價格(`123.5`、`1,085.00`)→ price(粗體、前景色)。整數計數不動。
@@ -16,6 +17,8 @@ const PATTERN = new RegExp(
   [
     "(?<signed>[+\\-−]\\d+(?:\\.\\d+)?%)",
     "(?<zero>(?<![\\d.])0(?:\\.0+)?%)",
+    // 帶號金額(區間損益估算的「+2.7 億」「−850 萬」)
+    "(?<amount>(?<![\\d.,])[+\\-−]\\d+(?:,\\d{3})*(?:\\.\\d+)?\\s*(?:億|萬|元))",
     "(?<upverb>漲\\s*≥?\\s*\\d+(?:\\.\\d+)?%)",
     "(?<downverb>跌\\s*≥?\\s*\\d+(?:\\.\\d+)?%)",
     "(?<above>高於[^、，；。]*?\\d+\\s*檔)",
@@ -34,6 +37,7 @@ export function changeTokens(text: string): ChangeToken[] {
     if (start > last) out.push({ kind: "text", text: text.slice(last, start) });
     let kind: ChangeTokenKind = "text";
     if (g.signed) kind = g.signed.startsWith("+") ? "up" : "down";
+    else if (g.amount) kind = g.amount.startsWith("+") ? "up" : "down";
     else if (g.zero) kind = "flat";
     else if (g.upverb || g.above) kind = "up";
     else if (g.downverb || g.below) kind = "down";

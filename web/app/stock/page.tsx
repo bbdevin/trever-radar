@@ -18,6 +18,7 @@ import AccumulationBranches from "@/components/AccumulationBranches";
 import BranchFlowSection from "@/components/BranchFlowSection";
 import BranchPctilePanel from "@/components/BranchPctilePanel";
 import BranchDrillView from "@/components/BranchDrillView";
+import BranchPnlPanel from "@/components/BranchPnlPanel";
 import ChangeText from "@/components/ChangeText";
 import SectionHeader from "@/components/SectionHeader";
 import InstiPanel from "@/components/InstiPanel";
@@ -50,6 +51,7 @@ import PocketBadges from "@/components/PocketBadges";
 import { Skeleton } from "@/components/ui/skeleton";
 import WatchlistButton from "@/components/WatchlistButton";
 import { normalizeBranchPctile } from "@/lib/branchPctile";
+import { normalizePnl } from "@/lib/branchPnl";
 import { dataFetch } from "@/lib/dataFetch";
 import { OFFLINE_DATA_COPY, isBrowserOffline } from "@/lib/pwa";
 import type { Buyback, CompanyTheme, RecentThemeHeat, StockJson } from "@/lib/types";
@@ -66,13 +68,16 @@ const RANGES = [
   { key: "all", label: "全部", days: Infinity },
 ] as const;
 
-/** 籌碼日報分頁內的三個分段;預設是原本的分點進出(當日買賣超)。 */
-type ChipsSectionKey = "flow" | "acc" | "pctile";
+/** 籌碼日報分頁內的分段;預設是原本的分點進出(當日買賣超)。
+ *  2026-10-03 加「區間損益」(docs/42)後成為四段,手機一列放得下所以標籤都壓到 4 字內。 */
+type ChipsSectionKey = "flow" | "acc" | "pctile" | "pnl";
 const CHIPS_SECTIONS: { key: ChipsSectionKey; label: string }[] = [
-  { key: "flow", label: "當日買賣超" },
-  { key: "acc", label: "囤貨／出貨" },
+  { key: "flow", label: "買賣超" },
+  { key: "acc", label: "囤出貨" },
   { key: "pctile", label: "買低賣高" },
+  { key: "pnl", label: "區間損益" },
 ];
+const CHIPS_GRID_COLS: Record<number, string> = { 2: "grid-cols-2", 3: "grid-cols-3", 4: "grid-cols-4" };
 const CHIPS_SECTION_KEY = "trever.stock.chipsSection";
 
 const CHG_TEXT: Record<string, string> = { up: "text-up", down: "text-down", flat: "text-foreground" };
@@ -112,7 +117,7 @@ function StockView() {
   useEffect(() => {
     try {
       const stored = window.localStorage.getItem(CHIPS_SECTION_KEY);
-      if (stored === "flow" || stored === "acc" || stored === "pctile") setChipsSection(stored);
+      if (stored === "flow" || stored === "acc" || stored === "pctile" || stored === "pnl") setChipsSection(stored);
     } catch {
       // 私密視窗或封鎖網站資料:維持預設「當日買賣超」。
     }
@@ -229,7 +234,8 @@ function StockView() {
   const chipsSections = CHIPS_SECTIONS.filter((s) =>
     s.key === "flow"
     || (s.key === "acc" && (data.branch_history?.length ?? 0) > 0)
-    || (s.key === "pctile" && normalizeBranchPctile(data.branch_pctile_counts) !== null),
+    || (s.key === "pctile" && normalizeBranchPctile(data.branch_pctile_counts) !== null)
+    || (s.key === "pnl" && normalizePnl(data.branch_pnl_est) !== null),
   );
   const activeChips: ChipsSectionKey = chipsSections.some((s) => s.key === chipsSection) ? chipsSection : "flow";
   const chooseChips = (key: ChipsSectionKey) => {
@@ -411,7 +417,7 @@ function StockView() {
             aria-label="籌碼日報內容"
             className={cn(
               "grid gap-1 rounded-[var(--r-md)] bg-secondary p-1",
-              chipsSections.length === 3 ? "grid-cols-3" : chipsSections.length === 2 ? "grid-cols-2" : "hidden",
+              CHIPS_GRID_COLS[chipsSections.length] ?? "hidden",
             )}
           >
             {chipsSections.map((s) => (
@@ -462,6 +468,7 @@ function StockView() {
           {activeChips === "pctile" && (
             <BranchPctilePanel data={data.branch_pctile_counts} onOpenBranch={setDrillBranch} branchTags={data.branch_tags} />
           )}
+          {activeChips === "pnl" && <BranchPnlPanel data={data.branch_pnl_est} onOpenBranch={setDrillBranch} />}
         </>
       )}
       {view === "insti" && <InstiPanel data={data} candles={cs} />}

@@ -13,12 +13,13 @@
 | C | 個股「基本資料」的題材 section：公司分類、近期熱度、有效／停用／過時狀態，顯示「近期可能相關題材」而非無證據的因果宣稱 | **程式／fixture／UI／typecheck／正式 build 完成（2026-08-27）**；`import-themes` 未執行；16:58 `export-json` 已發布既有快照、未更新題材官方來源資料，不改綜合分 |
 | D | 基本資料的集團連結可點入 `/group?id=`，顯示版本化的集團成員股票 | **程式／fixture／UI／typecheck／正式 build 完成（2026-08-27）**；16:58 正式 VPS `export-json` 2,410 檔已完成 |
 | E1 | 個股「基本資料」的庫藏股 section：官方 MOPS `t35sc09` 與 **KB1 事實標籤** | **程式／fixture／point-in-time export／個股 UI 完成（2026-08-27）**；`import-buybacks` 未執行；16:58 `export-json` 已發布既有快照、未更新庫藏股官方來源資料，未排程 |
-| E2 | `branch × stock` point-in-time 的**獨立**買／賣 episode 分位、後續表現與覆蓋率描述 | **唯讀 shadow CLI／JSON contract 與測試完成（2026-08-27）**；buy→sell 配對規則／coverage 尚未定義，未跑正式 DB、未接 UI、未定門檻，schema／歷史回算仍須人工確認 |
+| E2 | `branch × stock` point-in-time 的**獨立**買／賣 episode 分位、後續表現與覆蓋率描述 | **唯讀 shadow CLI／JSON contract 與測試完成（2026-08-27）**；buy→sell 配對規則／coverage 尚未定義，未跑正式 DB、未接 UI、未定門檻，schema／歷史回算仍須人工確認。**2026-10-03 使用者反轉**：允許平均成本法**估算**損益（`pnl-avgcost-v1`，個股頁籌碼日報「區間損益」分段），標示估算、不稱勝率，見 §7 與 `docs/42` |
 
 ### 明確排除
 
 - **KB2 `BUYBACK_BRANCH` 不實作**：無法由公開資料證實「某分點就是公司庫藏股執行分點」，不可用分點淨買超反推並在 UI 呈現為事實；`docs/27` 的舊 KB2 規劃以本文件為準作廢。
 - E2 **不做交易獲利歸因**：分點×個股資料只能產生 point-in-time 的事件後價格結果與描述性統計，不能宣稱分點實際獲利、持倉成本或單一帳戶績效。
+  - **2026-10-03 使用者反轉（上面這條 2026-08-27 紀錄保留）**：「買低賣高可以用區間獲利來看嗎？…群益金鼎-板橋的十銓就是這樣」→ 允許以平均成本法**估算**分點×個股的區間損益（`docs/42`，`pnl-avgcost-v1`）。仍不宣稱帳戶實際損益或單一帳戶績效：畫面標「估算」、列出看不見的部分（前 15 大以外、區間前持股、手續費／稅／股利），不稱勝率、不做「常低買高賣」身分標籤、只依金額排序。
 - 不因 B/C/D/E 調高 `daily_scores.final`、`tech_score`、`branch_score`，不另增第 14 策略；新資訊先維持 tag／badge／shadow。
 - 不在本輪執行正式 `radar.db` 全市場重算、回灌、資料刪除／重建、VPS destructive 操作、workflow／secrets／DNS 變更或 force push。
 
@@ -152,6 +153,12 @@ A2 是語意決策關卡，不是單純修 UI。Executor 先產出對照表與�
 - buy 與 sell episode 是**獨立**統計；本 shadow 不做 buy→sell 配對，也不輸出配對 coverage。配對資格、時間窗、缺列處理與 coverage 定義均 deferred，須另次人工確認。
 - CLI report 的固定排序 JSON 含 metadata、定義、coverage、branch×stock rows、買／賣 episodes、known／unknown、low-buy／high-sell rates、成熟 fwd5 統計及全部可稽核 episode samples。`evidence` 僅表示同一列兩側都有至少一筆已知分位樣本，絕非統計充分性、產品上線或排行門檻。
 - fixture tests 覆蓋市場日 episode merge（含全列 close null 日）、過去窗不偷看未來、未成熟／缺價格／缺 `pct` unknown、`abs(pct)` 賣超、candidate universe／timestamp coverage、固定輸出、實體 DB 不存在／DML 拒絕／out=DB 拒絕與 read-only contract。**未對正式 DB／VPS 執行本報表。**
+
+### 2026-10-03 反轉：區間損益（估算）
+
+- 2026-10-03 使用者反轉：『買低賣高可以用區間獲利來看嗎？…群益金鼎-板橋的十銓就是這樣』→ 允許平均成本法估算損益，標示估算、不稱勝率。上方「不計算分點實際交易獲利」與 §0「明確排除」的 2026-08-27 紀錄保留作為當時決定；本條取代其中「不做任何損益歸因」的部分，但「實際帳戶損益」仍不宣稱。
+- 定義與公式：`docs/42_branch_interval_pnl_estimate.md`（`pnl-avgcost-v1`）。匯出時在個股迴圈內用尚未裁成前 12 名的 `branch_trades` 列計算（`radar/compute/branch_interval_pnl.py`），不新增資料表、不新增夜間步驟；payload `stocks/{id}.json.branch_pnl_est`，沒有分點列時缺鍵。
+- UI：個股頁籌碼日報第四段「區間損益」（3月／1年／2年 × 估算賺／賠，前 5 張卡＋顯示全部 15），點卡片開既有分點下鑽。文案鎖在 `web/lib/branchPnl.ts` 與測試：禁用「勝率」「獲利能力」「常低買高賣」。
 
 ## 8. UI／UX 共通驗收（沿用 `ui-ux-pro-max` 規範）
 
