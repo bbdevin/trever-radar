@@ -239,6 +239,27 @@ export function normalizeBranchPctile(data: BranchPctileCounts | unknown): Pctil
   return null;
 }
 
+/**
+ * 席位類型標示(2026-10-02 使用者:「券商總公司標示,不要移除」)。
+ * lots_shrunk_v2 依張數排序後,前段常是券商總公司與外資席位;這些席位常混著自營、
+ * 權證避險或法人帳戶的量,不一定是單一主力。只標示、不排除、不改排序。
+ * 名稱規則(Fubon 分點命名):外資 = 「美商/港商/新加坡商/…商」開頭;總公司 = 名稱沒有「-」。
+ */
+export type SeatKind = { label: "外資" | "總公司"; note: string } | null;
+
+const FOREIGN_SEAT = /^(美商|港商|新加坡商|英商|瑞士商|法商|德商|日商|荷蘭商|香港商|澳商|加拿大商|韓商)/;
+
+export function seatKind(name: string): SeatKind {
+  const n = name.replace(/^\([^)]*\)/, "").trim();
+  if (FOREIGN_SEAT.test(n)) {
+    return { label: "外資", note: "外資券商席位：多為外資法人或其客戶的合計量，不一定是單一主力" };
+  }
+  if (n && !n.includes("-")) {
+    return { label: "總公司", note: "券商總公司席位：常混著自營部、權證避險或法人帳戶的量，不一定是單一主力" };
+  }
+  return null;
+}
+
 export function fmtInt(value: number): string {
   return Math.round(value).toLocaleString("en-US");
 }

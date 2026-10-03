@@ -3,14 +3,17 @@
 # 與 mid-backfill-publish 分離:mid 只負責加深 JSON;本腳本專跑 stats→scores→export。
 # 避開 daily-* 窗;pause bf;記憶體不足則跳過;stats 失敗則中止(不跑 scores/export)。
 #
-# 環境變數:MIN_FREE_GB=4;MIN_MEM_MB=900;SKIP_EXPORT=1 只算不上線;SKIP_SCORES=1 略過分數;
+# 環境變數:MIN_FREE_GB=3;MIN_MEM_MB=900;SKIP_EXPORT=1 只算不上線;SKIP_SCORES=1 略過分數;
 #           SKIP_PIT=1 略過 point-in-time 帳本;
 #           SKIP_PAIR_PCTILE=1 略過分點×個股價格分位計數。
 source "$(dirname "$0")/lib.sh"
 
 FLAG="${MID_PUBLISH_FLAG:-/tmp/radar-mid-publish.flag}"
 STATE_FILE="${SAFE_STATS_STATE:-$HOME/safe-branch-stats.state}"
-MIN_FREE_GB="${MIN_FREE_GB:-4}"
+# 2026-10-03 使用者核准 4 → 3:磁碟剩 3.6G 時本輪天天略過(買低賣高、分點排行不再更新)。
+# 本輪實際暫用幾百 MB(10-03 手動補跑前後 3.7G → 3.6G),3G 仍留足餘裕;
+# 這只是爭取時間,根本解是擴充磁碟。disk-cleanup.sh 仍在 <4G 時每天提醒。
+MIN_FREE_GB="${MIN_FREE_GB:-3}"
 MIN_MEM_MB="${MIN_MEM_MB:-900}"
 CONTAINERS="${BF_CONTAINERS:-radar-bf-branches radar-bf-warrant}"
 # 2026-08-31~09-03 事故(docs/STATUS.md):安靜窗 off-by-one 讓本作業四天沒跑,

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { ChevronDown, Search } from "lucide-react";
 
 import {
+  seatKind,
   CAMP_KEYS,
   CAMP_NAMES,
   DEFAULT_VISIBLE,
@@ -278,6 +279,21 @@ function CampList({
 }
 
 /** 中性色的小標籤(不用紅綠:這是價格位置的佔比,不是漲跌也不是損益)。 */
+/** 席位類型小標籤(外資／總公司);只標示、不排除。說明放 title(點按時列的展開區不受影響)。 */
+function SeatTag({ name }: { name: string }) {
+  const kind = seatKind(name);
+  if (!kind) return null;
+  return (
+    <span
+      className="shrink-0 rounded-full border border-[color:var(--warn)]/45 bg-[color:var(--warn)]/12 px-1.5 py-px text-[10.5px] font-semibold text-[color:var(--warn)]"
+      title={kind.note}
+      aria-label={`${kind.label}：${kind.note}`}
+    >
+      {kind.label}
+    </span>
+  );
+}
+
 function SideChip({ side }: { side: CompactSide }) {
   return (
     <span
@@ -325,8 +341,11 @@ function BranchRow({
         className="flex min-h-11 w-full min-w-0 items-center gap-1.5 px-2.5 py-1.5 text-left"
       >
         <span className="num w-4 shrink-0 text-[11.5px] text-muted-foreground">{position}</span>
-        <span className="min-w-0 flex-1 truncate text-[13.5px] font-semibold text-foreground" title={stat.name}>
-          {stat.name}
+        <span className="flex min-w-0 flex-1 items-center gap-1">
+          <span className="min-w-0 truncate text-[13.5px] font-semibold text-foreground" title={stat.name}>
+            {stat.name}
+          </span>
+          <SeatTag name={stat.name} />
         </span>
         <SideChip side={compactSide("buy", stat.buy, model.minKnown)} />
         <SideChip side={compactSide("sell", stat.sell, model.minKnown)} />
@@ -410,7 +429,10 @@ function SearchResults({
       <ul className="grid gap-2">
         {hits.map((hit) => (
           <li key={hit.name} className="grid gap-2 rounded-[var(--r-md)] border border-border bg-background px-3 py-2">
-            <h3 className="truncate text-[13.5px] font-semibold text-foreground" title={hit.name}>{hit.name}</h3>
+            <h3 className="flex min-w-0 items-center gap-1 text-[13.5px] font-semibold text-foreground">
+              <span className="min-w-0 truncate" title={hit.name}>{hit.name}</span>
+              <SeatTag name={hit.name} />
+            </h3>
             {CAMP_KEYS.filter((key) => model.camps[key] !== null).map((key) => {
               const camp = model.camps[key] as CampModel;
               const campHit = hit.camps[key];

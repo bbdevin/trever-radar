@@ -15,9 +15,20 @@ import {
   fmtInt,
   normalizeBranchPctile,
   searchBranches,
+  seatKind,
   sideView,
   visibleRows,
 } from "./branchPctile.ts";
+
+test("席位類型:總公司與外資只標示,一般分點不標", () => {
+  assert.equal(seatKind("凱基")?.label, "總公司");
+  assert.equal(seatKind("永豐金證券")?.label, "總公司");
+  assert.equal(seatKind("港商麥格理")?.label, "外資");
+  assert.equal(seatKind("美商高盛")?.label, "外資");
+  assert.equal(seatKind("群益金鼎-板橋"), null);
+  assert.equal(seatKind("(牛牛牛)亞-鑫豐"), null);
+  assert.ok(seatKind("凱基")!.note.includes("不一定是單一主力"));
+});
 
 function row(name: string, values: Partial<Record<string, number | null>> = {}) {
   return {
