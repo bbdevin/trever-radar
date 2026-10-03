@@ -897,7 +897,8 @@ def main(argv=None):
     desc.set_defaults(fn=cmd_import_descriptions)
 
     sub.add_parser("seed-branches",
-                   help="seed manual tracked-branch list (docs/13)"
+                   help="sync the admin's global tracked-branch list from Supabase "
+                        "(track/mute; never fails the round) (docs/13)"
                    ).set_defaults(fn=cmd_seed_branches)
 
     bt = sub.add_parser("import-branch-trades",

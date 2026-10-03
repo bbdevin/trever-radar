@@ -364,17 +364,23 @@ def load_tracked_keys(conn) -> set[str]:
     """「追蹤分點」的唯一定義:tracked_branches ∪ 最新排行 rank_score ≥ 70 且非隔日沖。
 
     口袋 T1「追蹤分點同買」與籌碼日報的「追蹤」標籤讀同一份,兩邊不得各算各的。
+
+    source='muted'(管理員在全站名單取消追蹤,seed_branches.sync_tracked_branches)
+    不算追蹤,而且連 rank_score ≥ 70 那半段也排除:管理員明說不要追蹤的分點,
+    不能因為分數高又以「追蹤分點」的名義出現。
     """
-    tracked = [r[0] for r in conn.execute(text(
-        "SELECT branch_name FROM tracked_branches"
-    ))]
+    rows = conn.execute(text(
+        "SELECT branch_name, source FROM tracked_branches"
+    )).fetchall()
+    muted = {normalize_branch_name(r[0]) for r in rows if r[0] and r[1] == "muted"}
+    tracked = [r[0] for r in rows if r[1] != "muted"]
     ranked = [r[0] for r in conn.execute(text(
         "SELECT branch_name FROM branch_rankings "
         "WHERE as_of = (SELECT MAX(as_of) FROM branch_rankings) "
         "AND rank_score >= :mn "
         "AND COALESCE(is_daytrade, 0) = 0"
     ), {"mn": RANK_SCORE_MIN})]
-    return {normalize_branch_name(n) for n in tracked + ranked if n}
+    return {normalize_branch_name(n) for n in tracked + ranked if n} - muted
 
 
 def load_pocket_context(conn, window_dates: list[str], stock_ids: list[str]) -> PocketContext:

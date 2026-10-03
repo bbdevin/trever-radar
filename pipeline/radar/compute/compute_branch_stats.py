@@ -283,8 +283,12 @@ def compute_all():
             print("branch stats: no branch_trades data.")
             return
 
-        tracked = {r[0]: r[1] for r in conn.execute(text(
-            "SELECT branch_name, source FROM tracked_branches"))}
+        # source='muted' = 管理員取消追蹤(seed_branches.sync_tracked_branches):
+        # 不算在追蹤名單裡,而且自動入選必須略過,否則隔天又被演算法加回來。
+        tracked_rows = conn.execute(text(
+            "SELECT branch_name, source FROM tracked_branches")).fetchall()
+        muted = {r[0] for r in tracked_rows if r[1] == "muted"}
+        tracked = {r[0]: r[1] for r in tracked_rows if r[1] != "muted"}
 
         # 只取個股(排除權證與指數)的 distinct stock_id,比照 json_export 的個股判定。
         stock_ids = [r[0] for r in conn.execute(text("""
@@ -464,6 +468,8 @@ def compute_all():
     # 註:規格的「連續 60 日 < 50」移出需快照歷史累積,V1 先以當次分數簡化判定。
     auto_in, auto_out = [], []
     for br, m in branch_meta.items():
+        if br in muted:
+            continue  # 管理員取消追蹤:不自動入選(muted 列本身也只由同步程式維護)
         src = tracked.get(br)
         if br in closed:
             # 停業:不自動加入;自動加入過的移出;使用者手動加的不動(那是他的決定)。

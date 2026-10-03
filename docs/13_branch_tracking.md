@@ -30,6 +30,8 @@
 - 管理介面:系統頁 admin 可增刪(V1 先直接改 DB/seed 檔)。
 - **全站追蹤名單的管理員覆寫(2026-10-03,Phase 1 前端疊加)**:上面(與 §2b)是**系統預設名單**。管理員(`app_profiles.role='admin'`)可在個股分點下鑽頁、`/branch` 排行卡、追蹤明細選單旁按 ★「追蹤／取消追蹤」,存在 Supabase `branch_track_list(branch_name PK, state∈{track,mute}, updated_by, updated_at)`——**一份名單、全站一致**;登入的核准使用者可讀,寫入只限管理員(RLS)。其他人沒有按鈕,只看結果。有效追蹤 = 系統名單 − mute ∪ track(`web/lib/branchTrackResolve.ts`);影響範圍:籌碼日報「追蹤」標籤、`/branch`「我的追蹤」篩選(手動種子 − mute ∪ track)、口袋名單「追蹤分點同買」徽章在背後分點**全部** mute 時隱藏。前端疊加只是過渡:VPS 夜間讀這張表併回 `tracked_branches`(另案)後,口袋名單入選／排序才跟著變。資料表未建或讀不到時按鈕不出現,畫面照系統名單。
 
+> **2026-10-03 更新(使用者定案:站長＝管理員,全站一份名單)**:手動名單的真相改為 Supabase `public.branch_track_list`(`docs/sql/20261003181500_create_branch_track_list.sql`;只有 admin 可寫、approved 可讀;初始種子＝原寫死的 30 個分點)。每晚 `radar seed-branches`(`daily-branches.sh` 原本那一步,未改接線)改為呼叫 `seed_branches.sync_tracked_branches()`:經 `branch_track_list_public()`(只回 `branch_name`/`state`,以前端同一把 publishable key 讀,批次容器不持有任何特權金鑰)鏡像進本機 `tracked_branches`——`track`→`source='manual'`、`mute`→`source='muted'`(自動入選略過;所有消費端都當成不在名單上,含口袋「追蹤分點同買」、個股 `branch_tags.tracked`、`rankings.json`/track index 出處、`today.json`)、名單上沒有的名稱→中立(manual/muted 列移除,auto 不動)。抓取或驗證任何失敗:印 WARN、本機名單不動、本步驟仍以 0 結束;空名單拒絕套用;本機從未同步過才退回寫死的 30 個。`rankings.json` 的 `source` 匯出時以**當下**名單覆蓋快照值。舊的每人偏好案 `20261003145606_create_branch_track_prefs.sql` 已作廢(未執行)。
+
 ### 2b. 演算法自動入選(每週六重算,04 §5 可信度分數)
 
 入選條件(全部滿足):

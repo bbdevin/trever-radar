@@ -36,4 +36,5 @@ YYYYMMDDHHMMSS_snake_case_description.sql
 | `20260826114421_create_user_ui_prefs.sql` | 字級／搜尋歷史／theme |
 | `20260826114857_grant_user_ui_prefs.sql` | prefs 表 GRANT |
 | `20260826115525_add_user_ui_prefs_theme.sql` | 既有表補 theme 欄 |
-| `20261003145606_create_branch_track_prefs.sql` | 分點追蹤／靜音偏好（綁帳號；寫入需 approved） |
+| `20261003145606_create_branch_track_prefs.sql` | ~~分點追蹤／靜音偏好（綁帳號）~~ **已作廢（未執行），改用 `20261003181500_create_branch_track_list.sql`；請勿執行** |
+| `20261003181500_create_branch_track_list.sql` | 全站分點追蹤名單（只有管理員可寫、approved 可讀；`branch_track_list_public()` 供 VPS 夜間管線以 publishable key 唯讀；含原 30 分點種子） |

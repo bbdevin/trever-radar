@@ -2341,6 +2341,10 @@ def _export_branches(out: Path, engine, date: str):
         # 新快照,這裡是第二道:舊快照在下一次重算之前仍會被讀到,使用者在那段
         # 時間差裡看見元大-西門(停)仍在排行上。
         rows = [r for r in rows if not any(m in (r["branch_name"] or "") for m in CLOSED_MARKS)]
+        # 出處以「現在的」追蹤名單為準(/branch「我的追蹤」= source === "manual")。
+        # 快照的 source 是 compute-branch-stats 當時寫的;管理員在那之後改名單
+        # (第二輪只刷新評分時不重算快照)不能等到隔天才反映。
+        _overlay_tracked_source(rows, _current_tracked_sources(conn))
         rankings = {
             "as_of": rows[0]["as_of"] if rows else None,
             # is_daytrade 為 NULL = 未判定 → 走主榜,不進 daytrade 清單。
@@ -2357,7 +2361,8 @@ def _export_branches(out: Path, engine, date: str):
             SELECT MAX(b.date)
             FROM branch_trades b
             WHERE b.date <= :d
-              AND b.branch_name IN (SELECT branch_name FROM tracked_branches)
+              AND b.branch_name IN (SELECT branch_name FROM tracked_branches
+                                    WHERE COALESCE(source, '') <> 'muted')
         """), {"d": date}).scalar()
         today_trades = [] if today_as_of is None else [dict(r._mapping) for r in conn.execute(text("""
             SELECT b.branch_name, b.stock_id, s.name AS stock_name,
@@ -2365,7 +2370,8 @@ def _export_branches(out: Path, engine, date: str):
             FROM branch_trades b
             JOIN stocks s ON s.id = b.stock_id
             WHERE b.date = :as_of
-              AND b.branch_name IN (SELECT branch_name FROM tracked_branches)
+              AND b.branch_name IN (SELECT branch_name FROM tracked_branches
+                                    WHERE COALESCE(source, '') <> 'muted')
             ORDER BY b.branch_name, b.net_lots DESC
         """), {"as_of": today_as_of})]
         
@@ -2640,6 +2646,35 @@ def _track_safe_key(branch_name: str) -> str:
     return hashlib.sha1(branch_name.encode("utf-8")).hexdigest()[:16]
 
 
+def _current_tracked_sources(conn) -> dict[str, str]:
+    """tracked_branches 現況 {名稱: source};NULL／空白 source 視為 manual(沿用既有口徑)。
+
+    含 source='muted'(管理員取消追蹤):呼叫端自行把它當成「不在名單上」。
+    """
+    return {
+        r[0]: r[1]
+        for r in conn.execute(text(
+            "SELECT branch_name, COALESCE(NULLIF(TRIM(source), ''), 'manual') "
+            "FROM tracked_branches "
+            "WHERE branch_name IS NOT NULL AND TRIM(branch_name) <> ''"))
+    }
+
+
+def _overlay_tracked_source(rows: list[dict], current: dict[str, str]) -> None:
+    """排行列的 source 改成現在的追蹤狀態(就地修改)。
+
+    * 現在在名單上(manual／auto)→ 用現況。
+    * 現在被取消追蹤(muted),或快照寫 manual／muted 但現在已不在名單 → candidate。
+    * 其他(快照的 candidate／auto 且名單沒有這個名稱)→ 保留快照值。
+    """
+    for r in rows:
+        cur = current.get(r["branch_name"])
+        if cur is not None and cur != "muted":
+            r["source"] = cur
+        elif cur == "muted" or r.get("source") in ("manual", "muted"):
+            r["source"] = "candidate"
+
+
 def _export_tracked_branch_history(out: Path, engine, date: str):
     track_dir = out / "branches" / "track"
     track_dir.mkdir(parents=True, exist_ok=True)
@@ -2648,11 +2683,13 @@ def _export_tracked_branch_history(out: Path, engine, date: str):
         stale.unlink()
 
     with engine.connect() as conn:
-        tracked = [dict(r._mapping) for r in conn.execute(text(
-            "SELECT branch_name, COALESCE(NULLIF(TRIM(source), ''), 'manual') AS source "
-            "FROM tracked_branches "
-            "WHERE branch_name IS NOT NULL AND TRIM(branch_name) <> '' "
-            "ORDER BY branch_name"))]
+        # muted = 管理員取消追蹤:不屬於追蹤名單(不佔 tracked 名額、不標 manual)。
+        # 它若仍在排行前 N 名,下面會以 candidate 身分進 detail,供排行卡下鑽。
+        current = _current_tracked_sources(conn)
+        tracked = [
+            {"branch_name": name, "source": src}
+            for name, src in sorted(current.items()) if src != "muted"
+        ]
         if len(tracked) > TRACK_DETAIL_MAX_BRANCHES:
             raise ValueError(
                 f"tracked branches ({len(tracked)}) exceed detail cap "
@@ -2668,6 +2705,7 @@ def _export_tracked_branch_history(out: Path, engine, date: str):
             LIMIT :limit
         """), {"limit": TRACK_RANK_DETAIL_LIMIT})]
         ranked = [r for r in ranked if not any(m in r["branch_name"] for m in CLOSED_MARKS)]
+        _overlay_tracked_source(ranked, current)
 
         # tracked source wins on a duplicate.  Ranking-only entries retain
         # their candidate/auto/etc. source so the client can label them.  Fill
