@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, Suspense, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import {
@@ -27,6 +27,7 @@ import MarginPanel from "@/components/MarginPanel";
 import HoldersPanel from "@/components/HoldersPanel";
 import WarrantBranchPanel from "@/components/WarrantBranchPanel";
 import ReasonPill, { isChipStrategyCode } from "@/components/ReasonPill";
+import { ScrollHint } from "@/components/ScrollHint";
 import {
   anomalyFacts,
   contractLabelTitle,
@@ -97,7 +98,6 @@ function StockView() {
   const [view, setView] = useState<"chart" | "chips" | "insti" | "margin" | "holders" | "basic" | "tech" | "warrant" | "futures">("chart");
   const [drillBranch, setDrillBranch] = useState<string | null>(null);
   const [chipsSection, setChipsSection] = useState<ChipsSectionKey>("flow");
-  const activeTabRef = useRef<HTMLButtonElement | null>(null);
   // 大標頭是否已捲出畫面(被站台 sticky 標頭蓋住也算);是的話在分頁列上方顯示精簡摘要。
   // callback ref:標頭在資料載入後才掛上,要靠 state 觸發 effect 重新觀察。
   const [headerEl, setHeaderEl] = useState<HTMLElement | null>(null);
@@ -161,14 +161,6 @@ function StockView() {
       setView("tech");
     }
   }, [data, tabParam]);
-
-  useEffect(() => {
-    const tab = activeTabRef.current;
-    const tabList = tab?.parentElement;
-    if (!tab || !tabList) return;
-    const left = tab.offsetLeft - (tabList.clientWidth - tab.offsetWidth) / 2;
-    tabList.scrollTo({ left: Math.max(0, left), behavior: "auto" });
-  }, [view]);
 
   const visibleDays = useMemo(() => {
     const days = RANGES.find((r) => r.key === range)?.days ?? Infinity;
@@ -358,10 +350,13 @@ function StockView() {
             </div>
           </div>
         )}
-        <div
+        <ScrollHint
           role="tablist"
           aria-label="個股內容"
-          className="flex w-full max-w-full shrink-0 gap-0.5 overflow-x-auto rounded-full border border-border bg-card p-[3px] scrollbar-hide [scrollbar-width:none] max-md:flex-nowrap max-md:[&>*]:shrink-0 [&::-webkit-scrollbar]:hidden md:w-fit"
+          activeKey={view}
+          peekId="stock-tabs"
+          wrapperClassName="w-full shrink-0 md:w-fit"
+          className="flex gap-0.5 overflow-x-auto rounded-full border border-border bg-card p-[3px] scrollbar-hide [scrollbar-width:none] max-md:flex-nowrap max-md:[&>*]:shrink-0 [&::-webkit-scrollbar]:hidden"
         >
           {(
             [
@@ -380,7 +375,6 @@ function StockView() {
           ).map((t) => (
           <button
               key={t.key}
-              ref={view === t.key ? activeTabRef : undefined}
               data-testid={`stock-tab-${t.key}`}
               type="button"
               role="tab"
@@ -391,11 +385,12 @@ function StockView() {
               {t.label}
             </button>
           ))}
-        </div>
+        </ScrollHint>
         {view === "chart" && (
-          <div
+          <ScrollHint
             role="tablist"
             aria-label="K線區間"
+            activeKey={range}
             className="flex max-w-full gap-0.5 overflow-x-auto rounded-full border border-border bg-card p-[3px] scrollbar-hide [scrollbar-width:none] max-md:flex-nowrap max-md:[&>*]:shrink-0 [&::-webkit-scrollbar]:hidden"
           >
             {RANGES.map((r) => (
@@ -403,7 +398,7 @@ function StockView() {
                 {r.label}
               </button>
             ))}
-          </div>
+          </ScrollHint>
         )}
       </div>
       {view === "chart" && <KChart candles={cs} visibleDays={visibleDays} mainForce={mainForce} />}

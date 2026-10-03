@@ -9,6 +9,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
 import BranchTrackView from "@/components/BranchTrackView";
 import BranchTrackButton from "@/components/BranchTrackButton";
+import { ScrollHint } from "@/components/ScrollHint";
 import { useBranchTrack } from "@/lib/branchTrackList";
 import { effectiveTracked } from "@/lib/branchTrackResolve";
 import ChangeText from "@/components/ChangeText";
@@ -757,11 +758,11 @@ export default function BranchPage() {
       {/* 分頁放在篩選列之上:篩選列的內容依分頁而變,先選分頁再看篩選才對得上
           (手機上原本要先滑過整排篩選才看得到分頁)。 */}
       <div className="my-1.5 mb-3 flex items-center gap-2.5">
-        <div role="tablist" className="flex max-w-full gap-0.5 overflow-x-auto rounded-full border border-border bg-card p-[3px] whitespace-nowrap">
+        <ScrollHint role="tablist" activeKey={tab} className="flex max-w-full gap-0.5 overflow-x-auto rounded-full border border-border bg-card p-[3px] whitespace-nowrap">
           {TABS.map((t) => (
             <TabPill key={t.key} active={tab === t.key} onClick={() => { setTab(t.key); setTrackOpen(false); }} title={t.hint} icon={t.icon} label={t.label} />
           ))}
-        </div>
+        </ScrollHint>
         <span className="hidden text-xs text-muted-foreground lg:inline">{TABS.find((t) => t.key === tab)?.hint}</span>
       </div>
 
@@ -1016,7 +1017,7 @@ export default function BranchPage() {
         return (
           <div className="flex flex-col gap-4 pb-7 animate-in fade-in duration-300">
             <div className="flex flex-col sm:flex-row justify-between items-center gap-3 mb-4">
-              <div className="flex bg-background/80 p-1.5 rounded-full border border-border/40 shadow-inner overflow-x-auto max-w-full">
+              <ScrollHint fade="background" activeKey={warrantTimeframe} className="flex bg-background/80 p-1.5 rounded-full border border-border/40 shadow-inner overflow-x-auto max-w-full">
                 {[
                   { k: "1d", l: "近 1 日" },
                   { k: "2d", l: "近 2 日" },
@@ -1026,13 +1027,14 @@ export default function BranchPage() {
                 ].map(t => (
                   <button
                     key={t.k}
+                    data-active={warrantTimeframe === t.k}
                     onClick={() => setWarrantTimeframe(t.k as any)}
                     className={cn(pillTabClass(warrantTimeframe === t.k), "min-h-11 whitespace-nowrap")}
                   >
                     {t.l}
                   </button>
                 ))}
-              </div>
+              </ScrollHint>
               <div className="flex bg-background/80 p-1.5 rounded-full border border-border/40 shadow-inner">
                 <button
                   onClick={() => setViewMode("by_stock")}

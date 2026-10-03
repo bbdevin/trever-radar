@@ -6,6 +6,7 @@ import { fmtLots } from "@/lib/format";
 import { bollinger, kd, macd, rsi, sma } from "@/lib/indicators";
 import { barsForDays, periodKey, resample, type Timeframe } from "@/lib/resample";
 import { cn, pillTabClass, segBtnClass } from "@/lib/utils";
+import { ScrollHint } from "@/components/ScrollHint";
 
 const TF_DEFS: { key: Timeframe; label: string; short: string }[] = [
   { key: "D", label: "日K", short: "日" },
@@ -509,7 +510,9 @@ export default function KChart({
       {/* ── Row 1：固定可見選項 ── */}
       {/* 手機:兩組 segment 同一行不換行(放不下時橫滑),副圖/主力/分點本來就擇一顯示,
           所以併成同一組——舊版把主力/分點做成另一種外觀的按鈕,在 390px 上自己掉到第二行。 */}
-      <div
+      <ScrollHint
+        fade="background"
+        variant="plain"
         className={cn(
           "flex min-w-0 items-center gap-1.5 px-0.5 pt-2 pb-1",
           isMobile ? "flex-nowrap overflow-x-auto scrollbar-hide [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" : "flex-wrap",
@@ -567,10 +570,12 @@ export default function KChart({
             </button>
           )}
         </span>
-      </div>
+      </ScrollHint>
       {/* ── Row 2：均線 + 布林 + 桌機主力(手機單行橫滑,不再佔兩行) ── */}
       {!(isMobile && hideMaRowOnMobile) && (
-      <div
+      <ScrollHint
+        fade="background"
+        variant="plain"
         className={cn(
           "flex items-center gap-1.5 px-0.5 pb-2",
           isMobile ? "flex-nowrap overflow-x-auto scrollbar-hide [scrollbar-width:none] [&::-webkit-scrollbar]:hidden [&>*]:shrink-0" : "flex-wrap",
@@ -611,7 +616,7 @@ export default function KChart({
             主力買賣超
           </label>
         )}
-      </div>
+      </ScrollHint>
       )}
       {/* 呼叫端的說明列(例:權證分頁的「代號 券商 · 股票 · 區間金額」),緊接在均線列下方、
           圖表上緣;使用者 2026-10-02 要求整合到這裡,而不是在 K 線上方另起一行。 */}

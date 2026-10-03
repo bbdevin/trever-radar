@@ -7,6 +7,7 @@ import { IconFlame, IconTrend, IconZap, IconRadar, IconPulse, IconStar, IconTren
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
 import MoneyFlow from "@/components/MoneyFlow";
+import { ScrollHint } from "@/components/ScrollHint";
 import StockCard from "@/components/StockCard";
 import ThemeGroupedList from "@/components/ThemeGroupedList";
 import MarginUsageRank from "@/components/MarginUsageRank";
@@ -345,7 +346,12 @@ function RadarView() {
   return (
     <>
       {/* Compact Daily Brief */}
-      <div className="my-3.5 grid auto-cols-[minmax(110px,1fr)] grid-flow-col gap-2 overflow-x-auto [scroll-snap-type:x_proximity] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+      <ScrollHint
+        wrapperClassName="my-3.5"
+        fade="background"
+        variant="plain"
+        className="grid auto-cols-[minmax(110px,1fr)] grid-flow-col gap-2 overflow-x-auto [scroll-snap-type:x_proximity] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+      >
         <div className="flex snap-start flex-col gap-0.5 rounded-[var(--r-md)] border border-border bg-card px-3 py-2 shadow-[var(--shadow-card)]">
           <span className="text-[10.5px] text-muted-foreground">{"資料日"}</span>
           <span className="num text-[15px] font-bold">
@@ -367,7 +373,7 @@ function RadarView() {
             </span>
           </div>
         ))}
-      </div>
+      </ScrollHint>
 
       {stale.length > 0 && (
         <Alert className="mb-3 border-warn/30 bg-warn/5">
@@ -414,9 +420,11 @@ function RadarView() {
 
       {/* Primary Queue: tabs + stock list */}
       <div className="my-1.5 mb-2">
-        <div
+        <ScrollHint
           role="tablist"
           aria-label="觀察名單"
+          activeKey={tab}
+          peekId="home-tabs"
           className="flex max-w-full gap-0.5 overflow-x-auto rounded-full border border-border bg-card p-[3px] whitespace-nowrap [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         >
           {TABS.map((t) => {
@@ -450,7 +458,7 @@ function RadarView() {
               </button>
             );
           })}
-        </div>
+        </ScrollHint>
         {tab !== "margin" && (
           <p
             className="mt-2.5 rounded-[var(--r-md)] border border-border/80 bg-muted/25 px-3 py-2 text-[12.5px] leading-relaxed text-foreground/90"

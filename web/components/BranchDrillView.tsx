@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft } from "lucide-react";
 import KChart from "@/components/KChart";
 import BranchTrackButton from "@/components/BranchTrackButton";
+import { ScrollHint } from "@/components/ScrollHint";
 import type { Candle, StockJson } from "@/lib/types";
 import { fmtLots } from "@/lib/format";
 import { cn, pillTabClass } from "@/lib/utils";
@@ -119,8 +120,9 @@ export default function BranchDrillView({
         <StatTile label="上榜日數" value={totals.days} />
       </div>
 
-      <div
+      <ScrollHint
         role="tablist"
+        activeKey={range}
         className="flex max-w-full gap-0.5 overflow-x-auto rounded-full border border-border bg-card p-[3px] scrollbar-hide [scrollbar-width:none] max-md:flex-nowrap max-md:[&>*]:shrink-0 [&::-webkit-scrollbar]:hidden"
       >
         {RANGES.map((r) => (
@@ -135,7 +137,7 @@ export default function BranchDrillView({
             {r.label}
           </button>
         ))}
-      </div>
+      </ScrollHint>
 
       {candles.length > 0 ? (
         <KChart
