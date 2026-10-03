@@ -14,6 +14,7 @@ import { useBranchTrack } from "@/lib/branchTrackList";
 import { effectiveTracked } from "@/lib/branchTrackResolve";
 import ChangeText from "@/components/ChangeText";
 import { dataFetch } from "@/lib/dataFetch";
+import { markNavPending } from "@/lib/navFeedback";
 import { OFFLINE_DATA_COPY, isBrowserOffline } from "@/lib/pwa";
 import type { RadarJson } from "@/lib/types";
 import type { TrackIndexEntry } from "@/lib/branchTrack";
@@ -335,7 +336,7 @@ function ConcentrationTab({ radar }: { radar: RadarJson | null }) {
             {rows.map((r) => (
               <tr
                 key={r.id}
-                onClick={() => { router.push(`/stock?id=${r.id}`); }}
+                onClick={() => { markNavPending(); router.push(`/stock?id=${r.id}`); }}
                 className="num cursor-pointer border-t border-[color:var(--line)] text-[color:var(--ink-2)] transition-colors duration-200 hover:bg-secondary"
               >
                 <td className="px-3.5 py-2.5 text-left">
@@ -565,6 +566,10 @@ function BranchGroupCard({ branchName, totalAmt, stocks }: { branchName: string,
 
 export default function BranchPage() {
   const router = useRouter();
+  // 表格列是 router.push 換頁,不像 <Link> 會自動預取;先把個股頁的 JS 與載入骨架抓好。
+  useEffect(() => {
+    router.prefetch("/stock");
+  }, [router]);
   const [radar, setRadar] = useState<RadarJson | null>(null);
   const [tab, setTab] = useState<"rankings" | "today" | "warrant">("rankings");
   const [rankingsData, setRankingsData] = useState<RankingsData | null>(null);
@@ -1103,7 +1108,7 @@ export default function BranchPage() {
                     {trades.map((t) => (
                       <tr
                         key={t.stock_id}
-                        onClick={() => { router.push(`/stock?id=${t.stock_id}`); }}
+                        onClick={() => { markNavPending(); router.push(`/stock?id=${t.stock_id}`); }}
                         className="num cursor-pointer border-t border-[color:var(--line)] transition-colors duration-200 hover:bg-secondary"
                       >
                         <td className="px-2 py-2.5 text-left font-sans">
