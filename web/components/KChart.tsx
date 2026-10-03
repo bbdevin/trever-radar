@@ -120,6 +120,7 @@ export default function KChart({
   branchFlowFormat,
   caption,
   mobileHeightClass = DEFAULT_MOBILE_HEIGHT,
+  hideMaRowOnMobile = false,
 }: {
   candles: Candle[];
   visibleDays: number;
@@ -137,6 +138,9 @@ export default function KChart({
   /** 手機版(<768px)圖表高度的 Tailwind class;缺省為個股 K 線分頁的大圖。
    *  權證分頁要讓券商列與整張圖同屏,傳較矮的 clamp。須是原始碼裡的字面字串(Tailwind 掃描)。 */
   mobileHeightClass?: string;
+  /** 手機版不顯示均線／布林 chip 列(權證分頁要讓券商列與整張圖同屏)。均線設定存在
+   *  localStorage、各分頁共用,仍可在 K 線分頁調整;桌機不受影響。 */
+  hideMaRowOnMobile?: boolean;
 }) {
   const selLabel = branchFlowLabel ?? SEL_TITLE;
   const fmtSel = branchFlowFormat ?? fmtLotsUnit;
@@ -544,6 +548,7 @@ export default function KChart({
         </span>
       </div>
       {/* ── Row 2：均線 + 布林 + 桌機主力(手機單行橫滑,不再佔兩行) ── */}
+      {!(isMobile && hideMaRowOnMobile) && (
       <div
         className={cn(
           "flex items-center gap-1.5 px-0.5 pb-2",
@@ -586,6 +591,7 @@ export default function KChart({
           </label>
         )}
       </div>
+      )}
       {/* 呼叫端的說明列(例:權證分頁的「代號 券商 · 股票 · 區間金額」),緊接在均線列下方、
           圖表上緣;使用者 2026-10-02 要求整合到這裡,而不是在 K 線上方另起一行。 */}
       {caption && (

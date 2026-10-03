@@ -356,7 +356,7 @@ export default function WarrantBranchPanel({
   const anyTag = !exclude && [...buys, ...sells].some((r) => selfIssuedTag(r.self));
 
   return (
-    <section className="grid gap-3 rounded-[var(--r-lg)] border border-border bg-card p-3.5 shadow-[var(--shadow-card)]">
+    <section className="grid gap-3 max-md:gap-2 rounded-[var(--r-lg)] border border-border bg-card p-3.5 shadow-[var(--shadow-card)]">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <div className="max-md:w-full">
           {/* 手機:說明折起來、與標題同一行,讓券商列與整張圖留在同一屏;展開時換到下一行全寬。 */}
@@ -364,7 +364,7 @@ export default function WarrantBranchPanel({
             <h3 className="text-sm font-bold text-foreground">權證分點進出</h3>
             {dataDate && <span className="ml-auto text-[11px] text-muted-foreground md:hidden">資料日 {dataDate}</span>}
             <details className={cn("group md:hidden open:basis-full", !dataDate && "ml-auto")}>
-              <summary className="flex min-h-8 cursor-pointer list-none items-center gap-1 text-[11.5px] text-muted-foreground [&::-webkit-details-marker]:hidden">
+              <summary className="flex min-h-7 cursor-pointer list-none items-center gap-1 text-[11.5px] text-muted-foreground [&::-webkit-details-marker]:hidden">
                 說明<SummaryChevron />
               </summary>
               <p className="pb-1 text-[11.5px] leading-relaxed text-muted-foreground">
@@ -432,7 +432,7 @@ export default function WarrantBranchPanel({
         // 手機 DOM 順序:券商列 → K 線 → 註記 → 排行與搜尋(折疊) → 權證明細(折疊)。
         // 右欄在手機上是 display:contents,子元素直接排進這個單欄 grid,再用 order 把
         // 兩個折疊區排到最後;桌機(md 以上)左右兩欄與改版前相同。
-        <div className="grid min-w-0 gap-3 md:grid-cols-[minmax(0,17rem)_minmax(0,1fr)]">
+        <div className="grid min-w-0 gap-3 max-md:gap-2 md:grid-cols-[minmax(0,17rem)_minmax(0,1fr)]">
           <BrokerStrip items={stripItems} selected={selected} onSelect={setPicked} />
           <details
             open={isDesktop || ranksOpen}
@@ -513,6 +513,7 @@ export default function WarrantBranchPanel({
                 candles={candles}
                 visibleDays={120}
                 mobileHeightClass={MOBILE_CHART_HEIGHT}
+                hideMaRowOnMobile
                 branchFlow={series}
                 branchFlowLabel={selected ? `${selected} 權證進出` : undefined}
                 branchFlowFormat={fmtWanValueSigned}
