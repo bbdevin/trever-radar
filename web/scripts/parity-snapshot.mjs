@@ -205,6 +205,10 @@ try {
   {
     const context = await newContext(browser, VIEWPORTS[0], { fixedClock: false });
     const page = await context.newPage();
+    const rscRequests = [];
+    page.on("request", (r) => {
+      if (new URL(r.url()).pathname.endsWith(".txt")) rscRequests.push(r.url());
+    });
     await page.goto(`${BASE}/`, { waitUntil: "load" });
     await settle(page);
     await page.evaluate(() => {
@@ -216,8 +220,13 @@ try {
     // 綜合分頁在 fixture 上可能為空;切到「市場掃描」取第一張卡(也順便驗證返回後 ?tab= 還原)。
     await page.locator("main [role=tablist]").first().locator("[role=tab]", { hasText: "市場掃描" }).click();
     await settle(page);
+    const rscBefore = rscRequests.length;
+    await page.locator('main a[href^="/stock?id="]').first().locator('[role=button][aria-label="加入自選"]').click();
+    await page.waitForTimeout(800);
+    steps.push({ step: "click ★ inside card (must not navigate)", url: page.url(), sameDocument: await marker() });
     const card = page.locator('main a[href^="/stock?id="]').first();
     const href = await card.getAttribute("href");
+    navResult["RSC (.txt) requests before first click (prefetch)"] = rscBefore;
     await card.click();
     await page.waitForURL((u) => u.pathname === "/stock");
     await settle(page);
@@ -241,6 +250,9 @@ try {
     await settle(page);
     steps.push({ step: "search → 6488", url: page.url(), sameDocument: await marker(), identity: await page.getByTestId("stock-identity-line").getAttribute("aria-label").catch(() => null) });
 
+    // 先切到非預設分頁,換股後應回到預設 K 線(與以前整頁載入相同)。
+    await page.getByTestId("stock-tab-tech").click();
+    await settle(page);
     await page.getByRole("button", { name: "搜尋股票" }).click();
     await page.getByPlaceholder(/輸入代號或名稱/).fill("4967");
     await page.getByRole("option").first().waitFor({ state: "visible" });
@@ -264,7 +276,22 @@ try {
     await settle(page);
     steps.push({ step: "bottom nav → /watchlist", url: page.url(), sameDocument: await marker() });
 
-    const navEntries = await page.evaluate(() => performance.getEntriesByType("navigation").length);
+    // 深連結在 client 導覽下仍生效:#branch → 籌碼日報、?tab=margin → 資券(以 Next 的 app router 直接導覽)。
+    const hasNextRouter = await page.evaluate(() => Boolean(window.next?.router?.push));
+    if (hasNextRouter) {
+      for (const target of ["/stock?id=4967#branch", "/stock?id=4967&tab=margin", "/stock?id=6488&tab=tech"]) {
+        await page.evaluate((t) => window.next.router.push(t), target);
+        await page.waitForURL((u) => `${u.pathname}${u.search}${u.hash}` === target);
+        await settle(page);
+        steps.push({
+          step: `router.push ${target}`,
+          sameDocument: await marker(),
+          selectedTab: await page.locator('[data-testid^="stock-tab-"][aria-selected="true"]').getAttribute("data-testid").catch(() => null),
+        });
+      }
+    }
+
+    const navEntries =await page.evaluate(() => performance.getEntriesByType("navigation").length);
     navResult["client nav steps"] = steps;
     navResult["performance navigation entries after flow"] = navEntries;
     await context.close();
