@@ -10,6 +10,12 @@
 - **右滑提示**(使用者:「讓使用者清楚表示還可以往右滑」):新元件 `ScrollHint`——可橫滑的分頁列/按鈕列在有隱藏內容那側顯示同底色淡出＋藍色 ‹ › 鈕(點了捲 70%),選中分頁自動捲入可見,首次進入輕推一下示意(減少動態時不推)。套用首頁/個股/分點分頁列、K 線範圍與手機工具列、分點下鑽範圍列;表格尚未套用。規則記 `docs/19` 第 15 條。
 - 驗證:Playwright 對同一份資料、390/1280 兩寬度 78 個畫面文字改前改後逐字相同;登入情境(換帳號、核准↔拒絕切回分頁、token 更新、登出、700ms 重試)實測;node 189 pass、tsc、build 通過。兩次獨立 verifier,第一次抓到的兩個登入問題已修。
 - 新工具:`web/scripts/parity-snapshot.mjs`(改版前後頁面文字比對;假 Supabase session,不加正式繞過)。
+## 2026-10-04 點個股立即有轉圈圈＋完整預載
+
+- 使用者:改成站內換頁後「要等很久才跳頁」、「至少要有 loading 轉圈圈」。原因:Next 15 預設 auto 預載以 `/stock`(不含 `?id=`)為快取鍵,可見卡片互相覆蓋 → 點擊後仍要重抓頁面 payload;且沒有 `loading.tsx`,舊頁停在畫面直到新頁就緒。
+- 修法:`NavFeedback`(document capture 階段監聽點擊,直接改 DOM,下一幀就畫)→ 卡片變暗＋藍色轉圈、頂部載入條、其他連結出「載入中」小牌;`app/stock/loading.tsx`＋共用 `StockPageSkeleton`;StockCard `prefetch` 全量,分點頁/搜尋先 `router.prefetch('/stock')`。減少動態效果時改脈動圓點。
+- 實測(390px、CPU×4、1.6 Mbps/150 ms):點擊到出現轉圈 66–89 ms;點擊後不再有頁面 payload 請求(只剩個股資料 JSON)。72 張頁面文字快照改前改後相同;node 189、tsc、build 通過。個股資料 JSON 下載(~1.5 s)仍是點擊後的主要等待 → `docs/44` P1 拆檔解決。
+
 ## 2026-10-04 WITHOUT ROWID 離線轉換:程式上線,維護窗進行中(使用者要求今天做)
 
 - 2026-10-04 01:39 VPS 持鎖拍快照(integrity ok、sha256 397d8254…);PC 轉換 10 分鐘:9.03 GB → **5.56 GB**(`_date_cover` 版)。Planner(Fable)最終版面:兩表 WITHOUT ROWID＋`ix_branch_trades_raw_date_cover`(取代 `_date`)、`_branch` 保留、ANALYZE、`db.py` cache_size 64 MB。評分/口袋 20 日窗改走 `branch_source.py`(有 `_date_cover` 才加 INDEXED BY)。`daily_prices` 日期窗(b5/b6)讀取量增加但時間在容許內,依 Planner §2.4 接受。三輪獨立 verifier,最後一輪 5 項全 CONFIRMED。
