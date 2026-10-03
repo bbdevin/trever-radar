@@ -38,6 +38,14 @@
 
 - 使用者決定不等 3 天量測,`import-futures-day` 直接接進 16:10 `daily-insti.sh` 與 17:40／22:00 `daily-branches.sh`(75 只記 log、其他非 0 只 warn、不擋本輪);probe 保留量到 10-07 後移除;21:20 OpenAPI `import-futures` 改為官方覆核;`futures-day.sh` 已刪;export 期貨 stale 規則收回 `(d, prev)`;首頁時間表改「16:10 當日、17:40 補」。Z = 接上後第一個正式 16:10 輪(預計 2026-10-05)。見 `docs/38` §7.18。
 
+## 2026-10-03 地緣:上櫃公司地址改中文來源＋地址解析補強
+
+- 起因:4967 十銓地緣標籤 0。正式庫唯讀掃描:`company_profiles` 1988 檔中 **993 檔 city 為空** → 這些股票地緣全空。
+- 根因 1(892 檔上櫃全中):TPEx OpenAPI `mopsfin_t187ap03_O` 的 `Address` 是英文通訊地址。改抓 MOPS 同表 CSV `https://mopsfin.twse.com.tw/opendata/t187ap03_O.csv`(欄位同上市 `t187ap03_L`,中文「住址」);缺「住址」欄 → raise,`import_geo` 先抓後刪不受影響。VPS 連得到(HTTP 200)。
+- 根因 2(解析器):`parse_city_district` 補 巿(U+5DFF)異體字、郵遞區號前綴/城市後郵遞區號、縣轄市(彰化市→彰化縣…;新竹/嘉義/基隆市不動)、舊縣(台北縣板橋市→新北市板橋區…)、北市/南市縮寫、中華民國/台灣前綴;雙北無行政區時用 3 碼郵遞區號補(與正式庫 237 筆同時寫區名＋郵遞區號的地址比對 0 不一致)。
+- 預估效果(以今日來源離線模擬,非正式量測):city 空 993 → 51(41 開曼/泰國等英文 + 10 港陸越 + 1 只寫區名);雙北缺區 101 → 131 仍判不了(地址無區名也無郵遞區號,例 `台北市松江路168號`,需路名表,未做)。分點表 city 空 61 → 33(其餘為「免設／同上／無」)。
+- 生效:每週一 14:10 `import-geo`(`daily-market.sh`)會重抓重解析兩表,程式到 VPS 後下個週一自動生效,不需手動寫庫。
+
 ## 2026-10-03 盤中 worker 自選池只讀已核准使用者
 
 - `pipeline/intraday/worker.py::fetch_watchlist_ids` 原以 service_role 讀全部 `watchlist` 列 → pending/rejected 帳號的自選也會進監控池(耗 Fugle 額度、觸發推播)。改為先讀 `app_profiles.status='approved'` 的 user_id 再 `in_` 過濾(client 端二次驗證);app_profiles 讀取失敗 → fail closed,自選池為空,Armed 池照常。測試 30 pass(`cd pipeline; pytest tests/test_intraday_worker.py`)。

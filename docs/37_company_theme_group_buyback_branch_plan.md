@@ -63,7 +63,7 @@ A2 是語意決策關卡，不是單純修 UI。Executor 先產出對照表與�
 
 ### 資料與來源 PoC
 
-- 上市公司：TWSE `t187ap03_L`；上櫃公司：TPEx `mopsfin_t187ap03_O`。先確認地址欄位、更新頻率、代號覆蓋率與空值比例。
+- 上市公司：TWSE `t187ap03_L`；上櫃公司：MOPS `t187ap03_O.csv`(2026-10-03 起;原 TPEx `mopsfin_t187ap03_O` 地址為英文,見 `docs/27` §來源表)。先確認地址欄位、更新頻率、代號覆蓋率與空值比例。
 - 股務代理欄位需先從同一批官方公司基本資料／公開資訊來源驗證欄名與穩定性；若官方資料未提供，不以爬蟲猜測，改呈現「官方資料未提供」並記錄來源缺口。
 - 建議 additive 欄位：`company_profiles.address / city / district / transfer_agent / source / source_updated_at`。正式 migration 前須檢查目前 schema 與既有 upsert 行為。
 

@@ -26,8 +26,116 @@ class ParseAddressTests(unittest.TestCase):
     def test_hsinchu_science_park(self):
         self.assertEqual(parse_city_district("新竹科學園區力行六路8號"), ("新竹市", None))
 
+    def test_park_with_explicit_other_county_uses_written_county(self):
+        cases = {
+            "新竹科學園區新竹縣寶山鄉創新一路18號1樓": ("新竹縣", "寶山鄉"),
+            "新竹科學園區苗栗縣銅鑼鄉九湖村銅科二路8號": ("苗栗縣", "銅鑼鄉"),
+            "350新竹科學工業園區苗栗縣竹南鎮科北二路8號": ("苗栗縣", "竹南鎮"),
+            "中部科學園區雲林縣虎尾鎮科虎一路8號": ("雲林縣", "虎尾鎮"),
+            "744094南部科學園區台南市新市區南科六路1號": ("台南市", "新市區"),
+        }
+        for addr, want in cases.items():
+            with self.subTest(addr=addr):
+                self.assertEqual(parse_city_district(addr), want)
+
+    def test_house_number_after_city_is_not_postal(self):
+        self.assertEqual(parse_city_district("台北市104號"), ("台北市", None))
+
     def test_unparseable_is_none(self):
         self.assertEqual(parse_city_district("力行六路8號"), (None, None))
+
+    def _check(self, cases):
+        for addr, expected in cases:
+            with self.subTest(addr=addr):
+                self.assertEqual(parse_city_district(addr), expected)
+
+    def test_postal_prefix(self):
+        self._check([
+            ("71001台南市永康區中正路301號", ("台南市", "永康區")),
+            ("(104)台北市中山區松江路111號12樓", ("台北市", "中山區")),
+            ("320 桃園市中壢區中正路1號", ("桃園市", "中壢區")),
+            ("(806011)高雄市前鎮區成功二路1號", ("高雄市", "前鎮區")),
+            ("（235）新北市中和區建一路166號", ("新北市", "中和區")),
+        ])
+
+    def test_variant_shi_char(self):
+        self._check([
+            ("(235)新北巿中和區建一路166號3樓", ("新北市", "中和區")),  # 4967 十銓
+            ("高雄巿前金區中正四路170號", ("高雄市", "前金區")),
+            ("新北巿新店區中正路190號8樓", ("新北市", "新店區")),
+        ])
+
+    def test_county_seat_without_county(self):
+        self._check([
+            ("彰化市中山路3段359號", ("彰化縣", "彰化市")),
+            ("南投市中興路1號", ("南投縣", "南投市")),
+            ("苗栗市中正路1號", ("苗栗縣", "苗栗市")),
+            ("屏東市自由路1號", ("屏東縣", "屏東市")),
+            ("宜蘭市中山路1號", ("宜蘭縣", "宜蘭市")),
+            ("臺東市中華路1號", ("台東縣", "台東市")),
+            ("花蓮市中正路1號", ("花蓮縣", "花蓮市")),
+            ("斗六市雲林路1號", ("雲林縣", "斗六市")),
+            ("太保市祥和一路1號", ("嘉義縣", "太保市")),
+            ("朴子市開元路1號", ("嘉義縣", "朴子市")),
+            ("竹北市光明六路1號", ("新竹縣", "竹北市")),
+            ("頭份市中華路1號", ("苗栗縣", "頭份市")),
+            ("員林市中山路1號", ("彰化縣", "員林市")),
+        ])
+
+    def test_provincial_cities_not_remapped(self):
+        self._check([
+            ("新竹市東區光復路1號", ("新竹市", "東區")),
+            ("嘉義市西區中山路1號", ("嘉義市", "西區")),
+            ("基隆市仁愛區仁一路1號", ("基隆市", "仁愛區")),
+        ])
+
+    def test_old_counties(self):
+        self._check([
+            ("台北縣板橋市文化路一段1號", ("新北市", "板橋區")),
+            ("台中縣沙鹿鎮中山路1號", ("台中市", "沙鹿區")),
+            ("台南縣麻豆鎮興中路1號", ("台南市", "麻豆區")),
+            ("高雄縣岡山鎮岡山路1號", ("高雄市", "岡山區")),
+            ("桃園縣中壢市中正路1號", ("桃園市", "中壢區")),
+            ("台中縣烏日鄉中山路1號", ("台中市", "烏日區")),
+            ("臺南縣新市鄉中山路1號", ("台南市", "新市區")),
+        ])
+
+    def test_abbreviations_and_country_prefix(self):
+        self._check([
+            ("北市南京東路二段1號", ("台北市", None)),
+            ("南市東區中華東路1號", ("台南市", "東區")),
+            ("新北市板橋區文化路1號", ("新北市", "板橋區")),
+            ("臺灣雲林縣斗六市雲林路1號", ("雲林縣", "斗六市")),
+            ("台灣台北市大安區敦化南路1號", ("台北市", "大安區")),
+            ("中華民國台灣台北市內湖區新明路138號7樓", ("台北市", "內湖區")),
+        ])
+
+    def test_postal_after_city(self):
+        self._check([
+            ("台北市104中山區長安東路一段23號5樓之6", ("台北市", "中山區")),
+            ("台北市114民權東路六段160號11樓", ("台北市", "內湖區")),
+        ])
+
+    def test_dual_north_postal_fills_district(self):
+        self._check([
+            ("104台北市松江路162號11樓", ("台北市", "中山區")),
+            ("(220)新北市文化路一段1號", ("新北市", "板橋區")),
+            ("台北市延平南路八十一號", ("台北市", None)),
+            # 郵遞區號屬台北但地址是新北:不補區
+            ("104新北市文化路一段1號", ("新北市", None)),
+            # 文字已有區,以文字為準
+            ("104台北市大安區敦化南路1號", ("台北市", "大安區")),
+        ])
+
+    def test_foreign_and_placeholders_stay_none(self):
+        self._check([
+            ("Floor 4, Willow House, Cricket Square, Grand Cayman", (None, None)),
+            ("100 Pine Street, San Francisco", (None, None)),
+            ("免設營業廳", (None, None)),
+            ("同上", (None, None)),
+            ("無", (None, None)),
+            ("板橋區民生路一段一號", (None, None)),
+        ])
 
 
 class NameTests(unittest.TestCase):
@@ -65,20 +173,30 @@ class OfficialCompanyProviderTests(unittest.TestCase):
             "source": opendata.TWSE_COMPANY, "source_updated_at": "2026-08-26",
         }])
 
-    def test_otc_company_maps_exact_english_fields_and_empty_to_none(self):
-        rows = [{
-            "SecuritiesCompanyCode": "5469", "Address": "高雄市前鎮區",
-            "SecuritiesIndustryCode": " 09 ", "StockTransferAgent": "",
-            "StockTransferAgentTelephone": " ", "StockTransferAgentAddress": None, "Date": "20260826",
-        }]
-        with patch("radar.providers.opendata.get_json", return_value=rows):
+    def test_otc_company_reads_chinese_address_from_mops_csv(self):
+        # TPEx OpenAPI 的 Address 是英文通訊地址;上櫃改讀 MOPS CSV 的中文「住址」
+        text = (
+            "﻿出表日期,公司代號,公司名稱,住址,產業別,股票過戶機構,過戶電話,過戶地址,英文通訊地址\n"
+            '1151003,1240,茂生農經,台北市和平西路一段三十號二樓, 33 ,,  ,,"2F.,No.30,Sec. 1,Heping W.Rd.,Taipei"\n'
+            ",,空代號列,,,,,,\n"
+        )
+        with patch("radar.providers.opendata.get_text", return_value=text) as get_text:
             result = opendata.fetch_otc_companies()
-        self.assertEqual(result[0]["stock_id"], "5469")
-        self.assertEqual(result[0]["industry_code"], "09")
+        self.assertEqual(get_text.call_args.args[0], opendata.TPEX_COMPANY)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["stock_id"], "1240")
+        self.assertEqual(result[0]["address"], "台北市和平西路一段三十號二樓")
+        self.assertEqual(result[0]["market"], "tpex")
+        self.assertEqual(result[0]["industry_code"], "33")
         self.assertIsNone(result[0]["transfer_agent"])
         self.assertIsNone(result[0]["transfer_agent_phone"])
         self.assertIsNone(result[0]["transfer_agent_address"])
-        self.assertEqual(result[0]["source_updated_at"], "2026-08-26")
+        self.assertEqual(result[0]["source_updated_at"], "2026-10-03")
+
+    def test_otc_company_rejects_payload_without_chinese_address(self):
+        with patch("radar.providers.opendata.get_text", return_value="SecuritiesCompanyCode,Address\n1240,x\n"):
+            with self.assertRaises(RuntimeError):
+                opendata.fetch_otc_companies()
 
 
 class ImportGeoTests(unittest.TestCase):

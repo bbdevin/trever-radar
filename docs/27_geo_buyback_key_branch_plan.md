@@ -76,7 +76,7 @@
 | 資料 | 端點 | 結果 |
 |---|---|---|
 | 上市公司地址 | `https://openapi.twse.com.tw/v1/opendata/t187ap03_L` | ✅ 1,089 筆,`住址` 欄存在(2330=新竹科學園區力行六路8號) |
-| 上櫃公司地址 | `https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap03_O` | ✅ 891 筆,`Address` 欄存在;合計 1,980 ≈ 全市場 |
+| 上櫃公司地址 | ~~`https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap03_O`~~ → **`https://mopsfin.twse.com.tw/opendata/t187ap03_O.csv`(2026-10-03 起)** | TPEx OpenAPI 的 `Address` 是**英文**通訊地址,上櫃 892 檔全抽不到縣市(地緣標籤全空)。MOPS 同表 CSV 欄位與上市 `t187ap03_L` 相同,有中文「住址」。合計 1,987 ≈ 全市場 |
 | 券商分公司 | `https://openapi.twse.com.tw/v1/opendata/OpenData_BRK02` | ✅ 812 筆:證券商代號/名稱/地址/電話;**名稱格式即「統一-三多」,與我方 branch_name 同慣例** |
 | 券商總公司 | `https://openapi.twse.com.tw/v1/brokerService/brokerList` | ✅ 64 筆(Code/Name/Address) |
 | 庫藏股 | TWSE OpenAPI **無端點** | ⚠️ 待深挖:候選 = MOPS 查詢頁(POST/HTML)或 data.gov.tw 資料集;KB 工作包 +0.5 天前置 |
