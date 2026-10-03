@@ -352,14 +352,15 @@ function StockView() {
             [
               { key: "chart" as const, label: "K線" },
               { key: "chips" as const, label: "籌碼日報" },
+              // 使用者 2026-10-03:權證、期貨緊接在籌碼日報右邊(手機上不用橫滑到最後才找得到)。
+              { key: "warrant" as const, label: "權證" },
+              // 只有確實有個股期貨的股票才有這個分頁;沒有或還沒匯入時不出現。
+              ...(futuresTab.show ? [{ key: "futures" as const, label: "期貨" }] : []),
               { key: "insti" as const, label: "三大法人" },
               { key: "tech" as const, label: "技術" },
               { key: "holders" as const, label: "大戶" },
               { key: "basic" as const, label: "基本資料" },
               { key: "margin" as const, label: "資券" },
-              { key: "warrant" as const, label: "權證" },
-              // 只有確實有個股期貨的股票才有這個分頁;沒有或還沒匯入時不出現。
-              ...(futuresTab.show ? [{ key: "futures" as const, label: "期貨" }] : []),
             ]
           ).map((t) => (
           <button
