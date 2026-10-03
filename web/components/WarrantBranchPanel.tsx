@@ -98,10 +98,14 @@ const LARGE_AMOUNT = 5_000_000;
 const DETAIL_CONTRACT_VERSION = 1;
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 /**
- * 手機版 K 線高度(2026-10-03):390×844 扣掉頁首、個股摘要列、分頁列與底部導覽約剩
- * 620px,要讓「切換券商列 + 整張圖」同屏,圖只能約 350px。桌機不受影響。
+ * 手機版 K 線高度。2026-10-03 第一版為了讓「切換券商列 + 整張圖」同屏只給約 350px;
+ * 同日使用者回饋「這張圖要大一點,主要就是看這個」,改成約 490px(390×844),
+ * 並以 WARRANT_MOBILE_PANES 讓底部「權證進出」pane 與主圖一樣大、量縮小。
+ * 代價:切換列與整張圖不再保證同屏(捲動時圖表與其工具列可佔滿可視區)。桌機不受影響。
  */
-export const MOBILE_CHART_HEIGHT = "[height:clamp(300px,42vh,380px)]";
+export const MOBILE_CHART_HEIGHT = "[height:clamp(420px,58vh,520px)]";
+/** 手機版 pane 比例:主圖 : 量 : 權證進出。 */
+export const WARRANT_MOBILE_PANES = [12, 3, 12] as const;
 
 function SummaryChevron() {
   return (
@@ -520,6 +524,7 @@ export default function WarrantBranchPanel({
                 candles={candles}
                 visibleDays={120}
                 mobileHeightClass={MOBILE_CHART_HEIGHT}
+                mobilePaneFactors={WARRANT_MOBILE_PANES}
                 hideMaRowOnMobile
                 branchFlow={series}
                 branchFlowLabel={selected ? `${selected} 權證進出` : undefined}

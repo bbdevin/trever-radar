@@ -121,6 +121,7 @@ export default function KChart({
   caption,
   mobileHeightClass = DEFAULT_MOBILE_HEIGHT,
   hideMaRowOnMobile = false,
+  mobilePaneFactors,
 }: {
   candles: Candle[];
   visibleDays: number;
@@ -141,6 +142,9 @@ export default function KChart({
   /** 手機版不顯示均線／布林 chip 列(權證分頁要讓券商列與整張圖同屏)。均線設定存在
    *  localStorage、各分頁共用,仍可在 K 線分頁調整;桌機不受影響。 */
   hideMaRowOnMobile?: boolean;
+  /** 手機版三個 pane(主圖/量/子 pane)的高度比;缺省 16:4:8。權證分頁主要看子 pane 的
+   *  權證進出,傳 [12,3,12] 讓它與主圖一樣大(使用者 2026-10-03)。請傳模組層級常數(effect 相依)。 */
+  mobilePaneFactors?: readonly [number, number, number];
 }) {
   const selLabel = branchFlowLabel ?? SEL_TITLE;
   const fmtSel = branchFlowFormat ?? fmtLotsUnit;
@@ -341,9 +345,10 @@ export default function KChart({
         titlesRef.current = []; // 手機不建 pane 內 watermark(避免小 pane 壓資料),數值走上方 compact legend
         // 主圖佔比加大;子 pane 於放大後總高仍 ≥120px
         // 主圖再加大(使用者 2026-10-02:手機 K 棒過小),副圖退到約三成
-        paneFactor(0, 16);
-        paneFactor(1, 4);
-        paneFactor(2, 8);
+        const [f0, f1, f2] = mobilePaneFactors ?? [16, 4, 8];
+        paneFactor(0, f0);
+        paneFactor(1, f1);
+        paneFactor(2, f2);
       } else {
         // 桌機:副圖常駐 pane 2,主力/分點依序接 pane 3/4(逐位元不變)
         addSub(2);
@@ -450,7 +455,7 @@ export default function KChart({
       chartRef.current = undefined;
       titlesRef.current = [];
     };
-  }, [bars, calc, flow, settings, visibleDays, mobilePaneKey, isMobile, selLabel, fmtSel]);
+  }, [bars, calc, flow, settings, visibleDays, mobilePaneKey, isMobile, selLabel, fmtSel, mobilePaneFactors]);
 
   // 主題切換:就地更新既有 chart 的 grid/軸/水印色(不重建 → 不閃爍)。chart 建立時已用當下主題色,故此處僅處理「建立後」的切換。
   useEffect(() => {
