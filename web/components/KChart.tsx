@@ -25,7 +25,9 @@ type MaKey = (typeof MA_DEFS)[number]["key"];
 type SubKey = "macd" | "kd" | "rsi";
 /** 手機版子 pane 切換 key(< 768px)：sub=副圖、main=主力買賣超、sel=分點進出 */
 type MobilePaneKey = "sub" | "main" | "sel";
-const LS_MOBILE_PANE = "trever.chart.mobilepane.v1";
+// v2(2026-10-03):使用者要「K 線主力預設選取」——預設改成主力買賣超;換 key 讓舊的「副圖」記憶失效一次,
+// 之後使用者自己切換仍會被記住。沒有主力資料的圖會自動退回副圖(effPane)。
+const LS_MOBILE_PANE = "trever.chart.mobilepane.v2";
 
 interface Settings {
   ma: Record<MaKey, boolean>;
@@ -154,8 +156,12 @@ export default function KChart({
   const [settings, setSettings] = useState<Settings>(loadSettings);
   // 手機版子 pane 切換(< 768px)；桌機版全部 pane 同時顯示
   const [mobilePaneKey, setMobilePaneKey] = useState<MobilePaneKey>(() => {
-    if (typeof window === "undefined") return "sub";
-    return (localStorage.getItem(LS_MOBILE_PANE) as MobilePaneKey | null) ?? "sub";
+    if (typeof window === "undefined") return "main";
+    try {
+      return (localStorage.getItem(LS_MOBILE_PANE) as MobilePaneKey | null) ?? "main";
+    } catch {
+      return "main";
+    }
   });
   // 手機版偵測(<768px)。KChart 僅在資料載入後於 client 渲染(SSR 期間顯示骨架屏),
   // 故初始化直接讀 matchMedia,無 hydration mismatch;跨斷點時觸發 chart 重建(effect 依賴 isMobile)。
