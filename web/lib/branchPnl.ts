@@ -10,7 +10,7 @@ import type { BranchPnlEst, BranchPnlRow, BranchPnlWindow } from "@/lib/types";
 export const PNL_HEADING = "區間損益（估算）";
 export const PNL_LEAD =
   "只用這檔每日前 15 大進出看得見的買賣，以當日收盤價當成交價、平均成本法估算；"
-  + "看不見的日子視為沒交易，區間起點視為零持股。不含手續費、交易稅與股利。";
+  + "看不見的日子視為沒交易，區間起點視為零持股。不含手續費與交易稅；股利只在調整因子有更新的期間才反映。";
 export const PNL_POS_NOTE = "以未實現為主：若已在榜外出清，實際結果會不同。";
 export const PNL_AF_NOTE = "區間內有調整因子變動，成本已換算到今日股本。";
 export const PNL_FOOTER =
@@ -81,9 +81,9 @@ export function sideCount(win: BranchPnlWindow, side: PnlSide): number {
   return side === "gain" ? (win.n_gainers ?? win.gainers.length) : (win.n_losers ?? win.losers.length);
 }
 
-/** 「看得見 N 個分點：估算賺 X 個、賠 Y 個」——個數,不是金額,不是比率。 */
+/** 「符合門檻的 N 個分點：估算賺 X 個、賠 Y 個」——個數,不是金額,不是比率。 */
 export function summaryText(win: BranchPnlWindow): string {
-  return `看得見 ${win.pairs_considered} 個分點：估算賺 ${sideCount(win, "gain")} 個、賠 ${sideCount(win, "loss")} 個`;
+  return `符合門檻的 ${win.pairs_considered} 個分點：估算賺 ${sideCount(win, "gain")} 個、賠 ${sideCount(win, "loss")} 個`;
 }
 
 export function captionText(row: BranchPnlRow): string {

@@ -242,7 +242,7 @@ function PnlCard({
           <span className="num block text-[13px] font-bold text-foreground">{fmtPrice(row.avg_cost)}</span>
           <span className="num block text-[11.5px] text-muted-foreground">→ {fmtPrice(row.last_close)}</span>
         </Tile>
-        <Tile label="持有（下限）">
+        <Tile label="估算持有">
           <span className="num block text-[13px] font-bold text-foreground">{row.pos_lots.toLocaleString("zh-TW")} 張</span>
         </Tile>
         <Tile label="已實現／未實現">

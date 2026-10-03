@@ -44,7 +44,7 @@ test("鎖定文案逐字", () => {
   assert.equal(PNL_HEADING, "區間損益（估算）");
   assert.equal(
     PNL_LEAD,
-    "只用這檔每日前 15 大進出看得見的買賣，以當日收盤價當成交價、平均成本法估算；看不見的日子視為沒交易，區間起點視為零持股。不含手續費、交易稅與股利。",
+    "只用這檔每日前 15 大進出看得見的買賣，以當日收盤價當成交價、平均成本法估算；看不見的日子視為沒交易，區間起點視為零持股。不含手續費與交易稅；股利只在調整因子有更新的期間才反映。",
   );
   assert.equal(PNL_POS_NOTE, "以未實現為主：若已在榜外出清，實際結果會不同。");
   assert.equal(unattributedNote(120), "另有 120 張賣出找不到對應買進（區間前已持有或榜外買進），未計入。");
@@ -81,9 +81,9 @@ test("帶號金額會被 ChangeText 上色", () => {
 });
 
 test("摘要句是個數", () => {
-  assert.equal(summaryText(win()), "看得見 37 個分點：估算賺 21 個、賠 16 個");
+  assert.equal(summaryText(win()), "符合門檻的 37 個分點：估算賺 21 個、賠 16 個");
   // 舊 payload 沒有 n_gainers → 用清單長度
-  assert.equal(summaryText(win({ n_gainers: undefined, n_losers: undefined })), "看得見 37 個分點：估算賺 1 個、賠 0 個");
+  assert.equal(summaryText(win({ n_gainers: undefined, n_losers: undefined })), "符合門檻的 37 個分點：估算賺 1 個、賠 0 個");
 });
 
 test("條件註記與說明列", () => {
