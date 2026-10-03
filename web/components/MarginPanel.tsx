@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import Link from "next/link";
 import type { Candle, MarginHistoryPoint, MarginMeta, StockJson } from "@/lib/types";
 import { fmtLots, fmtLotsPlain, toneClass } from "@/lib/format";
 import { cn, pillTabClass } from "@/lib/utils";
@@ -99,12 +100,12 @@ export default function MarginPanel({ data, candles }: { data: StockJson; candle
             )}
           </>
         )}
-        <a
+        <Link
           href="/?tab=margin"
           className="ml-auto inline-flex min-h-9 items-center text-[12px] font-semibold text-primary hover:underline"
         >
           使用率排行 →
-        </a>
+        </Link>
       </div>
 
       <p className="text-[11px] leading-relaxed text-muted-foreground">

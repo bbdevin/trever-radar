@@ -1,6 +1,7 @@
 "use client";
 
 import { Fragment, Suspense, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import {
   type ColumnDef,
@@ -266,7 +267,7 @@ function StockView() {
         <div className="flex min-h-full min-w-0 flex-col">
           <header ref={setHeaderEl} data-testid="stock-header" className="shrink-0 pb-1.5">
             <div className="grid min-w-0 grid-cols-[2.75rem_minmax(0,1fr)] items-start gap-1">
-              <a href="/" className="inline-flex size-11 items-center justify-center rounded-full text-muted-foreground transition-colors duration-200 hover:bg-secondary hover:text-foreground" aria-label="返回雷達"><IconArrowLeft size={17} /></a>
+              <Link href="/" className="inline-flex size-11 items-center justify-center rounded-full text-muted-foreground transition-colors duration-200 hover:bg-secondary hover:text-foreground" aria-label="返回雷達"><IconArrowLeft size={17} /></Link>
               <div className="min-w-0 pt-1.5">
                 <div data-testid="stock-primary-row" className="min-w-0">
                   <h1 data-testid="stock-identity-line" aria-label={`${data.id} ${data.name}`} className="flex min-w-0 flex-wrap items-baseline gap-2.5 font-extrabold leading-tight tracking-[-0.02em]">
@@ -582,9 +583,9 @@ function BasicInfoPanel({ data, quoteDate }: { data: StockJson; quoteDate: strin
             <p className="text-xs text-muted-foreground">集團</p>
             <div className="mt-1.5 flex flex-wrap gap-2">
               {data.company_groups.map((group) => (
-                <a key={group.id} href={`/group?id=${encodeURIComponent(group.id)}`} className="inline-flex min-h-11 items-center gap-1 rounded-full border border-[color:var(--accent-2)]/40 px-2.5 text-xs font-semibold text-[color:var(--accent-2)] transition-colors duration-200 hover:bg-[color:var(--accent-2)]/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" title={`查看${group.name}成員股`}>
+                <Link key={group.id} href={`/group?id=${encodeURIComponent(group.id)}`} className="inline-flex min-h-11 items-center gap-1 rounded-full border border-[color:var(--accent-2)]/40 px-2.5 text-xs font-semibold text-[color:var(--accent-2)] transition-colors duration-200 hover:bg-[color:var(--accent-2)]/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" title={`查看${group.name}成員股`}>
                   <Building2 size={14} aria-hidden="true" /> {group.name}
-                </a>
+                </Link>
               ))}
             </div>
           </div>
@@ -1280,10 +1281,16 @@ function WarrantPanel({ data }: { data: StockJson }) {
   );
 }
 
+/** 站內 client 導覽換股時 StockView 不會卸載;以 id 當 key 讓每檔股票都從全新狀態開始(同以前整頁載入)。 */
+function KeyedStockView() {
+  const id = useSearchParams().get("id");
+  return <StockView key={id ?? ""} />;
+}
+
 export default function StockPage() {
   return (
     <Suspense fallback={<div className="py-[46px] text-center text-sm text-muted-foreground">載入中…</div>}>
-      <StockView />
+      <KeyedStockView />
     </Suspense>
   );
 }

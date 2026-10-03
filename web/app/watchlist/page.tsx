@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { toast } from "sonner";
 import { ArrowUpDown, ChevronDown, ShieldCheck } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -337,7 +338,7 @@ function WatchlistRow({ row }: { row: Row }) {
   const nearStop = m.stopDist != null && m.stopDist < 5;
 
   return (
-    <a
+    <Link
       href={`/stock?id=${stock_id}`}
       className={cn(
         "flex min-h-11 flex-wrap items-center gap-3 rounded-[var(--r-md)] border bg-card p-3.5 shadow-[var(--shadow-card)] cursor-pointer transition-colors duration-200 hover:border-[color:var(--border-strong)]",
@@ -411,6 +412,6 @@ function WatchlistRow({ row }: { row: Row }) {
       </div>
 
       <WatchlistButton stockId={stock_id} />
-    </a>
+    </Link>
   );
 }

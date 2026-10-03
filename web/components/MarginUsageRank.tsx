@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { AlertTriangle, Info } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { dataFetch } from "@/lib/dataFetch";
@@ -123,12 +124,12 @@ export default function MarginUsageRank({ embedded = false }: Props) {
                 >
                   <td className="num px-3 py-2.5 text-muted-foreground">{idx + 1}</td>
                   <td className="px-3 py-2.5">
-                    <a
+                    <Link
                       href={`/stock?id=${row.id}&tab=margin`}
                       className="num cursor-pointer font-bold text-primary hover:underline"
                     >
                       {row.id}
-                    </a>
+                    </Link>
                   </td>
                   <td className="max-w-[120px] truncate px-3 py-2.5" title={row.name}>
                     {row.name}

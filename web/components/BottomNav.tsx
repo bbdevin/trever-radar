@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { IconCompass, IconPulse, IconRadar, IconStar } from "@/components/Icons";
 import { cn } from "@/lib/utils";
@@ -26,8 +27,10 @@ export default function BottomNav() {
     >
       {ITEMS.map((it) => {
         const active = path === it.href || (it.href !== "/" && path.startsWith(it.href));
+        // 跨頁走 client 導覽;已在同一頁時維持原本整頁重載(回到該頁預設狀態)。
+        const Item = path === it.href ? "a" : Link;
         return (
-          <a
+          <Item
             key={it.label}
             href={it.href}
             aria-current={active ? "page" : undefined}
@@ -35,7 +38,7 @@ export default function BottomNav() {
           >
             <it.icon size={21} />
             <span>{it.label}</span>
-          </a>
+          </Item>
         );
       })}
     </nav>

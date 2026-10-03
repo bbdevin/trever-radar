@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import Link from "next/link";
 import { ChevronRight, X } from "lucide-react";
 import type { SectorFlow } from "@/lib/types";
 import ChangeText from "@/components/ChangeText";
@@ -25,7 +26,7 @@ function StockChips({ items }: { items: { id: string; name: string; chg_pct: num
       {items.map((t) => {
         const c = chgClass(t.chg_pct);
         return (
-          <a
+          <Link
             key={t.id}
             href={`/stock?id=${t.id}`}
             className="inline-flex min-h-9 items-center gap-2 rounded-[10px] border border-border bg-secondary px-2.5 py-1.5 text-[12.5px] text-foreground transition-colors hover:border-[color:var(--border-strong)]"
@@ -35,7 +36,7 @@ function StockChips({ items }: { items: { id: string; name: string; chg_pct: num
               {fmtPct(t.chg_pct)}
             </span>
             {t.turnover != null && <span className="num text-[11px] text-muted-foreground">{fmtE8(t.turnover)}</span>}
-          </a>
+          </Link>
         );
       })}
     </div>

@@ -1,6 +1,7 @@
 "use client";
 
 import { ALargeSmall, LogOut, Moon, ShieldCheck, Sun } from "lucide-react";
+import { useRouter } from "next/navigation";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -21,6 +22,7 @@ const prefBtnClass =
 export default function AuthButton() {
   const { session, loading, isAdmin } = useSession();
   const { fontScale, theme, cycleFontScale, toggleTheme } = useUserPrefs();
+  const router = useRouter();
 
   if (loading) return <span className="ml-2 size-8" />;
   if (!session) return null;
@@ -51,7 +53,7 @@ export default function AuthButton() {
             <DropdownMenuItem
               className="cursor-pointer"
               onClick={() => {
-                window.location.href = "/admin";
+                router.push("/admin");
               }}
             >
               <ShieldCheck />

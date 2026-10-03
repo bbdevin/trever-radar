@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { Activity, AlertTriangle, Clock, Radio, ShieldCheck, Star, Zap } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { useSession } from "@/lib/useSession";
@@ -190,7 +191,7 @@ function SignalRow({ s }: { s: IntradaySignal }) {
   const cleanDesc = humanizeSignalDesc(rawDesc);
 
   return (
-    <a
+    <Link
       href={`/stock?id=${encodeURIComponent(s.stock_id)}`}
       className={cn(
         "flex min-h-11 cursor-pointer items-start justify-between gap-3 rounded-md px-3 py-2.5 text-sm transition-colors duration-200 hover:bg-secondary",
@@ -235,7 +236,7 @@ function SignalRow({ s }: { s: IntradaySignal }) {
       <div className="shrink-0 text-right">
         <div className="num min-w-[52px] font-medium text-up">{Number(s.price).toFixed(2)}</div>
       </div>
-    </a>
+    </Link>
   );
 }
 
