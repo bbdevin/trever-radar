@@ -32,6 +32,7 @@
 12. **SVG 不用 emoji**(同上 lucide 規則);資料日期標注(「分點資料:7/4」)避免誤以為即時。
 13. **Tab／篩選選中說明**(2026-08-25):首頁觀察名單等橫向 pill tab，選中後必須在下方顯示**可見定義句**(非僅 `title` hover)；桌機隱藏、手機也要看得到。文案說明「這榜代表什麼／不代表什麼」，避免與空狀態／免責重複堆疊。
 14. **BottomNav ≤4～5 項**:次要榜(如資券)優先併入首頁 tab + `?tab=` 深連，不要為單一功能擠爆手機底欄；桌機頂欄可連到同一 tab。
+15. **手機橫滑列要看得出能滑**(2026-10-04):捲軸隱藏的橫向 tab/chip 列一律包 `web/components/ScrollHint.tsx`——有內容被裁掉的那一側顯示漸層(`fade` 對應容器底色:pill 列 `card`、直接在頁面上的列 `background`)+ 主色箭頭鈕(點了捲 ~70%);沒溢出時不畫。`role`/`aria-*` 照舊寫在 ScrollHint 上(落在捲動元素本身)。傳 `activeKey` 會把選中項(`aria-selected`/`aria-pressed`/`data-active`)捲進可視範圍,只捲容器不捲頁面;`peekId` 為第一次造訪輕推一次。表格的 `overflow-x-auto` 目前未套。
 
 ## 3. 對齊策略
 
