@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { dataFetch } from "@/lib/dataFetch";
@@ -77,6 +79,7 @@ function AggTable({
   rows: { stock_id: string; net_lots: number; pct_avg: number | null }[];
   stocks: BranchTrackFile["stocks"];
 }) {
+  const router = useRouter();
   if (rows.length === 0) {
     return (
       <div className="rounded-[var(--r-lg)] border border-border bg-card px-4 py-[46px] text-center text-sm text-muted-foreground">
@@ -102,14 +105,14 @@ function AggTable({
               return (
                 <tr
                   key={r.stock_id}
-                  onClick={() => { window.location.href = `/stock?id=${r.stock_id}#branch`; }}
+                  onClick={() => { router.push(`/stock?id=${r.stock_id}#branch`); }}
                   className="num cursor-pointer border-t border-[color:var(--line)] transition-colors duration-200 hover:bg-secondary"
                 >
                   <td className="px-3.5 py-2.5 text-left">
-                    <a href={`/stock?id=${r.stock_id}#branch`} onClick={(e) => e.stopPropagation()} className="flex flex-col gap-0.5 font-sans">
+                    <Link href={`/stock?id=${r.stock_id}#branch`} onClick={(e) => e.stopPropagation()} className="flex flex-col gap-0.5 font-sans">
                       <b className="text-sm font-bold text-foreground">{meta?.name ?? r.stock_id}</b>
                       <small className="text-[11px] text-muted-foreground">{r.stock_id}</small>
-                    </a>
+                    </Link>
                   </td>
                   <td className={cn("px-3.5 py-2.5 text-right font-bold whitespace-nowrap", r.net_lots > 0 ? "text-up" : r.net_lots < 0 ? "text-down" : "text-[color:var(--ink-2)]")}>
                     {fmtLots(r.net_lots)}

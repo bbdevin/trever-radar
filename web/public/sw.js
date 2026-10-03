@@ -13,6 +13,13 @@ function shouldBypass(url) {
   return false;
 }
 
+/* Next client-navigation payloads (/page.txt?_rsc=…). Cache-first would keep serving a
+ * previous build's payload after a deploy; Next then sees a build-id mismatch and falls
+ * back to a full page load on every hop. Let them go to the network (HTTP cache applies). */
+function isRscRequest(req, url) {
+  return url.searchParams.has("_rsc") || req.headers.get("RSC") === "1";
+}
+
 self.addEventListener("install", (event) => {
   event.waitUntil(
     caches.open(VERSION).then((cache) =>
@@ -45,7 +52,7 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  if (url.origin !== self.location.origin || shouldBypass(url)) return;
+  if (url.origin !== self.location.origin || shouldBypass(url) || isRscRequest(req, url)) return;
 
   if (req.mode === "navigate") {
     event.respondWith(networkFirst(req));

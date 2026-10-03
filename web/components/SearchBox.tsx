@@ -2,6 +2,7 @@
 
 import { History, Search } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   Command,
   CommandDialog,
@@ -24,6 +25,7 @@ export default function SearchBox() {
   const [q, setQ] = useState("");
   const [index, setIndex] = useState<IndexRow[] | null>(null);
   const { session } = useSession();
+  const router = useRouter();
   const { searchHistory, pushSearch, clearSearchHistory } = useUserPrefs();
 
   useEffect(() => {
@@ -60,7 +62,7 @@ export default function SearchBox() {
   }, [index, q]);
 
   const go = async (id: string) => {
-    // 必須等寫入完成再換頁,否則 hard navigate 會取消 upsert,歷史永遠空白
+    // 先等寫入完成再換頁(以前是 hard navigate,會取消 upsert);改 client 導覽後保留同樣順序。
     try {
       await pushSearch(id);
     } catch {
@@ -68,7 +70,7 @@ export default function SearchBox() {
     }
     setOpen(false);
     setQ("");
-    window.location.href = `/stock?id=${id}`;
+    router.push(`/stock?id=${id}`);
   };
 
   const showHistory = q.trim() === "";

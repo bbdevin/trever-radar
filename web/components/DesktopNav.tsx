@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { Suspense } from "react";
 import { cn, navPillClass } from "@/lib/utils";
@@ -18,15 +19,17 @@ function DesktopNavInner() {
     <nav className="hidden gap-0.5 md:flex" aria-label="主導覽">
       {NAV.map((n) => {
         const isActive = n.match(path, tab);
+        // 跨頁走 client 導覽;已在同一頁時維持原本整頁重載(回到該頁預設狀態)。
+        const Item = path === n.href ? "a" : Link;
         return (
-          <a
+          <Item
             key={n.label}
             href={n.href}
             aria-current={isActive ? "page" : undefined}
             className={cn(navPillClass(isActive))}
           >
             {n.label}
-          </a>
+          </Item>
         );
       })}
     </nav>

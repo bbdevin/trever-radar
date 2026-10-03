@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { ShieldCheck, Zap, AlertTriangle, Ban } from "lucide-react";
 import Sparkline from "@/components/Sparkline";
 import WatchlistButton from "@/components/WatchlistButton";
@@ -43,7 +44,7 @@ export default function StockCard({ s, index = 99 }: { s: RadarStock; index?: nu
   const src = sourceSuffix(s);
   const s4Phase = s.strategy_signals?.find((signal) => signal.strategy === "S4_VOLATILITY_CONTRACTION")?.phase;
   return (
-    <a
+    <Link
       href={`/stock?id=${s.id}`}
       style={index < 6 ? { animationDelay: `${0.02 + index * 0.03}s` } : undefined}
       className="group relative flex cursor-pointer flex-col gap-2.5 overflow-hidden rounded-[var(--r-lg)] border border-border bg-card p-3.5 shadow-[var(--shadow-card)] transition-[transform,border-color,box-shadow] duration-150 animate-[fadeUp_0.35s_ease_backwards] hover:-translate-y-0.5 hover:border-[color:var(--border-strong)] hover:shadow-[var(--shadow-lift)] active:scale-[0.985]"
@@ -171,7 +172,7 @@ export default function StockCard({ s, index = 99 }: { s: RadarStock; index?: nu
           </div>
         )}
       </div>
-    </a>
+    </Link>
   );
 }
 

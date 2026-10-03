@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { ArrowLeft, Search, Info, TrendingUp, TrendingDown, Building2, User, Star } from "lucide-react";
 import { IconFlame, IconTrend, IconZap } from "@/components/Icons";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -306,6 +308,7 @@ function EmptyNotice({ tag, children }: { tag: string; children: React.ReactNode
 }
 
 function ConcentrationTab({ radar }: { radar: RadarJson | null }) {
+  const router = useRouter();
   if (!radar) return <Skeleton className="h-[68px] rounded-[var(--r-md)]" />;
   const rows = radar.concentration ?? [];
   if (rows.length === 0) {
@@ -331,16 +334,16 @@ function ConcentrationTab({ radar }: { radar: RadarJson | null }) {
             {rows.map((r) => (
               <tr
                 key={r.id}
-                onClick={() => { window.location.href = `/stock?id=${r.id}`; }}
+                onClick={() => { router.push(`/stock?id=${r.id}`); }}
                 className="num cursor-pointer border-t border-[color:var(--line)] text-[color:var(--ink-2)] transition-colors duration-200 hover:bg-secondary"
               >
                 <td className="px-3.5 py-2.5 text-left">
-                  <a href={`/stock?id=${r.id}`} onClick={(e) => e.stopPropagation()} className="flex flex-col gap-0.5 font-sans">
+                  <Link href={`/stock?id=${r.id}`} onClick={(e) => e.stopPropagation()} className="flex flex-col gap-0.5 font-sans">
                     <b className="text-sm font-bold text-foreground">{r.name}</b>
                     <small className="text-[11px] text-muted-foreground">
                       {r.id} · {MARKET_LABEL[r.market] ?? r.market}
                     </small>
-                  </a>
+                  </Link>
                 </td>
                 <td className="px-3.5 py-2.5 text-right whitespace-nowrap">{(r.buy_concentration * 100).toFixed(1)}%</td>
                 <td className="px-3.5 py-2.5 text-right whitespace-nowrap">{(r.concentration_avg20 * 100).toFixed(1)}%</td>
@@ -396,10 +399,10 @@ function StockGroupCard({ stockId, stockName, totalAmt, branches }: { stockId: s
   return (
     <div className="flex flex-col rounded-[var(--r-lg)] border border-border bg-card shadow-sm hover:border-border-strong transition-all duration-300 overflow-hidden">
       <div className="p-4 pb-3 flex justify-between items-center border-b border-border bg-card">
-        <a href={`/stock?id=${stockId}`} className="flex items-baseline gap-2 hover:opacity-80 transition-opacity">
+        <Link href={`/stock?id=${stockId}`} className="flex items-baseline gap-2 hover:opacity-80 transition-opacity">
           <span className="text-foreground font-semibold text-lg tracking-tight">{stockName}</span>
           <span className="text-sm font-medium text-muted-foreground">{stockId}</span>
-        </a>
+        </Link>
         <div className="flex flex-col items-end">
           <span className="text-[10px] uppercase font-bold tracking-wider text-muted-foreground mb-0.5">Total Net</span>
           <span className={cn("text-xl font-bold num tracking-tight", totalAmt > 0 ? "text-up drop-shadow-[0_0_8px_rgba(239,68,68,0.3)]" : "text-down drop-shadow-[0_0_8px_rgba(34,197,94,0.3)]")}>
@@ -506,9 +509,9 @@ function BranchGroupCard({ branchName, totalAmt, stocks }: { branchName: string,
                 aria-label={`${s.underlying_name} 權證明細`}
               >
                 <div className="flex items-center gap-2">
-                  <a href={`/stock?id=${s.underlying_id}`} className="font-medium text-[14px] text-foreground tracking-tight hover:text-primary transition-colors z-10" onClick={(e) => e.stopPropagation()}>
+                  <Link href={`/stock?id=${s.underlying_id}`} className="font-medium text-[14px] text-foreground tracking-tight hover:text-primary transition-colors z-10" onClick={(e) => e.stopPropagation()}>
                     {s.underlying_name}
-                  </a>
+                  </Link>
                   <div className={cn("px-1.5 py-0.5 rounded text-[10px] font-bold", s.net_amount > 0 ? "bg-up/10 text-up" : "bg-down/10 text-down")}>
                     {s.net_amount > 0 ? "買" : "賣"}
                   </div>
@@ -560,6 +563,7 @@ function BranchGroupCard({ branchName, totalAmt, stocks }: { branchName: string,
 }
 
 export default function BranchPage() {
+  const router = useRouter();
   const [radar, setRadar] = useState<RadarJson | null>(null);
   const [tab, setTab] = useState<"rankings" | "today" | "warrant">("rankings");
   const [rankingsData, setRankingsData] = useState<RankingsData | null>(null);
@@ -1097,13 +1101,13 @@ export default function BranchPage() {
                     {trades.map((t) => (
                       <tr
                         key={t.stock_id}
-                        onClick={() => { window.location.href = `/stock?id=${t.stock_id}`; }}
+                        onClick={() => { router.push(`/stock?id=${t.stock_id}`); }}
                         className="num cursor-pointer border-t border-[color:var(--line)] transition-colors duration-200 hover:bg-secondary"
                       >
                         <td className="px-2 py-2.5 text-left font-sans">
-                          <a href={`/stock?id=${t.stock_id}`} onClick={(e) => e.stopPropagation()} className="no-underline">
+                          <Link href={`/stock?id=${t.stock_id}`} onClick={(e) => e.stopPropagation()} className="no-underline">
                             <span className="text-foreground">{t.stock_name}</span> <span className="text-xs text-muted-foreground">{t.stock_id}</span>
-                          </a>
+                          </Link>
                         </td>
                         <td className="px-2 py-2.5 text-right whitespace-nowrap text-[color:var(--ink-2)]">{t.buy_lots}</td>
                         <td className="px-2 py-2.5 text-right whitespace-nowrap text-[color:var(--ink-2)]">{t.sell_lots}</td>

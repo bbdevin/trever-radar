@@ -1,6 +1,7 @@
 "use client";
 
 import { Suspense, useEffect, useState } from "react";
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { ArrowLeft, Building2, ExternalLink, MapPin } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -36,9 +37,9 @@ function EmptyState({ title, detail }: { title: string; detail: string }) {
       <Building2 className="mx-auto mb-3 h-7 w-7 text-muted-foreground" aria-hidden="true" />
       <h1 className="text-base font-bold text-foreground">{title}</h1>
       <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">{detail}</p>
-      <a href="/" className="mt-4 inline-flex min-h-11 items-center gap-1 rounded-full px-3 text-sm font-semibold text-primary transition-colors duration-200 hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+      <Link href="/" className="mt-4 inline-flex min-h-11 items-center gap-1 rounded-full px-3 text-sm font-semibold text-primary transition-colors duration-200 hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
         <ArrowLeft size={16} aria-hidden="true" /> 返回雷達
-      </a>
+      </Link>
     </div>
   );
 }
@@ -46,9 +47,9 @@ function EmptyState({ title, detail }: { title: string; detail: string }) {
 function GroupDetail({ group, dataDate }: { group: CompanyGroup; dataDate: string }) {
   return (
     <div className="min-w-0 py-4">
-      <a href="/" className="-ml-2 inline-flex min-h-11 items-center gap-1 rounded-full px-2 text-sm text-muted-foreground transition-colors duration-200 hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+      <Link href="/" className="-ml-2 inline-flex min-h-11 items-center gap-1 rounded-full px-2 text-sm text-muted-foreground transition-colors duration-200 hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
         <ArrowLeft size={16} aria-hidden="true" /> 返回雷達
-      </a>
+      </Link>
       <section className="mt-1 rounded-[var(--r-lg)] border border-border bg-card p-4 shadow-[var(--shadow-card)]">
         <div className="flex min-w-0 items-start gap-2">
           <Building2 className="mt-0.5 h-5 w-5 shrink-0 text-[color:var(--accent-2)]" aria-hidden="true" />
@@ -70,7 +71,7 @@ function GroupDetail({ group, dataDate }: { group: CompanyGroup; dataDate: strin
         {group.members.map((member) => {
           const movement = chgClass(member.chg_pct);
           return (
-            <a key={member.id} href={`/stock?id=${encodeURIComponent(member.id)}`} className="block min-h-11 rounded-[var(--r-md)] border border-border bg-card p-3.5 shadow-[var(--shadow-card)] transition-colors duration-200 hover:bg-secondary/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+            <Link key={member.id} href={`/stock?id=${encodeURIComponent(member.id)}`} className="block min-h-11 rounded-[var(--r-md)] border border-border bg-card p-3.5 shadow-[var(--shadow-card)] transition-colors duration-200 hover:bg-secondary/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
               <div className="flex min-w-0 items-center gap-2">
                 <span className="num shrink-0 text-sm font-extrabold text-[color:var(--ink-2)]">{member.id}</span>
                 <span className="truncate font-bold">{member.name ?? "公司名稱資料未提供"}</span>
@@ -84,7 +85,7 @@ function GroupDetail({ group, dataDate }: { group: CompanyGroup; dataDate: strin
                 <span>成交額：<span className="num">{member.turnover == null ? "資料未提供" : fmtE8(member.turnover)}</span></span>
                 {member.quote_date == null && <span className="inline-flex items-center gap-1"><MapPin size={13} aria-hidden="true" />未有可用收盤價，不代表成員資格不存在。</span>}
               </div>
-            </a>
+            </Link>
           );
         })}
       </div>
