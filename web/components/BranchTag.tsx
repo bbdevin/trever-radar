@@ -20,12 +20,23 @@ import { cn } from "@/lib/utils";
  * 顏色只是輔助:每個標籤都有文字,地緣／隔日沖／追蹤另有圖示,點開有帶數字的說明。
  */
 
-/** payload → 標籤用的 context。舊 JSON 缺鍵時對應的標籤自然不出現。 */
+/**
+ * payload → 標籤用的 context。舊 JSON 缺鍵時對應的標籤自然不出現。
+ * list = useBranchTrack() 的 muted/added(管理員的全站取消／加入追蹤);讀不到是兩個空集合。
+ */
 export function makeTagContext(
   tags: BranchTags | null | undefined,
   pctile: BranchPctileCounts | null | undefined,
+  list?: { muted: ReadonlySet<string>; added: ReadonlySet<string> },
 ): TagContext {
-  return { tags, pctile: normalizeBranchPctile(pctile), seatKind, compactSide };
+  return {
+    tags,
+    pctile: normalizeBranchPctile(pctile),
+    seatKind,
+    compactSide,
+    listMuted: list?.muted,
+    listAdded: list?.added,
+  };
 }
 
 const TONE: Record<TagTone, string> = {

@@ -7,6 +7,7 @@ import { dataFetch } from "@/lib/dataFetch";
 import { fmtLots, fmtAmount } from "@/lib/format";
 import { cn, pillTabClass } from "@/lib/utils";
 import BuySellSplit from "@/components/BuySellSplit";
+import BranchTrackButton from "@/components/BranchTrackButton";
 import {
   aggregateBranchRows,
   tradingDaysDesc,
@@ -239,6 +240,13 @@ export default function BranchTrackView({
           </select>
           {badge && (
             <span className={cn("rounded-md px-1.5 py-0.5 text-[10.5px] font-bold", badge.cls)}>{badge.label}</span>
+          )}
+          {entry && (
+            // 明細索引 = tracked_branches 匯出;manual/auto 就是系統追蹤名單。
+            <BranchTrackButton
+              name={entry.branch_name}
+              serverTracked={entry.source === "manual" || entry.source === "auto"}
+            />
           )}
         </div>
       </div>

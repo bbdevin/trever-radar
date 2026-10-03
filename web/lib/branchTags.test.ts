@@ -9,11 +9,13 @@ import {
   MAX_VISIBLE_PHONE,
   MAX_VISIBLE_WIDE,
   TAG_PRIORITY,
+  TRACKED_OVERRIDE_NOTE,
   branchTags,
   tagDefinitions,
   tagLegendFootnote,
   type TagContext,
 } from "./branchTags.ts";
+import { effectiveTracked } from "./branchTrackResolve.ts";
 
 function row(name: string, values: Record<string, number | null> = {}) {
   return {
@@ -140,6 +142,36 @@ test("定義與說明不得出現被禁的詞", () => {
   assert.ok(texts.length > 20);
   for (const text of texts) assert.ok(!banned.test(text), text);
   assert.ok(banned.test(`${word(0x52dd, 0x7387)} 60%`), "regex 本身有效");
+});
+
+test("全站名單覆寫:取消追蹤拿掉「追蹤」,管理員加入的補上,規則和 effectiveTracked 一致", () => {
+  const withUser = (muted: string[], added: string[]): TagContext => ({
+    ...ctx(),
+    listMuted: new Set(muted),
+    listAdded: new Set(added),
+  });
+  const has = (name: string, c: TagContext) => branchTags(name, "buy", c).some((t) => t.code === "TRACKED");
+  // 系統名單裡的(手動種子或自動入選都一樣)被 mute → 不標
+  assert.ok(has("凱基-新竹", ctx()));
+  assert.ok(!has("凱基-新竹", withUser(["凱基-新竹"], [])));
+  assert.ok(!has("富邦-台北", withUser(["富邦-台北"], [])));
+  // 系統名單外、管理員加入 → 標,說明講清楚是管理員加的
+  assert.ok(!has("永豐-板橋", ctx()));
+  const added = branchTags("永豐-板橋", "buy", withUser([], ["永豐-板橋"])).find((t) => t.code === "TRACKED")!;
+  assert.ok(added.note.includes("管理員加入"));
+  // 舊 JSON 沒有 branch_tags,管理員加入的照樣標
+  assert.ok(has("永豐-板橋", { ...ctx(null, null), listAdded: new Set(["永豐-板橋"]) }));
+  // 和 branchTrackResolve.effectiveTracked 對照
+  for (const name of ["凱基-新竹", "富邦-台北", "永豐-板橋"]) {
+    for (const [m, a] of [[[], []], [[name], []], [[], [name]]] as [string[], string[]][]) {
+      const server = TAGS.tracked.includes(name);
+      assert.equal(has(name, withUser(m, a)), effectiveTracked(name, server, new Set(m), new Set(a)), `${name} ${m} ${a}`);
+    }
+  }
+  // 圖例說明名單由誰維護
+  const def = tagDefinitions(ctx()).find((d) => d.label === "追蹤")!;
+  assert.ok(def.text.endsWith(TRACKED_OVERRIDE_NOTE));
+  assert.equal(TRACKED_OVERRIDE_NOTE, "追蹤名單由管理員設定，全站一致。");
 });
 
 test("定義的數字從 payload 讀", () => {

@@ -27,6 +27,7 @@ import {
   type SideView,
 } from "@/lib/branchPctile";
 import { branchTags as tagsFor, type Tag, type TagContext } from "@/lib/branchTags";
+import { useBranchTrack } from "@/lib/branchTrackList";
 import type { BranchPctileCounts, BranchTags } from "@/lib/types";
 import { cn, segBtnClass } from "@/lib/utils";
 import { BranchTagList, BranchTagNote, makeTagContext } from "@/components/BranchTag";
@@ -88,7 +89,11 @@ export default function BranchPctilePanel({
   branchTags?: BranchTags;
 }) {
   const model = useMemo(() => normalizeBranchPctile(data), [data]);
-  const tagCtx = useMemo(() => makeTagContext(branchTags, data), [branchTags, data]);
+  const { muted, added } = useBranchTrack();
+  const tagCtx = useMemo(
+    () => makeTagContext(branchTags, data, { muted, added }),
+    [branchTags, data, muted, added],
+  );
   const [camp, setCamp] = useState<CampKey>("short");
   const [expanded, setExpanded] = useState(false);
   const [openRow, setOpenRow] = useState<string | null>(null);

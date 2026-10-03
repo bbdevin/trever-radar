@@ -2,6 +2,7 @@ from datetime import datetime
 from radar.db import get_engine, init_db
 from sqlalchemy import text
 
+# Server default tracked list; the admin's site-wide track/mute overrides live in Supabase branch_track_list (docs/13 §2a).
 branches = [
     "永豐金-匯立", "凱基-松山", "兆豐-復興", "富邦-南京", "元大-南京",
     "永豐金-南京", "統一-南京", "凱基-三多", "元大-南屯", "元大-信義",

@@ -485,6 +485,7 @@ function StockView() {
             stockName={data.name}
             stockId={data.id}
             branchName={drillBranch}
+            serverTracked={Array.isArray(data.branch_tags?.tracked) && data.branch_tags.tracked.includes(drillBranch)}
             candles={cs}
             branchHistory={data.branch_history}
             onBack={() => setDrillBranch(null)}

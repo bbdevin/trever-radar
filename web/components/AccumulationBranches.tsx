@@ -23,6 +23,7 @@ import {
   type WindowKey,
 } from "@/lib/accumulation";
 import { branchTags as tagsFor } from "@/lib/branchTags";
+import { useBranchTrack } from "@/lib/branchTrackList";
 import { fmtLots } from "@/lib/format";
 import type { BranchPctileCounts, BranchTags, Candle, StockJson } from "@/lib/types";
 import { cn, pillTabClass } from "@/lib/utils";
@@ -56,7 +57,11 @@ export default function AccumulationBranches({
   const [side, setSide] = useState<Side>("acc");
   const [expanded, setExpanded] = useState(false);
   const [tagOpen, setTagOpen] = useState<{ name: string; key: string } | null>(null);
-  const tagCtx = useMemo(() => makeTagContext(branchTags, branchPctile), [branchTags, branchPctile]);
+  const { muted, added } = useBranchTrack();
+  const tagCtx = useMemo(
+    () => makeTagContext(branchTags, branchPctile, { muted, added }),
+    [branchTags, branchPctile, muted, added],
+  );
 
   const results = useMemo(
     () => Object.fromEntries(WINDOWS.map((w) => [w.key, computeWindow(branchHistory, candles, w.days)])),

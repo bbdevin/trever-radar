@@ -31,6 +31,21 @@ export interface TagContext {
   pctile: PctileModel | null;
   seatKind: (name: string) => SeatKind;
   compactSide: (kind: "buy" | "sell", stat: SideNumbers, minKnown: number) => CompactSide;
+  /** 管理員從全站追蹤名單取消的分點(Supabase branch_track_list 'mute');讀不到時為空。 */
+  listMuted?: ReadonlySet<string>;
+  /** 管理員加入全站追蹤名單的分點('track')。 */
+  listAdded?: ReadonlySet<string>;
+}
+
+/**
+ * 有效追蹤 = (系統名單 − listMuted) ∪ listAdded。與 branchTrackResolve.ts 的
+ * effectiveTracked 同一條規則(這支檔案不能 import 值,所以在這裡寫一次;
+ * branchTags.test.ts 會拿兩者對照)。
+ */
+function trackedFor(name: string, server: boolean, ctx: TagContext): boolean {
+  if (ctx.listAdded?.has(name)) return true;
+  if (ctx.listMuted?.has(name)) return false;
+  return server;
 }
 
 export const TAG_PRIORITY: TagCode[] = ["GEO", "DT", "TRACKED", "LOW", "HIGH", "SEAT"];
@@ -39,6 +54,9 @@ export const MAX_VISIBLE_PHONE = 2;
 export const MAX_VISIBLE_WIDE = 3;
 
 const CAMP_ORDER: CampKey[] = ["short", "long"];
+
+/** 「追蹤」定義的最後一句:名單由誰維護。 */
+export const TRACKED_OVERRIDE_NOTE = "追蹤名單由管理員設定，全站一致。";
 
 function fmtInt(value: number): string {
   return Math.round(value).toLocaleString("en-US");
@@ -128,14 +146,17 @@ export function branchTags(name: string, side: "buy" | "sell", ctx: TagContext):
         tone: "daytrade",
       });
     }
-    if (hasName(tags.tracked, name)) {
-      out.push({
-        code: "TRACKED",
-        label: "追蹤",
-        note: "追蹤：在追蹤名單裡（手動加入或演算法自動入選，或分點排行高分且不是隔日沖），與口袋名單「追蹤分點同買」同一份",
-        tone: "tracked",
-      });
-    }
+  }
+  const server = tags ? hasName(tags.tracked, name) : false;
+  if (trackedFor(name, server, ctx)) {
+    out.push({
+      code: "TRACKED",
+      label: "追蹤",
+      note: server
+        ? "追蹤：在追蹤名單裡（手動加入或演算法自動入選，或分點排行高分且不是隔日沖），與口袋名單「追蹤分點同買」同一份"
+        : "追蹤：管理員加入全站追蹤名單的分點",
+      tone: "tracked",
+    });
   }
   const pctile = pctileTag(name, side, ctx);
   if (pctile) out.push(pctile);
@@ -171,9 +192,12 @@ export function tagDefinitions(ctx: TagContext): TagDefinition[] {
           + `次數不足 ${dt.min_obs} 次的不判定、不標；看不見的出場不算，所以是下限。`,
       });
     }
+  }
+  if (tags || ctx.listAdded?.size) {
     defs.push({
       label: "追蹤",
-      text: "在追蹤名單裡：手動加入或演算法自動入選，或分點排行高分且不是隔日沖。與口袋名單「追蹤分點同買」同一份名單。",
+      text: "在追蹤名單裡：手動加入或演算法自動入選，或分點排行高分且不是隔日沖。與口袋名單「追蹤分點同買」同一份名單。"
+        + TRACKED_OVERRIDE_NOTE,
     });
   }
   const model = ctx.pctile;

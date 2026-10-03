@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft } from "lucide-react";
 import KChart from "@/components/KChart";
+import BranchTrackButton from "@/components/BranchTrackButton";
 import type { Candle, StockJson } from "@/lib/types";
 import { fmtLots } from "@/lib/format";
 import { cn, pillTabClass } from "@/lib/utils";
@@ -22,6 +23,7 @@ export default function BranchDrillView({
   stockName,
   stockId,
   branchName,
+  serverTracked = false,
   candles,
   branchHistory,
   onBack,
@@ -29,6 +31,8 @@ export default function BranchDrillView({
   stockName: string;
   stockId: string;
   branchName: string;
+  /** 系統追蹤名單(branch_tags.tracked)是否包含這個分點;舊 JSON 沒有時為 false。 */
+  serverTracked?: boolean;
   candles: Candle[];
   branchHistory?: BranchHistory;
   onBack: () => void;
@@ -105,6 +109,7 @@ export default function BranchDrillView({
             {stockName} {stockId} · 進出明細
           </div>
         </div>
+        <BranchTrackButton name={branchName} serverTracked={serverTracked} />
       </div>
 
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">

@@ -1,6 +1,13 @@
+"use client";
+
 import { Flame, MapPin, Shield, Star } from "lucide-react";
 import ReasonPill from "@/components/ReasonPill";
+import { useBranchTrack } from "@/lib/branchTrackList";
+import { pocketBadgeVisible } from "@/lib/branchTrackResolve";
 import type { PocketTag } from "@/lib/types";
+
+/** 「追蹤分點同買」徽章的兩個代號(新/舊,見下方 META)。 */
+const TRACKED_CODES = new Set(["T1_TRACKED_BUY", "K1_KEY_BUY"]);
 
 const META: Record<string, { label: string; icon: typeof Star }> = {
   G1_GEO_BUY: { label: "地緣買", icon: MapPin },
@@ -42,7 +49,7 @@ function displayText(t: PocketTag): string {
 
 /** docs/27 G4:口袋 reason badges。卡片最多 4 個 +N;個股頁傳 compact=false 顯示人話全文。 */
 export default function PocketBadges({
-  tags,
+  tags: rawTags,
   compact = true,
   max = 4,
 }: {
@@ -50,6 +57,10 @@ export default function PocketBadges({
   compact?: boolean;
   max?: number;
 }) {
+  // 管理員把這個徽章背後的分點全部從全站追蹤名單取消 → 先在畫面上藏起來,
+  // 直到 VPS 下一輪把名單併回系統名單、重算口袋名單。入選與排序這裡不重算。
+  const { muted } = useBranchTrack();
+  const tags = rawTags?.filter((t) => !TRACKED_CODES.has(t.code) || pocketBadgeVisible(t.branches, muted));
   if (!tags?.length) return null;
   const shown = compact ? tags.slice(0, max) : tags;
   const extra = compact ? tags.length - shown.length : 0;

@@ -10,6 +10,7 @@ import BottomNav from "@/components/BottomNav";
 import DesktopNav from "@/components/DesktopNav";
 import PwaProvider from "@/components/PwaProvider";
 import { WatchlistProvider } from "@/lib/watchlist";
+import { BranchTrackProvider } from "@/lib/branchTrackList";
 import { UserPrefsProvider } from "@/lib/userPrefs";
 import "./globals.css";
 
@@ -60,6 +61,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <UserPrefsProvider>
             <AuthGate>
               <WatchlistProvider>
+              <BranchTrackProvider>
               <header className="sticky top-0 z-40 border-b border-border bg-background/78 pt-[env(safe-area-inset-top)] backdrop-blur-md backdrop-saturate-150">
                 {/* 手機上標語原本會折成兩行(大字級時連品牌名也折),把 58px 的標頭撐亂;
                     改成單行、放不下就截斷。 */}
@@ -99,6 +101,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 </div>
               </footer>
               <BottomNav />
+              </BranchTrackProvider>
               </WatchlistProvider>
             </AuthGate>
           </UserPrefsProvider>

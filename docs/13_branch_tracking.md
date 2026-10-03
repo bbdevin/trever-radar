@@ -28,6 +28,7 @@
 - 表:`tracked_branches(branch_id, source='manual', added_by, note, added_at)`
 - 種子名單只是起點;**名聲交給演算法驗證**——上榜與否看數據,不看江湖傳說。
 - 管理介面:系統頁 admin 可增刪(V1 先直接改 DB/seed 檔)。
+- **全站追蹤名單的管理員覆寫(2026-10-03,Phase 1 前端疊加)**:上面(與 §2b)是**系統預設名單**。管理員(`app_profiles.role='admin'`)可在個股分點下鑽頁、`/branch` 排行卡、追蹤明細選單旁按 ★「追蹤／取消追蹤」,存在 Supabase `branch_track_list(branch_name PK, state∈{track,mute}, updated_by, updated_at)`——**一份名單、全站一致**;登入的核准使用者可讀,寫入只限管理員(RLS)。其他人沒有按鈕,只看結果。有效追蹤 = 系統名單 − mute ∪ track(`web/lib/branchTrackResolve.ts`);影響範圍:籌碼日報「追蹤」標籤、`/branch`「我的追蹤」篩選(手動種子 − mute ∪ track)、口袋名單「追蹤分點同買」徽章在背後分點**全部** mute 時隱藏。前端疊加只是過渡:VPS 夜間讀這張表併回 `tracked_branches`(另案)後,口袋名單入選／排序才跟著變。資料表未建或讀不到時按鈕不出現,畫面照系統名單。
 
 ### 2b. 演算法自動入選(每週六重算,04 §5 可信度分數)
 

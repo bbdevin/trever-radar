@@ -5,6 +5,7 @@ import { Clock, ShieldCheck } from "lucide-react";
 import type { BranchPctileCounts, BranchTags, Buyback, ReasonItem, StockJson } from "@/lib/types";
 import { fmtLots } from "@/lib/format";
 import { branchTags as tagsFor, type Tag } from "@/lib/branchTags";
+import { useBranchTrack } from "@/lib/branchTrackList";
 import { cn, pillTabClass } from "@/lib/utils";
 import { BranchTagLegend, BranchTagList, BranchTagNote, makeTagContext } from "@/components/BranchTag";
 import BuySellSplit from "@/components/BuySellSplit";
@@ -101,7 +102,11 @@ const BranchFlowSection = forwardRef<
   const [sideTab, setSideTab] = useState<"buy" | "sell">("buy");
   /** 目前開著說明的標籤(一次只開一個):分點名＋標籤代號。 */
   const [tagOpen, setTagOpen] = useState<{ name: string; key: string } | null>(null);
-  const tagCtx = useMemo(() => makeTagContext(branchTags, branchPctile), [branchTags, branchPctile]);
+  const { muted, added } = useBranchTrack();
+  const tagCtx = useMemo(
+    () => makeTagContext(branchTags, branchPctile, { muted, added }),
+    [branchTags, branchPctile, muted, added],
+  );
   const showTagLegend = !!tagCtx.tags || !!tagCtx.pctile;
 
   const activeDaysRaw = days === "custom" ? parseInt(customDays) || 1 : days;

@@ -6,7 +6,9 @@ import { IconFlame, IconTrend, IconZap } from "@/components/Icons";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
 import BranchTrackView from "@/components/BranchTrackView";
-import ChangeText from "@/components/ChangeText";
+import BranchTrackButton from "@/components/BranchTrackButton";
+import { useBranchTrack } from "@/lib/branchTrackList";
+import { effectiveTracked } from "@/lib/branchTrackResolve";import ChangeText from "@/components/ChangeText";
 import { dataFetch } from "@/lib/dataFetch";
 import { OFFLINE_DATA_COPY, isBrowserOffline } from "@/lib/pwa";
 import type { RadarJson } from "@/lib/types";
@@ -127,6 +129,9 @@ const SOURCE_BADGE: Record<string, { label: string; cls: string }> = {
 };
 
 function RankCard({ r, trackable, active }: { r: Ranking; trackable?: boolean; active?: boolean }) {
+  const { canEdit, isTracked } = useBranchTrack();
+  // 系統的追蹤標:手動種子或可信度分數 ≥70;再套管理員的全站加入/取消。
+  const serverTracked = r.rank_score >= 70 || r.source === "manual";
   const enoughSamples = effectiveSamples(r) >= MIN_SAMPLES;
   const badge = SOURCE_BADGE[r.source] ?? SOURCE_BADGE.candidate;
   const dtBadge = daytradeBadge(r);
@@ -143,7 +148,9 @@ function RankCard({ r, trackable, active }: { r: Ranking; trackable?: boolean; a
           {trackable && <span aria-hidden className="text-muted-foreground">›</span>}
         </h3>
         <div className="flex items-center gap-1.5">
-          {(r.rank_score >= 70 || r.source === "manual") && (
+          {canEdit ? (
+            <BranchTrackButton name={r.branch_name} serverTracked={serverTracked} variant="pill" size={12} />
+          ) : isTracked(r.branch_name, serverTracked) && (
             <span
               title="追蹤分點:手動種子或可信度分數 ≥70"
               className="inline-flex items-center gap-0.5 rounded-md bg-[color:var(--accent-2)]/12 px-1.5 py-0.5 text-[10.5px] font-bold text-[color:var(--accent-2)]"
@@ -567,6 +574,7 @@ export default function BranchPage() {
   // 出處篩選:只留下 source === "manual",也就是操作者自己挑進追蹤清單的分點。
   const [filterManual, setFilterManual] = useState(false);
   const [filterDaytrade, setFilterDaytrade] = useState<"all" | "exclude" | "only">("all");
+  const { muted: listMuted, added: listAdded } = useBranchTrack();
 
   useEffect(() => {
     dataFetch("/data/radar.json")
@@ -638,7 +646,7 @@ export default function BranchPage() {
     if (filterSearch && !r.branch_name.includes(filterSearch)) return false;
     if (filterTrackable && !trackNames.has(r.branch_name)) return false;
     if (filterEnough && effectiveSamples(r) < MIN_SAMPLES) return false;
-    if (filterManual && r.source !== "manual") return false;
+    if (filterManual && !effectiveTracked(r.branch_name, r.source === "manual", listMuted, listAdded)) return false;
     if (filterDaytrade === "exclude" && r.is_daytrade === 1) return false;
     if (filterDaytrade === "only" && r.is_daytrade !== 1) return false;
     return true;
@@ -657,17 +665,22 @@ export default function BranchPage() {
   // 舊 payload 相容:rankings.json 從一開始就帶 source,所以舊檔案照樣能篩;但
   // source 若缺漏或是沒見過的值,一律退成「不是我挑的」(篩選開啟時不顯示),
   // 寧可少給也不要把來歷不明的分點算進使用者的名單。
-  const manualCount = allRankings.filter(r => r.source === "manual").length;
+  //
+  // 全站覆寫(Supabase branch_track_list,管理員設定):我的追蹤 = 手動種子 − 取消的 ∪ 加入的。
+  // 未登入或名單表讀不到時兩個集合都是空的,行為和以前一樣。
   const sourceByBranch = new Map(allRankings.map(r => [r.branch_name, r.source]));
+  const isMine = (name: string) =>
+    effectiveTracked(name, sourceByBranch.get(name) === "manual", listMuted, listAdded);
+  const manualCount = allRankings.filter(r => isMine(r.branch_name)).length;
   const todayGroups = Object.entries(today.movements);
   // 最近動向的 payload 沒有 source(也不該為此加一個欄位),改用排行榜資料查表。
   // 有出現在動向、卻查不到排行列的分點:排除,但在下面明說排除了幾個——留著會
   // 宣稱一個查不到的出處,無聲丟掉則是把資料藏起來。
   const todayVisible = filterManual
-    ? todayGroups.filter(([name]) => sourceByBranch.get(name) === "manual")
+    ? todayGroups.filter(([name]) => isMine(name))
     : todayGroups;
   const todayUnknownSource = filterManual
-    ? todayGroups.filter(([name]) => !sourceByBranch.has(name)).length
+    ? todayGroups.filter(([name]) => !sourceByBranch.has(name) && !isMine(name)).length
     : 0;
 
   const anyFilterActive = tab === "today"
@@ -685,7 +698,7 @@ export default function BranchPage() {
       onClick={() => setFilterManual(v => !v)}
       className={cn(filterChipClass(filterManual, "warn"), "min-h-11")}
       aria-pressed={filterManual}
-      title={"只顯示手動加入追蹤清單的分點；這是來源篩選，與排行分數無關"}
+      title={"只顯示手動加入追蹤清單的分點（含管理員在全站追蹤名單的加入／取消）；這是來源篩選，與排行分數無關"}
     >
       {"我的追蹤"} {manualCount}
     </button>
