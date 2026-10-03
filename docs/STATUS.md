@@ -38,6 +38,12 @@
 
 - 使用者決定不等 3 天量測,`import-futures-day` 直接接進 16:10 `daily-insti.sh` 與 17:40／22:00 `daily-branches.sh`(75 只記 log、其他非 0 只 warn、不擋本輪);probe 保留量到 10-07 後移除;21:20 OpenAPI `import-futures` 改為官方覆核;`futures-day.sh` 已刪;export 期貨 stale 規則收回 `(d, prev)`;首頁時間表改「16:10 當日、17:40 補」。Z = 接上後第一個正式 16:10 輪(預計 2026-10-05)。見 `docs/38` §7.18。
 
+## 2026-10-03 整體效能規劃(`docs/44`)
+
+- 使用者:「整體性規劃 要做就做最好」、網站架構一併評估、功能必須一致。兩位 Fable Planner(VPS／網站)唯讀量測後合併成 `docs/44`。
+- 關鍵數字:radar.db **9.03 GB**(先前 5.5 GB 是舊數字;磁碟剩 3.4 GB);分點表家族 6.13 GB(68%);export-json 6 輪/日 ≈ 2 h,其中逐檔 `branch_history` 回表 ≈ 11 分/輪;前端每次點個股是整頁重載、`useSession` 首頁 ~90 次 `app_profiles`、`/data` 全部 `no-store`。
+- 決定方向:不換 DB 引擎;D-P0 維護窗離線轉 WITHOUT ROWID(`branch_trades_raw`＋`daily_prices`,傳輸走 ssh 不走 Drive);W-P0 前端三項;P1 JSON 拆檔(核心＋雜湊歷史＋籌碼區段)。待使用者核准窗口。
+
 ## 2026-10-03 期貨未平倉增減上色(使用者決定)
 
 - 使用者:「增減顏色」要改。首頁未平倉四格計數:增加紅、減少綠(淡底＋字色),持平/無法判定中性;個別契約「未平倉增減」數字(首頁卡片、個股期貨分頁異常卡與每日成交未平倉格)紅增綠減。fact 帶 `signed`,畫面走 `toneClass`。反轉 `docs/38` §7.17 第二輪「不用紅綠」,已註記。
