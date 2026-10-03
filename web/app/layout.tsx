@@ -12,6 +12,7 @@ import PwaProvider from "@/components/PwaProvider";
 import { WatchlistProvider } from "@/lib/watchlist";
 import { BranchTrackProvider } from "@/lib/branchTrackList";
 import { UserPrefsProvider } from "@/lib/userPrefs";
+import { SessionProvider } from "@/lib/useSession";
 import "./globals.css";
 
 // 數字與拉丁字用 Manrope(build 時自託管);中文走系統字體堆疊
@@ -58,6 +59,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           }}
         />
         <PwaProvider>
+          <SessionProvider>
           <UserPrefsProvider>
             <AuthGate>
               <WatchlistProvider>
@@ -105,6 +107,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               </WatchlistProvider>
             </AuthGate>
           </UserPrefsProvider>
+          </SessionProvider>
           <Toaster
             position="bottom-center"
             richColors
