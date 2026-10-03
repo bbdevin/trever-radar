@@ -15,6 +15,8 @@ import {
   searchBranches,
   toWanSeries,
   fmtWanValueSigned,
+  buildStripItems,
+  stepIndex,
 } from "./warrantBranches.ts";
 
 const rows = [
@@ -165,4 +167,41 @@ test("預設選買超第一名,沒有就賣超第一名", () => {
   assert.equal(defaultBranch([{ branch_name: "a", amount: 1 }], [{ branch_name: "b", amount: -1 }]), "a");
   assert.equal(defaultBranch([], [{ branch_name: "b", amount: -1 }]), "b");
   assert.equal(defaultBranch([], []), null);
+});
+
+test("手機券商列:買超在前、賣超在後,帶代號與標籤", () => {
+  const buys = rankBranches(selfRows, "all", "buy", 10, { minAbs: 1_000_000 });
+  const sells = rankBranches(selfRows, "all", "sell", 10, { minAbs: 1_000_000 });
+  const items = buildStripItems(buys, sells, { "凱基": "9200" });
+  assert.deepEqual(items.map((i) => [i.name, i.tone]), [
+    ["凱基-台北", "up"], ["元大-南京", "up"], ["兆豐-嘉義", "up"], ["凱基", "down"],
+  ]);
+  assert.equal(items[3].code, "9200");
+  assert.equal(items[3].tag, "發行商");
+  assert.equal(items[0].tag, "同券商");
+  assert.equal(items[1].tag, undefined);
+  assert.equal(items[1].code, undefined);
+  assert.equal(items[3].amount, -8_000_000);
+});
+
+test("手機券商列:排除同券商發行時跟著排行重排,且不標標籤", () => {
+  const opts = { excludeSelf: true, minAbs: 1_000_000 };
+  const buys = rankBranches(selfRows, "all", "buy", 10, opts);
+  const sells = rankBranches(selfRows, "all", "sell", 10, opts);
+  const items = buildStripItems(buys, sells, {}, false);
+  // 凱基扣掉自家 -900 萬後變 +100 萬買超;凱基-台北扣完只剩 50 萬,掉出門檻。
+  assert.deepEqual(items.map((i) => [i.name, i.tone, i.amount]), [
+    ["元大-南京", "up", 2_000_000], ["兆豐-嘉義", "up", 1_500_000], ["凱基", "up", 1_000_000],
+  ]);
+  assert.ok(items.every((i) => i.tag === undefined));
+});
+
+test("券商列前後切換:不繞回,不在列上時 › 從第一格開始", () => {
+  assert.equal(stepIndex(3, 0, 1), 1);
+  assert.equal(stepIndex(3, 2, 1), null);
+  assert.equal(stepIndex(3, 0, -1), null);
+  assert.equal(stepIndex(3, 2, -1), 1);
+  assert.equal(stepIndex(3, -1, 1), 0);
+  assert.equal(stepIndex(3, -1, -1), null);
+  assert.equal(stepIndex(0, -1, 1), null);
 });

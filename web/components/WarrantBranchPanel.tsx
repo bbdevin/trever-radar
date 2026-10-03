@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import BrokerStrip from "@/components/BrokerStrip";
 import KChart from "@/components/KChart";
 import { dataFetch } from "@/lib/dataFetch";
 import type { Candle } from "@/lib/types";
@@ -8,6 +9,7 @@ import { cn, pillTabClass } from "@/lib/utils";
 import {
   branchAmount,
   branchSeries,
+  buildStripItems,
   defaultBranch,
   fmtWanSigned,
   fmtWanValueSigned,
@@ -93,6 +95,23 @@ const BREAKDOWN_PREVIEW = 10;
 const LARGE_AMOUNT = 5_000_000;
 const DETAIL_CONTRACT_VERSION = 1;
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+/**
+ * 手機版 K 線高度(2026-10-03):390×844 扣掉頁首、個股摘要列、分頁列與底部導覽約剩
+ * 620px,要讓「區間 + 券商列 + 整張圖」同屏,圖只能約 350px。桌機不受影響。
+ */
+export const MOBILE_CHART_HEIGHT = "[height:clamp(300px,42vh,380px)]";
+
+/** 手機折疊區塊的標題列(排行與搜尋、權證明細);桌機隱藏、內容恆展開。 */
+const MOBILE_SUMMARY =
+  "flex min-h-11 cursor-pointer select-none list-none items-center gap-2 rounded-[var(--r-md)] border border-border px-3 text-[12.5px] font-semibold text-foreground md:hidden [&::-webkit-details-marker]:hidden";
+
+function SummaryChevron() {
+  return (
+    <span aria-hidden className="text-muted-foreground transition-transform duration-200 group-open:rotate-90">
+      ›
+    </span>
+  );
+}
 
 function fmtWan(amt: number, digits = 0): string {
   return (Math.abs(amt) / 10000).toLocaleString("zh-TW", { maximumFractionDigits: digits });
@@ -131,6 +150,19 @@ export default function WarrantBranchPanel({
   const [split, setSplit] = useState<SplitBreakdown | null>(null);
   const [splitError, setSplitError] = useState(false);
   const [excludeSelf, setExcludeSelf] = useState(false);
+  // 手機(<768px)把排行與明細折成 <details>;桌機兩者恆展開、標題列隱藏,版面與改版前相同。
+  // 面板只在 client 載入資料後渲染,初值直接讀 matchMedia(同 KChart)。
+  const [isDesktop, setIsDesktop] = useState(
+    () => typeof window !== "undefined" && window.matchMedia("(min-width:768px)").matches,
+  );
+  useEffect(() => {
+    const mq = window.matchMedia("(min-width:768px)");
+    const on = () => setIsDesktop(mq.matches);
+    mq.addEventListener("change", on);
+    return () => mq.removeEventListener("change", on);
+  }, []);
+  const [ranksOpen, setRanksOpen] = useState(false);
+  const [detailOpen, setDetailOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -256,6 +288,8 @@ export default function WarrantBranchPanel({
   );
   const selectedRow = rows?.find((r) => r.branch_name === selected) ?? null;
   const series = useMemo(() => toWanSeries(branchSeries(daily, selected, kind)), [daily, selected, kind]);
+  // 排除模式下金額已不含自家權證,標籤會誤導,所以不標(與排行表一致)。
+  const stripItems = useMemo(() => buildStripItems(buys, sells, codes, !exclude), [buys, sells, codes, exclude]);
 
   useEffect(() => {
     setPicked(null);
@@ -313,7 +347,9 @@ export default function WarrantBranchPanel({
   const resolved = resolveBreakdown(selectedRow, split, tf);
   const breakdown = [...(resolved ?? [])]
     .sort((a, b) => Math.abs(b.net_amount) - Math.abs(a.net_amount));
-  const selectedAmount = selectedRow ? branchAmount(selectedRow, kind, exclude) : 0;
+  // 拆檔明細還沒到(或載入失敗):有選中的列、拆檔模式、resolve 回 null。
+  const breakdownPending = !!selectedRow && resolved === null && breakdownSplit;
+  const selectedAmount = selectedRow ?branchAmount(selectedRow, kind, exclude) : 0;
   const selectedSelf = selectedRow?.self;
   const selectedTag = selfIssuedTag(selectedSelf);
   // 排除模式下列上的金額已不含自家權證,標籤會誤導,所以不標。
@@ -322,15 +358,30 @@ export default function WarrantBranchPanel({
   return (
     <section className="grid gap-3 rounded-[var(--r-lg)] border border-border bg-card p-3.5 shadow-[var(--shadow-card)]">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <div>
-          <h3 className="text-sm font-bold text-foreground">權證分點進出</h3>
-          <p className="mt-0.5 text-[11.5px] leading-relaxed text-muted-foreground">
+        <div className="max-md:w-full">
+          {/* 手機:說明折起來、與標題同一行,讓券商列與整張圖留在同一屏;展開時換到下一行全寬。 */}
+          <div className="flex flex-wrap items-center gap-x-2">
+            <h3 className="text-sm font-bold text-foreground">權證分點進出</h3>
+            {dataDate && <span className="ml-auto text-[11px] text-muted-foreground md:hidden">資料日 {dataDate}</span>}
+            <details className={cn("group md:hidden open:basis-full", !dataDate && "ml-auto")}>
+              <summary className="flex min-h-8 cursor-pointer list-none items-center gap-1 text-[11.5px] text-muted-foreground [&::-webkit-details-marker]:hidden">
+                說明<SummaryChevron />
+              </summary>
+              <p className="pb-1 text-[11.5px] leading-relaxed text-muted-foreground">
+              點選 K 線上方券商列(或下方「排行與搜尋」)的券商,對照股價看它每天在這檔股票權證上的買賣超金額。
+              金額為認購＋認售合計;明細逐檔標示<b className="font-semibold text-foreground">購／售</b>,買認售是看空。
+              金額為估計值(張數 × 1000 × 當日權證收盤價);每檔權證只有前 15 大分點,
+              區間淨額 ≥ {threshold} 萬才列入。
+              </p>
+            </details>
+          </div>
+          <p className="mt-0.5 text-[11.5px] leading-relaxed text-muted-foreground max-md:hidden">
             點選左邊的券商,右邊對照股價看它每天在這檔股票權證上的買賣超金額。
             金額為認購＋認售合計;下方明細逐檔標示<b className="font-semibold text-foreground">購／售</b>,買認售是看空。
             金額為估計值(張數 × 1000 × 當日權證收盤價);每檔權證只有前 15 大分點,
             區間淨額 ≥ {threshold} 萬才列入。
           </p>
-          {dataDate && <p className="mt-1 text-[11px] text-muted-foreground">資料日 {dataDate}</p>}
+          {dataDate && <p className="mt-1 text-[11px] text-muted-foreground max-md:hidden">資料日 {dataDate}</p>}
           {usingMarketFallback && (
             <p className="mt-1 text-[11px] text-muted-foreground">
               100 萬明細快照尚未發布,暫以既有 500 萬門檻快照顯示{dataDate ? "" : ";該快照未提供資料日"}。
@@ -378,8 +429,21 @@ export default function WarrantBranchPanel({
           此區間沒有權證淨買賣超達 {threshold} 萬的券商。涵蓋依已匯入且符合條件的權證池,每檔僅前 15 大分點;沒有資料不代表沒有交易。
         </p>
       ) : (
+        // 手機 DOM 順序:券商列 → K 線 → 註記 → 排行與搜尋(折疊) → 權證明細(折疊)。
+        // 右欄在手機上是 display:contents,子元素直接排進這個單欄 grid,再用 order 把
+        // 兩個折疊區排到最後;桌機(md 以上)左右兩欄與改版前相同。
         <div className="grid min-w-0 gap-3 md:grid-cols-[minmax(0,17rem)_minmax(0,1fr)]">
-          <div className="grid min-w-0 content-start gap-3">
+          <BrokerStrip items={stripItems} selected={selected} onSelect={setPicked} />
+          <details
+            open={isDesktop || ranksOpen}
+            onToggle={(e) => { if (!isDesktop) setRanksOpen(e.currentTarget.open); }}
+            className="group min-w-0 max-md:order-1"
+          >
+            <summary className={MOBILE_SUMMARY}>
+              <SummaryChevron />
+              排行與搜尋（買超 {buys.length} · 賣超 {sells.length}）
+            </summary>
+          <div className="grid min-w-0 content-start gap-3 max-md:mt-2">
             {/* 搜尋券商:名稱或代號,不限排行前 10(參考圖右上角的「搜尋券商」)。 */}
             <div className="relative">
               <input
@@ -441,12 +505,14 @@ export default function WarrantBranchPanel({
               </p>
             )}
           </div>
+          </details>
 
-          <div className="grid min-w-0 content-start gap-2.5">
+          <div className="grid min-w-0 content-start gap-2.5 max-md:contents">
             {candles.length > 0 ? (
               <KChart
                 candles={candles}
                 visibleDays={120}
+                mobileHeightClass={MOBILE_CHART_HEIGHT}
                 branchFlow={series}
                 branchFlowLabel={selected ? `${selected} 權證進出` : undefined}
                 branchFlowFormat={fmtWanValueSigned}
@@ -490,7 +556,20 @@ export default function WarrantBranchPanel({
                 {selectedTag?.hq ? ";這是發行商總公司席位,多為發行商造市／避險,不代表看多或看空。" : "。"}
               </p>
             )}
-            {selectedRow && resolved === null && breakdownSplit && (
+            {(breakdownPending || breakdown.length > 0) && (
+            <details
+              open={isDesktop || detailOpen}
+              onToggle={(e) => { if (!isDesktop) setDetailOpen(e.currentTarget.open); }}
+              className="group min-w-0 max-md:order-2"
+            >
+              <summary className={MOBILE_SUMMARY}>
+                <SummaryChevron />
+                <span className="min-w-0 truncate">
+                  {selected} 權證明細（{breakdownPending ? (splitError ? "載入失敗" : "載入中") : `${breakdown.length} 檔`}）
+                </span>
+              </summary>
+              <div className="max-md:mt-2">
+            {breakdownPending && (
               splitError ? (
                 <p className="text-[11.5px] text-muted-foreground">權證明細載入失敗(改選其他券商會重試),區間合計與排行不受影響。</p>
               ) : (
@@ -499,7 +578,7 @@ export default function WarrantBranchPanel({
             )}
             {breakdown.length > 0 && (
               <div className="rounded-[var(--r-md)] border border-border bg-background px-2 py-2">
-                <p className="mb-1 px-2 text-[11.5px] font-semibold text-foreground">
+                <p className="mb-1 px-2 text-[11.5px] font-semibold text-foreground max-md:hidden">
                   {selected} 這段期間的權證明細
                 </p>
                 <div className="mb-1 grid grid-cols-[1.4fr_1fr_0.6fr] px-2 text-[10.5px] font-semibold text-muted-foreground">
@@ -555,6 +634,9 @@ export default function WarrantBranchPanel({
                   </button>
                 )}
               </div>
+            )}
+              </div>
+            </details>
             )}
           </div>
         </div>

@@ -107,6 +107,9 @@ function resampleNet(points: NetPoint[], bars: Candle[], tf: Timeframe) {
   return out.length ? out : undefined;
 }
 
+/** 手機版預設圖高:技術摘要已獨立成 tab,放大主圖區。 */
+const DEFAULT_MOBILE_HEIGHT = "[height:clamp(440px,68vh,640px)]";
+
 /** 日 K + 均線/布林(可勾選)+ 成交量 + 副圖 MACD/KD/RSI + 主力買賣超/分點進出 pane。偏好記在 localStorage。 */
 export default function KChart({
   candles,
@@ -116,6 +119,7 @@ export default function KChart({
   branchFlowLabel,
   branchFlowFormat,
   caption,
+  mobileHeightClass = DEFAULT_MOBILE_HEIGHT,
 }: {
   candles: Candle[];
   visibleDays: number;
@@ -130,6 +134,9 @@ export default function KChart({
   branchFlowFormat?: (n: number) => string;
   /** 均線列下方、圖表上緣的一行說明(可選;缺省時版面不變)。 */
   caption?: ReactNode;
+  /** 手機版(<768px)圖表高度的 Tailwind class;缺省為個股 K 線分頁的大圖。
+   *  權證分頁要讓券商列與整張圖同屏,傳較矮的 clamp。須是原始碼裡的字面字串(Tailwind 掃描)。 */
+  mobileHeightClass?: string;
 }) {
   const selLabel = branchFlowLabel ?? SEL_TITLE;
   const fmtSel = branchFlowFormat ?? fmtLotsUnit;
@@ -612,7 +619,7 @@ export default function KChart({
           className={cn(
             "w-full rounded-t-none rounded-b-[var(--r-lg)] border border-border bg-card p-2 shadow-[var(--shadow-card)]",
             // 手機版(<768px):放大主圖區,技術摘要已獨立成 tab 不再擠高度
-            isMobile && "[height:clamp(440px,68vh,640px)]",
+            isMobile && mobileHeightClass,
             !isMobile && extraPanes === 0 && "[height:clamp(440px,68vh,740px)]",
             !isMobile && extraPanes === 1 && "[height:clamp(520px,80vh,900px)]",
             !isMobile && extraPanes === 2 && "[height:clamp(600px,88vh,1050px)]",

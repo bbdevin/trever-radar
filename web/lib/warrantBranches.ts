@@ -155,6 +155,41 @@ export function searchBranches(
     .slice(0, limit);
 }
 
+/** 手機券商列(BrokerStrip)的一格。tag = 「發行商」「同券商」標籤文字(可選)。 */
+export type StripItem = { name: string; code?: string; amount: number; tone: "up" | "down"; tag?: string };
+
+/**
+ * 手機券商列:買超排行接賣超排行,順序與桌機左邊兩張表一致。buys/sells 已是
+ * 目前區間、目前「排除同券商發行」狀態下的排行;排除模式下金額已扣自家權證,
+ * 標籤會誤導,與排行表一樣不標(showTags = false)。
+ */
+export function buildStripItems(
+  buys: RankedBranch[], sells: RankedBranch[], codes: Record<string, string> = {}, showTags = true,
+): StripItem[] {
+  const one = (r: RankedBranch, tone: "up" | "down"): StripItem => {
+    const tag = showTags ? selfIssuedTag(r.self) : null;
+    return {
+      name: r.branch_name,
+      amount: r.amount,
+      tone,
+      ...(codes[r.branch_name] ? { code: codes[r.branch_name] } : {}),
+      ...(tag ? { tag: tag.label } : {}),
+    };
+  };
+  return [...buys.map((r) => one(r, "up")), ...sells.map((r) => one(r, "down"))];
+}
+
+/**
+ * 券商列的 ‹ › 前後切換,不繞回。current = -1(選中的券商不在列上,例如搜尋選的)
+ * 時 › 從第一格開始、‹ 不動。回 null = 這個方向沒有下一格(按鈕停用)。
+ */
+export function stepIndex(length: number, current: number, delta: -1 | 1): number | null {
+  if (length === 0) return null;
+  if (current < 0) return delta > 0 ? 0 : null;
+  const next = current + delta;
+  return next < 0 || next >= length ? null : next;
+}
+
 /** 預設選中的券商:目前排行的買超第一名,沒有就賣超第一名。 */
 export function defaultBranch(buys: RankedBranch[], sells: RankedBranch[]): string | null {
   return buys[0]?.branch_name ?? sells[0]?.branch_name ?? null;
