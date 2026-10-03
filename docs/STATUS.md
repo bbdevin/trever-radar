@@ -38,6 +38,13 @@
 
 - 使用者決定不等 3 天量測,`import-futures-day` 直接接進 16:10 `daily-insti.sh` 與 17:40／22:00 `daily-branches.sh`(75 只記 log、其他非 0 只 warn、不擋本輪);probe 保留量到 10-07 後移除;21:20 OpenAPI `import-futures` 改為官方覆核;`futures-day.sh` 已刪;export 期貨 stale 規則收回 `(d, prev)`;首頁時間表改「16:10 當日、17:40 補」。Z = 接上後第一個正式 16:10 輪(預計 2026-10-05)。見 `docs/38` §7.18。
 
+## 2026-10-03 分點追蹤:管理員全站名單(加入/取消追蹤)
+
+- 使用者:「分點追蹤要有取消追蹤功能」→ 選「管理員名單全站共用」。Supabase `public.branch_track_list(branch_name, state track|mute)`:approved 可讀、只有 admin(`is_admin()`)可寫;初始種入原本寫死的 30 個分點。**待使用者在 SQL Editor 執行 `docs/sql/20261003181500_create_branch_track_list.sql`**(舊的 `20261003145606_…prefs.sql` 已作廢,勿執行)。
+- 網站(`53309aa`):管理員在分點下鑽標題、/branch 排行卡、追蹤明細選單看到星號;其他人唯讀;追蹤標籤、我的追蹤、口袋徽章以「系統名單 − 取消 ∪ 加入」即時覆寫。
+- 正式機(`seed-branches` 17:40/22:00 改為同步):以公開 publishable key 呼叫唯讀 RPC `branch_track_list_public()`(只回名稱與狀態,不給批次管線特權金鑰);track→manual、mute→`source='muted'`(自動入選與口袋/標籤/today 皆排除,rank≥70 也排除);讀取失敗→WARN、DB 不變、不讓本輪失敗;線上空名單而本機有資料→拒絕清空。不需改 VPS 環境變數、crontab、schema。
+- 取捨(待使用者知悉):名單可被持公開 key 者讀到(低敏感度),換取批次管線不持有特權金鑰。
+
 ## 2026-10-03 UI 美化(Fable 規劃 A)＋權證分點手機一屏(Fable 規劃 B)
 
 - **A**(`5383b27`):新 `SectionHeader`(圖示色圈標題:籌碼青/權證琥珀/價格藍)、`StatTile`;囤貨／出貨三格彩色合計、紅綠切換、左色條＋名次圈＋留倉率細條;當日買賣超列加名次圈與金額細條;觀察/失效距離、自選、分點 5 日平均漲跌改 `ChangeText` 紅漲綠跌(佔量/留倉/使用率等比例刻意不上色)。權證成交摘要 60 根柱在 390px 溢出 14px 已修。
