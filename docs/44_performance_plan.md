@@ -53,7 +53,26 @@ stocks/chips/{id}.json      branch_history、branch_pnl_est、branch_pctile_coun
 - **不變式(測試鎖住)**:前端把三檔組回來後,必須與今天的單一 JSON **逐鍵深度相等**(扣除前端沒讀的 `af`)。VPS 端 `export-json --verify-split` 在記憶體內同時產生新舊格式比對。
 - **畫面一致**:Playwright 對同一份資料,逐頁、逐分頁、390px 與 1280px,比對頁面全部文字(主要依據)+ 截圖;既有 node／pytest 全綠。
 - **上線順序**:前端雙讀(新舊格式都能讀)先上 → VPS 切新格式(環境旗標可退回)→ Worker 對雜湊歷史檔給長快取(需資安審查)→ 觀察一週後停產舊單檔。
-- 先做 `export-json --size-report`(每檔每個欄位的大小分布),依實測決定 chips 要不要再拆。
+- 先做 `export-json --size-report`(每檔每個欄位的大小分布,**分「榜單聯集 275 檔」與「其餘 2,143 檔」兩組**,否則平均會誤導)。
+
+### 3.1 正式機實測(2026-10-03,修正網站端以本機 fixture 推估的「candles 佔 95%」)
+
+| 檔 | 總 raw | candles | branch_history |
+|---|---|---|---|
+| 2330(聯集,全史 8,092 根) | 1,424 KB | 811 KB(57%) | 302 KB |
+| 6488(聯集,2,909 根) | 803 KB | 290 KB | 284 KB |
+| 4967(非聯集,600 根上限) | 532 KB | 59 KB(11%) | **283 KB(53%)** |
+
+- 89% 的個股(2,143 檔)早就只有 600 根 K 線,**最大的是籌碼區段**(branch_history + pnl + pctile + tags ≈ 340–370 KB raw)。所以拆成兩步:
+  - **P1-a**:K 線歷史拆檔(雜湊檔名)＋`--size-report`＋`separators`＋`--verify-split`。對聯集 275 檔首屏大幅下降(2330:1.42 MB → ~0.6 MB raw),其餘只約 −10%。
+  - **P1-b**:籌碼區段 `chips` 延遲載入＋`--sections` 依輪次重算 → **才是把 p50 從 497 KB 壓到 ~120 KB 的那一步**。順序 a → b,都在 D-P0 維護窗之後。
+- 規則補充:
+  - 歷史檔完整度 = 當日是否在聯集(既有行為),前端不可假設歷史檔永遠是全史。
+  - export 寫新歷史檔前**刪掉同檔舊雜湊檔**,否則 wrangler 會一直上傳舊檔、佔 VPS 磁碟。
+  - 跳過重建:`stocks/hist/index.json` 記 id→hash/bars/cut/built_at;`built_at` 之後 `import_logs` 沒有除權息重算或深度回補 → 全域跳過歷史檔重建,只重建當天進出聯集的檔。籌碼區段同理,只在分點有新列的輪次重建。
+  - `separators` 主要省 VPS 寫入(每輪 1.13 → ~0.9 GB),線上 brotli 下載量幾乎不變。
+  - `af`(還原因子):前端與盤中 worker 都沒讀;排後由使用者決定,建議改出一份稀疏的 `adj`(只有除權息日)而不是直接丟掉。
+  - `cloudflare-data-worker` 的任何 commit 會在**下一輪 VPS deploy 自動上線**(不經 GitHub),改 Worker 前要先告知並完成資安審查。
 
 ## 4. 明確不做
 
