@@ -103,9 +103,11 @@ const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
  * 並以 WARRANT_MOBILE_PANES 讓底部「權證進出」pane 與主圖一樣大、量縮小。
  * 代價:切換列與整張圖不再保證同屏(捲動時圖表與其工具列可佔滿可視區)。桌機不受影響。
  */
-export const MOBILE_CHART_HEIGHT = "[height:clamp(420px,58vh,520px)]";
+// 同日再一輪:「至少跟 K 線圖一樣大或更大」——K 線分頁手機為 clamp(440px,68vh,640px)≈574px,
+// 這裡給 clamp(480px,74vh,700px)≈625px(幾乎一整個可視區),權證進出 pane 比主圖更高。
+export const MOBILE_CHART_HEIGHT = "[height:clamp(480px,74vh,700px)]";
 /** 手機版 pane 比例:主圖 : 量 : 權證進出。 */
-export const WARRANT_MOBILE_PANES = [12, 3, 12] as const;
+export const WARRANT_MOBILE_PANES = [11, 2, 13] as const;
 
 function SummaryChevron() {
   return (
