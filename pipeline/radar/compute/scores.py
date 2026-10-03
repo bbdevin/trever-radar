@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import text
 
 from .. import config, schema
+from ..branch_source import date_window_from
 from ..db import get_engine, init_db, upsert
 
 WEIGHTS = {"branch": 0.35, "warrant": 0.20, "tech": 0.20, "inst": 0.15, "theme": 0.10}
@@ -160,10 +161,11 @@ def score_branch(rows_by_date, dates, volumes_by_date):
     penalty = 0
     reasons, risks = [], []
     volume_lots = _volume_lots(volumes_by_date, today)
+    # 同張數以 branch_key 定先後(B1 挑 best 依序比較):today_rows 的順序跟著
+    # branch_trades 的實體排列走,改 WITHOUT ROWID(docs/43)就會變。
     buy_rows = sorted(
         [r for r in today_rows if (r.get("net_lots") or 0) > 0],
-        key=lambda r: r["net_lots"],
-        reverse=True,
+        key=lambda r: (-r["net_lots"], str(r.get("branch_key") or "")),
     )
 
     def add(points, code, txt, value=None):
@@ -177,7 +179,12 @@ def score_branch(rows_by_date, dates, volumes_by_date):
         risks.append({"code": code, "points": -points, "text": txt, "value": value})
 
     # B1:單一分點連買。用張數/成交量近似成交值佔比。
+    # 多個分點都合格時取「最強的一個」,全序(docs/04 §2 B1、docs/43 §1.1;使用者
+    # 2026-10-04 核准):連買天數多者優先(給分只看天數,≥5 日 30 分),再比累計
+    # 張數,再比佔比,最後以 branch_key 定。以前用「天數較多或張數較多就換」逐一
+    # 比較,不具遞移性,誰被選中(連帶 20／30 分)取決於候選的先後。
     best = None
+    best_rank = None
     for row in buy_rows:
         key = row["branch_key"]
         streak = 0
@@ -196,8 +203,9 @@ def score_branch(rows_by_date, dates, volumes_by_date):
         share = cum_lots / cum_volume if cum_volume > 0 else 0
         if streak >= 3 and share >= 0.03:
             candidate = (streak, cum_lots, branch_name, share)
-            if best is None or candidate[0] > best[0] or candidate[1] > best[1]:
-                best = candidate
+            rank = (-streak, -cum_lots, -share, str(key))
+            if best_rank is None or rank < best_rank:
+                best, best_rank = candidate, rank
     if best:
         streak, cum_lots, branch_name, share = best
         points = 30 if streak >= 5 else 20
@@ -233,8 +241,9 @@ def score_branch(rows_by_date, dates, volumes_by_date):
 
     # 扣分:昨日大買分點今日反手大賣。
     yesterday_rows = _branch_rows(rows_by_date, dates[1]) if len(dates) > 1 else []
+    # 前 5 大以 (張數, branch_key) 全序取,同張數時不再看列的先後(docs/43)。
     for prev in sorted([r for r in yesterday_rows if (r.get("net_lots") or 0) > 0],
-                       key=lambda r: r["net_lots"], reverse=True)[:5]:
+                       key=lambda r: (-r["net_lots"], str(r.get("branch_key") or "")))[:5]:
         today_match = next((r for r in today_rows if r["branch_key"] == prev["branch_key"]), None)
         if today_match and (today_match.get("net_lots") or 0) < 0 \
                 and abs(today_match["net_lots"]) >= prev["net_lots"] * 0.7:
@@ -490,9 +499,11 @@ def compute_scores(date: str | None = None) -> dict:
             "WHERE date = :d"), {"d": d})}
 
         branches: dict[str, dict[str, list[dict]]] = {}
+        # 全市場 20 日窗:走依日期連續的覆蓋索引(radar/branch_source.py,docs/43)。
         for r in conn.execute(text(
-            "SELECT stock_id, date, branch_key, branch_name, buy_lots, sell_lots, net_lots, pct "
-            "FROM branch_trades WHERE date >= :lo AND date <= :d AND LENGTH(stock_id) = 4"),
+            "SELECT r.stock_id, r.date, d.branch_key, d.branch_name, r.buy_lots, r.sell_lots, "
+            f"r.net_lots, r.pct FROM {date_window_from(conn)} "
+            "WHERE r.date >= :lo AND r.date <= :d AND LENGTH(r.stock_id) = 4"),
                 {"lo": base20_start, "d": d}):
             branches.setdefault(r[0], {}).setdefault(r[1], []).append({
                 "branch_key": r[2], "branch_name": r[3], "buy_lots": r[4],

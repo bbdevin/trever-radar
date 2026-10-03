@@ -10,6 +10,15 @@
 - **右滑提示**(使用者:「讓使用者清楚表示還可以往右滑」):新元件 `ScrollHint`——可橫滑的分頁列/按鈕列在有隱藏內容那側顯示同底色淡出＋藍色 ‹ › 鈕(點了捲 70%),選中分頁自動捲入可見,首次進入輕推一下示意(減少動態時不推)。套用首頁/個股/分點分頁列、K 線範圍與手機工具列、分點下鑽範圍列;表格尚未套用。規則記 `docs/19` 第 15 條。
 - 驗證:Playwright 對同一份資料、390/1280 兩寬度 78 個畫面文字改前改後逐字相同;登入情境(換帳號、核准↔拒絕切回分頁、token 更新、登出、700ms 重試)實測;node 189 pass、tsc、build 通過。兩次獨立 verifier,第一次抓到的兩個登入問題已修。
 - 新工具:`web/scripts/parity-snapshot.mjs`(改版前後頁面文字比對;假 Supabase session,不加正式繞過)。
+## 2026-10-04 WITHOUT ROWID 離線轉換:程式上線,維護窗進行中(使用者要求今天做)
+
+- 2026-10-04 01:39 VPS 持鎖拍快照(integrity ok、sha256 397d8254…);PC 轉換 10 分鐘:9.03 GB → **5.56 GB**(`_date_cover` 版)。Planner(Fable)最終版面:兩表 WITHOUT ROWID＋`ix_branch_trades_raw_date_cover`(取代 `_date`)、`_branch` 保留、ANALYZE、`db.py` cache_size 64 MB。評分/口袋 20 日窗改走 `branch_source.py`(有 `_date_cover` 才加 INDEXED BY)。`daily_prices` 日期窗(b5/b6)讀取量增加但時間在容許內,依 Planner §2.4 接受。三輪獨立 verifier,最後一輪 5 項全 CONFIRMED。
+
+- 對象:`branch_trades_raw`(32.4M 列)＋`daily_prices`(10.3M 列)改 WITHOUT ROWID,拿掉覆蓋索引與兩個 PK 自動索引;正式庫 9.03 GB、VPS 剩 3.4 GB。程序、磁碟算術、回滾見 **`docs/43`**。
+- 工具(`pipeline/tools/`,轉換／驗證只用標準庫):`convert_branch_raw_without_rowid.py`(`--tables`/`--page-size 4096|8192`/`--analyze`)、`verify_db_equivalence.py`(逐表 PK 順序 SHA-256、DDL 只差 ` WITHOUT ROWID`、integrity;`--single` 給換檔後的 VPS)、`export_parity.py`(同一程式對新舊檔完整匯出逐位元比對;manifest 可跨機器比)、`bench_branch_raw.py`(舊 vs 4k/8k × 無統計/ANALYZE,小快取＋讀取位元組,>2× 自動試 INDEXED BY/NOT INDEXED)。
+- 程式:`schema.py` 兩表宣告 `sqlite_with_rowid=False`、移除覆蓋索引宣告(既有庫 `create_all` 不受影響);`build-branch-cover-index.sh` 作廢。**計算與匯出改成只由資料決定、與列的實體順序無關**(`docs/43` §1.1):評分 B1 改全序(天數→張數→佔比→branch_key;舊規則不具遞移性)、反手扣分前 5 大與各「前 N」加 tie-break、同名多 branch_key 同日的列一律**加總**(`compute/branch_same_day.py`;分點統計/v2 shadow/分位/PIT/battery)、權證分點金額改整數加總、radar.json/today.json/權證 top-8 明寫 ORDER BY。相對 HEAD 只在同分或同名同日多列時變值。`export-json` 新增一行 `export timing:` 分段計時,JSON 不變。
+- 合成資料演練:4 個變體 verify 全 PASS、改一列即 FAIL;新程式對新舊檔匯出 **逐位元相同**。效能:依股票讀變快(branch_history、K 線讀取量約 0.15×);ANALYZE 讓長窗掃描(分位 490 日、PIT、權證 120 日)優於舊版;但單日／20 日窗的全市場讀(權證當日分點、評分／口袋窗、追蹤當日異動)在**四個變體都 >2×**,依規則合成資料上沒有可上線的變體——待正式快照 bench 後由 Planner 決定(見 `docs/43` §10)。
+
 ## 2026-10-03 分點追蹤可「取消追蹤」(Phase 1,管理員全站名單,前端疊加)
 
 - 使用者:「分點追蹤要有取消追蹤功能」;追蹤名單**不是每人一份**,由管理員維護一份、全站一致。管理員在個股分點下鑽頁標題、`/branch` 排行卡(取代靜態「追蹤」標)、追蹤明細選單旁按 ★ 加入／取消全站追蹤;存 Supabase `branch_track_list`(state `track`/`mute`;核准使用者可讀、只有管理員可寫;**SQL 由資安 agent 另交,需人工在 Supabase 執行後才生效**,表不存在時按鈕不出現、畫面照系統名單)。非管理員沒有按鈕。

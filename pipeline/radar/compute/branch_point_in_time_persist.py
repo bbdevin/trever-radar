@@ -85,6 +85,7 @@ from .branch_point_in_time_report import (
     _price_observation,
 )
 from .branch_point_in_time_series import plan_as_of_walk
+from .branch_same_day import merge_by_date
 
 # 定義版本:買/賣事件、20 日分位、fwd5 的定義若改變就 bump,舊列因此仍可辨識。
 # v2(2026-09-04):價格改用 adj_factor 還原(見 :func:`_price_rows_for_stock`)。
@@ -265,7 +266,7 @@ def compute_branch_pit_stats(*, as_of: str, window_days: int = DEFAULT_WINDOW_DA
             WHERE s.type = 'stock'
               AND b.date >= :date_from
               AND b.date <= :as_of
-            ORDER BY b.stock_id, b.branch_name, b.date
+            ORDER BY b.stock_id, b.branch_name, b.date, b.branch_key  -- 明確先後(docs/43)
         """), {"date_from": window_from, "as_of": as_of}).mappings()
 
         for stock_id, stock_group in groupby(trade_rows, key=lambda row: row["stock_id"]):
@@ -275,16 +276,18 @@ def compute_branch_pit_stats(*, as_of: str, window_days: int = DEFAULT_WINDOW_DA
                     continue
                 buy_dates: list[str] = []
                 sell_dates: list[str] = []
-                observed = 0
-                for row in pair_group:
-                    observed += 1
+                pair_rows = list(pair_group)
+                observed = len(pair_rows)
+                # 同名同日多個 branch_key → 加總(branch_same_day,docs/43);以前每列
+                # 各判一次,同一天可能被算成兩個合格日。
+                for day, row in merge_by_date(pair_rows, ("net_lots", "pct")).items():
                     net_lots, pct = row["net_lots"], row["pct"]
                     if net_lots is None or pct is None:
                         continue
                     if net_lots > 0 and pct >= QUAL_PCT:
-                        buy_dates.append(row["date"])
+                        buy_dates.append(day)
                     elif net_lots < 0 and abs(pct) >= QUAL_PCT:
-                        sell_dates.append(row["date"])
+                        sell_dates.append(day)
 
                 counter = counters.setdefault(branch_name, _BranchCounter())
                 counter.add_pair_rows(observed)

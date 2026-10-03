@@ -17,6 +17,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine, make_url
 
 from .. import config
+from .branch_same_day import merge_by_date
 
 
 QUAL_PCT = 1.0
@@ -356,7 +357,7 @@ def build_branch_point_in_time_report(
               AND b.date >= :date_from
               AND b.date <= :date_to
               AND b.date <= :as_of
-            ORDER BY b.branch_name, b.stock_id, b.date
+            ORDER BY b.branch_name, b.stock_id, b.date, b.branch_key  -- 明確先後(docs/43)
         """), {
             "as_of": as_of, "date_from": date_from, "date_to": date_to,
             }).mappings().all()
@@ -408,14 +409,15 @@ def build_branch_point_in_time_report(
     report_rows: list[dict[str, Any]] = []
     for (branch_name, stock_id), trade_rows in sorted(rows_by_pair.items()):
         by_direction: dict[str, list[str]] = {"buy": [], "sell": []}
-        for row in trade_rows:
+        # 同名同日多個 branch_key → 加總(branch_same_day,docs/43)。
+        for day, row in merge_by_date(trade_rows, ("net_lots", "pct")).items():
             net_lots, pct = row["net_lots"], row["pct"]
             if net_lots is None or pct is None:
                 continue
             if net_lots > 0 and pct >= QUAL_PCT:
-                by_direction["buy"].append(row["date"])
+                by_direction["buy"].append(day)
             elif net_lots < 0 and abs(pct) >= QUAL_PCT:
-                by_direction["sell"].append(row["date"])
+                by_direction["sell"].append(day)
 
         pair_episodes: list[dict[str, Any]] = []
         for direction in ("buy", "sell"):

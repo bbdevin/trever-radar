@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from . import config
@@ -13,6 +13,15 @@ def get_engine():
         config.DATA_DIR.mkdir(parents=True, exist_ok=True)
         # timeout: wait for locks instead of failing while backfill writes in parallel
         _engine = create_engine(config.DB_URL, connect_args={"timeout": 30})
+        if _engine.dialect.name == "sqlite":
+            # 64 MiB page cache per connection (default is 2 MiB). docs/43: the clustered
+            # WITHOUT ROWID tables re-visit the same pages within one query; with 2 MiB they
+            # are re-fetched from the OS each time. Only the cache size changes here.
+            @event.listens_for(_engine, "connect")
+            def _sqlite_cache(dbapi_conn, _record):
+                cur = dbapi_conn.cursor()
+                cur.execute("PRAGMA cache_size = -65536")
+                cur.close()
     return _engine
 
 

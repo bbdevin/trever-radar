@@ -45,6 +45,13 @@ class CoverIndexScriptTests(unittest.TestCase):
         self.assertLess(self.idx("minutes_until_next_scheduled_writer"), build)
         self.assertLess(self.idx("pause_bf_containers"), build)
 
+    def test_script_is_obsolete_and_exits_before_touching_anything(self):
+        """2026-10-03(docs/43):WITHOUT ROWID 取代了覆蓋索引;預設一進來就結束。"""
+        guard = self.idx('if [ "${FORCE_OBSOLETE_COVER_INDEX:-0}" != "1" ]; then')
+        self.assertLess(guard, self.idx('source "$(dirname "$0")/lib.sh"'))
+        self.assertLess(guard, self.idx("exec 9>/tmp/radar-db.lock"))
+        self.assertIn("exit 0", self.code[guard:self.idx('source "$(dirname "$0")/lib.sh"')])
+
     def test_giving_up_is_written_to_the_log_not_only_notified(self):
         """第一版放棄時只發通知,log 停在「開始等待」,看不出它已經結束。"""
         block = self.code[self.idx("WAIT_UNTIL\" ]"):self.idx("exit 75")]

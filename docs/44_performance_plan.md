@@ -78,7 +78,7 @@ stocks/chips/{id}.json      branch_history、branch_pnl_est、branch_pctile_coun
 
 - 不換 DB 引擎、不引入任何需綁卡或常駐服務(Postgres、D1、R2、KV、SSR)。
 - 不在 VPS 原地轉換;不在交易日窗口做。
-- 不丟 `ix_branch_trades_raw_date` / `_branch`;不轉 `indicators_daily`、`daily_scores`、`branch_stock_stats`、`pctile_counts`。
+- `ix_branch_trades_raw_date` 由覆蓋式 `ix_branch_trades_raw_date_cover (date, stock_id, branch_id, buy_lots, sell_lots, net_lots, pct)` 取代(2026-10-04 定案,`docs/43`),`_branch` 保留;不轉 `indicators_daily`、`daily_scores`、`branch_stock_stats`、`pctile_counts`。
 - 不設 `temp_store=MEMORY`、不把 `cache_size` 開到數百 MB(1.7 GB RAM 有 OOM 前例)。
 - 不讓 Service Worker 快取 `/data`、不顯示過期訊號;不裁數字精度;不換圖表庫;不做列表虛擬化(列表量級不需要)。
 - 不加前端登入繞過;不改 workflow／secrets／DNS／crontab(P1 的輪次差異以腳本參數 `--sections` 實作,不改 crontab)。

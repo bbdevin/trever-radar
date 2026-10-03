@@ -55,6 +55,10 @@ daily_prices = Table(
     Column("turnover", Integer),                   # 元
     Column("transactions", Integer),
     Index("ix_daily_prices_date", "date"),
+    # WITHOUT ROWID(2026-10-03,docs/43,與 branch_trades_raw 同一個維護窗):
+    # 表依 (stock_id, date) 聚集,個股 K 線讀取不再在全檔跳;rowid 表的 PK
+    # 自動索引因此消失。create_all 不改既有庫,正式庫由離線轉換工具處理。
+    sqlite_with_rowid=False,
 )
 
 warrant_daily = Table(
@@ -181,16 +185,23 @@ branch_trades_raw = Table(
     Column("net_lots", Integer),
     Column("pct", Float),
     Column("source", Text, nullable=False, server_default="fubon"),
-    Index("ix_branch_trades_raw_date", "date"),
+    # 覆蓋式日期索引(docs/43,Planner 2026-10-04 定案):表依股票聚集之後,依日期切的
+    # 全市場讀取(評分 20 日窗、權證當日分點、口袋窗)若只靠 (date) 索引,每一列都要回表
+    # 到分散在全檔的股票叢集。這個索引就是一份「依日期連續」的完整副本,那些查詢只讀索引。
+    # 取代原本的 ix_branch_trades_raw_date(date)。
+    Index("ix_branch_trades_raw_date_cover",
+          "date", "stock_id", "branch_id", "buy_lots", "sell_lots", "net_lots", "pct"),
     Index("ix_branch_trades_raw_branch", "branch_id", "date"),
-    # 覆蓋索引(2026-09-30,使用者核准)。compute-branch-stats 逐檔讀
-    # (branch_id, date, net_lots, sell_lots, pct);表是 rowid 表、按日期附加,
-    # 一檔的列散在整個 7.5 GB 檔案裡,在 1.7 GB 記憶體的機器上冷讀 526 秒。
-    # 這個索引依 stock_id 聚集,讀取只走索引、不回表。約 1.24 GB。
-    # 注意:既有資料庫的 create_all 不會補建索引——正式庫由
-    # vps/scripts/build-branch-cover-index.sh 在選定時段建立。
-    Index("ix_branch_trades_raw_stock_cover",
-          "stock_id", "date", "branch_id", "net_lots", "sell_lots", "pct"),
+    # WITHOUT ROWID(2026-10-03,使用者核准,docs/43)。表本身就是以
+    # PK (stock_id, date, branch_id) 排序的 B-tree:一檔股票的列在檔內相鄰,
+    # 逐檔讀取(compute-branch-stats、個股 JSON)不必在全檔隨機跳。
+    # 取代了 2026-09-30 的覆蓋索引 ix_branch_trades_raw_stock_cover(約 1.24 GB)
+    # 與 rowid 表的 PK 自動索引——兩者都不再存在。
+    # 注意:create_all 不會改變既有資料庫的表結構;正式庫由
+    # pipeline/tools/convert_branch_raw_without_rowid.py 在維護窗離線轉換。
+    # 副作用:次要索引的尾端由 rowid 變成 PK 欄,同一日期內的列以
+    # (stock_id, branch_id) 順序出現,不再是寫入順序——沒寫 ORDER BY 的查詢不得依賴寫入順序。
+    sqlite_with_rowid=False,
 )
 
 daily_scores = Table(

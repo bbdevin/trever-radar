@@ -580,7 +580,7 @@ def deep_backfill(ids: list[str] | None = None, top: int | None = None,
                 latest = conn.execute(text(
                     "SELECT stock_id FROM daily_prices WHERE date = "
                     "(SELECT MAX(date) FROM daily_prices) AND turnover IS NOT NULL "
-                    "ORDER BY turnover DESC LIMIT :n"), {"n": top}).fetchall()
+                    "ORDER BY turnover DESC, stock_id LIMIT :n"), {"n": top}).fetchall()
                 wanted = {r[0] for r in latest}
                 targets = [(sid, mind) for sid, mind in rows if sid in wanted]
             elif all_stocks:
@@ -786,7 +786,7 @@ def backfill_branches(top: int = 300, days: int = 60, sleep_s: float = 1.2,
                 "SELECT p.stock_id FROM daily_prices p "
                 "JOIN stocks s ON s.id = p.stock_id AND s.type = 'stock' "
                 "WHERE p.date = :d AND p.turnover IS NOT NULL "
-                "ORDER BY p.turnover DESC LIMIT :n"),
+                "ORDER BY p.turnover DESC, p.stock_id LIMIT :n"),
                 {"d": latest, "n": top})]
 
     fetched = skipped_dates = failed = 0
@@ -1499,7 +1499,7 @@ def import_branch_trades(date: str | None = None, top: int = 80,
                 targets = [r[0] for r in conn.execute(text(
                     "SELECT p.stock_id FROM daily_prices p "
                     "JOIN stocks s ON s.id = p.stock_id AND s.type = 'stock' "
-                    "WHERE p.date = :d ORDER BY p.turnover DESC LIMIT :n"),
+                    "WHERE p.date = :d ORDER BY p.turnover DESC, p.stock_id LIMIT :n"),
                     {"d": iso_d, "n": top})]
         # 合格判準的分母:**這一輪要的股票檔數**,必須在權證目標被接上去之前量。
         # 接在後面的權證不進 `_branch_coverage` 的分子(那邊 JOIN 了

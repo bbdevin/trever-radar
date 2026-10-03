@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 
 from sqlalchemy import text
 
+from .branch_source import date_window_from
 from .geo import classify_broker_kind, normalize_branch_name
 from .theme_lifecycle import eligible_for_hot_theme
 
@@ -231,7 +232,8 @@ def tracked_buy_trigger(
         return None
     period_vol = sum(int(volumes.get(d) or 0) for d in window_dates)
     qualified = []
-    for name, net in sorted(hits, key=lambda x: -x[1]):
+    # 同張數以名稱定先後:nets 的插入順序跟著 branch_trades 的實體排列走(docs/43)。
+    for name, net in sorted(hits, key=lambda x: (-x[1], x[0])):
         share = (net * 1000 / period_vol) if period_vol > 0 else 0.0
         if net >= TRACKED_MIN_LOTS or share >= TRACKED_VOL_SHARE:
             qualified.append((name, net, share))
@@ -411,10 +413,11 @@ def load_pocket_context(conn, window_dates: list[str], stock_ids: list[str]) -> 
 
     lo, hi = window_dates[0], window_dates[-1]
     want = set(stock_ids)
+    # 全市場窗:走依日期連續的覆蓋索引(radar/branch_source.py,docs/43)。
     for r in conn.execute(text(
-        "SELECT stock_id, date, branch_name, net_lots "
-        "FROM branch_trades "
-        "WHERE date >= :lo AND date <= :hi AND LENGTH(stock_id) = 4"
+        "SELECT r.stock_id, r.date, d.branch_name, r.net_lots "
+        f"FROM {date_window_from(conn)} "
+        "WHERE r.date >= :lo AND r.date <= :hi AND LENGTH(r.stock_id) = 4"
     ), {"lo": lo, "hi": hi}):
         if r[0] not in want:
             continue

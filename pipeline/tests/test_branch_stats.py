@@ -236,10 +236,12 @@ class CredibilityScoreTests(unittest.TestCase):
 
 
 class CoveringIndexPlanTests(unittest.TestCase):
-    """compute-branch-stats 的逐檔讀取要走覆蓋索引,不回表(2026-09-30)。
+    """compute-branch-stats 的逐檔讀取要走 branch_trades_raw 的主鍵(2026-10-03 起)。
 
-    冷讀 526 秒的原因是表按日期存放、一檔的列散在全檔;索引依 stock_id 聚集。
-    這條測試守的是「查詢形狀一改就悄悄失去索引」——例如多選一個不在索引裡的欄位。
+    冷讀 526 秒的原因是表按日期存放、一檔的列散在全檔。2026-09-30 先用覆蓋索引
+    解,2026-10-03 改成整表 WITHOUT ROWID(docs/43):表本身依 (stock_id, date,
+    branch_id) 聚集,PK 查找就是整列,不需要也不再有覆蓋索引。
+    這條測試守的是「查詢形狀一改就悄悄改走全表掃描或日期索引」。
     """
 
     def test_the_per_stock_read_uses_the_covering_index(self):
@@ -267,7 +269,62 @@ class CoveringIndexPlanTests(unittest.TestCase):
                     db._engine.dispose()
                 db._engine = None
                 config.DB_URL, config.DATA_DIR = old_url, old_dir
-        self.assertIn("COVERING INDEX ix_branch_trades_raw_stock_cover", plan, plan)
+        # WITHOUT ROWID 表的主鍵查找印成 "SEARCH r USING PRIMARY KEY (stock_id=?)"
+        self.assertIn("SEARCH r USING PRIMARY KEY (stock_id=?)", plan, plan)
+        self.assertNotIn("ix_branch_trades_raw_date", plan, plan)        # also excludes _date_cover
+        self.assertNotIn("ix_branch_trades_raw_date_cover", plan, plan)
+
+    def test_branch_trades_raw_is_without_rowid_and_has_no_cover_index(self):
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+
+        from sqlalchemy import text
+
+        import radar.config as config
+        import radar.db as db
+
+        with TemporaryDirectory() as tmp:
+            old_url, old_dir = config.DB_URL, config.DATA_DIR
+            config.DB_URL = "sqlite:///" + (Path(tmp) / "t.db").as_posix()
+            config.DATA_DIR = Path(tmp)
+            db._engine = None
+            try:
+                db.init_db()
+                with db.get_engine().connect() as conn:
+                    ddl = conn.execute(text(
+                        "SELECT sql FROM sqlite_master WHERE name = 'branch_trades_raw'")).scalar()
+                    indexes = {r[0] for r in conn.execute(text(
+                        "SELECT name FROM sqlite_master WHERE type = 'index' "
+                        "AND tbl_name = 'branch_trades_raw'"))}
+                    # rowid 表才有 rowid 欄;WITHOUT ROWID 表選 rowid 會報錯
+                    with self.assertRaises(Exception):
+                        conn.execute(text("SELECT rowid FROM branch_trades_raw")).fetchall()
+            finally:
+                if db._engine is not None:
+                    db._engine.dispose()
+                db._engine = None
+                config.DB_URL, config.DATA_DIR = old_url, old_dir
+        self.assertTrue(ddl.rstrip().upper().endswith("WITHOUT ROWID"), ddl)
+        self.assertNotIn("ix_branch_trades_raw_stock_cover", indexes)
+        self.assertNotIn("ix_branch_trades_raw_date", indexes)       # replaced by the covering one
+        self.assertIn("ix_branch_trades_raw_date_cover", indexes)
+        self.assertIn("ix_branch_trades_raw_branch", indexes)
+
+    def test_converter_cover_ddl_is_what_sqlalchemy_emits(self):
+        """convert_branch_raw_without_rowid.py is stdlib-only, so it carries the DDL as text;
+        verify_db_equivalence compares NEW's sqlite_master against it. Both must equal schema.py."""
+        from sqlalchemy.dialects import sqlite
+        from sqlalchemy.schema import CreateIndex
+
+        from radar import schema
+        from tools.convert_branch_raw_without_rowid import COVER_ADDED, COVER_DROPPED
+
+        emitted = {i.name: str(CreateIndex(i).compile(dialect=sqlite.dialect()))
+                   for i in schema.branch_trades_raw.indexes}
+        for name, ddl in COVER_ADDED["branch_trades_raw"]:
+            self.assertEqual(ddl, emitted[name])
+        for name in COVER_DROPPED["branch_trades_raw"]:
+            self.assertNotIn(name, emitted)
 
     def test_the_query_in_compute_all_is_the_one_measured(self):
         """上面那條只有在 compute_all 真的發這句 SQL 時才有意義。"""

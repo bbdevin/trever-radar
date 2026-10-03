@@ -52,7 +52,7 @@ def _targets(conn, ids: list[str] | None, top: int | None, all_stocks: bool) -> 
             FROM daily_prices
             WHERE date = (SELECT MAX(date) FROM daily_prices)
               AND turnover IS NOT NULL
-            ORDER BY turnover DESC
+            ORDER BY turnover DESC, stock_id
             LIMIT :n
         """), {"n": top}).fetchall()
         return [r[0] for r in rows]

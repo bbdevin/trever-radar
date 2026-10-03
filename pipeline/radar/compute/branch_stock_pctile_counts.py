@@ -98,6 +98,7 @@ from sqlalchemy import text
 
 from ..db import get_engine, init_db
 from ..schema import branch_stock_pctile_counts
+from .branch_same_day import merge_by_date
 from .branch_point_in_time_persist import (
     _price_rows_for_stock,
     _validate_window_days,
@@ -372,7 +373,8 @@ def compute_branch_stock_pctile_counts(
             WHERE s.type = 'stock'
               AND b.date >= :date_from
               AND b.date <= :as_of
-            ORDER BY b.stock_id, b.branch_name, b.date
+            -- 同名同日多列在 Python 端加總(順序無關);branch_key 只是讓串流順序明確(docs/43)。
+            ORDER BY b.stock_id, b.branch_name, b.date, b.branch_key
         """), {"date_from": window_from, "as_of": as_of}).mappings()
 
         for stock_id, stock_group in groupby(trade_rows, key=lambda row: row["stock_id"]):
@@ -387,16 +389,19 @@ def compute_branch_stock_pctile_counts(
                 sell_dates: list[str] = []
                 # 這一對在窗口內的每一列(不只合格日):次日回吐要查的是次一交易日
                 # 的 sell_lots,那一天本身不必是事件。只活到這一對算完為止。
+                # 同名同日多個 branch_key → 加總(branch_same_day,docs/43);以前
+                # datemap 留最後一列、合格日每列各判一次,結果跟著讀取順序走。
+                merged = merge_by_date(pair_group, ("net_lots", "sell_lots", "pct"))
                 datemap: dict[str, dict[str, Any]] = {}
-                for row in pair_group:
+                for day, row in merged.items():
                     net_lots, pct = row["net_lots"], row["pct"]
-                    datemap[row["date"]] = {"net": net_lots, "sell": row["sell_lots"]}
+                    datemap[day] = {"net": net_lots, "sell": row["sell_lots"]}
                     if net_lots is None or pct is None:
                         continue
                     if net_lots > 0 and pct >= QUAL_PCT:
-                        buy_dates.append(row["date"])
+                        buy_dates.append(day)
                     elif net_lots < 0 and abs(pct) >= QUAL_PCT:
-                        sell_dates.append(row["date"])
+                        sell_dates.append(day)
                 if not buy_dates and not sell_dates:
                     continue
                 if row_by_date is None:

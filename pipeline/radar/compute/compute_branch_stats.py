@@ -23,6 +23,7 @@ from sqlalchemy import text
 from .. import config, schema
 from ..db import get_engine, init_db, upsert
 from ..branch_names import is_closed
+from .branch_same_day import merge_by_date
 from .performance import forward_returns
 
 # 事件資格
@@ -330,9 +331,15 @@ def compute_all():
             ), {"sid": sid}).fetchall()
             t_read += time.monotonic() - t_q
 
-            by_branch: dict[str, dict[str, dict]] = defaultdict(dict)
+            # 同名同日多個 branch_key → 加總(branch_same_day);以前是「留最後一列」,
+            # 最後一列是誰取決於讀取順序(docs/43)。
+            rows_by_branch: dict[str, list[dict]] = defaultdict(list)
             for br, d, net, sell, pct in strade_rows:
-                by_branch[br][d] = {"net": net, "sell": sell, "pct": pct}
+                rows_by_branch[br].append({"date": d, "net": net, "sell": sell, "pct": pct})
+            by_branch: dict[str, dict[str, dict]] = {
+                br: merge_by_date(rs, ("net", "sell", "pct"))
+                for br, rs in rows_by_branch.items()
+            }
 
             for br, datemap in by_branch.items():
                 # 停業判定用:分點在任一檔股票最後出現的日子(資料已在手上,不另查)。

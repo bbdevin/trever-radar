@@ -1,4 +1,10 @@
 #!/usr/bin/env bash
+# ⚠️ 已作廢(2026-10-03,docs/43):branch_trades_raw 改成 WITHOUT ROWID 之後,表本身
+# 就依 (stock_id, date, branch_id) 聚集,這個覆蓋索引不再需要,schema.py 也已移除它的
+# 宣告。維護窗離線轉換(pipeline/tools/convert_branch_raw_without_rowid.py)不會重建它。
+# 保留本檔只作歷史紀錄;預設直接結束,不動資料庫。真的要在舊版面上重建時才設
+# FORCE_OBSOLETE_COVER_INDEX=1(轉換後的新庫上建它只會白佔約 1.3 GB)。
+#
 # 一次性維運:在正式庫建立 branch_trades_raw 的覆蓋索引(2026-09-30,使用者核准)。
 #
 # 為什麼:compute-branch-stats 逐檔讀 branch_trades,冷讀 526 秒——表是 rowid 表、按
@@ -15,6 +21,11 @@
 # 峰值約 2.5–3 GB。可用空間不足 4 GiB 就不做。
 #
 # 冪等:CREATE INDEX IF NOT EXISTS;已存在就只回報、不重建。
+if [ "${FORCE_OBSOLETE_COVER_INDEX:-0}" != "1" ]; then
+  echo "build-branch-cover-index.sh is obsolete (docs/43: branch_trades_raw is WITHOUT ROWID) — nothing done"
+  exit 0
+fi
+
 source "$(dirname "$0")/lib.sh"
 trap - ERR   # 失敗點各自講清楚後果,不用「執行到第 N 行失敗」
 

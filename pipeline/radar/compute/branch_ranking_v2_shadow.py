@@ -42,6 +42,7 @@ from .compute_branch_stats import (
     price_percentile,
     recency_factor,
 )
+from .branch_same_day import merge_by_date
 from .performance import forward_returns
 from .read_only_sqlite import get_read_only_sqlite_engine, safe_report_output_path
 
@@ -220,9 +221,13 @@ def _fetch(conn, as_of: str) -> tuple[dict[str, _BranchAgg], dict[str, list[tupl
         """), {"sid": sid, "as_of": as_of}).fetchall()
         observed_trade_rows += len(trade_rows)
 
-        by_branch: dict[str, dict[str, dict]] = defaultdict(dict)
+        # 同名同日多個 branch_key → 加總(branch_same_day,docs/43),與 compute_branch_stats 一致。
+        rows_by_branch: dict[str, list[dict]] = defaultdict(list)
         for branch_name, day, net, sell, pct in trade_rows:
-            by_branch[branch_name][day] = {"net": net, "sell": sell, "pct": pct}
+            rows_by_branch[branch_name].append({"date": day, "net": net, "sell": sell, "pct": pct})
+        by_branch: dict[str, dict[str, dict]] = {
+            br: merge_by_date(rs, ("net", "sell", "pct")) for br, rs in rows_by_branch.items()
+        }
 
         for branch_name, datemap in by_branch.items():
             qual_dates = sorted(

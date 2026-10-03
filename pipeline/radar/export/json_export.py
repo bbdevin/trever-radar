@@ -7,6 +7,7 @@ money-flow panel built from industry sums vs their 20-day averages.
 import hashlib
 import json
 import re
+import time
 from datetime import date, datetime
 from datetime import date as date_cls  # 函式內有叫 date 的區域名稱時仍拿得到類別
 from pathlib import Path
@@ -1403,6 +1404,9 @@ def export_json(out_dir: Path | None = None) -> dict:
                 GROUP BY stock_id
             ) wa ON wa.stock_id = p.stock_id
             WHERE p.date = :d AND p.close IS NOT NULL
+            -- all_stocks 的順序就是各榜單同分時的先後;明寫出來,不跟著
+            -- daily_prices 的實體排列走(docs/43 改 WITHOUT ROWID 後會變)。
+            ORDER BY p.stock_id
         """), {"d": d, "prev": prev, "d5": d5, "d20": base20[-1] if base20 else d,
                "i_date": i_date, "m_date": m_date}).fetchall()
 
@@ -2102,9 +2106,12 @@ def export_json(out_dir: Path | None = None) -> dict:
         groups, groups_by_stock = _company_group_payloads(conn, d)
         # 權證分點(當日,權證代號=6碼)→ {權證id: 前8大進出}
         wb: dict[str, list] = {}
+        # ORDER BY 是同張數時的名次(下面是穩定排序):不寫的話,同分的先後跟著檔案的
+        # 實體排列走,branch_trades_raw 改 WITHOUT ROWID(docs/43)就會變。
         for r in conn.execute(text(
             "SELECT stock_id, branch_name, buy_lots, sell_lots, net_lots "
-            "FROM branch_trades WHERE date = :d AND LENGTH(stock_id) = 6"), {"d": d}):
+            "FROM branch_trades WHERE date = :d AND LENGTH(stock_id) = 6 "
+            "ORDER BY stock_id, branch_key"), {"d": d}):
             wb.setdefault(r[0], []).append(
                 {"name": r[1], "buy": r[2], "sell": r[3], "net": r[4]})
         for rows_list in wb.values():
@@ -2138,6 +2145,9 @@ def export_json(out_dir: Path | None = None) -> dict:
         export_ids = list(dict.fromkeys(
             list(union.keys()) + sorted(stock_meta.keys())
         ))
+        # 各段累計秒數(docs/43):只印一行 log,輸出的 JSON 一個位元都不變。
+        timing = {k: 0.0 for k in ("branch_history", "candles", "pctile", "pnl",
+                                   "warrant_shards", "tracked", "write")}
         for sid in export_ids:
             s = by_id_all.get(sid)
             if s is None:
@@ -2153,6 +2163,7 @@ def export_json(out_dir: Path | None = None) -> dict:
                     "strategy_signals": [],
                     "pocket_tags": [], "pocket_score": 0, "risks": [],
                 }
+            t_sec = time.perf_counter()
             if sid in union:
                 candles = conn.execute(text(
                     "SELECT p.date, p.open, p.high, p.low, p.close, p.volume, p.turnover, p.adj_factor "
@@ -2163,6 +2174,7 @@ def export_json(out_dir: Path | None = None) -> dict:
                     "SELECT p.date, p.open, p.high, p.low, p.close, p.volume, p.turnover, p.adj_factor "
                     "FROM daily_prices p WHERE p.stock_id = :s AND p.close IS NOT NULL "
                     "ORDER BY p.date DESC LIMIT 600"), {"s": sid}).fetchall()))
+            timing["candles"] += time.perf_counter() - t_sec
             warrant_history = conn.execute(text("""
                 SELECT date, call_turnover, put_turnover, call_count, put_count
                 FROM warrant_stock_daily
@@ -2181,22 +2193,29 @@ def export_json(out_dir: Path | None = None) -> dict:
                 ORDER BY d.turnover DESC
                 LIMIT 12
             """), {"s": sid, "d": d}).fetchall()
+            t_sec = time.perf_counter()
+            # 同張數的先後明寫成 branch_id(= 以前走 PK 索引時的自然順序,輸出逐位元不變),
+            # 不再靠索引走訪順序(docs/43)。view 沒有 branch_id,所以直接 join。
             stock_branches = conn.execute(text("""
-                SELECT branch_name, buy_lots, sell_lots, net_lots, pct
-                FROM branch_trades
-                WHERE stock_id = :s AND date = :d
-                ORDER BY net_lots DESC
+                SELECT d.branch_name, r.buy_lots, r.sell_lots, r.net_lots, r.pct
+                FROM branch_trades_raw r
+                JOIN branch_dim d ON r.branch_id = d.id
+                WHERE r.stock_id = :s AND r.date = :d
+                ORDER BY r.net_lots DESC, r.branch_id
             """), {"s": sid, "d": d}).fetchall()
 
             has_any_branch = conn.execute(text(
                 "SELECT 1 FROM branch_trades WHERE stock_id = :s LIMIT 1"
             ), {"s": sid}).scalar()
             if has_any_branch:
+                # 同日內的先後(下面依 |net| 穩定排序取前 12,同值時就看它)明寫成
+                # branch_id 遞減 = 以前倒著走索引的自然順序,輸出逐位元不變(docs/43)。
                 branch_history_rows = conn.execute(text("""
-                    SELECT date, branch_name, buy_lots, sell_lots, net_lots
-                    FROM branch_trades
-                    WHERE stock_id = :s AND date >= date(:d, '-730 days')
-                    ORDER BY date DESC
+                    SELECT r.date, d.branch_name, r.buy_lots, r.sell_lots, r.net_lots
+                    FROM branch_trades_raw r
+                    JOIN branch_dim d ON r.branch_id = d.id
+                    WHERE r.stock_id = :s AND r.date >= date(:d, '-730 days')
+                    ORDER BY r.date DESC, r.branch_id DESC
                 """), {"s": sid, "d": d}).fetchall()
             else:
                 branch_history_rows = []
@@ -2217,7 +2236,13 @@ def export_json(out_dir: Path | None = None) -> dict:
                 {"t": dt, "branches": sorted(branches, key=lambda x: -abs(x["net"]))[:12]}
                 for dt, branches in sorted(history_by_date.items(), reverse=True)[:480]
             ]
+            timing["branch_history"] += time.perf_counter() - t_sec
             margin_hist, margin_meta = _margin_history_payload(conn, sid, d)
+            t_sec = time.perf_counter()
+            branch_pctile_counts = _branch_pctile_payload(
+                conn, sid, branch_pctile_meta, branch_pctile_exists,
+            )
+            timing["pctile"] += time.perf_counter() - t_sec
             holders_hist, holders_meta = _holders_history_payload(conn, sid, d)
             directors_latest = _directors_latest_payload(conn, sid)
             payload = {
@@ -2248,9 +2273,7 @@ def export_json(out_dir: Path | None = None) -> dict:
                 ],
                 "branch_history": branch_history,
                 # 計數與分母,不是判定;鍵永遠存在,沒有合格分點時是空清單。
-                "branch_pctile_counts": _branch_pctile_payload(
-                    conn, sid, branch_pctile_meta, branch_pctile_exists,
-                ),
+                "branch_pctile_counts": branch_pctile_counts,
                 "branch_tags": _branch_tags_payload(
                     as_of=d,
                     names={b["n"] for day in branch_history for b in day["branches"]}
@@ -2288,11 +2311,13 @@ def export_json(out_dir: Path | None = None) -> dict:
                 "directors_latest": directors_latest,
             }
             # 區間損益(估算,docs/42):用裁成前 12 名之前的分點列;沒有分點列 → 鍵不輸出。
+            t_sec = time.perf_counter()
             branch_pnl = branch_pnl_payload(
                 ((r[0], r[1], r[4]) for r in branch_history_rows),
                 ((c[0], c[4], c[7]) for c in candles),
                 as_of_limit=d,
             )
+            timing["pnl"] += time.perf_counter() - t_sec
             if branch_pnl is not None:
                 payload["branch_pnl_est"] = branch_pnl
             # futures_contracts 還是空的(第一次 import-futures 之前)→ 整個鍵不輸出。
@@ -2310,17 +2335,25 @@ def export_json(out_dir: Path | None = None) -> dict:
                         "anomaly_history": stock_anomaly_history(
                             futures_history, futures_history_meta, sid),
                     }
+            t_sec = time.perf_counter()
             (stock_dir / f"{sid}.json").write_text(
                 json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+            timing["write"] += time.perf_counter() - t_sec
 
     (out / "groups.json").write_text(json.dumps({
         "version": 1, "data_date": d, "generated_at": now, "groups": groups,
     }, ensure_ascii=False), encoding="utf-8")
-                
+
     # ── Export Branches ──
     _export_branches(out, engine, d)
+    t_sec = time.perf_counter()
     _export_warrant_branches(out, engine, d, base20)
+    timing["warrant_shards"] += time.perf_counter() - t_sec
+    t_sec = time.perf_counter()
     _export_tracked_branch_history(out, engine, d)
+    timing["tracked"] += time.perf_counter() - t_sec
+    # 一行、固定鍵序,正式機 radar-cron.log 可直接 grep 'export timing:' 比較前後。
+    print("export timing: " + " ".join(f"{k}={v:.1f}s" for k, v in timing.items()), flush=True)
 
     return {"out": str(out), "date": d, "stocks": len(export_ids)}
 
@@ -2372,7 +2405,7 @@ def _export_branches(out: Path, engine, date: str):
             WHERE b.date = :as_of
               AND b.branch_name IN (SELECT branch_name FROM tracked_branches
                                     WHERE COALESCE(source, '') <> 'muted')
-            ORDER BY b.branch_name, b.net_lots DESC
+            ORDER BY b.branch_name, b.net_lots DESC, b.stock_id, b.branch_key
         """), {"as_of": today_as_of})]
         
         # Group by branch
@@ -2446,6 +2479,8 @@ def _export_warrant_branches(out: Path, engine, date: str, base20: list[str]):
         # Calculate estimated NTD amount: net_lots * 1000 * price
         # Since warrant_daily might miss some days, we fallback to 1.0 if unknown, though usually it's there.
         # We query per warrant to provide breakdown.
+        # 金額用整數算(價格 ×1000 先取整,權證價最多 3 位小數,所以等於原值):浮點 SUM
+        # 的結果跟列的加總順序有關,int() 截斷後會差 1 元;整數加總與順序無關(docs/43)。
         rows = [] if not bd1 else conn.execute(text("""
             SELECT
                 b.branch_name,
@@ -2455,15 +2490,15 @@ def _export_warrant_branches(out: Path, engine, date: str, base20: list[str]):
                 w.name AS warrant_name,
                 w.kind,
                 SUM(CASE WHEN b.date >= :d1 THEN b.net_lots ELSE 0 END) AS net_lots_1d,
-                SUM(CASE WHEN b.date >= :d1 THEN b.net_lots * 1000 * COALESCE(wd.close, 1.0) ELSE 0 END) AS net_amt_1d,
+                SUM(CASE WHEN b.date >= :d1 THEN b.net_lots * CAST(ROUND(COALESCE(wd.close, 1.0) * 1000) AS INTEGER) ELSE 0 END) AS net_amt_1d,
                 SUM(CASE WHEN b.date >= :d2 THEN b.net_lots ELSE 0 END) AS net_lots_2d,
-                SUM(CASE WHEN b.date >= :d2 THEN b.net_lots * 1000 * COALESCE(wd.close, 1.0) ELSE 0 END) AS net_amt_2d,
+                SUM(CASE WHEN b.date >= :d2 THEN b.net_lots * CAST(ROUND(COALESCE(wd.close, 1.0) * 1000) AS INTEGER) ELSE 0 END) AS net_amt_2d,
                 SUM(CASE WHEN b.date >= :d5 THEN b.net_lots ELSE 0 END) AS net_lots_5d,
-                SUM(CASE WHEN b.date >= :d5 THEN b.net_lots * 1000 * COALESCE(wd.close, 1.0) ELSE 0 END) AS net_amt_5d,
+                SUM(CASE WHEN b.date >= :d5 THEN b.net_lots * CAST(ROUND(COALESCE(wd.close, 1.0) * 1000) AS INTEGER) ELSE 0 END) AS net_amt_5d,
                 SUM(CASE WHEN b.date >= :d30 THEN b.net_lots ELSE 0 END) AS net_lots_30d,
-                SUM(CASE WHEN b.date >= :d30 THEN b.net_lots * 1000 * COALESCE(wd.close, 1.0) ELSE 0 END) AS net_amt_30d,
+                SUM(CASE WHEN b.date >= :d30 THEN b.net_lots * CAST(ROUND(COALESCE(wd.close, 1.0) * 1000) AS INTEGER) ELSE 0 END) AS net_amt_30d,
                 SUM(CASE WHEN b.date >= :d120 THEN b.net_lots ELSE 0 END) AS net_lots_120d,
-                SUM(CASE WHEN b.date >= :d120 THEN b.net_lots * 1000 * COALESCE(wd.close, 1.0) ELSE 0 END) AS net_amt_120d
+                SUM(CASE WHEN b.date >= :d120 THEN b.net_lots * CAST(ROUND(COALESCE(wd.close, 1.0) * 1000) AS INTEGER) ELSE 0 END) AS net_amt_120d
             FROM branch_trades b
             JOIN warrants w ON w.id = b.stock_id
             JOIN stocks s ON s.id = w.stock_id
@@ -2549,9 +2584,9 @@ def _export_warrant_branches(out: Path, engine, date: str, base20: list[str]):
             for r in conn.execute(text("""
                 SELECT b.branch_name, w.stock_id AS underlying_id, b.date,
                        SUM(CASE WHEN w.kind = 'call'
-                                THEN b.net_lots * 1000 * COALESCE(wd.close, 1.0) ELSE 0 END) AS call_amt,
+                                THEN b.net_lots * CAST(ROUND(COALESCE(wd.close, 1.0) * 1000) AS INTEGER) ELSE 0 END) AS call_amt,
                        SUM(CASE WHEN w.kind = 'put'
-                                THEN b.net_lots * 1000 * COALESCE(wd.close, 1.0) ELSE 0 END) AS put_amt
+                                THEN b.net_lots * CAST(ROUND(COALESCE(wd.close, 1.0) * 1000) AS INTEGER) ELSE 0 END) AS put_amt
                 FROM branch_trades b
                 JOIN warrants w ON w.id = b.stock_id
                 JOIN stocks s ON s.id = w.stock_id

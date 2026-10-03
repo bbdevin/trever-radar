@@ -70,6 +70,7 @@ from typing import Any, Iterable
 from sqlalchemy import text
 
 from .branch_point_in_time_persist import _price_rows_for_stock
+from .branch_same_day import merge_by_date
 from .branch_point_in_time_report import (
     HIGH_SELL_MIN_PCTILE,
     LOW_BUY_MAX_PCTILE,
@@ -883,7 +884,7 @@ def build_branch_window_direction_battery(
                 WHERE s.type = 'stock'
                   AND b.date >= :date_from
                   AND b.date <= :date_to
-                ORDER BY b.stock_id, b.branch_name, b.date
+                ORDER BY b.stock_id, b.branch_name, b.date, b.branch_key  -- 明確先後(docs/43)
             """), {"date_from": split["window_from"], "date_to": split["window_to"]}).mappings()
 
             for stock_id, stock_group in groupby(trade_rows, key=lambda row: row["stock_id"]):
@@ -894,20 +895,23 @@ def build_branch_window_direction_battery(
                 ):
                     dates_by_side: dict[str, list[str]] = {"buy": [], "sell": []}
                     abs_pct_by_date: dict[str, float] = {}
-                    for row in pair_group:
-                        trade_rows_streamed += 1
-                        if branch_name not in universe:
-                            continue
+                    pair_rows = list(pair_group)
+                    trade_rows_streamed += len(pair_rows)
+                    if branch_name not in universe:
+                        continue
+                    # 同名同日多個 branch_key → 加總(branch_same_day,docs/43);以前
+                    # abs_pct 留最後一列、合格日每列各判一次,結果跟著讀取順序走。
+                    for day, row in merge_by_date(pair_rows, ("net_lots", "pct")).items():
                         net_lots, pct = row["net_lots"], row["pct"]
                         if net_lots is None or pct is None:
                             continue
                         if net_lots > 0 and pct >= QUAL_PCT:
-                            dates_by_side["buy"].append(row["date"])
+                            dates_by_side["buy"].append(day)
                         elif net_lots < 0 and abs(pct) >= QUAL_PCT:
-                            dates_by_side["sell"].append(row["date"])
+                            dates_by_side["sell"].append(day)
                         else:
                             continue
-                        abs_pct_by_date[row["date"]] = abs(pct)
+                        abs_pct_by_date[day] = abs(pct)
                     if not dates_by_side["buy"] and not dates_by_side["sell"]:
                         continue
                     if row_by_date is None:
