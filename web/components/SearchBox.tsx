@@ -12,6 +12,7 @@ import {
   CommandList,
 } from "@/components/ui/command";
 import { dataFetch } from "@/lib/dataFetch";
+import { markNavPending } from "@/lib/navFeedback";
 import { useSession } from "@/lib/useSession";
 import { useUserPrefs } from "@/lib/userPrefs";
 
@@ -61,7 +62,14 @@ export default function SearchBox() {
     return [...byId, ...byName].slice(0, 12);
   }, [index, q]);
 
+  // 打開搜尋就預取個股頁(JS + 載入骨架),選到股票後不必再等。
+  useEffect(() => {
+    if (open) router.prefetch("/stock");
+  }, [open, router]);
+
   const go = async (id: string) => {
+    // 點下去立刻轉圈圈:下面要先等搜尋歷史寫入(一次 Supabase 來回)才換頁。
+    markNavPending(null, `/stock?id=${id}`);
     // 先等寫入完成再換頁(以前是 hard navigate,會取消 upsert);改 client 導覽後保留同樣順序。
     try {
       await pushSearch(id);

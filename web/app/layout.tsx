@@ -9,6 +9,7 @@ import AuthGate from "@/components/AuthGate";
 import BottomNav from "@/components/BottomNav";
 import DesktopNav from "@/components/DesktopNav";
 import PwaProvider from "@/components/PwaProvider";
+import NavFeedback from "@/components/NavFeedback";
 import { WatchlistProvider } from "@/lib/watchlist";
 import { BranchTrackProvider } from "@/lib/branchTrackList";
 import { UserPrefsProvider } from "@/lib/userPrefs";
@@ -115,6 +116,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             mobileOffset={{ bottom: "calc(4.75rem + env(safe-area-inset-bottom))" }}
           />
         </PwaProvider>
+        <NavFeedback />
       </body>
     </html>
   );

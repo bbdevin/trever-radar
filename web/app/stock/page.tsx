@@ -50,7 +50,7 @@ import {
 } from "@/lib/futures";
 import { ContractTag, SpotChip, flagCardClass } from "@/components/FuturesFlagParts";
 import PocketBadges from "@/components/PocketBadges";
-import { Skeleton } from "@/components/ui/skeleton";
+import StockPageSkeleton from "@/components/StockPageSkeleton";
 import WatchlistButton from "@/components/WatchlistButton";
 import { normalizeBranchPctile } from "@/lib/branchPctile";
 import { normalizePnl } from "@/lib/branchPnl";
@@ -196,13 +196,7 @@ function StockView() {
         {isBrowserOffline() ? OFFLINE_DATA_COPY : `尚無 ${id} 的個股資料檔。目前僅產出雷達榜單內的股票,之後擴大到全候選池。`}
       </div>
     );
-  if (!data)
-    return (
-      <>
-        <Skeleton className="my-4 h-[68px] rounded-[var(--r-md)]" />
-        <Skeleton className="h-[52vh] rounded-[var(--r-lg)]" />
-      </>
-    );
+  if (!data) return <StockPageSkeleton />;
 
   const cs = data.candles;
   const last = cs[cs.length - 1];

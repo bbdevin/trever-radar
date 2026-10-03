@@ -127,8 +127,104 @@
 body { padding-bottom: 0; }
 main { min-height: 62vh; }
 
+/* ── 站內換頁即時回饋(lib/navFeedback.ts 在點擊當下設 data-nav-pending) ──
+   轉圈圈 = 品牌藍環;頂部進度條每次換頁都出現;卡片點下去蓋一層轉圈圈,其他入口(搜尋、表格列、
+   一般連結)顯示畫面上方的「載入中」小膠囊。減少動態效果時改成脈動圓點(仍看得到)。 */
+@keyframes nav-spin { to { transform: rotate(360deg); } }
+@keyframes nav-pulse { 50% { opacity: 0.35; } }
+@keyframes nav-slide { from { transform: translateX(-100%); } to { transform: translateX(250%); } }
+.nav-spinner {
+  display: inline-block;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  border-radius: 9999px;
+  border: 2.5px solid color-mix(in srgb, var(--primary) 22%, transparent);
+  border-top-color: var(--primary);
+  animation: nav-spin 0.7s linear infinite;
+}
+.nav-progress {
+  position: fixed;
+  top: env(safe-area-inset-top, 0px);
+  left: 0;
+  right: 0;
+  z-index: 70;
+  height: 3px;
+  overflow: hidden;
+  pointer-events: none;
+  visibility: hidden;
+}
+.nav-progress::after {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 40%;
+  border-radius: 9999px;
+  background: var(--grad-accent);
+  /* 負延遲:第一個 frame 就已滑進畫面,不會從左邊外面慢慢進來 */
+  animation: nav-slide 0.9s ease-in-out -0.3s infinite;
+}
+html[data-nav-pending] .nav-progress { visibility: visible; }
+.nav-chip {
+  position: fixed;
+  top: calc(var(--header-offset) + 10px);
+  left: 50%;
+  z-index: 70;
+  display: none;
+  align-items: center;
+  gap: 8px;
+  transform: translateX(-50%);
+  border: 1px solid var(--border);
+  border-radius: 9999px;
+  background: var(--popover);
+  padding: 7px 14px 7px 10px;
+  color: var(--foreground);
+  font-size: 13px;
+  font-weight: 600;
+  box-shadow: var(--shadow-lift);
+  pointer-events: none;
+}
+html[data-nav-pending="chip"] .nav-chip { display: inline-flex; }
+/* 卡片本身已在轉;但卡片中心可能在畫面外(只露出上緣),超過 0.3 秒還沒換頁就也顯示小膠囊。
+   預取過的卡片通常一兩個 frame 就換頁,不會閃一下膠囊。 */
+@keyframes nav-chip-in { from { opacity: 0; } }
+html[data-nav-pending="card"] .nav-chip { display: inline-flex; animation: nav-chip-in 0.15s ease 0.3s backwards; }
+.nav-card[data-nav-pending] { border-color: var(--primary); }
+.nav-card[data-nav-pending]::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  background: color-mix(in srgb, var(--card) 55%, transparent);
+}
+.nav-card[data-nav-pending]::after {
+  content: "";
+  position: absolute;
+  top: calc(50% - 20px);
+  left: calc(50% - 20px);
+  z-index: 11;
+  width: 40px;
+  height: 40px;
+  border-radius: 9999px;
+  border: 3.5px solid color-mix(in srgb, var(--primary) 22%, transparent);
+  border-top-color: var(--primary);
+  animation: nav-spin 0.7s linear infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
+  /* 轉圈圈 → 脈動圓點;進度條 → 整條淡入淡出。只有透明度變化,沒有位移。 */
+  .nav-spinner,
+  .nav-card[data-nav-pending]::after {
+    border: 0;
+    background: var(--primary);
+    transform: scale(0.55);
+    animation: nav-pulse 1.2s ease-in-out infinite !important;
+  }
+  .nav-progress::after {
+    width: 100%;
+    animation: nav-pulse 1.2s ease-in-out infinite !important;
+  }
 }
 
 @theme inline {

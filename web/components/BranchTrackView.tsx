@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { dataFetch } from "@/lib/dataFetch";
+import { markNavPending } from "@/lib/navFeedback";
 import { fmtLots, fmtAmount } from "@/lib/format";
 import { cn, pillTabClass } from "@/lib/utils";
 import BuySellSplit from "@/components/BuySellSplit";
@@ -105,7 +106,7 @@ function AggTable({
               return (
                 <tr
                   key={r.stock_id}
-                  onClick={() => { router.push(`/stock?id=${r.stock_id}#branch`); }}
+                  onClick={() => { markNavPending(); router.push(`/stock?id=${r.stock_id}#branch`); }}
                   className="num cursor-pointer border-t border-[color:var(--line)] transition-colors duration-200 hover:bg-secondary"
                 >
                   <td className="px-3.5 py-2.5 text-left">
