@@ -421,14 +421,16 @@ export default function KChart({
           })
           .filter(Boolean)
           .join(" ");
-        const tone = prev != null && c.c >= prev ? "up" : "down";
+        // 平盤不上色(紅漲綠跌只給真的有漲跌的那一根);漲時補「+」,符號與顏色並存。
+        const tone = prev == null || c.c === prev ? "" : c.c > prev ? "up" : "down";
+        const sign = prev != null && c.c > prev ? "+" : "";
         el.innerHTML = mobile
           ? `<div class="truncate"><b>${c.t.slice(5)}</b> 收<b class="${tone}">${c.c}</b> ` +
-            `<span class="${tone}">${prev != null && c.c >= prev ? "+" : ""}${chg}%</span> ` +
+            `<span class="${tone}">${sign}${chg}%</span> ` +
             `開${c.o} 高${c.h} 低${c.l} 量${c.v >= 10000 ? `${(c.v / 10000).toFixed(1)}萬` : c.v.toLocaleString()}</div>` +
             `<div class="truncate">${mas}</div>`
           : `<b>${c.t}</b> 開${c.o} 高${c.h} 低${c.l} 收<b>${c.c}</b> ` +
-            `<span class="${tone}">${chg}%</span> ` +
+            `<span class="${tone}">${sign}${chg}%</span> ` +
             `量${c.v.toLocaleString()}張 ${mas}`;
       };
       chart.subscribeCrosshairMove((param) => {
@@ -442,7 +444,15 @@ export default function KChart({
             const title = effPane === "main" ? MF_TITLE : selLabel;
             const p = t ? byT.get(t) : undefined;
             const fmt = effPane === "main" ? fmtLotsUnit : fmtSel;
-            ml.textContent = p ? `${title} 買賣超 ${fmt(p.net)} · 累計 ${fmt(p.cum)}` : title;
+            // 買賣超／累計的帶號數字紅買綠賣;用 DOM 節點組,title 是分點名稱,不進 innerHTML。
+            const toned = (n: number) => {
+              const s = document.createElement("span");
+              if (n !== 0) s.className = n > 0 ? "up" : "down";
+              s.textContent = fmt(n);
+              return s;
+            };
+            if (p) ml.replaceChildren(`${title} 買賣超 `, toned(p.net), " · 累計 ", toned(p.cum));
+            else ml.textContent = title;
           }
         } else {
           updTitle(mfTitle, mainByTime, MF_TITLE, t, fmtLotsUnit);

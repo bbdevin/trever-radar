@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
+import ChangeText from "@/components/ChangeText";
 
 /**
  * WP-H2 語意色彩層次:理由/風險 pill 的家族色分類 + 呈現。
@@ -88,7 +89,10 @@ export default function ReasonPill({
       ) : (
         <span aria-hidden className={cn("h-1.5 w-1.5 shrink-0 rounded-full", f.dot)} />
       )}
-      <span className="min-w-0">{text}</span>
+      {/* 理由句裡的漲跌 %(如「今日+1.2%、5日−0.5%」「5日累漲12%」)照樣紅漲綠跌(使用者 2026-10-03)。 */}
+      <span className="min-w-0">
+        <ChangeText text={text} prices={false} />
+      </span>
     </span>
   );
 }

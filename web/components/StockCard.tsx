@@ -4,7 +4,7 @@ import WatchlistButton from "@/components/WatchlistButton";
 import ReasonPill, { reasonFamily, type ReasonFamily } from "@/components/ReasonPill";
 import PocketBadges from "@/components/PocketBadges";
 import type { RadarStock } from "@/lib/types";
-import { MARKET_LABEL, chgClass, fmtE8, fmtLots, fmtPct, fmtX, legacyReasonText } from "@/lib/format";
+import { MARKET_LABEL, chgClass, fmtE8, fmtLots, fmtPct, fmtX, legacyReasonText, toneClass } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 const CHG_TEXT: Record<string, string> = { up: "text-up", down: "text-down", flat: "text-foreground" };
@@ -131,8 +131,8 @@ export default function StockCard({ s, index = 99 }: { s: RadarStock; index?: nu
       <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11.5px] text-muted-foreground">
         <span>金額 <span className="num font-semibold text-[color:var(--ink-2)]">{fmtE8(s.turnover)}</span></span>
         <span>量比 <span className="num font-semibold text-[color:var(--ink-2)]">{s.volume_ratio != null ? `${s.volume_ratio.toFixed(1)}×` : "—"}</span></span>
-        <span>外資 <span className="num font-semibold text-[color:var(--ink-2)]">{fmtLots(s.foreign_net_lots)}</span></span>
-        <span>投信 <span className="num font-semibold text-[color:var(--ink-2)]">{fmtLots(s.trust_net_lots)}</span></span>
+        <span>外資 <span className={cn("num font-semibold", toneClass(s.foreign_net_lots) || "text-[color:var(--ink-2)]")}>{fmtLots(s.foreign_net_lots)}</span></span>
+        <span>投信 <span className={cn("num font-semibold", toneClass(s.trust_net_lots) || "text-[color:var(--ink-2)]")}>{fmtLots(s.trust_net_lots)}</span></span>
       </div>
 
       <div className="border-t border-dashed border-[color:var(--line)] pt-2 text-[11.5px] text-muted-foreground">

@@ -3,7 +3,8 @@
 import { useMemo, useState } from "react";
 import { ChevronRight, X } from "lucide-react";
 import type { SectorFlow } from "@/lib/types";
-import { chgClass, fmtE8, fmtPct } from "@/lib/format";
+import ChangeText from "@/components/ChangeText";
+import { chgClass, fmtE8, fmtPct, toneClass } from "@/lib/format";
 import { cn, pillTabClass, softSelectClass } from "@/lib/utils";
 
 type Mode = "industry" | "theme";
@@ -48,9 +49,9 @@ export function Vs20Badge({ vs20 }: { vs20: number | null }) {
     <span
       className={cn(
         "num shrink-0 rounded-full border px-1.5 py-px text-[10.5px] font-bold",
-        d == null
+        d == null || d === 0
           ? "border-border text-muted-foreground"
-          : d >= 0
+          : d > 0
             ? "border-[color:color-mix(in_srgb,var(--up)_45%,transparent)] text-up"
             : "border-[color:color-mix(in_srgb,var(--down)_45%,transparent)] text-down",
       )}
@@ -143,7 +144,7 @@ export default function MoneyFlow({ sectors, themes }: { sectors: SectorFlow[]; 
           <b className="num whitespace-nowrap text-xs font-semibold text-[color:var(--ink-2)]">{fmtE8(g.turnover)}</b>
           <span className="num whitespace-nowrap text-[11px]">
             <span
-              className={side === "in" ? "text-up" : "text-down"}
+              className={toneClass(dv) || "text-foreground"}
               title={`今日成交金額為近20日平均的 ${g.vs20!.toFixed(2)} 倍`}
             >
               {dv! > 0 ? "+" : ""}
@@ -188,7 +189,7 @@ export default function MoneyFlow({ sectors, themes }: { sectors: SectorFlow[]; 
       </div>
       <span className="text-[11px] text-muted-foreground">
         {sortBy === "volume"
-          ? "基準=近20日平均成交金額;+80% = 今日資金比平時多八成、−20% = 比平時少兩成"
+          ? <ChangeText text="基準=近20日平均成交金額;+80% = 今日資金比平時多八成、−20% = 比平時少兩成" />
           : "依據該族群個股平均漲跌幅排序，找出族群性大漲或大跌板塊"}
       </span>
 

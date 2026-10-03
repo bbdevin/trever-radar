@@ -68,6 +68,12 @@ export function chgClass(n: number | null | undefined): string {
   return n > 0 ? "up" : "down";
 }
 
+/** 數字格的漲跌色 Tailwind class(紅漲綠跌;0／缺值不上色,沿用外層顏色)。數值本身仍要帶正負號。 */
+export function toneClass(n: number | null | undefined): string {
+  if (n == null || n === 0) return "";
+  return n > 0 ? "text-up" : "text-down";
+}
+
 export const MARKET_LABEL: Record<string, string> = { twse: "上市", tpex: "上櫃" };
 export const DATASET_LABEL: Record<string, string> = {
   quotes: "日K",

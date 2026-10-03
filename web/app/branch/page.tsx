@@ -403,7 +403,7 @@ function StockGroupCard({ stockId, stockName, totalAmt, branches }: { stockId: s
         <div className="flex flex-col items-end">
           <span className="text-[10px] uppercase font-bold tracking-wider text-muted-foreground mb-0.5">Total Net</span>
           <span className={cn("text-xl font-bold num tracking-tight", totalAmt > 0 ? "text-up drop-shadow-[0_0_8px_rgba(239,68,68,0.3)]" : "text-down drop-shadow-[0_0_8px_rgba(34,197,94,0.3)]")}>
-            {(Math.abs(totalAmt) / 10000).toLocaleString('zh-TW', { maximumFractionDigits: 0 })} 萬
+            {signedWan(totalAmt, 0)} 萬
           </span>
         </div>
       </div>
@@ -453,7 +453,7 @@ function StockGroupCard({ stockId, stockName, totalAmt, branches }: { stockId: s
                             </div>
                           </div>
                           <div className={cn("text-right num font-medium text-[13px] tracking-tight", brk.net_amount > 0 ? "text-up" : "text-down")}>
-                            {(Math.abs(brk.net_amount) / 10000).toLocaleString('zh-TW', { maximumFractionDigits: 1 })} 萬
+                            {signedWan(brk.net_amount, 1)} 萬
                           </div>
                           <div className="text-right num text-[11px] text-muted-foreground">
                             {Math.round(Math.abs(brk.net_amount) / Math.abs(b.net_amount) * 100)}%
@@ -472,6 +472,12 @@ function StockGroupCard({ stockId, stockName, totalAmt, branches }: { stockId: s
   );
 }
 
+/** 元 → 帶號萬(「+1,234」「-56.7」):淨額欄只有紅綠時補上正負號,顏色不是唯一訊號。 */
+function signedWan(amt: number, digits: number): string {
+  const s = (Math.abs(amt) / 10000).toLocaleString("zh-TW", { maximumFractionDigits: digits });
+  return `${amt > 0 ? "+" : amt < 0 ? "-" : ""}${s}`;
+}
+
 function BranchGroupCard({ branchName, totalAmt, stocks }: { branchName: string, totalAmt: number, stocks: WarrantBranch[] }) {
   const [expandedStock, setExpandedStock] = useState<string | null>(null);
 
@@ -482,7 +488,7 @@ function BranchGroupCard({ branchName, totalAmt, stocks }: { branchName: string,
         <div className="flex flex-col items-end">
           <span className="text-[10px] uppercase font-bold tracking-wider text-muted-foreground mb-0.5">Total Net</span>
           <span className={cn("text-xl font-bold num tracking-tight", totalAmt > 0 ? "text-up drop-shadow-[0_0_8px_rgba(239,68,68,0.3)]" : "text-down drop-shadow-[0_0_8px_rgba(34,197,94,0.3)]")}>
-            {(Math.abs(totalAmt) / 10000).toLocaleString('zh-TW', { maximumFractionDigits: 0 })} 萬
+            {signedWan(totalAmt, 0)} 萬
           </span>
         </div>
       </div>
@@ -534,7 +540,7 @@ function BranchGroupCard({ branchName, totalAmt, stocks }: { branchName: string,
                             </div>
                           </div>
                           <div className={cn("text-right num font-medium text-[13px] tracking-tight", brk.net_amount > 0 ? "text-up" : "text-down")}>
-                            {(Math.abs(brk.net_amount) / 10000).toLocaleString('zh-TW', { maximumFractionDigits: 1 })} 萬
+                            {signedWan(brk.net_amount, 1)} 萬
                           </div>
                           <div className="text-right num text-[11px] text-muted-foreground">
                             {Math.round(Math.abs(brk.net_amount) / Math.abs(s.net_amount) * 100)}%

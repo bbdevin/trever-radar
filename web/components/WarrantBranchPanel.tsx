@@ -27,6 +27,7 @@ import {
   type WarrantKind,
 } from "@/lib/warrantBranches";
 import { Skeleton } from "@/components/ui/skeleton";
+import { toneClass } from "@/lib/format";
 
 export type WarrantBreakdown = {
   warrant_id: string;
@@ -545,7 +546,7 @@ export default function WarrantBranchPanel({
                     {selectedRow && (
                       <>
                         <span className="text-muted-foreground">·</span>
-                        <span className={cn("num font-semibold", selectedAmount >= 0 ? "text-up" : "text-down")}>
+                        <span className={cn("num font-semibold", toneClass(selectedAmount) || "text-foreground")}>
                           {TIMEFRAMES.find((t) => t.key === tf)?.label}權證{exclude ? "(排除同券商)" : ""} {fmtWanSigned(selectedAmount)}
                         </span>
                       </>
@@ -567,7 +568,7 @@ export default function WarrantBranchPanel({
             {selectedSelf && selectedSelf.pct > 0 && (
               <p className="text-[11.5px] leading-relaxed text-muted-foreground">
                 {selected} 這段期間 <b className="num font-semibold text-foreground">{selectedSelf.pct}%</b> 的權證金額是同券商發行的權證
-                (淨 {fmtWanSigned(selectedSelf.net)})
+                (淨 <span className={cn("num font-semibold", toneClass(selectedSelf.net))}>{fmtWanSigned(selectedSelf.net)}</span>)
                 {selectedTag?.hq ? ";這是發行商總公司席位,多為發行商造市／避險,不代表看多或看空。" : "。"}
               </p>
             )}
@@ -618,7 +619,7 @@ export default function WarrantBranchPanel({
                           {brkBuy ? "+" : "−"}
                           {fmtWan(brk.net_amount, 1)} 萬
                         </span>
-                        <span className="num text-right text-[11px] text-muted-foreground">
+                        <span className={cn("num text-right text-[11px]", toneClass(brk.net_lots) || "text-muted-foreground")}>
                           {brk.net_lots > 0 ? "+" : ""}
                           {brk.net_lots.toLocaleString("zh-TW")}
                         </span>

@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import type { Candle, MarginHistoryPoint, MarginMeta, StockJson } from "@/lib/types";
-import { fmtLots, fmtLotsPlain } from "@/lib/format";
+import { fmtLots, fmtLotsPlain, toneClass } from "@/lib/format";
 import { cn, pillTabClass } from "@/lib/utils";
 
 const TABLE_PREVIEW = 20;
@@ -78,7 +78,7 @@ export default function MarginPanel({ data, candles }: { data: StockJson; candle
             </span>
             <span>
               增減{" "}
-              <span className={cn("num font-semibold", (latest.chg ?? 0) >= 0 ? "text-up" : "text-down")}>
+              <span className={cn("num font-semibold", toneClass(latest.chg) || "text-foreground")}>
                 {fmtLots(latest.chg)}
               </span>
             </span>
