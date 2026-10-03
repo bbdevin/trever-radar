@@ -186,6 +186,27 @@ export interface CompanyGroupsJson {
   groups: CompanyGroup[];
 }
 
+/**
+ * 籌碼日報分點標籤的原始事實(json_export `_branch_tags_payload`)。
+ * 名字只限此股 payload 會出現的分點;鍵永遠存在,沒有就是空清單。
+ */
+export interface BranchTags {
+  /** 資料日(與籌碼日相同)。 */
+  as_of: string;
+  /** rule:雙北同區 "district"、其他同縣市 "city";公司地址判不了為 null。 */
+  geo: { rule: "district" | "city" | null; names: string[] };
+  /** 只收判定為隔日沖的配對;未判定(NULL)不輸出。rows 值為 [觀察數, 次日回吐數]。 */
+  daytrade: {
+    min_obs: number;
+    rate: number;
+    /** 次日賣出 ≥ 當日淨買的這個比例才算回吐。 */
+    payback?: number;
+    rows: Record<string, [number, number]>;
+  };
+  /** 追蹤名單(手動/自動入選 ∪ 排行高分非隔日沖),與口袋「追蹤分點同買」同一份。 */
+  tracked: string[];
+}
+
 export interface StockJson {
   id: string;
   name: string;
@@ -223,10 +244,13 @@ export interface StockJson {
   /**
    * 每一對(分點, 個股)在固定窗口內的買/賣進出場價格分位計數。
    * 只有分子與分母,沒有旗標、分數或名次——這個性質量測到「傾向為真、標籤不可
-   * 重現」,所以讀取端只能呈現次數與該股自身的同側比率,不得做成徽章。
+   * 重現」,所以讀取端只能呈現次數與該股自身的同側比率,不得做成判定徽章
+   * (籌碼日報的「買低 NN%／賣高 NN%」標籤只是同一個比率的文字,中性色、點開是分子分母)。
    * 舊版 JSON 沒有這個鍵;缺鍵時整節不渲染。
    */
   branch_pctile_counts?: BranchPctileCounts;
+  /** 籌碼日報分點標籤(地緣/隔日沖/追蹤);舊 JSON 沒有這個鍵,缺鍵時不標。 */
+  branch_tags?: BranchTags;
   warrant: WarrantSummary | null;
   warrant_history: WarrantHistoryPoint[];
   active_warrants: ActiveWarrant[];

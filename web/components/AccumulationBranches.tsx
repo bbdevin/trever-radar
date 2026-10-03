@@ -22,9 +22,11 @@ import {
   type Side,
   type WindowKey,
 } from "@/lib/accumulation";
+import { branchTags as tagsFor } from "@/lib/branchTags";
 import { fmtLots } from "@/lib/format";
-import type { Candle, StockJson } from "@/lib/types";
+import type { BranchPctileCounts, BranchTags, Candle, StockJson } from "@/lib/types";
 import { cn, pillTabClass } from "@/lib/utils";
+import { BranchTagLegend, BranchTagList, BranchTagNote, makeTagContext } from "@/components/BranchTag";
 import SectionHeader from "@/components/SectionHeader";
 import StatTile, { toneOf } from "@/components/StatTile";
 
@@ -40,14 +42,21 @@ export default function AccumulationBranches({
   branchHistory,
   candles,
   onOpenBranch,
+  branchTags,
+  branchPctile,
 }: {
   branchHistory: StockJson["branch_history"];
   candles: Candle[];
   onOpenBranch: (name: string) => void;
+  /** 分點標籤(地緣/隔日沖/追蹤);舊 JSON 沒有時不標。 */
+  branchTags?: BranchTags;
+  branchPctile?: BranchPctileCounts;
 }) {
   const [windowKey, setWindowKey] = useState<WindowKey>(DEFAULT_WINDOW);
   const [side, setSide] = useState<Side>("acc");
   const [expanded, setExpanded] = useState(false);
+  const [tagOpen, setTagOpen] = useState<{ name: string; key: string } | null>(null);
+  const tagCtx = useMemo(() => makeTagContext(branchTags, branchPctile), [branchTags, branchPctile]);
 
   const results = useMemo(
     () => Object.fromEntries(WINDOWS.map((w) => [w.key, computeWindow(branchHistory, candles, w.days)])),
@@ -170,8 +179,12 @@ export default function AccumulationBranches({
             </p>
           ) : (
             <div className="grid gap-2">
+              {(tagCtx.tags || tagCtx.pctile) && <BranchTagLegend ctx={tagCtx} />}
               <ol className="grid gap-1.5">
-                {visibleRows(rows, expanded).map((row, index) => (
+                {visibleRows(rows, expanded).map((row, index) => {
+                  const tags = tagsFor(row.name, side === "acc" ? "buy" : "sell", tagCtx);
+                  const open = tagOpen?.name === row.name ? tagOpen.key : null;
+                  return (
                   <li key={row.name}>
                     <button
                       type="button"
@@ -188,7 +201,16 @@ export default function AccumulationBranches({
                       >
                         {index + 1}
                       </span>
-                      <span className="truncate text-[13px] font-semibold leading-5 text-foreground" title={row.name}>{row.name}</span>
+                      <span className="flex min-w-0 flex-wrap items-center gap-x-1 gap-y-0.5">
+                        <span className="min-w-0 max-w-full truncate text-[13px] font-semibold leading-5 text-foreground" title={row.name}>{row.name}</span>
+                        <BranchTagList
+                          tags={tags}
+                          open={open}
+                          onToggle={(key) =>
+                            setTagOpen((cur) => (cur?.name === row.name && cur.key === key ? null : { name: row.name, key }))
+                          }
+                        />
+                      </span>
                       <span className={cn("num shrink-0 text-[13px] font-bold leading-5", row.net > 0 ? "text-up" : row.net < 0 ? "text-down" : "text-foreground")}>
                         {fmtLots(row.net)}張
                       </span>
@@ -211,8 +233,10 @@ export default function AccumulationBranches({
                         />
                       </span>
                     </button>
+                    <BranchTagNote tags={tags} open={open} className="px-2.5 pt-1" />
                   </li>
-                ))}
+                  );
+                })}
               </ol>
               {!expanded && rows.length > DEFAULT_VISIBLE && (
                 <button

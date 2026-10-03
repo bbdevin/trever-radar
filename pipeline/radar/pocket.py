@@ -71,6 +71,35 @@ def _is_excluded(branch_name: str, geo: dict | None) -> bool:
     return False
 
 
+def is_geo_branch(
+    branch_name: str,
+    company_city: str | None,
+    company_district: str | None,
+    geo_by_key: dict[str, dict],
+) -> bool:
+    """這個分點對這家公司算不算「地緣」——口袋 G1/G2 與籌碼日報分點標籤共用的唯一判斷。
+
+    總公司/外資席位排除;分點地址抽不到縣市、或雙北缺行政區 → 不算(fail-safe)。
+    """
+    geo = geo_by_key.get(normalize_branch_name(branch_name))
+    if _is_excluded(branch_name, geo):
+        return False
+    if geo is None or not geo.get("city"):
+        return False
+    return in_geo_circle(
+        company_city, company_district, geo.get("city"), geo.get("district"),
+    ) is True
+
+
+def geo_rule(company_city: str | None, company_district: str | None) -> str | None:
+    """這家公司用哪一把地緣尺:雙北同區("district")、其他同縣市("city");判不了為 None。"""
+    if not company_city:
+        return None
+    if company_city in DUAL_NORTH:
+        return "district" if company_district else None
+    return "city"
+
+
 def _consecutive_side(net_by_date: dict[str, int], window_dates: list[str], side: str) -> bool:
     """window_dates 由舊到新。缺列視為 0。連買/連賣 ≥ GEO_STREAK 個交易日。"""
     need = 1 if side == "buy" else -1
@@ -117,17 +146,9 @@ def geo_trigger(
         elif not want_buy and net < 0:
             top_side_total += abs(net)
         name = t.get("branch_name") or ""
-        key = normalize_branch_name(name)
-        geo = geo_by_key.get(key)
-        if _is_excluded(name, geo):
+        if not is_geo_branch(name, company_city, company_district, geo_by_key):
             continue
-        if geo is None or not geo.get("city"):
-            continue
-        circled = in_geo_circle(
-            company_city, company_district, geo.get("city"), geo.get("district"),
-        )
-        if circled is not True:
-            continue
+        geo = geo_by_key.get(normalize_branch_name(name))
         geo_rows.append(t)
         nets[name][dt] += net
         if (want_buy and net > 0) or (not want_buy and net < 0):
@@ -325,6 +346,37 @@ class PocketContext:
     buybacks: dict[str, list] = field(default_factory=dict)
 
 
+def load_branch_geo(conn) -> dict[str, dict]:
+    """broker_branch_geo 整表,以正規化名稱為鍵。"""
+    return {
+        r[0]: {
+            "broker_id": r[1], "city": r[2], "district": r[3],
+            "kind": r[4], "branch_name": r[5],
+        }
+        for r in conn.execute(text(
+            "SELECT name_key, broker_id, city, district, kind, branch_name "
+            "FROM broker_branch_geo"
+        ))
+    }
+
+
+def load_tracked_keys(conn) -> set[str]:
+    """「追蹤分點」的唯一定義:tracked_branches ∪ 最新排行 rank_score ≥ 70 且非隔日沖。
+
+    口袋 T1「追蹤分點同買」與籌碼日報的「追蹤」標籤讀同一份,兩邊不得各算各的。
+    """
+    tracked = [r[0] for r in conn.execute(text(
+        "SELECT branch_name FROM tracked_branches"
+    ))]
+    ranked = [r[0] for r in conn.execute(text(
+        "SELECT branch_name FROM branch_rankings "
+        "WHERE as_of = (SELECT MAX(as_of) FROM branch_rankings) "
+        "AND rank_score >= :mn "
+        "AND COALESCE(is_daytrade, 0) = 0"
+    ), {"mn": RANK_SCORE_MIN})]
+    return {normalize_branch_name(n) for n in tracked + ranked if n}
+
+
 def load_pocket_context(conn, window_dates: list[str], stock_ids: list[str]) -> PocketContext:
     ctx = PocketContext()
     if not window_dates or not stock_ids:
@@ -337,26 +389,8 @@ def load_pocket_context(conn, window_dates: list[str], stock_ids: list[str]) -> 
             "SELECT stock_id, city, district FROM company_profiles"
         ))
     }
-    ctx.geo_by_key = {
-        r[0]: {
-            "broker_id": r[1], "city": r[2], "district": r[3],
-            "kind": r[4], "branch_name": r[5],
-        }
-        for r in conn.execute(text(
-            "SELECT name_key, broker_id, city, district, kind, branch_name "
-            "FROM broker_branch_geo"
-        ))
-    }
-    tracked = [r[0] for r in conn.execute(text(
-        "SELECT branch_name FROM tracked_branches"
-    ))]
-    ranked = [r[0] for r in conn.execute(text(
-        "SELECT branch_name FROM branch_rankings "
-        "WHERE as_of = (SELECT MAX(as_of) FROM branch_rankings) "
-        "AND rank_score >= :mn "
-        "AND COALESCE(is_daytrade, 0) = 0"
-    ), {"mn": RANK_SCORE_MIN})]
-    ctx.tracked_keys = {normalize_branch_name(n) for n in tracked + ranked if n}
+    ctx.geo_by_key = load_branch_geo(conn)
+    ctx.tracked_keys = load_tracked_keys(conn)
 
     # Point-in-time guard: plans published after the quote date cannot create a
     # historical KB1.  Null source dates are not treated as fresh.

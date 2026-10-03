@@ -17,7 +17,15 @@ from sqlalchemy import bindparam, text
 from .. import config
 from ..db import get_engine, init_db
 from .spark_day import attach_spark_day
-from ..pocket import apply_pocket, buyback_status
+from ..geo import normalize_branch_name
+from ..pocket import (
+    apply_pocket,
+    buyback_status,
+    geo_rule,
+    is_geo_branch,
+    load_branch_geo,
+    load_tracked_keys,
+)
 from ..theme_lifecycle import ACTIVE, displayed_status, eligible_for_hot_theme
 from ..branch_names import CLOSED_MARKS
 from ..company_groups import is_effective, load_company_groups, validate_company_groups
@@ -25,7 +33,7 @@ from ..compute.strategy_performance import (
     compute_strategy_performance_from_events,
     fetch_strategy_events,
 )
-from ..compute.compute_branch_stats import DAYTRADE_MIN_OBS
+from ..compute.compute_branch_stats import DAYTRADE_MIN_OBS, DAYTRADE_PAYBACK, DAYTRADE_RATE
 from ..compute.branch_point_in_time_report import (
     HIGH_SELL_MIN_PCTILE,
     LOW_BUY_MAX_PCTILE,
@@ -441,6 +449,57 @@ def _branch_pctile_payload(conn, sid: str, meta: dict | None, table_exists: bool
     payload["lookup_fields"] = list(BRANCH_PCTILE_LOOKUP_FIELDS)
     payload["lookup"] = lookup
     return payload
+
+
+def _daytrade_pairs_by_stock(conn) -> dict[str, dict[str, list[int]]]:
+    """branch_stock_stats 裡**判定為**隔日沖的配對:{個股: {分點: [觀察數, 回吐數]}}。
+
+    只收 is_daytrade_suspect = 1;NULL(觀察數不足、未判定)與 0 一律不收——畫面上
+    不得把「未判定」講成「不是隔日沖」,所以根本不輸出。
+    """
+    out: dict[str, dict[str, list[int]]] = {}
+    for r in conn.execute(text(
+        "SELECT stock_id, branch_name, daytrade_obs, daytrade_paybacks "
+        "FROM branch_stock_stats WHERE is_daytrade_suspect = 1"
+    )):
+        if r[2] is None or r[3] is None:
+            continue
+        out.setdefault(r[0], {})[r[1]] = [int(r[2]), int(r[3])]
+    return out
+
+
+def _branch_tags_payload(
+    *,
+    as_of: str,
+    names: set[str],
+    profile: dict | None,
+    geo_by_key: dict[str, dict],
+    tracked_keys: set[str],
+    daytrade_rows: dict[str, list[int]],
+) -> dict:
+    """個股頁籌碼日報的分點標籤(地緣/隔日沖/追蹤)。鍵永遠存在,沒有就是空清單。
+
+    names = 這檔股票 payload 裡會出現的分點名(branch_history ∪ 當日 branches),
+    輸出只限這些名字,JSON 不為畫面上不會出現的分點多帶資料。
+    """
+    city = (profile or {}).get("city")
+    district = (profile or {}).get("district")
+    rule = geo_rule(city, district)
+    geo_names = sorted(
+        n for n in names if rule and is_geo_branch(n, city, district, geo_by_key)
+    )
+    tracked = sorted(n for n in names if normalize_branch_name(n) in tracked_keys)
+    return {
+        "as_of": as_of,
+        "geo": {"rule": rule, "names": geo_names},
+        "daytrade": {
+            "min_obs": DAYTRADE_MIN_OBS,
+            "rate": DAYTRADE_RATE,
+            "payback": DAYTRADE_PAYBACK,
+            "rows": {n: daytrade_rows[n] for n in sorted(names) if n in daytrade_rows},
+        },
+        "tracked": tracked,
+    }
 
 
 def _active_buybacks_by_stock(conn, as_of: str) -> dict[str, dict]:
@@ -2070,6 +2129,10 @@ def export_json(out_dir: Path | None = None) -> dict:
         branch_pctile_meta = (
             _branch_pctile_snapshot_meta(conn) if branch_pctile_exists else None
         )
+        # 分點標籤:地址表、追蹤名單、隔日沖配對各讀一次,逐檔只做查表。
+        branch_geo = load_branch_geo(conn)
+        tracked_keys = load_tracked_keys(conn)
+        daytrade_pairs = _daytrade_pairs_by_stock(conn)
         # 榜單優先(全歷史),其餘依代號排序,穩定輸出
         export_ids = list(dict.fromkeys(
             list(union.keys()) + sorted(stock_meta.keys())
@@ -2186,6 +2249,15 @@ def export_json(out_dir: Path | None = None) -> dict:
                 # 計數與分母,不是判定;鍵永遠存在,沒有合格分點時是空清單。
                 "branch_pctile_counts": _branch_pctile_payload(
                     conn, sid, branch_pctile_meta, branch_pctile_exists,
+                ),
+                "branch_tags": _branch_tags_payload(
+                    as_of=d,
+                    names={b["n"] for day in branch_history for b in day["branches"]}
+                    | {r[0] for r in stock_branches},
+                    profile=company_profiles.get(sid),
+                    geo_by_key=branch_geo,
+                    tracked_keys=tracked_keys,
+                    daytrade_rows=daytrade_pairs.get(sid, {}),
                 ),
                 "warrant": s["warrant"],
                 "warrant_history": [

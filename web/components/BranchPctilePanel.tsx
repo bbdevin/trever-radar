@@ -4,7 +4,6 @@ import { useEffect, useMemo, useState } from "react";
 import { ChevronDown, Search } from "lucide-react";
 
 import {
-  seatKind,
   CAMP_KEYS,
   CAMP_NAMES,
   DEFAULT_VISIBLE,
@@ -27,8 +26,10 @@ import {
   type PctileModel,
   type SideView,
 } from "@/lib/branchPctile";
-import type { BranchPctileCounts } from "@/lib/types";
+import { branchTags as tagsFor, type Tag, type TagContext } from "@/lib/branchTags";
+import type { BranchPctileCounts, BranchTags } from "@/lib/types";
 import { cn, segBtnClass } from "@/lib/utils";
+import { BranchTagList, BranchTagNote, makeTagContext } from "@/components/BranchTag";
 import SectionHeader from "@/components/SectionHeader";
 
 /**
@@ -79,11 +80,15 @@ function storeCamp(value: CampKey) {
 export default function BranchPctilePanel({
   data,
   onOpenBranch,
+  branchTags,
 }: {
   data: BranchPctileCounts | undefined;
   onOpenBranch?: (name: string) => void;
+  /** 分點標籤(地緣/隔日沖/追蹤);舊 JSON 沒有時只剩席位標籤。 */
+  branchTags?: BranchTags;
 }) {
   const model = useMemo(() => normalizeBranchPctile(data), [data]);
+  const tagCtx = useMemo(() => makeTagContext(branchTags, data), [branchTags, data]);
   const [camp, setCamp] = useState<CampKey>("short");
   const [expanded, setExpanded] = useState(false);
   const [openRow, setOpenRow] = useState<string | null>(null);
@@ -184,10 +189,11 @@ export default function BranchPctilePanel({
       )}
 
       {searching ? (
-        <SearchResults model={model} hits={search.results} total={search.total} onOpenBranch={onOpenBranch} />
+        <SearchResults model={model} hits={search.results} total={search.total} onOpenBranch={onOpenBranch} tagCtx={tagCtx} />
       ) : (
         <CampList
           model={model}
+          tagCtx={tagCtx}
           camp={active}
           expanded={expanded}
           onExpand={() => setExpanded(true)}
@@ -218,6 +224,7 @@ function DrillButton({ name, onOpenBranch }: { name: string; onOpenBranch?: (nam
 
 function CampList({
   model,
+  tagCtx,
   camp,
   expanded,
   onExpand,
@@ -226,6 +233,7 @@ function CampList({
   onOpenBranch,
 }: {
   model: PctileModel;
+  tagCtx: TagContext;
   camp: CampModel;
   expanded: boolean;
   onExpand: () => void;
@@ -257,6 +265,7 @@ function CampList({
           <BranchRow
             key={stat.name}
             model={model}
+            tags={panelTags(stat.name, tagCtx)}
             camp={camp}
             stat={stat}
             position={index + 1}
@@ -279,20 +288,12 @@ function CampList({
   );
 }
 
-/** 中性色的小標籤(不用紅綠:這是價格位置的佔比,不是漲跌也不是損益)。 */
-/** 席位類型小標籤(外資／總公司);只標示、不排除。說明放 title(點按時列的展開區不受影響)。 */
-function SeatTag({ name }: { name: string }) {
-  const kind = seatKind(name);
-  if (!kind) return null;
-  return (
-    <span
-      className="shrink-0 rounded-full border border-[color:var(--warn)]/45 bg-[color:var(--warn)]/12 px-1.5 py-px text-[10.5px] font-semibold text-[color:var(--warn)]"
-      title={kind.note}
-      aria-label={`${kind.label}：${kind.note}`}
-    >
-      {kind.label}
-    </span>
-  );
+/**
+ * 這一節的分點標籤:地緣/隔日沖/追蹤/席位(總公司外資只標示、不排除)。
+ * 買低/賣高不重複標——每列右側本來就是那兩個數字。
+ */
+function panelTags(name: string, ctx: TagContext): Tag[] {
+  return tagsFor(name, "buy", ctx).filter((t) => t.code !== "LOW" && t.code !== "HIGH");
 }
 
 function SideChip({ side }: { side: CompactSide }) {
@@ -314,6 +315,7 @@ function SideChip({ side }: { side: CompactSide }) {
  */
 function BranchRow({
   model,
+  tags,
   camp,
   stat,
   position,
@@ -322,6 +324,7 @@ function BranchRow({
   onOpenBranch,
 }: {
   model: PctileModel;
+  tags: Tag[];
   camp: CampModel;
   stat: CampStat;
   position: number;
@@ -332,6 +335,7 @@ function BranchRow({
   const daytrade = camp.key === "short" ? daytradeSummary(model, stat) : null;
   const legend = baseLegend(camp);
   const detailId = `pctile-row-${camp.key}-${position}`;
+  const [tagOpen, setTagOpen] = useState<string | null>(null);
   return (
     <li className="min-w-0 rounded-[var(--r-md)] border border-border bg-background">
       <button
@@ -342,11 +346,12 @@ function BranchRow({
         className="flex min-h-11 w-full min-w-0 items-center gap-1.5 px-2.5 py-1.5 text-left"
       >
         <span className="num w-4 shrink-0 text-[11.5px] text-muted-foreground">{position}</span>
-        <span className="flex min-w-0 flex-1 items-center gap-1">
-          <span className="min-w-0 truncate text-[13.5px] font-semibold text-foreground" title={stat.name}>
+        {/* 放不下時標籤換到名稱下一行,不擠掉名稱、不壓到右側數字 */}
+        <span className="flex min-w-0 flex-1 flex-wrap items-center gap-x-1 gap-y-0.5">
+          <span className="min-w-0 max-w-full truncate text-[13.5px] font-semibold text-foreground" title={stat.name}>
             {stat.name}
           </span>
-          <SeatTag name={stat.name} />
+          <BranchTagList tags={tags} open={tagOpen} onToggle={(key) => setTagOpen((cur) => (cur === key ? null : key))} />
         </span>
         <SideChip side={compactSide("buy", stat.buy, model.minKnown)} />
         <SideChip side={compactSide("sell", stat.sell, model.minKnown)} />
@@ -356,6 +361,7 @@ function BranchRow({
           className={cn("shrink-0 text-muted-foreground transition-transform", open && "rotate-180")}
         />
       </button>
+      <BranchTagNote tags={tags} open={tagOpen} className="border-t border-border px-2.5 py-1.5" />
       {open && (
         <div id={detailId} className="grid gap-1.5 border-t border-border px-2.5 pt-2 pb-2.5">
           <SideRow view={sideView("buy", stat.buy, camp.base.buy, model.minKnown)} />
@@ -408,12 +414,15 @@ function SearchResults({
   hits,
   total,
   onOpenBranch,
+  tagCtx,
 }: {
   model: PctileModel;
   hits: ReturnType<typeof searchBranches>["results"];
   total: number;
   onOpenBranch?: (name: string) => void;
+  tagCtx: TagContext;
 }) {
+  const [tagOpen, setTagOpen] = useState<{ name: string; key: string } | null>(null);
   if (hits.length === 0) {
     return (
       <p className="rounded-[var(--r-md)] border border-border bg-secondary px-3 py-3 text-[12.5px] leading-relaxed text-muted-foreground">
@@ -428,12 +437,22 @@ function SearchResults({
         <p className="text-[11px] text-muted-foreground">共 {total} 個符合，只列前 {hits.length} 個；請輸入更完整的名稱。</p>
       )}
       <ul className="grid gap-2">
-        {hits.map((hit) => (
+        {hits.map((hit) => {
+          const tags = panelTags(hit.name, tagCtx);
+          const open = tagOpen?.name === hit.name ? tagOpen.key : null;
+          return (
           <li key={hit.name} className="grid gap-2 rounded-[var(--r-md)] border border-border bg-background px-3 py-2">
             <h3 className="flex min-w-0 items-center gap-1 text-[13.5px] font-semibold text-foreground">
               <span className="min-w-0 truncate" title={hit.name}>{hit.name}</span>
-              <SeatTag name={hit.name} />
+              <BranchTagList
+                tags={tags}
+                open={open}
+                onToggle={(key) =>
+                  setTagOpen((cur) => (cur?.name === hit.name && cur.key === key ? null : { name: hit.name, key }))
+                }
+              />
             </h3>
+            <BranchTagNote tags={tags} open={open} />
             {CAMP_KEYS.filter((key) => model.camps[key] !== null).map((key) => {
               const camp = model.camps[key] as CampModel;
               const campHit = hit.camps[key];
@@ -451,7 +470,8 @@ function SearchResults({
             })}
             <DrillButton name={hit.name} onOpenBranch={onOpenBranch} />
           </li>
-        ))}
+          );
+        })}
       </ul>
     </div>
   );

@@ -444,13 +444,23 @@ function StockView() {
               id="branch"
               quoteDate={last.t}
               onOpenBranch={setDrillBranch}
+              branchTags={data.branch_tags}
+              branchPctile={data.branch_pctile_counts}
+              buyback={data.buyback}
+              onOpenBuyback={() => setView("basic")}
             />
           )}
           {activeChips === "acc" && (
-            <AccumulationBranches branchHistory={data.branch_history} candles={cs} onOpenBranch={setDrillBranch} />
+            <AccumulationBranches
+              branchHistory={data.branch_history}
+              candles={cs}
+              onOpenBranch={setDrillBranch}
+              branchTags={data.branch_tags}
+              branchPctile={data.branch_pctile_counts}
+            />
           )}
           {activeChips === "pctile" && (
-            <BranchPctilePanel data={data.branch_pctile_counts} onOpenBranch={setDrillBranch} />
+            <BranchPctilePanel data={data.branch_pctile_counts} onOpenBranch={setDrillBranch} branchTags={data.branch_tags} />
           )}
         </>
       )}

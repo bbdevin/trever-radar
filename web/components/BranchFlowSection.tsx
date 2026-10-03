@@ -1,10 +1,12 @@
 "use client";
 
 import { forwardRef, useMemo, useState, useEffect } from "react";
-import { Clock } from "lucide-react";
-import type { ReasonItem, StockJson } from "@/lib/types";
+import { Clock, ShieldCheck } from "lucide-react";
+import type { BranchPctileCounts, BranchTags, Buyback, ReasonItem, StockJson } from "@/lib/types";
 import { fmtLots } from "@/lib/format";
+import { branchTags as tagsFor, type Tag } from "@/lib/branchTags";
 import { cn, pillTabClass } from "@/lib/utils";
+import { BranchTagLegend, BranchTagList, BranchTagNote, makeTagContext } from "@/components/BranchTag";
 import BuySellSplit from "@/components/BuySellSplit";
 import ReasonPill from "@/components/ReasonPill";
 import SectionHeader from "@/components/SectionHeader";
@@ -63,6 +65,14 @@ const BranchFlowSection = forwardRef<
     quoteDate?: string | null;
     /** 可選:與 radar.freshness.branch.stale 對齊;未傳則僅用 quoteDate 比對 */
     branchStale?: boolean;
+    /** 分點標籤(地緣/隔日沖/追蹤);舊 JSON 沒有時不標。 */
+    branchTags?: BranchTags;
+    /** 買低/賣高標籤的來源(同一份「買點偏低、賣點偏高」排行)。 */
+    branchPctile?: BranchPctileCounts;
+    /** 進行中的庫藏股計畫(只有進行中才有);有值時標頭多一顆 chip。 */
+    buyback?: Buyback | null;
+    /** 點庫藏股 chip → 切到基本資料分頁。 */
+    onOpenBuyback?: () => void;
   }
 >(function BranchFlowSection(
   {
@@ -78,6 +88,10 @@ const BranchFlowSection = forwardRef<
     quoteDate,
     branchStale,
     onOpenBranch,
+    branchTags,
+    branchPctile,
+    buyback,
+    onOpenBuyback,
   },
   ref
 ) {
@@ -85,6 +99,10 @@ const BranchFlowSection = forwardRef<
   const [customDays, setCustomDays] = useState<string>("5");
   const [expandedBranch, setExpandedBranch] = useState<string | null>(null);
   const [sideTab, setSideTab] = useState<"buy" | "sell">("buy");
+  /** 目前開著說明的標籤(一次只開一個):分點名＋標籤代號。 */
+  const [tagOpen, setTagOpen] = useState<{ name: string; key: string } | null>(null);
+  const tagCtx = useMemo(() => makeTagContext(branchTags, branchPctile), [branchTags, branchPctile]);
+  const showTagLegend = !!tagCtx.tags || !!tagCtx.pctile;
 
   const activeDaysRaw = days === "custom" ? parseInt(customDays) || 1 : days;
   /** 此股實際可用交易日數(每檔回補深度不同) */
@@ -242,6 +260,23 @@ const BranchFlowSection = forwardRef<
       </span>
     ) : null;
 
+  // 庫藏股不是分點的屬性,是公司的:放標頭一顆,點了去基本資料看完整計畫。
+  const buybackChip =
+    buyback && buyback.end_date ? (
+      <button
+        type="button"
+        onClick={onOpenBuyback}
+        disabled={!onOpenBuyback}
+        className="inline-flex min-h-7 shrink-0 items-center gap-1 rounded-md border border-warn/30 bg-warn/10 px-2 py-1 text-[11.5px] font-semibold text-warn disabled:cursor-default"
+        title={`庫藏股買回期間 ${buyback.start_date ?? "—"} 至 ${buyback.end_date}（MOPS）；點一下看基本資料`}
+        aria-label={`庫藏股買回期間，至 ${fmtMD(buyback.end_date)}；看基本資料`}
+      >
+        <ShieldCheck size={12} strokeWidth={1.8} aria-hidden />
+        <span>庫藏股買回期間</span>
+        <span className="num font-bold">· 至 {fmtMD(buyback.end_date)}</span>
+      </button>
+    ) : null;
+
   const depthChip =
     branchDepth != null ? (
       <span
@@ -280,10 +315,11 @@ const BranchFlowSection = forwardRef<
       {heading && (
         <div className="flex flex-col gap-1.5">
           <SectionHeader family="chips" title={heading} />
-          {(depthChip || asOfChip) && (
+          {(depthChip || asOfChip || buybackChip) && (
             <div className="flex flex-wrap items-center gap-1.5">
               {depthChip}
               {asOfChip}
+              {buybackChip}
             </div>
           )}
           <span className="text-[11px] leading-relaxed text-muted-foreground">
@@ -291,10 +327,11 @@ const BranchFlowSection = forwardRef<
           </span>
         </div>
       )}
-      {!heading && (depthChip || asOfChip) && (
+      {!heading && (depthChip || asOfChip || buybackChip) && (
         <div className="flex flex-wrap justify-end gap-1.5">
           {depthChip}
           {asOfChip}
+          {buybackChip}
         </div>
       )}
 
@@ -417,6 +454,7 @@ const BranchFlowSection = forwardRef<
             ? `前 ${agg.top13Buy.length || 13} 大買超分點`
             : `前 ${agg.top13Sell.length || 13} 大賣超分點`}
         </h3>
+        {showTagLegend && <BranchTagLegend ctx={tagCtx} />}
         <div className="flex flex-col gap-1.5">
           {listRows.map((b, i) => (
             <BranchRow
@@ -424,6 +462,11 @@ const BranchFlowSection = forwardRef<
               b={b}
               rank={i + 1}
               maxAbs={listMaxAbs}
+              tags={tagsFor(b.name, sideTab, tagCtx)}
+              tagOpen={tagOpen?.name === b.name ? tagOpen.key : null}
+              onTagToggle={(key) =>
+                setTagOpen((cur) => (cur?.name === b.name && cur.key === key ? null : { name: b.name, key }))
+              }
               expanded={!onOpenBranch && expandedBranch === b.name}
               onToggle={() => setExpandedBranch(expandedBranch === b.name ? null : b.name)}
               onOpen={onOpenBranch ? () => onOpenBranch(b.name) : undefined}
@@ -487,10 +530,18 @@ function BranchRow({
   selected,
   onSelect,
   selectDisabled,
+  tags,
+  tagOpen,
+  onTagToggle,
 }: {
   b: { name: string; net: number; history?: { t: string; net: number }[] };
   /** 名次(1 起) */
   rank: number;
+  /** 這個分點在目前這一側名單上的標籤(已排序) */
+  tags: Tag[];
+  /** 開著說明的標籤代號 */
+  tagOpen: string | null;
+  onTagToggle: (key: string) => void;
   /** 同一名單最大 |淨張|,小條以此為 100% */
   maxAbs: number;
   expanded: boolean;
@@ -540,7 +591,11 @@ function BranchRow({
           >
             {rank}
           </span>
-          <span className="truncate font-semibold text-[color:var(--ink-2)]" title={b.name}>{b.name}</span>
+          {/* 放不下時標籤換到名稱下一行,不擠掉名稱 */}
+          <span className="flex min-w-0 flex-wrap items-center gap-x-1 gap-y-0.5">
+            <span className="min-w-0 max-w-full truncate font-semibold text-[color:var(--ink-2)]" title={b.name}>{b.name}</span>
+            <BranchTagList tags={tags} open={tagOpen} onToggle={onTagToggle} />
+          </span>
           <span className={cn("num font-bold", b.net > 0 ? "text-up" : b.net < 0 ? "text-down" : "text-foreground")}>{fmtLots(b.net)}張</span>
           {/* 張數小條:以同名單最大淨張為 100%,只在自己的條軌內縮放,不侵入數字欄 */}
           <span aria-hidden className="col-start-2 block h-1 w-full overflow-hidden rounded-full bg-secondary">
@@ -551,6 +606,7 @@ function BranchRow({
           </span>
         </button>
       </div>
+      <BranchTagNote tags={tags} open={tagOpen} className="border-t border-border px-2.5 py-1.5" />
       {expanded && (
         <div className="border-t border-[color:var(--line)] px-2.5 pt-2 pb-2.5">
           {history.length === 0 ? (
