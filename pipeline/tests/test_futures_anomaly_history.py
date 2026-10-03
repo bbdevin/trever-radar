@@ -25,6 +25,7 @@ from radar.compute.futures_volume_anomaly import (
     SPOT_AFTER_KEYS,
     anomaly_history,
     spot_after,
+    stock_anomaly_history,
 )
 from radar.compute.futures_volume_battery import FORWARD_SPOT_DAYS, WINDOW_DAYS
 from radar.export.json_export import export_json
@@ -47,6 +48,7 @@ from tests.test_futures_export import (
 
 HISTORY_KEY = "futures_volume_anomaly_history"
 HISTORY_META_KEY = "futures_volume_anomaly_history_meta"
+STOCK_HISTORY_KEY = "anomaly_history"      # stocks/{id}.json 的 futures 底下
 
 PRIOR = _DAYS[-1 - HISTORY_DAYS:-1]          # AD 之前的 10 個期貨交易日(舊到新)
 FLAG = _DAYS[-10]                            # 2026-06-08(週一),不在 R4 排除窗內
@@ -324,6 +326,99 @@ class HistoryShapeTests(_HistoryFixture):
 class HistoryUnitTests(unittest.TestCase):
     def test_none_as_of_is_none(self):
         self.assertIsNone(anomaly_history(None, as_of=None, spot_date="2026-06-22"))
+
+    def test_stock_slice_keeps_each_days_tri_state(self):
+        meta = {"as_of": "2026-06-22"}
+        e1 = {"stock_id": "2303", "code": "CCF"}
+        e2 = {"stock_id": "1565", "code": "MYF"}
+        history = [
+            {"as_of": "2026-06-19", "entries": [e2, e1]},
+            {"as_of": "2026-06-18"},
+            {"as_of": "2026-06-17", "entries": []},
+        ]
+        self.assertEqual(stock_anomaly_history(history, meta, "2303"), {
+            "meta": meta,
+            "days": [
+                {"as_of": "2026-06-19", "entries": [e1]},
+                {"as_of": "2026-06-18"},
+                {"as_of": "2026-06-17", "entries": []},
+            ],
+        })
+        self.assertIsNone(stock_anomaly_history(None, meta, "2303"))
+        self.assertIsNone(stock_anomaly_history(history, None, "2303"))
+
+
+class StockHistoryExportTests(_HistoryFixture):
+    """個股 JSON 的 ``futures.anomaly_history``(docs/38 §7.20):radar.json 那一份切出
+    這一檔,不重算;每一天的三態原樣保留;沒有算過就整個鍵不輸出。"""
+
+    def stock(self, sid):
+        return json.loads(
+            (self.out / "stocks" / f"{sid}.json").read_text(encoding="utf-8"))
+
+    def test_shape_and_identity_with_radar_json(self):
+        self.seed([_history_flag_spec(), _history_flag_spec("BBB", "1565")])
+        self.set_spot("2303", FLAG_FWD[2], volume=SPOT_SHARES * 5)
+        radar = self.radar()
+        for sid in ("2303", "1565"):
+            with self.subTest(sid=sid):
+                block = self.stock(sid)["futures"][STOCK_HISTORY_KEY]
+                self.assertEqual(sorted(block), ["days", "meta"])
+                self.assertEqual(block["meta"], radar[HISTORY_META_KEY])
+                self.assertEqual([d["as_of"] for d in block["days"]],
+                                 [h["as_of"] for h in radar[HISTORY_KEY]])
+                for mine, market in zip(block["days"], radar[HISTORY_KEY]):
+                    self.assertTrue(set(mine) <= {"as_of", "entries"}, mine)
+                    self.assertEqual("entries" in mine, "entries" in market)
+                    if "entries" in market:
+                        self.assertEqual(
+                            mine["entries"],
+                            [e for e in market["entries"] if e["stock_id"] == sid])
+        flagged = next(d for d in self.stock("2303")["futures"][STOCK_HISTORY_KEY]["days"]
+                       if d["as_of"] == FLAG)
+        self.assertEqual([e["code"] for e in flagged["entries"]], ["CCF"])
+        self.assertIs(flagged["entries"][0]["spot_followed"], True)
+        self.assertIn("spot_after", flagged["entries"][0])
+
+    def test_unflagged_days_are_kept_as_empty_lists(self):
+        self.seed([_history_flag_spec()])
+        self.radar()
+        days = self.stock("2303")["futures"][STOCK_HISTORY_KEY]["days"]
+        self.assertEqual(len(days), HISTORY_DAYS)
+        self.assertEqual(sum(1 for d in days if d.get("entries")), 1)
+        self.assertTrue(all(d["entries"] == [] for d in days
+                            if d["as_of"] != FLAG and "entries" in d))
+
+    def test_a_day_the_rule_cannot_answer_has_no_entries_key_here_too(self):
+        self.seed([_history_flag_spec()])
+        real = fva.futures_volume_anomalies
+
+        def undecidable_on_flag(conn, day, **kw):
+            return None if day == FLAG else real(conn, day, **kw)
+
+        with patch("radar.compute.futures_volume_anomaly.futures_volume_anomalies",
+                   undecidable_on_flag):
+            export_json(self.out)
+        days = self.stock("2303")["futures"][STOCK_HISTORY_KEY]["days"]
+        self.assertEqual(next(d for d in days if d["as_of"] == FLAG), {"as_of": FLAG})
+
+    def test_absent_when_the_history_was_never_computed(self):
+        self.seed([_spec("CCF", "2303", lots=_NO_FUTURES_ROWS)])
+        self.radar()
+        self.assertNotIn(STOCK_HISTORY_KEY, self.stock("2303").get("futures", {}))
+
+    def test_the_history_is_not_recomputed_per_stock(self):
+        self.seed([_history_flag_spec(), _history_flag_spec("BBB", "1565")])
+        calls = []
+        real = fva.futures_volume_anomalies
+
+        def counting(conn, day, **kw):
+            calls.append(day)
+            return real(conn, day, **kw)
+
+        with patch("radar.compute.futures_volume_anomaly.futures_volume_anomalies", counting):
+            export_json(self.out)
+        self.assertEqual(calls, list(reversed(PRIOR)))
 
 
 if __name__ == "__main__":

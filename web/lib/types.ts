@@ -267,6 +267,8 @@ export interface FuturesInfo {
    */
   daily_as_of?: string;
   contracts: FuturesContract[];
+  /** 近 N 日舉旗紀錄(docs/38 §7.20)。缺鍵 = 沒有算過,不是「沒有舉旗」。 */
+  anomaly_history?: StockFuturesAnomalyHistory;
 }
 
 export interface FuturesContract {
@@ -287,6 +289,18 @@ export interface FuturesContract {
   /** 與 `anomaly` 同生共死;沒有旗標就沒有這兩個鍵(§7.3)。 */
   reasons?: ReasonItem[];
   risks?: ReasonItem[];
+  /** 與 `anomaly` 同生共死:現貨當日有沒有同步創高(§7.17)。舊 payload 沒有 → 無法判定。 */
+  spot_new_high?: boolean | null;
+}
+
+/**
+ * 個股頁的近 N 日舉旗紀錄(docs/38 §7.20)= radar.json 那一份只留這一檔的條目,
+ * 不是另外算的。`days` 每一天的三態同市場那一份:`entries` 缺鍵 = 那一天規則答不出來;
+ * `[]` = 算過、這一檔沒有舉旗。整個鍵缺 = 紀錄沒有算過。
+ */
+export interface StockFuturesAnomalyHistory {
+  meta: FuturesAnomalyHistoryMeta;
+  days: FuturesAnomalyHistoryDay[];
 }
 
 /**

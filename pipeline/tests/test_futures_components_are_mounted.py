@@ -82,6 +82,20 @@ MOUNTS = (
         "任何對應的東西——名單指向一個講不出理由的頁面。",
     ),
     (
+        "FuturesHistoryBlock",
+        STOCK,
+        None,
+        "個股頁期貨分頁不再有這一檔的近 N 日舉旗紀錄(docs/38 §7.20):使用者從首頁"
+        "「近 N 日」點進來,看不到這檔之前舉過的旗、後來現貨量有沒有跟上。",
+    ),
+    (
+        "FuturesEvidenceBlock",
+        STOCK,
+        None,
+        "個股頁期貨分頁不再講這個訊號的回測依據(docs/38 §7.16/§7.20):旗標變成一個"
+        "沒有說明它代表什麼、也沒有說明它不代表漲跌的標籤。",
+    ),
+    (
         "FuturesDailyBlock",
         STOCK,
         None,
@@ -95,7 +109,9 @@ FUTURES_COMPONENTS = frozenset(name for name, *_ in MOUNTS)
 
 # 2026-09-30 起只住在個股頁「期貨」分頁(FuturesPanel)裡的三塊。使用者的原話:
 # 期貨資訊「直接在個股上面呈現很醜很奇怪」,要收進一個分頁。
-STOCK_TAB_BLOCKS = frozenset({"FuturesBadge", "FuturesAnomalyBlock", "FuturesDailyBlock"})
+# 2026-10-03(§7.20)再加兩塊:近 N 日舉旗紀錄與回測依據,同樣只住在分頁裡。
+STOCK_TAB_BLOCKS = frozenset({"FuturesBadge", "FuturesAnomalyBlock", "FuturesDailyBlock",
+                              "FuturesHistoryBlock", "FuturesEvidenceBlock"})
 
 _TS_TOKEN_RE = re.compile(
     r"/\*.*?\*/"                     # block comment(含 JSX 的 {/* ... */})

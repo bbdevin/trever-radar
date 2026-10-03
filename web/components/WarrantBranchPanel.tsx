@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import KChart from "@/components/KChart";
 import { dataFetch } from "@/lib/dataFetch";
 import type { Candle } from "@/lib/types";
-import { cn, pillTabClass } from "@/lib/utils";
+import { cn, filterChipClass, pillTabClass, softSelectClass } from "@/lib/utils";
 import {
   branchAmount,
   branchSeries,
@@ -420,7 +420,7 @@ export default function WarrantBranchPanel({
             role="switch"
             aria-checked={exclude}
             onClick={() => setExcludeSelf((v) => !v)}
-            className={pillTabClass(exclude)}
+            className={cn(filterChipClass(exclude), "min-h-9")}
           >
             排除同券商發行
           </button>
@@ -781,7 +781,7 @@ function RankTable({
                   aria-pressed={active}
                   className={cn(
                     "flex min-h-10 w-full items-center justify-between gap-2 px-3 py-1.5 text-left text-[12.5px] transition-colors hover:bg-secondary",
-                    active && "bg-secondary font-bold",
+                    active && cn(softSelectClass(true), "font-bold"),
                   )}
                 >
                   <span className="flex min-w-0 items-baseline gap-2">

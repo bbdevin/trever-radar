@@ -472,6 +472,33 @@ def anomaly_history_meta(
     }
 
 
+def stock_anomaly_history(
+    history: list[dict[str, Any]] | None,
+    meta: dict[str, Any] | None,
+    stock_id: str,
+) -> dict[str, Any] | None:
+    """個股頁的舉旗紀錄:同一份 :func:`anomaly_history` 結果,只留這一檔的條目。
+
+    **不重算**——export 已經算好的那一份(radar.json 用的)切出來而已,所以條目與
+    radar.json 裡這檔的條目逐字相同。每一天的三態原封不動:那一天缺 ``entries``
+    = 規則答不出來(不主張);``[]`` = 算過了、這一檔沒有舉旗(帶日期的正面主張)。
+    沒有舉旗的日子**照樣保留**,時間軸才誠實。meta 與 radar.json 的那一份是同一個。
+    紀錄或 meta 不存在 → ``None``(呼叫端整個鍵不輸出)。
+    """
+    if history is None or meta is None:
+        return None
+    days: list[dict[str, Any]] = []
+    for day in history:
+        if "entries" not in day:
+            days.append({"as_of": day["as_of"]})
+            continue
+        days.append({
+            "as_of": day["as_of"],
+            "entries": [e for e in day["entries"] if e["stock_id"] == stock_id],
+        })
+    return {"meta": meta, "days": days}
+
+
 # 四個計數鍵,一個不多。**沒有**總數(相加由讀的人做,同 §1 的五個整數)、
 # 沒有比率、沒有淨額、沒有旗標。
 DIRECTION_COUNT_KEYS = ("increased", "decreased", "unchanged", "undetermined")

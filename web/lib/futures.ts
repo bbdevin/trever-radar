@@ -11,6 +11,7 @@ import type {
   FuturesVolumeAnomalyEntry,
   FuturesVolumeAnomalyMeta,
   ReasonItem,
+  StockFuturesAnomalyHistory,
 } from "@/lib/types";
 
 /**
@@ -710,6 +711,77 @@ export function futuresAnomalyHistoryState(
     })),
   };
 }
+
+/* ------------------------------------------------------------------ *
+ * 個股頁的近 N 日舉旗紀錄(docs/38 §7.20,2026-10-03,post-data,只動呈現)。
+ *
+ * payload 是 radar.json 那一份只留這一檔的條目(`futures.anomaly_history`),所以
+ * 判斷直接沿用 `futuresAnomalyHistoryState`,只是:
+ *   - 契約名稱改用這一檔**全部契約**的名稱表(與同一頁其他區塊叫同一個名字);
+ *   - 多帶兩個計數(舉旗次數、沒算出結果的天數),空狀態的句子由它們決定。
+ * 「這檔沒有舉旗」只在**有算過**的日子才講得出口:鍵缺 = 沒算過(不主張);
+ * 那天缺 `entries` = 那天規則答不出來,不算進「沒有舉旗」。
+ * ------------------------------------------------------------------ */
+export type StockAnomalyHistoryState =
+  | { kind: "not-computed" }
+  | {
+      kind: "listed";
+      meta: FuturesAnomalyHistoryMeta;
+      days: { asOf: string; computed: boolean; rows: FuturesHistoryRow[] }[];
+      /** 舉旗筆數(契約-日,不合併)。 */
+      total: number;
+      /** 規則答不出來的那幾天(新到舊)。 */
+      uncomputed: string[];
+    };
+
+export function stockAnomalyHistoryState(
+  history: StockFuturesAnomalyHistory | null | undefined,
+  labels?: ReadonlyMap<string, string>,
+): StockAnomalyHistoryState {
+  const base = futuresAnomalyHistoryState(history?.days, history?.meta);
+  if (base.kind === "not-computed") return base;
+  const days = base.days.map((d) => ({
+    ...d,
+    rows: d.rows.map((r) => ({ ...r, label: labels?.get(r.code) ?? r.label })),
+  }));
+  return {
+    kind: "listed",
+    meta: base.meta,
+    days,
+    total: days.reduce((n, d) => n + d.rows.length, 0),
+    uncomputed: days.filter((d) => !d.computed).map((d) => d.asOf),
+  };
+}
+
+/** 紀錄的一句摘要(次數,不是比率)。天數讀 payload 的天數,不寫死 10。 */
+export function stockAnomalyHistorySummaryText(
+  s: Extract<StockAnomalyHistoryState, { kind: "listed" }>,
+): string {
+  const n = s.days.length;
+  const u = s.uncomputed.length;
+  if (n === 0) return "沒有可看的期貨交易日。";
+  if (u === n) return `近 ${n} 個期貨交易日都沒有算出結果。這不代表沒有舉旗。`;
+  const missing = u > 0 ? `；另 ${u} 天沒有算出結果` : "";
+  if (s.total === 0) {
+    return u > 0
+      ? `近 ${n} 個期貨交易日中，算出結果的 ${n - u} 天這檔都沒有舉旗${missing}。`
+      : `近 ${n} 個期貨交易日這檔沒有舉旗。`;
+  }
+  return `近 ${n} 個期貨交易日舉旗 ${s.total} 次${missing}。`;
+}
+
+/** 個股紀錄下方的一行說明:重算的事實與「跟上」的定義。天數全部讀 meta。 */
+export function stockAnomalyHistoryNoteText(
+  meta: Pick<FuturesAnomalyHistoryMeta, "forward_days" | "window_days">,
+): string {
+  return (
+    `以今天的資料重算。「現貨量跟上」= 之後 ${meta.forward_days} 個交易日內` +
+    `現貨量創 ${meta.window_days} 日新高；價格是事後紀錄，未扣除權息。`
+  );
+}
+
+/** 個股頁「回測依據」摺疊列的那一行(不帶數字;數字都在展開後的凍結常數句子裡)。 */
+export const EVIDENCE_SUMMARY = "回測依據：預告的是現貨量與波動，不是漲跌";
 
 /** 首頁期貨分頁「當日｜近 N 日」的記憶值;讀不懂就回預設「當日」。 */
 export type FuturesView = "today" | "history";

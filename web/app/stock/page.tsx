@@ -37,7 +37,15 @@ import {
   noDailyRowText,
   stockFuturesTab,
   anomalyMeaningText,
+  EVIDENCE_SUMMARY,
+  nextDayEvidenceText,
+  PRICE_AFTER_HEADING,
+  spotFollow,
+  stockAnomalyHistoryNoteText,
+  stockAnomalyHistoryState,
+  stockAnomalyHistorySummaryText,
 } from "@/lib/futures";
+import { ContractTag, SpotChip, flagCardClass } from "@/components/FuturesFlagParts";
 import PocketBadges from "@/components/PocketBadges";
 import { Skeleton } from "@/components/ui/skeleton";
 import WatchlistButton from "@/components/WatchlistButton";
@@ -416,7 +424,10 @@ function StockView() {
                 onClick={() => chooseChips(s.key)}
                 className={cn(
                   "min-h-11 rounded-[var(--r-sm)] px-1.5 py-1.5 text-[13px] font-semibold leading-tight transition-colors touch-manipulation",
-                  activeChips === s.key ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
+                  // docs/19 規則 10:選中狀態不可只靠灰/白區分,用主色實心。
+                  activeChips === s.key
+                    ? "bg-primary text-primary-foreground shadow-sm"
+                    : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground",
                 )}
               >
                 {s.label}
@@ -732,30 +743,21 @@ function StockDecisionHeader({
  * 「期貨」分頁的內容(docs/38 §7.16)。只在這檔**有**個股期貨時才會被畫(分頁本身
  * 也只在那時出現),所以這裡不必處理 unknown / none。
  *
- * 由上而下:這檔有哪些契約 → 今天有沒有舉旗(有的話放最前面,那是會影響決策的
- * 部分)→ 這個訊號歷史上代表什麼(一句實話:預告的是現貨量,不是方向)→ 每個
- * 契約的當日成交與未平倉。說明句只在今天有舉旗時放在旗標下面;沒舉旗的日子它
- * 仍在分頁底部,讓人知道「舉旗」是什麼意思、值不值得等。
+ * 由上而下(手機優先,docs/38 §7.20):這檔有哪些契約 → 期貨行情日有沒有舉旗
+ * (與首頁同一套卡片外觀)→ 近 N 日舉旗紀錄(首頁「近 N 日」只留這一檔)→
+ * 回測依據(摺起來,一行摘要)→ 每個契約的當日成交與未平倉。
  */
 /** 契約代碼 → 白話名稱(`contractLabelsByCode`)。畫面上只顯示名稱,代碼放在 title。 */
 type ContractLabels = ReadonlyMap<string, string>;
 
 function FuturesPanel({ futures, labels }: { futures: StockJson["futures"]; labels: ContractLabels }) {
-  const flagged = stockFuturesTab(futures).flaggedCodes.length > 0;
-  const meaning = (
-    <p className="rounded-[var(--r-lg)] border border-border bg-card px-3 py-2.5 text-[12px] leading-relaxed text-muted-foreground">
-      <span className="font-semibold text-foreground">期貨量異常代表什麼?</span>
-      {" "}
-      {anomalyMeaningText()}
-    </p>
-  );
   return (
     <div className="flex flex-col gap-2.5" data-testid="stock-futures-panel">
       <FuturesBadge futures={futures} labels={labels} />
       <FuturesAnomalyBlock futures={futures} labels={labels} />
-      {flagged && meaning}
+      <FuturesHistoryBlock futures={futures} labels={labels} />
+      <FuturesEvidenceBlock />
       <FuturesDailyBlock futures={futures} labels={labels} />
-      {!flagged && meaning}
     </div>
   );
 }
@@ -806,48 +808,123 @@ function FuturesAnomalyBlock({ futures, labels }: { futures: StockJson["futures"
   const heading = asOf ? `期貨成交量異常(${asOf})` : "期貨成交量異常";
 
   return (
-    <div className="mb-2.5 flex flex-col gap-2" aria-label="個股期貨成交量異常">
-      {flagged.map((c) => (
-        <div
-          key={c.code}
-          className="min-w-0 rounded-[var(--r-lg)] border border-[color:var(--accent-2)]/30 bg-card p-3 shadow-[var(--shadow-card)]"
-        >
-          <div className="flex min-w-0 flex-wrap items-baseline gap-2">
-            <span
-              className="inline-flex shrink-0 items-center gap-1 rounded-full border border-[color:var(--accent-2)]/35 bg-[color:var(--accent-2)]/8 px-1.5 py-0.5 text-[11px] font-semibold text-[color:var(--accent-2)]"
-              title={contractLabelTitle(labels.get(c.code) ?? "期貨", c.code)}
-            >
-              <Layers size={11} aria-hidden="true" />
-              {labels.get(c.code) ?? "期貨"}
-            </span>
-            <span className="text-[12.5px] font-semibold text-foreground">{heading}</span>
-          </div>
-          <div className="mt-2 grid grid-cols-2 gap-1.5 md:grid-cols-4">
-            {anomalyFacts(c.anomaly).map((f) => (
-              <span
-                key={f.key}
-                className="flex items-baseline justify-between gap-2 rounded-[var(--r-sm)] border border-border bg-secondary px-2.5 py-1.5 text-[11.5px] text-muted-foreground"
-              >
-                {f.label}
-                <b className="num shrink-0 font-bold text-[color:var(--ink-2)]">
-                  {f.value}
-                  <span className="ml-0.5 font-normal">{f.unit}</span>
-                </b>
+    <div className="flex flex-col gap-2" aria-label="個股期貨成交量異常">
+      {flagged.map((c) => {
+        // 與首頁當日名單同一套外觀(§7.20):accent-2 = 現貨尚未跟上(檢定成立的那一種),
+        // 紅 = 現貨已同步爆量;不知道 = 一般外框、不貼標籤。卡片不可點,所以不要 hover。
+        const spot = spotFollow(c.spot_new_high);
+        const label = labels.get(c.code) ?? "期貨";
+        return (
+          <div key={c.code} className={cn(flagCardClass(spot), "hover:bg-card")}>
+            <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+              <span className="text-[14px] font-bold text-foreground">{heading}</span>
+              <span className="ml-auto flex shrink-0 items-center">
+                <SpotChip spot={spot} />
               </span>
-            ))}
+            </div>
+            <div className="mt-0.5">
+              <ContractTag label={label} code={c.code} />
+            </div>
+            {/* 單位一律是口,寫在第一格就好(同首頁) */}
+            <dl className="mt-2 grid grid-cols-4 gap-x-2">
+              {anomalyFacts(c.anomaly).map((f, i) => (
+                <div key={f.key} className="min-w-0">
+                  <dt className="truncate text-[10.5px] text-muted-foreground" title={f.label}>{f.short ?? f.label}</dt>
+                  <dd className={cn("num truncate font-bold text-foreground", i === 0 ? "text-[15px]" : "text-[13px]")}>
+                    {f.value}
+                    {i === 0 && <span className="ml-0.5 text-[10.5px] font-normal text-muted-foreground">{f.unit}</span>}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+            {/* 觸發理由那句(§4 步驟 5 範本)以契約代碼開頭、並重述上面四格的數字,
+                所以不畫(同首頁 §7.17 的處理;§7.19)。風險提醒改成一行小字(同首頁)。 */}
+            {(c.risks?.length ?? 0) > 0 && (
+              <p className="mt-1.5 text-[11px] leading-snug text-muted-foreground">
+                {(c.risks ?? []).map((r) => r.text).join(" ")}
+              </p>
+            )}
           </div>
-          {/* 觸發理由那句(§4 步驟 5 範本)以契約代碼開頭、並重述上面四格的數字,
-              所以不畫(同首頁 §7.17 的處理;§7.19)。風險提醒照舊。 */}
-          {(c.risks?.length ?? 0) > 0 && (
-            <div className="mt-2 flex flex-wrap gap-1.5">
-              {(c.risks ?? []).map((r, i) => (
-                <ReasonPill key={`fk-${i}`} code={r.code} text={r.text} />
+        );
+      })}
+    </div>
+  );
+}
+
+/**
+ * 近 N 日舉旗紀錄,只有這一檔(docs/38 §7.20)。payload 是 radar.json 那一份切出來的
+ * (`futures.anomaly_history`),判斷全在 `lib/futures.ts`。依舉旗日分組(新到舊),
+ * 只畫有舉旗的日子;沒有舉旗/沒算出結果的日子由摘要句用計數講。不依價格排序、
+ * 不給命中徽章:價格是事後紀錄,不是這個訊號驗證過的東西。
+ *
+ * 鍵缺 = 紀錄沒有算過:整塊不畫,不說「這檔沒有舉旗」——那是一個沒人做過的主張。
+ */
+function FuturesHistoryBlock({ futures, labels }: { futures: StockJson["futures"]; labels: ContractLabels }) {
+  const state = stockAnomalyHistoryState(futures?.anomaly_history, labels);
+  if (state.kind === "not-computed") return null;
+  const flaggedDays = state.days.filter((d) => d.rows.length > 0);
+  return (
+    <section
+      aria-label="近期舉旗紀錄"
+      className="min-w-0 rounded-[var(--r-lg)] border border-border bg-card px-3 py-2.5 shadow-[var(--shadow-card)]"
+    >
+      <h3 className="text-[13px] font-bold text-foreground">
+        近 <span className="num">{state.days.length}</span> 日舉旗紀錄
+      </h3>
+      <p className="mt-0.5 text-[12px] leading-relaxed text-[color:var(--ink-2)]">
+        {stockAnomalyHistorySummaryText(state)}
+      </p>
+      {flaggedDays.length > 0 && (
+        <div className="mt-2 grid gap-2.5">
+          {flaggedDays.map((day) => (
+            <div key={day.asOf} className="grid gap-1.5">
+              <p className="num px-0.5 text-[11.5px] font-bold text-muted-foreground">期貨 {day.asOf}</p>
+              {day.rows.map((row) => (
+                <div key={`${day.asOf}-${row.code}`} className={cn(flagCardClass(row.spot), "py-2 shadow-none hover:bg-card")}>
+                  <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+                    <ContractTag label={row.label} code={row.code} />
+                    <span className="ml-auto flex shrink-0 items-center">
+                      <SpotChip spot={row.spot} when="flag" />
+                    </span>
+                  </div>
+                  <p className="mt-1 text-[12.5px] font-semibold text-foreground">{row.followLabel}</p>
+                  <p className="num mt-0.5 text-[12px] leading-snug text-[color:var(--ink-2)]"><ChangeText text={row.priceAfter} /></p>
+                </div>
               ))}
             </div>
-          )}
+          ))}
         </div>
-      ))}
-    </div>
+      )}
+      <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
+        {stockAnomalyHistoryNoteText(state.meta)}
+      </p>
+    </section>
+  );
+}
+
+/**
+ * 回測依據(docs/38 §7.20):摺起來,摘要一行。展開後兩段都是**已凍結的**回測句子
+ * (`anomalyMeaningText` = 量的檢定、`nextDayEvidenceText` = 之後第二個交易日的漲跌
+ * 次數),數字只來自 `lib/futures.ts` 的常數,這裡一個都不重打。
+ */
+function FuturesEvidenceBlock() {
+  return (
+    <details className="group min-w-0 rounded-[var(--r-lg)] border border-border bg-card px-3 shadow-[var(--shadow-card)]">
+      <summary className="flex min-h-10 cursor-pointer list-none items-center gap-1.5 text-[12.5px] font-semibold text-foreground [&::-webkit-details-marker]:hidden">
+        <span className="text-muted-foreground transition-transform group-open:rotate-90" aria-hidden="true">▸</span>
+        {EVIDENCE_SUMMARY}
+      </summary>
+      <div className="grid gap-2 pb-3 text-[12px] leading-relaxed text-[color:var(--ink-2)]">
+        <div>
+          <p className="text-[11px] font-semibold text-muted-foreground">期貨量創新高之後，現貨量有沒有跟上</p>
+          <p><ChangeText text={anomalyMeaningText()} /></p>
+        </div>
+        <div>
+          <p className="text-[11px] font-semibold text-muted-foreground">{PRICE_AFTER_HEADING}</p>
+          <p><ChangeText text={nextDayEvidenceText()} /></p>
+        </div>
+      </div>
+    </details>
   );
 }
 

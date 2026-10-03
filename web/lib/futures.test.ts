@@ -39,6 +39,10 @@ import {
   priceAfterCountsText,
   priceAfterText,
   PRICE_AFTER_HEADING,
+  EVIDENCE_SUMMARY,
+  stockAnomalyHistoryState,
+  stockAnomalyHistorySummaryText,
+  stockAnomalyHistoryNoteText,
 } from "./futures.ts";
 import { readFileSync } from "node:fs";
 
@@ -840,8 +844,108 @@ function sampleCopy(): string[] {
       followStatusLabel(k === "followed" ? { kind: k, on: "2026-09-25" } : k === "watching" ? { kind: k, observed: 2 } : { kind: k }, 5)),
     ...[2000, 100, 1000, undefined].map((m) => contractLabel(m, "2303")),
     spotFollowLabel("lagging")!, spotFollowLabel("followed")!,
+    EVIDENCE_SUMMARY,
+    stockAnomalyHistoryNoteText(H_META),
+    ...[
+      stockHist([{ as_of: "2026-09-30", entries: [] }, { as_of: "2026-09-29", entries: [] }]),
+      stockHist([{ as_of: "2026-09-30", entries: [] }, { as_of: "2026-09-29" }]),
+      stockHist([{ as_of: "2026-09-30" }]),
+      stockHist([{ as_of: "2026-09-30", entries: [hEntry({})] }, { as_of: "2026-09-29" }]),
+    ].map((s) => stockAnomalyHistorySummaryText(s)),
   ];
 }
+
+function stockHist(days: unknown[], labels?: ReadonlyMap<string, string>) {
+  const s = stockAnomalyHistoryState({ meta: H_META, days: days as never }, labels);
+  if (s.kind !== "listed") throw new Error("expected listed");
+  return s;
+}
+
+// ── 個股頁的近 N 日舉旗紀錄(docs/38 §7.20) ─────────────────────────────
+
+test("§7.20 個股紀錄:鍵缺 = 沒有算過(不主張),不是「沒有舉旗」", () => {
+  assert.deepEqual(stockAnomalyHistoryState(undefined), { kind: "not-computed" });
+  assert.deepEqual(stockAnomalyHistoryState(null), { kind: "not-computed" });
+});
+
+test("§7.20 個股紀錄:每一天的三態原樣、順序照 payload、計數與沒算出的天數", () => {
+  const s = stockHist([
+    { as_of: "2026-09-30", entries: [] },
+    { as_of: "2026-09-29", entries: [hEntry({ code: "MYF", stock_id: "1565" }), hEntry({ code: "OMF", stock_id: "1565", multiplier: 100 })] },
+    { as_of: "2026-09-26" },
+    { as_of: "2026-09-25", entries: [hEntry({ code: "MYF", stock_id: "1565", spot_followed: true, spot_followed_on: "2026-09-29" })] },
+  ]);
+  assert.deepEqual(s.days.map((d) => [d.asOf, d.computed, d.rows.map((r) => r.code)]), [
+    ["2026-09-30", true, []],
+    ["2026-09-29", true, ["MYF", "OMF"]],
+    ["2026-09-26", false, []],
+    ["2026-09-25", true, ["MYF"]],
+  ]);
+  assert.equal(s.total, 3);
+  assert.deepEqual(s.uncomputed, ["2026-09-26"]);
+  assert.equal(s.days[3].rows[0].followLabel, "現貨量 09-29 跟上");
+  assert.equal(stockAnomalyHistorySummaryText(s), "近 4 個期貨交易日舉旗 3 次；另 1 天沒有算出結果。");
+});
+
+test("§7.20 個股紀錄的契約名稱用這一檔全部契約的名稱表(與同頁其他區塊同名)", () => {
+  const labels = contractLabelsByCode([{ code: "MYF", multiplier: 2000 }, { code: "OMF", multiplier: 100 }], "1565");
+  const s = stockHist([{ as_of: "2026-09-30", entries: [hEntry({ code: "OMF", stock_id: "1565", multiplier: 100 })] }], labels);
+  assert.equal(s.days[0].rows[0].label, "小型個股期貨");
+  // 沒給名稱表時退回條目自己的乘數。
+  const bare = stockHist([{ as_of: "2026-09-30", entries: [hEntry({ code: "OMF", stock_id: "1565", multiplier: 100 })] }]);
+  assert.equal(bare.days[0].rows[0].label, "小型個股期貨");
+  assert.ok(!/[A-Za-z]/.test(s.days[0].rows[0].label));
+});
+
+test("§7.20 個股紀錄的空狀態:只有算過的日子才講「沒有舉旗」", () => {
+  const ten = Array.from({ length: 10 }, (_, i) => ({ as_of: `2026-09-${String(30 - i).padStart(2, "0")}`, entries: [] }));
+  assert.equal(stockAnomalyHistorySummaryText(stockHist(ten)), "近 10 個期貨交易日這檔沒有舉旗。");
+  // 天數讀 payload,不寫死 10。
+  assert.equal(stockAnomalyHistorySummaryText(stockHist(ten.slice(0, 3))), "近 3 個期貨交易日這檔沒有舉旗。");
+  const partly = [...ten.slice(0, 8), { as_of: "2026-09-21" }, { as_of: "2026-09-20" }];
+  assert.equal(
+    stockAnomalyHistorySummaryText(stockHist(partly)),
+    "近 10 個期貨交易日中，算出結果的 8 天這檔都沒有舉旗；另 2 天沒有算出結果。",
+  );
+  assert.equal(
+    stockAnomalyHistorySummaryText(stockHist([{ as_of: "2026-09-30" }, { as_of: "2026-09-29" }])),
+    "近 2 個期貨交易日都沒有算出結果。這不代表沒有舉旗。",
+  );
+});
+
+test("§7.20 個股紀錄的說明句逐字,天數讀 meta", () => {
+  assert.equal(
+    stockAnomalyHistoryNoteText(H_META),
+    "以今天的資料重算。「現貨量跟上」= 之後 5 個交易日內現貨量創 60 日新高；價格是事後紀錄，未扣除權息。",
+  );
+  const other = stockAnomalyHistoryNoteText({ forward_days: 3, window_days: 20 });
+  assert.ok(other.includes("之後 3 個交易日") && other.includes("創 20 日新高"), other);
+});
+
+test("§7.20 個股紀錄的列沒有名次/比率鍵,價格只走 priceAfterText", () => {
+  const after = { flag_close: 100, last_close: 104, last_date: "2026-10-02", high: 106, low: 97, days: 3, ex_rights: false };
+  const s = stockHist([{ as_of: "2026-09-30", entries: [hEntry({ spot_after: after })] }]);
+  const row = s.days[0].rows[0];
+  assert.equal(row.priceAfter, priceAfterText(after));
+  for (const key of Object.keys(row)) assert.ok(!/rank|position|score|ratio|pct|top|hit/i.test(key), key);
+});
+
+test("§7.20 個股頁期貨分頁:舉旗卡用首頁同一套部件,回測依據用凍結常數,不重打數字", () => {
+  const src = readFileSync(new URL("../app/stock/page.tsx", import.meta.url), "utf8");
+  const start = src.indexOf("function FuturesPanel");
+  const end = src.indexOf("function TechnicalPanel");
+  const panel = src.slice(start, end);
+  for (const needle of [
+    "flagCardClass(", "<SpotChip", "<ContractTag", 'when="flag"',
+    "stockAnomalyHistoryState(", "stockAnomalyHistorySummaryText(",
+    "anomalyMeaningText()", "nextDayEvidenceText()", "PRICE_AFTER_HEADING", "EVIDENCE_SUMMARY",
+    "<ChangeText text={row.priceAfter}",
+  ]) assert.ok(panel.includes(needle), needle);
+  // 回測數字只來自凍結常數:期貨分頁原始碼裡不重打 680/141/551/81/112。
+  for (const n of ["680", "141", "551", "112", "43–67"]) assert.ok(!panel.includes(n), n);
+  // 「今日」不出現在期貨分頁的文案(期貨行情日不是使用者的今天,§7.12)。
+  assert.ok(!panel.includes("今日"), "期貨分頁出現「今日」");
+});
 
 test("§7.19 期貨文案沒有誇大或喊單的詞", () => {
   for (const text of sampleCopy()) {

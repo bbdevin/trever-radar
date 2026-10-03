@@ -693,7 +693,8 @@ function RadarView() {
                   onClick={() => chooseFuturesView(s.key)}
                   className={cn(
                     "min-h-11 rounded-[var(--r-sm)] px-1.5 py-1.5 text-[13px] font-semibold leading-tight transition-colors touch-manipulation",
-                    futuresView === s.key ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
+                    // 選中態用主色藍(docs/19 規則 10:禁止只用灰底;使用者 2026-10-03:「灰白的請修正」)
+                    futuresView === s.key ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground",
                   )}
                 >
                   {s.label}

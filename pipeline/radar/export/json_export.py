@@ -41,6 +41,7 @@ from ..compute.futures_volume_anomaly import (
     anomaly_index_meta,
     futures_volume_anomalies,
     open_interest_direction,
+    stock_anomaly_history,
 )
 from ..compute.futures_volume_battery import (
     load_futures_calendar,
@@ -1887,6 +1888,10 @@ def export_json(out_dir: Path | None = None) -> dict:
             if futures_result is not None and futures_result[2] is not None
             else None
         )
+        # meta 只算一次:radar.json 與每一檔的 futures.anomaly_history 共用同一份。
+        futures_history_meta = anomaly_history_meta(
+            futures_history, as_of=f_date, observed_through=d,
+        )
 
     now = datetime.now(ZoneInfo(config.TZ)).isoformat(timespec="seconds")
 
@@ -1998,9 +2003,7 @@ def export_json(out_dir: Path | None = None) -> dict:
         # futures_volume_anomaly 的 HISTORY_DAYS 那一段)。
         if futures_history is not None:
             radar["futures_volume_anomaly_history"] = futures_history
-            radar["futures_volume_anomaly_history_meta"] = anomaly_history_meta(
-                futures_history, as_of=f_date, observed_through=d,
-            )
+            radar["futures_volume_anomaly_history_meta"] = futures_history_meta
     # 市場層級的未平倉方向計數(docs/38 §7.15)。**平行於**名單而不是包在它的 meta
     # 裡:meta 是「這份名單的隨附事實」(§7.11),而這四個計數不是名單的事實——
     # 名單只有舉旗的契約,計數涵蓋全部約 320 個;名單會因為 R4 算不出結算窗口而
@@ -2218,6 +2221,14 @@ def export_json(out_dir: Path | None = None) -> dict:
                 payload["futures"] = futures_by_stock.get(sid, {
                     "version": 1, "list_as_of": futures_list_as_of, "contracts": [],
                 })
+                # 近 10 日舉旗紀錄(docs/38 §7.20):radar.json 那一份切出這一檔,不重算。
+                # 只給有契約的股票(沒有契約的股票不會有期貨分頁);紀錄沒有算過就不給。
+                if sid in futures_by_stock and futures_history is not None:
+                    payload["futures"] = {
+                        **payload["futures"],
+                        "anomaly_history": stock_anomaly_history(
+                            futures_history, futures_history_meta, sid),
+                    }
             (stock_dir / f"{sid}.json").write_text(
                 json.dumps(payload, ensure_ascii=False), encoding="utf-8")
 

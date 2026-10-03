@@ -12,7 +12,7 @@ import { OFFLINE_DATA_COPY, isBrowserOffline } from "@/lib/pwa";
 import type { RadarJson } from "@/lib/types";
 import type { TrackIndexEntry } from "@/lib/branchTrack";
 import { MARKET_LABEL, fmtX } from "@/lib/format";
-import { cn, filterChipClass, navPillClass } from "@/lib/utils";
+import { cn, filterChipClass, navPillClass, pillTabClass } from "@/lib/utils";
 
 type Ranking = {
   branch_name: string;
@@ -1003,12 +1003,7 @@ export default function BranchPage() {
                   <button
                     key={t.k}
                     onClick={() => setWarrantTimeframe(t.k as any)}
-                    className={cn(
-                      "px-4 py-1.5 rounded-full text-[13px] font-medium transition-all duration-300 whitespace-nowrap",
-                      warrantTimeframe === t.k 
-                        ? "bg-secondary text-foreground shadow-sm ring-1 ring-border/60" 
-                        : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"
-                    )}
+                    className={cn(pillTabClass(warrantTimeframe === t.k), "min-h-11 whitespace-nowrap")}
                   >
                     {t.l}
                   </button>
@@ -1017,23 +1012,13 @@ export default function BranchPage() {
               <div className="flex bg-background/80 p-1.5 rounded-full border border-border/40 shadow-inner">
                 <button
                   onClick={() => setViewMode("by_stock")}
-                  className={cn(
-                    "px-4 py-1.5 rounded-full text-[13px] font-medium transition-all duration-300 flex items-center gap-1.5",
-                    viewMode === "by_stock" 
-                      ? "bg-secondary text-foreground shadow-sm ring-1 ring-border/60" 
-                      : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"
-                  )}
+                  className={cn(pillTabClass(viewMode === "by_stock"), "flex min-h-11 items-center gap-1.5")}
                 >
                   <Building2 size={16} /> 依標的
                 </button>
                 <button
                   onClick={() => setViewMode("by_branch")}
-                  className={cn(
-                    "px-4 py-1.5 rounded-full text-[13px] font-medium transition-all duration-300 flex items-center gap-1.5",
-                    viewMode === "by_branch" 
-                      ? "bg-secondary text-foreground shadow-sm ring-1 ring-border/60" 
-                      : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"
-                  )}
+                  className={cn(pillTabClass(viewMode === "by_branch"), "flex min-h-11 items-center gap-1.5")}
                 >
                   <User size={16} /> 依分點
                 </button>

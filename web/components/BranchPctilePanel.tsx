@@ -153,8 +153,8 @@ export default function BranchPctilePanel({
               onClick={() => choose(key)}
               className={`min-h-11 rounded-[var(--r-sm)] px-2 py-1.5 text-[12.5px] font-semibold leading-tight transition-colors ${
                 activeKey === key
-                  ? "bg-card text-foreground shadow-sm"
-                  : "text-muted-foreground hover:text-foreground"
+                  ? "bg-primary text-primary-foreground shadow-sm"
+                  : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground"
               }`}
             >
               <span aria-hidden="true" className="block">{CAMP_NAMES[key]}</span>
