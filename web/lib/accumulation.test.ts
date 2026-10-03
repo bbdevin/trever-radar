@@ -6,6 +6,7 @@ import { test } from "node:test";
 
 import {
   DEFAULT_VISIBLE,
+  HOLD_MIN,
   MAX_ROWS,
   MIN_DAYS,
   MIN_LOTS,
@@ -299,9 +300,92 @@ test("definition text comes from the constants", () => {
   );
   assert.equal(
     definitionText(60, "dist"),
-    "出貨＝期間淨賣 ≥50 張且 ≥ 期間成交量 0.5%、賣超 ≥10 天、出清率 ≥60%（買回不到賣出的四成）、近 5 日沒有回補（淨買 ≤ 期間淨賣 3 成）",
+    "出貨＝期間淨賣 ≥50 張且 ≥ 近 20 日成交量 0.5%、賣超 ≥10 天、目前空出 ≥ 期間最大賣出部位的 60%（賣出後沒有買回四成以上）、近 5 日沒有回補（淨買 ≤ 期間淨賣 3 成）",
   );
+  assert.equal(
+    definitionText(120, "acc"),
+    "囤貨＝期間淨買 ≥50 張且 ≥ 近 20 日成交量 0.5%、買超 ≥15 天、目前持倉 ≥ 期間最高持倉的 60%（建倉後沒有跑掉四成以上）、近 5 日沒有倒貨（淨賣 ≤ 期間淨買 3 成）",
+  );
+  assert.ok(definitionText(120, "acc").includes("目前持倉 ≥ 期間最高持倉的 60%"));
   assert.equal(fmtMonthDay("2026-10-01"), "10-01");
   assert.equal(fmtShare(0.04), "<0.1%");
   assert.equal(fmtShare(null), "—");
+});
+
+test("6月、1年:門檻依期間延伸,歷史不足整段不列", () => {
+  assert.equal(MIN_DAYS[120], 15);
+  assert.equal(MIN_DAYS[240], 20);
+  const { candles, history } = build(60, { a: new Array(60).fill(0) });
+  const r = computeWindow(history, candles, 240);
+  assert.equal(r.available, false);
+});
+/** 偶數日買 +buy、奇數日賣 −sell,共 len 天(len 為奇數時以買日收尾) */
+function zigzag(len: number, buy: number, sell: number): number[] {
+  return Array.from({ length: len }, (_, i) => (i % 2 === 0 ? buy : -sell));
+}
+
+test("長期間改用持倉保有率:留倉率 0.3 但結尾在高點,20 日不過、120 日通過", () => {
+  const short = build(20, { z: zigzag(19, 100, 70) });
+  const rs = computeWindow(short.history, short.candles, 20);
+  assert.ok(rs.available);
+  assert.equal(rs.acc.length, 0); // 淨 370 / 買 1000 = 0.37 < 0.6
+  assert.equal(HOLD_MIN, 0.6);
+
+  const long = build(120, { z: zigzag(41, 100, 70) });
+  const rl = computeWindow(long.history, long.candles, 120);
+  assert.ok(rl.available);
+  assert.deepEqual(names(rl.acc), ["z"]);
+  assert.equal(rl.acc[0].net, 700);
+  assert.equal(rl.acc[0].peakNet, 700);
+  assert.equal(rl.acc[0].holdPct, 100);
+  assert.ok(rl.acc[0].retainPct < 40);
+});
+
+test("長期間:建倉後倒出一半(保有 50%)不算囤貨;短期間 holdPct 為 null", () => {
+  const plan = new Array(120).fill(0);
+  for (let i = 0; i < 20; i++) plan[i] = 100; // 峰值 2000
+  for (let i = 20; i < 30; i++) plan[i] = -100; // 剩 1000 = 50%
+  const keep = new Array(120).fill(0);
+  for (let i = 0; i < 20; i++) keep[i] = 100;
+  for (let i = 20; i < 28; i++) keep[i] = -100; // 剩 1200 = 60%
+  const { candles, history } = build(120, { dump: plan, keep });
+  const r = computeWindow(history, candles, 120);
+  assert.ok(r.available);
+  assert.deepEqual(names(r.acc), ["keep"]);
+  assert.equal(r.acc[0].holdPct, 60);
+
+  const s = build(20, { a: series(20, 5, 0) });
+  const rs = computeWindow(s.history, s.candles, 20);
+  assert.ok(rs.available);
+  assert.equal(rs.acc[0].holdPct, null);
+});
+
+test("長期間出貨為鏡像:賣出後買回超過四成不算,holdPct 以最低累計淨持倉計", () => {
+  const neg = (xs: number[]) => xs.map((x) => -x);
+  const z = build(120, { z: neg(zigzag(41, 100, 70)) });
+  const rz = computeWindow(z.history, z.candles, 120);
+  assert.ok(rz.available);
+  assert.deepEqual(names(rz.dist), ["z"]);
+  assert.equal(rz.dist[0].troughNet, -700);
+  assert.equal(rz.dist[0].holdPct, 100);
+
+  const plan = new Array(120).fill(0);
+  for (let i = 0; i < 20; i++) plan[i] = -100;
+  for (let i = 20; i < 30; i++) plan[i] = 100; // 買回一半
+  const d = build(120, { dump: plan });
+  const rd = computeWindow(d.history, d.candles, 120);
+  assert.ok(rd.available);
+  assert.equal(rd.dist.length, 0);
+});
+
+test("長期間的規模門檻以 20 日均量計,不隨期間放大", () => {
+  // 240 天、每天量 1,000 張:整段 24 萬張的 0.5% = 1,200 張;改以 20 日均量 = 2 萬張的 0.5% = 100 張
+  const days = 240;
+  const series = new Array(days).fill(0);
+  for (let i = 0; i < 20; i++) series[i] = 10; // 20 天各買 10 張 → 淨 200 張
+  const { candles, history } = build(days, { a: series });
+  for (const c of candles) c.v = 1000;
+  const r = computeWindow(history, candles, days);
+  assert.ok(r.available);
+  assert.deepEqual(names(r.acc), ["a"]);
 });

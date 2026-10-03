@@ -6,7 +6,10 @@ import {
   DEFAULT_VISIBLE,
   DEFAULT_WINDOW,
   RETAIN_MIN,
+  HOLD_MIN,
+  LONG_WINDOW_DAYS,
   MIN_DAYS,
+  SHARE_FLOOR_DAYS,
   MIN_LOTS,
   MIN_SHARE,
   RECENT_DAYS,
@@ -122,7 +125,7 @@ export default function AccumulationBranches({
         </div>
       )}
 
-      <div role="tablist" aria-label="期間" className="grid grid-cols-3 gap-1 rounded-full border border-border bg-card p-[3px]">
+      <div role="tablist" aria-label="期間" className="grid grid-cols-5 gap-0.5 rounded-full border border-border bg-card p-[3px]">
         {WINDOWS.map((w) => (
           <button
             key={w.key}
@@ -130,7 +133,7 @@ export default function AccumulationBranches({
             role="tab"
             aria-selected={windowKey === w.key}
             onClick={() => chooseWindow(w.key)}
-            className={cn(pillTabClass(windowKey === w.key), "min-h-11 justify-center touch-manipulation")}
+            className={cn(pillTabClass(windowKey === w.key), "min-h-11 justify-center px-1 touch-manipulation")}
           >
             {w.label}
           </button>
@@ -180,7 +183,11 @@ export default function AccumulationBranches({
 
           {rows.length === 0 ? (
             <p className="rounded-[var(--r-md)] border border-border bg-secondary px-3 py-3 text-[12.5px] leading-relaxed text-muted-foreground">
-              這 {result.days} 個交易日沒有分點符合{side === "acc" ? "囤貨" : "出貨"}條件。
+              {win.days > LONG_WINDOW_DAYS
+                ? side === "acc"
+                  ? "這段期間沒有分點把倉位留到現在——大戶多是來回操作。"
+                  : "這段期間沒有分點持續出清到現在。"
+                : `這 ${result.days} 個交易日沒有分點符合${side === "acc" ? "囤貨" : "出貨"}條件。`}
             </p>
           ) : (
             <div className="grid gap-2">
@@ -221,9 +228,13 @@ export default function AccumulationBranches({
                       </span>
                       {/* 細節與小條在名稱下方自成一列(橫跨到數字欄下方,不與數字同列) */}
                       <span className="num col-span-2 col-start-2 text-[11px] text-muted-foreground">
-                        {side === "acc"
-                          ? `買 ${row.buyLots.toLocaleString("zh-TW")} 張、賣回 ${row.sellLots.toLocaleString("zh-TW")} 張 · 留倉 ${Math.round(row.retainPct)}%`
-                          : `賣 ${row.sellLots.toLocaleString("zh-TW")} 張、買回 ${row.buyLots.toLocaleString("zh-TW")} 張 · 出清 ${Math.round(row.retainPct)}%`}
+                        {row.holdPct != null
+                          ? side === "acc"
+                            ? `最高持倉 ${row.peakNet.toLocaleString("zh-TW")} 張 · 現在 ${row.net.toLocaleString("zh-TW")} 張 · 保有 ${Math.round(row.holdPct)}%`
+                            : `最大空出 ${(-row.troughNet).toLocaleString("zh-TW")} 張 · 現在 ${(-row.net).toLocaleString("zh-TW")} 張 · 保有 ${Math.round(row.holdPct)}%`
+                          : side === "acc"
+                            ? `買 ${row.buyLots.toLocaleString("zh-TW")} 張、賣回 ${row.sellLots.toLocaleString("zh-TW")} 張 · 留倉 ${Math.round(row.retainPct)}%`
+                            : `賣 ${row.sellLots.toLocaleString("zh-TW")} 張、買回 ${row.buyLots.toLocaleString("zh-TW")} 張 · 出清 ${Math.round(row.retainPct)}%`}
                         <br />
                         買 {row.buyDays} 天／賣 {row.sellDays} 天 · 佔量 {fmtShare(row.volumeSharePct)} ·{" "}
                         <span className="whitespace-nowrap">
@@ -234,7 +245,7 @@ export default function AccumulationBranches({
                       <span aria-hidden className="col-span-2 col-start-2 mt-1 block h-1 w-full overflow-hidden rounded-full bg-secondary">
                         <span
                           className={cn("block h-full w-full origin-left rounded-full", side === "acc" ? "bg-up/60" : "bg-down/60")}
-                          style={{ transform: `scaleX(${Math.min(100, Math.max(0, row.retainPct)) / 100})` }}
+                          style={{ transform: `scaleX(${Math.min(100, Math.max(0, row.holdPct ?? row.retainPct)) / 100})` }}
                         />
                       </span>
                     </button>
@@ -265,14 +276,17 @@ export default function AccumulationBranches({
           <p className="text-foreground">{definitionText(win.days, side)}</p>
           <p>只計入每天淨買賣前 {TOP_N_PER_DAY} 大的分點，小量吃貨的會漏掉，數字是下限。</p>
           <p>
-            期間以這檔股票的交易日計算：1週＝{WINDOWS[0].days} 天、1月＝{WINDOWS[1].days} 天、3月＝{WINDOWS[2].days} 天，
+            期間以這檔股票的交易日計算：{WINDOWS.map((w) => `${w.label}＝${w.days} 天`).join("、")}，
             截至最新一天的分點資料。期間內任一天缺分點資料，整個期間就不列名單。
           </p>
           <p>
-            囤貨要同時符合四件事：期間淨買至少 {MIN_LOTS} 張，且至少佔期間總成交量的 {Number((MIN_SHARE * 100).toFixed(2))}%；買超天數至少 {MIN_DAYS[WINDOWS[0].days]}／{MIN_DAYS[WINDOWS[1].days]}／
-            {MIN_DAYS[WINDOWS[2].days]} 天（依期間）；留倉率 ≥{Math.round(RETAIN_MIN * 100)}%——留倉率＝期間淨買 ÷ 買超日淨買合計，看的是張數不是天數，散戶在同一分點小賣幾天不會讓大買的主力出局；最近 {RECENT_DAYS} 個交易日的淨賣
+            囤貨要同時符合四件事：期間淨買至少 {MIN_LOTS} 張，且至少佔期間總成交量的 {Number((MIN_SHARE * 100).toFixed(2))}%（期間超過 {SHARE_FLOOR_DAYS} 天時，以 {SHARE_FLOOR_DAYS} 天的平均量計）；買超天數至少 {WINDOWS.map((w) => MIN_DAYS[w.days]).join("／")} 天（依期間）；留倉率 ≥{Math.round(RETAIN_MIN * 100)}%——留倉率＝期間淨買 ÷ 買超日淨買合計，看的是張數不是天數，散戶在同一分點小賣幾天不會讓大買的主力出局；最近 {RECENT_DAYS} 個交易日的淨賣
             不超過期間淨買的 {Math.round(RECENT_REVERSAL * 100)}%。出貨是完全相反的條件。買賣天數只是參考，不是門檻。
             單一分點一天的大單不算囤貨，常是鉅額交易或轉倉。
+          </p>
+          <p>
+            期間超過 {LONG_WINDOW_DAYS} 天（{WINDOWS.filter((w) => w.days > LONG_WINDOW_DAYS).map((w) => w.label).join("、")}）改用持倉保有率：現在的淨持倉 ÷ 期間內曾達到的最高持倉，≥{Math.round(HOLD_MIN * 100)}% 才算，
+            建倉後沒有跑掉四成以上；出貨則看賣出後有沒有被買回。這取代上面的留倉率，因為長期間的大戶常來回操作。
           </p>
           <p>
             某天沒進前 {TOP_N_PER_DAY} 大的分點，當天記為 0，不算買也不算賣。佔量＝期間淨張數 ÷ 期間總成交量。

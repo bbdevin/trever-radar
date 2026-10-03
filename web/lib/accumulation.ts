@@ -11,12 +11,19 @@ export const WINDOWS = [
   { key: "1w", label: "1週", days: 5 },
   { key: "1m", label: "1月", days: 20 },
   { key: "3m", label: "3月", days: 60 },
+  // 2026-10-03 使用者要求加 6月、1年(branch_history 約 480 個交易日,兩者都涵蓋得到)
+  { key: "6m", label: "6月", days: 120 },
+  { key: "1y", label: "1年", days: 240 },
 ] as const;
 export type WindowKey = (typeof WINDOWS)[number]["key"];
 export const DEFAULT_WINDOW: WindowKey = "1m";
 
 /** 期間內最少買超(或賣超)天數 */
-export const MIN_DAYS: Record<number, number> = { 5: 3, 20: 5, 60: 10 };
+// 長期間沿用同一個斜率往上延伸(3/5/10 → 15/20):囤貨要「反覆買」,但半年、一年
+// 的主力常是幾波大買後長抱,天數門檻不宜隨期間線性放大。
+export const MIN_DAYS: Record<number, number> = { 5: 3, 20: 5, 60: 10, 120: 15, 240: 20 };
+/** 規模門檻(佔量 ≥ MIN_SHARE)的成交量基準最多取幾天的平均量。 */
+export const SHARE_FLOOR_DAYS = 20;
 /**
  * 留倉率門檻(以張數,不以天數):囤貨 = 期間淨買 ÷ 期間買超日淨買合計 ≥ 此值,
  * 也就是賣回的張數不到買進的四成。2026-10-02 使用者指出:舊版「買超天數 ≥ 賣超天數 2 倍」
@@ -24,6 +31,14 @@ export const MIN_DAYS: Record<number, number> = { 5: 3, 20: 5, 60: 10 };
  * 出貨鏡像:期間淨賣 ÷ 賣超日淨賣合計 ≥ 此值(賣出後買回不到四成)。
  */
 export const RETAIN_MIN = 0.6;
+/** 超過這個天數的視窗(3月、6月、1年)改用持倉保有率,不用留倉率。 */
+export const LONG_WINDOW_DAYS = SHARE_FLOOR_DAYS;
+/**
+ * 長期間的持倉保有率門檻:囤貨 = 期間結束時淨持倉 ≥ 此值 × 期間內最高累計淨持倉(peakNet);
+ * 出貨鏡像:−淨額 ≥ 此值 × 期間內最低累計淨持倉的絕對值。長期間的主力常是波段來回,
+ * 用買賣張數比會把「建倉後仍抱著」誤殺。
+ */
+export const HOLD_MIN = 0.6;
 /**
  * 規模門檻:|期間淨額| 至少 MIN_LOTS 張,且至少佔期間總成交量的 MIN_SHARE(成交量為 0 時略過此項)。
  * 單一分點一天的大單常是鉅額交易或轉倉,不該被當成囤貨。買賣天數比只是資訊,不是門檻。
@@ -53,6 +68,11 @@ export interface AccRow {
   sellLots: number;
   /** 囤貨:net ÷ buyLots;出貨:|net| ÷ sellLots(百分比,0–100) */
   retainPct: number;
+  /** 長期間(> LONG_WINDOW_DAYS)才有:囤貨 net ÷ peakNet;出貨 −net ÷ −troughNet(百分比);短期間 null */
+  holdPct: number | null;
+  /** 期間內最高累計淨持倉(囤貨用,≥0)與最低累計淨持倉(出貨用,≤0);長期間 UI 顯示用 */
+  peakNet: number;
+  troughNet: number;
   /** |net| / 期間總成交量,百分比;成交量為 0 時 null */
   volumeSharePct: number | null;
   /** 囤貨:最後一次買超日;出貨:最後一次賣超日 */
@@ -84,6 +104,13 @@ export function definitionText(days: number, side: Side): string {
   const retain = Math.round(RETAIN_MIN * 100);
   const back = ZH_DIGIT[Math.round((1 - RETAIN_MIN) * 10)];
   const share = String(Number((MIN_SHARE * 100).toFixed(2)));
+  if (days > LONG_WINDOW_DAYS) {
+    const hold = Math.round(HOLD_MIN * 100);
+    if (side === "acc") {
+      return `囤貨＝期間淨買 ≥${MIN_LOTS} 張且 ≥ 近 ${SHARE_FLOOR_DAYS} 日成交量 ${share}%、買超 ≥${min} 天、目前持倉 ≥ 期間最高持倉的 ${hold}%（建倉後沒有跑掉${back}成以上）、近 ${RECENT_DAYS} 日沒有倒貨（淨賣 ≤ 期間淨買 ${pct} 成）`;
+    }
+    return `出貨＝期間淨賣 ≥${MIN_LOTS} 張且 ≥ 近 ${SHARE_FLOOR_DAYS} 日成交量 ${share}%、賣超 ≥${min} 天、目前空出 ≥ 期間最大賣出部位的 ${hold}%（賣出後沒有買回${back}成以上）、近 ${RECENT_DAYS} 日沒有回補（淨買 ≤ 期間淨賣 ${pct} 成）`;
+  }
   if (side === "acc") {
     return `囤貨＝期間淨買 ≥${MIN_LOTS} 張且 ≥ 期間成交量 ${share}%、買超 ≥${min} 天、留倉率 ≥${retain}%（賣回不到買進的${back}成）、近 ${RECENT_DAYS} 日沒有倒貨（淨賣 ≤ 期間淨買 ${pct} 成）`;
   }
@@ -95,18 +122,21 @@ const ZH_DIGIT: Record<number, string> = { 1: "一", 2: "二", 3: "三", 4: "四
 type Acc = {
   net: number; buyDays: number; sellDays: number; buyLots: number; sellLots: number;
   recentNet: number; lastBuy: string; lastSell: string;
+  peakNet: number; troughNet: number;
 };
 
 function bigEnough(absNet: number, totalVolume: number): boolean {
   return absNet >= MIN_LOTS && (totalVolume <= 0 || absNet >= MIN_SHARE * totalVolume);
 }
 
-function qualifies(side: Side, a: Acc, min: number, totalVolume: number): boolean {
+function qualifies(side: Side, a: Acc, min: number, totalVolume: number, long: boolean): boolean {
   if (side === "acc") {
-    return a.net > 0 && bigEnough(a.net, totalVolume) && a.buyDays >= min && a.net >= RETAIN_MIN * a.buyLots
+    const kept = long ? a.net >= HOLD_MIN * a.peakNet : a.net >= RETAIN_MIN * a.buyLots;
+    return a.net > 0 && bigEnough(a.net, totalVolume) && a.buyDays >= min && kept
       && a.recentNet >= -RECENT_REVERSAL * a.net;
   }
-  return a.net < 0 && bigEnough(-a.net, totalVolume) && a.sellDays >= min && -a.net >= RETAIN_MIN * a.sellLots
+  const kept = long ? -a.net >= HOLD_MIN * -a.troughNet : -a.net >= RETAIN_MIN * a.sellLots;
+  return a.net < 0 && bigEnough(-a.net, totalVolume) && a.sellDays >= min && kept
     && a.recentNet <= RECENT_REVERSAL * -a.net;
 }
 
@@ -140,6 +170,9 @@ export function computeWindow(
   const dates = windowCandles.map((c) => c.t); // 舊→新
   const recentFrom = dates[Math.max(0, dates.length - RECENT_DAYS)];
   const totalVolume = windowCandles.reduce((s, c) => s + (c.v || 0), 0);
+  // 規模門檻用的量最多取 SHARE_FLOOR_DAYS 天的平均量:6月／1年 若用整段成交量,0.5% 會
+  // 放大成數萬張,幾乎沒人過得了(2026-10-03 加長期間時實測 1 年 0 檔)。佔量 % 照舊用整段。
+  const floorVolume = days > SHARE_FLOOR_DAYS ? (totalVolume / days) * SHARE_FLOOR_DAYS : totalVolume;
 
   const map = new Map<string, Acc>();
   for (const t of dates) {
@@ -150,10 +183,12 @@ export function computeWindow(
     for (const [name, net] of dayNet) {
       let a = map.get(name);
       if (!a) {
-        a = { net: 0, buyDays: 0, sellDays: 0, buyLots: 0, sellLots: 0, recentNet: 0, lastBuy: "", lastSell: "" };
+        a = { net: 0, buyDays: 0, sellDays: 0, buyLots: 0, sellLots: 0, recentNet: 0, lastBuy: "", lastSell: "", peakNet: 0, troughNet: 0 };
         map.set(name, a);
       }
       a.net += net;
+      if (a.net > a.peakNet) a.peakNet = a.net;
+      if (a.net < a.troughNet) a.troughNet = a.net;
       if (t >= recentFrom) a.recentNet += net;
       if (net > 0) {
         a.buyDays += 1;
@@ -167,9 +202,10 @@ export function computeWindow(
     }
   }
 
+  const long = days > LONG_WINDOW_DAYS;
   const build = (side: Side): AccRow[] =>
     [...map.entries()]
-      .filter(([, a]) => qualifies(side, a, min, totalVolume))
+      .filter(([, a]) => qualifies(side, a, min, floorVolume, long))
       .map(([name, a]) => ({
         name,
         net: a.net,
@@ -180,6 +216,13 @@ export function computeWindow(
         retainPct: side === "acc"
           ? (a.buyLots > 0 ? (a.net / a.buyLots) * 100 : 0)
           : (a.sellLots > 0 ? (-a.net / a.sellLots) * 100 : 0),
+        holdPct: !long
+          ? null
+          : side === "acc"
+            ? (a.peakNet > 0 ? (a.net / a.peakNet) * 100 : 0)
+            : (a.troughNet < 0 ? (-a.net / -a.troughNet) * 100 : 0),
+        peakNet: a.peakNet,
+        troughNet: a.troughNet,
         volumeSharePct: totalVolume > 0 ? (Math.abs(a.net) / totalVolume) * 100 : null,
         lastDate: side === "acc" ? a.lastBuy : a.lastSell,
         recentNet: a.recentNet,
