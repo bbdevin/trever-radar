@@ -7,6 +7,8 @@ import { fmtLots } from "@/lib/format";
 import { cn, pillTabClass } from "@/lib/utils";
 import BuySellSplit from "@/components/BuySellSplit";
 import ReasonPill from "@/components/ReasonPill";
+import SectionHeader from "@/components/SectionHeader";
+import StatTile, { toneOf } from "@/components/StatTile";
 
 const BRANCH_RANGES = [
   { label: "1日", days: 1 },
@@ -201,6 +203,8 @@ const BranchFlowSection = forwardRef<
   // 買賣方 Top13 一律全列顯示(不再手機先收成 8 列再「展開」)
   const buyRows = agg.top13Buy;
   const sellRows = agg.top13Sell;
+  const listRows = sideTab === "buy" ? buyRows : sellRows;
+  const listMaxAbs = Math.max(1, ...listRows.map((x) => Math.abs(x.net)));
 
   const asOfChip =
     branchAsOf != null ? (
@@ -274,14 +278,14 @@ const BranchFlowSection = forwardRef<
       className="mt-3.5 grid min-w-0 max-w-full gap-3 overflow-hidden rounded-[var(--r-lg)] border border-border bg-card p-3.5 shadow-[var(--shadow-card)]"
     >
       {heading && (
-        <div className="flex flex-col gap-0.5">
-          <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-1.5">
-            <h2 className="text-[15px] font-bold text-foreground">{heading}</h2>
-            <div className="flex flex-wrap items-center justify-end gap-1.5">
+        <div className="flex flex-col gap-1.5">
+          <SectionHeader family="chips" title={heading} />
+          {(depthChip || asOfChip) && (
+            <div className="flex flex-wrap items-center gap-1.5">
               {depthChip}
               {asOfChip}
             </div>
-          </div>
+          )}
           <span className="text-[11px] leading-relaxed text-muted-foreground">
             {rangeHint}盤後 T+1、每日買賣超各取前 15 大，僅供籌碼觀察。15 是上限不是張數：冷清的日子不足 15 家，是當天只有那些分點進出。
           </span>
@@ -302,26 +306,12 @@ const BranchFlowSection = forwardRef<
           : "grid-cols-3 md:grid-cols-3",
       )}>
         {score != null && (
-          <div className="flex flex-col gap-0.5 rounded-[var(--r-sm)] border border-border bg-secondary p-2.5">
-            <span className="text-[11px] text-muted-foreground">分點分</span>
-            <span className="num text-[30px] leading-none font-extrabold text-warn">{score ?? "—"}</span>
-          </div>
+          <StatTile label="分點分" value={score ?? "—"} tone="warn" valueClassName="text-[30px] leading-none font-extrabold" />
         )}
-        <div className="flex flex-col gap-0.5 rounded-[var(--r-sm)] border border-border bg-secondary p-2.5">
-          <span className="text-[11px] text-muted-foreground">{activeDays}日買超</span>
-          <span className="num text-base font-bold text-foreground">{agg.buyers.length} 點</span>
-        </div>
-        <div className="flex flex-col gap-0.5 rounded-[var(--r-sm)] border border-border bg-secondary p-2.5">
-          <span className="text-[11px] text-muted-foreground">{activeDays}日賣超</span>
-          <span className="num text-base font-bold text-foreground">{agg.sellers.length} 點</span>
-        </div>
+        <StatTile label={`${activeDays}日買超`} value={`${agg.buyers.length} 點`} />
+        <StatTile label={`${activeDays}日賣超`} value={`${agg.sellers.length} 點`} />
         {/* 有分點分時手機是對稱 2×2(原本淨流獨佔一列,賣超旁邊空一格,白白多一列高度) */}
-        <div className="flex flex-col gap-0.5 rounded-[var(--r-sm)] border border-border bg-secondary p-2.5">
-          <span className="text-[11px] text-muted-foreground">{activeDays}日淨流</span>
-          <span className={cn("num text-base font-bold", netTotal > 0 ? "text-up" : netTotal < 0 ? "text-down" : "text-foreground")}>
-            {fmtLots(netTotal)} 張
-          </span>
-        </div>
+        <StatTile label={`${activeDays}日淨流`} value={`${fmtLots(netTotal)} 張`} tone={toneOf(netTotal)} />
       </div>
 
       {/* 分點理由 pills（WP-H2 語意家族色，升級版分點區）*/}
@@ -428,10 +418,12 @@ const BranchFlowSection = forwardRef<
             : `前 ${agg.top13Sell.length || 13} 大賣超分點`}
         </h3>
         <div className="flex flex-col gap-1.5">
-          {(sideTab === "buy" ? buyRows : sellRows).map((b) => (
+          {listRows.map((b, i) => (
             <BranchRow
               key={b.name}
               b={b}
+              rank={i + 1}
+              maxAbs={listMaxAbs}
               expanded={!onOpenBranch && expandedBranch === b.name}
               onToggle={() => setExpandedBranch(expandedBranch === b.name ? null : b.name)}
               onOpen={onOpenBranch ? () => onOpenBranch(b.name) : undefined}
@@ -487,6 +479,8 @@ export default BranchFlowSection;
 
 function BranchRow({
   b,
+  rank,
+  maxAbs,
   expanded,
   onToggle,
   onOpen,
@@ -495,6 +489,10 @@ function BranchRow({
   selectDisabled,
 }: {
   b: { name: string; net: number; history?: { t: string; net: number }[] };
+  /** 名次(1 起) */
+  rank: number;
+  /** 同一名單最大 |淨張|,小條以此為 100% */
+  maxAbs: number;
   expanded: boolean;
   onToggle: () => void;
   onOpen?: () => void;
@@ -533,11 +531,24 @@ function BranchRow({
         <button
           type="button"
           aria-expanded={onOpen ? undefined : expanded}
-          className="flex min-h-11 w-full min-w-0 cursor-pointer items-baseline justify-between px-2.5 py-2 text-left text-[12.5px] select-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-primary"
+          className="grid min-h-11 w-full min-w-0 cursor-pointer grid-cols-[20px_minmax(0,1fr)_auto] items-center gap-x-2 gap-y-1 px-2.5 py-2 text-left text-[12.5px] select-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-primary"
           onClick={onOpen ?? onToggle}
         >
+          <span
+            aria-hidden
+            className="num grid h-5 w-5 place-items-center rounded-full bg-secondary text-[10.5px] font-semibold text-muted-foreground"
+          >
+            {rank}
+          </span>
           <span className="truncate font-semibold text-[color:var(--ink-2)]" title={b.name}>{b.name}</span>
           <span className={cn("num font-bold", b.net > 0 ? "text-up" : b.net < 0 ? "text-down" : "text-foreground")}>{fmtLots(b.net)}張</span>
+          {/* 張數小條:以同名單最大淨張為 100%,只在自己的條軌內縮放,不侵入數字欄 */}
+          <span aria-hidden className="col-start-2 block h-1 w-full overflow-hidden rounded-full bg-secondary">
+            <span
+              className={cn("block h-full w-full origin-left rounded-full", b.net >= 0 ? "bg-up/60" : "bg-down/60")}
+              style={{ transform: `scaleX(${Math.min(1, Math.abs(b.net) / maxAbs)})` }}
+            />
+          </span>
         </button>
       </div>
       {expanded && (

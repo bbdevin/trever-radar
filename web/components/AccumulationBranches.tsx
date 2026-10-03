@@ -25,13 +25,16 @@ import {
 import { fmtLots } from "@/lib/format";
 import type { Candle, StockJson } from "@/lib/types";
 import { cn, pillTabClass } from "@/lib/utils";
+import SectionHeader from "@/components/SectionHeader";
+import StatTile, { toneOf } from "@/components/StatTile";
 
 /**
  * 個股頁「囤貨／出貨分點」:近 1 週／1 月／3 月持續淨買(或淨賣)的分點。
  *
  * 使用者常是為了替套牢的股票找信心才來看這張卡,所以同期出貨名單永遠只差一下點擊,
- * 標頭同時列出兩邊數量,避免只看到單邊。名單本身不上紅綠(那是判決色),
- * 只有帶正負號的張數沿用全站 紅＝淨買、綠＝淨賣。
+ * 標頭同時列出兩邊數量,避免只看到單邊。紅綠只表方向(紅＝淨買側、綠＝淨賣側,全站慣例):
+ * 分頁、列左側色條與留倉／出清小條都同時有「囤貨／出貨」文字與帶正負號的張數,
+ * 顏色不是唯一訊號,也不是漲跌判決(2026-10-03 使用者嫌黑白難掃讀後改版)。
  */
 export default function AccumulationBranches({
   branchHistory,
@@ -72,22 +75,38 @@ export default function AccumulationBranches({
       data-testid="accumulation-branches"
       className="mt-3.5 grid min-w-0 max-w-full gap-2.5 overflow-hidden rounded-[var(--r-lg)] border border-border bg-card p-3 shadow-[var(--shadow-card)]"
     >
-      <div className="grid gap-0.5">
-        <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
-          <h2 id="acc-branches-heading" className="text-[15px] font-bold text-foreground">囤貨／出貨分點</h2>
-          {result.available && (
+      <SectionHeader
+        family="chips"
+        id="acc-branches-heading"
+        title="囤貨／出貨分點"
+        meta={
+          result.available ? (
+            <span className="num">
+              {result.start} ～ {result.end}
+              <span className="whitespace-nowrap">（{result.days} 個交易日）</span>
+            </span>
+          ) : undefined
+        }
+        right={
+          result.available ? (
             <span className="num text-[12px] font-semibold text-foreground" data-testid="accumulation-counts">
               囤貨 {result.accCount} 個 · 出貨 {result.distCount} 個
             </span>
-          )}
+          ) : undefined
+        }
+      />
+
+      {result.available && (
+        <div className="grid grid-cols-3 gap-2">
+          <StatTile label="囤貨合計" value={`${fmtLots(result.accTotal)} 張`} tone="up" />
+          <StatTile label="出貨合計" value={`${fmtLots(result.distTotal)} 張`} tone="down" />
+          <StatTile
+            label="名單淨額"
+            value={`${fmtLots(result.accTotal + result.distTotal)} 張`}
+            tone={toneOf(result.accTotal + result.distTotal)}
+          />
         </div>
-        {result.available && (
-          <p className="num text-[11.5px] leading-snug text-muted-foreground">
-            {result.start} ～ {result.end}（{result.days} 個交易日）· 囤貨合計 {fmtLots(result.accTotal)} 張 · 出貨合計{" "}
-            {fmtLots(result.distTotal)} 張 · 名單淨額 {fmtLots(result.accTotal + result.distTotal)} 張
-          </p>
-        )}
-      </div>
+      )}
 
       <div role="tablist" aria-label="期間" className="grid grid-cols-3 gap-1 rounded-full border border-border bg-card p-[3px]">
         {WINDOWS.map((w) => (
@@ -133,7 +152,11 @@ export default function AccumulationBranches({
                 onClick={() => chooseSide(s.key)}
                 className={cn(
                   "min-h-11 rounded-[var(--r-sm)] px-2 py-1.5 text-[13px] font-semibold transition-colors",
-                  side === s.key ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
+                  side === s.key
+                    ? s.key === "acc"
+                      ? "bg-up/15 text-up"
+                      : "bg-down/15 text-down"
+                    : "text-muted-foreground hover:text-foreground",
                 )}
               >
                 {s.label} <span className="num">{s.count}</span> 個
@@ -148,27 +171,44 @@ export default function AccumulationBranches({
           ) : (
             <div className="grid gap-2">
               <ol className="grid gap-1.5">
-                {visibleRows(rows, expanded).map((row) => (
+                {visibleRows(rows, expanded).map((row, index) => (
                   <li key={row.name}>
                     <button
                       type="button"
                       data-testid="accumulation-row"
                       onClick={() => onOpenBranch(row.name)}
-                      className="grid min-h-11 w-full min-w-0 gap-0.5 rounded-[var(--r-sm)] border border-border bg-background px-2.5 py-2 text-left transition-colors hover:border-[color:var(--border-strong)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-primary"
+                      className={cn(
+                        "grid min-h-11 w-full min-w-0 grid-cols-[20px_minmax(0,1fr)_auto] items-center gap-x-2 gap-y-0.5 rounded-[var(--r-sm)] border border-border border-l-[3px] bg-background py-2 pr-2.5 pl-2 text-left transition-colors hover:border-[color:var(--border-strong)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-primary",
+                        side === "acc" ? "border-l-up/70 hover:border-l-up/70" : "border-l-down/70 hover:border-l-down/70",
+                      )}
                     >
-                      <span className="flex min-w-0 items-baseline justify-between gap-2">
-                        <span className="truncate text-[13px] font-semibold text-foreground" title={row.name}>{row.name}</span>
-                        <span className={cn("num shrink-0 text-[13px] font-bold", row.net > 0 ? "text-up" : row.net < 0 ? "text-down" : "text-foreground")}>
-                          {fmtLots(row.net)}張
-                        </span>
+                      <span
+                        aria-hidden
+                        className="num grid h-5 w-5 place-items-center rounded-full bg-secondary text-[10.5px] font-semibold text-muted-foreground"
+                      >
+                        {index + 1}
                       </span>
-                      <span className="num text-[11px] text-muted-foreground">
+                      <span className="truncate text-[13px] font-semibold leading-5 text-foreground" title={row.name}>{row.name}</span>
+                      <span className={cn("num shrink-0 text-[13px] font-bold leading-5", row.net > 0 ? "text-up" : row.net < 0 ? "text-down" : "text-foreground")}>
+                        {fmtLots(row.net)}張
+                      </span>
+                      {/* 細節與小條在名稱下方自成一列(橫跨到數字欄下方,不與數字同列) */}
+                      <span className="num col-span-2 col-start-2 text-[11px] text-muted-foreground">
                         {side === "acc"
                           ? `買 ${row.buyLots.toLocaleString("zh-TW")} 張、賣回 ${row.sellLots.toLocaleString("zh-TW")} 張 · 留倉 ${Math.round(row.retainPct)}%`
                           : `賣 ${row.sellLots.toLocaleString("zh-TW")} 張、買回 ${row.buyLots.toLocaleString("zh-TW")} 張 · 出清 ${Math.round(row.retainPct)}%`}
                         <br />
-                        買 {row.buyDays} 天／賣 {row.sellDays} 天 · 佔量 {fmtShare(row.volumeSharePct)} · 最近{side === "acc" ? "買超" : "賣超"}{" "}
-                        {fmtMonthDay(row.lastDate)}
+                        買 {row.buyDays} 天／賣 {row.sellDays} 天 · 佔量 {fmtShare(row.volumeSharePct)} ·{" "}
+                        <span className="whitespace-nowrap">
+                          最近{side === "acc" ? "買超" : "賣超"} {fmtMonthDay(row.lastDate)}
+                        </span>
+                      </span>
+                      {/* 留倉／出清率小條:數字已在上一行文字裡,條只是掃讀輔助 */}
+                      <span aria-hidden className="col-span-2 col-start-2 mt-1 block h-1 w-full overflow-hidden rounded-full bg-secondary">
+                        <span
+                          className={cn("block h-full w-full origin-left rounded-full", side === "acc" ? "bg-up/60" : "bg-down/60")}
+                          style={{ transform: `scaleX(${Math.min(100, Math.max(0, row.retainPct)) / 100})` }}
+                        />
                       </span>
                     </button>
                   </li>

@@ -6,6 +6,7 @@ import { IconFlame, IconTrend, IconZap } from "@/components/Icons";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
 import BranchTrackView from "@/components/BranchTrackView";
+import ChangeText from "@/components/ChangeText";
 import { dataFetch } from "@/lib/dataFetch";
 import { OFFLINE_DATA_COPY, isBrowserOffline } from "@/lib/pwa";
 import type { RadarJson } from "@/lib/types";
@@ -179,8 +180,8 @@ function RankCard({ r, trackable, active }: { r: Ranking; trackable?: boolean; a
         <div>
           <div className="text-xs text-muted-foreground">5日平均漲跌</div>
           {enoughSamples ? (
-            <div className={cn("text-lg font-semibold", r.avg_ret5 != null ? (r.avg_ret5 > 0 ? "text-up" : "text-down") : "text-[color:var(--ink-2)]")}>
-              {r.avg_ret5 != null ? `${r.avg_ret5.toFixed(1)}%` : "-"}
+            <div className={cn("num text-lg font-semibold", r.avg_ret5 == null && "text-[color:var(--ink-2)]")}>
+              {r.avg_ret5 != null ? <ChangeText text={`${r.avg_ret5 > 0 ? "+" : ""}${r.avg_ret5.toFixed(1)}%`} /> : "-"}
             </div>
           ) : (
             <div className="text-[13px] font-medium text-[color:var(--ink-2)]">樣本不足</div>

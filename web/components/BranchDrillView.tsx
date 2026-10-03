@@ -6,6 +6,7 @@ import KChart from "@/components/KChart";
 import type { Candle, StockJson } from "@/lib/types";
 import { fmtLots } from "@/lib/format";
 import { cn, pillTabClass } from "@/lib/utils";
+import StatTile, { toneOf } from "@/components/StatTile";
 
 const RANGES = [
   { key: "1m", label: "1月", days: 22 },
@@ -107,24 +108,10 @@ export default function BranchDrillView({
       </div>
 
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-        <div className="flex flex-col gap-0.5 rounded-[var(--r-sm)] border border-border bg-card p-2.5">
-          <span className="text-[11px] text-muted-foreground">累計淨張</span>
-          <span className={cn("num text-base font-bold", totals.net > 0 ? "text-up" : totals.net < 0 ? "text-down" : "text-foreground")}>
-            {fmtLots(totals.net)}
-          </span>
-        </div>
-        <div className="flex flex-col gap-0.5 rounded-[var(--r-sm)] border border-border bg-card p-2.5">
-          <span className="text-[11px] text-muted-foreground">買張合計</span>
-          <span className="num text-base font-bold text-up">{fmtLots(totals.buy)}</span>
-        </div>
-        <div className="flex flex-col gap-0.5 rounded-[var(--r-sm)] border border-border bg-card p-2.5">
-          <span className="text-[11px] text-muted-foreground">賣張合計</span>
-          <span className="num text-base font-bold text-down">{fmtLots(-totals.sell)}</span>
-        </div>
-        <div className="flex flex-col gap-0.5 rounded-[var(--r-sm)] border border-border bg-card p-2.5">
-          <span className="text-[11px] text-muted-foreground">上榜日數</span>
-          <span className="num text-base font-bold text-foreground">{totals.days}</span>
-        </div>
+        <StatTile label="累計淨張" value={fmtLots(totals.net)} tone={toneOf(totals.net)} />
+        <StatTile label="買張合計" value={fmtLots(totals.buy)} tone="up" />
+        <StatTile label="賣張合計" value={fmtLots(-totals.sell)} tone="down" />
+        <StatTile label="上榜日數" value={totals.days} />
       </div>
 
       <div

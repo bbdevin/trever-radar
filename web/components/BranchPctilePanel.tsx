@@ -29,6 +29,7 @@ import {
 } from "@/lib/branchPctile";
 import type { BranchPctileCounts } from "@/lib/types";
 import { cn, segBtnClass } from "@/lib/utils";
+import SectionHeader from "@/components/SectionHeader";
 
 /**
  * 個股頁：分點在這檔股票的買點／賣點價格分位紀錄(短線派 20 日、長線派 120 日)。
@@ -122,24 +123,24 @@ export default function BranchPctilePanel({
       aria-labelledby="branch-pctile-heading"
       className="mt-3.5 grid min-w-0 max-w-full gap-2.5 overflow-hidden rounded-[var(--r-lg)] border border-border bg-card p-3 shadow-[var(--shadow-card)]"
     >
-      <div className="flex min-w-0 items-start justify-between gap-2">
-        <div className="grid min-w-0 gap-0.5">
-          <h2 id="branch-pctile-heading" className="text-[15px] font-bold text-foreground">
-            買點偏低、賣點偏高的分點
-          </h2>
-          <p className="text-[11.5px] leading-snug text-muted-foreground">統計窗口 {windowLabel}</p>
-        </div>
-        <button
-          type="button"
-          onClick={toggleSearch}
-          aria-expanded={searchOpen}
-          aria-controls="branch-pctile-search"
-          className={cn(segBtnClass(searchOpen), "inline-flex min-h-9 shrink-0 items-center gap-1 border border-border")}
-        >
-          <Search size={13} aria-hidden />
-          {searchOpen ? "收起" : "搜尋"}
-        </button>
-      </div>
+      <SectionHeader
+        family="chips"
+        id="branch-pctile-heading"
+        title="買點偏低、賣點偏高的分點"
+        meta={<>統計窗口 {windowLabel}</>}
+        right={
+          <button
+            type="button"
+            onClick={toggleSearch}
+            aria-expanded={searchOpen}
+            aria-controls="branch-pctile-search"
+            className={cn(segBtnClass(searchOpen), "inline-flex min-h-9 shrink-0 items-center gap-1 border border-border")}
+          >
+            <Search size={13} aria-hidden />
+            {searchOpen ? "收起" : "搜尋"}
+          </button>
+        }
+      />
 
       {hasLong && (
         <div role="tablist" aria-label="分位區間" className="grid grid-cols-2 gap-1 rounded-[var(--r-md)] bg-secondary p-1">

@@ -6,6 +6,7 @@ import { ArrowUpDown, ChevronDown, ShieldCheck } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import ChangeText from "@/components/ChangeText";
 import WatchlistButton from "@/components/WatchlistButton";
 import { dataFetch } from "@/lib/dataFetch";
 import type { RadarJson, StockJson } from "@/lib/types";
@@ -384,7 +385,7 @@ function WatchlistRow({ row }: { row: Row }) {
             {"觀察"} {data.scores.watch_price.toFixed(2)}
             {m.watchDist != null && (
               <span className="ml-1 text-muted-foreground">
-                ({m.watchDist > 0 ? "+" : ""}{m.watchDist.toFixed(1)}%)
+                <ChangeText text={`(${m.watchDist > 0 ? "+" : ""}${m.watchDist.toFixed(1)}%)`} />
               </span>
             )}
           </span>
@@ -394,7 +395,12 @@ function WatchlistRow({ row }: { row: Row }) {
             {"失效"} {data.scores.stop_price.toFixed(2)}
             {m.stopDist != null && (
               <span className={cn("ml-1", nearStop ? "text-destructive" : "text-muted-foreground")}>
-                ({m.stopDist > 0 ? "+" : ""}{m.stopDist.toFixed(1)}%)
+                {/* 逼近失效時整段維持紅色警示,不讓漲跌色蓋過 */}
+                {nearStop ? (
+                  `(${m.stopDist > 0 ? "+" : ""}${m.stopDist.toFixed(1)}%)`
+                ) : (
+                  <ChangeText text={`(${m.stopDist > 0 ? "+" : ""}${m.stopDist.toFixed(1)}%)`} />
+                )}
               </span>
             )}
           </span>

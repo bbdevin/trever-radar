@@ -18,6 +18,8 @@ import AccumulationBranches from "@/components/AccumulationBranches";
 import BranchFlowSection from "@/components/BranchFlowSection";
 import BranchPctilePanel from "@/components/BranchPctilePanel";
 import BranchDrillView from "@/components/BranchDrillView";
+import ChangeText from "@/components/ChangeText";
+import SectionHeader from "@/components/SectionHeader";
 import InstiPanel from "@/components/InstiPanel";
 import MarginPanel from "@/components/MarginPanel";
 import HoldersPanel from "@/components/HoldersPanel";
@@ -639,7 +641,7 @@ function StockPriceTargets({
           <span className="num min-w-0 truncate text-right font-bold text-[color:var(--accent-2)]">
             {watchPrice.toFixed(2)}
             <span className="ml-1 font-medium text-muted-foreground">
-              ({distPct(close, watchPrice) > 0 ? "+" : ""}{distPct(close, watchPrice).toFixed(1)}%)
+              <ChangeText text={`(${distPct(close, watchPrice) > 0 ? "+" : ""}${distPct(close, watchPrice).toFixed(1)}%)`} />
             </span>
           </span>
         </div>
@@ -653,7 +655,12 @@ function StockPriceTargets({
           )}>
             {stopPrice.toFixed(2)}
             <span className={cn("ml-1 font-medium text-muted-foreground", distPct(close, stopPrice) < 5 && "text-destructive/80")}>
-              ({distPct(close, stopPrice) > 0 ? "+" : ""}{distPct(close, stopPrice).toFixed(1)}%)
+              {/* 逼近失效(<5%)時保留整段紅色警示,不讓漲跌色蓋過 */}
+              {distPct(close, stopPrice) < 5 ? (
+                `(${distPct(close, stopPrice) > 0 ? "+" : ""}${distPct(close, stopPrice).toFixed(1)}%)`
+              ) : (
+                <ChangeText text={`(${distPct(close, stopPrice) > 0 ? "+" : ""}${distPct(close, stopPrice).toFixed(1)}%)`} />
+              )}
             </span>
           </span>
         </div>
@@ -1043,13 +1050,13 @@ function WarrantPanel({ data }: { data: StockJson }) {
   return (
     <div className="grid min-w-0 grid-cols-1 gap-3">
       <WarrantBranchPanel stockId={data.id} stockName={data.name} candles={data.candles} />
-      <div className="grid gap-3 rounded-[var(--r-lg)] border border-border bg-card p-3.5 shadow-[var(--shadow-card)]">
-      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-        <h3 className="text-sm font-bold text-foreground">權證成交摘要</h3>
-        <span className="text-[11.5px] text-muted-foreground">
-          權證資料日 {warrantDataDate ?? "未提供（舊版資料）"}
-        </span>
-      </div>
+      <div className="grid min-w-0 grid-cols-1 gap-3 rounded-[var(--r-lg)] border border-border bg-card p-3.5 shadow-[var(--shadow-card)]">
+      <SectionHeader
+        family="warrant"
+        as="h3"
+        title="權證成交摘要"
+        meta={<>權證資料日 {warrantDataDate ?? "未提供（舊版資料）"}</>}
+      />
       <div className="grid grid-cols-2 gap-2.5 md:grid-cols-4">
         <div className="flex flex-col gap-0.5 rounded-[var(--r-sm)] border border-border bg-secondary p-2.5">
           <span className="text-[11px] text-muted-foreground">認購成交</span>
@@ -1071,7 +1078,8 @@ function WarrantPanel({ data }: { data: StockJson }) {
         </div>
       </div>
 
-      <div className="flex items-end gap-[3px] px-0.5 pt-2 [height:120px]" aria-label="權證60日成交金額">
+      {/* 60 根 × (3px＋3px 間距) 在 390 手機上比卡片內寬多出約 25px,把卡片撐出畫面;手機改 2px 間距 */}
+      <div className="flex min-w-0 items-end gap-[2px] px-0.5 pt-2 [height:120px] md:gap-[3px]" aria-label="權證60日成交金額">
         {data.warrant_history.map((p) => (
           <div key={p.t} className="grid h-full min-w-[3px] flex-1 grid-rows-2 items-end gap-px" title={`${p.t} 認購 ${fmtE8(p.call_turnover)} / 認售 ${fmtE8(p.put_turnover)}`}>
             <span className="min-h-px rounded-t-[3px] bg-up opacity-80 self-end" style={{ height: `${Math.max(2, (p.call_turnover / maxTurnover) * 100)}%` }} />
