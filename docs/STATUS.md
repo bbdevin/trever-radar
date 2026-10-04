@@ -2,6 +2,13 @@
 
 > 單一進度真相。每完成一個里程碑就更新本檔。規格細節看各編號文件,別寫在這裡。
 
+## 2026-10-04 `/data` Worker 驗證優化(docs/44 P1):⏳ 待資安審查 + 使用者核准,未上線
+
+- 分支已 commit、**未合 main、未 deploy**(合入後下一輪 VPS deploy 會自動上線,所以必須先過審)。
+- 內容:JWT 改 ES256 + Supabase JWKS 本地驗簽,拿掉 `/auth/v1/user`(無 HS256 fallback、Worker 不持 service_role);`app_profiles` 仍用使用者 JWT 經 RLS 查,以 `sub` 快取 5 分;同時多個請求 JWKS／REST 各只查一次。service key、路由、標頭、401/403/503 格式不變。
+- 取捨:撤銷核准最長 5 分生效;登出不會讓已發 token 立即失效(到 exp,預設 1 小時)。細節 `cloudflare-data-worker/README.md`。
+- 測試:`node --test test/auth.test.mjs test/worker.test.mjs` 36 pass(stub fetch、自簽 token、假時鐘)。
+
 ## 2026-10-04 網站 W-P0 上線:登入單例、站內換頁、靜態快取、右滑提示
 
 - **登入狀態單例**(`web/lib/useSession.ts` `SessionProvider`):首頁 `app_profiles` 請求 14(正式 ~90)→ 1。profile 綁 user id(換帳號時不沿用前一人的核准);分頁回前景／token 更新時背景重查(不閃閘門),撤銷/核准切回分頁即生效;背景重查遇連線錯誤保留上次確定結果(資料仍由 Worker 擋)。

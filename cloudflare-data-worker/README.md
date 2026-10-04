@@ -7,8 +7,18 @@
 ## 邊界(不得破壞)
 
 - **2026-08-19 WP-B7:本 worker 必須驗身分**,未通過一律 401/403,不得回 JSON。通過條件二擇一:
-  1. `X-Radar-Service-Key` 對上 wrangler secret `RADAR_SERVICE_KEY`(盤中 worker)
+  1. `X-Radar-Service-Key` 對上 wrangler secret `RADAR_SERVICE_KEY`(盤中 worker;優先於 JWT)
   2. `Authorization: Bearer <Supabase JWT>`,且 `app_profiles.status = approved`
+- **JWT 驗證(2026-10-04 docs/44 P1,`src/auth.js`;待資安審查 + 使用者核准,未上線)**:
+  - 只收 **ES256**(alg 釘死;none/HS256/RS256 一律 401),以 Supabase JWKS
+    (`${SUPABASE_URL}/auth/v1/.well-known/jwks.json`)**本地驗簽**,不再呼叫 `/auth/v1/user`。
+    **沒有 HS256 fallback;Worker 不持有 service_role key。**
+  - 每個請求都驗:token ≤ 8KB、三段 base64url、`kid`、`typ` 缺或 JWT、`exp`(無寬限)、
+    `iat`/`nbf` ≤ 現在 +60 秒、`iss` = `${SUPABASE_URL}/auth/v1`、`aud` 含 `authenticated`、
+    `role = authenticated`、`sub` 為 UUID、64 位元組 r‖s 簽章。`is_anonymous = true` → 403。
+  - `app_profiles` 仍用**使用者自己的 JWT 經 RLS** 讀(URL/headers 與舊版相同),結果以 `sub` 快取。
+  - fail closed:JWKS 抓不到且記憶體內沒有任何金鑰 → 503;REST 連線失敗 → 503;絕不放行。
+  - 不得記錄 token(測試鎖住 `src/` 無 `console.*`)。
 - **DB 快照永不進資產**:資產目錄 = `web/public/data`(export-json 產物,只有 JSON);
   DB 備份只走 Google Drive(docs/31 §4),不得為了方便把 `.db`/`.db.gz` 放進資產目錄。
 - `/data-preview/*` 是 WP-B2 影子驗證通道,與 `/data/*` 讀同一份資產;cutover 後保留無妨,同樣要驗身分。
@@ -58,7 +68,28 @@ curl -sS -o /dev/null -w "%{http_code}\n" \
   https://radar.techtrever.com/data/radar.json
 ```
 
+```bash
+# 假 / 過期 / alg 不對的 JWT → 必須 401(不是 200、不是 503)
+curl -sS -o /dev/null -w "%{http_code}\n" \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.e30.x" \
+  https://radar.techtrever.com/data/radar.json
+
+# JWKS 必須有 EC P-256 / ES256 金鑰,且使用者 access token header 的 kid 在其中
+curl -sS https://eroycvbgfitvyulfbbnw.supabase.co/auth/v1/.well-known/jwks.json
+```
+
 無痕開站應為站內 Google 登入。任何一測變成未認證可讀 JSON → 立刻回報,屬資料裸奔。
+
+### 本機單元測試(不打網路、不 deploy)
+
+```bash
+cd cloudflare-data-worker
+node --test test/auth.test.mjs test/worker.test.mjs   # Node ≥20.19/22.12(.js ESM 自動偵測)
+```
+
+自簽 P-256 token + stub fetch + 假時鐘;涵蓋 alg 混淆、竄改、claims、kid 重抓節流、
+並發去重(20 請求 → JWKS 1 次、REST 1 次)、撤銷延遲、負快取、fail closed、快取上限、路由/標頭迴歸。
+`MODULE_TYPELESS_PACKAGE_JSON` 警告可忽略(package.json 刻意不動)。
 
 ## 平台限制(現況遠低於上限)
 
@@ -68,3 +99,18 @@ curl -sS -o /dev/null -w "%{http_code}\n" \
 
 `radar.json`/`meta.json` = `private, no-store`;其餘檔案 `private, max-age=60`。
 身分相關回應不可進共享快取。調整常數在 `src/index.js` 頂部。
+
+### 驗證快取與撤銷延遲(isolate 記憶體,常數在 `src/auth.js` 頂部;改動需資安審查)
+
+| 快取 | 內容 | TTL | 影響 |
+|---|---|---|---|
+| JWKS | kid → CryptoKey | 10 分(fetch 另帶 `cf.cacheTtl=600` 邊緣快取) | 未知 kid 每 60 秒最多強制重抓一次;重抓失敗但有舊金鑰 → 沿用舊金鑰,60 秒後再試 |
+| profile | `sub` → approved / denied | 5 分 | **撤銷(改 rejected/pending)最長 5 分生效**;核准同理最長 5 分 |
+| profile 失敗 | `sub` → REST 非 2xx | 45 秒 | 期間該使用者 401 |
+| 上限 | profile 快取 1000 筆 | — | 超過淘汰最舊 |
+
+- token 本身每次都驗:過期立即 401,不受 profile 快取影響。
+- **登出 / Supabase 撤銷 session 不會讓已發出的 access token 立刻失效**(不再問 `/auth/v1/user`),
+  最長到該 token `exp`(Supabase 預設 1 小時)。要立即擋人 → 把 `app_profiles.status` 改掉(≤5 分)。
+- 輪替 JWKS 金鑰:先在 Supabase 建 standby key、等 ≥20 分(邊緣快取 10 分 + isolate 10 分)再設為 current。
+- 同一 isolate 同時多個請求:JWKS 只抓一次、同一 `sub` 的 REST 只查一次(共用 promise,交給 `ctx.waitUntil`)。

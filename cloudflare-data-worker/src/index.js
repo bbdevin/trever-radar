@@ -4,13 +4,18 @@
 //   1. X-Radar-Service-Key 對上 wrangler secret RADAR_SERVICE_KEY(盤中 worker)
 //   2. Authorization: Bearer <Supabase JWT>,且 app_profiles.status = approved
 // 未通過一律 401/403,不得回 JSON。Access 拆除前這層已生效 = 雙鎖;拆除後這層是唯一門鎖。
+// 2026-10-04(docs/44 P1):JWT 改 ES256 + JWKS 本地驗簽、profile 以 sub 快取 5 分,邏輯在 auth.js。
+
+import { createAuthorizer } from "./auth.js";
 
 const NO_STORE = new Set(["radar.json", "meta.json"]);
 const CACHE_TTL_SECONDS = 60;
-const AUTH_CACHE_TTL_MS = 45_000;
 
-/** isolate 內短快取,同一頁連抓多個 JSON 時少打 Supabase */
-const authCache = new Map();
+/** isolate 內共用:JWKS 金鑰與 sub → app_profiles 狀態快取 */
+const jwtAuth = createAuthorizer({
+  fetch: (input, init) => fetch(input, init),
+  now: () => Date.now(),
+});
 
 function jsonError(status, message) {
   return new Response(JSON.stringify({ error: message }), {
@@ -33,79 +38,19 @@ function timingSafeEqual(a, b) {
   return out === 0;
 }
 
-function bearerToken(request) {
-  const h = request.headers.get("Authorization") || "";
-  const m = h.match(/^Bearer\s+(.+)$/i);
-  return m ? m[1].trim() : "";
-}
-
-async function lookupUser(token, env) {
-  const now = Date.now();
-  const hit = authCache.get(token);
-  if (hit && hit.exp > now) return hit;
-
-  const miss = { kind: "invalid", exp: now + AUTH_CACHE_TTL_MS };
-  const userRes = await fetch(`${env.SUPABASE_URL}/auth/v1/user`, {
-    headers: {
-      Authorization: `Bearer ${token}`,
-      apikey: env.SUPABASE_PUBLISHABLE_KEY,
-    },
-  });
-  if (!userRes.ok) {
-    authCache.set(token, miss);
-    return miss;
-  }
-  const user = await userRes.json();
-  const uid = user && user.id;
-  if (!uid) {
-    authCache.set(token, miss);
-    return miss;
-  }
-
-  const profileRes = await fetch(
-    `${env.SUPABASE_URL}/rest/v1/app_profiles?select=status&user_id=eq.${encodeURIComponent(uid)}`,
-    {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        apikey: env.SUPABASE_PUBLISHABLE_KEY,
-      },
-    },
-  );
-  if (!profileRes.ok) {
-    authCache.set(token, miss);
-    return miss;
-  }
-  const rows = await profileRes.json();
-  const approved = Array.isArray(rows) && rows[0] && rows[0].status === "approved";
-  const result = { kind: approved ? "ok" : "denied", exp: now + AUTH_CACHE_TTL_MS };
-  authCache.set(token, result);
-  return result;
-}
-
-async function authorize(request, env) {
+async function authorize(request, env, ctx) {
   const serviceKey = env.RADAR_SERVICE_KEY || "";
   const presented = request.headers.get("X-Radar-Service-Key") || "";
   if (serviceKey && presented && timingSafeEqual(presented, serviceKey)) {
     return { ok: true };
   }
 
-  const token = bearerToken(request);
-  if (!token) return { ok: false, status: 401, message: "login required" };
-  if (!env.SUPABASE_URL || !env.SUPABASE_PUBLISHABLE_KEY) {
-    return { ok: false, status: 503, message: "auth not configured" };
-  }
-  try {
-    const looked = await lookupUser(token, env);
-    if (looked.kind === "ok") return { ok: true };
-    if (looked.kind === "denied") return { ok: false, status: 403, message: "not approved" };
-    return { ok: false, status: 401, message: "login required" };
-  } catch {
-    return { ok: false, status: 503, message: "auth lookup failed" };
-  }
+  // 401 login required / 403 not approved / 503 auth not configured|auth lookup failed
+  return jwtAuth.authorize(request, env, ctx);
 }
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     if (request.method !== "GET" && request.method !== "HEAD") {
       return new Response("method not allowed", { status: 405 });
     }
@@ -118,7 +63,7 @@ export default {
       return new Response("bad request", { status: 400 });
     }
 
-    const gate = await authorize(request, env);
+    const gate = await authorize(request, env, ctx);
     if (!gate.ok) return jsonError(gate.status, gate.message);
 
     const assetReq = new Request(new URL(`/${m[2]}`, url.origin), {
