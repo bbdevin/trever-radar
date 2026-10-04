@@ -51,6 +51,20 @@ export: Armed 池 + watch/stop 價     worker(Python,08:55–13:35)
 
 **風險**:Fugle 免費方案額度/條款變動(I0 先驗);訊號雜訊(先 Shadow,不進任何分數);盤中面板誘發追價(風險提示常駐)。**不做**:自動下單、雲端常駐 worker、全市場掃描。
 
+### 2.4 Worker 連線韌性與時段把關(2026-10-04 實作)
+
+起因:正式 `~/radar-worker.log` 25 個交易日中 6 天盤中斷線(`Connection to remote host was lost`)後不重連,整天失明;另每天 08:50–09:00 試撮都出 4–7 則訊號。
+
+- **連線管理**(`FeedSupervisor`):掛 SDK `disconnect`/`error` 事件(未掛 `error` 時 pyee 會拋例外,即 log 的 `error from callback <…__on_error…>`)。穩定連線後斷線第一次立即重連,之後指數退避 2→4→…→60 秒(+0–25% jitter,不超過 60);每次重連建新 client 並**重訂全部監控代號**;13:35 前絕不因斷線結束程序。SDK `connect()` 會無限忙等驗證,worker 以 15 秒逾時與錯誤事件解開;log 記 `authenticated in N.NNs`。
+- **任何時刻最多一條連線**:websocket-client 在 SDK callback 拋例外(非 JSON 訊框等)時只發 `error`、不關連線,所以建新 client 前、判定斷線後、收工時都會主動 `disconnect()` 舊 client 並等它的 `run_forever` 執行緒結束(最多 5 秒)。`__main__` 結束時 `os._exit`,作為最後防線,避免殘留非 daemon 執行緒讓容器 13:35 收不了工、隔天 `docker run --name radar-worker` 撞名。
+- **Flapping**:連上不到 60 秒又斷,算一次失敗、照退避,中斷時間持續累計(會觸發告警);連線撐過 60 秒才歸零失敗計數,也才算「恢復」。connect 成功但訂閱送不出去、或斷線事件在 connect 回傳前後才到,一律當連線失敗處理(不會停在 online 卻零訂閱)。
+- **告警**:斷線或不穩連續 > `INTRADAY_RECONNECT_ALERT_SECONDS`(預設 300)→ 一則 ERROR log、`worker_heartbeat.status='offline'`(前端即顯示離線)、選配 ntfy high(在 `pipeline/intraday/.env` 設 `NTFY=<主題>`,未設則只寫 log/heartbeat);連線穩定 60 秒後通知恢復一次。短暫斷線期間 heartbeat 寫 `reconnecting`。
+- **Stall 看門狗**:09:00–13:30 超過 `INTRADAY_STALL_SECONDS`(預設 180)沒收到任何 Fugle 訊息(成交、heartbeat、訂閱回應皆算,5 檔冷門股也不會誤判)→ 強制重連(log `Forcing Fugle WebSocket reconnect: stall…`)。重連後仍收不到任何訊息,門檻倍增至最多 48 分鐘,收到訊息即回到 180 秒。主迴圈的 tick 有例外保護,意外錯誤只記 log,不會結束盤中監控。
+- **時段把關**:`isTrial=true`(試撮)或牆鐘/成交自帶 `time`(微秒,換算 UTC+8)任一不在 09:00–13:30 → 不更新價量、不進 5 分鐘窗、不出訊號(用成交自帶時間,容器 TZ 設錯也不會在試撮出訊號)。開/收盤集合競價撮合(`isOpen`/`isClose`)會更新價量,但不判訊號(否則 09:00/13:30 必出「數十億大單」並吃掉當日唯一一次的訊號額度)。
+- **欄位修正**:Fugle trades `size`=本筆成交量、`volume`=當日累計量(官方文件 `websocket-api/market-data-channels/trades`)。舊碼把 `volume` 當本筆量相加,I-1 金額與 I-2 累積量嚴重高估;現改 I-1 用 `size`、I-2 用累計 `volume`。
+- **遙測**:每 5 分鐘一行 `liveness trades_5m=N symbols_with_trades=K last_trade_at=HH:MM:SS reconnects=R`(試撮成交也計入,代表資料流活著)。`worker_heartbeat` 無自由欄位,不改 schema,遙測只寫 log。
+- **部署**:worker 是 Docker 映像,合併後須在 VPS `docker build -t radar-worker pipeline/intraday`,下個 08:50 生效。驗證:`grep -E 'liveness|reconnect|stall' ~/radar-worker.log`。
+
 ---
 
 ## 3. Part B:分點追蹤視角(常見分點 → 近 N 日買最多)
