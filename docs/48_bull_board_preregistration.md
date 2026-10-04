@@ -26,6 +26,7 @@
 - **族群欄位(2026-10-04 追加,只影響顯示,不屬 §1 凍結規則)**:entries 每項多一個選用鍵 `theme:{name,vs20}|null`。建置器以 `web/lib/themeGroups.ts hottestListedTheme(radar.stocks[].themes, radar.themes)` 算——與首頁「題材」排序(WP-H1)同一個最熱題材挑法,但只從今日題材資金流(`radar.themes`)上有的題材裡挑;一個都不在上面 = `null`。首頁「事實｜族群」切換的族群檢視(`groupBoardEntries`,純函式)依 `theme` → `industry` → 「其他」分組:族群依檔數多 → 族群內最前面那檔的原順序,「其他」最後;族群內維持 entries 原順序;標頭顯示檔數與「成交為20日均 X 倍」(題材取 `theme.vs20`、產業查 `radar.sectors`)。兩種檢視上方都有一列「多方集中」族群分布膠囊(`groupSummary`):同一個分組與順序取前 6 個有名字的族群,其餘(含「其他」)併成「其他」放最後;點膠囊切到族群檢視並捲到該組。缺 `theme` 鍵的舊 `bull_board.json` 由畫面從 `radar.json` 補查。**`theme` 不參與入榜、排序、40 上限,也不寫進紀錄行**(`bullBoard.test.ts` 鎖住:有無 theme,`selectBoard` 與 `boardLogLine` 結果相同)。
 - **三態**:檔不存在/404 = 沒算過(「這一版還沒有多方榜…」);`qualified 0` 且 `entries []` = 算過、沒人入榜;非空 = 名單。不得把前兩者塌成同一句。
 - **紀錄行**(`bull_board_log/*.jsonl`,一次建置一行):`{version, data_date, generated_at, radar_generated_at, universe, qualified, universe_ids:[…], entries:[{id,bull_key_n,bear_key_n,bull_codes:[…]}], excluded:[{id,bull_key_n,codes:[…]}], inputs}`。`excluded` = `|K_bull| ≥ 3` 但被 E 排除者。這是 §2 的唯一資料來源;建置器**只追加,不改寫**。
+- **重複行(2026-10-04 釐清,讀法規則,在任何評估存在之前決定,不改 §1/§2 任何規則)**:同一 data_date 可有多行(每輪發布後都重建)。檢定只讀 §2 定義的紀錄版 r(t)——`data_date == t` 且 `generated_at` 早於 e(t) 09:00 的**最後一行**,也就是那天的最終名單;同日較早的行只是稽核軌跡(以及 §4 伴隨計數「14:05 那一版」),不進任何判準。建置器在追加前比對**同一 data_date 的最後一行**:去掉 `generated_at`/`radar_generated_at` 後 JSON 相同 → 不追加(印 `bull-board log: unchanged, skipped`);內容變了(例:17:30 分點到齊改了名單)照樣追加;最後一行壞掉(無法解析)→ 照樣追加(先補換行)。一段相同行只留**第一行**,它的 `generated_at` 最早,故 r(t) 選到的**內容**與全部保留時相同(評估中立)。既有月檔用 `web/scripts/dedupe-bull-board-log.mjs`(同一判定,`lib/bullBoardLog.ts`;預設 dry-run,`--write` 寫 `.tmp` 再 rename)一次性壓縮;這是維護、不是建置器改寫。`--write` 必須加 `--locked` 並在 `flock -w 600 /tmp/radar-db.lock` 底下跑(建置器在各輪握著這把鎖時追加);工具逐檔處理,不處理跨月重複;`web/public/data/bull_board_log/` 副本在下一次建置或 deploy 時由主本覆蓋。鎖在 `web/lib/bullBoardBuild.test.ts`。
 - 建置器失敗**不得擋 deploy**(VPS 以 warn-and-continue 接)。
 - **VPS 接線(2026-10-04)**:`vps/scripts/lib.sh build_bull_board` 在主機上跑 `timeout ${BULL_BOARD_TIMEOUT_SECS:-600}s node --experimental-strip-types --no-warnings web/scripts/build-bull-board.mjs --data $REPO/web/public/data --log $REPO/data/bull_board_log`(VPS Node 22.23 實測 2,418 檔 33.5 s),log 一行 `step bull-board start … / done rc= elapsed=`;失敗/逾時只 `notify_warn`、永遠 return 0,首頁沿用上一版。每一支 export-json → deploy_data 的腳本都在 export-json **緊後**、deploy_data 之前裸呼叫(daily-market/tpex-quotes/insti/branches 兩模式/margin、safe-branch-stats、mid-backfill-publish、weekly-tdcc、monthly-directors、manual-catchup、backfill-margin、backfill-tdcc);沒匯出(`publish skipped: no change`)的輪就不建。`data/bull_board_log/` 列入 `.gitignore`。鎖在 `pipeline/tests/test_bull_board_vps_wiring.py`。
 
@@ -89,3 +90,7 @@
 - **漲跌幅 10%**:開盤鎖漲停結構性未命中(R3)。
 - **成本**:+3% 是毛額,未扣手續費與交易稅。
 - **盤中版本**:14:05 等盤中建置的名單資料未到齊(法人、分點);紀錄版取 e 日 09:00 前最後一版,通常是晚間資料齊全那一版。差異只列伴隨計數。
+
+## 8. 變更紀錄
+
+- 2026-10-04:§1.1 加「重複行」讀法釐清——檢定只讀每個 data_date 的 r(t)(09:00 前最後一行,即當日最終名單),同日較早行僅為稽核軌跡;建置器跳過只差時間戳的相同重建、既有重複行可用壓縮工具移除(每段留第一行,r(t) 內容不變)。評估中立,§1–§4 規則未改,不需開 v2。
