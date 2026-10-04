@@ -2,6 +2,14 @@
 
 > 單一進度真相。每完成一個里程碑就更新本檔。規格細節看各編號文件,別寫在這裡。
 
+## 2026-10-04 分點「股代」標籤＋股代變動史(`docs/37` §3.1;程式完成、未上線)
+
+- 公司的股務代理是券商時,籌碼日報／囤貨出貨列上該券商的**總公司席位**標「股代」(分公司不標;中探針 6217 股代凱基 → 只標「凱基」)。解析官方「股票過戶機構」自由文字(190 多種寫法、HTML 實體、異體字),銀行代理部與公司自辦不標;別名表＋元大/元富、國泰/國票、富邦/福邦防撞測試。實抓 1,987 家:券商 1,653(83.2%),全部對得到 brokerList 總公司。
+- 股代會換:新表 `transfer_agent_history` 記每段觀察(週一 `import-geo` 更新,換了寫 `import_logs dataset='transfer_agent_change'`);每筆依當日股代標示,最早觀察之前「依最早觀察推定」,偵測粒度一週。不進多空 fact/口袋/分數,不與庫藏股文案並列。
+- 驗證:pytest 全套 1407 passed(新增 `test_transfer_agent.py`、`test_json_export_branch_tags.py` 擴充)、node web/lib 275 pass、tsc、next build、390px 截圖(6488 本機快照,「元大證券」列顯示 股代＋總公司)。
+- A→B→A 而 B 只出現一次 → 視為一時填錯,併回 A(log 記 revert);相鄰同券商的段在匯入、export、前端三處都會合併。自訂天數亂打(負數)不再讓名單期間越界。
+- **上線**:VPS `sync_code()` 每輪自動 `git pull`,**合併進 `main` 即正式上線**——下一輪排程的 `init_db()` 自動建空表 `transfer_agent_history`(additive,建表已獲使用者核准),週一 `daily-market.sh`/`weekly-refdata.sh` 的 `import-geo` 寫入第一段;在那之前 export 用 `company_profiles` 現值,標籤照常出現。延後:重大訊息回補換股代日期、興櫃、更多合併別名。
+
 ## 2026-10-04 首頁「多方榜」取代「綜合」分頁(程式完成;VPS 接線完成、待上 VPS)
 
 - **規則凍結＋事前登記** `docs/48`(`bull-board-v1`,commit 早於程式):母體 = 有評分且最後 K 棒 = 資料日;入榜 = 技術/籌碼段 rank ≥4、非滯後的多方 ≥3 條,且無 rank 5 空方事件;排序條數 → 來源數 → 空方重點少 → 金額 → 代號;上限 40、不湊數;payload 無名次/rank/分數。

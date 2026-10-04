@@ -1,7 +1,9 @@
 """docs/27 G1:地址縣市/行政區抽取與分點名稱正規化(純函式,供匯入與之後 G2 共用)。"""
 from __future__ import annotations
 
+import html
 import re
+import unicodedata
 
 CITIES = (
     "台北市", "新北市", "桃園市", "台中市", "台南市", "高雄市",
@@ -161,3 +163,93 @@ def classify_broker_kind(name: str, *, is_hq: bool = False) -> str:
     if "-" not in key:
         return "hq"
     return "branch"
+
+
+# ---- 股代(docs/37 §3.1):公司登記的「股票過戶機構」是哪家券商 ----
+# 官方欄位是自由文字,2026-10-04 實抓 1,987 家有 190 多種寫法:「元大證券股份有限公司」
+# 「元大證券(股)公司股務代理部」「台新綜合證&#21173;股務代理部」「褔邦證券」「凱碁證券」……
+# 只收「證券」字樣的機構;銀行代理部(中國信託商業銀行代理部等)與公司自辦一律不標。
+_AGENT_TEXT_FIXES = (
+    ("證劵", "證券"), ("証", "證"), ("褔邦", "福邦"), ("凱碁", "凱基"),
+)
+_AGENT_BANK_RE = re.compile(r"銀行|商銀|中信銀")
+_CJK_NAME_RE = re.compile(r"[一-鿿]{2,6}")
+
+# 同一家券商的簡寫 → 分點名稱裡總公司席位的名字(TWSE brokerList 簡稱:元大、凱基、
+# 群益金鼎、永豐金、第一金、華南永昌、中國信託…)。股代欄與分點名兩邊都套用。
+# 只寫名字不同的;每一筆只指向一家券商、一個總公司席位。
+#   股代欄常寫「群益證券」「永豐證券」「第一證券」「華南證券」,省略「金鼎」「金」「永昌」。
+#   中國信託綜合證券的簡稱是「中信」(json_export._ISSUER_TO_BROKER 同一筆:權證簡稱
+#   「中信」對分點前綴「中國信託」);中國信託「銀行」代理部另由 _AGENT_BANK_RE 排除。
+BROKER_ALIASES: dict[str, str] = {
+    "群益": "群益金鼎",
+    "永豐": "永豐金",
+    "第一": "第一金",
+    "華南": "華南永昌",
+    "中信": "中國信託",
+}
+
+# 已併入他家的舊券商 → 存續券商。**只套用在股代欄**(官方表若還寫舊名,現在的股代
+# 就是存續券商);不套用在分點名:合併前「大華」總公司席位是另一家公司,不是股代。
+# 每一筆要有公開合併紀錄;沒有把握的不列(fail closed,寧可不標)。
+#   凱基:2011 併台証證券、2012 併大華證券(存續名凱基)。
+#   元大:2012 與寶來證券合併為元大寶來證券,2014 更名元大證券。
+#   群益金鼎:2012 群益證券與金鼎證券合併。
+MERGED_BROKERS: dict[str, str] = {
+    "台證": "凱基", "大華": "凱基",
+    "寶來": "元大", "元大寶來": "元大",
+    "金鼎": "群益金鼎",
+}
+
+
+def transfer_agent_broker(agent: str | None) -> str | None:
+    """股票過戶機構 → 券商(= 分點名稱裡總公司席位的名字,例「元大」「群益金鼎」);不是券商回 None。
+
+    'X證券…' 取「證券」前的字、去掉「綜合」、套 BROKER_ALIASES 與 MERGED_BROKERS;
+    銀行代理部、公司自辦、沒有「證券」字樣一律 None(不猜)。
+    """
+    if not agent:
+        return None
+    s = unicodedata.normalize("NFKC", html.unescape(agent))
+    s = fold_tai(re.sub(r"\s+", "", s))
+    for bad, good in _AGENT_TEXT_FIXES:
+        s = s.replace(bad, good)
+    if _AGENT_BANK_RE.search(s):
+        return None
+    head, sep, _ = s.partition("證券")
+    if not sep:
+        return None
+    head = re.sub(r"綜合$", "", head)
+    if not _CJK_NAME_RE.fullmatch(head):
+        return None
+    head = MERGED_BROKERS.get(head, head)
+    return BROKER_ALIASES.get(head, head)
+
+
+def hq_seat_broker(branch_name: str) -> str | None:
+    """分點名稱若是券商總公司席位,回傳券商(套 BROKER_ALIASES);分公司回 None。
+
+    分點來源(Fubon/MoneyDJ 鏡像)的總公司席位就是不帶「-」的券商名,有時多「證券」二字:
+    「凱基」「元大證券」「永豐金證券」「台新」(9B00;舊 9B17「台新-營業部」是另一個據點,
+    已由 branch_names.RENAMES 併入)。「元大-南京」是分公司;「元大期貨」是期貨子公司,
+    名字不同,不會被當成元大總公司。外資席位(美商高盛…)名字對不到股代券商,自然不會中。
+    只套 BROKER_ALIASES(同一家的簡寫),不套 MERGED_BROKERS(合併前是別家公司)。
+    """
+    key = normalize_branch_name(re.sub(r"^\(.*?\)", "", (branch_name or "").strip()))
+    if not key or "-" in key:
+        return None
+    key = key.replace("証", "證")
+    if key.endswith("證券") and len(key) > 2:
+        key = key[:-2]
+    return BROKER_ALIASES.get(key, key)
+
+
+def is_agent_seat(branch_name: str, broker: str | None) -> bool:
+    """這個分點是不是股代券商的總公司席位。
+
+    2026-10-04 使用者定案:只標總公司,不標分公司(例:中探針股代=凱基 → 只有「凱基」標股代,
+    「凱基-松山」不標)。整段名稱相等才算,所以元大≠元富、國泰≠國票、富邦≠福邦。
+    """
+    return bool(broker) and hq_seat_broker(branch_name) == broker
+
+

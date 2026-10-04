@@ -218,6 +218,18 @@ export interface CompanyGroupsJson {
 }
 
 /**
+ * 股代的一段:from = 首次觀察日(還沒有歷史時為 null)、to = 下一段的 from(最新一段 null);
+ * broker null = 銀行或自辦。
+ */
+export interface BranchAgentPeriod {
+  broker: string | null;
+  from: string | null;
+  to: string | null;
+  /** 此股 payload 裡、該段股代券商的總公司席位名稱。 */
+  names: string[];
+}
+
+/**
  * 籌碼日報分點標籤的原始事實(json_export `_branch_tags_payload`)。
  * 名字只限此股 payload 會出現的分點;鍵永遠存在,沒有就是空清單。
  */
@@ -226,6 +238,12 @@ export interface BranchTags {
   as_of: string;
   /** rule:雙北同區 "district"、其他同縣市 "city";公司地址判不了為 null。 */
   geo: { rule: "district" | "city" | null; names: string[] };
+  /**
+   * 股代(docs/37 §3.1):股務代理是券商時,該券商的總公司席位。current = 現在;
+   * periods 舊→新,換過股代才有多段(日期 d 用 from ≤ d 的最後一段,早於最早一段沿用最早)。
+   * 舊 JSON 沒有這個鍵,缺鍵時不標;沒有 periods 時只用 current。
+   */
+  agent?: { current: { broker: string | null; names: string[] }; periods?: BranchAgentPeriod[] };
   /** 只收判定為隔日沖的配對;未判定(NULL)不輸出。rows 值為 [觀察數, 次日回吐數]。 */
   daytrade: {
     min_obs: number;

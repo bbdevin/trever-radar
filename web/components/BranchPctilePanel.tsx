@@ -90,9 +90,15 @@ export default function BranchPctilePanel({
 }) {
   const model = useMemo(() => normalizeBranchPctile(data), [data]);
   const { muted, added } = useBranchTrack();
+  // 股代依統計期間(windowFrom ～ asOf)當時的股代標示。
+  const tagFrom = model?.windowFrom ?? null;
+  const tagTo = model?.asOf ?? null;
   const tagCtx = useMemo(
-    () => makeTagContext(branchTags, data, { muted, added }),
-    [branchTags, data, muted, added],
+    () => makeTagContext(
+      branchTags, data, { muted, added },
+      tagFrom && tagTo ? { from: tagFrom, to: tagTo } : null,
+    ),
+    [branchTags, data, muted, added, tagFrom, tagTo],
   );
   const [camp, setCamp] = useState<CampKey>("short");
   const [expanded, setExpanded] = useState(false);

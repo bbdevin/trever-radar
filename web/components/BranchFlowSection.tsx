@@ -4,7 +4,7 @@ import { forwardRef, useMemo, useState, useEffect } from "react";
 import { Clock, ShieldCheck } from "lucide-react";
 import type { BranchPctileCounts, BranchTags, Buyback, ReasonItem, StockJson } from "@/lib/types";
 import { fmtLots } from "@/lib/format";
-import { branchTags as tagsFor, type Tag } from "@/lib/branchTags";
+import { branchTags as tagsFor, historyWindow, type Tag } from "@/lib/branchTags";
 import { useBranchTrack } from "@/lib/branchTrackList";
 import { cn, pillTabClass } from "@/lib/utils";
 import { BranchTagLegend, BranchTagList, BranchTagNote, makeTagContext } from "@/components/BranchTag";
@@ -104,17 +104,25 @@ const BranchFlowSection = forwardRef<
   /** 目前開著說明的標籤(一次只開一個):分點名＋標籤代號。 */
   const [tagOpen, setTagOpen] = useState<{ name: string; key: string } | null>(null);
   const { muted, added } = useBranchTrack();
-  const tagCtx = useMemo(
-    () => makeTagContext(branchTags, branchPctile, { muted, added }),
-    [branchTags, branchPctile, muted, added],
-  );
-  const showTagLegend = !!tagCtx.tags || !!tagCtx.pctile;
 
   const activeDaysRaw = days === "custom" ? parseInt(customDays) || 1 : days;
   /** 此股實際可用交易日數(每檔回補深度不同) */
   const availableDays = branchHistory?.length ?? 0;
   /** 聚合用天數:不超過此股真實深度 */
   const activeDays = availableDays > 0 ? Math.min(activeDaysRaw, availableDays) : activeDaysRaw;
+  /** 名單涵蓋的交易日(history 新→舊):股代換過時,依這段期間當時的股代標示。 */
+  // 自訂天數可能是負數或 0(輸入框擋不住打字);historyWindow 夾在 [1, 深度],絕不越界。
+  const tagWindow = historyWindow(branchHistory, activeDays);
+  const tagWindowFrom = tagWindow?.from ?? null;
+  const tagWindowTo = tagWindow?.to ?? null;
+  const tagCtx = useMemo(
+    () => makeTagContext(
+      branchTags, branchPctile, { muted, added },
+      tagWindowFrom && tagWindowTo ? { from: tagWindowFrom, to: tagWindowTo } : null,
+    ),
+    [branchTags, branchPctile, muted, added, tagWindowFrom, tagWindowTo],
+  );
+  const showTagLegend = !!tagCtx.tags || !!tagCtx.pctile;
 
   // 籌碼最新交易日(history 新→舊);無 history 不腦補「今日」
   const branchAsOf = branchHistory?.length ? branchHistory[0].t : null;

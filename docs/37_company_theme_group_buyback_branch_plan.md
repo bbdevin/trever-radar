@@ -79,6 +79,23 @@ A2 是語意決策關卡，不是單純修 UI。Executor 先產出對照表與�
 - TWSE/TPEx provider 只解析已驗證官方欄位；空字串轉 `null`、產業碼維持字串前導 0、民國 `1150826` 正規化為 `2026-08-26`。
 - 個股 JSON 增加可選 `industry` 與 `company_profile`；舊 snapshot 缺欄位時 UI 顯示「資料未提供」，不將缺值視為 0 或不存在。
 
+### 3.1 分點「股代」標籤（2026-10-04）
+
+使用者：「有些公司的股務代理會是券商，所以也要多個股代的標籤」「股代可能會變動，所以也要注意」。與地緣同一套 `branch_tags`（籌碼日報／囤貨出貨分點列），只是事實標示：**不進多空 fact、不進口袋、不加分**（docs/48 禁 bull-board-v2 新 fact），文案**不與庫藏股並列**（KB2 禁令）。
+
+- **來源**：`company_profiles.transfer_agent`＝官方公司基本資料「股票過戶機構」（TWSE `t187ap03_L`／MOPS `t187ap03_O.csv`），已由週一 `import-geo`（`weekly-refdata.sh`、`daily-market.sh` weekly_step）整表重抓，不需新排程。興櫃（`t187ap03_R`）、ETF 不標。
+- **解析**（`geo.transfer_agent_broker`）：自由文字 190 多種寫法 → HTML 實體（`&#21173;`）、NFKC、全形空白、`証→證`、`褔邦→福邦`、`凱碁→凱基` → 取「證券」前的字、去「綜合」→ 套別名。含「銀行／商銀／中信銀」或沒有「證券」字樣（公司自辦、股務室）→ `null`，不標。
+- **別名**（程式內明列、有測試）：`BROKER_ALIASES`（同一家的簡寫，股代欄與分點名兩邊都套）群益→群益金鼎、永豐→永豐金、第一→第一金、華南→華南永昌、中信→中國信託；`MERGED_BROKERS`（只套股代欄，合併前的舊總公司是另一家公司，不套分點名）台證／大華→凱基、寶來／元大寶來→元大、金鼎→群益金鼎。日盛→富邦合併日期未核實，**fail closed 不列**。
+- **只標總公司席位**（2026-10-04 使用者定案；曾短暫改成全部分點又改回）：分點名沒有「-」、去掉尾端「證券」後整段等於券商名——實際資料兩種寫法都有（本機快照：`元大證券`、`宏遠證券`、`台新`、`凱基`）。整段相等所以元大≠元富≠元大期貨、國泰≠國票、富邦≠福邦。分公司、自營、期貨子公司都不標。券商股自己當股代（群益證→群益金鼎）就標自家總公司，不排除。
+- **實測覆蓋（2026-10-04 實抓，唯讀）**：1,987 家；股代是券商 1,653（83.2%），全部對得到 TWSE brokerList 總公司（0 筆對不到）；非券商 334（中國信託商業銀行代理部各寫法約 260、公司自辦其餘）。券商分布：元大 247、台新 245、福邦 197、群益金鼎 189、凱基 176、永豐金 146、富邦 118、兆豐 78、統一 75、宏遠 53、華南永昌 34、康和 29、國票 23、第一金 19、亞東 17、新光 6、國泰 1。範例：中探針 6217「凱基證券股份有限公司」→ 只標「凱基」。
+- **變動史**：新表 `transfer_agent_history(stock_id, first_seen, last_seen, broker, agent_text, source='opendata_weekly')`，PK `(stock_id, first_seen)`。`import-geo` 每次比對券商（不是原文；同券商換寫法不算換）：沒換只推 `last_seen`，換了新增一段並在 `import_logs` 記 `dataset='transfer_agent_change'`（rows=家數、error 欄放 `sid:舊->新` 明細、status 仍 ok）；同日重跑覆寫當天那段；這次沒出現的公司不動。`import-geo` 另印 `agent-check`：股代券商對 `broker_branch_geo kind='hq'` 的 broker_id 對照，對不到的列出（報告，不擋匯入）。
+- **生效日規則**：日期 d 用 `first_seen ≤ d` 的最後一段；最新一段無終點（`last_seen` 只是每週核對的落後指標，不拿來截斷）；早於最早觀察沿用最早一段，畫面標「依最早觀察推定」。異動偵測粒度＝每週核對，日期最多晚一週。
+- **Export**：`branch_tags.agent = {current:{broker,names}, periods:[{from,to,broker,names}]}`，names 只限此股 payload 會出現的分點；表還沒資料時以 `company_profiles` 現值當唯一一段（`from=null`）。
+- **UI**：pill「股代」，與總公司同色（`--warn`，不新增色票）＋ `Building2` 圖示；優先序 GEO > DT > TRACKED > AGENT > LOW/HIGH > SEAT。說明：「股代：本公司登記的股務代理機構是這家券商（官方公司基本資料，每週核對）；只標總公司席位，不是單一主力。」換過股代時加「（YYYY-MM 起）」／「（YYYY-MM 起已換成其他機構）」。`branchTags(name, side, ctx, date?)`；合計多日的名單用 `ctx.window`（期間內有效的段都算）。「標籤怎麼看」講出券商名，總公司席位不在名單時註明「本檔近兩年前 12 大無其總公司席位」。舊 JSON 無 `agent` 鍵 → 不標。
+- **延後**：用重大訊息回補換股代的實際日期（現在只有每週觀察）、興櫃 `t187ap03_R`、更多合併別名（需公開合併紀錄才加）。
+- **A→B→A**：B 只出現在一次匯入（`first_seen = last_seen`）就換回 A → 刪掉 B 那段、A 延長，`import_logs` 明細記 `(revert)`；B 觀察到兩次以上才算真的換過。永遠不會有相鄰兩段同一家券商；export 與前端也各自把相鄰同券商的段併成一段。
+- **上線方式（使用者已核准建表）**：`vps/scripts/lib.sh` 的 `sync_code()` 每輪自動 `git pull`，**合併進 `main` 就是正式上線**：下一輪排程的 `init_db()` 自動建立空表 `transfer_agent_history`（additive，不動既有表），週一 `daily-market.sh`／`weekly-refdata.sh` 的 `import-geo` 寫入第一段觀察；之前的 export 以 `company_profiles` 現值當唯一一段，標籤照常出現。要提早生效可在合併後手動跑一次 `import-geo`＋`export-json`（非必要）。
+
 ## 4. C：題材完整化
 
 ### 定義
