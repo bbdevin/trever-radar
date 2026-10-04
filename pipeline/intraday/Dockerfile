@@ -9,7 +9,7 @@ ENV TZ=Asia/Taipei
 RUN apt-get update && apt-get install -y --no-install-recommends tzdata \
     && rm -rf /var/lib/apt/lists/*
 RUN pip install --no-cache-dir \
-    "fugle-marketdata>=2.4.1" "supabase>=2.31.0" "python-dotenv>=1.2.2" "requests>=2.31"
+    "fugle-marketdata==2.4.1" "websocket-client==1.9.0" "supabase>=2.31.0" "python-dotenv>=1.2.2" "requests>=2.31"
 WORKDIR /app
 COPY worker.py .
 CMD ["python", "worker.py"]
