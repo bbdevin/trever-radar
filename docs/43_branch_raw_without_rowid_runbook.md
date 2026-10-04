@@ -388,13 +388,16 @@ grep -E '^step (export-json|compute-branch-stats|branch-point-in-time-persist|br
 
 | 項目 | 數值 |
 |---|---|
-| 同名同日多列件數(§3) | |
-| 快照 sha256／列數(branch／prices) | |
-| 各變體檔案大小(4k／4k+stats／8k／8k+stats) | |
-| 選定變體與理由 | |
-| verify／export_parity／compute_parity 結果 | |
-| bench 結論(貼 `bench.txt` 表格) | |
-| 換檔後 export-json elapsed(前 5 日 → 後 5 日) | |
+| 執行日 | **2026-10-04(日)**,使用者要求提前(原定 10-10);VPS 持鎖 01:39 → 14:45 |
+| 同名同日多列件數(§3) | 0(正式庫唯讀查詢,只有「台新」有兩個 key 且從未同股同日) |
+| 快照 sha256／列數(branch／prices) | `397d8254…`(9,027,452,928 B);32,378,591／10,279,864;integrity ok |
+| 各變體檔案大小 | new_cover(4k+ANALYZE+`_date_cover`)5,556,072,448 B;new_plain(無 cover,只做對照)5,116,956,672 B;轉換 10 分鐘 |
+| 選定變體與理由 | new_cover;Planner(Fable)GO:硬性資料閘門全過,效能閘門未過者為 PC 暖快取校準問題或已知小額結構代價(b5/b6 日價日期窗 +0.02–0.2 s、prices_new_day +1 s);b14 權證異動改走釘選覆蓋索引(37 s → 8.4 s)後過 |
+| verify／export_parity／compute_parity 結果 | verify PASS(兩表 sha 相同);compute_parity 26/26 PASS;PC export_parity 3 檔 company_themes 同分順序(已以 `ORDER BY st.rowid` 固定);**VPS 同映像 manifest:3,592 檔 identical,0 different** |
+| bench 結論 | `D:\wor\bench64.txt`(64 MB cache):branch_history 讀取量 0.19×、夜間分位 237→84 s、追蹤明細 13.9→1.5 s、權證 120 日 64→25 s、PC 匯出 816→675 s |
+| VPS 匯出(同一程式 0c523ed,export-one) | **舊庫 26.5 分 → 新庫 14.4 分**(0.54×) |
+| 換檔後 | 15:01 重新匯出+deploy 完成;磁碟 3.4 → 6.9 GB 可用;權證分點 prune dry-run backlog 3,960 列/28 日(首輪 1,671 列/10 日) |
+| 換檔後 export-json elapsed(前 5 日 → 後 5 日) | 待週一起填(V7) |
 
 ## 10. 合成資料演練紀錄(PC)
 
