@@ -8,7 +8,8 @@
  *
  * 讀 radar.json → 逐檔讀 stocks/*.json(一次一檔,不同時持有原始 JSON)→ summaryFromStockJson
  * (與個股頁同一次呼叫)→ selectBoard → 原子寫 bull_board.json(.tmp → rename)→ 追加一行到
- * <log>/YYYY-MM.jsonl,並把當月檔複製到 <data>/bull_board_log/YYYY-MM.jsonl。
+ * <log>/YYYY-MM.jsonl(同一 data_date 最後一行內容相同、只差時間戳 → 不追加,見 lib/bullBoardLog.ts),
+ * 並把當月檔複製到 <data>/bull_board_log/YYYY-MM.jsonl。
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -16,6 +17,7 @@ import { fileURLToPath } from "node:url";
 
 import { boardLogLine, buildBullBoard, selectBoard } from "../lib/bullBoard.ts";
 import { lastCandleDate, summaryFromStockJson } from "../lib/bullBearFromStock.ts";
+import { shouldAppendLogLine } from "../lib/bullBoardLog.ts";
 import { hottestListedTheme } from "../lib/themeGroups.ts";
 
 const t0 = performance.now();
@@ -127,7 +129,19 @@ writeAtomic(path.join(DATA, "bull_board.json"), JSON.stringify(board));
 const month = generatedAt.slice(0, 7);
 const logFile = path.join(LOG, `${month}.jsonl`);
 fs.mkdirSync(LOG, { recursive: true });
-fs.appendFileSync(logFile, `${JSON.stringify(boardLogLine(board, sel))}\n`);
+const readIf = (p) => (fs.existsSync(p) ? fs.readFileSync(p, "utf8") : "");
+const prevLog = readIf(logFile);
+// 跨月重建(例:11/01 重建 10/31):同一 data_date 的前幾行在資料日那個月的檔裡。
+const dataMonthFile = path.join(LOG, `${String(radar.data_date).slice(0, 7)}.jsonl`);
+const history = dataMonthFile === logFile ? prevLog : readIf(dataMonthFile) + "\n" + prevLog;
+const logLine = boardLogLine(board, sel);
+if (shouldAppendLogLine(history, logLine)) {
+  // 上一行若被截斷(沒有換行),先補換行,新行才不會黏在壞行後面。
+  const sep = prevLog && !prevLog.endsWith("\n") ? "\n" : "";
+  fs.appendFileSync(logFile, `${sep}${JSON.stringify(logLine)}\n`);
+} else {
+  console.log("bull-board log: unchanged, skipped");
+}
 writeAtomic(path.join(DATA, "bull_board_log", `${month}.jsonl`), fs.readFileSync(logFile, "utf8"));
 
 const elapsed = (performance.now() - t0) / 1000;
