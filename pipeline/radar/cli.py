@@ -812,7 +812,9 @@ def cmd_prune(args):
     print(f"{head}: {info['indicators']} indicators, {info['warrants']} warrants, {info['logs']} logs, "
           f"{wb['deleted_rows']} warrant-branch rows over {len(wb['dates'])} dates"
           + (f" (skipped: {wb['skipped_reason']})" if wb["skipped_reason"] else "")
-          + (f", freelist {wb['freelist_count']} pages" if wb["freelist_count"] is not None else ""))
+          + (f", freelist {wb['freelist_count']} pages" if wb["freelist_count"] is not None else "")
+          + (f"; backlog {wb['backlog_rows']} warrant-branch rows over {wb['backlog_dates']} dates"
+             if "backlog_rows" in wb else ""))
     if info['vacuum']:
         print("vacuum completed")
 

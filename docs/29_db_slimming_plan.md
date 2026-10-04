@@ -72,7 +72,7 @@
 **權證分點列(`branch_trades_raw` 6 碼列)保留政策 —— ✅ 2026-10-04 Planner 定案,程式已實作**(`docs/44` §6.4):
 - 保留 **150 個交易日**,與 `warrant_daily` **共用 `prune.py` 同一個 `war_cutoff` 變數**(`date < war_cutoff` 刪,等於 cutoff 那天保留)。兩條線若分開會讓權證頁與權證分點明細對不上,測試 `test_prune_warrant_branches.py` 鎖住同一天邊界。
 - **4 碼個股/ETF 列永久保留**(評分、分點勝率、E2 帳本的根資料,歷史只能慢速回補)。
-- 執行方式:`radar prune`(17:40 那輪既有步驟)由新到舊逐日刪,每輪最多 `--max-dates 10` 個日期、連續 3 個空日即停;每刪一日寫一列 `import_logs(source='prune', dataset='warrant_branch_prune')`。不做一次性補刪、不 VACUUM(freelist 重用)。`--dry-run` 只計數不寫。
+- 執行方式:`radar prune`(17:40 那輪既有步驟)由新到舊逐日刪,每輪最多 `--max-dates 10` 個日期、連續 3 個空日即停;每刪一日寫一列 `import_logs(source='prune', dataset='warrant_branch_prune', date=執行日(台北), error='data_date=YYYY-MM-DD', status='ok')`——`date` 刻意用執行日,用資料日的話會被下一輪 `logs_days=180` 刪掉。不做一次性補刪、不 VACUUM(freelist 重用)。`--dry-run` 只計數不寫,另外印出**全部積壓**的列數與日期數(不受 `--max-dates`/空日停止限制)。
 - 只在新版面(有 `ix_branch_trades_raw_date_cover`,docs/43)啟用;舊版面印 `warrant-branch prune skipped: no ix_branch_trades_raw_date_cover` 並跳過。`--warrant-branches 0` 關閉。
 
 ## 3. 瘦身後總量預估

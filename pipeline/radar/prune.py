@@ -84,10 +84,13 @@ def _prune_warrant_branches(engine, war_cutoff, days, max_dates, dry_run) -> dic
                 if deleted != n:
                     raise RuntimeError(f"warrant-branch prune {d}: counted {n}, deleted {deleted}")
                 elapsed = time.monotonic() - t0
+                now = datetime.now(ZoneInfo(config.TZ))
+                # date = 執行日(台北),不是資料日:資料日早於 logs_days,用資料日的話
+                # 下一輪 prune 就把這筆紀錄刪掉了。資料日放 error 欄(status 仍是 ok)。
                 conn.execute(schema.import_logs.insert().values(
-                    run_at=datetime.now(ZoneInfo(config.TZ)).isoformat(timespec="seconds"),
-                    source="prune", dataset="warrant_branch_prune", date=d,
-                    rows=n, status="ok", duration_ms=int(elapsed * 1000),
+                    run_at=now.isoformat(timespec="seconds"),
+                    source="prune", dataset="warrant_branch_prune", date=now.date().isoformat(),
+                    rows=n, status="ok", error=f"data_date={d}", duration_ms=int(elapsed * 1000),
                 ))
             print(f"prune warrant-branch rows date={d} deleted={n} elapsed={elapsed:.2f}s")
         result["deleted_rows"] += n
@@ -95,6 +98,14 @@ def _prune_warrant_branches(engine, war_cutoff, days, max_dates, dry_run) -> dic
 
     with engine.connect() as conn:
         result["freelist_count"] = conn.execute(text("PRAGMA freelist_count")).scalar()
+        if dry_run:
+            # 全部積壓(不受 max_dates / 空日停止限制),讓使用者看到總量;仍只讀。
+            rows, ndates = conn.execute(text(
+                f"SELECT COUNT(*), COUNT(DISTINCT date) FROM branch_trades_raw INDEXED BY {COVER_INDEX} "
+                "WHERE date < :c AND LENGTH(stock_id) = 6"), {"c": war_cutoff}).one()
+            result["backlog_rows"], result["backlog_dates"] = rows, ndates
+            print(f"prune warrant-branch backlog would delete total={rows} dates={ndates} "
+                  f"(before {war_cutoff})")
     return result
 
 

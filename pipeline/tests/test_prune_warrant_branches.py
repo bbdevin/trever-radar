@@ -7,8 +7,9 @@ import hashlib
 import io
 import unittest
 from contextlib import redirect_stdout
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 from tempfile import TemporaryDirectory
 
 from sqlalchemy import text
@@ -93,8 +94,8 @@ class PruneWarrantBranchesTests(unittest.TestCase):
         return len(rows), hashlib.sha256(repr(rows).encode()).hexdigest()
 
     def _prune_logs(self):
-        return self._q("SELECT date, rows, status, source FROM import_logs "
-                       "WHERE dataset='warrant_branch_prune' ORDER BY date")
+        return self._q("SELECT error, rows, status, source, date FROM import_logs "
+                       "WHERE dataset='warrant_branch_prune' ORDER BY error")
 
     def _prune(self, **kw):
         buf = io.StringIO()
@@ -129,8 +130,13 @@ class PruneWarrantBranchesTests(unittest.TestCase):
         self._seed()
         self._prune()
         logs = self._prune_logs()
-        self.assertEqual([r[0] for r in logs], EXPIRED)
+        self.assertEqual([r[0] for r in logs], [f"data_date={d}" for d in EXPIRED])
         self.assertTrue(all(r[1] == 2 and r[2] == "ok" and r[3] == "prune" for r in logs))
+        # date = 執行日(台北),才不會被下一輪 logs_days=180 刪掉
+        today = datetime.now(ZoneInfo(config.TZ)).date().isoformat()
+        self.assertTrue(all(r[4] == today for r in logs))
+        self._prune()
+        self.assertEqual(len(self._prune_logs()), len(EXPIRED))
 
     def test_max_dates_batches_newest_first_and_continues_next_run(self):
         self._seed()
@@ -166,6 +172,18 @@ class PruneWarrantBranchesTests(unittest.TestCase):
         self.assertEqual(info["warrants"], len(EXPIRED))
         self.assertEqual(info["warrant_branches"]["deleted_rows"], 2 * len(EXPIRED))
         self.assertIn("would delete", out)
+
+    def test_dry_run_reports_full_backlog_beyond_max_dates(self):
+        e = EXPIRED
+        missing = {e[8], e[6], e[5], e[4]}  # empty-date stop would hide e[0..3]
+        self._seed(warrant_dates=[d for d in DAYS if d not in missing])
+        info, out = self._prune(dry_run=True, max_dates=1)
+        wb = info["warrant_branches"]
+        self.assertEqual(wb["dates"], [e[7]])
+        self.assertEqual(wb["backlog_dates"], 5)            # e7 + e0..e3
+        self.assertEqual(wb["backlog_rows"], 2 * 5)
+        self.assertIn("backlog would delete total=10 dates=5", out)
+        self.assertEqual(len(self._warrant_dates()), len(DAYS) - len(missing))
 
     def test_old_layout_without_date_cover_is_skipped(self):
         self._seed()
