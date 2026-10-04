@@ -69,6 +69,11 @@ export interface DerivedFact {
   dataDate?: string;
   /** 同 code 同週期可有多列時的區分(N 日高、缺口序號…) */
   variant?: string;
+  /**
+   * 壓力段價位事實的短標(價位名稱 + 價格,如「20日線 952」「成交最密集區 1,100–1,111」)。
+   * 不上畫面;技術段的「3% 內壓力/支撐價位」句(nearLevelFacts)由它組句,與壓力段同一份事實。
+   */
+  level?: Seg[];
 }
 
 export interface SectionBuckets {
@@ -179,6 +184,20 @@ export const EMPTY_SIDE: Record<"bull" | "bear", string> = {
   bull: "目前沒有符合的多方事實",
   bear: "目前沒有符合的空方事實",
 };
+/**
+ * 技術段空欄、但壓力分析小節同側有價位時(那些價位都在現價 3% 之外,3% 內的會在技術段另成一句):
+ * 說明為何技術段沒有,避免「技術分析沒有空方,壓力分析卻有」的矛盾觀感。
+ */
+export const EMPTY_TECH_WITH_LEVELS: Record<"bull" | "bear", string> = {
+  bull: "目前無明顯多方技術訊號(下方 3% 內沒有支撐價位)",
+  bear: "目前無明顯空方技術訊號(上方 3% 內沒有壓力價位)",
+};
+
+/** 一欄沒有事實時的中性句。 */
+export function emptySideText(s: BullBearSummary, section: Section, side: "bull" | "bear"): string {
+  if (section === "tech" && s.sections.levels[side].length > 0) return EMPTY_TECH_WITH_LEVELS[side];
+  return EMPTY_SIDE[side];
+}
 export const CONTEXT_LABEL = "背景";
 
 /** 總覽列一段:「技術 ▲5 ▼3」 */

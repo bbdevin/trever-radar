@@ -112,6 +112,30 @@ export function okLevels(over: Partial<Extract<PriceLevels, { status: "ok" }>> =
 }
 
 /**
+ * 使用者回報「技術分析沒有空方,壓力分析卻有」的形狀(1342 八貫 07/06):收盤剛好落在上方成交最密集區的下緣(0.0%)、
+ * 120 日最高在 +4.7%、均線全在下方、沒有任何技術空方事件。修正前技術段空方欄空白,壓力段上方壓力卻有「接近」的密集區。
+ * candles 為空:只看 price_levels 產生的事實。
+ */
+export function nearResistanceStock(over: Partial<Extract<PriceLevels, { status: "ok" }>> = {}): StockJson {
+  const price_levels: PriceLevels = {
+    version: 1, status: "ok", as_of: LAST, bars: 240, close: 116.5,
+    ma: { "5": 115, "10": 113.4, "20": 110.2, "60": 104, "120": 98, "240": 90 },
+    ma_align: null,
+    highs: { "20": { p: 122, t: "2026-09-15" }, "60": { p: 122, t: "2026-09-15" }, "120": { p: 122, t: "2026-09-15" } },
+    lows: { "20": { p: 100.5, t: "2026-09-05" } },
+    new_high_20: false, new_low_20: false, vol_price_2d: null,
+    vol_profile: { window: 120, above: 0.06, below: 0.94, at: 0 },
+    dense_above: { lo: 116.5, hi: 117.7, share: 0.028 },
+    dense_below: { lo: 94.4, hi: 95.5, share: 0.07 },
+    ...over,
+  };
+  return {
+    id: "1342", name: "樣本", market: "twse", candles: [], technical: null, price_levels,
+    scores: null, reasons: [], risks: [], branches: [], warrant: null, warrant_history: [], active_warrants: [],
+  } as unknown as StockJson;
+}
+
+/**
  * 壓力段用的日K:300 根(>240 才有資料內最高/最低),近 120 根內有一個向上缺口(支撐)
  * 與一個向下缺口(壓力),最後一根收 1085。
  */

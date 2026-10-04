@@ -11,7 +11,7 @@ import { priceLevelFacts } from "../priceLevels.ts";
 import { branchFacts } from "./branchFacts.ts";
 import { holdersFacts } from "./holdersFacts.ts";
 import { instFacts } from "./instFacts.ts";
-import { levelFacts } from "./levelFacts.ts";
+import { levelFacts, nearLevelFacts } from "./levelFacts.ts";
 import { marginFacts } from "./marginFacts.ts";
 import { marginFlowFacts } from "./marginFlowFacts.ts";
 import { futuresFacts, themeFacts, warrantFacts } from "./otherFacts.ts";
@@ -42,10 +42,14 @@ export function deriveAllFacts(data: StockJson, lastT: string, muted: ReadonlySe
   const candles = data.candles ?? [];
   // 融資×分點集中度先算:結果會調整 C_MARGIN_HOT 的 rank、決定是否列 5 日融資增價跌(docs/46 §7)
   const flow = marginFlowFacts(data, candles, series.adjusted, lastT);
+  const price = priceLevelFacts(data.price_levels, lastT, data.technical?.rsi14);
+  const levels = levelFacts(data.price_levels, series, lastT);
   return [
-    ...priceLevelFacts(data.price_levels, lastT, data.technical?.rsi14),
+    ...price,
     ...techFacts(series, data.technical ?? null),
-    ...levelFacts(data.price_levels, series, lastT),
+    // 壓力段 ≤3% 的價位在技術段也成句(同一份壓力段事實,不另算門檻)
+    ...nearLevelFacts([...price, ...levels]),
+    ...levels,
     ...instFacts(data.insti_history, candles, lastT),
     ...flow.facts,
     ...marginFacts(data.margin_history, series.adjusted, lastT, flow),

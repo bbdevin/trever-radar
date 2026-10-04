@@ -67,6 +67,9 @@ export const FACT_CATALOGUE: Record<string, CatalogueEntry> = {
   X_GAP_UP_TODAY: tech("bull", D, 1),
   X_GAP_DOWN_TODAY: tech("bear", D, 1, { risk: true }),
   X_BIG_BLACK: tech("bear", D, 1, { risk: true }),
+  // 壓力段 ≤3% 的價位在技術段的對應句(levelFacts.nearLevelFacts,docs/46 §6.9)
+  X_LEVEL_ABOVE_NEAR: tech("bear", D, 0),
+  X_LEVEL_BELOW_NEAR: tech("bull", D, 0),
 
   // ── 壓力 ──
   F1_MA_BELOW: lvl("bull", DWM, 0, { mirrors: ["T1_MA20", "T1_MA60"] }),

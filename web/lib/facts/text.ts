@@ -55,6 +55,8 @@ export interface MkOpts {
   date?: string;
   dataDate?: string;
   variant?: string;
+  /** 壓力段價位的短標(見 DerivedFact.level) */
+  level?: Seg[];
 }
 
 /** 建一條事實:側別/來源/段/警示都取自 FACT_CATALOGUE;相鄰純文字段合併。 */
@@ -85,6 +87,7 @@ export function mk(code: string, segs: readonly (Seg | string | false | null | u
   if (o.date) f.date = o.date;
   if (o.dataDate) f.dataDate = o.dataDate;
   if (o.variant) f.variant = o.variant;
+  if (o.level?.length) f.level = o.level;
   if (o.mirrors?.length && !o.date && !o.dataDate) f.mirrors = o.mirrors;
   return f;
 }

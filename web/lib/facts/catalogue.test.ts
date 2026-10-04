@@ -17,7 +17,7 @@ import {
 import { holdersFacts } from "./holdersFacts.ts";
 import { STOCK_KEYS_NOT_FACTS, STOCK_KEYS_USED, deriveAllFacts } from "./index.ts";
 import { instFacts } from "./instFacts.ts";
-import { levelFacts } from "./levelFacts.ts";
+import { levelFacts, nearLevelFacts } from "./levelFacts.ts";
 import { marginFacts } from "./marginFacts.ts";
 import { marginFlowFacts } from "./marginFlowFacts.ts";
 import { futuresFacts, themeFacts, warrantFacts } from "./otherFacts.ts";
@@ -43,6 +43,7 @@ function everyFixtureFact(): DerivedFact[] {
   out.push(...levelFacts(okLevels(), levelSeries(), LAST));
   out.push(...levelFacts(okLevels({ highs: { "60": { p: 1090, t: "2026-09-30" } } }), levelSeries(), LAST));
   out.push(...levelFacts(okLevels({ lows: { "60": { p: 1080, t: "2026-09-30" } } }), levelSeries(), LAST));
+  out.push(...nearLevelFacts([...priceLevelFacts(okLevels(), LAST, 60), ...levelFacts(okLevels(), levelSeries(), LAST)]));
   for (const f of [instiSellStreak(), instiBothBuy(), instiBothSell(), insti20d(), insti20d(true)]) out.push(...instFacts(f.ih, f.candles, LAST));
   for (const f of [marginHotUp(), marginOkDown()]) out.push(...marginFacts(f.mh, f.adjusted, LAST));
   for (const f of [marginConcBuildup(), marginDispersedDown()]) {

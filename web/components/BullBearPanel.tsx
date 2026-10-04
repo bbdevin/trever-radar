@@ -8,7 +8,7 @@ import {
   COLUMN_LABEL,
   CONTEXT_LABEL,
   COUNT_NOTE,
-  EMPTY_SIDE,
+  emptySideText,
   PANEL_ORDER,
   PANEL_TITLE,
   SECTION_LABEL,
@@ -134,7 +134,7 @@ function AnalysisSection({
         right={<SideCounts b={b} />}
       />
       {top}
-      <SideColumns section={section} b={b} />
+      <SideColumns section={section} summary={summary} />
       {bottom}
     </section>
   );
@@ -150,12 +150,13 @@ function SideCounts({ b, size }: { b: SectionBuckets; size?: "sm" }) {
   );
 }
 
-function SideColumns({ section, b, sub }: { section: Section; b: SectionBuckets; sub?: boolean }) {
+function SideColumns({ section, summary, sub }: { section: Section; summary: BullBearSummary; sub?: boolean }) {
+  const b = summary.sections[section];
   return (
     <>
       <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-x-2">
-        <Column side="bull" section={section} items={b.bull} sub={sub} />
-        <Column side="bear" section={section} items={b.bear} sub={sub} />
+        <Column side="bull" section={section} items={b.bull} empty={emptySideText(summary, section, "bull")} sub={sub} />
+        <Column side="bear" section={section} items={b.bear} empty={emptySideText(summary, section, "bear")} sub={sub} />
       </div>
       {b.context.length > 0 && <ContextStrip items={b.context} section={section} sub={sub} />}
     </>
@@ -186,7 +187,7 @@ function LevelsSubsection({ summary, levels }: { summary: BullBearSummary; level
           <SideCounts b={b} size="sm" />
         </div>
       </div>
-      <SideColumns section="levels" b={b} sub />
+      <SideColumns section="levels" summary={summary} sub />
       <LevelsExtra view={levels} />
     </section>
   );
@@ -234,7 +235,7 @@ function TechMetricsRow({ metrics }: { metrics: TechMetric[] | null }) {
 }
 
 /** sub:位於小節(h4)之下,欄頭降一級為 h5。 */
-function Column({ side, section, items, sub }: { side: "bull" | "bear"; section: Section; items: BullBearItem[]; sub?: boolean }) {
+function Column({ side, section, items, empty, sub }: { side: "bull" | "bear"; section: Section; items: BullBearItem[]; empty: string; sub?: boolean }) {
   const groups = groupColumn(items, section);
   const tint = SIDE_TINT[side];
   const H = sub ? "h5" : "h4";
@@ -249,7 +250,7 @@ function Column({ side, section, items, sub }: { side: "bull" | "bear"; section:
         {COLUMN_LABEL[section][side]}
       </H>
       {items.length === 0 ? (
-        <p className="text-[12.5px] leading-snug text-muted-foreground">{EMPTY_SIDE[side]}</p>
+        <p className="text-[12.5px] leading-snug text-muted-foreground">{empty}</p>
       ) : (
         groups.map((g) => (
           <div key={g.key} data-group={g.keyGroup ? "key" : undefined} className="grid min-w-0 gap-1">
