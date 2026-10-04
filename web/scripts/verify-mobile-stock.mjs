@@ -140,7 +140,17 @@ try {
     assert(await page.getByTestId(`bullbear-section-${sec}`).isVisible(), `多空分頁缺少 ${sec} 段`);
   }
   assert((await page.getByTestId("bullbear-panel").locator("[aria-expanded]").count()) === 0, "多空分頁不應有展開按鈕(全部列出)");
-  await page.getByText("技術分").first().waitFor({ state: "visible", timeout: 5000 });
+  // docs/46 §6.7:技術指標併入技術分析段頂(指標列),不再有獨立卡片與「技術訊號原文」收合區。
+  { const techSec = page.getByTestId("bullbear-section-tech");
+    const metrics = techSec.getByTestId("tech-metrics");
+    assert((await metrics.count()) + (await techSec.getByTestId("tech-metrics-missing").count()) === 1, "技術分析段應有指標列(或尚未產出技術指標提示)");
+    if (await metrics.count()) {
+      assert(await metrics.getByText("技術分", { exact: true }).isVisible(), "指標列缺少技術分");
+      assert(!(await metrics.evaluate((el) => el.scrollWidth > el.clientWidth + 1)), "指標列發生水平溢位");
+    }
+    assert((await page.getByTestId("tech-signal-details").count()) === 0, "不應再有「技術訊號原文」收合區");
+    assert((await page.getByRole("heading", { name: "技術指標" }).count()) === 0, "不應再有獨立的技術指標卡");
+    assert((await techSec.locator("details").count()) === 0, "技術分析段不應有收合區(details)"); }
   await page.getByRole("tab", { name: "權證" }).click();
   await page.getByRole("heading", { name: "權證分點動向" }).waitFor({ state: "visible", timeout: 5000 });
   assert(await page.getByText(/熱門上市權證/).first().isVisible(), "權證分點沒有揭露熱門上市權證與前15大分點的裁剪限制");

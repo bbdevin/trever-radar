@@ -26,7 +26,7 @@ import InstiPanel from "@/components/InstiPanel";
 import MarginPanel from "@/components/MarginPanel";
 import HoldersPanel from "@/components/HoldersPanel";
 import WarrantBranchPanel from "@/components/WarrantBranchPanel";
-import ReasonPill, { isChipStrategyCode } from "@/components/ReasonPill";
+import { isChipStrategyCode } from "@/components/ReasonPill";
 import { ScrollHint } from "@/components/ScrollHint";
 import {
   anomalyFacts,
@@ -55,12 +55,12 @@ import WatchlistButton from "@/components/WatchlistButton";
 import { normalizeBranchPctile } from "@/lib/branchPctile";
 import { chartLevels, priceLevelsView } from "@/lib/priceLevels";
 import { deriveAllFacts } from "@/lib/facts";
-import { buildBullBear, techDetailsSummary, topOfSide, type BullBearSummary } from "@/lib/bullBear";
+import { buildBullBear, topOfSide, type BullBearSummary } from "@/lib/bullBear";
+import { techMetrics } from "@/lib/techMetrics";
 import { useBranchTrack } from "@/lib/branchTrackList";
 import { pocketBadgeVisible } from "@/lib/branchTrackResolve";
 import BullBearPanel, { CountChip } from "@/components/BullBearPanel";
 import { pocketDisplayText } from "@/components/PocketBadges";
-import StatTile from "@/components/StatTile";
 import { normalizePnl } from "@/lib/branchPnl";
 import { dataFetch } from "@/lib/dataFetch";
 import { OFFLINE_DATA_COPY, isBrowserOffline } from "@/lib/pwa";
@@ -1065,70 +1065,19 @@ function FuturesDailyBlock({ futures, labels }: { futures: StockJson["futures"];
   );
 }
 
-/** 多空分頁(key 仍是 tech,docs/46 v2):總覽 → 技術分析 / 籌碼分析 / 壓力分析(含價格階梯,docs/45)→ 技術指標。
- *  technical 為 null 仍畫多空三段。 */
+/** 多空分頁(key 仍是 tech,docs/46 v2):總覽 → 技術分析(頂端指標列)/ 籌碼分析 / 壓力分析(含價格階梯,docs/45)。
+ *  技術指標併入技術分析段(docs/46 §6.7);technical 為 null 時該段改顯示「尚未產出技術指標」,三段仍照畫。 */
 function TechnicalPanel({ data, summary }: { data: StockJson; summary: BullBearSummary }) {
   const levels = useMemo(() => priceLevelsView(data.price_levels), [data.price_levels]);
-  return (
-    <div className="mt-3.5 grid min-w-0 grid-cols-1 gap-3">
-      <BullBearPanel summary={summary} levels={levels} />
-      <TechnicalScoreCard data={data} />
-    </div>
-  );
-}
-
-function TechnicalScoreCard({ data }: { data: StockJson }) {
-  const t = data.technical;
-  if (!t) {
-    return (
-      <div className="flex gap-2.5 rounded-[var(--r-md)] border border-border bg-card px-4.5 py-3.5 text-sm">
-        <span className="shrink-0 font-bold text-muted-foreground">技術</span>
-        <span className="min-w-0 text-foreground">尚未產出技術指標;請先跑 compute-indicators。</span>
-      </div>
-    );
-  }
-  const risks = t.risks ?? [];
-
-  return (
-    <section aria-labelledby="tech-indicators-heading" className="grid min-w-0 gap-2.5 rounded-[var(--r-lg)] border border-border bg-card p-3.5 shadow-[var(--shadow-card)]">
-      <SectionHeader family="price" as="h3" id="tech-indicators-heading" title="技術指標" />
-      <div className="grid grid-cols-3 gap-2">
-        <StatTile label="技術分" value={t.score} valueClassName="text-[color:var(--accent-2)]" />
-        <StatTile label="RSI14" value={t.rsi14 == null ? "—" : t.rsi14.toFixed(1)} />
-        <StatTile label="量比" value={fmtX(t.volume_ratio)} />
-      </div>
-      {(data.scores?.watch_price != null || data.scores?.stop_price != null) && (
-        <div className="flex flex-wrap gap-2">
-          {data.scores?.watch_price != null && (
-            <span className="rounded-[var(--r-sm)] border border-border bg-secondary px-2.5 py-2 text-xs text-muted-foreground">
-              觀察價 <b className="num font-bold text-[color:var(--accent-2)]">{data.scores.watch_price.toFixed(2)}</b>
-            </span>
-          )}
-          {data.scores?.stop_price != null && (
-            <span className="rounded-[var(--r-sm)] border border-border bg-secondary px-2.5 py-2 text-xs text-muted-foreground">
-              失效價 <b className="num font-bold text-up">{data.scores.stop_price.toFixed(2)}</b>
-            </span>
-          )}
-        </div>
-      )}
-      {/* 技術訊號原文(ReasonPill 原樣);摘要句已整理在上方多空,這裡預設收合。
-          技術面風險(R*,如 RSI 過熱)以前存在 JSON 卻沒畫出來(docs/45 §1)。 */}
-      <details data-testid="tech-signal-details" className="group min-w-0 rounded-[var(--r-sm)] border border-[color:var(--line)]">
-        <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-2 px-3 text-[12.5px] font-semibold text-[color:var(--ink-2)] [&::-webkit-details-marker]:hidden">
-          {techDetailsSummary(t.reasons.length, risks.length)}
-          <ChevronDown size={16} aria-hidden className="transition-transform duration-200 group-open:rotate-180" />
-        </summary>
-        <div className="flex flex-wrap gap-1.5 px-3 pb-3">
-          {t.reasons.length > 0 ? (
-            t.reasons.map((r) => <ReasonPill key={r.code} code={r.code} text={r.text} />)
-          ) : (
-            <span className="rounded-full border border-[color:var(--line)] px-2 py-[3px] text-[11.5px] text-[color:var(--ink-2)]">未觸發技術加分條件</span>
-          )}
-          {risks.map((r) => <ReasonPill key={`risk-${r.code}`} code={r.code} text={r.text} risk />)}
-        </div>
-      </details>
-    </section>
-  );
+  const metrics = useMemo(() => {
+    if (!data.technical) return null;
+    const cs = data.candles;
+    const last = cs[cs.length - 1];
+    const prev = cs.length > 1 ? cs[cs.length - 2] : null;
+    const chg = last && prev ? (last.c - prev.c) / prev.c : null;
+    return techMetrics(data.technical, { watch: data.scores?.watch_price, stop: data.scores?.stop_price }, last?.c ?? null, chg);
+  }, [data.technical, data.candles, data.scores]);
+  return <BullBearPanel summary={summary} levels={levels} metrics={metrics} className="mt-3.5" />;
 }
 
 function WarrantPanel({ data }: { data: StockJson }) {

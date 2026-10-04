@@ -22,11 +22,11 @@ import {
   SOURCE_ORDER,
   TF_LABEL,
   buildBullBear,
+  factKey,
   groupColumn,
   keyItems,
   overviewText,
   riskCodeFromText,
-  techDetailsSummary,
   topOfSide,
   type BullBearSummary,
   type DerivedFact,
@@ -214,6 +214,43 @@ test("每個輸入 code 在 bull ∪ bear ∪ context ∪ suppressed 恰出現�
   assert.equal(keys.length, new Set(keys).size);
 });
 
+/**
+ * 「技術訊號原文」收合區已移除(docs/46 §6.7):technical.reasons/risks 的每個 code 都必須在多空裡有一列,
+ * 或被一條仍在畫面上的事實取代(suppressed 且鏡像事實那一列存在)。
+ */
+function assertTechRepresented(s: BullBearSummary, t: TechnicalSummary, facts: DerivedFact[]) {
+  const rows = ALL(s);
+  const keys = new Set(rows.map((i) => i.key));
+  for (const r of [...t.reasons, ...t.risks]) {
+    if (rows.some((i) => i.code === r.code)) continue;
+    assert.ok(s.suppressed.includes(r.code), `${r.code} 既不在多空列也不在 suppressed`);
+    const mirror = facts.find((f) => !f.date && !f.dataDate && f.mirrors?.includes(r.code) && keys.has(factKey(f)));
+    assert.ok(mirror, `${r.code} 被取代但沒有對應的鏡像事實列`);
+  }
+}
+
+test("技術訊號原文:technical 每個理由/風險 code 都在多空列,或被畫面上的鏡像事實取代", () => {
+  const techCodes = Object.entries(SIDE_BY_CODE).filter(([, v]) => v.source === "tech").map(([c]) => c);
+  const t = tech(
+    techCodes.filter((c) => SIDE_BY_CODE[c].side !== "bear").map((code) => ({ code, points: 5, text: `理由${code}` })),
+    techCodes.filter((c) => SIDE_BY_CODE[c].side === "bear").map((code) => ({ code, points: 5, text: `風險${code}` })),
+  );
+  const scenarios: Array<[string, DerivedFact[]]> = [
+    ["無前端事實", []],
+    ["多頭序列+價格位置", [...priceLevelFacts(pl({ vol_price_2d: "up" }), "2026-10-03", 60), ...techFacts(techBullSeries(), tech([], [], 2))]],
+    ["空頭序列", techFacts(techBearSeries(), tech([], [], 2))],
+    ["資料日落後(不取代)", priceLevelFacts(pl({ vol_price_2d: "up" }), "2026-10-06", 60)],
+  ];
+  for (const [name, facts] of scenarios) {
+    const s = buildBullBear({ rawReasons: [], reasons: [], rawRisks: [], risks: [], technical: t, derivedFacts: facts, asOf: "2026-10-03" });
+    assertTechRepresented(s, t, facts);
+    if (name !== "無前端事實" && name !== "資料日落後(不取代)") assert.ok(s.suppressed.length > 0, name);
+  }
+  // 理由同時出現在 raw_reasons(先列)也算代表
+  const both = buildBullBear({ rawReasons: t.reasons, reasons: [], rawRisks: t.risks, risks: [], technical: t, asOf: "2026-10-03" });
+  assertTechRepresented(both, t, []);
+});
+
 test("完整性:6488 型 —— 240 日高、密集區、現價之上成交、外資連 5 日賣超都出現在空方;R_FOREIGN_SELL5 被取代", () => {
   const { ih, candles } = instiSellStreak();
   const data = {
@@ -385,7 +422,7 @@ test("rank 表:集保大戶封頂 4;狀態型風險 R_RSI_OVERHEAT/R_MARGIN_HOT 
 test("禁用詞鎖:標籤、定義句、欄頭、F 句", () => {
   const texts = [
     PANEL_TITLE, SIDE_DEFINITION, COUNT_NOTE, CONTEXT_LABEL, KEY_GROUP_LABEL, ...Object.values(EMPTY_SIDE), ...Object.values(SIDE_LABEL),
-    ...Object.values(SOURCE_LABEL), ...Object.values(SECTION_LABEL), ...Object.values(TF_LABEL), techDetailsSummary(4, 1),
+    ...Object.values(SOURCE_LABEL), ...Object.values(SECTION_LABEL), ...Object.values(TF_LABEL),
     ...Object.values(COLUMN_LABEL).flatMap((x) => Object.values(x)),
     ...priceLevelFacts(pl(), "2026-10-03", 60).map((f) => f.text),
     ...priceLevelFacts(pl({ ma_align: "bear", new_low_20: true, new_high_20: false, vol_price_2d: "down" }), "2026-10-03", 30).map((f) => f.text),

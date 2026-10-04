@@ -86,7 +86,7 @@ P2:期貨背景列;F9–F11。
 使用者:三段(技術/籌碼/壓力)、每段左多右空中間分隔線、全部列出不收合、空方要完整(6488 的 240 日高、上方密集區、上方成交、外資賣超、前大分點淨賣都要出現)、日/週/月、大戶比(集保週資料帶資料日)。純呈現:不改分數、radar.json、DB;全部事實由現有個股 JSON 鍵算出。
 
 ### 6.1 版面(`web/components/BullBearPanel.tsx`)
-總覽卡(`bullbear-overview`:定義句、計數、「技術 ▲n ▼n ・ 籌碼 … ・ 壓力 …」)→ 三張段卡(`bullbear-section-tech|chips|levels`)→ 技術指標卡。段卡 = SectionHeader + 兩顆計數 chip → `grid-cols-[minmax(0,1fr)_1px_minmax(0,1fr)] items-start`(中間格 `self-stretch` 分隔線貫穿較高欄;**§6.6 起改為兩欄側別淡底,不再有分隔線**)→ 背景列(有才出現)。欄頭 `▲ 多方`/`▼ 空方`(壓力段 `▲ 下方支撐`/`▼ 上方壓力`),欄 testid 仍 `bullbear-bull|bear` 加 `data-section`。群組頭取代每列來源標籤:技術段 日K/週K/月K;籌碼段依來源(大戶顯示「大戶(集保 MM/DD)」);壓力段不分組、依距離由近到遠,兩欄之下接價格階梯、現價上下成交、「怎麼算」(`PriceLevelsCard.tsx` 只剩這三個小元件)。週/月列前綴描邊小 chip「週」「月」;事件型空方(R*、B_RISK_REVERSAL、空方口袋、出貨、跌破 20 線、MACD 翻負、KD 高檔死叉、跳空下跌、長黑)前綴 ⚠。前端事實帶 `segments`(價格藍、+ 紅、− 綠),後端原文仍走 ChangeText。
+總覽卡(`bullbear-overview`:定義句、計數、「技術 ▲n ▼n ・ 籌碼 … ・ 壓力 …」)→ 三張段卡(`bullbear-section-tech|chips|levels`)→ 技術指標卡。段卡 = SectionHeader + 兩顆計數 chip → `grid-cols-[minmax(0,1fr)_1px_minmax(0,1fr)] items-start`(中間格 `self-stretch` 分隔線貫穿較高欄;**§6.6 起改為兩欄側別淡底,不再有分隔線**)→ 背景列(有才出現)。欄頭 `▲ 多方`/`▼ 空方`(壓力段 `▲ 下方支撐`/`▼ 上方壓力`),欄 testid 仍 `bullbear-bull|bear` 加 `data-section`。群組頭取代每列來源標籤:技術段 日K/週K/月K;籌碼段依來源(大戶顯示「大戶(集保 MM/DD)」);壓力段不分組、依距離由近到遠,兩欄之下接價格階梯、現價上下成交、「怎麼算」(`PriceLevelsCard.tsx` 只剩這三個小元件)。**§6.7 起技術指標卡併入技術分析段頂,不再有獨立卡。**週/月列前綴描邊小 chip「週」「月」;事件型空方(R*、B_RISK_REVERSAL、空方口袋、出貨、跌破 20 線、MACD 翻負、KD 高檔死叉、跳空下跌、長黑)前綴 ⚠。前端事實帶 `segments`(價格藍、+ 紅、− 綠),後端原文仍走 ChangeText。
 
 ### 6.2 契約(`web/lib/bullBear.ts`)
 `BullBearItem` 加 `section`、`segments?`、`tf?`、`dataDate?`、`rank`(1–5)、`magnitude?`、`dist?`;`BullBearSummary.sections`。`buildBullBear({..., derivedFacts})`;`SECTION_BY_SOURCE`(tech/strategy→技術、price/levels→壓力、其餘→籌碼);Source 加 `holders`、`levels`。分類調整:R_HOT5/R_HOT10 來源 price→tech(技術段日K)、S11→inst、S12→chips、S13→margin;F1_FUTURES_VOLUME_60D_HIGH、R_FUTURES_VOLUME_NO_DIRECTION 進表(背景/期貨)。去重:①後端 code 只一次 ②前端事實(無 date/dataDate)的 mirrors 取代同方向後端 code,含風險與口袋 ③`YIELD_TO_BACKEND`:R_HOT5/10→X_CHG5_UP、R_GAP_FADE→X_GAP_UP_TODAY、R_SHOOTING→X_BIG_BLACK ④事實鍵 code+tf+variant 只一次。排序:段內先分組,再 rank↓ → magnitude↓ → points↓ → 原順序;壓力段距離↑。`topOfSide`:rank → magnitude → 段序(壓力距離 ≤3% → 籌碼 → 技術 → 其餘壓力)→ 來源序。
@@ -126,6 +126,11 @@ P2:期貨背景列;F9–F11。
 | 1 | 量縮、融資使用率 <60%、券增減、券資比、期貨量、庫藏股、董監質押、資料內最高最低、遠距週/月均線 |
 本次調整(其餘不動):外資/投信單日 ≥3% 由「僅外資賣超」改為多空、外資投信一致;三大法人合計與前12大分點 ≥5% 升 5;囤貨分點 3→4;融資增減股價反向 3→4;日K 最接近下方均線 ≤3% 2→4、週/月 1→3(與上方對稱);MACD 零軸狀態 3→2;集保大戶 5→4;後端 R_RSI_OVERHEAT、R_MARGIN_HOT 4→3。
 **視覺**:多方欄 `bg-up/[0.06]`、空方欄 `bg-down/[0.06]` 圓角淡底(取代中間 1px 分隔線);重點列 `bg-up/12`/`bg-down/12` + 左 2px 側別色條;群組頭改家族色 /12 淡底小膠囊;一般列之間 `divide-border` 細線。不新增色票。
+
+### 6.7 技術指標併入技術分析段(2026-10-04 使用者:「技術指標是否能整合技術分析」)
+- 技術分析段卡的段頭之下、兩欄之上加指標列(`BullBearPanel.tsx TechMetricsRow`,testid `tech-metrics`;純函式 `web/lib/techMetrics.ts`):技術分(`bg-primary/12` 藍)、RSI14(50–70 紅、<50 綠、>80 琥珀、70–80 中性,同 F8)、量比(`1.8×`;≥1.5 且收漲紅、收跌綠,否則中性)、觀察價/失效價(有才列;藍字價格、精度同價格階梯,附與收盤距離 +紅/−綠,`bg-primary/[0.06]`)。390px 一列 3 格自動換行。§1.3/§6.1 的獨立「技術指標」卡**取消**。
+- `technical` 為 null 時,指標列位置改顯示「尚未產出技術指標;請先跑 compute-indicators。」(`tech-metrics-missing`),三段照畫。
+- 「技術訊號原文」`<details>` **移除**(`techDetailsSummary` 一併刪):`bullBear.test.ts` 鎖定 technical.reasons/risks 的每個 code 不是在多空列(bull/bear/context),就是被 suppressed 且取代它的鏡像事實列仍在畫面上,故不需要補列。
 
 ### 6.5 測試
 `web/lib/bullBear.test.ts`(完整性 fixture:240 日高 +46.9%、上方密集區、現價之上成交、外資連 5 日賣超取代 R_FOREIGN_SELL5;讓位;鏡像含口袋;標頭 rank;分組;每 code 恰一次)、`web/lib/facts/{series,techFacts,levelFacts,holdersFacts,chipsFacts,catalogue}.test.ts`(重取樣:部分週/週中與週一假日/跨年週/月桶/分割前後還原相等/零量;目錄覆蓋率=每個 code 都有 fixture 產生;segments 接起來等於 text;mirrors ⊆ 目錄;禁用詞)。`pipeline/tests/test_bull_bear_codes.py`:SOURCES 加 `futures_volume_anomaly.py`;json_export 個股 payload 頂層鍵 ⊆ `STOCK_KEYS_USED ∪ STOCK_KEYS_NOT_FACTS`(且不得列 payload 沒有的鍵)。

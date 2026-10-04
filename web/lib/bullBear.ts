@@ -179,10 +179,6 @@ export const EMPTY_SIDE: Record<"bull" | "bear", string> = {
 };
 export const CONTEXT_LABEL = "背景";
 
-export function techDetailsSummary(nReasons: number, nRisks: number): string {
-  return `技術訊號原文 加分 ${nReasons} 項・風險 ${nRisks} 項`;
-}
-
 /** 總覽列一段:「技術 ▲5 ▼3」 */
 export function overviewText(s: BullBearSummary, section: Section): string {
   const b = s.sections[section];
