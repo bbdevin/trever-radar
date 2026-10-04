@@ -3,7 +3,7 @@
  * 技術/壓力情境直接組 Series(不經指標計算),好精準觸發每一個分支。
  */
 import type { Tf } from "../bullBear.ts";
-import type { Candle, PriceLevels, StockJson } from "../types.ts";
+import type { BranchPnlRow, Candle, PriceLevels, StockJson } from "../types.ts";
 import type { AllSeries, Series } from "./series.ts";
 
 export const LAST = "2026-10-01";
@@ -256,8 +256,91 @@ export function branchMonth(): Pick<StockJson, "branch_history" | "branch_tags" 
       windows: {
         "60": {
           window_days: 60, first_date: ds[24], pairs_considered: 4, pairs_skipped_missing_price: 0,
-          gainers: [row("甲", 500, 2_000_000), row("乙", 300, 1_000_000)],
+          // 前 3 名(甲乙戊)由 C_SMART_HOLDING 逐家寫;己、庚留給 C_PNL_GAINERS_HOLDING(「另有」)
+          gainers: [row("甲", 500, 2_000_000), row("乙", 300, 1_000_000), row("戊", 0, 800_000), row("己", 120, 50_000), row("庚", 80, 20_000)],
           losers: [row("丙", 400, -1_500_000), row("丁", 200, -300_000)],
+        },
+      },
+    },
+  };
+}
+
+function pnlRow(name: string, est: number, pos: number, un: number, ds: string[]): BranchPnlRow {
+  return {
+    name, est_total: est, realized: est - un, unrealized: un, pos_lots: pos, avg_cost: 100, last_close: 100, buy_lots: pos + 500,
+    sell_lots_attributed: 0, sell_lots_unattributed: 0, visible_days: 40, max_cost: 5_000_000, ret_pct: null, af_adjusted: false,
+    first_date: ds[ds.length - 1], last_date: ds[0],
+  };
+}
+
+function pctileRow(name: string, lowBuy: number, highSell: number, known = 10) {
+  return {
+    branch_name: name, buy_pctile_known: known, buy_pctile_unknown: 0, low_buy_count: lowBuy,
+    sell_pctile_known: known, sell_pctile_unknown: 0, high_sell_count: highSell,
+    buy_lots_known: known * 100, low_buy_lots: lowBuy * 100, sell_lots_known: known * 100, high_sell_lots: highSell * 100,
+  };
+}
+
+/**
+ * 低買高賣/區間損益前段分點(docs/46 §6.8),量 10,000 張/日:
+ *  - 群益金鼎-板橋:短線派第 1(買低 70%、賣高 80%),近 5 日每天買 300 → 近5日 +1,500(佔量 3.0%)
+ *  - 凱基-台北:區間損益估算 3月第 1(+500 萬),只有今日買 600 → 寫「今日」(佔量 6.0%)
+ *  - B1:長線派第 1(賣高 60%),今日賣 600 → 空方
+ *  - 元大-士林:長線派第 2,今日賣 40(未達 50 張下限)→ 份量不足,不列
+ *  - 富邦-建國:區間損益估算 3月第 2,估算持股 100 張;前 3 日各賣 60(近5日 −180,佔量 0.36% 未達門檻),
+ *    但估算持股減少 180/(100+180)=64% ≥30% → 空方
+ *  - 永豐-竹北:短線派第 6(超出前 5 名)今日買 2,000 → 不是強分點,不列
+ *  - 國泰-敦南:區間損益估算 1年第 1,沒有買賣、仍持股 800 張帳面為正 → C_SMART_HOLDING
+ *  - 紀錄不足:短線派第 2 但買側只 3 次可知(compactSide 判不足)今日買 3,000 → 不列
+ */
+export function branchSmart(): Pick<StockJson, "branch_history" | "branch_pctile_counts" | "branch_pnl_est" | "branch_tags"> & { candles: Candle[] } {
+  const ds = recentDates(25);
+  const bh: BranchDay[] = ds.map((t, i) => ({
+    t,
+    branches: [
+      ...(i < 5 ? [{ n: "群益金鼎-板橋", b: 300, s: 0, net: 300 }] : []),
+      ...(i === 0 ? [
+        { n: "凱基-台北", b: 600, s: 0, net: 600 },
+        { n: "B1", b: 0, s: 600, net: -600 },
+        { n: "元大-士林", b: 0, s: 40, net: -40 },
+        { n: "永豐-竹北", b: 2000, s: 0, net: 2000 },
+        { n: "紀錄不足", b: 3000, s: 0, net: 3000 },
+      ] : []),
+      ...(i >= 1 && i <= 3 ? [{ n: "富邦-建國", b: 0, s: 60, net: -60 }] : []),
+    ],
+  }));
+  const camp = (rows: ReturnType<typeof pctileRow>[]) => ({
+    available: true, stock_buy_pctile_known: 2000, stock_low_buy_count: 800, stock_sell_pctile_known: 2000, stock_high_sell_count: 800,
+    stock_buy_lots_known: 200000, stock_low_buy_lots: 80000, stock_sell_lots_known: 200000, stock_high_sell_lots: 80000,
+    shrink_k_buy_lots: 100, shrink_k_sell_lots: 100, branches: rows,
+  });
+  return {
+    candles: volCandles(ds, 10000),
+    branch_history: bh,
+    branch_tags: { as_of: LAST, geo: { rule: "city", names: [] }, daytrade: { min_obs: 5, rate: 0.6, rows: {} }, tracked: [] },
+    branch_pctile_counts: {
+      version: 2, ranking: "lots_shrunk_v2", min_known_episodes_per_side: 5, max_branches: 30, windows: { short: 20, long: 120 },
+      low_buy_max_pctile: 0.4, high_sell_min_pctile: 0.6, min_daytrade_obs: 5, as_of: LAST, window_market_days: 120, window_from: ds[24],
+      computed_at: null, definitions_version: null, stock_daytrade_obs: null, stock_daytrade_paybacks: null,
+      short: camp([
+        pctileRow("群益金鼎-板橋", 7, 8), { ...pctileRow("紀錄不足", 3, 3), buy_pctile_known: 3, buy_lots_known: 300 },
+        pctileRow("A1", 5, 5), pctileRow("A2", 5, 5), pctileRow("A3", 5, 5), pctileRow("永豐-竹北", 9, 9),
+      ]),
+      long: camp([pctileRow("B1", 6, 6), pctileRow("元大-士林", 6, 6)]),
+      lookup_fields: ["branch_name"], lookup: [],
+    },
+    branch_pnl_est: {
+      as_of: LAST, definitions_version: "pnl-avgcost-v1",
+      windows: {
+        "60": {
+          window_days: 60, first_date: ds[24], pairs_considered: 4, pairs_skipped_missing_price: 0,
+          gainers: [pnlRow("凱基-台北", 5_000_000, 900, 3_000_000, ds), pnlRow("富邦-建國", 3_000_000, 100, 200_000, ds)],
+          losers: [],
+        },
+        "240": {
+          window_days: 240, first_date: ds[24], pairs_considered: 4, pairs_skipped_missing_price: 0,
+          gainers: [pnlRow("國泰-敦南", 9_000_000, 800, 4_000_000, ds)],
+          losers: [],
         },
       },
     },

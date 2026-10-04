@@ -22,7 +22,7 @@ export { FACT_CATALOGUE } from "./catalogue.ts";
 /** 會產生多空事實的個股 payload 鍵 */
 export const STOCK_KEYS_USED = [
   "candles", "technical", "price_levels", "reasons", "raw_reasons", "risks", "raw_risks", "pocket_tags",
-  "branch_history", "branch_tags", "branch_pnl_est", "insti_history", "margin_history",
+  "branch_history", "branch_tags", "branch_pnl_est", "branch_pctile_counts", "insti_history", "margin_history",
   "holders_history", "holders_meta", "directors_latest", "warrant", "warrant_history",
   "futures", "recent_theme_heat", "buyback",
 ] as const;
@@ -33,8 +33,6 @@ export const STOCK_KEYS_NOT_FACTS = [
   "scores", "strategy_signals", "pocket_score",
   // 今日分點清單:多空用 branch_history[0](同一天、已按名稱可加總)
   "branches",
-  // 買低賣高分位計數:只呈現次數,不得做成判定(docs/43)
-  "branch_pctile_counts",
   "active_warrants", "margin_meta",
 ] as const;
 
