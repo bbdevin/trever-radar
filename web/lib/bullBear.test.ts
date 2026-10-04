@@ -10,6 +10,7 @@ import {
   CONTEXT_LABEL,
   COUNT_NOTE,
   EMPTY_SIDE,
+  EMPTY_TECH_WITH_LEVELS,
   KEY_GROUP_LABEL,
   KEY_GROUP_MAX,
   PANEL_TITLE,
@@ -22,6 +23,7 @@ import {
   SOURCE_ORDER,
   TF_LABEL,
   buildBullBear,
+  emptySideText,
   factKey,
   groupColumn,
   keyItems,
@@ -32,11 +34,12 @@ import {
   type DerivedFact,
 } from "./bullBear.ts";
 import { FACT_CATALOGUE } from "./facts/catalogue.ts";
-import { LAST, holdersBull, instiSellStreak, marginConcBuildup, marginConcTdccDown, okLevels, techBearSeries, techBullSeries } from "./facts/fixtures.ts";
+import { LAST, holdersBull, instiSellStreak, marginConcBuildup, marginConcTdccDown, nearResistanceStock, okLevels, techBearSeries, techBullSeries } from "./facts/fixtures.ts";
 import { holdersFacts } from "./facts/holdersFacts.ts";
 import { deriveAllFacts } from "./facts/index.ts";
 import { techFacts } from "./facts/techFacts.ts";
-import { priceLevelFacts } from "./priceLevels.ts";
+import { boardKeys } from "./bullBoard.ts";
+import { isNear, priceLevelFacts, priceLevelsView } from "./priceLevels.ts";
 import type { PriceLevels, ReasonItem, StockJson, TechnicalSummary } from "./types.ts";
 
 // 以「·」拆開或用字碼組回,避免這個檔案本身被 test_label_honesty 掃到。
@@ -421,7 +424,7 @@ test("rank 表:集保大戶封頂 4;狀態型風險 R_RSI_OVERHEAT/R_MARGIN_HOT 
 
 test("禁用詞鎖:標籤、定義句、欄頭、F 句", () => {
   const texts = [
-    PANEL_TITLE, SIDE_DEFINITION, COUNT_NOTE, CONTEXT_LABEL, KEY_GROUP_LABEL, ...Object.values(EMPTY_SIDE), ...Object.values(SIDE_LABEL),
+    PANEL_TITLE, SIDE_DEFINITION, COUNT_NOTE, CONTEXT_LABEL, KEY_GROUP_LABEL, ...Object.values(EMPTY_SIDE), ...Object.values(EMPTY_TECH_WITH_LEVELS), ...Object.values(SIDE_LABEL),
     ...Object.values(SOURCE_LABEL), ...Object.values(SECTION_LABEL), ...Object.values(TF_LABEL),
     ...Object.values(COLUMN_LABEL).flatMap((x) => Object.values(x)),
     ...priceLevelFacts(pl(), "2026-10-03", 60).map((f) => f.text),
@@ -457,4 +460,65 @@ test("融資堆積且同期分點集中(docs/46 §7):C_MARGIN_HOT 仍空方、�
   const t = run(marginConcTdccDown());
   assert.equal(t.sections.chips.bear.find((i) => i.code === "C_MARGIN_HOT")?.rank, 3);
   assert.ok(!ALL(t).some((i) => i.code?.startsWith("C_MARGIN_UP_") || i.code === "C_MARGIN_BUILDUP_CONC"));
+});
+// ── 技術段與壓力分析一致(使用者:「技術分析有時候會沒有空方理由 但是在壓力分析又有」) ──
+const summaryOf = (data: StockJson) =>
+  buildBullBear({ reasons: [], risks: [], rawReasons: [], rawRisks: [], technical: null, derivedFacts: deriveAllFacts(data, LAST), asOf: LAST });
+
+test("1342 型:壓力段有 ≤3% 的上方密集區 → 技術段空方不再空白,點名同一個價位", () => {
+  const data = nearResistanceStock();
+  const s = summaryOf(data);
+  assert.ok(s.sections.levels.bear.some((i) => i.code === "L_DENSE_ABOVE" && i.rank === 5), "壓力段照舊有接近的密集區");
+  assert.deepEqual(s.sections.tech.bear.map((i) => i.text), ["上方 3% 內有壓力價位:成交最密集區 116.5–117.7(0.0%)"]);
+  assert.deepEqual(s.sections.tech.bull.map((i) => i.text), ["下方 3% 內有支撐價位:5日線 115.0(−1.3%)"]);
+  // 技術段只有 rank 3 的那一句時,它就是該欄重點
+  assert.equal(keyItems(s.sections.tech.bear)[0].code, "X_LEVEL_ABOVE_NEAR");
+  // 標頭仍是壓力段那條(rank 5),不被技術段的對應句搶走
+  assert.equal(topOfSide(s, "bear")?.code, "L_DENSE_ABOVE");
+});
+
+test("不變式:壓力段或價格階梯有 ≤3% 的價位,技術段同側一定有對應句;沒有時技術段空欄說明原因", () => {
+  const cases = [
+    nearResistanceStock(),
+    nearResistanceStock({ dense_above: { lo: 122.3, hi: 123.5, share: 0.03 } }),
+    nearResistanceStock({ dense_above: { lo: 116.5, hi: 117.7, share: 0.001 } }),
+    nearResistanceStock({ ma: { "5": 117, "10": 113.4 }, dense_above: null }),
+    nearResistanceStock({ highs: { "20": { p: 119.9, t: "2026-09-20" } }, dense_above: null }),
+    { ...nearResistanceStock(), price_levels: okLevels() } as StockJson,
+  ];
+  for (const data of cases) {
+    const s = summaryOf(data);
+    const v = priceLevelsView(data.price_levels);
+    assert.equal(v.state, "ok");
+    if (v.state !== "ok") continue;
+    for (const [side, rows, code] of [["bear", v.above, "X_LEVEL_ABOVE_NEAR"], ["bull", v.below, "X_LEVEL_BELOW_NEAR"]] as const) {
+      const nearLevels = s.sections.levels[side].some((i) => i.dist != null && isNear(i.dist));
+      const nearLadder = rows.some((r) => isNear(r.dist));
+      const has = s.sections.tech[side].some((i) => i.code === code);
+      assert.equal(has, nearLevels || nearLadder, `${side} ${JSON.stringify(data.price_levels)}`);
+    }
+  }
+  // 遠距(+5.0%)的密集區:技術段空方空欄改說明「上方 3% 內沒有壓力價位」;籌碼段照舊
+  const far = summaryOf(nearResistanceStock({ dense_above: { lo: 122.3, hi: 123.5, share: 0.03 } }));
+  assert.equal(far.sections.tech.bear.length, 0);
+  assert.ok(far.sections.levels.bear.length > 0);
+  assert.equal(emptySideText(far, "tech", "bear"), EMPTY_TECH_WITH_LEVELS.bear);
+  assert.equal(emptySideText(far, "chips", "bear"), EMPTY_SIDE.bear);
+  assert.equal(emptySideText(far, "levels", "bear"), EMPTY_SIDE.bear);
+  // 壓力段也空時不提壓力
+  const none = buildBullBear({ reasons: [], risks: [], technical: null, asOf: LAST });
+  assert.equal(emptySideText(none, "tech", "bear"), EMPTY_SIDE.bear);
+});
+
+test("多方榜不受影響:技術段對應句 rank 3,不進 K_bull/K_bear(rank ≥4)也不觸發排除(rank 5)", () => {
+  for (const data of [nearResistanceStock(), { ...nearResistanceStock(), price_levels: okLevels() } as StockJson]) {
+    const all = deriveAllFacts(data, LAST);
+    const without = all.filter((f) => !f.code.startsWith("X_LEVEL_"));
+    assert.ok(all.length > without.length);
+    const k = (facts: DerivedFact[]) => {
+      const bk = boardKeys(buildBullBear({ reasons: [], risks: [], technical: null, derivedFacts: facts, asOf: LAST }));
+      return { bull: bk.bull.map((i) => i.key), bear: bk.bear.map((i) => i.key), excl: bk.excl.map((i) => i.key) };
+    };
+    assert.deepEqual(k(all), k(without));
+  }
 });

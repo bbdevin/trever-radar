@@ -4,8 +4,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
+import { chartLevels, isNear, priceLevelFacts, priceLevelsView } from "../priceLevels.ts";
 import { LAST, levelSeries, okLevels } from "./fixtures.ts";
-import { levelFacts } from "./levelFacts.ts";
+import { levelFacts, nearLevelFacts } from "./levelFacts.ts";
 
 test("上方壓力:240 日最高(60/120 同價同日合併)、密集區、現價之上成交、缺口、資料內最高", () => {
   const fs = levelFacts(okLevels(), levelSeries(), LAST);
@@ -55,4 +56,49 @@ test("舊 JSON:沒有 price_levels 只剩週/月均線;密集區佔量 <0.5% 不
   assert.ok(fs.every((f) => f.code.startsWith("F1_") && (f.tf === "W" || f.tf === "M")));
   const thin = levelFacts(okLevels({ dense_above: { lo: 1100, hi: 1111, share: 0.002 } }), levelSeries(), LAST);
   assert.ok(!thin.some((f) => f.code === "L_DENSE_ABOVE"));
+});
+
+test("密集區佔量門檻:價格階梯、K 線虛線與事實句同一個 denseZone(佔 <0.5% 三處都不列)", () => {
+  const pl = okLevels({ dense_above: { lo: 1100, hi: 1111, share: 0.002 }, dense_below: { lo: 944, hi: 955, share: 0.001 } });
+  const v = priceLevelsView(pl);
+  assert.equal(v.state, "ok");
+  if (v.state !== "ok") return;
+  assert.ok(![...v.above, ...v.below].some((r) => r.kind === "zone"));
+  assert.ok(!chartLevels(pl).some((l) => l.label === "密集區"));
+  assert.ok(!levelFacts(pl, levelSeries(), LAST).some((f) => f.code.startsWith("L_DENSE")));
+  // 達門檻的照列
+  const ok = priceLevelsView(okLevels());
+  assert.ok(ok.state === "ok" && ok.above.some((r) => r.kind === "zone") && ok.below.some((r) => r.kind === "zone"));
+});
+
+test("isNear:依畫面一位小數判斷(畫面 +3.0% 算接近,+3.1% 不算)", () => {
+  assert.ok(isNear(3.04));
+  assert.ok(isNear(-3.04));
+  assert.ok(!isNear(3.05));
+  assert.ok(isNear(0));
+});
+
+test("nearLevelFacts:壓力段 ≤3% 的價位在技術段日K 併成一句,由近到遠點名 2 個、其餘「等 N 處」;rank 3", () => {
+  const facts = [...priceLevelFacts(okLevels(), LAST, 60), ...levelFacts(okLevels(), levelSeries(), LAST)];
+  const near = nearLevelFacts(facts);
+  const bear = near.find((f) => f.code === "X_LEVEL_ABOVE_NEAR")!;
+  const bull = near.find((f) => f.code === "X_LEVEL_BELOW_NEAR")!;
+  // 上方 ≤3%:20月線 0.0%、缺口 +0.9%、120日線 +1.4%、密集區 +1.4%(20週線 +3.2% 不算)
+  assert.equal(bear.text, "上方 3% 內有壓力價位:20月線 1,085(0.0%)、未回補缺口 1,095–1,240(+0.9%)等 4 處");
+  assert.equal(bull.text, "下方 3% 內有支撐價位:未回補缺口 1,060–1,075(−0.9%)、5週線 1,070(−1.4%)等 4 處");
+  for (const f of near) {
+    assert.equal(f.section, "tech");
+    assert.equal(f.tf, "D");
+    assert.equal(f.rank, 3);
+    assert.equal(f.dist, undefined);
+    assert.equal(f.segments!.map((s) => s.t).join(""), f.text);
+  }
+  assert.ok(bear.segments!.some((s) => s.kind === "price" && s.t === "1,085"));
+  // 每一個壓力段 ≤3% 的價位事實都有短標(否則技術段會漏)
+  for (const f of facts.filter((x) => x.section === "levels" && x.dist != null && isNear(x.dist))) assert.ok(f.level?.length, f.code);
+  // 價格位置落後 → 技術段這句也帶日期
+  const stale = nearLevelFacts([...priceLevelFacts(okLevels(), "2026-10-02", 60), ...levelFacts(okLevels(), levelSeries(), "2026-10-02")]);
+  assert.ok(stale.every((f) => f.date === "10/01"));
+  // 沒有 ≤3% 的價位 → 不產
+  assert.deepEqual(nearLevelFacts(facts.filter((f) => !isNear(f.dist ?? Infinity))), []);
 });

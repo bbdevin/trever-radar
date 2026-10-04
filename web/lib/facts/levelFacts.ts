@@ -3,26 +3,26 @@
  * 週/月均線價位、歷史最高最低、未回補缺口由還原後的 K 棒自算。每列都帶價位與距離 %。
  * 日K 的 F1(均線在上/下)由 priceLevelFacts 產。
  */
-import type { DerivedFact, Tf } from "../bullBear.ts";
+import type { DerivedFact, Seg, Tf } from "../bullBear.ts";
 import type { PriceLevels } from "../types.ts";
-import { extremes, maSideSegs, maSplit } from "../priceLevels.ts";
+import { NEAR_PCT, denseZone, extremes, isNear, maLevelSegs, maSideSegs, maSplit } from "../priceLevels.ts";
 import type { AllSeries } from "./series.ts";
 import { MA_BY_TF } from "./series.ts";
 import { P, PCT, mk, mmdd, share } from "./text.ts";
 
 const pct = (price: number, close: number) => ((price - close) / close) * 100;
-/** ≤3% 視為「接近」:句尾加註,rank 升到 5(標頭優先) */
-const NEAR = 3;
+/** ≤3% 視為「接近」:句尾加註,rank 升級(標頭優先);與技術段 nearLevelFacts 同一門檻 */
+const NEAR = NEAR_PCT;
 /** 缺口:近 120 根、寬度 ≥ 現價 0.5% 才列,每側最多 2 個 */
 const GAP_WINDOW = 120;
 const GAP_MIN = 0.005;
 const GAP_PER_SIDE = 2;
 /** 現價之上/之下成交比例低於 5% 不列(幾乎沒有成交在那一側) */
 const SUPPLY_MIN = 0.05;
-/** 成交最密集區佔量低於 0.5% 不列(那一側幾乎沒有成交,「最密集」沒有意義) */
-const DENSE_MIN = 0.005;
-
 const ymd = (t: string) => `${t.slice(0, 4)}/${t.slice(5, 7)}/${t.slice(8, 10)}`;
+/** 區間價位的短標(DerivedFact.level):「成交最密集區 1,100–1,111」 */
+const rangeLevel = (label: string, z: { lo: number; hi: number }, close: number): Seg[] => [{ t: label }, P(z.lo, close), { t: "–" }, P(z.hi, close)];
+const gapLevel = (g: { lo: number; hi: number }, close: number) => rangeLevel("未回補缺口 ", g, close);
 
 function maFactsFor(series: AllSeries, tf: Exclude<Tf, "D">): DerivedFact[] {
   const S = series[tf];
@@ -36,11 +36,11 @@ function maFactsFor(series: AllSeries, tf: Exclude<Tf, "D">): DerivedFact[] {
   const out: DerivedFact[] = [];
   if (sp.nearBelow) {
     const d = Math.abs(pct(sp.nearBelow.v, close));
-    out.push(mk("F1_MA_BELOW", maSideSegs("below", sp.below, sp.nearBelow, close, unit), { tf, rank: d <= NEAR ? 3 : 1, dist: d }));
+    out.push(mk("F1_MA_BELOW", maSideSegs("below", sp.below, sp.nearBelow, close, unit), { tf, rank: isNear(d) ? 3 : 1, dist: d, level: maLevelSegs(sp.nearBelow, close, unit) }));
   }
   if (sp.nearAbove) {
     const d = Math.abs(pct(sp.nearAbove.v, close));
-    out.push(mk("F1_MA_ABOVE", maSideSegs("above", sp.above, sp.nearAbove, close, unit), { tf, rank: d <= NEAR ? 3 : 1, dist: d }));
+    out.push(mk("F1_MA_ABOVE", maSideSegs("above", sp.above, sp.nearAbove, close, unit), { tf, rank: isNear(d) ? 3 : 1, dist: d, level: maLevelSegs(sp.nearAbove, close, unit) }));
   }
   return out;
 }
@@ -71,11 +71,11 @@ function gapFacts(series: AllSeries, close: number, date?: string): DerivedFact[
   const near = (a: { lo: number; hi: number }) => Math.abs(pct(a.lo > close ? a.lo : a.hi, close));
   above.sort((a, b) => near(a) - near(b)).slice(0, GAP_PER_SIDE).forEach((g, k) => {
     const d = near(g);
-    out.push(mk("L_GAP_ABOVE", ["未回補缺口 ", P(g.lo, close), "–", P(g.hi, close), `(${mmdd(g.t)})在上方 `, PCT(d)], { rank: d <= NEAR ? 4 : 2, dist: d, variant: String(k), date }));
+    out.push(mk("L_GAP_ABOVE", ["未回補缺口 ", P(g.lo, close), "–", P(g.hi, close), `(${mmdd(g.t)})在上方 `, PCT(d)], { rank: isNear(d) ? 4 : 2, dist: d, variant: String(k), date, level: gapLevel(g, close) }));
   });
   below.sort((a, b) => near(a) - near(b)).slice(0, GAP_PER_SIDE).forEach((g, k) => {
     const d = near(g);
-    out.push(mk("L_GAP_BELOW", ["未回補缺口 ", P(g.lo, close), "–", P(g.hi, close), `(${mmdd(g.t)})在下方 `, PCT(-d)], { rank: d <= NEAR ? 4 : 2, dist: d, variant: String(k), date }));
+    out.push(mk("L_GAP_BELOW", ["未回補缺口 ", P(g.lo, close), "–", P(g.hi, close), `(${mmdd(g.t)})在下方 `, PCT(-d)], { rank: isNear(d) ? 4 : 2, dist: d, variant: String(k), date, level: gapLevel(g, close) }));
   });
   return out;
 }
@@ -92,13 +92,13 @@ export function levelFacts(pl: PriceLevels | null | undefined, series: AllSeries
   const lo = extremes(pl.lows, pl.as_of).rows;
   for (const { n, pt } of hi) {
     const d = pct(pt.p, close);
-    out.push(mk("L_HIGH_ABOVE", [`${n}日最高 `, P(pt.p, close), `(${mmdd(pt.t)})在上方 `, PCT(d), d <= NEAR ? ",接近" : ""],
-      { rank: d <= NEAR ? 5 : 2, dist: Math.abs(d), magnitude: d <= NEAR ? NEAR - d : undefined, variant: n, date }));
+    out.push(mk("L_HIGH_ABOVE", [`${n}日最高 `, P(pt.p, close), `(${mmdd(pt.t)})在上方 `, PCT(d), isNear(d) ? ",接近" : ""],
+      { rank: isNear(d) ? 5 : 2, dist: Math.abs(d), magnitude: isNear(d) ? Math.max(0, NEAR - d) : undefined, variant: n, date, level: [{ t: `${n}日最高 ` }, P(pt.p, close)] }));
   }
   for (const { n, pt } of lo) {
     const d = pct(pt.p, close);
-    out.push(mk("L_LOW_BELOW", [`${n}日最低 `, P(pt.p, close), `(${mmdd(pt.t)})在下方 `, PCT(d), -d <= NEAR ? ",接近" : ""],
-      { rank: -d <= NEAR ? 5 : 2, dist: Math.abs(d), variant: n, date }));
+    out.push(mk("L_LOW_BELOW", [`${n}日最低 `, P(pt.p, close), `(${mmdd(pt.t)})在下方 `, PCT(d), isNear(-d) ? ",接近" : ""],
+      { rank: isNear(-d) ? 5 : 2, dist: Math.abs(d), variant: n, date, level: [{ t: `${n}日最低 ` }, P(pt.p, close)] }));
   }
 
   // 資料內最高/最低(全部 K 棒;與 240 日同價則不另列)
@@ -116,26 +116,28 @@ export function levelFacts(pl: PriceLevels | null | undefined, series: AllSeries
     const last = A.c.length - 1;
     if (hiI !== last && A.h[hiI] > close && (h240 == null || Math.abs(A.h[hiI] / h240 - 1) > 0.001)) {
       const d = pct(A.h[hiI], close);
-      out.push(mk("L_ALLTIME_HIGH", [`近 ${years} 年資料最高 `, P(A.h[hiI], close), `(${ymd(A.t[hiI])})在上方 `, PCT(d)], { rank: 1, dist: Math.abs(d), date }));
+      out.push(mk("L_ALLTIME_HIGH", [`近 ${years} 年資料最高 `, P(A.h[hiI], close), `(${ymd(A.t[hiI])})在上方 `, PCT(d)],
+        { rank: 1, dist: Math.abs(d), date, level: [{ t: `近 ${years} 年資料最高 ` }, P(A.h[hiI], close)] }));
     }
     if (loI !== last && A.l[loI] < close && (l240 == null || Math.abs(A.l[loI] / l240 - 1) > 0.001)) {
       const d = pct(A.l[loI], close);
-      out.push(mk("L_ALLTIME_LOW", [`近 ${years} 年資料最低 `, P(A.l[loI], close), `(${ymd(A.t[loI])})在下方 `, PCT(d)], { rank: 1, dist: Math.abs(d), date }));
+      out.push(mk("L_ALLTIME_LOW", [`近 ${years} 年資料最低 `, P(A.l[loI], close), `(${ymd(A.t[loI])})在下方 `, PCT(d)],
+        { rank: 1, dist: Math.abs(d), date, level: [{ t: `近 ${years} 年資料最低 ` }, P(A.l[loI], close)] }));
     }
   }
 
-  // 成交最密集區
-  if (pl.dense_above && pl.dense_above.share >= DENSE_MIN) {
-    const z = pl.dense_above;
-    const d = pct(z.lo, close);
-    out.push(mk("L_DENSE_ABOVE", ["成交最密集區 ", P(z.lo, close), "–", P(z.hi, close), " 在上方 ", PCT(d), `(佔近120日成交 ${share(z.share, z.share < 0.1 ? 1 : 0)})`, d <= NEAR ? ",接近" : ""],
-      { rank: d <= NEAR ? 5 : 2, dist: Math.abs(d), date }));
+  // 成交最密集區(佔量門檻與價格階梯同一個 denseZone)
+  const za = denseZone(pl, "above");
+  if (za) {
+    const d = pct(za.lo, close);
+    out.push(mk("L_DENSE_ABOVE", ["成交最密集區 ", P(za.lo, close), "–", P(za.hi, close), " 在上方 ", PCT(d), `(佔近120日成交 ${share(za.share, za.share < 0.1 ? 1 : 0)})`, isNear(d) ? ",接近" : ""],
+      { rank: isNear(d) ? 5 : 2, dist: Math.abs(d), date, level: rangeLevel("成交最密集區 ", za, close) }));
   }
-  if (pl.dense_below && pl.dense_below.share >= DENSE_MIN) {
-    const z = pl.dense_below;
-    const d = pct(z.hi, close);
-    out.push(mk("L_DENSE_BELOW", ["成交最密集區 ", P(z.lo, close), "–", P(z.hi, close), " 在下方 ", PCT(d), `(佔近120日成交 ${share(z.share, z.share < 0.1 ? 1 : 0)})`, -d <= NEAR ? ",接近" : ""],
-      { rank: -d <= NEAR ? 5 : 2, dist: Math.abs(d), date }));
+  const zb = denseZone(pl, "below");
+  if (zb) {
+    const d = pct(zb.hi, close);
+    out.push(mk("L_DENSE_BELOW", ["成交最密集區 ", P(zb.lo, close), "–", P(zb.hi, close), " 在下方 ", PCT(d), `(佔近120日成交 ${share(zb.share, zb.share < 0.1 ? 1 : 0)})`, isNear(-d) ? ",接近" : ""],
+      { rank: isNear(-d) ? 5 : 2, dist: Math.abs(d), date, level: rangeLevel("成交最密集區 ", zb, close) }));
   }
 
   // 現價之上/之下成交比例:兩側都列(使用者要「全列」);達門檻(之上 ≥30%、之下 ≥70%)者 rank 較高
@@ -155,6 +157,35 @@ export function levelFacts(pl: PriceLevels | null | undefined, series: AllSeries
     const txt = `(區間 ${Math.round(pos * 100)}%)`;
     if (pos >= 0.9) out.push(mk("L_RANGE_POS_TOP", ["收盤位於近60日高低區間上緣", txt], { rank: 2, mirrors: ["T3_BOX_TOP"], date }));
     else if (pos <= 0.1) out.push(mk("L_RANGE_POS_BOTTOM", ["收盤位於近60日高低區間下緣", txt], { rank: 2, date }));
+  }
+  return out;
+}
+
+/** 技術段「3% 內壓力/支撐價位」句最多點名幾個價位,其餘寫「等 N 處」 */
+const NEAR_NAMED = 2;
+/**
+ * 技術段的近距壓力/支撐(docs/46 §6.9):從壓力段**已產出的價位事實**(priceLevelFacts + levelFacts,帶 level 短標者)
+ * 挑距現價 ≤ NEAR_PCT 的,上方併成一句空方、下方併成一句多方,放技術段日K。
+ * 與壓力段同一份事實、同一個門檻:壓力分析標「接近」的價位,技術分析的多空欄一定也看得到。
+ * rank 固定 3:不進多方榜的 K_bull/K_bear(rank ≥4)與排除條件(rank 5),也不搶標頭(同價位的壓力段事實 rank 更高或段序在前)。
+ */
+export function nearLevelFacts(facts: readonly DerivedFact[]): DerivedFact[] {
+  const out: DerivedFact[] = [];
+  for (const side of ["bear", "bull"] as const) {
+    const near = facts
+      .filter((f) => f.section === "levels" && f.side === side && f.level && f.dist != null && isNear(f.dist))
+      .map((f, i) => ({ f, i }))
+      .sort((a, b) => a.f.dist! - b.f.dist! || a.i - b.i)
+      .map(({ f }) => f);
+    if (!near.length) continue;
+    const segs: (Seg | string)[] = [side === "bear" ? `上方 ${NEAR}% 內有壓力價位:` : `下方 ${NEAR}% 內有支撐價位:`];
+    near.slice(0, NEAR_NAMED).forEach((f, k) => {
+      if (k) segs.push("、");
+      segs.push(...f.level!, "(", PCT(side === "bear" ? f.dist! : -f.dist!), ")");
+    });
+    if (near.length > NEAR_NAMED) segs.push(`等 ${near.length} 處`);
+    const date = near.find((f) => f.date)?.date;
+    out.push(mk(side === "bear" ? "X_LEVEL_ABOVE_NEAR" : "X_LEVEL_BELOW_NEAR", segs, { tf: "D", rank: 3, date }));
   }
   return out;
 }

@@ -38,6 +38,23 @@ const MA_LABEL: Record<(typeof MA_KEYS)[number], string> = {
   "5": "5日均線", "10": "10日均線", "20": "20日均線", "60": "60日均線", "120": "120日均線", "240": "240日均線",
 };
 export const MAX_ROWS_PER_SIDE = 5;
+/**
+ * 距現價 ≤3% 視為「接近」(壓力段句尾加註、rank 升級;技術段另成「3% 內壓力/支撐價位」句)。
+ * 壓力段與技術段共用這一個門檻。
+ */
+export const NEAR_PCT = 3;
+/** 距離(%,正負皆可)是否「接近」:先依畫面的一位小數四捨五入再比,畫面寫 +3.0% 的就算接近,不會一邊寫 3.0% 一邊說 3% 內沒有。 */
+export function isNear(distPct: number): boolean {
+  return Math.round(Math.abs(distPct) * 10) / 10 <= NEAR_PCT;
+}
+/** 成交最密集區佔量低於 0.5% 不列(那一側幾乎沒有成交,「最密集」沒有意義);階梯、K 線虛線、事實句共用 */
+export const DENSE_MIN_SHARE = 0.005;
+
+/** 有意義的成交最密集區(佔量 ≥ DENSE_MIN_SHARE);階梯、K 線虛線、事實句都從這裡取,不各自判斷。 */
+export function denseZone(pl: OkLevels, side: "above" | "below"): PriceLevelZone | null {
+  const z = side === "above" ? pl.dense_above : pl.dense_below;
+  return z && z.share >= DENSE_MIN_SHARE ? z : null;
+}
 
 export type LadderRow = {
   key: string;
@@ -150,6 +167,11 @@ export function maSplit(ma: Partial<Record<string, number | null>>, keys: readon
   return { above, below, nearAbove, nearBelow };
 }
 
+/** 均線價位的短標(DerivedFact.level):「20日線 952」 */
+export function maLevelSegs(near: MaNear, close: number, unit: string): Seg[] {
+  return [{ t: `${near.n}${unit}線 ` }, { t: fmtLevelPrice(near.v, close), kind: "price" }];
+}
+
 /** F1 句:「站上 5/10/20 日線,最接近 20日線 952(−12.2%)」/「60/120 日線在上方,最接近 60日線 1,150(+6.0%)」 */
 export function maSideSegs(side: "above" | "below", keys: readonly string[], near: MaNear, close: number, unit: string): Seg[] {
   const head = side === "below" ? `站上 ${keys.join("/")} ${unit}線` : `${keys.join("/")} ${unit}線在上方`;
@@ -186,9 +208,10 @@ export function priceLevelFacts(
   const date = lastCandleDate && pl.as_of !== lastCandleDate ? mmdd(pl.as_of) : undefined;
   const close = pl.close;
   const out: PriceLevelFact[] = [];
-  const add = (code: PriceFactCode, side: "bull" | "bear", segs: Seg[], rank: number, extra: { mirrors?: string[]; dist?: number } = {}) => {
+  const add = (code: PriceFactCode, side: "bull" | "bear", segs: Seg[], rank: number, extra: { mirrors?: string[]; dist?: number; level?: Seg[] } = {}) => {
     const f: PriceLevelFact = { code, side, ...F_SECTION[code], text: segs.map((s) => s.t).join(""), segments: segs, tf: "D", rank };
     if (extra.dist != null) f.dist = extra.dist;
+    if (extra.level) f.level = extra.level;
     if (date) f.date = date;
     else if (extra.mirrors?.length) f.mirrors = extra.mirrors;
     out.push(f);
@@ -198,11 +221,13 @@ export function priceLevelFacts(
     const mirrors = [...(ma.below.includes("20") ? ["T1_MA20"] : []), ...(ma.below.includes("60") ? ["T1_MA60"] : [])];
     const d = Math.abs(pct(ma.nearBelow.v, close));
     // 下方最接近均線 ≤3% 與上方同級(支撐/壓力對稱)
-    add("F1_MA_BELOW", "bull", maSideSegs("below", ma.below, ma.nearBelow, close, "日"), d <= 3 ? 4 : 2, { mirrors, dist: d });
+    add("F1_MA_BELOW", "bull", maSideSegs("below", ma.below, ma.nearBelow, close, "日"), isNear(d) ? 4 : 2,
+      { mirrors, dist: d, level: maLevelSegs(ma.nearBelow, close, "日") });
   }
   if (ma.nearAbove) {
     const d = Math.abs(pct(ma.nearAbove.v, close));
-    add("F1_MA_ABOVE", "bear", maSideSegs("above", ma.above, ma.nearAbove, close, "日"), d <= 3 ? 4 : 2, { dist: d });
+    add("F1_MA_ABOVE", "bear", maSideSegs("above", ma.above, ma.nearAbove, close, "日"), isNear(d) ? 4 : 2,
+      { dist: d, level: maLevelSegs(ma.nearAbove, close, "日") });
   }
   if (pl.ma_align === "bull") add("F2_BULL", "bull", [{ t: "5/10/20日均線多頭排列" }], 3, { mirrors: ["T1_BULL_MA"] });
   if (pl.ma_align === "bear") add("F2_BEAR", "bear", [{ t: "5/10/20日均線空頭排列" }], 3);
@@ -243,8 +268,10 @@ export function priceLevelsView(pl: PriceLevels | null | undefined): PriceLevels
   const lo = extremes(pl.lows, pl.as_of);
   for (const { n, pt } of hi.rows) above.push({ key: `high-${n}`, kind: "high", side: "above", label: `${n}日最高`, date: mmdd(pt.t), price: pt.p, dist: pct(pt.p, close) });
   for (const { n, pt } of lo.rows) below.push({ key: `low-${n}`, kind: "low", side: "below", label: `${n}日最低`, date: mmdd(pt.t), price: pt.p, dist: pct(pt.p, close) });
-  if (pl.dense_above) above.push(zoneRow(pl.dense_above, "above", close));
-  if (pl.dense_below) below.push(zoneRow(pl.dense_below, "below", close));
+  const za = denseZone(pl, "above");
+  const zb = denseZone(pl, "below");
+  if (za) above.push(zoneRow(za, "above", close));
+  if (zb) below.push(zoneRow(zb, "below", close));
 
   return {
     state: "ok",
@@ -315,8 +342,10 @@ export function chartLevels(pl: PriceLevels | null | undefined, candles: readonl
   };
   const hi = extremes(pl.highs, pl.as_of).rows.map(({ n, pt }) => ({ price: toRaw(pt.p, pt.t), adj: pt.p, label: `${n}日高`, side: "above" as const }));
   const lo = extremes(pl.lows, pl.as_of).rows.map(({ n, pt }) => ({ price: toRaw(pt.p, pt.t), adj: pt.p, label: `${n}日低`, side: "below" as const }));
-  const za = pl.dense_above ? [{ price: (pl.dense_above.lo + pl.dense_above.hi) / 2, adj: pl.dense_above.lo, label: "密集區", side: "above" as const }] : [];
-  const zb = pl.dense_below ? [{ price: (pl.dense_below.lo + pl.dense_below.hi) / 2, adj: pl.dense_below.hi, label: "密集區", side: "below" as const }] : [];
+  const dza = denseZone(pl, "above");
+  const dzb = denseZone(pl, "below");
+  const za = dza ? [{ price: (dza.lo + dza.hi) / 2, adj: dza.lo, label: "密集區", side: "above" as const }] : [];
+  const zb = dzb ? [{ price: (dzb.lo + dzb.hi) / 2, adj: dzb.hi, label: "密集區", side: "below" as const }] : [];
   const near = (xs: { price: number; adj: number; label: string; side: "above" | "below" }[]) =>
     xs.sort((a, b) => Math.abs(a.adj - close) - Math.abs(b.adj - close) || a.label.localeCompare(b.label)).slice(0, perSide);
   return [...near([...hi, ...za]), ...near([...lo, ...zb])].map(({ price, label, side }) => ({ price, label, side }));

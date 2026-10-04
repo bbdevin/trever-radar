@@ -91,7 +91,7 @@ P2:期貨背景列;F9–F11。
 ### 6.2 契約(`web/lib/bullBear.ts`)
 `BullBearItem` 加 `section`、`segments?`、`tf?`、`dataDate?`、`rank`(1–5)、`magnitude?`、`dist?`;`BullBearSummary.sections`。`buildBullBear({..., derivedFacts})`;`SECTION_BY_SOURCE`(tech/strategy→技術、price/levels→壓力、其餘→籌碼);Source 加 `holders`、`levels`。分類調整:R_HOT5/R_HOT10 來源 price→tech(技術段日K)、S11→inst、S12→chips、S13→margin;F1_FUTURES_VOLUME_60D_HIGH、R_FUTURES_VOLUME_NO_DIRECTION 進表(背景/期貨)。去重:①後端 code 只一次 ②前端事實(無 date/dataDate)的 mirrors 取代同方向後端 code,含風險與口袋 ③`YIELD_TO_BACKEND`:R_HOT5/10→X_CHG5_UP、R_GAP_FADE→X_GAP_UP_TODAY、R_SHOOTING→X_BIG_BLACK ④事實鍵 code+tf+variant 只一次。排序:段內先分組,再 rank↓ → magnitude↓ → points↓ → 原順序;壓力段距離↑。`topOfSide`:rank → magnitude → 段序(壓力距離 ≤3% → 籌碼 → 技術 → 其餘壓力)→ 來源序。
 
-### 6.3 事實目錄(`web/lib/facts/catalogue.ts`,104 個 code;產生器 `techFacts`/`levelFacts`/`instFacts`/`marginFacts`/`marginFlowFacts`(§7)/`branchFacts`/`holdersFacts`/`otherFacts`,彙整 `facts/index.ts deriveAllFacts`)
+### 6.3 事實目錄(`web/lib/facts/catalogue.ts`,104 個 code,§6.9 加 X_LEVEL_ABOVE/BELOW_NEAR;產生器 `techFacts`/`levelFacts`/`instFacts`/`marginFacts`/`marginFlowFacts`(§7)/`branchFacts`/`holdersFacts`/`otherFacts`,彙整 `facts/index.ts deriveAllFacts`)
 | 段/來源 | P0 | P1 | P2 |
 |---|---|---|---|
 | 技術(日K F2/F3/F4/F5/F8 由 `priceLevelFacts`) | F2_BULL/BEAR、X_ALIGN_BULL/BEAR(W/M)、X_MA_CROSS_UP/DOWN、X_MACD_CROSS_UP/DOWN、X_KD_GOLDEN_LOW/X_KD_DEATH_HIGH、F8_RSI_OK/LOW、X_VOL_SURGE_UP/DOWN、F5_UP/DOWN、F4_NEW_HIGH/LOW、F3_HIGH/LOW_TODAY、X_UP/DOWN_STREAK、X_CHG1_UP/DOWN、X_CHG5_UP/DOWN | X_MA20_SLOPE_UP/DOWN、X_MA60_SLOPE_UP/DOWN、X_MACD_STATE_POS/NEG、X_KD_OVER80、X_GAP_UP/DOWN_TODAY、X_BIG_BLACK(週/月版 F4/F5/F8 亦屬 P1) | X_VOL_DRY |
@@ -147,6 +147,14 @@ P2:期貨背景列;F9–F11。
 - **持股**:沒被買賣句點名的強分點,在區間損益估算有持股 ≥50 張 → 帳面為正:`C_SMART_HOLDING`(多方,rank 3)「…仍有持股 800 張,帳面為正(估算)」;帳面為負:`C_SMART_HOLDING_NEG`(背景,rank 2,2026-10-04 使用者:套牢中仍持股不是多方證據),同句型。各自一家一句、最多 2 家。這些分點不再算進 `C_PNL_GAINERS/LOSERS_HOLDING` 家數,有排除時家數句首加「另有」。
 - **去重**:`C_TRACKED_SELL` 已點名的今日賣超分點不再出現在 `C_SMART_SELL`。
 - `branch_pctile_counts` 由 `STOCK_KEYS_NOT_FACTS` 移到 `STOCK_KEYS_USED`(原註記「只呈現次數,不得做成判定」:這裡只點名排行前段分點的買賣超事實並附分位佔比,不做評分與判定)。
+
+### 6.9 技術段與壓力分析一致(2026-10-04 使用者:「技術分析有時候會沒有空方理由 但是在壓力分析又有 這樣好奇怪」)
+- **原因**:壓力段的價位事實(F1 均線、N 日高低、密集區、缺口)只進 `levels` 段;技術段沒有任何來源會提到上方壓力。本地 967 檔(07/06 資料 + price_levels)有 109 檔技術段空方欄空白、但同卡的上方壓力有列(1342 八貫:收盤 116.5 = 上方密集區下緣 0.0%,rank 5「接近」);下方支撐/多方對稱 40 檔。另有 21 檔價格階梯列出佔量 <0.5% 的「成交最密集區 佔 0%」,事實句卻因門檻不列(階梯與事實兩套判斷)。
+- **同一份來源**:壓力段價位事實帶不上畫面的短標 `level`(「20日線 952」「成交最密集區 116.5–117.7」)。`levelFacts.nearLevelFacts` 從**已產出的壓力段事實**挑距離 ≤3% 者(`priceLevels.isNear`,依畫面一位小數四捨五入,畫面寫 +3.0% 即算接近),上方併成一句 `X_LEVEL_ABOVE_NEAR`(技術段空方日K)「上方 3% 內有壓力價位:成交最密集區 116.5–117.7(0.0%)」、下方 `X_LEVEL_BELOW_NEAR`(多方)「下方 3% 內有支撐價位:…」;由近到遠點名 2 個,其餘「等 N 處」;價格位置落後時帶日期。不另算門檻,壓力段標「接近」的價位技術段一定看得到。
+- **rank 3**:不進多方榜 K_bull/K_bear(rank ≥4)與排除條件(rank 5),docs/48 v1 選股不變;也不搶標頭(同價位的壓力段事實 rank 4–5 或段序在前)。技術段只有這一句時它就是該欄重點。
+- **密集區門檻統一**:`priceLevels.denseZone`(佔量 ≥0.5%)供價格階梯、K 線虛線與事實句共用,「佔 0%」空殼三處都不列。
+- **空欄說明**:技術段某側沒有事實、但壓力分析同側有價位(都在 3% 外)時,空欄改寫「目前無明顯空方技術訊號(上方 3% 內沒有壓力價位)」/多方對稱(`bullBear.emptySideText`);其餘照舊「目前沒有符合的…事實」。
+- **多方榜核對**(本地 830 檔合成母體,改前/改後各跑 `build-bull-board.mjs`):母體、入榜 74 檔、排序與 log 的 universe/entries/excluded 完全相同;卡片上 `counts.tech` 多 1 的有 32 檔(新句計入技術段計數),2 檔卡片空方句由「最接近均線」換成 +3.0% 的密集區(`isNear` 四捨五入後升為接近)。
 
 ### 6.5 測試
 `web/lib/bullBear.test.ts`(完整性 fixture:240 日高 +46.9%、上方密集區、現價之上成交、外資連 5 日賣超取代 R_FOREIGN_SELL5;讓位;鏡像含口袋;標頭 rank;分組;每 code 恰一次)、`web/lib/facts/{series,techFacts,levelFacts,holdersFacts,chipsFacts,catalogue}.test.ts`(重取樣:部分週/週中與週一假日/跨年週/月桶/分割前後還原相等/零量;目錄覆蓋率=每個 code 都有 fixture 產生;segments 接起來等於 text;mirrors ⊆ 目錄;禁用詞)。`pipeline/tests/test_bull_bear_codes.py`:SOURCES 加 `futures_volume_anomaly.py`;json_export 個股 payload 頂層鍵 ⊆ `STOCK_KEYS_USED ∪ STOCK_KEYS_NOT_FACTS`(且不得列 payload 沒有的鍵)。
