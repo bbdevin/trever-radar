@@ -13,7 +13,7 @@
    - **資料永不快取**:`dataFetch` 一律 `cache: "no-store"`,同一檔看第二次、隔天再看都整包重抓;個股 JSON 大型股 57%(正式)是 K 線全歷史,`branch_history` 固定約 290 KB raw。自選頁每檔抓整包只為最後兩根 K 線。
 3. **VPS 批次一個交易日 DB 鎖忙 5.5–7 小時**:①分點爬蟲 95–165 分(網路禮貌率,不是 I/O)②`export-json` 每次 14–34 分 × 6 輪 ≈ **2 小時**③`compute-branch-stats` 12 分④夜間分位 10–15 分⑤deploy 10 分。
 4. **export 慢的主因 = 分點表儲存佈局**:逐檔 `branch_history` 要回表拿 `buy_lots`,40 檔樣本 11.2 s → 全市場 ≈ **11 分/輪**,佔 export 一半以上。**WITHOUT ROWID 轉換直接解這段**(估 1–2 分)。
-5. **磁碟**:`radar.db` 實為 **9.03 GB**(不是 5.5),磁碟剩 3.4 GB;分點表家族 6.13 GB(68%,PK 索引 42% 是頁分裂空洞),`daily_prices` 1.49 GB。`docs/29` 的「`indicators_daily` 52%」已過時(現 68 MB)。轉換後估 **6.0–6.5 GB**,但每天仍長約 14 MB,**12–15 個月後再撞牆**,「PC 來回壓實」要變年度例行,或由使用者決定權證分點列保留天數。
+5. **磁碟**:`radar.db` 實為 **9.03 GB**(不是 5.5),磁碟剩 3.4 GB;分點表家族 6.13 GB(68%,PK 索引 42% 是頁分裂空洞),`daily_prices` 1.49 GB。`docs/29` 的「`indicators_daily` 52%」已過時(現 68 MB)。轉換後估 **6.0–6.5 GB**,但每天仍長約 14 MB,**12–15 個月後再撞牆**,「PC 來回壓實」要變年度例行,或由使用者決定權證分點列保留天數。**2026-10-04 已定案**(§6.4):權證分點列保留 150 個交易日,與 `warrant_daily` 同一條線;個股/ETF 列永久保留。過期列刪除後頁面進 freelist 重用,2027-02 消化完積壓後每天淨成長約 **6–7 MB**(只剩個股列)。
 
 ## 1. 分期總表
 
@@ -95,4 +95,4 @@ stocks/chips/{id}.json      branch_history、branch_pnl_est、branch_pctile_coun
 1. ✅ D-P0 維護窗:**2026-10-10(週六)**,前提是工具與 `docs/43` 完成、PC 試跑通過。
 2. ✅ `daily_prices` 同窗轉換(基準不過就自動剔除)。
 3. ✅ W-P0 前端三項:今晚開工,**驗證通過後 00:00 之後才推上線**。
-4. 待決:權證分點列保留天數(資料刪除,不決定則 12–15 個月後再壓實一次)。
+4. ✅ **權證分點列保留天數(2026-10-04 Planner 定案)**:`branch_trades_raw` 的 6 碼列保留 **150 個交易日**,與 `warrant_daily` **共用同一個 `war_cutoff`**(嚴格 `<` 刪,邊界日保留);4 碼個股/ETF 列**永久保留**。實作於 `pipeline/radar/prune.py`(`radar prune --warrant-branches 150 --max-dates 10 [--dry-run]`),每輪由新到舊最多 10 個過期日、一日一交易、連續 3 個空日即停,不做一次性補刪、不 VACUUM(freelist 重用)。只在新版面(有 `ix_branch_trades_raw_date_cover`)啟用,舊版面跳過。每日 17:40 那輪 `daily-branches.sh` 原本就跑 `radar prune`,排程不變。效果:2027-02 起每天淨成長約 6–7 MB(原 ~14 MB)。詳見 `docs/29` §2.4。

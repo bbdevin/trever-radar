@@ -2,6 +2,12 @@
 
 > 單一進度真相。每完成一個里程碑就更新本檔。規格細節看各編號文件,別寫在這裡。
 
+## 2026-10-04 權證分點列保留 150 交易日(程式完成,待 10-07 合併)
+
+- Planner 定案(`docs/44` §6.4、`docs/29` §2.4):`branch_trades_raw` 6 碼(權證)列保留 150 個交易日,與 `warrant_daily` **共用同一個 `war_cutoff`**;4 碼個股/ETF 列永久保留。`radar prune` 新增 `--warrant-branches 150`(0 關閉)、`--max-dates 10`、`--dry-run`;由新到舊每輪最多 10 日、一日一交易、連續 3 空日即停,每刪一日寫 `import_logs(dataset='warrant_branch_prune')`;不補刪、不 VACUUM。只在新版面(有 `ix_branch_trades_raw_date_cover`)啟用。排程不變(17:40 那輪本來就跑 prune)。
+- **10-07 合併**(等換檔穩定);合併前使用者先跑 `docker run --rm -v ~/trever-radar/data:/app/data radar-pipeline python -m radar prune --dry-run`,預期 2026-01/02 約 4.5k 列可刪。
+- 測試:`pipeline/tests/test_prune_warrant_branches.py` 8 項;pipeline 全套 1280 passed。
+
 ## 2026-10-04 網站 W-P0 上線:登入單例、站內換頁、靜態快取、右滑提示
 
 - **登入狀態單例**(`web/lib/useSession.ts` `SessionProvider`):首頁 `app_profiles` 請求 14(正式 ~90)→ 1。profile 綁 user id(換帳號時不沿用前一人的核准);分頁回前景／token 更新時背景重查(不閃閘門),撤銷/核准切回分頁即生效;背景重查遇連線錯誤保留上次確定結果(資料仍由 Worker 擋)。
