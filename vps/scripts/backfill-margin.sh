@@ -47,6 +47,7 @@ sync_code
 echo "backfill-margin --days $DAYS"
 radar backfill-margin --days "$DAYS" --sleep 0.4
 radar export-json
+build_bull_board
 deploy_data
 
 date -Iseconds > "$DONE_FLAG"

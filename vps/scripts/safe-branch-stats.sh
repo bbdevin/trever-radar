@@ -319,6 +319,8 @@ if [ "$PUBLISH_CHANGED" = "0" ]; then
   echo "skip export-json：${BRANCH_IMPORT_DATE} 那輪已上線（標記 ${MARKER_AT}），今晚帳本與分位計數都沒有新結果"
 elif [ "${SKIP_EXPORT:-0}" != "1" ]; then
   run_step "export-json" radar export-json
+  # 多方榜(docs/48)跟著匯出走:沒匯出就不建;warn-and-continue,失敗不擋下面的 deploy。
+  build_bull_board
 fi
 
 if [ "$BRANCH_STATUS" = "error" ]; then

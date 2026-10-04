@@ -29,6 +29,7 @@ radar compute-scores
 radar compute-performance
 radar compute-branch-stats
 radar export-json
+build_bull_board
 deploy_data
 
 notify_ok "資料追補完成，接著做週備份快照"

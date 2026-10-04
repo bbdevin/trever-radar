@@ -39,6 +39,7 @@ sync_code
 echo "import-directors"
 radar import-directors
 radar export-json
+build_bull_board
 deploy_data
 
 rm -f "$FLAG"

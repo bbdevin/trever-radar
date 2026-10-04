@@ -25,7 +25,8 @@
 - `bull_board.json`:`{version:"bull-board-v1", data_date, generated_at, radar_generated_at, log_from, universe, qualified, min_bull_key:3, inputs:{insti:{date,stale}, branch:{…}, margin:{…}, holders_week}, entries:[{id,name,market,industry,close,chg_pct,turnover,final,state,bull_key_n,bear_key_n, bull:[{code,source,section,text,segments}]×≤3, bear:{code,source,section,risk,text,segments,date}|null, counts:{tech:{bull,bear},chips:{…},levels:{…}}}]}`。**不輸出** `rank`/`magnitude`/`score`/`position`(形狀鎖在 `bullBoard.test.ts`)。entries 的陣列順序就是 §1 的排序,畫面不顯示第 N 名。
 - **三態**:檔不存在/404 = 沒算過(「這一版還沒有多方榜…」);`qualified 0` 且 `entries []` = 算過、沒人入榜;非空 = 名單。不得把前兩者塌成同一句。
 - **紀錄行**(`bull_board_log/*.jsonl`,一次建置一行):`{version, data_date, generated_at, radar_generated_at, universe, qualified, universe_ids:[…], entries:[{id,bull_key_n,bear_key_n,bull_codes:[…]}], excluded:[{id,bull_key_n,codes:[…]}], inputs}`。`excluded` = `|K_bull| ≥ 3` 但被 E 排除者。這是 §2 的唯一資料來源;建置器**只追加,不改寫**。
-- 建置器失敗**不得擋 deploy**(VPS 以 warn-and-continue 接;接線另案)。
+- 建置器失敗**不得擋 deploy**(VPS 以 warn-and-continue 接)。
+- **VPS 接線(2026-10-04)**:`vps/scripts/lib.sh build_bull_board` 在主機上跑 `timeout ${BULL_BOARD_TIMEOUT_SECS:-600}s node --experimental-strip-types --no-warnings web/scripts/build-bull-board.mjs --data $REPO/web/public/data --log $REPO/data/bull_board_log`(VPS Node 22.23 實測 2,418 檔 33.5 s),log 一行 `step bull-board start … / done rc= elapsed=`;失敗/逾時只 `notify_warn`、永遠 return 0,首頁沿用上一版。每一支 export-json → deploy_data 的腳本都在 export-json **緊後**、deploy_data 之前裸呼叫(daily-market/tpex-quotes/insti/branches 兩模式/margin、safe-branch-stats、mid-backfill-publish、weekly-tdcc、monthly-directors、manual-catchup、backfill-margin、backfill-tdcc);沒匯出(`publish skipped: no change`)的輪就不建。`data/bull_board_log/` 列入 `.gitignore`。鎖在 `pipeline/tests/test_bull_board_vps_wiring.py`。
 
 ## 2. 名詞(事前登記)
 

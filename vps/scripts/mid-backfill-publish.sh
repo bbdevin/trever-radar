@@ -119,6 +119,7 @@ fi
 
 echo "export-json + deploy"
 radar export-json
+build_bull_board
 deploy_data
 
 {

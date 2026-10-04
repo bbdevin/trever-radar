@@ -60,6 +60,7 @@ run_step_or_fail "aggregate-warrants" radar aggregate-warrants --date "$(taipei_
 run_step_or_fail "compute-indicators" radar compute-indicators --all --days 5
 run_step_or_fail "compute-scores" radar compute-scores
 run_step_or_fail "export-json" radar export-json
+build_bull_board
 run_step_or_fail "deploy" deploy_data
 notify_ok "收盤行情已更新並上線（上市日K／指標／分數）"
 refdata_catchup

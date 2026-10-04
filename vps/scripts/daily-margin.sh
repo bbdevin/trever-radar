@@ -131,6 +131,7 @@ fi
 run_step_or_fail "compute-scores" radar compute-scores
 run_step_or_fail "compute-performance" radar compute-performance
 run_step_or_fail "export-json" radar export-json
+build_bull_board
 run_step_or_fail "deploy" deploy_data
 
 MARGIN_META2="$(docker run --rm \

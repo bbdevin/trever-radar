@@ -51,5 +51,6 @@ run_step_or_fail "aggregate-warrants" radar aggregate-warrants --date "$(taipei_
 run_step_or_fail "compute-indicators" radar compute-indicators --all --days 5
 run_step_or_fail "compute-scores" radar compute-scores
 run_step_or_fail "export-json" radar export-json
+build_bull_board
 run_step_or_fail "deploy" deploy_data
 notify_ok "上櫃日K已補齊並上線"

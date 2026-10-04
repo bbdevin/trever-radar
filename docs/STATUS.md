@@ -2,12 +2,12 @@
 
 > 單一進度真相。每完成一個里程碑就更新本檔。規格細節看各編號文件,別寫在這裡。
 
-## 2026-10-04 首頁「多方榜」取代「綜合」分頁(程式完成;VPS 接線待做)
+## 2026-10-04 首頁「多方榜」取代「綜合」分頁(程式完成;VPS 接線完成、待上 VPS)
 
 - **規則凍結＋事前登記** `docs/48`(`bull-board-v1`,commit 早於程式):母體 = 有評分且最後 K 棒 = 資料日;入榜 = 技術/籌碼段 rank ≥4、非滯後的多方 ≥3 條,且無 rank 5 空方事件;排序條數 → 來源數 → 空方重點少 → 金額 → 代號;上限 40、不湊數;payload 無名次/rank/分數。
 - **程式**:個股頁多空組裝抽成 `web/lib/bullBearFromStock.ts summaryFromStockJson`(個股頁與建置器同一次呼叫;口袋舊字樣轉場搬到 `web/lib/pocketText.ts`)、純函式 `web/lib/bullBoard.ts`、建置器 `web/scripts/build-bull-board.mjs`(Node `--experimental-strip-types` 直接跑 TS → `bull_board.json` 原子寫 + `bull_board_log/YYYY-MM.jsonl` 追加並複製到 `web/public/data/bull_board_log/`)、`BullBoardCard`/`BullBoardList`、共用 `FactLine`(多空分頁也用)。首頁分頁 `score` → `board`(預設,`?tab=score` 落回預設);`web/lib/scoreList.ts` 刪除。radar.json `lists.score`/`score_list_meta` 契約不動(`test_score_list_contract.py` 照過)。
 - **三態**:檔不存在 = 「這一版還沒有多方榜」;qualified 0 = 「今日檢視 N 檔,沒有…」;另有「停在上一版」「法人、分點尚未到齊」兩種提示。
-- **待做(orchestrator 另行驗證後接)**:VPS `lib.sh build_bull_board` + 各 daily 腳本 export-json 後、deploy_data 前 `run_step` warn-and-continue。本機舊 fixture 實測 968 檔 ≈4.0 s(≈4.1 ms/檔,幾乎都是 JSON.parse),VPS 2,400 檔估數十秒,需實測。battery(`bull_board_battery.py`)是 ≥60 市場日後的 P3。
+- **VPS 接線(完成)**:`lib.sh build_bull_board`(`timeout 600` + `step bull-board … elapsed=` log;失敗/逾時只 `notify_warn`、永遠 return 0)接在 12 支 export-json → deploy_data 腳本的 export-json 緊後、deploy 之前(五支日更含 branches 兩模式、safe-branch-stats、mid-backfill-publish、weekly-tdcc、monthly-directors、manual-catchup、backfill-margin/tdcc);沒匯出就不建。`data/bull_board_log/` 進 `.gitignore`。VPS 實測 2,418 檔 33.5 s。測試 `test_bull_board_vps_wiring.py`(原始碼 + WSL bash 假 node 實跑)。battery(`bull_board_battery.py`)是 ≥60 市場日後的 P3。
 - 驗證:node 265 pass(新增 `bullBoard`/`bullBearFromStock`/`bullBoardBuild` 冒煙)、tsc、build、pytest score_list_contract + label_honesty;parity 72 畫面:個股頁全部逐字相同,首頁只有分頁內容與分頁標籤「綜合→多方榜 N」不同;390 深/淺 + 1280 截圖五態(正常、0 檔、404、停在上一版、未到齊)。
 
 ## 2026-10-04 使用者決定:依 Fable 建議(多方榜、融資共動)

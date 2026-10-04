@@ -35,6 +35,7 @@ sync_code
 echo "import-tdcc"
 radar import-tdcc
 radar export-json
+build_bull_board
 deploy_data
 
 rm -f "$FLAG"

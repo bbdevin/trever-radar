@@ -302,6 +302,8 @@ fi
 run_step_or_fail "compute-scores" radar compute-scores
 run_step_or_fail "compute-performance" radar compute-performance
 run_step_or_fail "export-json" radar export-json
+# 多方榜(docs/48):兩種模式都走這一段;warn-and-continue,失敗不擋 prune/deploy。
+build_bull_board
 # prune 與其他步驟同一個待遇(high + 中止),理由是**順序**:它排在 deploy_data
 # **之前**,所以 prune 失敗的那一輪根本還沒上線——代價與 compute 失敗完全一樣,
 # 是「今天沒有任何一輪上線」,不是「已經上線了只差收尾」。若哪天把 prune 移到

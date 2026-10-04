@@ -11,6 +11,8 @@ data/*.db-wal
 data/*.gz
 data/spark_day.json
 data/warrant-branch-state-*.json
+# 多方榜紀錄(docs/48 §2 事前登記的唯一資料來源;VPS 追加,不進 git)
+data/bull_board_log/
 # 容器工作目錄是 /app/pipeline,所以 CLI 收到的相對 --state-file 落在這裡
 # (權證分點回補的每日 state 檔),不是 repo 根的 data/。
 pipeline/data/

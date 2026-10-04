@@ -270,6 +270,7 @@ notify_warn() { record \"warn:$1\"; }
 notify_ok() { record \"ok:$1\"; }
 taipei_date() { echo 20260901; }
 deploy_data() { guard_locked deploy; record deploy; }
+build_bull_board() { record bull-board; }
 radar() {
   guard_locked \"radar:$*\"
   record \"radar:$*\"
@@ -399,5 +400,9 @@ ROUND_FAIL_CONSEQUENCE=""
         self.assertTrue(any("export-json" in event for event in events))
         self.assertIn("deploy", events)
         self.assertTrue(any(event.startswith("ok:") for event in events))
+        # 多方榜(docs/48)在 export-json 之後、deploy 之前建置。
+        export = next(i for i, e in enumerate(events) if "export-json" in e)
+        self.assertLess(export, events.index("bull-board"))
+        self.assertLess(events.index("bull-board"), events.index("deploy"))
         # 期貨量異常推播(docs/38 §7.19)在上線之後才送。
         self.assertLess(events.index("deploy"), events.index("futures-digest"))

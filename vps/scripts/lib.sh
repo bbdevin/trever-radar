@@ -327,6 +327,35 @@ deploy_data() {
   return "$rc"
 }
 
+# 首頁「多方榜」(docs/48 §1.1):export-json 之後、deploy_data 之前呼叫。
+# 只讀剛匯出的 web/public/data/*.json(radar.json + stocks/*.json),不開資料庫,
+# 在主機上直接跑 Node(22+,--experimental-strip-types 跑 web/lib 的 TS),不進容器。
+# 產物:web/public/data/bull_board.json(原子寫)、data/bull_board_log/YYYY-MM.jsonl
+# (追加)及其當月副本 web/public/data/bull_board_log/,隨後由 deploy_data 一起上線。
+# 實測 2,418 檔 33.5 s;硬上限 BULL_BOARD_TIMEOUT_SECS(預設 600 s)+30 s kill。
+#
+# 這一步**絕不擋本輪**(warn-and-continue,本函式自己就是那個不中止的 helper):
+#   * 計時 log 走 run_step(同一行 `step bull-board start/done rc= elapsed=`),
+#     包在 if 的測試式裡取碼——set -e 不會中止、ERR trap 也不觸發。
+#   * 失敗(含逾時 124/137、node 不在 PATH 127)只發一則 notify_warn,永遠 return 0;
+#     首頁沿用上一版 bull_board.json(畫面以 data_date 自述是哪一天的名單),
+#     deploy_data 與之後的步驟照跑。
+#   * 呼叫端一律裸呼叫 `build_bull_board`,不可包進 run_step_or_fail(那會讓它
+#     變成中止型步驟)。
+BULL_BOARD_TIMEOUT_SECS="${BULL_BOARD_TIMEOUT_SECS:-600}"
+build_bull_board() {
+  local rc=0
+  if run_step "bull-board" timeout --signal=TERM --kill-after=30s "${BULL_BOARD_TIMEOUT_SECS}s" \
+      node --experimental-strip-types --no-warnings "$REPO/web/scripts/build-bull-board.mjs" \
+      --data "$REPO/web/public/data" --log "$REPO/data/bull_board_log"; then
+    return 0
+  else
+    rc=$?
+  fi
+  notify_warn "多方榜建置失敗（碼 ${rc}），本輪照常上線；首頁多方榜沿用上一版" || true
+  return 0
+}
+
 taipei_date() { TZ=Asia/Taipei date "$@"; }
 
 # ── docs/47 排程優化:輪詢到公布為止、有變動才上線、等鎖不略過 ─────────────────

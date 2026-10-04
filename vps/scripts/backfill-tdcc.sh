@@ -54,6 +54,7 @@ else
   radar backfill-tdcc --from "$FROM" --sleep 0.4
 fi
 radar export-json
+build_bull_board
 deploy_data
 
 date -Iseconds > "$DONE_FLAG"

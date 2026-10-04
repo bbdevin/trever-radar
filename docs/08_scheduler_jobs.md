@@ -37,6 +37,7 @@
 | push `main` | GitHub Actions `deploy.yml` | checkout → npm build → wrangler pages deploy(**只管程式碼/前端,不碰資料**) |
 
 - **共用機制**(`vps/scripts/lib.sh`):`/tmp/radar-db.lock` 互斥。2026-10-04 起五支日更輪與 `weekly-refdata.sh` 用 `acquire_db_lock_wait`(`flock -w`,等不到才 high 通知),輪詢期間每次嘗試之間放鎖(`poll_until`,docs/47);`data-backfill.sh` 等仍是 `flock -n`(搶不到=跳過本輪+ntfy 通知)；開輪的 `git pull --ff-only`+docker build(layer cache)只適用於已獲授權且 working tree clean 的正常狀態。2026-08-31 快照因 VPS 有未追蹤檔，現階段**不得自行 pull**。另有**失敗 ntfy High／日更成功繁中摘要**，非交易日靠 `NoDataError` 安全空跑。
+- **首頁多方榜(2026-10-04,docs/48)**:表中每一輪的「export-json → deploy」之間都多一步 `build_bull_board`(`lib.sh`;主機 Node 跑 `web/scripts/build-bull-board.mjs`,只讀匯出的 JSON,硬上限 600 s,實測 ~34 s)→ `bull_board.json` + `data/bull_board_log/YYYY-MM.jsonl`。失敗只 warn、不擋 deploy;沒匯出的輪(publish skipped)不建。log 行 `step bull-board … elapsed=`。
 - **DB 續存**:VPS `data/radar.db` 為唯一常駐主本,無 Actions cache/release 續存鏈(已隨 WP-B3 退役)。
 - **權證全市場輪（2026-08-28 code-ready、未啟用）**:`daily-warrant-branches-poc.sh` 與 `import-warrant-branch-trades --market all` 將上市＋上櫃、當日有量有額、普通股標的的認購／認售合併成單一池；`--top` 是 fail-closed 安全上限而非截斷。VPS 2026-08-31 最新實測可用空間為 7.0GB，低於 20GB 閘門，且 sleep=1.0 約需 6–8 小時；正式 crontab 保持未加，未寫正式 DB、未 deploy。見 `docs/30`。
 - **舊 GitHub Actions 資料 workflow 已無觸發**:`daily-market/daily-insti/daily-branches/daily-margin/data-backfill.yml` 檔案仍在 repo，Cloudflare Worker trigger 的 cron 已清空。原訂 2026-08-01 後刪除但尚未執行；改 workflow 仍須人工確認，另案處理，勿由本文件更新順手刪除。
