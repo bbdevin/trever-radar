@@ -614,21 +614,118 @@ def test_disconnect_triggers_reconnect_and_resubscribe():
     feed.tick()
     assert feed.connected and len(clients) == 1
     assert sorted(clients[0].subscribed) == ["2330", "2454"]
+    clock.advance(61)
+    feed.tick()  # 連線穩定
+    assert feed.down_since is None
 
     # 正式 log 的情境:SDK 先發 error(Connection to remote host was lost)再發 disconnect
     clients[0].emit("error", ConnectionError("Connection to remote host was lost."))
     clients[0].emit("disconnect", None, None)
     assert not feed.connected
 
-    feed.tick()  # 第一次重試立即進行
+    feed.tick()  # 穩定連線後斷線:第一次重試立即進行
     assert feed.connected and len(clients) == 2
     assert sorted(clients[1].subscribed) == ["2330", "2454"]
     assert feed.reconnects == 1
     assert worker._subscribed_symbols == {"2330", "2454"}
+    assert clients[0].disconnect_calls >= 1  # 舊連線一定被關
 
-    # 舊 client 的遲到 callback 不得把新連線標成斷線、也不得處理其訊息
+    # 舊 client 的遲到 callback 不得把新連線標成斷線
     clients[0].emit("disconnect", 1006, "late")
     assert feed.connected
+
+
+def test_error_only_closes_old_client_before_reconnecting():
+    """websocket-client 在 SDK callback 拋例外時只發 on_error、不關連線:
+    必須主動關舊連線,否則兩條連線並存(重複訂閱)且非 daemon 執行緒讓程序收不了工。"""
+    _monitor("2330")
+    clock, clients = _Clock(), []
+    feed = _make_feed(clock, clients)
+    feed.tick()
+    clock.advance(61)
+    feed.tick()
+
+    clients[0].emit("error", ValueError("exception from callback"))
+    feed.tick()
+
+    assert len(clients) == 2 and feed.connected
+    assert clients[0].disconnect_calls == 1
+    assert clients[1].subscribed == ["2330"]
+    feed.shutdown()
+    assert clients[1].disconnect_calls == 1
+
+
+def test_subscribe_failure_after_connect_goes_back_to_reconnect():
+    """connect() 成功但訂閱送不出去:不得停在 connected=True 且零訂閱(整天失明)。"""
+    _monitor("2330")
+    clock, clients = _Clock(), []
+
+    class _SubFail(_FakeWsClient):
+        def subscribe(self, params):
+            raise ConnectionError("socket is already closed")
+
+    def factory():
+        c = _SubFail() if not clients else _FakeWsClient()
+        clients.append(c)
+        return c
+
+    feed = worker.FeedSupervisor(
+        factory, mono=lambda: clock.mono, wall=lambda: clock.wall, rng=lambda: 0.0,
+        sleep=lambda *_: None, notifier=MagicMock(),
+    )
+    feed.tick()
+    assert not feed.connected
+    assert feed.heartbeat_status() == "reconnecting"
+    assert worker._subscribed_symbols == set()
+    assert clients[0].disconnect_calls >= 1
+
+    clock.advance(feed.next_attempt_at - clock.mono)
+    feed.tick()
+    assert feed.connected and clients[1].subscribed == ["2330"]
+
+
+def test_disconnect_right_after_connect_returns_counts_as_failure():
+    """斷線事件在 connect() 回傳前後到達(尚未 connected)也不能被吞掉。"""
+    _monitor("2330")
+    clock, clients = _Clock(), []
+
+    class _DropOnConnect(_FakeWsClient):
+        def connect(self):
+            super().connect()
+            self.emit("disconnect", 1006, "dropped during auth")
+
+    def factory():
+        c = _DropOnConnect() if not clients else _FakeWsClient()
+        clients.append(c)
+        return c
+
+    feed = worker.FeedSupervisor(
+        factory, mono=lambda: clock.mono, wall=lambda: clock.wall, rng=lambda: 0.0,
+        sleep=lambda *_: None, notifier=MagicMock(),
+    )
+    feed.tick()
+    assert not feed.connected and feed.failures == 1
+    assert clients[0].subscribed == []
+    clock.advance(feed.next_attempt_at - clock.mono)
+    feed.tick()
+    assert feed.connected and len(clients) == 2
+
+
+def test_flapping_connection_backs_off_and_alerts_once():
+    """連上就被踢:不得每秒重連一次;中斷持續累計並只告警一次。"""
+    _monitor("2330")
+    clock, clients = _Clock(), []
+    notifier = MagicMock()
+    feed = _make_feed(clock, clients, notifier=notifier)
+    for _ in range(600):
+        feed.tick()
+        if feed.connected:
+            clients[-1].emit("disconnect", 1006, "kicked")
+        clock.advance(1)
+    assert len(clients) < 30          # 舊行為:600 次
+    high = [c for c in notifier.call_args_list if c.args[2] == "high"]
+    assert len(high) == 1
+    assert feed.heartbeat_status() == "offline"
 
 
 def test_repeated_failures_backoff_and_single_alert_then_recovery():
@@ -642,6 +739,8 @@ def test_repeated_failures_backoff_and_single_alert_then_recovery():
 
     feed.tick()
     assert feed.connected
+    clock.advance(61)
+    feed.tick()
     clients[0].emit("disconnect", 1006, "lost")
 
     delays = []
@@ -664,13 +763,17 @@ def test_repeated_failures_backoff_and_single_alert_then_recovery():
     assert not feed.connected
     assert len([c for c in notifier.call_args_list if c.args[2] == "high"]) == 1
 
-    # 之後連線成功 → 恢復通知一次
+    # 之後連線成功 → 穩定 60s 後才算恢復,通知一次
     while not feed.connected:
         clock.advance(60)
         feed.tick()
+    assert [c for c in notifier.call_args_list if c.args[2] == "default"] == []
+    clock.advance(61)
+    feed.tick()
     recovery = [c for c in notifier.call_args_list if c.args[2] == "default"]
     assert len(recovery) == 1
     assert feed.heartbeat_status() == "online"
+    clock.advance(61)
     feed.tick()
     assert notifier.call_count == 2
 
@@ -708,9 +811,9 @@ def test_stall_forces_reconnect_during_continuous_trading(caplog):
     feed.tick()
     assert len(clients) == 3
 
-    # 收到成交 → 門檻回到 180s 且不會誤判
+    # 收到任何 Fugle 訊息(這裡是 heartbeat,不是成交)→ 門檻回到 180s 且不會誤判
     clock.advance(1)
-    worker.feed_stats.record("2330", clock.mono, clock.wall)
+    clients[-1].emit("message", json.dumps({"event": "heartbeat", "data": {"time": 0}}))
     clock.advance(170)
     feed.tick()
     assert len(clients) == 3
@@ -791,6 +894,43 @@ def test_continuous_trade_uses_size_and_cumulative_volume(_trade_env):
     assert "I-1" in types                    # 500*20(size)*1000 = 1000萬 ≥ 500萬
     worker.process_trade(_trade_msg(size=1, volume=1001))
     assert state["volume"] == 1001
+
+
+@pytest.mark.parametrize(
+    "wall, flag",
+    [(datetime(2026, 10, 5, 9, 0, 0), "isOpen"), (datetime(2026, 10, 5, 13, 30, 3), "isClose")],
+)
+def test_auction_prints_update_state_but_never_signal(_trade_env, wall, flag):
+    """開/收盤集合競價撮合是一次總量:不得觸發 I-1「數十億大單」/I-2 並吃掉當日訊號額度。"""
+    _FixedDatetime.fixed = wall
+    t = _tw_micros(wall.replace(second=0))
+    worker.process_trade(_trade_msg(price=1000, size=3000, volume=30000, time=t, **{flag: True}))
+
+    state = worker.armed_stocks["2330"]
+    assert _trade_env == []
+    assert state["volume"] == 30000
+    assert state["last_price"] == 1000
+    assert worker.sent_signals == set()
+
+
+def test_run_session_survives_tick_exception(caplog):
+    _monitor("2330")
+    clock, clients = _Clock(wall=datetime(2026, 10, 5, 8, 0)), []
+    feed = _make_feed(clock, clients)
+    calls = {"n": 0}
+    real_tick = feed.tick
+
+    def flaky_tick():
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise RuntimeError("boom")
+        real_tick()
+
+    feed.tick = flaky_tick
+    with caplog.at_level(logging.ERROR):
+        n = _run_session(feed, clock, until_close_after=5)
+    assert n == 6 and calls["n"] == 5
+    assert "feed tick failed" in caplog.text
 
 
 def test_liveness_line_format():

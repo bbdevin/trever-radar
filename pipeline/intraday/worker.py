@@ -64,9 +64,12 @@ POOL_LABEL = {"armed": "未發動", "watchlist": "自選", "both": "雙池"}
 RECONNECT_BACKOFF_BASE = 2.0      # 秒;第一次重試 2s,之後倍增
 RECONNECT_BACKOFF_CAP = 60.0      # 秒;退避上限
 CONNECT_TIMEOUT = 15.0            # 秒;SDK connect() 會無限等驗證,超過即視為失敗
+CLOSE_JOIN_TIMEOUT = 5.0          # 秒;關閉舊連線時等 SDK run_forever 執行緒結束
+# 連線要撐過這麼久才算恢復:之前斷掉視為 flapping(照退避、計入告警),之後才歸零失敗計數
+STABLE_CONNECTION_SECONDS = 60.0
 # 斷線持續多久才告警(ERROR log + heartbeat offline + 選配 ntfy high),恢復時再通知一次
 RECONNECT_ALERT_SECONDS = float(os.getenv("INTRADAY_RECONNECT_ALERT_SECONDS", "300"))
-# 連續競價中,所有訂閱代號超過此秒數沒有任何成交訊息 → 強制重連
+# 連續競價中,超過此秒數沒收到任何 Fugle 訊息(成交/heartbeat/回應皆算)→ 強制重連
 STALL_SECONDS = float(os.getenv("INTRADAY_STALL_SECONDS", "180"))
 STALL_MAX_DOUBLINGS = 4           # 連續 stall(重連後仍無成交,如休市日)門檻倍增上限:3→48 分
 LIVENESS_LOG_SECONDS = 300        # 每 5 分鐘一行 liveness 遙測
@@ -540,7 +543,7 @@ class FeedSupervisor:
     ):
         self._factory = client_factory
         self._on_message = on_message or process_trade
-        self._stats = stats or feed_stats
+        self.stats = stats or feed_stats  # liveness 遙測計數(process_trade 寫入)
         self._notify = notifier
         self._heartbeat = heartbeat
         self._mono = mono
@@ -569,11 +572,15 @@ class FeedSupervisor:
         self.alerted = False
         self.stall_strikes = 0
         self._session_mono: float | None = None  # 首次觀察到連續競價的時刻(stall 起算下限)
+        self._last_msg_mono: float | None = None  # 目前連線最後收到任何 Fugle 訊息的時刻
+        self._pending_down: str | None = None     # connect() 回傳前後才到的斷線事件
 
     # ---------- SDK callbacks(背景執行緒)----------
     def _handle_message(self, gen: int, msg) -> None:
         if gen != self.generation:
             return
+        # 任何訊息(成交、heartbeat、subscribed…)都算連線活著,stall 看門狗以此為準
+        self._last_msg_mono = self._mono()
         self._on_message(msg)
 
     def _handle_down(self, gen: int, reason: str) -> None:
@@ -582,15 +589,32 @@ class FeedSupervisor:
                 return
             client = self.client
             if not self.connected:
-                # 連線/驗證中就出錯:解開 SDK connect() 的忙等
+                # 連線/驗證中就出錯:解開 SDK connect() 的忙等;connect() 已回傳時由
+                # _connect_once 看 _pending_down 判失敗
+                self._pending_down = reason
                 _abort_connect(client, reason)
                 return
-            self.connected = False
-            self.down_since = self._mono()
-            self.down_reason = reason
+            lived = self._mark_down_locked(reason)
+        logger.error(
+            "Fugle WebSocket down after %.0fs connected (%s); reconnecting…", lived, reason
+        )
+
+    def _mark_down_locked(self, reason: str) -> float:
+        """(持鎖呼叫)把目前連線標成斷線並排定重連;回傳該連線存活秒數。"""
+        now = self._mono()
+        self.connected = False
+        self.down_reason = reason
+        lived = now - (self.connected_mono or now)
+        if self.down_since is None or lived >= STABLE_CONNECTION_SECONDS:
+            # 穩定連線後的斷線:新一段中斷,立即重試
+            self.down_since = now
             self.failures = 0
-            self.next_attempt_at = self.down_since  # 第一次立即重試,之後才退避
-        logger.error("Fugle WebSocket down (%s); reconnecting…", reason)
+            self.next_attempt_at = now
+        else:
+            # 連上不到 STABLE 秒又斷(flapping):算一次失敗、照退避,中斷時間持續累計(會告警)
+            self.failures += 1
+            self.next_attempt_at = now + self.backoff_delay(self.failures)
+        return lived
 
     def _bind(self, client, gen: int) -> None:
         client.on("message", lambda msg: self._handle_message(gen, msg))
@@ -605,40 +629,89 @@ class FeedSupervisor:
         raw = min(self.backoff_cap, self.backoff_base * (2 ** max(0, failures - 1)))
         return min(self.backoff_cap, raw * (1 + 0.25 * self._rng()))
 
+    @staticmethod
+    def _close_client(client, join_timeout: float = CLOSE_JOIN_TIMEOUT) -> None:
+        """關閉 client 並等它的 run_forever 執行緒結束。
+
+        websocket-client 在 SDK callback 拋例外時只呼叫 on_error、不關連線;若不主動關,
+        舊連線會繼續收訊息(重複訂閱),且 SDK 的非 daemon 執行緒會讓程序在 13:35 無法退出。
+        """
+        if client is None:
+            return
+        try:
+            client.disconnect()
+        except Exception as e:
+            logger.warning("disconnect of previous Fugle client failed: %s", e)
+        ws = getattr(client, "_WebSocketClient__ws", None)  # SDK 私有欄位;取不到就只靠 disconnect
+        if ws is None:
+            return
+        me = threading.current_thread()
+        for t in threading.enumerate():
+            target = getattr(t, "_target", None)
+            if t is not me and getattr(target, "__self__", None) is ws:
+                t.join(join_timeout)
+                if t.is_alive():
+                    logger.warning("Fugle client thread %s still alive after close", t.name)
+
     def _connect_once(self) -> int:
-        """建立新連線並訂閱全部監控代號;回傳訂閱檔數。失敗 raise。"""
+        """建立新連線並訂閱全部監控代號;回傳訂閱檔數。失敗 raise(並已關閉該連線)。"""
         with self._lock:
+            previous = self.client
+            self.client = None
             self.generation += 1
             gen = self.generation
-            client = self._factory()
+            self._pending_down = None
+        # 任何時刻最多一條連線:建新的之前一定先關掉舊的
+        self._close_client(previous)
+        client = self._factory()
+        with self._lock:
             self.client = client
         self._bind(client, gen)
         timer = threading.Timer(self.connect_timeout, _abort_connect, args=(client, "connect timeout"))
         timer.daemon = True
         timer.start()
+        t0 = self._mono()
         try:
             client.connect()  # SDK 同步方法:阻塞到驗證成功或失敗
         except Exception as e:
             # SDK 失敗路徑常以 AttributeError('NoneType'…cancel)結尾,真因在 client.error
             # (須在 disconnect() 前讀,disconnect 會把 error 清掉)
             cause = getattr(client, "error", None)
-            try:
-                client.disconnect()
-            except Exception:
-                pass
+            self._close_client(client)
             raise ConnectionError(str(cause or e)) from e
         finally:
             timer.cancel()
         with self._lock:
-            if gen != self.generation:
-                raise ConnectionError("superseded")
-            self.connected = True
-            self.connected_mono = self._mono()
+            pending = self._pending_down
+            if gen == self.generation and pending is None:
+                self.connected = True
+                self.connected_mono = self._mono()
+                self._last_msg_mono = None
+        if gen != self.generation or pending is not None:
+            self._close_client(client)
+            raise ConnectionError(pending or "superseded")
+        logger.info("Fugle WebSocket authenticated in %.2fs", self._mono() - t0)
         _subscribed_symbols.clear()
-        return self.subscribe_new()
+        try:
+            n = self.subscribe_new()
+        except Exception as e:
+            with self._lock:
+                if gen == self.generation:
+                    self.connected = False
+            _subscribed_symbols.clear()
+            self._close_client(client)
+            raise ConnectionError(f"subscribe failed: {e}") from e
+        with self._lock:
+            ok = gen == self.generation and self.connected
+        if not ok:
+            # 訂閱途中斷線(_handle_down 已把 connected 設 False)
+            _subscribed_symbols.clear()
+            self._close_client(client)
+            raise ConnectionError(f"dropped while subscribing: {self.down_reason}")
+        return n
 
     def subscribe_new(self) -> int:
-        """訂閱監控池中尚未訂閱的代號(重整名單時增量;重連時已清空故全訂)。"""
+        """訂閱監控池中尚未訂閱的代號(重整名單時增量;重連時已清空故全訂)。失敗 raise。"""
         n = 0
         client = self.client
         if client is None or not self.connected:
@@ -653,6 +726,14 @@ class FeedSupervisor:
             if self.subscribe_delay:
                 self._sleep(self.subscribe_delay)  # 避免觸發 Fugle WS rate limit
         return n
+
+    def refresh_subscriptions(self) -> int:
+        """重整名單後增量訂閱;送不出去代表連線已壞 → 強制重連(重連時會全訂)。"""
+        try:
+            return self.subscribe_new()
+        except Exception as e:
+            self.force_reconnect(f"subscribe failed: {e}")
+            return 0
 
     def _attempt(self, now_mono: float) -> None:
         is_reconnect = self.ever_connected
@@ -669,8 +750,7 @@ class FeedSupervisor:
             return
         down_for = now_mono - self.down_since if self.down_since is not None else 0.0
         self.ever_connected = True
-        self.failures = 0
-        self.down_since = None
+        # failures / down_since 要等連線穩定 STABLE 秒才歸零(見 tick),flapping 才會退避與告警
         if is_reconnect:
             self.reconnects += 1
             logger.info(
@@ -679,9 +759,18 @@ class FeedSupervisor:
             )
         else:
             logger.info("Fugle WebSocket connected; subscribed %d symbols.", n)
+
+    def _mark_stable(self, now_mono: float) -> None:
+        """連線已穩定 STABLE 秒:中斷結束,歸零失敗計數;若曾告警則通知恢復一次。"""
+        down_for = (self.connected_mono or now_mono) - self.down_since
+        self.down_since = None
+        self.failures = 0
         if self.alerted:
             self.alerted = False
-            msg = f"盤中監控 Fugle 連線已恢復(中斷 {down_for:.0f}s,重訂 {n} 檔)"
+            msg = (
+                f"盤中監控 Fugle 連線已恢復(中斷約 {down_for:.0f}s,"
+                f"已穩定 {STABLE_CONNECTION_SECONDS:.0f}s,重訂 {len(_subscribed_symbols)} 檔)"
+            )
             logger.info(msg)
             self._notify(msg, "盤中監控 · 恢復", "default")
             self._push_heartbeat()
@@ -694,22 +783,24 @@ class FeedSupervisor:
         except Exception as e:
             logger.error("Heartbeat failed: %s", e)
 
+    def _drop_client(self) -> None:
+        """作廢並關閉目前 client(之後它的 callback 一律忽略)。"""
+        with self._lock:
+            self.generation += 1
+            client = self.client
+            self.client = None
+        self._close_client(client)
+
     def force_reconnect(self, reason: str) -> None:
         with self._lock:
             if not self.connected:
                 return
-            self.connected = False
-            self.down_since = self._mono()
-            self.down_reason = reason
-            self.failures = 0
-            self.next_attempt_at = self.down_since
+            self._mark_down_locked(reason)
             self.generation += 1  # 舊 client 的 close callback 之後一律忽略
             client = self.client
+            self.client = None
         logger.warning("Forcing Fugle WebSocket reconnect: %s", reason)
-        try:
-            client.disconnect()
-        except Exception as e:
-            logger.warning("disconnect during forced reconnect failed: %s", e)
+        self._close_client(client)
 
     def stall_threshold(self) -> float:
         return self.stall_seconds * (2 ** min(self.stall_strikes, STALL_MAX_DOUBLINGS))
@@ -717,18 +808,17 @@ class FeedSupervisor:
     def _check_stall(self, now_wall: datetime, now_mono: float) -> None:
         if not in_continuous_trading(now_wall):
             return
-        if not _subscribed_symbols:
-            return
-        last_trade = self._stats.last_trade_mono
-        if last_trade is not None and self.connected_mono is not None and last_trade > self.connected_mono:
-            self.stall_strikes = 0  # 這條連線有收到成交 → 門檻回到基準
-        ref = max(x for x in (last_trade, self.connected_mono, self._session_mono) if x is not None)
+        last_msg = self._last_msg_mono
+        if last_msg is not None and self.connected_mono is not None and last_msg > self.connected_mono:
+            self.stall_strikes = 0  # 這條連線有收到訊息 → 門檻回到基準
+        ref = max(x for x in (last_msg, self.connected_mono, self._session_mono) if x is not None)
         idle = now_mono - ref
         threshold = self.stall_threshold()
         if idle > threshold:
             self.stall_strikes += 1
             self.force_reconnect(
-                f"stall: no trade message for {idle:.0f}s (> {threshold:.0f}s) on {len(_subscribed_symbols)} symbols"
+                f"stall: no Fugle message for {idle:.0f}s (> {threshold:.0f}s); "
+                f"subscribed={len(_subscribed_symbols)}"
             )
 
     def tick(self) -> None:
@@ -743,21 +833,28 @@ class FeedSupervisor:
             self.down_since = now_mono
         if self.connected:
             self._check_stall(now_wall, now_mono)
-            if self.connected:
-                return
-        if now_mono >= self.next_attempt_at:
+        if (
+            self.connected
+            and self.down_since is not None
+            and now_mono - (self.connected_mono or now_mono) >= STABLE_CONNECTION_SECONDS
+        ):
+            self._mark_stable(now_mono)
+        if not self.connected and self.client is not None:
+            # 已判定斷線但舊 client 可能還開著(只發 error 未關):退避期間也立刻關掉
+            self._drop_client()
+        if not self.connected and now_mono >= self.next_attempt_at:
             self._attempt(now_mono)
         if (
-            not self.connected
-            and not self.alerted
+            not self.alerted
             and self.down_since is not None
             and now_mono - self.down_since >= self.alert_after
         ):
+            # 一直連不上,或反覆連上又斷(flapping)都算:down_since 要穩定 STABLE 秒才清
             self.alerted = True
             down_for = now_mono - self.down_since
             msg = (
-                f"盤中監控 Fugle WebSocket 已中斷 {down_for:.0f}s、重連 {self.failures} 次仍失敗"
-                f"(原因:{self.down_reason});盤中訊號暫停,持續重試至 13:35"
+                f"盤中監控 Fugle WebSocket 已中斷或不穩 {down_for:.0f}s、連續失敗 {self.failures} 次"
+                f"(原因:{self.down_reason});盤中訊號可能暫停,持續重試至 13:35"
             )
             logger.error(msg)
             self._notify(msg, "盤中監控 · 失敗", "high")
@@ -765,20 +862,18 @@ class FeedSupervisor:
 
     def heartbeat_status(self) -> str:
         """worker_heartbeat.status:前端只把 'offline' 視為離線,其餘看 last_active_at 新鮮度。"""
-        if self.connected:
-            return "online"
-        return "offline" if self.alerted else "reconnecting"
+        if self.alerted:
+            return "offline"
+        return "online" if self.connected else "reconnecting"
 
     def shutdown(self) -> None:
         with self._lock:
             self.closing = True
             self.connected = False
+            self.generation += 1
             client = self.client
-        if client is not None:
-            try:
-                client.disconnect()  # SDK 同步方法
-            except Exception as e:
-                logger.warning("disconnect on shutdown failed: %s", e)
+            self.client = None
+        self._close_client(client)
 
 
 _feed: FeedSupervisor | None = None  # main() 建立;update_heartbeat 讀連線狀態
@@ -853,6 +948,11 @@ def process_trade(message):
         state["trades_5m"].append((now, price))
         # 清理 5 分鐘前的紀錄
         state["trades_5m"] = [(t, p) for t, p in state["trades_5m"] if now - t <= timedelta(minutes=5)]
+
+        # 開盤 / 收盤集合競價撮合(isOpen / isClose)是一次撮合的總量,不是逐筆:更新價量,
+        # 但不判訊號(否則 09:00 / 13:30 必出「數十億大單」並吃掉當日唯一一次的訊號額度)
+        if data.get("isOpen") or data.get("isClose"):
+            return
 
         for signal_type, desc in evaluate_signals(state, price, qty, now):
             push_signal(
@@ -932,19 +1032,23 @@ async def run_session(
                 logger.info("Market closed. Shutting down worker.")
                 break
             # tick 內 SDK connect() 會阻塞(忙等驗證),丟到執行緒避免卡住 heartbeat
-            await asyncio.to_thread(feed.tick)
+            try:
+                await asyncio.to_thread(feed.tick)
+            except Exception as e:
+                # 任何意外都不得提早結束盤中監控;下一秒再 tick
+                logger.error("feed tick failed: %s", e, exc_info=True)
             mono = mono_fn()
             if mono - last_reload >= 300:
                 try:
                     reload_fn()
-                    await asyncio.to_thread(feed.subscribe_new)
+                    await asyncio.to_thread(feed.refresh_subscriptions)
                 except SystemExit:
                     logger.warning("監控名單重整失敗(fatal),沿用現有訂閱繼續。")
                 except Exception as e:
                     logger.error("監控名單重整失敗: %s", e)
                 last_reload = mono
             if mono - last_liveness >= LIVENESS_LOG_SECONDS:
-                trades, k, last_at = feed_stats.take_window()
+                trades, k, last_at = feed.stats.take_window()
                 logger.info(format_liveness(trades, k, last_at, feed.reconnects))
                 last_liveness = mono
             await sleep_fn(tick_interval)
@@ -952,4 +1056,16 @@ async def run_session(
         feed.shutdown()
 
 if __name__ == '__main__':
-    asyncio.run(main())
+    exit_code = 0
+    try:
+        asyncio.run(main())
+    except SystemExit as e:
+        exit_code = e.code if isinstance(e.code, int) else 1
+    except BaseException:
+        logger.exception("Worker crashed")
+        exit_code = 1
+    finally:
+        # 最後防線:SDK 的 run_forever / 計時器是非 daemon 執行緒,任何一條沒收乾淨都會讓
+        # 程序卡住、隔天 `docker run --name radar-worker` 撞名而整天失明 → 清理完強制結束
+        logging.shutdown()
+        os._exit(exit_code)
