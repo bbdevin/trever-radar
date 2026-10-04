@@ -12,7 +12,7 @@ import {
   useReactTable,
   type SortingState,
 } from "@tanstack/react-table";
-import { Building2, ChevronDown, ChevronUp, Flame, Layers, MapPin, Phone, ShieldCheck, Tags } from "lucide-react";
+import { AlertTriangle, Building2, ChevronDown, ChevronRight, ChevronUp, Flame, Layers, MapPin, Phone, ShieldCheck, Tags } from "lucide-react";
 import { IconArrowLeft } from "@/components/Icons";
 import KChart from "@/components/KChart";
 import AccumulationBranches from "@/components/AccumulationBranches";
@@ -53,6 +53,14 @@ import PocketBadges from "@/components/PocketBadges";
 import StockPageSkeleton from "@/components/StockPageSkeleton";
 import WatchlistButton from "@/components/WatchlistButton";
 import { normalizeBranchPctile } from "@/lib/branchPctile";
+import { chartLevels, priceLevelFacts, priceLevelsView } from "@/lib/priceLevels";
+import { buildBullBear, techDetailsSummary, topOfSide, type BullBearSummary } from "@/lib/bullBear";
+import { useBranchTrack } from "@/lib/branchTrackList";
+import { pocketBadgeVisible } from "@/lib/branchTrackResolve";
+import PriceLevelsCard from "@/components/PriceLevelsCard";
+import BullBearPanel, { CountChip } from "@/components/BullBearPanel";
+import { pocketDisplayText } from "@/components/PocketBadges";
+import StatTile from "@/components/StatTile";
 import { normalizePnl } from "@/lib/branchPnl";
 import { dataFetch } from "@/lib/dataFetch";
 import { OFFLINE_DATA_COPY, isBrowserOffline } from "@/lib/pwa";
@@ -176,6 +184,30 @@ function StockView() {
       .sort((a, b) => (a.t < b.t ? -1 : 1));
   }, [data]);
 
+  // K 線壓力/支撐虛線(docs/45 P1;預設關,開關在均線列)。只有這個 K 線分頁傳。
+  const chartLevelLines = useMemo(() => chartLevels(data?.price_levels, data?.candles), [data]);
+
+  // 多空摘要(docs/46):標頭與多空分頁共用同一份。使用者關掉的追蹤分點,口袋標籤照 PocketBadges 一樣不列。
+  const { muted } = useBranchTrack();
+  const bullBear = useMemo<BullBearSummary | null>(() => {
+    if (!data) return null;
+    const lastT = data.candles[data.candles.length - 1]?.t ?? "";
+    return buildBullBear({
+      rawReasons: data.raw_reasons,
+      reasons: data.reasons ?? [],
+      rawRisks: data.raw_risks,
+      risks: data.risks ?? [],
+      technical: data.technical,
+      pocketTags: data.pocket_tags?.filter(
+        (t) => !(t.code === "T1_TRACKED_BUY" || t.code === "K1_KEY_BUY") || pocketBadgeVisible(t.branches, muted),
+      ),
+      priceFacts: priceLevelFacts(data.price_levels, lastT, data.technical?.rsi14),
+      asOf: lastT,
+      reasonText: (code, text) => legacyReasonText(code, text),
+      pocketText: pocketDisplayText,
+    });
+  }, [data, muted]);
+
   // 分點理由過濾：B* 系列(分點) + S11 起的籌碼事件策略
   // 舊寫法是 ["S11","S12","S13"].includes(c),但 c 是完整 code(如
   // "S13_SHORT_SQUEEZE"),永遠不成立——這三個理由從未在此區顯示過。
@@ -296,7 +328,7 @@ function StockView() {
               </div>
             )}
           </header>
-          <StockDecisionHeader data={data} className="mt-auto mb-0 min-h-0 flex-1" />
+          <StockDecisionHeader data={data} summary={bullBear} onOpenBullBear={() => setView("tech")} className="mt-auto mb-0 min-h-0 flex-1" />
         </div>
         <section data-testid="stock-market-summary" className="flex min-h-full min-w-0 flex-col px-0.5" aria-label={`行情摘要，資料日 ${last.t}`}>
           <div data-testid="stock-watchlist" className="inline-flex size-11 shrink-0 items-center justify-center self-end">
@@ -355,13 +387,14 @@ function StockView() {
           {(
             [
               { key: "chart" as const, label: "K線" },
+              // docs/46:原「技術」分頁改名「多空」移到第二格;key 仍是 tech(?tab=tech、testid 不變)。
+              { key: "tech" as const, label: "多空" },
               { key: "chips" as const, label: "籌碼日報" },
               // 使用者 2026-10-03:權證、期貨緊接在籌碼日報右邊(手機上不用橫滑到最後才找得到)。
               { key: "warrant" as const, label: "權證" },
               // 只有確實有個股期貨的股票才有這個分頁;沒有或還沒匯入時不出現。
               ...(futuresTab.show ? [{ key: "futures" as const, label: "期貨" }] : []),
               { key: "insti" as const, label: "三大法人" },
-              { key: "tech" as const, label: "技術" },
               { key: "holders" as const, label: "大戶" },
               { key: "basic" as const, label: "基本資料" },
               { key: "margin" as const, label: "資券" },
@@ -395,7 +428,7 @@ function StockView() {
           </ScrollHint>
         )}
       </div>
-      {view === "chart" && <KChart candles={cs} visibleDays={visibleDays} mainForce={mainForce} />}
+      {view === "chart" && <KChart candles={cs} visibleDays={visibleDays} mainForce={mainForce} levels={chartLevelLines} />}
       {view === "chips" && (
         <>
           {/* 使用者 2026-10-02(手機優先):三節疊在一起要滑很久,當日買賣超被擠到最下面。
@@ -465,7 +498,7 @@ function StockView() {
       {view === "margin" && <MarginPanel data={data} candles={cs} />}
       {view === "holders" && <HoldersPanel data={data} />}
       {view === "basic" && <BasicInfoPanel data={data} quoteDate={last.t} />}
-      {view === "tech" && <TechnicalPanel data={data} />}
+      {view === "tech" && bullBear && <TechnicalPanel data={data} summary={bullBear} />}
       {view === "warrant" && <WarrantPanel data={data} />}
       {view === "futures" && futuresTab.show && <FuturesPanel futures={data.futures} labels={futuresLabels} />}
 
@@ -689,49 +722,73 @@ function StockPriceTargets({
   );
 }
 
-/** IA-2 + F3: Decision Header — 固定展開，僅分數與理由 pills */
+/** IA-2 + F3 → docs/46 §1.1:綜合分 + 來源徽章 + 「多方 N · 空方 N ›」(切到多空分頁)+ 各一條最前面的事實。
+ *  完整理由/風險移到多空分頁;口袋徽章手機也在那裡,≥sm 標頭照留。 */
 function StockDecisionHeader({
   data,
+  summary,
+  onOpenBullBear,
   className,
 }: {
   data: StockJson;
+  summary: BullBearSummary | null;
+  onOpenBullBear: () => void;
   className?: string;
 }) {
   const scores = data.scores;
-  const reasons = (data.raw_reasons?.length ? data.raw_reasons : (data.reasons ?? []).map((text) => ({ text, code: undefined }))).slice(0, 3);
-  const risks = (data.risks ?? []).slice(0, 2);
-
   const hasBranch = (scores?.branch ?? 0) > 0;
   const hasWarrant = (scores?.warrant ?? 0) > 0;
   const sourceLabel = hasBranch && hasWarrant ? "分點+權證" : hasBranch ? "分點" : hasWarrant ? "權證" : null;
-  const hasPills = reasons.length > 0 || risks.length > 0 || (data.pocket_tags?.length ?? 0) > 0;
+  const nBull = summary?.bull.length ?? 0;
+  const nBear = summary?.bear.length ?? 0;
+  const topBull = summary ? topOfSide(summary, "bull") : null;
+  const topBear = summary ? topOfSide(summary, "bear") : null;
 
-  if (!scores && !reasons.length && !risks.length && !(data.pocket_tags?.length)) return null;
+  if (!scores && nBull === 0 && nBear === 0) return null;
 
   return (
     <div data-testid="stock-decision" className={cn("flex min-h-0 flex-col overflow-hidden rounded-[var(--r-md)] border border-border bg-card shadow-[var(--shadow-card)]", className)}>
-      <div className="flex shrink-0 items-center gap-2 px-2.5 py-2">
-        {scores && (
+      {scores && (
+        <div className="flex shrink-0 items-center gap-2 px-2.5 pt-2">
           <span className={cn("num w-10 shrink-0 text-center text-[26px] font-extrabold leading-none sm:w-11 sm:text-[28px]", scores.final >= 65 ? "text-warn" : "text-[color:var(--ink-2)]")}>
             {scores.final}
           </span>
-        )}
-        <span className="flex min-w-0 flex-wrap items-center gap-1 text-[10.5px] text-muted-foreground">
-          綜合評分
-          {sourceLabel && <span className="max-w-full truncate rounded bg-[color:var(--ink-2)]/10 px-1 py-px text-[10px] font-bold text-[color:var(--ink-2)]">{sourceLabel}</span>}
-        </span>
-      </div>
-      {hasPills && (
-        <div className="flex min-h-0 flex-1 flex-col border-t border-[color:var(--line)] px-2.5 py-2">
-          <div className="flex min-h-0 flex-1 flex-wrap content-start gap-1 overflow-y-auto [scrollbar-width:thin]">
-            {reasons.map((r, i) => (
-              <ReasonPill key={`reason-${i}`} code={r.code} text={legacyReasonText(r.code, r.text)} />
-            ))}
-            <PocketBadges tags={data.pocket_tags} compact />
-            {risks.map((r, i) => (
-              <ReasonPill key={`risk-${i}`} text={r} risk />
-            ))}
-          </div>
+          <span className="flex min-w-0 flex-wrap items-center gap-1 text-[10.5px] text-muted-foreground">
+            綜合評分
+            {sourceLabel && <span className="max-w-full truncate rounded bg-[color:var(--ink-2)]/10 px-1 py-px text-[10px] font-bold text-[color:var(--ink-2)]">{sourceLabel}</span>}
+          </span>
+        </div>
+      )}
+      <button
+        type="button"
+        data-testid="stock-bullbear-link"
+        onClick={onOpenBullBear}
+        aria-label={`多方 ${nBull} 項、空方 ${nBear} 項,開啟多空分頁`}
+        className="flex min-h-11 w-full shrink-0 cursor-pointer items-center gap-1.5 px-2.5 text-left transition-colors duration-200 hover:bg-secondary/80"
+      >
+        <CountChip side="bull" n={nBull} />
+        <CountChip side="bear" n={nBear} />
+        <ChevronRight size={16} aria-hidden className="ml-auto shrink-0 text-muted-foreground" />
+      </button>
+      {(topBull || topBear) && (
+        <div className="grid min-w-0 gap-1 border-t border-[color:var(--line)] px-2.5 py-2 text-[12px] leading-snug">
+          {topBull && (
+            <p data-testid="stock-decision-top-bull" className="flex min-w-0 items-center gap-1.5" title={topBull.text}>
+              <span aria-hidden className="h-1.5 w-1.5 shrink-0 rounded-full bg-up" />
+              <span className="min-w-0 truncate text-foreground">{topBull.text}</span>
+            </p>
+          )}
+          {topBear && (
+            <p data-testid="stock-decision-top-bear" className="flex min-w-0 items-center gap-1.5" title={topBear.text}>
+              <AlertTriangle aria-hidden className="h-3 w-3 shrink-0 text-down" />
+              <span className="min-w-0 truncate text-foreground">{topBear.text}</span>
+            </p>
+          )}
+        </div>
+      )}
+      {!!data.pocket_tags?.length && (
+        <div className="hidden min-w-0 border-t border-[color:var(--line)] px-2.5 py-2 sm:flex">
+          <PocketBadges tags={data.pocket_tags} compact />
         </div>
       )}
     </div>
@@ -1007,39 +1064,41 @@ function FuturesDailyBlock({ futures, labels }: { futures: StockJson["futures"];
   );
 }
 
-function TechnicalPanel({ data }: { data: StockJson }) {
+/** 多空分頁(key 仍是 tech,docs/46 §1.3):多空摘要 → 價格位置卡(docs/45)→ 技術指標。
+ *  MA20/MA60 兩格由價格階梯取代(使用者 2026-10-03);technical 為 null 仍畫前兩張。 */
+function TechnicalPanel({ data, summary }: { data: StockJson; summary: BullBearSummary }) {
+  const levels = useMemo(() => priceLevelsView(data.price_levels), [data.price_levels]);
+  return (
+    <div className="mt-3.5 grid min-w-0 grid-cols-1 gap-3">
+      <BullBearPanel summary={summary} />
+      <PriceLevelsCard view={levels} />
+      <TechnicalScoreCard data={data} />
+    </div>
+  );
+}
+
+function TechnicalScoreCard({ data }: { data: StockJson }) {
   const t = data.technical;
   if (!t) {
     return (
-      <div className="mt-3.5 flex gap-2.5 rounded-[var(--r-md)] border border-border bg-card px-4.5 py-3.5 text-sm">
-        <span className="font-bold text-muted-foreground">技術</span>
-        <span className="text-foreground">尚未產出技術指標;請先跑 compute-indicators。</span>
+      <div className="flex gap-2.5 rounded-[var(--r-md)] border border-border bg-card px-4.5 py-3.5 text-sm">
+        <span className="shrink-0 font-bold text-muted-foreground">技術</span>
+        <span className="min-w-0 text-foreground">尚未產出技術指標;請先跑 compute-indicators。</span>
       </div>
     );
   }
+  const risks = t.risks ?? [];
 
   return (
-    <div className="mt-3.5 min-w-0 grid gap-2.5 rounded-[var(--r-lg)] border border-border bg-card p-3.5 shadow-[var(--shadow-card)] md:grid-cols-[90px_1fr] md:items-center">
-      <div className="flex flex-col gap-0.5">
-        <span className="text-[11px] text-muted-foreground">技術分</span>
-        <span className="num text-[30px] leading-none font-extrabold text-[color:var(--accent-2)]">{t.score}</span>
-      </div>
-      <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
-        <span className="flex justify-between gap-2 rounded-[var(--r-sm)] border border-border bg-secondary px-2.5 py-2 text-xs text-muted-foreground">
-          MA20 <b className="num font-bold text-[color:var(--ink-2)]">{t.ma20 == null ? "—" : t.ma20.toFixed(2)}</b>
-        </span>
-        <span className="flex justify-between gap-2 rounded-[var(--r-sm)] border border-border bg-secondary px-2.5 py-2 text-xs text-muted-foreground">
-          MA60 <b className="num font-bold text-[color:var(--ink-2)]">{t.ma60 == null ? "—" : t.ma60.toFixed(2)}</b>
-        </span>
-        <span className="flex justify-between gap-2 rounded-[var(--r-sm)] border border-border bg-secondary px-2.5 py-2 text-xs text-muted-foreground">
-          RSI14 <b className="num font-bold text-[color:var(--ink-2)]">{t.rsi14 == null ? "—" : t.rsi14.toFixed(1)}</b>
-        </span>
-        <span className="flex justify-between gap-2 rounded-[var(--r-sm)] border border-border bg-secondary px-2.5 py-2 text-xs text-muted-foreground">
-          量比 <b className="num font-bold text-[color:var(--ink-2)]">{fmtX(t.volume_ratio)}</b>
-        </span>
+    <section aria-labelledby="tech-indicators-heading" className="grid min-w-0 gap-2.5 rounded-[var(--r-lg)] border border-border bg-card p-3.5 shadow-[var(--shadow-card)]">
+      <SectionHeader family="price" as="h3" id="tech-indicators-heading" title="技術指標" />
+      <div className="grid grid-cols-3 gap-2">
+        <StatTile label="技術分" value={t.score} valueClassName="text-[color:var(--accent-2)]" />
+        <StatTile label="RSI14" value={t.rsi14 == null ? "—" : t.rsi14.toFixed(1)} />
+        <StatTile label="量比" value={fmtX(t.volume_ratio)} />
       </div>
       {(data.scores?.watch_price != null || data.scores?.stop_price != null) && (
-        <div className="flex flex-wrap gap-2 md:col-span-2">
+        <div className="flex flex-wrap gap-2">
           {data.scores?.watch_price != null && (
             <span className="rounded-[var(--r-sm)] border border-border bg-secondary px-2.5 py-2 text-xs text-muted-foreground">
               觀察價 <b className="num font-bold text-[color:var(--accent-2)]">{data.scores.watch_price.toFixed(2)}</b>
@@ -1052,14 +1111,23 @@ function TechnicalPanel({ data }: { data: StockJson }) {
           )}
         </div>
       )}
-      <div className="flex flex-wrap gap-1.5 md:col-span-2">
-        {t.reasons.length > 0 ? (
-          t.reasons.map((r) => <ReasonPill key={r.code} code={r.code} text={r.text} />)
-        ) : (
-          <span className="rounded-full border border-[color:var(--line)] px-2 py-[3px] text-[11.5px] text-[color:var(--ink-2)]">未觸發技術加分條件</span>
-        )}
-      </div>
-    </div>
+      {/* 技術訊號原文(ReasonPill 原樣);摘要句已整理在上方多空,這裡預設收合。
+          技術面風險(R*,如 RSI 過熱)以前存在 JSON 卻沒畫出來(docs/45 §1)。 */}
+      <details data-testid="tech-signal-details" className="group min-w-0 rounded-[var(--r-sm)] border border-[color:var(--line)]">
+        <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-2 px-3 text-[12.5px] font-semibold text-[color:var(--ink-2)] [&::-webkit-details-marker]:hidden">
+          {techDetailsSummary(t.reasons.length, risks.length)}
+          <ChevronDown size={16} aria-hidden className="transition-transform duration-200 group-open:rotate-180" />
+        </summary>
+        <div className="flex flex-wrap gap-1.5 px-3 pb-3">
+          {t.reasons.length > 0 ? (
+            t.reasons.map((r) => <ReasonPill key={r.code} code={r.code} text={r.text} />)
+          ) : (
+            <span className="rounded-full border border-[color:var(--line)] px-2 py-[3px] text-[11.5px] text-[color:var(--ink-2)]">未觸發技術加分條件</span>
+          )}
+          {risks.map((r) => <ReasonPill key={`risk-${r.code}`} code={r.code} text={r.text} risk />)}
+        </div>
+      </details>
+    </section>
   );
 }
 

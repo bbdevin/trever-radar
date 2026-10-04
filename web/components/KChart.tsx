@@ -7,6 +7,7 @@ import { bollinger, kd, macd, rsi, sma } from "@/lib/indicators";
 import { barsForDays, periodKey, resample, type Timeframe } from "@/lib/resample";
 import { cn, pillTabClass, segBtnClass } from "@/lib/utils";
 import { ScrollHint } from "@/components/ScrollHint";
+import { PL_LABELS, pricePrecision, type ChartLevel } from "@/lib/priceLevels";
 
 const TF_DEFS: { key: Timeframe; label: string; short: string }[] = [
   { key: "D", label: "日K", short: "日" },
@@ -36,6 +37,8 @@ interface Settings {
   sub: SubKey;
   tf: Timeframe;
   mainForce: boolean;
+  /** 壓力/支撐虛線(docs/45 P1);使用者 2026-10-03 定案預設關。舊存檔沒有此欄 → 由預設補 false。 */
+  levels: boolean;
 }
 const DEFAULT_SETTINGS: Settings = {
   ma: { ma5: true, ma10: true, ma20: true, ma60: true, ma120: true, ma240: true },
@@ -43,8 +46,11 @@ const DEFAULT_SETTINGS: Settings = {
   sub: "macd",
   tf: "D",
   mainForce: true,
+  levels: false,
 };
 const LS_KEY = "trever.chart.settings.v1";
+/** 壓力/支撐虛線色:上方紅、下方綠(台股紅漲綠跌語意:現價之上/之下)。 */
+const LEVEL_COLOR = { above: "rgba(230,103,103,0.85)", below: "rgba(12,163,12,0.85)" } as const;
 
 function loadSettings(): Settings {
   if (typeof window === "undefined") return DEFAULT_SETTINGS;
@@ -78,10 +84,9 @@ function fmtLotsUnit(n: number): string {
 }
 
 /** 價格軸小數位依台股升降單位:≥500 元跳 1 元、50–500 跳 0.1/0.5、<50 跳 0.01/0.05。
- *  固定 2 位時手機價格軸要讓出「1750.00」那麼寬(2026-10-02 使用者:線型要以手機畫面為主)。 */
-export function pricePrecision(close: number): number {
-  return close >= 500 ? 0 : close >= 50 ? 1 : 2;
-}
+ *  固定 2 位時手機價格軸要讓出「1750.00」那麼寬(2026-10-02 使用者:線型要以手機畫面為主)。
+ *  實作搬到 lib/priceLevels(價格位置卡同一規則,且 node 測試可直接 import)。 */
+export { pricePrecision };
 
 /** 每日分點淨買賣序列(t 同 candles 的 YYYY-MM-DD) */
 export interface NetPoint {
@@ -125,8 +130,12 @@ export default function KChart({
   mobileHeightClass = DEFAULT_MOBILE_HEIGHT,
   hideMaRowOnMobile = false,
   mobilePaneFactors,
+  levels,
 }: {
   candles: Candle[];
+  /** 壓力/支撐虛線(docs/45 P1,`chartLevels()`);有傳才出現「壓力/支撐」開關,預設關。
+   *  目前只有個股 K 線分頁傳。請傳 useMemo 過的陣列(effect 相依)。 */
+  levels?: ChartLevel[];
   visibleDays: number;
   /** 每日全部分點 net 加總(branch_history 裁剪版);缺省時不渲染主力買賣超 pane */
   mainForce?: NetPoint[];
@@ -198,7 +207,12 @@ export default function KChart({
   }, []);
 
   useEffect(() => {
-    if (typeof window !== "undefined") localStorage.setItem(LS_KEY, JSON.stringify(settings));
+    if (typeof window === "undefined") return;
+    try {
+      localStorage.setItem(LS_KEY, JSON.stringify(settings));
+    } catch {
+      // 私密視窗/封鎖網站資料:設定只在這次瀏覽有效。
+    }
   }, [settings]);
 
   // 手機版:首次勾選分點有資料時,自動切到「分點」子 pane(避免使用者不知道要手動切換)
@@ -285,6 +299,18 @@ export default function KChart({
         priceFormat: { type: "price", precision: prec, minMove: 1 / 10 ** prec },
       }, 0);
       candleSeries.setData(view.map((c) => ({ time: c.t, open: c.o, high: c.h, low: c.l, close: c.c })));
+      if (settings.levels && levels?.length) {
+        for (const lv of levels) {
+          candleSeries.createPriceLine({
+            price: lv.price,
+            color: LEVEL_COLOR[lv.side],
+            lineWidth: 1,
+            lineStyle: LineStyle.Dashed,
+            axisLabelVisible: true,
+            title: lv.label,
+          });
+        }
+      }
 
       const thin = { lineWidth: 1 as const, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false };
       for (const m of MA_DEFS) {
@@ -472,7 +498,7 @@ export default function KChart({
       chartRef.current = undefined;
       titlesRef.current = [];
     };
-  }, [bars, calc, flow, settings, visibleDays, mobilePaneKey, isMobile, selLabel, fmtSel, mobilePaneFactors]);
+  }, [bars, calc, flow, settings, visibleDays, mobilePaneKey, isMobile, selLabel, fmtSel, mobilePaneFactors, levels]);
 
   // 主題切換:就地更新既有 chart 的 grid/軸/水印色(不重建 → 不閃爍)。chart 建立時已用當下主題色,故此處僅處理「建立後」的切換。
   useEffect(() => {
@@ -605,6 +631,21 @@ export default function KChart({
           />
           布林
         </label>
+        {!!levels?.length && (
+          <label
+            data-testid="kchart-levels-toggle"
+            className={cn(chipBase, "min-h-9")}
+            style={settings.levels ? { color: LEVEL_COLOR.above, borderColor: LEVEL_COLOR.above } : undefined}
+            title="現價之上、之下最近的前高前低與成交最密集區(各 2 條)"
+          >
+            <input
+              type="checkbox"
+              checked={settings.levels}
+              onChange={(e) => setSettings((s) => ({ ...s, levels: e.target.checked }))}
+            />
+            {PL_LABELS.chartToggle}
+          </label>
+        )}
         {/* 桌機版：主力買賣超 checkbox */}
         {!isMobile && !!mainForce?.length && (
           <label className={cn(chipBase, "min-h-9")} style={settings.mainForce ? { color: CUM_COLOR, borderColor: CUM_COLOR } : undefined}>
