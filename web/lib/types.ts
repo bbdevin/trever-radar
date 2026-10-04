@@ -35,6 +35,37 @@ export interface TechnicalSummary {
   risks: ReasonItem[];
 }
 
+/** 個股 `price_levels`(docs/45 §3,export `compute/price_levels.py`)。價格皆為還原到資料日基準的價。 */
+export interface PriceLevelPoint {
+  p: number;
+  t: string;
+}
+export interface PriceLevelZone {
+  lo: number;
+  hi: number;
+  /** 該格成交量 ÷ 視窗總量 */
+  share: number;
+}
+export type PriceLevels =
+  | { version: number; status: "insufficient"; as_of: string; bars: number }
+  | {
+      version: number;
+      status: "ok";
+      as_of: string;
+      bars: number;
+      close: number;
+      ma: Partial<Record<"5" | "10" | "20" | "60" | "120" | "240", number | null>>;
+      ma_align: "bull" | "bear" | null;
+      highs: Partial<Record<"20" | "60" | "120" | "240", PriceLevelPoint | null>>;
+      lows: Partial<Record<"20" | "60" | "120" | "240", PriceLevelPoint | null>>;
+      new_high_20: boolean;
+      new_low_20: boolean;
+      vol_price_2d: "up" | "down" | null;
+      vol_profile: { window: number; above: number; below: number; at: number } | null;
+      dense_above: PriceLevelZone | null;
+      dense_below: PriceLevelZone | null;
+    };
+
 export interface WarrantSummary {
   call_turnover: number;
   call_volume: number;
@@ -268,7 +299,11 @@ export interface StockJson {
   pocket_tags?: PocketTag[]; // docs/27 G2;不進綜合分
   pocket_score?: number;
   risks: string[];
+  /** 帶 code 的完整風險項(docs/46;≤7)。舊 JSON 沒有 → 多空摘要用 risks 字串回推。 */
+  raw_risks?: ReasonItem[];
   technical: TechnicalSummary | null;
+  /** 價格位置事實(docs/45);舊 JSON 沒有此鍵,K 棒不足 20 根時 status = "insufficient"。只供顯示,不進任何分數。 */
+  price_levels?: PriceLevels | null;
   branches: BranchRow[];
   branch_history?: {
     t: string;

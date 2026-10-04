@@ -43,6 +43,7 @@ from ..compute.branch_point_in_time_report import (
 from ..compute.branch_stock_pctile_counts import LONG_PRICE_WINDOW_DAYS
 from ..compute.margin_cost import build_margin_cost_series
 from ..compute.branch_interval_pnl import branch_pnl_payload
+from ..compute.price_levels import compute_price_levels
 from ..compute.display_window import display_window_bounds, window_label
 from ..compute.futures_volume_anomaly import (
     anomaly_history,
@@ -1411,6 +1412,9 @@ def export_json(out_dir: Path | None = None) -> dict:
                "i_date": i_date, "m_date": m_date}).fetchall()
 
         all_stocks = []
+        # 個股頁「多空摘要」用的完整風險項(docs/46 §3.2)。放旁表而不是 all_stocks:
+        # all_stocks 的列會進 radar.json,那份不改(docs/46 §5);derive_radar_state 也不讀它。
+        raw_risks_by_id: dict[str, list] = {}
         for r in rows:
             (sid, name, market, industry, description, close, turnover, volume, tx,
              prev_close, f_net, t_net, mb, mp, avg_vol20,
@@ -1458,6 +1462,7 @@ def export_json(out_dir: Path | None = None) -> dict:
             # Armed / Triggered / Extended / Faded (docs/22)
             raw_rs = json.loads(score_reasons or "[]")
             raw_risks = json.loads(score_risks or "[]")
+            raw_risks_by_id[sid] = raw_risks[:7]
             strategy_signals = _strategy_signals_from_reasons(raw_rs)
             has_branch = any(r.get("code") == "S12_BRANCH_ACCUMULATION" for r in raw_rs) and (turnover or 0) >= MIN_TURNOVER
             has_warrant = False
@@ -2151,7 +2156,7 @@ def export_json(out_dir: Path | None = None) -> dict:
         ))
         # 各段累計秒數(docs/43):只印一行 log,輸出的 JSON 一個位元都不變。
         timing = {k: 0.0 for k in ("branch_history", "candles", "pctile", "pnl",
-                                   "warrant_shards", "tracked", "write")}
+                                   "levels", "warrant_shards", "tracked", "write")}
         for sid in export_ids:
             s = by_id_all.get(sid)
             if s is None:
@@ -2249,6 +2254,13 @@ def export_json(out_dir: Path | None = None) -> dict:
             timing["pctile"] += time.perf_counter() - t_sec
             holders_hist, holders_meta = _holders_history_payload(conn, sid, d)
             directors_latest = _directors_latest_payload(conn, sid)
+            # 價格位置(docs/45):只給顯示用事實,刻意不進 technical(Armed 判定讀 technical.risks)。
+            t_sec = time.perf_counter()
+            price_levels = compute_price_levels(
+                ((c[0], c[1], c[2], c[3], c[4], c[5], c[7]) for c in candles),
+                as_of_limit=d,
+            )
+            timing["levels"] += time.perf_counter() - t_sec
             payload = {
                 "id": sid, "name": s["name"], "market": s["market"],
                 "industry": s.get("industry"),
@@ -2263,6 +2275,7 @@ def export_json(out_dir: Path | None = None) -> dict:
                     for c in candles
                 ],
                 "technical": s["technical"],
+                "price_levels": price_levels,
                 "scores": s["scores"],
                 "reasons": s.get("reasons", []),
                 "raw_reasons": s.get("raw_reasons", []),
@@ -2270,6 +2283,8 @@ def export_json(out_dir: Path | None = None) -> dict:
                 "pocket_tags": s.get("pocket_tags", []),
                 "pocket_score": s.get("pocket_score") or 0,
                 "risks": s.get("risks", []),
+                # 帶 code 的完整風險項(docs/46);未評分的股票是 []。只供顯示。
+                "raw_risks": raw_risks_by_id.get(sid, []),
                 "branches": [
                     {"name": r[0], "buy": r[1] or 0, "sell": r[2] or 0,
                      "net": r[3] or 0, "pct": r[4]}

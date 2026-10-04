@@ -33,6 +33,7 @@
 13. **Tab／篩選選中說明**(2026-08-25):首頁觀察名單等橫向 pill tab，選中後必須在下方顯示**可見定義句**(非僅 `title` hover)；桌機隱藏、手機也要看得到。文案說明「這榜代表什麼／不代表什麼」，避免與空狀態／免責重複堆疊。
 14. **BottomNav ≤4～5 項**:次要榜(如資券)優先併入首頁 tab + `?tab=` 深連，不要為單一功能擠爆手機底欄；桌機頂欄可連到同一 tab。
 15. **手機橫滑列要看得出能滑**(2026-10-04):捲軸隱藏的橫向 tab/chip 列一律包 `web/components/ScrollHint.tsx`——有內容被裁掉的那一側顯示漸層(`fade` 對應容器底色:pill 列 `card`、直接在頁面上的列 `background`)+ 主色箭頭鈕(點了捲 ~70%);沒溢出時不畫。`role`/`aria-*` 照舊寫在 ScrollHint 上(落在捲動元素本身)。傳 `activeKey` 會把選中項(`aria-selected`/`aria-pressed`/`data-active`)捲進可視範圍,只捲容器不捲頁面;`peekId` 為第一次造訪輕推一次。**資料表**(2026-10-04 起)同樣包 ScrollHint,用 `variant="table"`:漸層鋪滿表高,箭頭鈕起點對齊表頭列、表比視窗高時 sticky 停在視窗垂直中線;保留原生捲軸;捲動容器自帶 1px 邊框＋圓角時傳 `edgeRadius`(如 `var(--r-lg)`),`fade` 照容器底色(表直接在頁面上用 `background`)。已套:三大法人日表、個股資券表、融資使用率排行、權證成交表、分點下鑽日表、分點追蹤聚合表、分點「最近動向」卡內表;分點日別小柱條用 `variant="plain"`。量測(390px,含字級「較大/最大」的 body zoom)min-content 永遠放得下的表不套(目前:分點集中度躍升榜、大戶 `table-fixed` 表)。新表若可能溢出就照此包。
+16. **版本號與更新紀錄**(2026-10-04):版號 `主版.次版`(如 v3.2)。每個使用者看得到變化的上線日次版 +1(同日多次上線併成一版;只動文件/排程/主機、畫面沒變的不發版);整站等級里程碑才進主版(v1 07-06 首版、v2 08-19 私人測試版＋獨立主機全市場資料、v3 10-02 手機優先翻修)。唯一來源 `web/lib/changelog.ts`(新版加在陣列最前面),`/changelog` 頁、全站 footer「Trever Radar 版本 vX.Y · 版本更新紀錄」與帳號選單都讀它;`web/package.json` 的 version 不維護。條目寫使用者看到什麼變了(不寫檔名、程式、資料表),種類只分 新增／改善／修正;禁用詞由 `web/lib/changelog.test.ts` 擋。
 
 ## 3. 對齊策略
 
@@ -56,3 +57,4 @@
 - **每卡語意色家族 ≤3**:僅 **卡片層(StockCard)** 套用——蒐集全部 pill,保留出現順序前 3 個家族的 pill,第 4 個家族起收「+N」(N=被摺家族數,`title` 列出被摺理由)。**個股頁詳情區(決策標頭/技術摘要/分點區)不設限**。
 - **層次規則**:主要資訊用 `foreground`、語意資訊用家族色、只有輔助說明(標籤、單位、日期)才 `muted-foreground`。改到的區塊若有「重要卻被 muted」的文字,小幅提回 `foreground`/家族色,不重排版面。
 - **雙主題可讀**:家族色文字用的 token(`--accent-2`/`--primary`/`--warn`/`--destructive`/`--ink-2`)於 `:root` 為淺色可讀值(對白 ≥4.5:1)、`.dark` 為深色調值;`/12` 淡底僅微幅染色,pill 文字對背景對比維持 AA。
+- **例外:個股多空摘要列(docs/46,`web/components/BullBearPanel.tsx`)不是 ReasonPill**——每列 = 家族色小字來源標籤(分點/法人/資券=`--accent-2`、技術/價格/策略=`--primary`、權證/題材=`--warn`、公司/其他=`--ink-2`)+ `foreground` 句子 + 側別色左邊框(多方 `border-up`、空方 `border-down`);風險列前綴 `AlertTriangle`(`text-down`)。不得退化成灰字 span;同一份理由的 ReasonPill 原樣仍在「技術訊號原文」收合區。多方/空方的計數 chip 用 `bg-up/15`/`bg-down/15` 並帶 ▲/▼。

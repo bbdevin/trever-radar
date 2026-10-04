@@ -9,6 +9,12 @@
 - **待人類**:正式 crontab 7 行(6 改 1 增)見 `vps/scripts/crontab.proposed.diff`;腳本在舊時刻下也正確。首頁時間表文字已改成新時刻。
 - 驗證:pytest 全綠(新增 `test_poll_until_published`(含 WSL bash 實跑:睡的當下鎖確實放開)、`test_import_daily_require`、`test_probe_branch_day`);`node --test web/lib/freshness.test.ts` 11 pass。
 
+## 2026-10-04 版本更新紀錄頁＋全站版本號(目前 v3.2)
+
+- 使用者:「網站要有地方顯示版本更新紀錄」「我是第幾版」。新增 `/changelog`(最新版展開,其餘依月份收合)、全站 footer「Trever Radar 版本 v3.2 · 版本更新紀錄」(手機在底部導航上方,無橫向溢出)、帳號選單「版本更新紀錄 v3.2」。
+- 版號 `主版.次版`,由 `git log` 回推 30 版:v1.0–1.8(07-06 首版~07-19)、v2.0–2.17(08-19 私人測試版＋獨立主機全市場資料~09-30)、v3.0–3.2(10-02 手機優先翻修~今天)。規則與發版責任:`docs/19` 第 16 條、`docs/18` Executor 提示詞。資料 `web/lib/changelog.ts`,測試 `web/lib/changelog.test.ts`(形狀＋禁用詞)。
+- 驗證:node 194 pass、tsc、build;parity 73 個畫面只多出 footer 那一行;390px 深/淺色截圖(頁面、footer、選單)。
+
 ## 2026-10-04 表格右滑提示＋搜尋換頁不等寫入
 
 - **表格右滑提示**:`ScrollHint` 新增 `variant="table"`(漸層鋪滿表高、箭頭起點在表頭列,長表 sticky 停在視窗中線,保留原生捲軸)。套用三大法人日表、個股資券表、融資使用率排行、權證成交表、分點下鑽日表、分點追蹤聚合表、「最近動向」卡內表、分點日別小柱條;沒溢出時不畫(字級「較大/最大」時三大法人等表才會溢出)。規則 `docs/19` 第 15 條。
@@ -20,6 +26,15 @@
 - Planner 定案(`docs/44` §6.4、`docs/29` §2.4):`branch_trades_raw` 6 碼(權證)列保留 150 個交易日,與 `warrant_daily` **共用同一個 `war_cutoff`**;4 碼個股/ETF 列永久保留。`radar prune` 新增 `--warrant-branches 150`(0 關閉)、`--max-dates 10`、`--dry-run`;由新到舊每輪最多 10 日、一日一交易、連續 3 空日即停,每刪一日寫 `import_logs(dataset='warrant_branch_prune')`(date=執行日、`error='data_date=…'`,才不會被 180 天 log 清理刪掉);不補刪、不 VACUUM。只在新版面(有 `ix_branch_trades_raw_date_cover`)啟用。排程不變(17:40 那輪本來就跑 prune)。
 - 使用者要求「今天能做的就先做」→ 10-04 提前合併(舊版面自動略過,換檔後才生效);第一次正式刪除前先跑 `docker run --rm -v ~/trever-radar/data:/app/data radar-pipeline python -m radar prune --dry-run`,看 `backlog would delete total=… dates=…` 那行(全部積壓總數),預期 2026-01/02 約 4.5k 列可刪。
 - 測試:`pipeline/tests/test_prune_warrant_branches.py` 9 項;pipeline 全套 1280 passed。
+## 2026-10-04 D-P0.5:批次寫入改 executemany＋WAL synchronous=NORMAL
+
+- `db.upsert()` 改 driver 層 executemany(每組欄位一句預備 `INSERT … ON CONFLICT DO UPDATE`),語意不變(只更新有帶的欄、key set 不同可混寫、回傳列數);新增 `insert_many()` 給分位計數整表重寫。WAL 連線 `synchronous=NORMAL`;cache 64 MB 保留,temp_store/mmap 不動。
+- 一致性:合成庫新舊程式跑 00:05 鏈,26 張表 PK 排序 SHA-256 全同;分點匯入/部分欄位更新另比對亦同。效能:合成庫分點統計寫入 71 s → 3 s;正式寫入段 212 s 估降至約 10–20 s,待 VPS 下一輪 log 確認。細節 `docs/44` §7。
+## 2026-10-04 個股「多空」分頁 + 價格位置(docs/45 P0/P1 + docs/46,程式完成、未上線)
+
+- **資料**(`json_export.py`):個股 JSON 新鍵 `price_levels`(`compute/price_levels.py` 純函式:還原均線 5–240、N 日高低+日期、20 日新高/新低、2 日量價、近 120 日現價之上/之下成交比例、上下最密集 1% 區)與 `raw_risks`(帶 code 的完整風險項 ≤7;未評分 = [])。不進 technical、不進 radar.json、不動任何分數與 Armed 狀態;`export timing:` 多一段 `levels=`。合成 DB parity:其餘鍵逐位元相同。正式 JSON 要等 VPS 下一輪 export-json 才有這兩鍵,前端對舊 JSON 照常(價格位置卡顯示「還沒有」、多空用風險字串回推)。
+- **前端**:原「技術」分頁改名「多空」移到 K線 右邊(key 仍 `tech`)。分頁內:多空摘要(`web/lib/bullBear.ts` + `BullBearPanel`;理由/風險/口袋/價格事實分多方、空方、背景;同方向同一天的價格事實取代 T1_MA20/T1_MA60/T1_BULL_MA/T2_20D_HIGH/T4/T5_RSI)→ 價格位置卡(階梯、上下成交雙色條、怎麼算;取代 MA20/MA60 兩格)→ 技術指標(技術分/RSI/量比、觀察/失效、收合的技術訊號原文,含以前沒畫的 `t.risks`)。標頭只留綜合分 + 「多方 N · 空方 N ›」+ 各一條最前面的事實。K 線均線列「壓力/支撐」chip 預設關,開了畫上下各 2 條虛線。
+- **測試**:`test_price_levels.py`(golden、分割不變、決定性、export 鍵)、`test_bull_bear_codes.py`(後端每個 code 都在 `SIDE_BY_CODE`)、`priceLevels.test.ts`、`bullBear.test.ts`(每個 code 恰一次、舊 JSON、禁用詞鎖)。
 
 ## 2026-10-04 網站 W-P0 上線:登入單例、站內換頁、靜態快取、右滑提示
 
