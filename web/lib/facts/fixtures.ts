@@ -231,6 +231,97 @@ export function marginOkDown(): { mh: MarginRow[]; adjusted: Candle[] } {
 
 type BranchDay = NonNullable<StockJson["branch_history"]>[number];
 
+// ── 融資 × 分點集中度(docs/46 §7) ──
+// i = 交易日索引(0 = LAST,新→舊);集保每 5 個交易日一筆(週索引 w,對應 i = 5w);量 10,000 張/日。
+
+export interface FlowCase {
+  data: Pick<StockJson, "margin_history" | "branch_history" | "insti_history" | "holders_history">;
+  candles: Candle[];
+}
+
+interface FlowSpec {
+  n: number;
+  usage: number;
+  bal: (i: number) => number;
+  branches: (i: number) => { n: string; net: number }[];
+  inst: (i: number) => { foreign: number; trust: number };
+  close: (i: number) => number;
+  p400: (w: number) => number;
+  rh: (w: number) => number;
+}
+
+function flowCase(s: FlowSpec): FlowCase {
+  const ds = recentDates(s.n);
+  const candles = ds.map((t, i) => ({ t, o: s.close(i), h: s.close(i), l: s.close(i), c: s.close(i), v: 10000, amt: 0, af: 1 })).reverse();
+  return {
+    candles,
+    data: {
+      margin_history: ds.map((t, i) => ({
+        t, balance: s.bal(i), prev: null, limit: 40000, usage: s.usage, chg: null, buy: null, sell: null, repay: null,
+        short_balance: null, short_prev: null, cost_est: null,
+      })),
+      branch_history: ds.map((t, i) => ({ t, branches: s.branches(i).map((b) => ({ n: b.n, b: Math.max(b.net, 0), s: Math.max(-b.net, 0), net: b.net })) })),
+      insti_history: ds.map((t, i) => {
+        const x = s.inst(i);
+        return { t, ...x, dealer: 0, total: x.foreign + x.trust };
+      }),
+      holders_history: ds.filter((_, i) => i % 5 === 0).map((t, w) => ({
+        t, thresholds: { "400": { holders: 90, shares_pct: s.p400(w) } }, retail_pct: null, retail_holders: s.rh(w),
+      })),
+    },
+  };
+}
+
+/**
+ * 2476 型:融資自 i=100(10,000 張,近 130 日最低)線性增至 20,000 張(使用率 75%);
+ * 統一-敦南每天買 150、康和每天買 60(囤貨),美林每天買 100(外資席位,不計);
+ * 股價緩漲、400 張以上大戶每週 +0.1 個百分點;法人每天各買 10。
+ * → 20 日集中(C_MARGIN_UP_CONC)+ 堆積集中(C_MARGIN_BUILDUP_CONC,近6月)→ C_MARGIN_HOT rank 2
+ */
+const concSpec = (): FlowSpec => ({
+  n: 130, usage: 0.75,
+  bal: (i) => (i <= 100 ? 20000 - 100 * i : 12000),
+  branches: () => [{ n: "統一-敦南", net: 150 }, { n: "康和", net: 60 }, { n: "美林", net: 100 }],
+  inst: () => ({ foreign: 10, trust: 10 }),
+  close: (i) => 120 - i * 0.1,
+  p400: (w) => 50 - w * 0.1,
+  rh: (w) => 100000 + w * 500,
+});
+export const marginConcBuildup = (): FlowCase => flowCase(concSpec());
+
+/** 2236 型:同上但集保 400 張以上大戶每週 −0.5 個百分點 → 無法判斷,不產事實;C_MARGIN_HOT 維持 rank 3 */
+export const marginConcTdccDown = (): FlowCase => flowCase({ ...concSpec(), p400: (w) => 50 + w * 0.5 });
+
+/** 唯一的大買方是外資席位(美林、(港商)麥格理)→ 囤貨分點合計 0,股價沒跌 → 不產事實 */
+export const marginConcForeignOnly = (): FlowCase =>
+  flowCase({ ...concSpec(), branches: () => [{ n: "美林", net: 150 }, { n: "(港商)麥格理", net: 100 }] });
+
+/** 分點缺日:20 日視窗內少一天 branch_history → computeWindow 不可用 → 不產事實 */
+export function marginConcGap(): FlowCase {
+  const f = marginConcBuildup();
+  f.data.branch_history = f.data.branch_history!.filter((_, i) => i !== 7);
+  return f;
+}
+
+/**
+ * 8039/3450 型:融資 20 日 +2,000 張(+20%,全在近 5 日),每天換不同分點買 100(無囤貨),
+ * 外資每天賣 700;股價自 120 跌到 100;400 張以上大戶每週 −0.5、散戶人數每週 +2%;使用率 50%。
+ * → C_MARGIN_UP_DISPERSED,且不再列 5 日 C_MARGIN_UP_PRICE_DOWN
+ */
+const dispersedSpec = (): FlowSpec => ({
+  n: 30, usage: 0.5,
+  bal: (i) => (i < 5 ? 10000 + (5 - i) * 400 : 10000),
+  branches: (i) => [{ n: `散戶分點${i}`, net: 100 }],
+  inst: () => ({ foreign: -700, trust: 0 }),
+  close: (i) => 100 + i,
+  p400: (w) => 50 + w * 0.5,
+  rh: (w) => 100000 / 1.02 ** w,
+});
+export const marginDispersedDown = (): FlowCase => flowCase(dispersedSpec());
+
+/** 6538 型(20 日):同上但外資每天買 100(20 日 +2,000 ≥ 融資增量一半)→ 法人主導,不判讀;5 日融資增價跌照列 */
+export const marginInstDominant = (): FlowCase => flowCase({ ...dispersedSpec(), inst: () => ({ foreign: 100, trust: 0 }) });
+
 /** 近 25 日:A 天天買 300(囤貨、地緣)、B 天天賣 300(出貨);今日 G 買 1,000(有隔日沖紀錄) */
 export function branchMonth(): Pick<StockJson, "branch_history" | "branch_tags" | "branch_pnl_est"> & { candles: Candle[] } {
   const ds = recentDates(25);
@@ -335,7 +426,8 @@ export function branchSmart(): Pick<StockJson, "branch_history" | "branch_pctile
         "60": {
           window_days: 60, first_date: ds[24], pairs_considered: 4, pairs_skipped_missing_price: 0,
           gainers: [pnlRow("凱基-台北", 5_000_000, 900, 3_000_000, ds), pnlRow("富邦-建國", 3_000_000, 100, 200_000, ds)],
-          losers: [],
+          // A2:短線派前 5,沒有買賣、仍持股 300 張但帳面為負 → C_SMART_HOLDING_NEG(背景)
+          losers: [pnlRow("A2", -1_000_000, 300, -800_000, ds)],
         },
         "240": {
           window_days: 240, first_date: ds[24], pairs_considered: 4, pairs_skipped_missing_price: 0,

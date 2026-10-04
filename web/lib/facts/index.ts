@@ -13,6 +13,7 @@ import { holdersFacts } from "./holdersFacts.ts";
 import { instFacts } from "./instFacts.ts";
 import { levelFacts } from "./levelFacts.ts";
 import { marginFacts } from "./marginFacts.ts";
+import { marginFlowFacts } from "./marginFlowFacts.ts";
 import { futuresFacts, themeFacts, warrantFacts } from "./otherFacts.ts";
 import { allSeries } from "./series.ts";
 import { techFacts } from "./techFacts.ts";
@@ -39,12 +40,15 @@ export const STOCK_KEYS_NOT_FACTS = [
 export function deriveAllFacts(data: StockJson, lastT: string, muted: ReadonlySet<string> = new Set()): DerivedFact[] {
   const series = allSeries(data.candles);
   const candles = data.candles ?? [];
+  // 融資×分點集中度先算:結果會調整 C_MARGIN_HOT 的 rank、決定是否列 5 日融資增價跌(docs/46 §7)
+  const flow = marginFlowFacts(data, candles, series.adjusted, lastT);
   return [
     ...priceLevelFacts(data.price_levels, lastT, data.technical?.rsi14),
     ...techFacts(series, data.technical ?? null),
     ...levelFacts(data.price_levels, series, lastT),
     ...instFacts(data.insti_history, candles, lastT),
-    ...marginFacts(data.margin_history, series.adjusted, lastT),
+    ...flow.facts,
+    ...marginFacts(data.margin_history, series.adjusted, lastT, flow),
     ...branchFacts(data, candles, lastT, muted),
     ...holdersFacts(data.holders_history, data.holders_meta, data.directors_latest),
     ...warrantFacts(data.warrant, data.warrant_history, lastT),

@@ -105,6 +105,10 @@ export const FACT_CATALOGUE: Record<string, CatalogueEntry> = {
   C_MARGIN_DOWN_PRICE_UP: chip("margin", "bull", 0),
   C_SHORT_CHANGE: chip("margin", "context", 1),
   C_SHORT_MARGIN_RATIO: chip("margin", "context", 2),
+  // 融資增量 × 同期分點囤貨/集保(docs/46 §7):只並列、不歸因;不取代任何後端 code
+  C_MARGIN_UP_CONC: chip("margin", "context", 1),
+  C_MARGIN_UP_DISPERSED: chip("margin", "bear", 1, { risk: true }),
+  C_MARGIN_BUILDUP_CONC: chip("margin", "context", 1),
 
   // ── 分點 ──
   C_TOP15_FLOW_BUY: chip("chips", "bull", 0, { mirrors: ["B6_BIG_MONEY_FLOW"] }),
@@ -123,6 +127,8 @@ export const FACT_CATALOGUE: Record<string, CatalogueEntry> = {
   C_SMART_BUY: chip("chips", "bull", 0),
   C_SMART_SELL: chip("chips", "bear", 0, { risk: true }),
   C_SMART_HOLDING: chip("chips", "bull", 1),
+  // 強分點仍持股但帳面為負(估算):不是多方證據,列背景
+  C_SMART_HOLDING_NEG: chip("chips", "context", 1),
 
   // ── 大戶(集保週資料)/ 董監 ──
   H_MAJOR400_UP: chip("holders", "bull", 0),

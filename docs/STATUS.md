@@ -7,6 +7,13 @@
 - **首頁「綜合」改為「多方榜」**(Fable 規劃 2026-10-04):docs/20 §1 例外核准(新名單規則,只用既有事實計數與 rank 表,不新增分數/策略、不改 `final`);名單紀錄 `bull_board_log/*.jsonl` 隨 deploy 上 Cloudflare 作異地副本(核准);隔天表現走 `docs/48` 事前登記,≥60 市場日後檢定,過了才顯示次數。
 - **融資 × 分點集中度**:採 Fable 方案——新增背景/空方共動事實(`C_MARGIN_UP_CONC`/`C_MARGIN_UP_DISPERSED`/`C_MARGIN_BUILDUP_CONC`);`C_MARGIN_HOT` 維持空方,有集中證據時 rank 3→2;**不採選項 B**(不改背景);評分 `R_MARGIN_HOT` 不改。
 
+## 2026-10-04 多空分頁:融資 × 同期分點囤貨/集保、強分點帳面為負改背景(docs/46 §7、§6.8;程式完成、未上線)
+
+- 新產生器 `web/lib/facts/marginFlowFacts.ts`(純前端、無新後端鍵):20 日融資顯著增加時,同期囤貨分點(扣外資席位,`facts/seat.ts`)≥ 融資增量一半 → `C_MARGIN_UP_CONC`(背景 rank 4);分散且股價 20 日 ≤ −5% → `C_MARGIN_UP_DISPERSED`(空方 ⚠ rank 4,取代 5 日融資增價跌);法人主導、集保 400 張以上減 ≥0.3pp、分點缺日 → 不判讀。使用率 ≥60% 時另看堆積視窗(近 240 日最低點起 ≥1.5 倍)→ `C_MARGIN_BUILDUP_CONC`(背景 rank 3)並讓 `C_MARGIN_HOT` rank 3→2(仍空方、不進重點)。籌碼段底常駐定義句(只並列、不歸因)。
+- `C_SMART_HOLDING` 拆分:強分點仍持股且帳面為正 → 多方 rank 3;帳面為負 → 新 `C_SMART_HOLDING_NEG` 背景 rank 2。
+- 驗證:node 260 tests、pytest `test_bull_bear_codes`/`test_label_honesty`、tsc、next build 通過;fixture 為合成 2476/8039/2236 型。⏳ 尚未用 VPS 正式個股 JSON(2476/3450/8039/2236)截圖驗收(本機 fixture 舊、branch_history 空)。
+- 文件:docs/46 §6.3/§6.6/§6.8 + 新 §7;docs/34 §1 註;docs/04 §8 漂移註記(scores.py 只實作使用率 ≥0.6)。
+
 ## 2026-10-04 日更排程優化:輪詢到公布為止(`docs/47`;程式與正式 crontab 已上線)
 
 - ✅ 2026-10-04 13:09 使用者授權後由 agent 在 VPS 套用(備份 `~/crontab-backup-20261004-1309.txt`;6 行改時刻 + 週一 11:00 `weekly-refdata.sh`);程式 `7badba4` 已 pull。兩輪獨立 verifier(第二輪 9 項全 CONFIRMED)。回滾:`crontab ~/crontab-backup-20261004-1309.txt`。第一週依 `docs/47` §5 grep 驗證。

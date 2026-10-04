@@ -104,7 +104,7 @@ interface Move {
 
 export interface SmartResult {
   facts: DerivedFact[];
-  /** C_SMART_HOLDING 涵蓋的分點(C_PNL_*_HOLDING 家數排除用,避免同一家寫兩次) */
+  /** C_SMART_HOLDING / C_SMART_HOLDING_NEG 涵蓋的分點(C_PNL_*_HOLDING 家數排除用,避免同一家寫兩次) */
   holdingNamed: Set<string>;
 }
 
@@ -187,17 +187,22 @@ export function smartBranchFacts(
     if (!pr || pr.row.pos_lots < SMART_FLOOR_LOTS || !pr.row.unrealized) continue;
     holds.push({ name, cred, pos: pr.row.pos_lots, un: pr.row.unrealized, window: pr.window });
   }
-  if (holds.length) {
-    holds.sort((a, b) => b.pos - a.pos);
-    for (const h of holds) holdingNamed.add(h.name);
+  // 帳面為正 → 多方(C_SMART_HOLDING,rank 3);帳面為負 → 背景(C_SMART_HOLDING_NEG,rank 2):
+  // 強分點套牢中仍持股,不是多方證據(2026-10-04 使用者)
+  const hDate = pnl?.as_of && pnl.as_of !== lastT ? mmdd(pnl.as_of) : undefined;
+  const holdSentence = (code: string, rows: typeof holds, rank: number) => {
+    if (!rows.length) return;
+    rows.sort((a, b) => b.pos - a.pos);
     const segs: string[] = [];
-    holds.slice(0, 2).forEach((h, k) => {
+    rows.slice(0, 2).forEach((h, k) => {
       if (k) segs.push(";");
       segs.push(`${credSegs(h.name, h.cred, "buy")}仍有持股 ${fmtInt(h.pos)} 張,帳面為${h.un > 0 ? "正" : "負"}(${h.cred.pnl ? "" : winLabel(h.window)}估算)`);
     });
-    if (holds.length > 2) segs.push(` 等 ${holds.length} 家`);
-    const hDate = pnl?.as_of && pnl.as_of !== lastT ? mmdd(pnl.as_of) : undefined;
-    facts.push(mk("C_SMART_HOLDING", segs, { rank: 3, date: hDate }));
-  }
+    if (rows.length > 2) segs.push(` 等 ${rows.length} 家`);
+    facts.push(mk(code, segs, { rank, date: hDate }));
+  };
+  for (const h of holds) holdingNamed.add(h.name);
+  holdSentence("C_SMART_HOLDING", holds.filter((h) => h.un > 0), 3);
+  holdSentence("C_SMART_HOLDING_NEG", holds.filter((h) => h.un < 0), 2);
   return { facts, holdingNamed };
 }

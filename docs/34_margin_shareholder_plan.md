@@ -16,6 +16,7 @@
 **非目標**
 
 - 不進綜合分、不新增 S14、不改既有 `I_MARGIN_OK` / `R_MARGIN_HOT` 門檻語意
+- 註(2026-10-04):個股頁多空摘要另有「融資增量 × 同期分點囤貨/集保」的並列事實(`C_MARGIN_UP_CONC`/`C_MARGIN_UP_DISPERSED`/`C_MARGIN_BUILDUP_CONC`,純前端,見 `docs/46` §7)。官方只有每檔融資餘額、無分點/帳戶層級,所以只並列不歸因;不進分數、不改上列門檻。
 - 不引入 GoodInfo HTML scraper、付費 API、R2
 - 不做 TDCC 多年全歷史回補（顯示窗見 §3.2）
 

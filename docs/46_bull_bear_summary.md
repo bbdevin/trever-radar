@@ -91,14 +91,14 @@ P2:期貨背景列;F9–F11。
 ### 6.2 契約(`web/lib/bullBear.ts`)
 `BullBearItem` 加 `section`、`segments?`、`tf?`、`dataDate?`、`rank`(1–5)、`magnitude?`、`dist?`;`BullBearSummary.sections`。`buildBullBear({..., derivedFacts})`;`SECTION_BY_SOURCE`(tech/strategy→技術、price/levels→壓力、其餘→籌碼);Source 加 `holders`、`levels`。分類調整:R_HOT5/R_HOT10 來源 price→tech(技術段日K)、S11→inst、S12→chips、S13→margin;F1_FUTURES_VOLUME_60D_HIGH、R_FUTURES_VOLUME_NO_DIRECTION 進表(背景/期貨)。去重:①後端 code 只一次 ②前端事實(無 date/dataDate)的 mirrors 取代同方向後端 code,含風險與口袋 ③`YIELD_TO_BACKEND`:R_HOT5/10→X_CHG5_UP、R_GAP_FADE→X_GAP_UP_TODAY、R_SHOOTING→X_BIG_BLACK ④事實鍵 code+tf+variant 只一次。排序:段內先分組,再 rank↓ → magnitude↓ → points↓ → 原順序;壓力段距離↑。`topOfSide`:rank → magnitude → 段序(壓力距離 ≤3% → 籌碼 → 技術 → 其餘壓力)→ 來源序。
 
-### 6.3 事實目錄(`web/lib/facts/catalogue.ts`,100 個 code;產生器 `techFacts`/`levelFacts`/`instFacts`/`marginFacts`/`branchFacts`/`holdersFacts`/`otherFacts`,彙整 `facts/index.ts deriveAllFacts`)
+### 6.3 事實目錄(`web/lib/facts/catalogue.ts`,104 個 code;產生器 `techFacts`/`levelFacts`/`instFacts`/`marginFacts`/`marginFlowFacts`(§7)/`branchFacts`/`holdersFacts`/`otherFacts`,彙整 `facts/index.ts deriveAllFacts`)
 | 段/來源 | P0 | P1 | P2 |
 |---|---|---|---|
 | 技術(日K F2/F3/F4/F5/F8 由 `priceLevelFacts`) | F2_BULL/BEAR、X_ALIGN_BULL/BEAR(W/M)、X_MA_CROSS_UP/DOWN、X_MACD_CROSS_UP/DOWN、X_KD_GOLDEN_LOW/X_KD_DEATH_HIGH、F8_RSI_OK/LOW、X_VOL_SURGE_UP/DOWN、F5_UP/DOWN、F4_NEW_HIGH/LOW、F3_HIGH/LOW_TODAY、X_UP/DOWN_STREAK、X_CHG1_UP/DOWN、X_CHG5_UP/DOWN | X_MA20_SLOPE_UP/DOWN、X_MA60_SLOPE_UP/DOWN、X_MACD_STATE_POS/NEG、X_KD_OVER80、X_GAP_UP/DOWN_TODAY、X_BIG_BLACK(週/月版 F4/F5/F8 亦屬 P1) | X_VOL_DRY |
 | 壓力 | F1_MA_BELOW/ABOVE(日/週/月,附最接近均線價位與距離)、L_HIGH_ABOVE、L_LOW_BELOW、L_DENSE_ABOVE/BELOW、L_SUPPLY_ABOVE/BELOW | L_ALLTIME_HIGH/LOW、L_GAP_ABOVE/BELOW、L_RANGE_POS_TOP/BOTTOM | — |
 | 法人 | C_FOREIGN_BUY/SELL、C_TRUST_BUY/SELL、C_BOTH_BUY/SELL、C_NET_SHARE_BUY/SELL | C_FOREIGN_20D_BUY/SELL、C_TRUST_20D_BUY/SELL | — |
-| 資券 | C_MARGIN_HOT/OK、C_MARGIN_UP_PRICE_DOWN、C_MARGIN_DOWN_PRICE_UP | C_SHORT_CHANGE | C_SHORT_MARGIN_RATIO |
-| 分點 | C_TOP15_FLOW_BUY/SELL、C_ACC_1M、C_DIST_1M、C_DAYTRADE_BUY、C_TRACKED_SELL、C_SMART_BUY、C_SMART_SELL(⚠)(§6.8) | C_ACC_1W、C_DIST_1W、C_GEO_BUY/SELL、C_PNL_GAINERS/LOSERS_HOLDING、C_SMART_HOLDING(§6.8) | — |
+| 資券 | C_MARGIN_HOT/OK、C_MARGIN_UP_PRICE_DOWN、C_MARGIN_DOWN_PRICE_UP | C_SHORT_CHANGE、C_MARGIN_UP_CONC(背景)、C_MARGIN_UP_DISPERSED(空方 ⚠)、C_MARGIN_BUILDUP_CONC(背景)(§7) | C_SHORT_MARGIN_RATIO |
+| 分點 | C_TOP15_FLOW_BUY/SELL、C_ACC_1M、C_DIST_1M、C_DAYTRADE_BUY、C_TRACKED_SELL、C_SMART_BUY、C_SMART_SELL(⚠)(§6.8) | C_ACC_1W、C_DIST_1W、C_GEO_BUY/SELL、C_PNL_GAINERS/LOSERS_HOLDING、C_SMART_HOLDING、C_SMART_HOLDING_NEG(背景)(§6.8) | — |
 | 大戶 | H_MAJOR400_UP/DOWN、H_MAJOR1000_UP/DOWN、H_RETAIL_DOWN/UP | H_MAJOR_COUNT、H_INSIDER_UP/DOWN | H_PLEDGE_HIGH |
 | 權證/期貨/題材/公司 | C_PUT_DOMINANT | C_PUT_SURGE、C_FUT_VOLUME_HIGH、C_THEME_HOT/COLD、C_BUYBACK | (C_WARRANT_QUIET、C_FUT_OI_CHANGE 未做) |
 
@@ -120,9 +120,9 @@ P2:期貨背景列;F9–F11。
 | rank | 事實 |
 |---|---|
 | 5 | 外資/投信單日買賣超佔量 ≥3%;三大法人合計佔量 ≥5%;前12大分點淨買賣佔量 ≥5%;低買高賣/區間損益前段分點買賣超佔量 ≥2%(§6.8);近1月出貨分點;分點反手賣出(B_RISK_REVERSAL);日K 跌破 20 日線、MACD 柱翻正/翻負;壓力/支撐 ≤3%(前高前低、成交密集區) |
-| 4 | 外資/投信單日佔量 1–3%(或張數門檻);外資投信同步;三大法人 3–5%;前12大分點 2–5%;低買高賣/區間損益前段分點買賣超(其餘);囤貨分點(1 月/1 週)、近1週出貨分點;當沖分點買超、追蹤分點賣超、地緣分點;融資增加股價跌 / 融資減少股價漲;認售成交暴增;日K 站回 20 日線、KD 低檔金叉/高檔死叉、爆量收紅/收黑(量比 ≥1.5)、創 20 日新高/新低、今日 N 日高低、單日 ±3%、跳空、長黑;最接近均線 ≤3%(上下對稱)、未回補缺口 ≤3%;集保大戶週變化 ≥0.5 個百分點(封頂);後端事件型 R_*、分點/法人/T2 類理由 |
-| 3 | 強分點仍有持股(C_SMART_HOLDING)、均線多空排列(日)、連漲連跌、2 日量增價漲/跌、近 5 日 ±8%、法人 20 日累計、融資使用率 ≥60%(含 R_MARGIN_HOT、R_RSI_OVERHEAT 狀態型風險)、認售為認購倍數、散戶人數、週/月最接近均線 ≤3%、後端其餘技術/策略理由 |
-| 2 | RSI 區間、KD >80、均線斜率、MACD 在零軸上/下(原 3,屬例行狀態)、遠距壓力支撐(>3%)、區間上下緣、題材熱度、分點帳面損益家數、董監持股 |
+| 4 | 融資 20 日增加且同期分點集中(背景)/分散且股價跌(空方 ⚠)(§7);外資/投信單日佔量 1–3%(或張數門檻);外資投信同步;三大法人 3–5%;前12大分點 2–5%;低買高賣/區間損益前段分點買賣超(其餘);囤貨分點(1 月/1 週)、近1週出貨分點;當沖分點買超、追蹤分點賣超、地緣分點;融資 5 日增加股價跌(20 日已列「分散且股價跌」時不列)/ 融資減少股價漲;認售成交暴增;日K 站回 20 日線、KD 低檔金叉/高檔死叉、爆量收紅/收黑(量比 ≥1.5)、創 20 日新高/新低、今日 N 日高低、單日 ±3%、跳空、長黑;最接近均線 ≤3%(上下對稱)、未回補缺口 ≤3%;集保大戶週變化 ≥0.5 個百分點(封頂);後端事件型 R_*、分點/法人/T2 類理由 |
+| 3 | 強分點仍有持股且帳面為正(C_SMART_HOLDING)、融資堆積且同期分點集中(背景,§7)、均線多空排列(日)、連漲連跌、2 日量增價漲/跌、近 5 日 ±8%、法人 20 日累計、融資使用率 ≥60%(含 R_MARGIN_HOT、R_RSI_OVERHEAT 狀態型風險;有融資堆積且同期分點集中時 C_MARGIN_HOT 降為 2,§7)、認售為認購倍數、散戶人數、週/月最接近均線 ≤3%、後端其餘技術/策略理由 |
+| 2 | 強分點仍有持股但帳面為負(C_SMART_HOLDING_NEG,背景);融資使用率 ≥60% 但同期有堆積集中(C_MARGIN_HOT,仍空方,§7);RSI 區間、KD >80、均線斜率、MACD 在零軸上/下(原 3,屬例行狀態)、遠距壓力支撐(>3%)、區間上下緣、題材熱度、分點帳面損益家數、董監持股 |
 | 1 | 量縮、融資使用率 <60%、券增減、券資比、期貨量、庫藏股、董監質押、資料內最高最低、遠距週/月均線 |
 本次調整(其餘不動):外資/投信單日 ≥3% 由「僅外資賣超」改為多空、外資投信一致;三大法人合計與前12大分點 ≥5% 升 5;囤貨分點 3→4;融資增減股價反向 3→4;日K 最接近下方均線 ≤3% 2→4、週/月 1→3(與上方對稱);MACD 零軸狀態 3→2;集保大戶 5→4;後端 R_RSI_OVERHEAT、R_MARGIN_HOT 4→3。
 **視覺**:多方欄 `bg-up/[0.06]`、空方欄 `bg-down/[0.06]` 圓角淡底(取代中間 1px 分隔線);重點列 `bg-up/12`/`bg-down/12` + 左 2px 側別色條;群組頭改家族色 /12 淡底小膠囊;一般列之間 `divide-border` 細線。不新增色票。
@@ -144,12 +144,50 @@ P2:期貨背景列;F9–F11。
 - **份量**:分點近 5 日(`branch_history` 前 5 天,每天只留前 12 大,看不到的日子算 0)或今日淨買賣超,須 ≥50 張,且佔同期間成交量 ≥0.5% 或 ≥500 張(500 張同 `C_TRACKED_SELL`,大型股 0.5% 太難達到;50 張下限擋小量股的幾張雜訊)。近 5 日的量全在今日 → 寫「今日」;否則先看近 5 日,不成立才看今日。一家分點只寫一句。
 - **減碼**:區間損益前段分點近 5 日淨賣 ≥50 張且 ≥ 估算持股的 30%(賣出 ÷(估算持股 + 賣出);估算日不早於分點資料日才算)→ 也列入 `C_SMART_SELL`,句尾「估算持股減少 N%」。
 - **句子**:`C_SMART_BUY`(多方)/`C_SMART_SELL`(空方 ⚠)點名前 2 家(依佔量排),其餘「等 N 家」;資格寫在名字前後,例「低買高賣分點【群益金鼎-板橋】(短線派 買低 70%)近5日買超 +1,500 張(佔量 3.0%)」「區間損益估算前段分點【凱基-台北】(3月 +500 萬)今日買超 +600 張(佔量 6.0%)」。賣超句的分位標示用「賣高 N%」(賣側紀錄不足時用買低)。rank:最大佔量 ≥2% → 5,否則 4;magnitude = 佔量 %。分點資料日落後 → 帶日期、「今日」字樣拿掉。
-- **持股**:沒被買賣句點名的強分點,在區間損益估算有持股 ≥50 張 → `C_SMART_HOLDING`(多方,rank 3)「…仍有持股 800 張,帳面為正(估算)」,一家一句、最多 2 家。這些分點不再算進 `C_PNL_GAINERS/LOSERS_HOLDING` 家數,有排除時家數句首加「另有」。
+- **持股**:沒被買賣句點名的強分點,在區間損益估算有持股 ≥50 張 → 帳面為正:`C_SMART_HOLDING`(多方,rank 3)「…仍有持股 800 張,帳面為正(估算)」;帳面為負:`C_SMART_HOLDING_NEG`(背景,rank 2,2026-10-04 使用者:套牢中仍持股不是多方證據),同句型。各自一家一句、最多 2 家。這些分點不再算進 `C_PNL_GAINERS/LOSERS_HOLDING` 家數,有排除時家數句首加「另有」。
 - **去重**:`C_TRACKED_SELL` 已點名的今日賣超分點不再出現在 `C_SMART_SELL`。
 - `branch_pctile_counts` 由 `STOCK_KEYS_NOT_FACTS` 移到 `STOCK_KEYS_USED`(原註記「只呈現次數,不得做成判定」:這裡只點名排行前段分點的買賣超事實並附分位佔比,不做評分與判定)。
 
 ### 6.5 測試
 `web/lib/bullBear.test.ts`(完整性 fixture:240 日高 +46.9%、上方密集區、現價之上成交、外資連 5 日賣超取代 R_FOREIGN_SELL5;讓位;鏡像含口袋;標頭 rank;分組;每 code 恰一次)、`web/lib/facts/{series,techFacts,levelFacts,holdersFacts,chipsFacts,catalogue}.test.ts`(重取樣:部分週/週中與週一假日/跨年週/月桶/分割前後還原相等/零量;目錄覆蓋率=每個 code 都有 fixture 產生;segments 接起來等於 text;mirrors ⊆ 目錄;禁用詞)。`pipeline/tests/test_bull_bear_codes.py`:SOURCES 加 `futures_volume_anomaly.py`;json_export 個股 payload 頂層鍵 ⊆ `STOCK_KEYS_USED ∪ STOCK_KEYS_NOT_FACTS`(且不得列 payload 沒有的鍵)。
 
+## 7. 融資增量 × 同期分點囤貨/集保(Fable 2026-10-04 規格,使用者核定;已實作)
+使用者問「融資使用率高但分點集中,是不是主力用融資」。結論:**只能是同向共動的觀察,不是歸因**——官方只公布每檔融資餘額,沒有分點或帳戶層級;分點也不分現股/融資。所以事實句只把「融資增量」與「同期囤貨分點」「同期集保大戶變化」並列,不寫誰用融資。使用者採 Fable 建議:`C_MARGIN_HOT` 維持空方,只在有堆積集中證據時 rank 3→2;**不採**選項 B(把 C_MARGIN_HOT 改背景);不改任何分數。
+
+**定義句**(籌碼分析卡底常駐,`priceLevels.ts MARGIN_FLOW_DEFINITION` ∈ `CHIPS_HOWTO_LINES`):「融資增量只有全市場餘額,無分點或帳戶層級;此處只列同一期間的分點囤貨與集保變化,是否相關由讀者判斷。」
+
+**產生器** `web/lib/facts/marginFlowFacts.ts`(純前端;資料 margin_history、branch_history、insti_history、holders_history、candles;無新後端鍵,`STOCK_KEYS_USED` 不變)。`deriveAllFacts` 先算它,結果 `{buildupConc, dispersed20}` 傳給 `marginFacts()` 第 4 參數。外資席位判斷 `web/lib/facts/seat.ts isForeignBroker`(去掉「(…)」前綴後比對 X商 前綴或美林/摩根/花旗/高盛/瑞銀/野村/麥格理/瑞士信貸/德意志/大和/巴黎/匯豐/法銀/星展/法國興業);`branchPctile.seatKind()` 不動。
+
+**名詞**:W=20 交易日,視窗同 `computeWindow`(以分點最新日為終點,且分點先截到融資最新日以前);ΔM、股價、法人都從**視窗前一交易日**算到視窗末日(=20 個交易日的變化)。囤貨分點 = `computeWindow(...).acc` 扣外資席位(總公司保留);cov = 囤貨分點合計淨買 ÷ ΔM;inst = 期間外資+投信淨買合計;px = 還原收盤變化;集保:期間內 holders_history ≥2 週點時 Δ400 = 末週−首週 400 張以上持股比(百分點)、Δretail = 未滿 400 張股東人數變化 %。
+
+**20 日分類**(每交易日):
+1. 顯著:ΔM ≥ max(200 張, 起點餘額 5%),否則不判讀(不算 cov)。
+2. inst ≥ 0.5×ΔM → 法人主導,不判讀。
+3. cov ≥0.5 且囤貨合計 ≥200 張且 px ≥ −5% 且非(Δ400 ≤ −0.3)→ `C_MARGIN_UP_CONC`(背景,rank 4)。
+4. cov <0.5 且 px ≤ −5% → `C_MARGIN_UP_DISPERSED`(空方 ⚠,rank 4);此時不再列 5 日 `C_MARGIN_UP_PRICE_DOWN`。
+5. 其他不判讀。分點缺日(`computeWindow` 不可用)→ 不判讀。
+
+**堆積視窗**(只在融資使用率 ≥60% 時算):起點 = 近 240 筆 margin_history 餘額最低日;需 末日/最低 ≥1.5 且 ΔM ≥500 張;分點視窗取與起點距今交易日數最接近的 20/60/120/240(>20 日用持倉保有率判準);同第 2–4 條分類(期間 = 起點到最新融資日),**只有集中才列** `C_MARGIN_BUILDUP_CONC`(背景,rank 3),並讓 `C_MARGIN_HOT` rank 3→2(文案不變、仍空方、仍取代 R_MARGIN_HOT;rank 2 不進重點、不當標頭)。
+
+**句型**(新事實不設 mirrors):
+- `C_MARGIN_UP_CONC`:「融資 20 日增加 +9,111 張(+31.3%),同期囤貨分點 4 家合計淨買超 +9,863 張(為融資增量的 108%),股價 20 日 +3.3%;400張以上大戶 +2.50 個百分點(集保 06/26)」(集保 ≥2 週才有分號後段)。
+- `C_MARGIN_UP_DISPERSED`:「融資 20 日增加 +2,058 張(+15.5%),同期無囤貨分點,外資投信合計賣超 14,442 張,股價 20 日 −9.8%;400張以上大戶 −7.33 個百分點、未滿400張股東 +14.6%(集保 10/02)」;有囤貨但 cov<0.5 改寫「同期囤貨分點合計僅為融資增量的 31%」;inst ≥0 省略法人子句。
+- `C_MARGIN_BUILDUP_CONC`:「融資餘額自 03/24 的 12,911 張增至 41,400 張(+28,489 張,使用率 75%);近6月囤貨分點 9 家合計淨買超 +33,223 張、400張以上大戶 +7.86 個百分點、股價 +21.2%」。
+- 禁詞:主力/鎖碼/大戶融資/散戶融資/買進/賣出/看多/看空/建議/將會(加專案既有禁詞),`chipsFacts.test.ts` 鎖。
+
+**驗證案例**(Fable 正式庫唯讀實查,10-02):
+| 股票 | 20 日 | 堆積 | 畫面 |
+|---|---|---|---|
+| 2476 鉅祥 | 04-17~07-09 七個評估點皆集中;之後融資停增 → 消失 | 起點 03-24 12,911 張;06-26/07-31/10-02 皆集中(統一-敦南 +8,901、康和 +5,722、兆豐-民生 +5,503、永豐金證券 +3,815;集保 ≥400 +7.86pp、散戶人數 −12.7%) | 背景兩條(20 日視窗期間)+ C_MARGIN_HOT rank 2 非重點 |
+| 8039 台虹、3450 聯鈞 | 分散且股價跌 | — | 空方 ⚠ C_MARGIN_UP_DISPERSED |
+| 2236 百達-KY | 無法判斷 | 大戶 −4.03pp → 無法判斷 | 只有 C_MARGIN_HOT(rank 3) |
+| 8932 智通 | 無法判斷(股價 −55.8%) | — | 無新事實 |
+| 6538 倉和 | 法人主導 | 集中(股價 +382%:說明為何 C_MARGIN_HOT 不改背景) | 堆積背景 + C_MARGIN_HOT rank 2 |
+| 1586 和勤 | 集中 | — | C_MARGIN_UP_CONC |
+母體(10-02,ΔM20 顯著 315/1,718 檔):集中 48、集中但跌/大戶減 26、法人主導 97、分散未跌 118、分散且跌 26。
+
+**測試**:`web/lib/facts/fixtures.ts` 的 `marginConcBuildup`(2476 型)、`marginDispersedDown`(8039/3450 型)、`marginInstDominant`、`marginConcForeignOnly`(唯一大買方是外資席位 → 不計)、`marginConcTdccDown`(2236 型 → 無事實)、`marginConcGap`(分點缺日 → 無事實);`chipsFacts.test.ts` 鎖文案/rank/禁詞,`catalogue.test.ts` 覆蓋率,`bullBear.test.ts` 鎖「有堆積集中時 C_MARGIN_HOT rank 2、不在重點、不當標頭;每 code 恰一次」。
+**後續(P2)**:`pipeline/tools/margin_flow_audit.py` 唯讀稽核母體分布。
+**不做**:不寫主力/鎖碼/歸因;不新增 DB 表或後端匯出;不把融資+集中放多方;不改 R_MARGIN_HOT/I_MARGIN_OK 分數與 60% 門檻;不改 accumulation.ts、seatKind();不用 5 日視窗判集中。
 ## 5. 不做
 不改 tech_score/final/risk_deductions/Armed;不加 S14/R_RESIST;不把 F 事實放 technical.*;不改 reasons/risks 字串陣列與 radar.json;不顯示 points、不相減計數;UI 不出現 做多/做空/看多/看空/買進/賣出/建議;不改預設分頁與其他分頁順序;不新增色票;不改伺服器原文;不碰 adj_factor。

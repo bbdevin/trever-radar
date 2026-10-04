@@ -286,10 +286,15 @@ export const HOWTO_LINES: readonly string[] = [
   "週K、月K由還原日K合併,最後一根是進行中的本週/本月。",
 ];
 
+/** 融資×分點集中度事實的定義句(docs/46 §7):只並列、不歸因。 */
+export const MARGIN_FLOW_DEFINITION =
+  "融資增量只有全市場餘額,無分點或帳戶層級;此處只列同一期間的分點囤貨與集保變化,是否相關由讀者判斷。";
+
 /** 籌碼分析段底的精簡門檻說明(常駐顯示;原「怎麼算」裡的籌碼條目)。 */
 export const CHIPS_HOWTO_LINES: readonly string[] = [
   "法人:外資達當日量 1% 或 1,000 張、投信 1% 或 500 張才列;自營商不列。",
   "分點:每天只存淨額前 12 大,合計與天數是下限。大戶:集保 400 張以上週變化 ≥0.3 個百分點。",
+  MARGIN_FLOW_DEFINITION,
 ];
 
 export type ChartLevel = { price: number; label: string; side: "above" | "below" };
