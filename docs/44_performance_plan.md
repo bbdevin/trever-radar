@@ -23,7 +23,7 @@
 | **D-P0** 維護窗(資料庫) | 離線把 `branch_trades_raw` + `daily_prices` 轉 WITHOUT ROWID、丟 1.33 GB 覆蓋索引、壓實;`page_size`/`ANALYZE` 各自以基準決定 | export 每輪 −9～−10 分(一天 −1 小時);夜間分位 −5～−8 分;9.03 → 6–6.5 GB | **是**(正式 DB 重建 + schema 變更 + 停機窗) | VPS 停寫一段時間,網站照常 |
 | **D-P0.5** 同批程式 ✅ 2026-10-04 程式完成(見 §7) | `db.py` 連線 PRAGMA(`synchronous=NORMAL`(僅 WAL)、`cache_size=-65536`;`temp_store` 維持 FILE;**mmap 不設**);`upsert()` 改 executemany;export 分段計時 log | `compute_all` 寫入 212 s → 40–60 s;寫入段 −20～−40% | 否 | 只動程式,不改檔案格式 |
 | **P1** 資料格式拆檔(前後端一起) | 見 §3:個股 JSON 拆「核心＋K線歷史(內容雜湊檔名,一年快取)＋籌碼區段」,每輪只重算有變動的區段;`separators` 去空白、移除前端沒用到的 `af`;`no-store` → `no-cache`(304) | 一天 export ~2 h → ~35–45 分;手機首屏下載 0.5–1.5 MB raw → ~100 KB;重複看同一檔近乎 0 下載 | **格式請你過目**;Worker 規則需資安審查 + 核准 | 前端先上雙讀 → VPS 切格式 → Worker |
-| **P1** Worker 驗證優化 | 同時多個請求只查一次 Supabase;JWKS 本地驗簽;profile 快取 5 分 | 冷啟動每頁 −0.25～−0.5 s | **是 + 資安審查**(門鎖) | `cloudflare-data-worker/` |
+| **P1** Worker 驗證優化 | 同時多個請求只查一次 Supabase;JWKS 本地驗簽(ES256 釘死、移除 `/auth/v1/user`);profile 以 `sub` 快取 5 分。**2026-10-04 已在分支實作(`src/auth.js` + `test/*.test.mjs`),獨立資安審查通過(4 個 Low 已修),⏳ 待使用者核准,未合 main、未上線** | 冷啟動每頁 −0.25～−0.5 s | **是 + 資安審查**(門鎖) | `cloudflare-data-worker/` |
 | **P2** 觀察後再決定 | 個股分頁元件按需載入、點擊預抓、爬蟲段不持 DB 鎖、權證分點增量彙總、`radar.json` 瘦身、權證分點列保留天數 | 邊際 | 部分需核准 | — |
 
 > **P2「爬蟲段不持 DB 鎖」的進度(2026-10-04,`docs/47`)**:分點輪改成先**探測**來源(等待期間放掉 DB 鎖,只握分點來源鎖),達門檻才全量爬;各日更輪的輪詢在每次嘗試之間放鎖;非交易日分點/資券/夜間輪收工。估 DB 鎖忙碌 4.3–5.5 → ~2.6–3.0 小時/日、非交易日 ~3.5 → ~0.1 小時。**全量爬本身仍持鎖**(逐檔 commit),那一段不變。deploy 全量重傳(`generated_at`)仍屬 P1。
