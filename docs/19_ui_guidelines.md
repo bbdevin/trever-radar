@@ -32,7 +32,7 @@
 12. **SVG 不用 emoji**(同上 lucide 規則);資料日期標注(「分點資料:7/4」)避免誤以為即時。
 13. **Tab／篩選選中說明**(2026-08-25):首頁觀察名單等橫向 pill tab，選中後必須在下方顯示**可見定義句**(非僅 `title` hover)；桌機隱藏、手機也要看得到。文案說明「這榜代表什麼／不代表什麼」，避免與空狀態／免責重複堆疊。
 14. **BottomNav ≤4～5 項**:次要榜(如資券)優先併入首頁 tab + `?tab=` 深連，不要為單一功能擠爆手機底欄；桌機頂欄可連到同一 tab。
-15. **手機橫滑列要看得出能滑**(2026-10-04):捲軸隱藏的橫向 tab/chip 列一律包 `web/components/ScrollHint.tsx`——有內容被裁掉的那一側顯示漸層(`fade` 對應容器底色:pill 列 `card`、直接在頁面上的列 `background`)+ 主色箭頭鈕(點了捲 ~70%);沒溢出時不畫。`role`/`aria-*` 照舊寫在 ScrollHint 上(落在捲動元素本身)。傳 `activeKey` 會把選中項(`aria-selected`/`aria-pressed`/`data-active`)捲進可視範圍,只捲容器不捲頁面;`peekId` 為第一次造訪輕推一次。表格的 `overflow-x-auto` 目前未套。
+15. **手機橫滑列要看得出能滑**(2026-10-04):捲軸隱藏的橫向 tab/chip 列一律包 `web/components/ScrollHint.tsx`——有內容被裁掉的那一側顯示漸層(`fade` 對應容器底色:pill 列 `card`、直接在頁面上的列 `background`)+ 主色箭頭鈕(點了捲 ~70%);沒溢出時不畫。`role`/`aria-*` 照舊寫在 ScrollHint 上(落在捲動元素本身)。傳 `activeKey` 會把選中項(`aria-selected`/`aria-pressed`/`data-active`)捲進可視範圍,只捲容器不捲頁面;`peekId` 為第一次造訪輕推一次。**資料表**(2026-10-04 起)同樣包 ScrollHint,用 `variant="table"`:漸層鋪滿表高,箭頭鈕起點對齊表頭列、表比視窗高時 sticky 停在視窗垂直中線;保留原生捲軸;捲動容器自帶 1px 邊框＋圓角時傳 `edgeRadius`(如 `var(--r-lg)`),`fade` 照容器底色(表直接在頁面上用 `background`)。已套:三大法人日表、個股資券表、融資使用率排行、權證成交表、分點下鑽日表、分點追蹤聚合表、分點「最近動向」卡內表;分點日別小柱條用 `variant="plain"`。量測(390px,含字級「較大/最大」的 body zoom)min-content 永遠放得下的表不套(目前:分點集中度躍升榜、大戶 `table-fixed` 表)。新表若可能溢出就照此包。
 
 ## 3. 對齊策略
 

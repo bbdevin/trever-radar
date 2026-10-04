@@ -5,6 +5,7 @@ import type { Candle, StockJson } from "@/lib/types";
 import { fmtLots } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import ReasonPill from "@/components/ReasonPill";
+import { ScrollHint } from "@/components/ScrollHint";
 
 type SeriesKey = "foreign" | "trust" | "dealer" | "total";
 
@@ -217,7 +218,11 @@ export default function InstiPanel({ data, candles }: { data: StockJson; candles
           </div>
 
           {/* 日表：日期 | 外資 | 投信 | 自營商 | 三大法人 */}
-          <div className="overflow-x-auto rounded-[var(--r-lg)] border border-border bg-card shadow-[var(--shadow-card)]">
+          <ScrollHint
+            variant="table"
+            edgeRadius="var(--r-lg)"
+            className="overflow-x-auto rounded-[var(--r-lg)] border border-border bg-card shadow-[var(--shadow-card)]"
+          >
             <table className="w-full border-collapse text-[13px]">
               <thead>
                 <tr>
@@ -246,7 +251,7 @@ export default function InstiPanel({ data, candles }: { data: StockJson; candles
                 ))}
               </tbody>
             </table>
-          </div>
+          </ScrollHint>
           {history.length > TABLE_PREVIEW && (
             <button
               type="button"

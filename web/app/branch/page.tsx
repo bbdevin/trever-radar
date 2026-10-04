@@ -1093,7 +1093,7 @@ export default function BranchPage() {
               <div className="mb-3 flex items-center justify-between border-b border-border pb-3">
                 <span className="text-lg font-semibold text-foreground">{branchName}</span>
               </div>
-              <div className="overflow-x-auto">
+              <ScrollHint variant="table" className="overflow-x-auto">
                 <table className="w-full border-collapse text-[13px]">
                   <thead>
                     <tr>
@@ -1126,7 +1126,7 @@ export default function BranchPage() {
                     ))}
                   </tbody>
                 </table>
-              </div>
+              </ScrollHint>
             </div>
           ))}
         </div>

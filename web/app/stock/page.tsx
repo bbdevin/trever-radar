@@ -1175,7 +1175,7 @@ function WarrantPanel({ data }: { data: StockJson }) {
       </div>
 
       {data.active_warrants.length > 0 ? (
-        <div className="overflow-x-auto">
+        <ScrollHint variant="table" className="overflow-x-auto">
           <table className="w-full border-collapse text-xs">
             <thead>
               {table.getHeaderGroups().map((hg) => (
@@ -1261,7 +1261,7 @@ function WarrantPanel({ data }: { data: StockJson }) {
               ))}
             </tbody>
           </table>
-        </div>
+        </ScrollHint>
       ) : (
         <div className="py-[46px] text-center text-sm text-muted-foreground">今日沒有權證成交明細</div>
       )}

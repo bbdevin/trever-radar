@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { AlertTriangle, Info } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
+import { ScrollHint } from "@/components/ScrollHint";
 import { dataFetch } from "@/lib/dataFetch";
 import { OFFLINE_DATA_COPY, isBrowserOffline } from "@/lib/pwa";
 import type { MarginUsageJson } from "@/lib/types";
@@ -95,7 +96,11 @@ export default function MarginUsageRank({ embedded = false }: Props) {
         <span>使用率 ≥ 60% 的列以琥珀色標示。「較前日」為融資使用率百分點變化；增減為融資餘額張數。色彩非唯一訊號。</span>
       </div>
 
-      <div className="overflow-x-auto rounded-[var(--r-lg)] border border-border bg-card shadow-[var(--shadow-card)]">
+      <ScrollHint
+        variant="table"
+        edgeRadius="var(--r-lg)"
+        className="overflow-x-auto rounded-[var(--r-lg)] border border-border bg-card shadow-[var(--shadow-card)]"
+      >
         <table className="w-full min-w-[720px] text-left text-[13px]">
           <thead className="border-b border-border bg-secondary/40 text-[12px] text-muted-foreground">
             <tr>
@@ -162,7 +167,7 @@ export default function MarginUsageRank({ embedded = false }: Props) {
             })}
           </tbody>
         </table>
-      </div>
+      </ScrollHint>
     </div>
   );
 }

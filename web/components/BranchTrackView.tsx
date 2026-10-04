@@ -11,6 +11,7 @@ import { fmtLots, fmtAmount } from "@/lib/format";
 import { cn, pillTabClass } from "@/lib/utils";
 import BuySellSplit from "@/components/BuySellSplit";
 import BranchTrackButton from "@/components/BranchTrackButton";
+import { ScrollHint } from "@/components/ScrollHint";
 import {
   aggregateBranchRows,
   tradingDaysDesc,
@@ -89,7 +90,11 @@ function AggTable({
     );
   }
   return (
-    <div className="overflow-x-auto rounded-[var(--r-lg)] border border-border bg-card shadow-[var(--shadow-card)]">
+    <ScrollHint
+      variant="table"
+      edgeRadius="var(--r-lg)"
+      className="overflow-x-auto rounded-[var(--r-lg)] border border-border bg-card shadow-[var(--shadow-card)]"
+    >
       <table className="w-full border-collapse text-[13px]">
           <thead>
             <tr>
@@ -129,7 +134,7 @@ function AggTable({
             })}
           </tbody>
         </table>
-      </div>
+      </ScrollHint>
   );
 }
 

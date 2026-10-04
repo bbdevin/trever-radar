@@ -5,6 +5,7 @@ import Link from "next/link";
 import type { Candle, MarginHistoryPoint, MarginMeta, StockJson } from "@/lib/types";
 import { fmtLots, fmtLotsPlain, toneClass } from "@/lib/format";
 import { cn, pillTabClass } from "@/lib/utils";
+import { ScrollHint } from "@/components/ScrollHint";
 
 const TABLE_PREVIEW = 20;
 
@@ -256,7 +257,12 @@ export default function MarginPanel({ data, candles }: { data: StockJson; candle
         </div>
       )}
 
-      <div className="overflow-x-auto rounded-[var(--r-md)] border border-border">
+      <ScrollHint
+        variant="table"
+        fade="background"
+        edgeRadius="var(--r-md)"
+        className="overflow-x-auto rounded-[var(--r-md)] border border-border"
+      >
         <table className="w-full min-w-[520px] text-left text-[12px]">
           <thead className="border-b border-border bg-secondary/40 text-muted-foreground">
             <tr>
@@ -300,7 +306,7 @@ export default function MarginPanel({ data, candles }: { data: StockJson; candle
             })}
           </tbody>
         </table>
-      </div>
+      </ScrollHint>
       {history.length > TABLE_PREVIEW && (
         <button
           type="button"

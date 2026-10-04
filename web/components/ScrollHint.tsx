@@ -17,6 +17,9 @@ import { cn } from "@/lib/utils";
  * - `activeKey` 改變時把選中項(aria-selected/aria-pressed/data-active)捲進可視範圍——只捲這個容器,
  *   不用 scrollIntoView(會連頁面一起垂直捲,個股分頁列是 sticky)。
  * - `peekId`:每列第一次出現時輕推 28px 再回來一次(localStorage 記住;減少動態偏好時不做)。
+ * - `variant="table"`(2026-10-04):橫向可捲的資料表。漸層鋪滿整個表高,箭頭鈕起始對齊表頭列,
+ *   表格比畫面高時以 sticky 停在視窗垂直中線、跟著表捲到底;保留原生捲軸(桌機滑鼠仍可拖)。
+ *   捲動容器自帶 1px 邊框與圓角時傳 `edgeRadius`(如 `var(--r-lg)`),提示層內縮 1px 並跟著圓角。
  */
 
 type Fade = "card" | "background";
@@ -36,8 +39,10 @@ type Props = HTMLAttributes<HTMLDivElement> & {
   /** 外層定位框的 class:原本放在捲動容器上的「外部版面」class(寬度、shrink、margin)搬到這裡。 */
   wrapperClassName?: string;
   fade?: Fade;
-  /** pill:容器有 1px 邊框與全圓角,提示層內縮 1px 並跟著圓角;plain:無邊框直角。 */
-  variant?: "pill" | "plain";
+  /** pill:容器有 1px 邊框與全圓角,提示層內縮 1px 並跟著圓角;plain:無邊框直角;table:見上。 */
+  variant?: "pill" | "plain" | "table";
+  /** 僅 table:捲動容器的圓角(有 1px 邊框時才傳)。 */
+  edgeRadius?: string;
   activeKey?: unknown;
   peekId?: string;
 };
@@ -67,6 +72,7 @@ export function ScrollHint({
   className,
   fade = "card",
   variant = "pill",
+  edgeRadius,
   activeKey,
   peekId,
   ...rest
@@ -197,58 +203,87 @@ export function ScrollHint({
     el.scrollBy({ left: dir * Math.max(80, el.clientWidth * 0.7), behavior: prefersReducedMotion() ? "auto" : "smooth" });
   };
 
-  const pill = variant === "pill";
   const style = { "--sh-fade": FADE_VAR[fade] } as CSSProperties;
+  const edgeProps = { variant, edgeRadius };
 
   return (
     <div className={cn("relative min-w-0 max-w-full", wrapperClassName)} style={style}>
-      <div ref={ref} className={cn("relative scrollbar-hide", className)} {...rest}>
+      <div ref={ref} className={cn("relative", variant !== "table" && "scrollbar-hide", className)} {...rest}>
         {children}
       </div>
       {edges.left && (
-        <HintEdge side="left" pill={pill} onClick={() => nudge(-1)} />
+        <HintEdge side="left" {...edgeProps} onClick={() => nudge(-1)} />
       )}
       {edges.right && (
-        <HintEdge side="right" pill={pill} onClick={() => nudge(1)} />
+        <HintEdge side="right" {...edgeProps} onClick={() => nudge(1)} />
       )}
     </div>
   );
 }
 
-function HintEdge({ side, pill, onClick }: { side: "left" | "right"; pill: boolean; onClick: () => void }) {
+function HintEdge({
+  side,
+  variant,
+  edgeRadius,
+  onClick,
+}: {
+  side: "left" | "right";
+  variant: NonNullable<Props["variant"]>;
+  edgeRadius?: string;
+  onClick: () => void;
+}) {
   const right = side === "right";
   const Icon = right ? ChevronRight : ChevronLeft;
+  const pill = variant === "pill";
+  const table = variant === "table";
+  // 有邊框(pill 或帶 edgeRadius 的表)就內縮 1px,邊框線不被漸層蓋掉。
+  const inset = pill || (table && edgeRadius != null);
+  const radius = table && edgeRadius != null ? `calc(${edgeRadius} - 1px)` : undefined;
+  const button = (
+    <button
+      type="button"
+      aria-label={right ? "往右看更多" : "往左看更多"}
+      onClick={onClick}
+      className={cn(
+        "pointer-events-auto flex h-full max-h-11 w-9 shrink-0 cursor-pointer items-center justify-center",
+        "rounded-full focus-visible:outline-offset-0",
+      )}
+    >
+      <span
+        aria-hidden
+        className="flex h-7 w-7 items-center justify-center rounded-full border border-primary/40 text-primary shadow-[var(--shadow-card)] transition-colors duration-200"
+        style={{ background: "color-mix(in srgb, var(--primary) 16%, var(--sh-fade))" }}
+      >
+        <Icon size={16} strokeWidth={2.2} />
+      </span>
+    </button>
+  );
   return (
     <div
       className={cn(
-        "pointer-events-none absolute z-1 flex items-center",
-        pill ? "inset-y-px" : "inset-y-0",
+        "pointer-events-none absolute z-1 flex",
+        table ? "flex-col" : "items-center",
+        inset ? "inset-y-px" : "inset-y-0",
         right
-          ? cn("justify-end", pill ? "right-px rounded-r-full" : "right-0")
-          : cn("justify-start", pill ? "left-px rounded-l-full" : "left-0"),
+          ? cn(table ? "items-end" : "justify-end", inset ? "right-px" : "right-0", pill && "rounded-r-full")
+          : cn(table ? "items-start" : "justify-start", inset ? "left-px" : "left-0", pill && "rounded-l-full"),
       )}
       style={{
         width: HINT_WIDTH,
         background: `linear-gradient(to ${right ? "left" : "right"}, var(--sh-fade) 42%, transparent)`,
+        ...(radius && (right
+          ? { borderTopRightRadius: radius, borderBottomRightRadius: radius }
+          : { borderTopLeftRadius: radius, borderBottomLeftRadius: radius })),
       }}
     >
-      <button
-        type="button"
-        aria-label={right ? "往右看更多" : "往左看更多"}
-        onClick={onClick}
-        className={cn(
-          "pointer-events-auto flex h-full max-h-11 w-9 shrink-0 cursor-pointer items-center justify-center",
-          "rounded-full focus-visible:outline-offset-0",
-        )}
-      >
-        <span
-          aria-hidden
-          className="flex h-7 w-7 items-center justify-center rounded-full border border-primary/40 text-primary shadow-[var(--shadow-card)] transition-colors duration-200"
-          style={{ background: "color-mix(in srgb, var(--primary) 16%, var(--sh-fade))" }}
-        >
-          <Icon size={16} strokeWidth={2.2} />
-        </span>
-      </button>
+      {table ? (
+        // 起點=表頭列;表比視窗高時停在視窗垂直中線(sticky 只在本提示層的高度內移動)。
+        <div className="sticky flex h-11 items-center" style={{ top: "calc(50vh - 22px)" }}>
+          {button}
+        </div>
+      ) : (
+        button
+      )}
     </div>
   );
 }

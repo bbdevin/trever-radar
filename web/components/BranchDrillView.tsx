@@ -150,7 +150,11 @@ export default function BranchDrillView({
         <p className="py-8 text-center text-sm text-muted-foreground">尚無 K 線資料。</p>
       )}
 
-      <div className="overflow-x-auto rounded-[var(--r-lg)] border border-border bg-card shadow-[var(--shadow-card)]">
+      <ScrollHint
+        variant="table"
+        edgeRadius="var(--r-lg)"
+        className="overflow-x-auto rounded-[var(--r-lg)] border border-border bg-card shadow-[var(--shadow-card)]"
+      >
         {daily.length === 0 ? (
           <p className="px-3.5 py-[46px] text-center text-sm text-muted-foreground">
             此分點在已抓到的前 15 大買賣超裡沒有進出紀錄。免費資料為裁剪版,冷門進出不可見。
@@ -180,7 +184,7 @@ export default function BranchDrillView({
             </tbody>
           </table>
         )}
-      </div>
+      </ScrollHint>
       <p className="text-[11.5px] leading-relaxed text-muted-foreground">
         僅列出該分點有進入當日前 15 大買/賣超的交易日,不是全量委託明細。盤後 T+1,僅供籌碼觀察。
       </p>

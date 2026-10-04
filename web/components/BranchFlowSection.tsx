@@ -10,6 +10,7 @@ import { cn, pillTabClass } from "@/lib/utils";
 import { BranchTagLegend, BranchTagList, BranchTagNote, makeTagContext } from "@/components/BranchTag";
 import BuySellSplit from "@/components/BuySellSplit";
 import ReasonPill from "@/components/ReasonPill";
+import { ScrollHint } from "@/components/ScrollHint";
 import SectionHeader from "@/components/SectionHeader";
 import StatTile, { toneOf } from "@/components/StatTile";
 
@@ -617,7 +618,8 @@ function BranchRow({
           {history.length === 0 ? (
             <p className="py-2 text-center text-[11px] text-muted-foreground">此區間無日別明細（僅有當日彙總）</p>
           ) : (
-            <div
+            <ScrollHint
+              variant="plain"
               className="overflow-x-auto scrollbar-hide [-webkit-overflow-scrolling:touch]"
               role="region"
               aria-label={`${b.name} 近 ${history.length} 日淨買賣明細`}
@@ -647,7 +649,7 @@ function BranchRow({
                 })}
               </div>
               <p className="mt-1 text-center text-[10px] text-muted-foreground md:hidden">← 左右滑動查看更多交易日 →</p>
-            </div>
+            </ScrollHint>
           )}
         </div>
       )}
