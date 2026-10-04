@@ -395,7 +395,10 @@ export function topOfSide(s: BullBearSummary, side: "bull" | "bear"): BullBearIt
       return;
     }
     const b: BullBearItem = best;
+    // 標頭只放一行:落後資料(集保週、董監月、期貨行情日等 dataDate/date)排在當日事實之後。
+    const lag = (x: BullBearItem) => (x.dataDate || x.date ? 1 : 0);
     const c =
+      lag(b) - lag(it) ||
       it.rank - b.rank ||
       (it.magnitude ?? 0) - (b.magnitude ?? 0) ||
       headerSectionIdx(b) - headerSectionIdx(it) ||
