@@ -1695,7 +1695,11 @@ def export_json(out_dir: Path | None = None) -> dict:
                 SELECT t.id, t.name, t.source, t.source_updated_at, t.data_date,
                        t.status, t.updated_at, st.stock_id
                 FROM stock_themes st JOIN themes t ON t.id = st.theme_id
+                ORDER BY st.rowid
         """)).mappings():
+            # ORDER BY st.rowid = the order this query always produced (scan stock_themes,
+            # look up themes). Without it, ANALYZE statistics let the planner scan themes
+            # first and the per-stock company_themes order changes (docs/43 §1.1).
             name, sid = row["name"], row["stock_id"]
             status = displayed_status(
                 row["status"], row["data_date"], row["source_updated_at"], d,
