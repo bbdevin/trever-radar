@@ -25,8 +25,8 @@ export function marginFacts(mh: MarginHistoryPoint[] | undefined, adjusted: read
     const chg = r0.balance - r5.balance;
     const rel = chg / r5.balance;
     const segs = [`融資 5 日${chg > 0 ? "增加" : "減少"} `, LOTS(chg), "(", PCT(rel * 100), "),股價 5 日 ", PCT(pchg)];
-    if (rel >= 0.1 && chg >= 100 && pchg <= 0) out.push(mk("C_MARGIN_UP_PRICE_DOWN", segs, { rank: 3, magnitude: rel * 100, date }));
-    else if (rel <= -0.1 && chg <= -100 && pchg >= 0) out.push(mk("C_MARGIN_DOWN_PRICE_UP", segs, { rank: 3, magnitude: -rel * 100, date }));
+    if (rel >= 0.1 && chg >= 100 && pchg <= 0) out.push(mk("C_MARGIN_UP_PRICE_DOWN", segs, { rank: 4, magnitude: rel * 100, date }));
+    else if (rel <= -0.1 && chg <= -100 && pchg >= 0) out.push(mk("C_MARGIN_DOWN_PRICE_UP", segs, { rank: 4, magnitude: -rel * 100, date }));
   }
   if (r0.short_balance != null && r5.short_balance != null && r5.short_balance > 0) {
     const chg = r0.short_balance - r5.short_balance;

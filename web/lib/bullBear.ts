@@ -199,6 +199,8 @@ export function backendRank(code: string | null, side: Side): number {
   if (!code) return side === "context" ? 1 : 3;
   if (code === "B_RISK_REVERSAL") return 5;
   if (side === "context") return 1;
+  // 狀態型風險(RSI 過熱、融資使用率高)與前端同類事實(C_MARGIN_HOT 3、X_KD_OVER80 2)同級,不進重點
+  if (code === "R_RSI_OVERHEAT" || code === "R_MARGIN_HOT") return 3;
   if (code.startsWith("R_")) return 4;
   if (/^(B[1-6]_|G[12]_|T1_TRACKED|K1_|I_(TRUST|FOREIGN)_BUY|I_BOTH|I_NET|T2_)/.test(code)) return 4;
   if (code === "I_MARGIN_OK") return 1;
@@ -417,14 +419,49 @@ export interface FactGroup {
   /** null = 不畫群組頭(壓力段) */
   label: string | null;
   source?: Source;
+  /** 欄頂「重點」群組 */
+  keyGroup?: boolean;
   items: BullBearItem[];
 }
 
-/** 一欄依段落規則分組:技術=日K/週K/月K;籌碼=來源(大戶附集保資料日);壓力=不分組。 */
+export const KEY_GROUP_LABEL = "重點";
+export const KEY_GROUP_MAX = 3;
+const lagOf = (x: BullBearItem) => (x.dataDate || x.date ? 1 : 0);
+/**
+ * 重點的比較:當日事實先於滯後資料 → rank↓ →(壓力段:距離↑)→ magnitude↓;
+ * 其餘相同時保留欄內原順序(sort 是穩定的)。
+ */
+const compareKey = (a: BullBearItem, b: BullBearItem) =>
+  lagOf(a) - lagOf(b) ||
+  b.rank - a.rank ||
+  (a.section === "levels" ? (a.dist ?? Infinity) - (b.dist ?? Infinity) : 0) ||
+  (b.magnitude ?? 0) - (a.magnitude ?? 0);
+
+/**
+ * 一欄的「重點」(docs/46 §6.6):rank ≥4 的事實依 compareKey 取前 3;沒有 rank ≥4 時,
+ * 取最高的一條但必須 rank ≥3;否則沒有重點。
+ */
+export function keyItems(items: BullBearItem[]): BullBearItem[] {
+  const sorted = [...items].sort(compareKey);
+  const top = sorted.filter((x) => x.rank >= 4).slice(0, KEY_GROUP_MAX);
+  if (top.length) return top;
+  const best = sorted.find((x) => x.rank >= 3);
+  return best ? [best] : [];
+}
+
+/**
+ * 一欄的顯示分組:最上面「重點」(從原群組移出,不重複),其餘依段落規則分組——
+ * 技術=日K/週K/月K;籌碼=來源(大戶附集保資料日);壓力=不分組、維持由近到遠。
+ * 技術/籌碼的群組依群組內最高 rank 排序,同 rank 維持固定序(日→週→月、SOURCE_ORDER)。
+ */
 export function groupColumn(items: BullBearItem[], section: Section): FactGroup[] {
-  if (section === "levels") return items.length ? [{ key: "all", label: null, items }] : [];
+  const key = keyItems(items);
+  const picked = new Set(key);
+  const rest = items.filter((x) => !picked.has(x));
+  const head: FactGroup[] = key.length ? [{ key: "key", label: KEY_GROUP_LABEL, keyGroup: true, items: key }] : [];
+  if (section === "levels") return rest.length ? [...head, { key: "all", label: null, items: rest }] : head;
   const out: FactGroup[] = [];
-  for (const it of items) {
+  for (const it of rest) {
     const key = section === "tech" ? (it.tf ?? "D") : it.source;
     let g = out.find((x) => x.key === key);
     if (!g) {
@@ -438,5 +475,6 @@ export function groupColumn(items: BullBearItem[], section: Section): FactGroup[
     }
     g.items.push(it);
   }
-  return out;
+  const best = (g: FactGroup) => Math.max(...g.items.map((x) => x.rank));
+  return [...head, ...out.sort((a, b) => best(b) - best(a))];
 }

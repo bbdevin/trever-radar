@@ -24,11 +24,11 @@ test("多方:400 張連 3 週增且為近 14 週最高、1000 張反向減另列
   assert.deepEqual(m.get("H_MAJOR400_UP")?.segments?.find((s) => s.kind), { t: "+0.40 個百分點", kind: "up" });
 });
 
-test("空方:400 張減 ≥0.5 → rank 5;1000 張反向增另列;散戶增;董監減", () => {
+test("空方:400 張減 ≥0.5 → rank 4(集保滯後,封頂 4);1000 張反向增另列;散戶增;董監減", () => {
   const fs = holdersFacts(holdersBear(), undefined, null);
   const m = new Map(fs.map((f) => [f.code, f]));
   assert.equal(m.get("H_MAJOR400_DOWN")?.text, "400張以上大戶持股 76.00%,週減 −0.60 個百分點");
-  assert.equal(m.get("H_MAJOR400_DOWN")?.rank, 5);
+  assert.equal(m.get("H_MAJOR400_DOWN")?.rank, 4);
   assert.equal(m.get("H_MAJOR1000_UP")?.text, "1000張以上大戶持股 71.20%,週增 +0.60 個百分點");
   assert.equal(m.get("H_RETAIL_UP")?.side, "bear");
   assert.equal(m.get("H_INSIDER_DOWN")?.text, "董監持股 46.90%,較前次申報 −0.30 個百分點");

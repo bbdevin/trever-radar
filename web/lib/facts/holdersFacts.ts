@@ -43,7 +43,8 @@ export function holdersFacts(hh: HoldersHistoryPoint[] | undefined, meta: Holder
       }
       const code = `H_MAJOR${lv}_${up ? "UP" : "DOWN"}`;
       return mk(code, [`${lv}張以上大戶持股 ${a.toFixed(2)}%,週${up ? "增" : "減"} `, PP(d), weeks >= 2 ? `,連 ${weeks} 週${up ? "增加" : "減少"}` : "", ext],
-        { rank: Math.abs(d) >= MAJOR_BIG ? 5 : 3, magnitude: Math.abs(d), dataDate });
+        // 集保是週資料(滯後):再大的變化也不超過 4,當日事實優先
+        { rank: Math.abs(d) >= MAJOR_BIG ? 4 : 3, magnitude: Math.abs(d), dataDate });
     };
     const m400 = majorFact("400");
     if (m400) out.push(m400);

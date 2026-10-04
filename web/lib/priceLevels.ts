@@ -196,7 +196,9 @@ export function priceLevelFacts(
   const ma = maSplit(pl.ma, MA_KEYS, close);
   if (ma.nearBelow) {
     const mirrors = [...(ma.below.includes("20") ? ["T1_MA20"] : []), ...(ma.below.includes("60") ? ["T1_MA60"] : [])];
-    add("F1_MA_BELOW", "bull", maSideSegs("below", ma.below, ma.nearBelow, close, "日"), 2, { mirrors, dist: Math.abs(pct(ma.nearBelow.v, close)) });
+    const d = Math.abs(pct(ma.nearBelow.v, close));
+    // 下方最接近均線 ≤3% 與上方同級(支撐/壓力對稱)
+    add("F1_MA_BELOW", "bull", maSideSegs("below", ma.below, ma.nearBelow, close, "日"), d <= 3 ? 4 : 2, { mirrors, dist: d });
   }
   if (ma.nearAbove) {
     const d = Math.abs(pct(ma.nearAbove.v, close));

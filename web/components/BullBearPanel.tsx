@@ -24,21 +24,31 @@ import {
 import { PL_LABELS, insufficientText, type PriceLevelsView } from "@/lib/priceLevels";
 import { cn } from "@/lib/utils";
 
-/** 群組頭的家族色(docs/19 §4 的同一組 token;零新色票)。 */
+/** 群組頭小膠囊的家族色(docs/19 §4 的同一組 token + /12 淡底;零新色票)。 */
+const ACCENT2_PILL = "bg-[color:var(--accent-2)]/12 text-[color:var(--accent-2)]";
+const PRIMARY_PILL = "bg-primary/12 text-primary";
+const WARN_PILL = "bg-warn/12 text-warn";
+const INK_PILL = "bg-[color:var(--ink-2)]/12 text-[color:var(--ink-2)]";
 const SOURCE_TONE: Record<Source, string> = {
-  chips: "text-[color:var(--accent-2)]",
-  inst: "text-[color:var(--accent-2)]",
-  margin: "text-[color:var(--accent-2)]",
-  holders: "text-[color:var(--accent-2)]",
-  futures: "text-[color:var(--accent-2)]",
-  tech: "text-primary",
-  price: "text-primary",
-  levels: "text-primary",
-  strategy: "text-primary",
-  warrant: "text-warn",
-  theme: "text-warn",
-  company: "text-[color:var(--ink-2)]",
-  other: "text-[color:var(--ink-2)]",
+  chips: ACCENT2_PILL,
+  inst: ACCENT2_PILL,
+  margin: ACCENT2_PILL,
+  holders: ACCENT2_PILL,
+  futures: ACCENT2_PILL,
+  tech: PRIMARY_PILL,
+  price: PRIMARY_PILL,
+  levels: PRIMARY_PILL,
+  strategy: PRIMARY_PILL,
+  warrant: WARN_PILL,
+  theme: WARN_PILL,
+  company: INK_PILL,
+  other: INK_PILL,
+};
+
+/** 兩欄的側別淡底、重點列的較深底與左側色條(--up 紅 / --down 綠)。 */
+const SIDE_TINT: Record<"bull" | "bear", { col: string; key: string }> = {
+  bull: { col: "bg-up/[0.06]", key: "border-up bg-up/12" },
+  bear: { col: "bg-down/[0.06]", key: "border-down bg-down/12" },
 };
 
 const CARD = "grid min-w-0 gap-3 rounded-[var(--r-lg)] border border-border bg-card p-3.5 shadow-[var(--shadow-card)]";
@@ -121,9 +131,8 @@ function AnalysisSection({ section, summary, levels }: { section: Section; summa
           </>
         }
       />
-      <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_1px_minmax(0,1fr)] items-start gap-x-2.5">
+      <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-x-2">
         <Column side="bull" section={section} items={b.bull} />
-        <div aria-hidden className="self-stretch bg-[color:var(--line)]" />
         <Column side="bear" section={section} items={b.bear} />
       </div>
       {b.context.length > 0 && <ContextStrip items={b.context} section={section} />}
@@ -134,8 +143,13 @@ function AnalysisSection({ section, summary, levels }: { section: Section; summa
 
 function Column({ side, section, items }: { side: "bull" | "bear"; section: Section; items: BullBearItem[] }) {
   const groups = groupColumn(items, section);
+  const tint = SIDE_TINT[side];
   return (
-    <div data-testid={`bullbear-${side}`} data-section={section} className="grid min-w-0 content-start gap-1.5">
+    <div
+      data-testid={`bullbear-${side}`}
+      data-section={section}
+      className={cn("grid min-w-0 content-start gap-2 rounded-[var(--r-sm)] p-1.5", tint.col)}
+    >
       <h4 className={cn("text-[13px] font-bold", side === "bull" ? "text-up" : "text-down")}>
         <span aria-hidden>{side === "bull" ? "▲" : "▼"} </span>
         {COLUMN_LABEL[section][side]}
@@ -144,15 +158,30 @@ function Column({ side, section, items }: { side: "bull" | "bear"; section: Sect
         <p className="text-[12.5px] leading-snug text-muted-foreground">{EMPTY_SIDE[side]}</p>
       ) : (
         groups.map((g) => (
-          <div key={g.key} className="grid min-w-0 gap-1">
+          <div key={g.key} data-group={g.keyGroup ? "key" : undefined} className="grid min-w-0 gap-1">
             {g.label && (
-              <p className={cn("text-[11px] font-bold", section === "chips" && g.source ? SOURCE_TONE[g.source] : "text-primary")}>{g.label}</p>
+              <p
+                className={cn(
+                  "w-fit rounded-full px-1.5 py-px text-[11px] font-bold leading-[1.45]",
+                  g.keyGroup ? "bg-primary text-primary-foreground" : section === "chips" && g.source ? SOURCE_TONE[g.source] : PRIMARY_PILL,
+                )}
+              >
+                {g.label}
+              </p>
             )}
-            <ul className="grid min-w-0 gap-1.5">
-              {g.items.map((it) => (
-                <FactRow key={it.key} it={it} />
-              ))}
-            </ul>
+            {g.keyGroup ? (
+              <ul className="grid min-w-0 gap-1">
+                {g.items.map((it) => (
+                  <FactRow key={it.key} it={it} lagDate className={cn("rounded-[6px] border-l-2 py-1 pl-1.5 pr-1", tint.key)} />
+                ))}
+              </ul>
+            ) : (
+              <ul className="grid min-w-0 divide-y divide-border">
+                {g.items.map((it) => (
+                  <FactRow key={it.key} it={it} className="py-1 first:pt-0 last:pb-0" />
+                ))}
+              </ul>
+            )}
           </div>
         ))
       )}
@@ -160,9 +189,11 @@ function Column({ side, section, items }: { side: "bull" | "bear"; section: Sect
   );
 }
 
-function FactRow({ it }: { it: BullBearItem }) {
+/** lagDate:重點群組沒有「大戶(集保 MM/DD)」群組頭,滯後資料日改放在列尾。 */
+function FactRow({ it, className, lagDate }: { it: BullBearItem; className?: string; lagDate?: boolean }) {
+  const date = it.date ?? (lagDate ? it.dataDate : undefined);
   return (
-    <li className="min-w-0 break-words text-[12.5px] leading-snug text-foreground">
+    <li className={cn("min-w-0 break-words text-[12.5px] leading-snug text-foreground", className)}>
       {it.risk && it.side === "bear" && <AlertTriangle aria-hidden className="mr-1 inline h-3 w-3 -translate-y-px text-down" />}
       {it.tf && it.tf !== "D" && (
         <span className="mr-1 inline-flex -translate-y-px items-center rounded-[4px] border border-[color:var(--line)] px-1 text-[10.5px] font-semibold leading-[1.35] text-[color:var(--ink-2)]">
@@ -178,7 +209,7 @@ function FactRow({ it }: { it: BullBearItem }) {
       ) : (
         <ChangeText text={it.text} prices={false} />
       )}
-      {it.date && <span className="num ml-1.5 whitespace-nowrap text-[11px] text-muted-foreground">{it.date}</span>}
+      {date && <span className="num ml-1.5 whitespace-nowrap text-[11px] text-muted-foreground">{date}</span>}
     </li>
   );
 }

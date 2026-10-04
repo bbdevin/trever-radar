@@ -47,7 +47,8 @@ export function instFacts(ih: Row[] | undefined, candles: readonly Candle[], las
         x > 0
           ? [id.key === "foreign" ? "I_FOREIGN_BUY" : "I_TRUST_BUY", ...(k >= 3 ? [id.key === "foreign" ? "I_FOREIGN_STREAK" : "I_TRUST_STREAK"] : [])]
           : id.key === "foreign" && k >= 5 ? ["R_FOREIGN_SELL5"] : [];
-      const rank = x < 0 && id.key === "foreign" && sh >= 3 ? 5 : 4;
+      // 佔量 ≥3% 的單日買賣超是今日最大的籌碼事件(docs/46 §6.6),多空、外資投信一致
+      const rank = sh >= 3 ? 5 : 4;
       out.push(mk(x > 0 ? id.buy : id.sell, segs, { rank, magnitude: sh, mirrors, date }));
       continue;
     }
@@ -71,7 +72,7 @@ export function instFacts(ih: Row[] | undefined, candles: readonly Candle[], las
     if (Math.abs(sh) >= 3) {
       const buy = sh > 0;
       out.push(mk(buy ? "C_NET_SHARE_BUY" : "C_NET_SHARE_SELL", [`三大法人合計${buy ? "買超" : "賣超"} ${fmtInt(Math.abs(r0.total))} 張(佔量 ${Math.abs(sh).toFixed(1)}%)`],
-        { rank: 4, magnitude: Math.abs(sh), mirrors: buy ? ["I_NET_SHARE"] : [], date }));
+        { rank: Math.abs(sh) >= 5 ? 5 : 4, magnitude: Math.abs(sh), mirrors: buy ? ["I_NET_SHARE"] : [], date }));
     }
   }
   return out;

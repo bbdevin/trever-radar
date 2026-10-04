@@ -86,7 +86,7 @@ P2:期貨背景列;F9–F11。
 使用者:三段(技術/籌碼/壓力)、每段左多右空中間分隔線、全部列出不收合、空方要完整(6488 的 240 日高、上方密集區、上方成交、外資賣超、前大分點淨賣都要出現)、日/週/月、大戶比(集保週資料帶資料日)。純呈現:不改分數、radar.json、DB;全部事實由現有個股 JSON 鍵算出。
 
 ### 6.1 版面(`web/components/BullBearPanel.tsx`)
-總覽卡(`bullbear-overview`:定義句、計數、「技術 ▲n ▼n ・ 籌碼 … ・ 壓力 …」)→ 三張段卡(`bullbear-section-tech|chips|levels`)→ 技術指標卡。段卡 = SectionHeader + 兩顆計數 chip → `grid-cols-[minmax(0,1fr)_1px_minmax(0,1fr)] items-start`(中間格 `self-stretch` 分隔線貫穿較高欄)→ 背景列(有才出現)。欄頭 `▲ 多方`/`▼ 空方`(壓力段 `▲ 下方支撐`/`▼ 上方壓力`),欄 testid 仍 `bullbear-bull|bear` 加 `data-section`。群組頭取代每列來源標籤:技術段 日K/週K/月K;籌碼段依來源(大戶顯示「大戶(集保 MM/DD)」);壓力段不分組、依距離由近到遠,兩欄之下接價格階梯、現價上下成交、「怎麼算」(`PriceLevelsCard.tsx` 只剩這三個小元件)。週/月列前綴描邊小 chip「週」「月」;事件型空方(R*、B_RISK_REVERSAL、空方口袋、出貨、跌破 20 線、MACD 翻負、KD 高檔死叉、跳空下跌、長黑)前綴 ⚠。前端事實帶 `segments`(價格藍、+ 紅、− 綠),後端原文仍走 ChangeText。
+總覽卡(`bullbear-overview`:定義句、計數、「技術 ▲n ▼n ・ 籌碼 … ・ 壓力 …」)→ 三張段卡(`bullbear-section-tech|chips|levels`)→ 技術指標卡。段卡 = SectionHeader + 兩顆計數 chip → `grid-cols-[minmax(0,1fr)_1px_minmax(0,1fr)] items-start`(中間格 `self-stretch` 分隔線貫穿較高欄;**§6.6 起改為兩欄側別淡底,不再有分隔線**)→ 背景列(有才出現)。欄頭 `▲ 多方`/`▼ 空方`(壓力段 `▲ 下方支撐`/`▼ 上方壓力`),欄 testid 仍 `bullbear-bull|bear` 加 `data-section`。群組頭取代每列來源標籤:技術段 日K/週K/月K;籌碼段依來源(大戶顯示「大戶(集保 MM/DD)」);壓力段不分組、依距離由近到遠,兩欄之下接價格階梯、現價上下成交、「怎麼算」(`PriceLevelsCard.tsx` 只剩這三個小元件)。週/月列前綴描邊小 chip「週」「月」;事件型空方(R*、B_RISK_REVERSAL、空方口袋、出貨、跌破 20 線、MACD 翻負、KD 高檔死叉、跳空下跌、長黑)前綴 ⚠。前端事實帶 `segments`(價格藍、+ 紅、− 綠),後端原文仍走 ChangeText。
 
 ### 6.2 契約(`web/lib/bullBear.ts`)
 `BullBearItem` 加 `section`、`segments?`、`tf?`、`dataDate?`、`rank`(1–5)、`magnitude?`、`dist?`;`BullBearSummary.sections`。`buildBullBear({..., derivedFacts})`;`SECTION_BY_SOURCE`(tech/strategy→技術、price/levels→壓力、其餘→籌碼);Source 加 `holders`、`levels`。分類調整:R_HOT5/R_HOT10 來源 price→tech(技術段日K)、S11→inst、S12→chips、S13→margin;F1_FUTURES_VOLUME_60D_HIGH、R_FUTURES_VOLUME_NO_DIRECTION 進表(背景/期貨)。去重:①後端 code 只一次 ②前端事實(無 date/dataDate)的 mirrors 取代同方向後端 code,含風險與口袋 ③`YIELD_TO_BACKEND`:R_HOT5/10→X_CHG5_UP、R_GAP_FADE→X_GAP_UP_TODAY、R_SHOOTING→X_BIG_BLACK ④事實鍵 code+tf+variant 只一次。排序:段內先分組,再 rank↓ → magnitude↓ → points↓ → 原順序;壓力段距離↑。`topOfSide`:rank → magnitude → 段序(壓力距離 ≤3% → 籌碼 → 技術 → 其餘壓力)→ 來源序。
@@ -111,6 +111,21 @@ P2:期貨背景列;F9–F11。
 - 期貨用新 code `C_FUT_VOLUME_HIGH`(背景,帶「行情 MM/DD」);後端兩個期貨 code 只進分類表。權證/期貨/題材/公司合在 `facts/otherFacts.ts`。
 - `web/tsconfig.json` 加 `allowImportingTsExtensions`:facts 模組彼此要用 `.ts` 副檔名 import,`node --test` 才跑得動,next build 的型別檢查原本會擋。
 - 週/月的量比用「日均量」比(進行中的那根才不會被少算);週/月事實 rank 比日K 低一級。
+
+### 6.6 重點與影響力排序(2026-10-04 使用者:「多空理由排序 重要幾項資訊擺在前面」「重要會影響多空的擺在前面」)
+**重點群組**(`bullBear.ts keyItems/groupColumn`):每段每欄最上方一個「重點」小群組(群組頭 = 實心 primary 膠囊),放 rank ≥4 的事實,依「當日先於滯後(無 date/dataDate 優先)→ rank↓ →(壓力段:距離↑)→ magnitude↓ → 欄內原順序」取前 **3** 條;沒有 rank ≥4 時,取最高一條但須 rank ≥3;否則不出現。重點是**移出**原群組(不重複),每個事實全欄仍恰一次。滯後事實在重點列尾補資料日(原本由「大戶(集保 MM/DD)」群組頭提供)。
+**其餘群組**:依群組內最高 rank↓ 排,同 rank 維持固定序(技術 日K→週K→月K;籌碼 SOURCE_ORDER);群組內 rank↓ → magnitude↓。壓力段其餘列不分組、維持由近到遠。
+**標頭** `topOfSide` 規則與重點一致(滯後後置 → rank → magnitude → 段序),單段時 = 該欄重點第一條。
+**影響力 rank 表**(magnitude 為同 rank 內主排序:佔量 %、漲跌幅 |%|、量比、合計張數佔量;週/月 = 日K 減一級;滯後的集保/董監封頂 4):
+| rank | 事實 |
+|---|---|
+| 5 | 外資/投信單日買賣超佔量 ≥3%;三大法人合計佔量 ≥5%;前12大分點淨買賣佔量 ≥5%;近1月出貨分點;分點反手賣出(B_RISK_REVERSAL);日K 跌破 20 日線、MACD 柱翻正/翻負;壓力/支撐 ≤3%(前高前低、成交密集區) |
+| 4 | 外資/投信單日佔量 1–3%(或張數門檻);外資投信同步;三大法人 3–5%;前12大分點 2–5%;囤貨分點(1 月/1 週)、近1週出貨分點;當沖分點買超、追蹤分點賣超、地緣分點;融資增加股價跌 / 融資減少股價漲;認售成交暴增;日K 站回 20 日線、KD 低檔金叉/高檔死叉、爆量收紅/收黑(量比 ≥1.5)、創 20 日新高/新低、今日 N 日高低、單日 ±3%、跳空、長黑;最接近均線 ≤3%(上下對稱)、未回補缺口 ≤3%;集保大戶週變化 ≥0.5 個百分點(封頂);後端事件型 R_*、分點/法人/T2 類理由 |
+| 3 | 均線多空排列(日)、連漲連跌、2 日量增價漲/跌、近 5 日 ±8%、法人 20 日累計、融資使用率 ≥60%(含 R_MARGIN_HOT、R_RSI_OVERHEAT 狀態型風險)、認售為認購倍數、散戶人數、週/月最接近均線 ≤3%、後端其餘技術/策略理由 |
+| 2 | RSI 區間、KD >80、均線斜率、MACD 在零軸上/下(原 3,屬例行狀態)、遠距壓力支撐(>3%)、區間上下緣、題材熱度、分點帳面損益家數、董監持股 |
+| 1 | 量縮、融資使用率 <60%、券增減、券資比、期貨量、庫藏股、董監質押、資料內最高最低、遠距週/月均線 |
+本次調整(其餘不動):外資/投信單日 ≥3% 由「僅外資賣超」改為多空、外資投信一致;三大法人合計與前12大分點 ≥5% 升 5;囤貨分點 3→4;融資增減股價反向 3→4;日K 最接近下方均線 ≤3% 2→4、週/月 1→3(與上方對稱);MACD 零軸狀態 3→2;集保大戶 5→4;後端 R_RSI_OVERHEAT、R_MARGIN_HOT 4→3。
+**視覺**:多方欄 `bg-up/[0.06]`、空方欄 `bg-down/[0.06]` 圓角淡底(取代中間 1px 分隔線);重點列 `bg-up/12`/`bg-down/12` + 左 2px 側別色條;群組頭改家族色 /12 淡底小膠囊;一般列之間 `divide-border` 細線。不新增色票。
 
 ### 6.5 測試
 `web/lib/bullBear.test.ts`(完整性 fixture:240 日高 +46.9%、上方密集區、現價之上成交、外資連 5 日賣超取代 R_FOREIGN_SELL5;讓位;鏡像含口袋;標頭 rank;分組;每 code 恰一次)、`web/lib/facts/{series,techFacts,levelFacts,holdersFacts,chipsFacts,catalogue}.test.ts`(重取樣:部分週/週中與週一假日/跨年週/月桶/分割前後還原相等/零量;目錄覆蓋率=每個 code 都有 fixture 產生;segments 接起來等於 text;mirrors ⊆ 目錄;禁用詞)。`pipeline/tests/test_bull_bear_codes.py`:SOURCES 加 `futures_volume_anomaly.py`;json_export 個股 payload 頂層鍵 ⊆ `STOCK_KEYS_USED ∪ STOCK_KEYS_NOT_FACTS`(且不得列 payload 沒有的鍵)。

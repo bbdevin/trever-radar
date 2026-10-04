@@ -36,7 +36,7 @@ function maFactsFor(series: AllSeries, tf: Exclude<Tf, "D">): DerivedFact[] {
   const out: DerivedFact[] = [];
   if (sp.nearBelow) {
     const d = Math.abs(pct(sp.nearBelow.v, close));
-    out.push(mk("F1_MA_BELOW", maSideSegs("below", sp.below, sp.nearBelow, close, unit), { tf, rank: 1, dist: d }));
+    out.push(mk("F1_MA_BELOW", maSideSegs("below", sp.below, sp.nearBelow, close, unit), { tf, rank: d <= NEAR ? 3 : 1, dist: d }));
   }
   if (sp.nearAbove) {
     const d = Math.abs(pct(sp.nearAbove.v, close));

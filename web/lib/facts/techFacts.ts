@@ -79,8 +79,8 @@ function forTf(S: Series, tf: Tf, technical: TechnicalSummary | null): DerivedFa
       else {
         let k = 0;
         for (let j = i; j >= 0 && S.hist[j] != null && Math.sign(S.hist[j] as number) === Math.sign(h0) && h0 !== 0; j--) k++;
-        if (dif > 0 && h0 > 0) add("X_MACD_STATE_POS", [`MACD 位於零軸之上,柱狀體連 ${k} ${cnt}為正`], { rank: rk(tf, 3) });
-        else if (dif < 0 && h0 < 0) add("X_MACD_STATE_NEG", [`MACD 位於零軸之下,柱狀體連 ${k} ${cnt}為負`], { rank: rk(tf, 3) });
+        if (dif > 0 && h0 > 0) add("X_MACD_STATE_POS", [`MACD 位於零軸之上,柱狀體連 ${k} ${cnt}為正`], { rank: rk(tf, 2) });
+        else if (dif < 0 && h0 < 0) add("X_MACD_STATE_NEG", [`MACD 位於零軸之下,柱狀體連 ${k} ${cnt}為負`], { rank: rk(tf, 2) });
       }
     }
   }

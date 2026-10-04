@@ -48,7 +48,7 @@ export function branchFacts(data: Pick<StockJson, "branch_history" | "branch_tag
       const buy = f0 > 0;
       out.push(mk(buy ? "C_TOP15_FLOW_BUY" : "C_TOP15_FLOW_SELL",
         [`前${TOP_N_PER_DAY}大分點${today}淨${buy ? "買超" : "賣超"} ${fmtInt(Math.abs(f0))} 張(佔量 ${sh.toFixed(1)}%)`, k >= 2 ? `,連 ${k} 日為${buy ? "正" : "負"}` : ""],
-        { rank: 4, magnitude: sh, mirrors: buy && k >= 3 ? ["B6_BIG_MONEY_FLOW"] : [], date }));
+        { rank: sh >= 5 ? 5 : 4, magnitude: sh, mirrors: buy && k >= 3 ? ["B6_BIG_MONEY_FLOW"] : [], date }));
     }
 
     // 囤貨 / 出貨(1 月、1 週;1 週名單與 1 月重疊過半就不另列)
@@ -64,11 +64,11 @@ export function branchFacts(data: Pick<StockJson, "branch_history" | "branch_tag
       return a.filter((r) => s.has(r.name)).length / a.length;
     };
     if (m1.available) {
-      if (m1.accCount) out.push(accFact("C_ACC_1M", "近1月", m1.acc, m1.accCount, m1.accTotal, m1.end, 3));
+      if (m1.accCount) out.push(accFact("C_ACC_1M", "近1月", m1.acc, m1.accCount, m1.accTotal, m1.end, 4));
       if (m1.distCount) out.push(accFact("C_DIST_1M", "近1月", m1.dist, m1.distCount, m1.distTotal, m1.end, 5));
     }
     if (w1.available) {
-      if (w1.accCount && (!m1.available || overlap(w1.acc, m1.acc) < 0.5)) out.push(accFact("C_ACC_1W", "近1週", w1.acc, w1.accCount, w1.accTotal, w1.end, 3));
+      if (w1.accCount && (!m1.available || overlap(w1.acc, m1.acc) < 0.5)) out.push(accFact("C_ACC_1W", "近1週", w1.acc, w1.accCount, w1.accTotal, w1.end, 4));
       if (w1.distCount && (!m1.available || overlap(w1.dist, m1.dist) < 0.5)) out.push(accFact("C_DIST_1W", "近1週", w1.dist, w1.distCount, w1.distTotal, w1.end, 4));
     }
 

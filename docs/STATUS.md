@@ -39,6 +39,7 @@
 - **事實**:新增 `web/lib/facts/*`(純函式,只讀現有個股 JSON 鍵,不改分數/radar.json/DB):技術 37 個 code(含週/月)、壓力 14、法人 12、資券 6、分點 12、大戶 10、權證/期貨/題材/公司 6;目錄 `facts/catalogue.ts`。同方向同一天的前端事實取代對應後端 code(例:外資連 5 日賣超的 C_FOREIGN_SELL 取代 R_FOREIGN_SELL5);後端 R_HOT5/10、R_GAP_FADE、R_SHOOTING 存在時對應前端事實讓位。標頭「最強一條」改依 rank(1–5)挑。
 - **設定**:`web/tsconfig.json` 加 `allowImportingTsExtensions`(noEmit 下合法)——lib 模組之間需要 `.ts` 副檔名的執行期 import 才能同時給 `node --test` 與 next build 用;順帶消掉測試檔的 TS5097。
 - **測試**:node 241 項(新增 `web/lib/facts/*.test.ts` 25 項:重取樣/還原、技術、壓力、籌碼、大戶、目錄覆蓋率與禁用詞);`test_bull_bear_codes.py` 加 `futures_volume_anomaly.py` 與「個股 payload 每個頂層鍵都要在 STOCK_KEYS_USED ∪ STOCK_KEYS_NOT_FACTS」閘門;pipeline 全套 1309 passed。parity:只有 /stock 標頭兩行與多空分頁不同。
+- **重點排序＋配色(同日追加,docs/46 §6.6)**:每段每欄最上方「重點」(rank ≥4 前 3 條,當日先於滯後、rank、magnitude;移出原群組不重複),其餘群組依最高 rank 排;影響力 rank 表微調(大額法人/分點流向、囤貨、融資背離、近支撐升級,例行狀態降級,集保封頂 4)。兩欄側別淡底、重點列較深底+左色條、群組頭家族色膠囊,不新增色票。node 247 項;parity:只有多空分頁與標頭最強一條(rank 調整所致)不同。
 
 ## 2026-10-04 個股「多空」分頁 + 價格位置(docs/45 P0/P1 + docs/46,程式完成、未上線)
 

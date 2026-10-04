@@ -10,6 +10,8 @@ import {
   CONTEXT_LABEL,
   COUNT_NOTE,
   EMPTY_SIDE,
+  KEY_GROUP_LABEL,
+  KEY_GROUP_MAX,
   PANEL_TITLE,
   RISK_TEXT_KEYS,
   SECTION_LABEL,
@@ -21,6 +23,7 @@ import {
   TF_LABEL,
   buildBullBear,
   groupColumn,
+  keyItems,
   overviewText,
   riskCodeFromText,
   techDetailsSummary,
@@ -287,9 +290,12 @@ test("標頭:rank 高者優先;同 rank 比 magnitude;再比段序(壓力 ≤3% 
 test("分組:技術段 日K/週K/月K;籌碼段依來源,大戶附集保資料日;壓力段不分組;總覽字串", () => {
   const derived = [...techFacts(techBullSeries(), tech([], [], 2)), ...holdersFacts(holdersBull(), undefined, null)];
   const s = buildBullBear({ reasons: [], risks: [], technical: null, derivedFacts: derived, asOf: LAST, rawReasons: [{ code: "I_TRUST_BUY", text: "投信買超" }] });
-  assert.deepEqual(groupColumn(s.sections.tech.bull, "tech").map((g) => g.label), [TF_LABEL.D, TF_LABEL.W, TF_LABEL.M]);
+  const labels = (gs: ReturnType<typeof groupColumn>) => gs.filter((g) => !g.keyGroup).map((g) => g.label);
+  assert.deepEqual(groupColumn(s.sections.tech.bull, "tech")[0].label, KEY_GROUP_LABEL);
+  assert.deepEqual(labels(groupColumn(s.sections.tech.bull, "tech")), [TF_LABEL.D, TF_LABEL.W, TF_LABEL.M]);
   const dd = holdersBull()[0].t;
-  assert.deepEqual(groupColumn(s.sections.chips.bull, "chips").map((g) => g.label), ["法人", `大戶(集保 ${dd.slice(5, 7)}/${dd.slice(8, 10)})`]);
+  // 投信買超(rank 4)進重點;大戶不因此失去集保資料日群組頭
+  assert.deepEqual(labels(groupColumn(s.sections.chips.bull, "chips")), [`大戶(集保 ${dd.slice(5, 7)}/${dd.slice(8, 10)})`]);
   assert.deepEqual(groupColumn([], "levels"), []);
   assert.match(overviewText(s, "tech"), /^技術 ▲\d+ ▼\d+$/);
   // 週K 事實出現在日K 之後
@@ -297,9 +303,88 @@ test("分組:技術段 日K/週K/月K;籌碼段依來源,大戶附集保資料�
   assert.deepEqual(tfs, [...tfs].sort((a, b) => "DWM".indexOf(a!) - "DWM".indexOf(b!)));
 });
 
+// ── 重點(docs/46 §6.6) ──
+const SRC: Record<DerivedFact["section"], DerivedFact["source"]> = { tech: "tech", chips: "inst", levels: "levels" };
+const fx = (code: string, section: DerivedFact["section"], rank: number, extra: Partial<DerivedFact> = {}): DerivedFact =>
+  ({ code, side: "bear", source: SRC[section], section, text: code, rank, ...extra });
+const col = (facts: DerivedFact[], section: DerivedFact["section"] = "chips") =>
+  buildBullBear({ reasons: [], risks: [], technical: null, derivedFacts: facts, asOf: LAST }).sections[section].bear;
+const flat = (gs: ReturnType<typeof groupColumn>) => gs.flatMap((g) => g.items.map((i) => i.code));
+
+test("重點:rank ≥4 最多 3 條,從原群組移出(每個 code 全欄恰一次)", () => {
+  const items = col([
+    fx("A5", "chips", 5, { source: "chips" }), fx("B4", "chips", 4, { source: "margin" }), fx("C4", "chips", 4),
+    fx("D4", "chips", 4, { source: "warrant" }), fx("E3", "chips", 3), fx("F2", "chips", 2, { source: "chips" }),
+  ]);
+  const gs = groupColumn(items, "chips");
+  assert.equal(gs[0].label, KEY_GROUP_LABEL);
+  assert.ok(gs[0].keyGroup);
+  assert.equal(gs[0].items.length, KEY_GROUP_MAX);
+  assert.equal(gs.filter((g) => g.keyGroup).length, 1);
+  const all = flat(gs);
+  assert.equal(all.length, items.length);
+  assert.deepEqual(new Set(all), new Set(items.map((i) => i.code)));
+  // 第 4 條 rank 4(D4)留在原群組
+  assert.ok(gs.slice(1).some((g) => g.items.some((i) => i.code === "D4")));
+});
+
+test("重點排序:當日先於滯後 → rank↓ → magnitude↓ → 原順序;沒有 ≥4 時取一條 ≥3;否則沒有", () => {
+  const k = (facts: DerivedFact[]) => keyItems(col(facts)).map((i) => i.code);
+  assert.deepEqual(k([fx("LAG5", "chips", 5, { date: "09/30" }), fx("T4", "chips", 4)]), ["T4", "LAG5"]);
+  assert.deepEqual(k([fx("H4", "chips", 4, { dataDate: "09/26", source: "holders" }), fx("T4", "chips", 4, { magnitude: 1 })]), ["T4", "H4"]);
+  assert.deepEqual(k([fx("R4", "chips", 4), fx("R5", "chips", 5)]), ["R5", "R4"]);
+  assert.deepEqual(k([fx("M2", "chips", 4, { magnitude: 2 }), fx("M9", "chips", 4, { magnitude: 9 })]), ["M9", "M2"]);
+  assert.deepEqual(k([fx("X", "chips", 4), fx("Y", "chips", 4)]), ["X", "Y"]);
+  assert.deepEqual(k([fx("S2", "chips", 2), fx("S3a", "chips", 3), fx("S3b", "chips", 3, { magnitude: 5 })]), ["S3b"]);
+  assert.deepEqual(k([fx("S2", "chips", 2), fx("S1", "chips", 1)]), []);
+  assert.ok(!groupColumn(col([fx("S2", "chips", 2)]), "chips").some((g) => g.keyGroup));
+});
+
+test("其餘群組依群組內最高 rank 排序;同 rank 維持固定序(日→週→月、來源序)", () => {
+  const top = [fx("K1", "chips", 5, { source: "chips" }), fx("K2", "chips", 5, { source: "chips" }), fx("K3", "chips", 5, { source: "chips" })];
+  const chips = groupColumn(col([...top, fx("BR", "chips", 2, { source: "chips" }), fx("MG", "chips", 3, { source: "margin" }), fx("IN", "chips", 3, { source: "inst" })]), "chips");
+  assert.deepEqual(chips.map((g) => g.label), [KEY_GROUP_LABEL, SOURCE_LABEL.inst, SOURCE_LABEL.margin, SOURCE_LABEL.chips]);
+  const techTop = [5, 5, 5].map((r, i) => fx(`TK${i}`, "tech", r));
+  const tech = groupColumn(col([...techTop, fx("D2", "tech", 2, { tf: "D" }), fx("W3", "tech", 3, { tf: "W" }), fx("M2", "tech", 2, { tf: "M" })], "tech"), "tech");
+  assert.deepEqual(tech.map((g) => g.label), [KEY_GROUP_LABEL, TF_LABEL.W, TF_LABEL.D, TF_LABEL.M]);
+  const tie = groupColumn(col([...techTop, fx("W2", "tech", 2, { tf: "W" }), fx("D2", "tech", 2, { tf: "D" })], "tech"), "tech");
+  assert.deepEqual(tie.map((g) => g.label), [KEY_GROUP_LABEL, TF_LABEL.D, TF_LABEL.W]);
+  // 群組內 rank↓ → magnitude↓
+  const g = groupColumn(col([...top, fx("a", "chips", 2, { source: "margin" }), fx("b", "chips", 3, { source: "margin", magnitude: 1 }), fx("c", "chips", 3, { source: "margin", magnitude: 8 })]), "chips");
+  assert.deepEqual(g[1].items.map((i) => i.code), ["c", "b", "a"]);
+});
+
+test("壓力段:重點取接近(rank ≥4)者由近到遠,其餘維持由近到遠、不分組", () => {
+  const items = col([
+    fx("FAR", "levels", 2, { dist: 20 }), fx("N2", "levels", 5, { dist: 2.5 }), fx("MID", "levels", 2, { dist: 8 }),
+    fx("N1", "levels", 5, { dist: 0.4 }), fx("MA", "levels", 4, { dist: 1.1 }), fx("ATH", "levels", 1, { dist: 40 }),
+  ], "levels");
+  const gs = groupColumn(items, "levels");
+  assert.deepEqual(gs.map((g) => g.label), [KEY_GROUP_LABEL, null]);
+  assert.deepEqual(gs[0].items.map((i) => i.code), ["N1", "N2", "MA"]);
+  assert.deepEqual(gs[1].items.map((i) => i.code), ["MID", "FAR", "ATH"]);
+});
+
+test("標頭與重點一致:單段時 topOfSide = 該欄重點第一條", () => {
+  const facts = [fx("LAG5", "chips", 5, { date: "09/30" }), fx("A4", "chips", 4, { magnitude: 2 }), fx("B4", "chips", 4, { magnitude: 7 })];
+  const s = buildBullBear({ reasons: [], risks: [], technical: null, derivedFacts: facts, asOf: LAST });
+  assert.equal(topOfSide(s, "bear")?.code, groupColumn(s.sections.chips.bear, "chips")[0].items[0].code);
+  assert.equal(topOfSide(s, "bear")?.code, "B4");
+});
+
+test("rank 表:集保大戶封頂 4;狀態型風險 R_RSI_OVERHEAT/R_MARGIN_HOT 為 3;事件型風險 4、反手賣出 5", () => {
+  const s = buildBullBear({
+    reasons: [], risks: [], technical: null, asOf: LAST,
+    rawRisks: [{ code: "R_RSI_OVERHEAT", text: "RSI" }, { code: "R_MARGIN_HOT", text: "融資" }, { code: "R_SHOOTING", text: "長上影" }, { code: "B_RISK_REVERSAL", text: "反手" }],
+  });
+  const r = Object.fromEntries(s.bear.map((i) => [i.code, i.rank]));
+  assert.deepEqual(r, { R_RSI_OVERHEAT: 3, R_MARGIN_HOT: 3, R_SHOOTING: 4, B_RISK_REVERSAL: 5 });
+  assert.ok(holdersFacts(holdersBull(), undefined, null).every((f) => (f.rank ?? 0) <= 4));
+});
+
 test("禁用詞鎖:標籤、定義句、欄頭、F 句", () => {
   const texts = [
-    PANEL_TITLE, SIDE_DEFINITION, COUNT_NOTE, CONTEXT_LABEL, ...Object.values(EMPTY_SIDE), ...Object.values(SIDE_LABEL),
+    PANEL_TITLE, SIDE_DEFINITION, COUNT_NOTE, CONTEXT_LABEL, KEY_GROUP_LABEL, ...Object.values(EMPTY_SIDE), ...Object.values(SIDE_LABEL),
     ...Object.values(SOURCE_LABEL), ...Object.values(SECTION_LABEL), ...Object.values(TF_LABEL), techDetailsSummary(4, 1),
     ...Object.values(COLUMN_LABEL).flatMap((x) => Object.values(x)),
     ...priceLevelFacts(pl(), "2026-10-03", 60).map((f) => f.text),
