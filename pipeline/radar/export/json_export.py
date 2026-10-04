@@ -19,7 +19,7 @@ from .. import config
 from ..db import get_engine, init_db
 from ..branch_source import date_window_from
 from .spark_day import attach_spark_day
-from ..geo import normalize_branch_name
+from ..geo import is_agent_seat, normalize_branch_name, transfer_agent_broker
 from ..pocket import (
     apply_pocket,
     buyback_status,
@@ -472,6 +472,52 @@ def _daytrade_pairs_by_stock(conn) -> dict[str, dict[str, list[int]]]:
     return out
 
 
+def _transfer_agent_history(conn) -> dict[str, list[tuple[str, str | None]]]:
+    """stock_id → [(first_seen, broker), …] 舊→新。表還不存在(舊庫)時回空,匯出改用現值。"""
+    exists = conn.execute(text(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='transfer_agent_history'"
+    )).scalar()
+    out: dict[str, list[tuple[str, str | None]]] = {}
+    if not exists:
+        return out
+    for r in conn.execute(text(
+        "SELECT stock_id, first_seen, broker FROM transfer_agent_history "
+        "ORDER BY stock_id, first_seen"
+    )):
+        out.setdefault(r[0], []).append((r[1], r[2]))
+    return out
+
+
+def _agent_payload(
+    names: set[str],
+    profile: dict | None,
+    history: list[tuple[str, str | None]] | None,
+) -> dict:
+    """股代標籤(docs/37 §3.1)。
+
+    periods 舊→新:日期 d 的股代 = first_seen ≤ d 的最後一段(from = first_seen;
+    to = 下一段的 first_seen,最新一段 to = null、不以 last_seen 截斷——它只是每週核對的
+    落後指標)。d 早於最早一段的 from → 沿用最早一段(畫面標「依最早觀察推定」)。
+    還沒有歷史(新表尚未跑過 import-geo)→ 以現值當唯一一段,from = null。
+    names = 這檔 payload 裡、該段股代券商的總公司席位。current = 最新一段。
+    """
+    if history:
+        spans = list(history)
+    else:
+        spans = [(None, transfer_agent_broker((profile or {}).get("transfer_agent")))]
+    periods = []
+    for i, (first_seen, broker) in enumerate(spans):
+        periods.append({
+            "from": first_seen,
+            "to": spans[i + 1][0] if i + 1 < len(spans) else None,
+            "broker": broker,
+            "names": sorted(n for n in names if is_agent_seat(n, broker)),
+        })
+    latest = periods[-1]
+    return {"current": {"broker": latest["broker"], "names": latest["names"]},
+            "periods": periods}
+
+
 def _branch_tags_payload(
     *,
     as_of: str,
@@ -480,11 +526,14 @@ def _branch_tags_payload(
     geo_by_key: dict[str, dict],
     tracked_keys: set[str],
     daytrade_rows: dict[str, list[int]],
+    agent_history: list[tuple[str, str | None]] | None = None,
 ) -> dict:
-    """個股頁籌碼日報的分點標籤(地緣/隔日沖/追蹤)。鍵永遠存在,沒有就是空清單。
+    """個股頁籌碼日報的分點標籤(地緣/股代/隔日沖/追蹤)。鍵永遠存在,沒有就是空清單。
 
     names = 這檔股票 payload 裡會出現的分點名(branch_history ∪ 當日 branches),
     輸出只限這些名字,JSON 不為畫面上不會出現的分點多帶資料。
+    股代(docs/37 §3.1):股務代理是券商 → 只標該券商的總公司席位,依 transfer_agent_history
+    分段(換股代時,每筆交易看當日的股代);銀行代理部/公司自辦 broker 為 null。
     """
     city = (profile or {}).get("city")
     district = (profile or {}).get("district")
@@ -496,6 +545,7 @@ def _branch_tags_payload(
     return {
         "as_of": as_of,
         "geo": {"rule": rule, "names": geo_names},
+        "agent": _agent_payload(names, profile, agent_history),
         "daytrade": {
             "min_obs": DAYTRADE_MIN_OBS,
             "rate": DAYTRADE_RATE,
@@ -2151,6 +2201,7 @@ def export_json(out_dir: Path | None = None) -> dict:
         branch_geo = load_branch_geo(conn)
         tracked_keys = load_tracked_keys(conn)
         daytrade_pairs = _daytrade_pairs_by_stock(conn)
+        agent_history = _transfer_agent_history(conn)
         # 榜單優先(全歷史),其餘依代號排序,穩定輸出
         export_ids = list(dict.fromkeys(
             list(union.keys()) + sorted(stock_meta.keys())
@@ -2302,6 +2353,7 @@ def export_json(out_dir: Path | None = None) -> dict:
                     geo_by_key=branch_geo,
                     tracked_keys=tracked_keys,
                     daytrade_rows=daytrade_pairs.get(sid, {}),
+                    agent_history=agent_history.get(sid),
                 ),
                 "warrant": s["warrant"],
                 "warrant_history": [

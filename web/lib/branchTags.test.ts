@@ -6,10 +6,12 @@ import { test } from "node:test";
 
 import { compactSide, normalizeBranchPctile, seatKind } from "./branchPctile.ts";
 import {
+  AGENT_NOTE,
   MAX_VISIBLE_PHONE,
   MAX_VISIBLE_WIDE,
   TAG_PRIORITY,
   TRACKED_OVERRIDE_NOTE,
+  agentPeriodAt,
   branchTags,
   tagDefinitions,
   tagLegendFootnote,
@@ -68,7 +70,7 @@ function ctx(tags: unknown = TAGS, pctile: unknown = PCTILE): TagContext {
 test("優先序:地緣 > 隔日沖 > 追蹤 > 買低/賣高 > 總公司外資", () => {
   const tags = branchTags("凱基-新竹", "buy", ctx());
   assert.deepEqual(tags.map((t) => t.code), ["GEO", "DT", "TRACKED", "LOW"]);
-  assert.deepEqual(TAG_PRIORITY, ["GEO", "DT", "TRACKED", "LOW", "HIGH", "SEAT"]);
+  assert.deepEqual(TAG_PRIORITY, ["GEO", "DT", "TRACKED", "AGENT", "LOW", "HIGH", "SEAT"]);
   assert.equal(MAX_VISIBLE_PHONE, 2);
   assert.equal(MAX_VISIBLE_WIDE, 3);
 });
@@ -172,6 +174,70 @@ test("全站名單覆寫:取消追蹤拿掉「追蹤」,管理員加入的補上
   const def = tagDefinitions(ctx()).find((d) => d.label === "追蹤")!;
   assert.ok(def.text.endsWith(TRACKED_OVERRIDE_NOTE));
   assert.equal(TRACKED_OVERRIDE_NOTE, "追蹤名單由管理員設定，全站一致。");
+});
+
+test("股代:只標股代券商的總公司席位,排在追蹤之後、總公司之前", () => {
+  // 中探針(6217)股代=凱基
+  const withAgent = ctx({ ...TAGS, agent: { current: { broker: "凱基", names: ["凱基"] } } });
+  const tags = branchTags("凱基", "buy", withAgent);
+  assert.deepEqual(tags.map((t) => t.code), ["AGENT", "SEAT"]);
+  assert.equal(tags[0].label, "股代");
+  assert.equal(tags[0].tone, "agent");
+  assert.equal(tags[0].note, AGENT_NOTE);
+  assert.ok(!branchTags("凱基-新竹", "buy", withAgent).some((t) => t.code === "AGENT"));
+  // 追蹤 > 股代
+  const tracked = ctx({ ...TAGS, tracked: ["凱基"], agent: { current: { broker: "凱基", names: ["凱基"] } } });
+  assert.deepEqual(branchTags("凱基", "buy", tracked).map((t) => t.code), ["TRACKED", "AGENT", "SEAT"]);
+  // 舊 JSON 沒有 agent 鍵 → 不標、不列定義
+  assert.ok(!branchTags("凱基", "buy", ctx()).some((t) => t.code === "AGENT"));
+  assert.ok(!tagDefinitions(ctx()).some((d) => d.label === "股代"));
+  // 銀行代理部(broker null)→ 不標,定義講清楚
+  const bank = ctx({ ...TAGS, agent: { current: { broker: null, names: [] }, periods: [{ from: null, to: null, broker: null, names: [] }] } });
+  assert.ok(!branchTags("凱基", "buy", bank).some((t) => t.code === "AGENT"));
+  assert.ok(tagDefinitions(bank).find((d) => d.label === "股代")!.text.includes("不是券商"));
+  // 定義講出券商名;總公司席位不在名單裡也講
+  assert.ok(tagDefinitions(withAgent).find((d) => d.label === "股代")!.text.includes("是 凱基"));
+  const absent = ctx({ ...TAGS, agent: { current: { broker: "元大", names: [] } } });
+  assert.ok(tagDefinitions(absent).find((d) => d.label === "股代")!.text.includes("本檔近兩年前 12 大無其總公司席位"));
+});
+
+test("股代換過:依日期找當時的股代,最早觀察之前依最早觀察推定", () => {
+  const periods = [
+    { from: "2026-07-06", to: "2026-08-03", broker: "元大", names: ["元大證券"] },
+    { from: "2026-08-03", to: null, broker: "凱基", names: ["凱基"] },
+  ];
+  const changed = ctx({ ...TAGS, agent: { current: { broker: "凱基", names: ["凱基"] }, periods } });
+  const agentOf = (name: string, c: TagContext, date?: string) =>
+    branchTags(name, "buy", c, date).find((t) => t.code === "AGENT");
+  // 依日期:from ≤ d 的最後一段;最新一段沒有終點
+  assert.equal(agentPeriodAt(periods, "2026-08-03")!.period.broker, "凱基");
+  assert.equal(agentPeriodAt(periods, "2026-08-02")!.period.broker, "元大");
+  assert.equal(agentPeriodAt(periods, "2027-01-01")!.period.broker, "凱基");
+  const early = agentPeriodAt(periods, "2025-01-02")!;
+  assert.equal(early.period.broker, "元大");
+  assert.equal(early.inferred, true);
+  assert.ok(agentOf("凱基", changed, "2026-09-01"));
+  assert.ok(!agentOf("元大證券", changed, "2026-09-01"));
+  assert.ok(agentOf("元大證券", changed, "2026-07-10")!.note.endsWith("（2026-08 起已換成其他機構）"));
+  assert.ok(agentOf("元大證券", changed, "2025-01-02")!.note.endsWith("（2026-07 前依最早觀察推定）"));
+  assert.ok(agentOf("凱基", changed, "2026-09-01")!.note.endsWith("（2026-08 起）"));
+  assert.ok(!agentOf("凱基", changed, "2026-07-10"));
+  // 沒給日期、沒給期間 → 現任
+  assert.ok(agentOf("凱基", changed));
+  assert.ok(!agentOf("元大證券", changed));
+  // 名單期間(合計好幾天):期間內有效的段都算
+  const at = (from: string, to: string): TagContext => ({ ...changed, window: { from, to } });
+  assert.ok(agentOf("元大證券", at("2026-07-20", "2026-08-10")));
+  assert.ok(agentOf("凱基", at("2026-07-20", "2026-08-10")));
+  assert.ok(!agentOf("凱基", at("2026-06-01", "2026-07-31")));
+  assert.ok(agentOf("元大證券", at("2025-01-01", "2025-03-01"))!.note.includes("依最早觀察推定"));
+  // 定義列出各段
+  const def = tagDefinitions(changed).find((d) => d.label === "股代")!.text;
+  assert.ok(def.includes("換過股代：最早觀察為元大、2026-08 起為凱基"), def);
+  assert.ok(def.includes("每週核對"), def);
+  // 壞掉的段丟掉,不標錯
+  const broken = ctx({ ...TAGS, agent: { current: { broker: "凱基", names: ["凱基"] }, periods: [{ broker: "凱基", from: "x", to: null, names: ["凱基"] }] } });
+  assert.ok(!agentOf("凱基", broken));
 });
 
 test("定義的數字從 payload 讀", () => {

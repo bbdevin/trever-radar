@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertTriangle, MapPin, Star, type LucideIcon } from "lucide-react";
+import { AlertTriangle, Building2, MapPin, Star, type LucideIcon } from "lucide-react";
 
 import { compactSide, normalizeBranchPctile, seatKind } from "@/lib/branchPctile";
 import {
@@ -16,8 +16,8 @@ import type { BranchPctileCounts, BranchTags } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 /**
- * 籌碼日報的分點標籤(地緣／隔日沖／追蹤／買低賣高／總公司外資)。
- * 顏色只是輔助:每個標籤都有文字,地緣／隔日沖／追蹤另有圖示,點開有帶數字的說明。
+ * 籌碼日報的分點標籤(地緣／股代／隔日沖／追蹤／買低賣高／總公司外資)。
+ * 顏色只是輔助:每個標籤都有文字,地緣／股代／隔日沖／追蹤另有圖示,點開有帶數字的說明。
  */
 
 /**
@@ -28,6 +28,7 @@ export function makeTagContext(
   tags: BranchTags | null | undefined,
   pctile: BranchPctileCounts | null | undefined,
   list?: { muted: ReadonlySet<string>; added: ReadonlySet<string> },
+  window?: { from: string; to: string } | null,
 ): TagContext {
   return {
     tags,
@@ -36,11 +37,14 @@ export function makeTagContext(
     compactSide,
     listMuted: list?.muted,
     listAdded: list?.added,
+    window,
   };
 }
 
 const TONE: Record<TagTone, string> = {
   geo: "border-primary/35 bg-primary/12 text-primary",
+  // 股代:與總公司席位同色(標的就是總公司席位;docs/19 不引入新色),靠圖示與文字區分
+  agent: "border-[color:var(--warn)]/45 bg-[color:var(--warn)]/12 text-[color:var(--warn)]",
   daytrade: "border-destructive/35 bg-destructive/12 text-destructive",
   tracked: "border-primary/35 bg-primary/12 text-primary",
   neutral: "border-border bg-secondary text-foreground",
@@ -49,6 +53,7 @@ const TONE: Record<TagTone, string> = {
 
 const ICON: Partial<Record<TagTone, LucideIcon>> = {
   geo: MapPin,
+  agent: Building2,
   daytrade: AlertTriangle,
   tracked: Star,
 };

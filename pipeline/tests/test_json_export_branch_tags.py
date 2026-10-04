@@ -58,7 +58,12 @@ class BranchTagsExportTests(unittest.TestCase):
             ])
             conn.execute(schema.company_profiles.insert(), [
                 {"stock_id": "2330", "address": "新竹市力行六路8號", "city": "新竹市",
-                 "district": "東區", "market": "twse", "updated_at": NOW},
+                 "district": "東區", "market": "twse", "updated_at": NOW,
+                 "transfer_agent": "凱基證券股份有限公司股務代理部"},
+                # 銀行代理部:不是券商,不標股代
+                {"stock_id": "2317", "address": None, "city": None, "district": None,
+                 "market": "twse", "updated_at": NOW,
+                 "transfer_agent": "中國信託商業銀行代理部"},
             ])
             conn.execute(schema.broker_branch_geo.insert(), [
                 {"name_key": "凱基-新竹", "branch_name": "凱基-新竹", "city": "新竹市",
@@ -111,9 +116,15 @@ class BranchTagsExportTests(unittest.TestCase):
     def test_shape_and_contents(self):
         payload = self._export("2330")
         tags = payload["branch_tags"]
-        self.assertEqual(set(tags), {"as_of", "geo", "daytrade", "tracked"})
+        self.assertEqual(set(tags), {"as_of", "geo", "agent", "daytrade", "tracked"})
         self.assertEqual(tags["as_of"], DATES[-1])
         self.assertEqual(tags["geo"], {"rule": "city", "names": ["元大-竹科", "凱基-新竹"]})
+        # 股代=凱基:只標總公司席位「凱基」;凱基-新竹(分公司)、元大、外資不標
+        self.assertEqual(tags["agent"], {
+            "current": {"broker": "凱基", "names": ["凱基"]},
+            # 還沒有 transfer_agent_history → 用現值當唯一一段
+            "periods": [{"from": None, "to": None, "broker": "凱基", "names": ["凱基"]}],
+        })
         self.assertEqual(tags["daytrade"]["min_obs"], DAYTRADE_MIN_OBS)
         self.assertEqual(tags["daytrade"]["rate"], DAYTRADE_RATE)
         self.assertEqual(tags["daytrade"]["rows"], {"凱基-新竹": [12, 9]})
@@ -124,6 +135,9 @@ class BranchTagsExportTests(unittest.TestCase):
         tags = payload["branch_tags"]
         names = self._names(payload)
         self.assertLessEqual(set(tags["geo"]["names"]), names)
+        self.assertLessEqual(set(tags["agent"]["current"]["names"]), names)
+        for p in tags["agent"]["periods"]:
+            self.assertLessEqual(set(p["names"]), names)
         self.assertLessEqual(set(tags["daytrade"]["rows"]), names)
         self.assertLessEqual(set(tags["tracked"]), names)
         self.assertNotIn("永豐-板橋", tags["daytrade"]["rows"])
@@ -143,8 +157,28 @@ class BranchTagsExportTests(unittest.TestCase):
         tags = self._export("2317")["branch_tags"]
         self.assertIsNone(tags["geo"]["rule"])
         self.assertEqual(tags["geo"]["names"], [])
+        self.assertEqual(tags["agent"]["current"], {"broker": None, "names": []},
+                         "銀行代理部不是券商")
         self.assertEqual(tags["daytrade"]["rows"], {})
         self.assertEqual(tags["tracked"], [])
+
+    def test_agent_history_splits_periods_by_date(self):
+        """換股代:2330 由元大換到凱基(2026-08-04 起)→ 兩段,各段只標各自的總公司席位。"""
+        with db.get_engine().begin() as conn:
+            conn.execute(schema.transfer_agent_history.insert(), [
+                {"stock_id": "2330", "first_seen": "2026-07-01", "last_seen": "2026-07-27",
+                 "broker": "元大", "agent_text": "元大證券股務代理部"},
+                {"stock_id": "2330", "first_seen": "2026-08-04", "last_seen": "2026-08-05",
+                 "broker": "凱基", "agent_text": "凱基證券股務代理部"},
+            ])
+            upsert_branch_trades(conn, [_trade("2330", DATES[0], "g", "元大證券", 30)])
+        agent = self._export("2330")["branch_tags"]["agent"]
+        self.assertEqual(agent["current"], {"broker": "凱基", "names": ["凱基"]})
+        # 最新一段不以 last_seen(08-05)截斷;最早一段 from 照實給,之前的日期由前端沿用
+        self.assertEqual(agent["periods"], [
+            {"from": "2026-07-01", "to": "2026-08-04", "broker": "元大", "names": ["元大證券"]},
+            {"from": "2026-08-04", "to": None, "broker": "凱基", "names": ["凱基"]},
+        ])
 
     def test_dual_north_needs_same_district(self):
         geo = {"富邦-台北": {"city": "台北市", "district": "中正區", "kind": "branch"},

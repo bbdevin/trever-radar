@@ -4,17 +4,17 @@
 // 點一下就看得到那個數字。沒有資料就什麼都不標——缺鍵、未判定(NULL)都不得
 // 印成反面(例如「非隔日沖」)。
 //
-// 優先序 GEO > DT > TRACKED > LOW/HIGH > SEAT;手機一列最多顯示 2 個、md 以上 3 個,
+// 優先序 GEO > DT > TRACKED > AGENT > LOW/HIGH > SEAT;手機一列最多顯示 2 個、md 以上 3 個,
 // 其餘只在點開的說明裡。
 //
 // 這支檔案不 import 任何「值」:node --test 認不得 "@/" 別名,而 Next 的型別檢查
 // 又不接受非測試檔用 ".ts" 結尾的 import。所以 seatKind / compactSide 由呼叫端放進
 // ctx(見 BranchTag.tsx 的 makeTagContext),這裡只用型別。
 import type { CampKey, CompactSide, PctileModel, SeatKind, SideNumbers } from "@/lib/branchPctile";
-import type { BranchTags } from "@/lib/types";
+import type { BranchAgentPeriod, BranchTags } from "@/lib/types";
 
-export type TagCode = "GEO" | "DT" | "TRACKED" | "LOW" | "HIGH" | "SEAT";
-export type TagTone = "geo" | "daytrade" | "tracked" | "neutral" | "seat";
+export type TagCode = "GEO" | "AGENT" | "DT" | "TRACKED" | "LOW" | "HIGH" | "SEAT";
+export type TagTone = "geo" | "agent" | "daytrade" | "tracked" | "neutral" | "seat";
 
 export interface Tag {
   code: TagCode;
@@ -35,6 +35,11 @@ export interface TagContext {
   listMuted?: ReadonlySet<string>;
   /** 管理員加入全站追蹤名單的分點('track')。 */
   listAdded?: ReadonlySet<string>;
+  /**
+   * 名單涵蓋的交易日(YYYY-MM-DD,含頭尾)。有值時「股代」看這段期間內有效的股代
+   * (公司換過股代時,舊股代只在它當股代的那幾天算);沒有值時看現在的股代。
+   */
+  window?: { from: string; to: string } | null;
 }
 
 /**
@@ -48,7 +53,7 @@ function trackedFor(name: string, server: boolean, ctx: TagContext): boolean {
   return server;
 }
 
-export const TAG_PRIORITY: TagCode[] = ["GEO", "DT", "TRACKED", "LOW", "HIGH", "SEAT"];
+export const TAG_PRIORITY: TagCode[] = ["GEO", "DT", "TRACKED", "AGENT", "LOW", "HIGH", "SEAT"];
 /** 手機(<md)一列最多顯示幾個;md 以上幾個。 */
 export const MAX_VISIBLE_PHONE = 2;
 export const MAX_VISIBLE_WIDE = 3;
@@ -83,6 +88,103 @@ export function fmtTagDate(iso: string): string {
 function geoNote(rule: unknown): string {
   const where = rule === "district" ? "同區" : "同縣市";
   return `地緣：分點地址與公司登記地${where}（統計推測，不是內部人）`;
+}
+
+/** YYYY-MM-DD → YYYY-MM;格式不對原樣回傳。 */
+function fmtMonth(iso: string): string {
+  const m = /^(\d{4})-(\d{2})/.exec(iso);
+  return m ? `${m[1]}-${m[2]}` : iso;
+}
+
+function isDateOrNull(value: unknown): value is string | null {
+  return value === null || (typeof value === "string" && /^\d{4}-\d{2}-\d{2}/.test(value));
+}
+
+/** 股代標籤的固定說明(docs/37 §3.1);期間資訊另外接在後面。 */
+export const AGENT_NOTE = "股代：本公司登記的股務代理機構是這家券商（官方公司基本資料，每週核對）；只標總公司席位，不是單一主力。";
+
+/**
+ * 股代分段,舊→新。新 JSON 有 periods;舊 JSON 只有 current 時當成一段(from/to = null)。
+ * 格式不對的段丟掉——寧可不標,不標錯。
+ */
+export function agentPeriods(tags: BranchTags | null | undefined): BranchAgentPeriod[] {
+  const agent = tags && typeof tags === "object" ? tags.agent : null;
+  if (!agent || typeof agent !== "object") return [];
+  const current = agent.current && typeof agent.current === "object" ? agent.current : null;
+  const raw: unknown[] = Array.isArray(agent.periods) && agent.periods.length
+    ? agent.periods
+    : current ? [{ from: null, to: null, broker: current.broker ?? null, names: current.names }] : [];
+  return raw.filter((p): p is BranchAgentPeriod => {
+    if (!p || typeof p !== "object") return false;
+    const q = p as Record<string, unknown>;
+    return (q.broker === null || typeof q.broker === "string")
+      && isDateOrNull(q.from ?? null) && isDateOrNull(q.to ?? null) && Array.isArray(q.names);
+  });
+}
+
+/**
+ * 某段的有效區間:第 i 段從 from 起、到下一段的 from 前;最新一段沒有終點
+ * (last_seen 只是每週核對的落後指標,不拿來截斷);最早一段往前沿用(下界 = 無)。
+ */
+function spanOf(periods: BranchAgentPeriod[], i: number): { lo: string | null; hi: string | null } {
+  return { lo: i === 0 ? null : periods[i].from, hi: i + 1 < periods.length ? periods[i + 1].from : null };
+}
+
+/** 日期 d 的股代那一段;d 早於最早觀察 → 最早一段,inferred = true。 */
+export function agentPeriodAt(
+  periods: BranchAgentPeriod[],
+  d: string,
+): { period: BranchAgentPeriod; index: number; inferred: boolean } | null {
+  if (!periods.length) return null;
+  let index = 0;
+  for (let i = 0; i < periods.length; i++) {
+    const from = periods[i].from;
+    if (from == null || from <= d) index = i;
+  }
+  const first = periods[0].from;
+  return { period: periods[index], index, inferred: index === 0 && first != null && d < first };
+}
+
+function agentSuffix(periods: BranchAgentPeriod[], index: number, inferred: boolean): string {
+  const p = periods[index];
+  if (inferred) return `（${p.from ? `${fmtMonth(p.from)} 前` : ""}依最早觀察推定）`;
+  if (index + 1 < periods.length) {
+    const next = periods[index + 1].from;
+    return next ? `（${fmtMonth(next)} 起已換成其他機構）` : "";
+  }
+  return periods.length > 1 && p.from ? `（${fmtMonth(p.from)} 起）` : "";
+}
+
+/**
+ * 股代:依日期找當時的股代段(公司換過股代時,舊股代只在它當股代的那幾天算)。
+ * date → 那一天;否則 ctx.window → 期間內有效的任一段(較新的優先);都沒有 → 現任。
+ */
+function agentTag(name: string, ctx: TagContext, date?: string): Tag | null {
+  const periods = agentPeriods(ctx.tags);
+  if (!periods.length) return null;
+  let hits: { index: number; inferred: boolean }[];
+  if (date) {
+    const at = agentPeriodAt(periods, date);
+    hits = at ? [{ index: at.index, inferred: at.inferred }] : [];
+  } else if (ctx.window) {
+    const [lo, hi] = ctx.window.from <= ctx.window.to
+      ? [ctx.window.from, ctx.window.to] : [ctx.window.to, ctx.window.from];
+    hits = periods
+      .map((_, i) => ({ i, s: spanOf(periods, i) }))
+      .filter(({ s }) => (s.lo == null || hi >= s.lo) && (s.hi == null || lo < s.hi))
+      .map(({ i }) => ({ index: i, inferred: i === 0 && periods[0].from != null && lo < periods[0].from && hi < periods[0].from }))
+      .reverse();
+  } else {
+    hits = [{ index: periods.length - 1, inferred: false }];
+  }
+  const hit = hits.find(({ index }) => periods[index].broker && hasName(periods[index].names, name));
+  if (!hit) return null;
+  return {
+    code: "AGENT",
+    label: "股代",
+    note: AGENT_NOTE + agentSuffix(periods, hit.index, hit.inferred),
+    tone: "agent",
+  };
 }
 
 function daytradeRow(tags: BranchTags, name: string): [number, number] | null {
@@ -129,7 +231,7 @@ function pctileTag(name: string, side: "buy" | "sell", ctx: TagContext): Tag | n
  * 某分點在某一側名單(買超 "buy"/賣超 "sell")上的標籤,已依優先序排好。
  * 回傳全部;要顯示幾個由畫面決定(MAX_VISIBLE_*)。
  */
-export function branchTags(name: string, side: "buy" | "sell", ctx: TagContext): Tag[] {
+export function branchTags(name: string, side: "buy" | "sell", ctx: TagContext, date?: string): Tag[] {
   const out: Tag[] = [];
   const tags = ctx.tags && typeof ctx.tags === "object" ? ctx.tags : null;
   if (tags) {
@@ -137,6 +239,8 @@ export function branchTags(name: string, side: "buy" | "sell", ctx: TagContext):
     if (geo && geo.rule && hasName(geo.names, name)) {
       out.push({ code: "GEO", label: "地緣", note: geoNote(geo.rule), tone: "geo" });
     }
+    const agent = agentTag(name, ctx, date);
+    if (agent) out.push(agent);
     const dt = daytradeRow(tags, name);
     if (dt) {
       out.push({
@@ -170,6 +274,32 @@ export interface TagDefinition {
   text: string;
 }
 
+/**
+ * 股代的定義:講出是哪家券商——即使它的總公司席位不在這檔的名單裡也講(不然使用者
+ * 會以為沒資料)。換過股代時列出各段;沒有 agent 鍵(舊 JSON)不列。
+ */
+function agentDefinition(ctx: TagContext): TagDefinition | null {
+  const periods = agentPeriods(ctx.tags);
+  if (!periods.length) return null;
+  const latest = periods[periods.length - 1];
+  const rule = "只標股代券商的總公司席位，分公司不標；股代異動以每週核對官方公司基本資料偵測，日期最多晚一週。";
+  if (!latest.broker) {
+    return { label: "股代", text: "本公司的股務代理是銀行或公司自辦，不是券商，這檔不標股代。" };
+  }
+  const absent = latest.names.length ? "" : "（本檔近兩年前 12 大無其總公司席位）";
+  let history = "";
+  if (periods.length > 1) {
+    history = "換過股代：" + periods.map((p, i) => {
+      const from = i === 0 ? "最早觀察" : `${fmtMonth(p.from ?? "")} 起`;
+      return `${from}為${p.broker ?? "非券商"}`;
+    }).join("、") + "；每筆依當日的股代標示，最早觀察之前依最早觀察推定。";
+  }
+  return {
+    label: "股代",
+    text: `本公司登記的股務代理機構是 ${latest.broker}${absent}。${history}${rule}`,
+  };
+}
+
 /** 「標籤怎麼看」展開的定義;數字全部來自 payload。沒有資料的標籤不列。 */
 export function tagDefinitions(ctx: TagContext): TagDefinition[] {
   const defs: TagDefinition[] = [];
@@ -200,6 +330,8 @@ export function tagDefinitions(ctx: TagContext): TagDefinition[] {
         + TRACKED_OVERRIDE_NOTE,
     });
   }
+  const agentDef = agentDefinition(ctx);
+  if (agentDef) defs.push(agentDef);
   const model = ctx.pctile;
   if (model) {
     const days = model.camps.short?.windowDays;
@@ -220,7 +352,7 @@ export function tagDefinitions(ctx: TagContext): TagDefinition[] {
 export function tagLegendFootnote(ctx: TagContext): string {
   const asOf = ctx.tags && typeof ctx.tags.as_of === "string" ? ctx.tags.as_of : null;
   const date = asOf
-    ? `標籤資料日 ${fmtTagDate(asOf)}（地緣地址每週一更新；隔日沖為全部可得歷史）。`
+    ? `標籤資料日 ${fmtTagDate(asOf)}（地緣地址與股代每週一更新；隔日沖為全部可得歷史）。`
     : "";
   return `${date}分點資料只涵蓋每日前 15 大買賣超，沒標不代表沒有這種情形。`;
 }

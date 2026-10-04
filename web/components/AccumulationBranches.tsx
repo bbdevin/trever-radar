@@ -61,14 +61,21 @@ export default function AccumulationBranches({
   const [expanded, setExpanded] = useState(false);
   const [tagOpen, setTagOpen] = useState<{ name: string; key: string } | null>(null);
   const { muted, added } = useBranchTrack();
-  const tagCtx = useMemo(
-    () => makeTagContext(branchTags, branchPctile, { muted, added }),
-    [branchTags, branchPctile, muted, added],
-  );
 
   const results = useMemo(
     () => Object.fromEntries(WINDOWS.map((w) => [w.key, computeWindow(branchHistory, candles, w.days)])),
     [branchHistory, candles],
+  );
+  // 股代換過時,依名單期間當時的股代標示(期間 = 這個分頁的起訖交易日)。
+  const current = results[windowKey];
+  const tagFrom = current?.available ? current.start : null;
+  const tagTo = current?.available ? current.end : null;
+  const tagCtx = useMemo(
+    () => makeTagContext(
+      branchTags, branchPctile, { muted, added },
+      tagFrom && tagTo ? { from: tagFrom, to: tagTo } : null,
+    ),
+    [branchTags, branchPctile, muted, added, tagFrom, tagTo],
   );
 
   if (!branchHistory?.length) return null;

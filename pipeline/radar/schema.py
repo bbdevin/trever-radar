@@ -431,6 +431,23 @@ company_profiles = Table(
     Column("updated_at", Text, nullable=False),
 )
 
+# docs/37 §3.1 股代:股務代理券商的變動史(company_profiles 每週整表覆寫,這張只增不刪)。
+# 一列 = 一段「這家公司的股代是 broker」的觀察期;broker 為 NULL = 該段不是券商
+# (銀行代理部/公司自辦)。換股代 → 新增一列;沒換 → 只把 last_seen 往後推。
+# 第一次觀察之前的日期一律沿用最早那一段(來源沒有歷史,無從得知更早的股代)。
+transfer_agent_history = Table(
+    "transfer_agent_history",
+    metadata,
+    Column("stock_id", Text, primary_key=True),
+    Column("first_seen", Text, primary_key=True),   # YYYY-MM-DD,import-geo 執行日
+    Column("last_seen", Text, nullable=False),
+    Column("broker", Text),                          # transfer_agent_broker() 結果;非券商 NULL
+    Column("agent_text", Text),                      # 官方原文(最近一次觀察)
+    # 觀察來源:每週 import-geo 讀官方公司基本資料。之後若用重大訊息回補換股代日期,
+    # 用別的值區分(docs/37 §3.1 延後項)。
+    Column("source", Text, server_default="opendata_weekly"),
+)
+
 # docs/37 E1: MOPS t35sc09 官方庫藏股事實。金額=元、股數=股、價格=元/股、百分比=百分點。
 # plan_id is deterministic so one issuer can retain multiple historical plans.
 buybacks = Table(
