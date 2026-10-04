@@ -6,9 +6,15 @@ import { test } from "node:test";
 
 import type { DerivedFact } from "../bullBear.ts";
 import { branchFacts } from "./branchFacts.ts";
-import { LAST, branchMonth, branchSmart, branchWeek, insti20d, instiBothBuy, instiBothSell, instiSellStreak, marginHotUp, marginOkDown } from "./fixtures.ts";
+import {
+  LAST, branchMonth, branchSmart, branchWeek, insti20d, instiBothBuy, instiBothSell, instiSellStreak, marginConcBuildup, marginConcForeignOnly,
+  marginConcGap, marginConcTdccDown, marginDispersedDown, marginHotUp, marginInstDominant, marginOkDown,
+} from "./fixtures.ts";
 import { instFacts } from "./instFacts.ts";
 import { marginFacts } from "./marginFacts.ts";
+import { marginFlowFacts } from "./marginFlowFacts.ts";
+import { isForeignBroker } from "./seat.ts";
+import { CHIPS_HOWTO_LINES, MARGIN_FLOW_DEFINITION } from "../priceLevels.ts";
 import { futuresFacts, themeFacts, warrantFacts } from "./otherFacts.ts";
 
 const byCode = (fs: DerivedFact[]) => new Map(fs.map((f) => [f.code, f]));
@@ -56,6 +62,78 @@ test("資券:使用率過熱、融資增價跌、融券變化;健康、融資減
   assert.deepEqual(marginFacts(undefined, [], LAST), []);
 });
 
+test("融資×分點集中度:2476 型 20 日集中 + 堆積集中(背景),C_MARGIN_HOT 仍空方但 rank 2(docs/46 §7)", () => {
+  const f = marginConcBuildup();
+  const r = marginFlowFacts(f.data, f.candles, f.candles, LAST);
+  const m = byCode(r.facts);
+  const up = m.get("C_MARGIN_UP_CONC")!;
+  assert.equal(up.text, "融資 20 日增加 +2,000 張(+11.1%),同期囤貨分點 2 家合計淨買超 +4,200 張(為融資增量的 210%),股價 20 日 +1.7%;400張以上大戶 +0.30 個百分點(集保 10/01)");
+  assert.equal(up.side, "context");
+  assert.equal(up.rank, 4);
+  assert.equal(up.mirrors, undefined);
+  const bu = m.get("C_MARGIN_BUILDUP_CONC")!;
+  // 美林(外資席位)不算進囤貨分點:統一-敦南 18,000 + 康和 7,200
+  assert.equal(bu.text, "融資餘額自 05/14 的 10,000 張增至 20,000 張(+10,000 張,使用率 75%);近6月囤貨分點 2 家合計淨買超 +25,200 張、400張以上大戶 +1.90 個百分點、股價 +9.1%");
+  assert.equal(bu.side, "context");
+  assert.equal(bu.rank, 3);
+  assert.ok(r.buildupConc && !r.dispersed20);
+  const hot = byCode(marginFacts(f.data.margin_history, f.candles, LAST, r)).get("C_MARGIN_HOT")!;
+  assert.equal(hot.side, "bear");
+  assert.equal(hot.rank, 2);
+  assert.deepEqual(hot.mirrors, ["R_MARGIN_HOT"]);
+  assert.equal(hot.text, "融資使用率 75%,高於 60%");
+  // 資料日落後 → 帶日期
+  assert.equal(byCode(marginFlowFacts(f.data, f.candles, f.candles, "2026-10-02").facts).get("C_MARGIN_UP_CONC")?.date, "10/01");
+});
+
+test("融資×分點集中度:分散且股價跌(空方 ⚠),取代 5 日融資增價跌;法人主導/外資席位/集保大戶減/分點缺日 → 不判讀", () => {
+  const d = marginDispersedDown();
+  const r = marginFlowFacts(d.data, d.candles, d.candles, LAST);
+  const x = byCode(r.facts).get("C_MARGIN_UP_DISPERSED")!;
+  assert.equal(x.text, "融資 20 日增加 +2,000 張(+20.0%),同期無囤貨分點,外資投信合計賣超 14,000 張,股價 20 日 −16.7%;400張以上大戶 −1.50 個百分點、未滿400張股東 +6.1%(集保 10/01)");
+  assert.equal(x.side, "bear");
+  assert.equal(x.risk, true);
+  assert.equal(x.rank, 4);
+  assert.equal(r.facts.length, 1);
+  assert.ok(r.dispersed20);
+  assert.ok(!byCode(marginFacts(d.data.margin_history, d.candles, LAST, r)).has("C_MARGIN_UP_PRICE_DOWN"));
+  // 有囤貨但只佔融資增量 24%(融資改 +5,000 張、元大-士林 20 日 +1,200 張):改寫比例
+  const p = marginDispersedDown();
+  p.data.margin_history = p.data.margin_history!.map((row, i) => ({ ...row, balance: i < 5 ? 10000 + (5 - i) * 1000 : 10000 }));
+  p.data.branch_history = p.data.branch_history!.map((day) => ({ ...day, branches: [...day.branches, { n: "元大-士林", b: 60, s: 0, net: 60 }] }));
+  assert.ok(byCode(marginFlowFacts(p.data, p.candles, p.candles, LAST).facts).get("C_MARGIN_UP_DISPERSED")!.text
+    .includes(",同期囤貨分點合計僅為融資增量的 24%,外資投信合計賣超"));
+
+  const inst = marginInstDominant();
+  const ri = marginFlowFacts(inst.data, inst.candles, inst.candles, LAST);
+  assert.deepEqual(ri.facts, []);
+  assert.ok(byCode(marginFacts(inst.data.margin_history, inst.candles, LAST, ri)).has("C_MARGIN_UP_PRICE_DOWN"));
+  for (const f of [marginConcForeignOnly(), marginConcTdccDown(), marginConcGap()]) {
+    const rr = marginFlowFacts(f.data, f.candles, f.candles, LAST);
+    assert.deepEqual(rr.facts, []);
+    assert.equal(byCode(marginFacts(f.data.margin_history, f.candles, LAST, rr)).get("C_MARGIN_HOT")?.rank, 3);
+  }
+  // 融資不顯著(< 200 張)→ 不判讀
+  const small = marginDispersedDown();
+  small.data.margin_history = small.data.margin_history!.map((row, i) => ({ ...row, balance: i < 5 ? 10100 : 10000 }));
+  assert.deepEqual(marginFlowFacts(small.data, small.candles, small.candles, LAST).facts, []);
+  assert.deepEqual(marginFlowFacts({}, [], [], LAST), { facts: [], buildupConc: false, dispersed20: false });
+});
+
+test("融資×分點集中度:只並列不歸因——事實句與定義句不出現歸因/操作字眼;定義句常駐籌碼段底", () => {
+  // 以「·」拆開,避免這個檔案本身被 test_label_honesty 掃到
+  const banned = ["主·力", "鎖·碼", "大戶·融資", "散戶·融資", "買·進", "賣·出", "看·多", "看·空", "建·議", "將·會"].map((w) => w.replace("·", ""));
+  const texts = [marginConcBuildup(), marginDispersedDown()].flatMap((f) => marginFlowFacts(f.data, f.candles, f.candles, LAST).facts.map((x) => x.text));
+  assert.equal(texts.length, 3);
+  for (const t of [...texts, MARGIN_FLOW_DEFINITION]) for (const w of banned) assert.ok(!t.includes(w), `「${t}」含「${w}」`);
+  assert.ok(CHIPS_HOWTO_LINES.includes(MARGIN_FLOW_DEFINITION));
+});
+
+test("外資席位:X商前綴、常見外資券商名、去掉 (…) 前綴後比對;本土分點/總公司不算", () => {
+  for (const n of ["美商高盛", "(港商)麥格理", "美林", "摩根大通", "新加坡商瑞銀", "法國興業"]) assert.ok(isForeignBroker(n), n);
+  for (const n of ["統一-敦南", "康和", "元大-士林", "凱基-台北"]) assert.ok(!isForeignBroker(n), n);
+});
+
 test("分點:前 12 大淨流、1 月囤貨/出貨、隔日沖買超、地緣、區間損益(估算)", () => {
   const f = branchMonth();
   const m = byCode(branchFacts(f, f.candles, LAST, new Set()));
@@ -93,11 +171,17 @@ test("分點:低買高賣/區間損益估算前段分點的買超、賣超、持
   assert.equal(sell.risk, true);
   assert.equal(m.get("C_SMART_HOLDING")?.text, "區間損益估算前段分點【國泰-敦南】(1年 +900 萬)仍有持股 800 張,帳面為正(估算)");
   assert.equal(m.get("C_SMART_HOLDING")?.rank, 3);
+  assert.equal(m.get("C_SMART_HOLDING")?.side, "bull");
+  // 帳面為負 → 背景,不是多方
+  const neg = m.get("C_SMART_HOLDING_NEG")!;
+  assert.equal(neg.text, "低買高賣分點【A2】(短線派 買低 50%)仍有持股 300 張,帳面為負(3月估算)");
+  assert.equal(neg.side, "context");
+  assert.equal(neg.rank, 2);
   // 份量不足(元大-士林 40 張)、超出前 5 名(永豐-竹北)、買側紀錄不足 → 都不點名
   const all = facts.map((x) => x.text).join("\n");
   for (const n of ["元大-士林", "永豐-竹北", "紀錄不足", "A1"]) assert.ok(!all.includes(`【${n}】`), n);
   // 一家分點只出現在一句
-  for (const n of ["凱基-台北", "群益金鼎-板橋", "B1", "富邦-建國", "國泰-敦南"])
+  for (const n of ["凱基-台北", "群益金鼎-板橋", "B1", "富邦-建國", "國泰-敦南", "A2"])
     assert.equal(facts.filter((x) => x.text.includes(`【${n}】`)).length, 1, n);
 });
 

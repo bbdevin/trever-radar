@@ -32,7 +32,7 @@ import {
   type DerivedFact,
 } from "./bullBear.ts";
 import { FACT_CATALOGUE } from "./facts/catalogue.ts";
-import { LAST, holdersBull, instiSellStreak, okLevels, techBearSeries, techBullSeries } from "./facts/fixtures.ts";
+import { LAST, holdersBull, instiSellStreak, marginConcBuildup, marginConcTdccDown, okLevels, techBearSeries, techBullSeries } from "./facts/fixtures.ts";
 import { holdersFacts } from "./facts/holdersFacts.ts";
 import { deriveAllFacts } from "./facts/index.ts";
 import { techFacts } from "./facts/techFacts.ts";
@@ -428,4 +428,33 @@ test("禁用詞鎖:標籤、定義句、欄頭、F 句", () => {
     ...priceLevelFacts(pl({ ma_align: "bear", new_low_20: true, new_high_20: false, vol_price_2d: "down" }), "2026-10-03", 30).map((f) => f.text),
   ];
   for (const t of texts) for (const w of BANNED) assert.ok(!t.includes(w), `「${t}」含禁用詞`);
+});
+
+test("融資堆積且同期分點集中(docs/46 §7):C_MARGIN_HOT 仍空方、取代 R_MARGIN_HOT,但 rank 2 → 不進重點、不當標頭;每 code 恰一次", () => {
+  const run = (f: ReturnType<typeof marginConcBuildup>) => {
+    const data = { id: "2476", name: "樣本", market: "twse", technical: null, scores: null, reasons: [], risks: [], branches: [], warrant: null, warrant_history: [], active_warrants: [], ...f.data, candles: f.candles } as unknown as StockJson;
+    return buildBullBear({
+      reasons: [], risks: [], rawReasons: [],
+      rawRisks: [{ code: "R_MARGIN_HOT", points: 5, text: "融資使用率過高" }, { code: "R_RSI_OVERHEAT", points: 5, text: "RSI過熱" }],
+      technical: null, derivedFacts: deriveAllFacts(data, LAST), asOf: LAST,
+    });
+  };
+  const s = run(marginConcBuildup());
+  const hot = s.sections.chips.bear.find((i) => i.code === "C_MARGIN_HOT")!;
+  assert.equal(hot.rank, 2);
+  assert.ok(s.suppressed.includes("R_MARGIN_HOT"));
+  assert.ok(!keyItems(s.sections.chips.bear).some((i) => i.code === "C_MARGIN_HOT"));
+  assert.notEqual(topOfSide(s, "bear")?.code, "C_MARGIN_HOT");
+  const ctx = s.sections.chips.context.map((i) => i.code);
+  assert.ok(ctx.includes("C_MARGIN_UP_CONC") && ctx.includes("C_MARGIN_BUILDUP_CONC"), ctx.join(","));
+  // 後端 code 恰一次(列出或被取代);事實鍵(code+週期)不重複
+  const backend = [...ALL(s).map((i) => i.code), ...s.suppressed].filter((c): c is string => !!c && !(c in FACT_CATALOGUE));
+  assert.deepEqual(backend.sort(), ["R_MARGIN_HOT", "R_RSI_OVERHEAT"]);
+  const keys = ALL(s).map((i) => i.key);
+  assert.equal(keys.length, new Set(keys).size, "有事實重複");
+  assert.equal(ALL(s).filter((i) => i.code === "C_MARGIN_HOT").length, 1);
+  // 集保大戶減(2236 型)→ 沒有集中事實,C_MARGIN_HOT 維持 rank 3
+  const t = run(marginConcTdccDown());
+  assert.equal(t.sections.chips.bear.find((i) => i.code === "C_MARGIN_HOT")?.rank, 3);
+  assert.ok(!ALL(t).some((i) => i.code?.startsWith("C_MARGIN_UP_") || i.code === "C_MARGIN_BUILDUP_CONC"));
 });
