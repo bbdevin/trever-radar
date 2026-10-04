@@ -415,7 +415,7 @@ export function branchSmart(): Pick<StockJson, "branch_history" | "branch_pctile
       computed_at: null, definitions_version: null, stock_daytrade_obs: null, stock_daytrade_paybacks: null,
       short: camp([
         pctileRow("群益金鼎-板橋", 7, 8), { ...pctileRow("紀錄不足", 3, 3), buy_pctile_known: 3, buy_lots_known: 300 },
-        pctileRow("A1", 5, 5), pctileRow("A2", 5, 5), pctileRow("A3", 5, 5), pctileRow("永豐-竹北", 9, 9),
+        pctileRow("A1", 7, 7), pctileRow("A2", 7, 7), pctileRow("A3", 7, 7), pctileRow("永豐-竹北", 9, 9),
       ]),
       long: camp([pctileRow("B1", 6, 6), pctileRow("元大-士林", 6, 6)]),
       lookup_fields: ["branch_name"], lookup: [],

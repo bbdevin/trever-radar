@@ -159,13 +159,13 @@ test("分點:低買高賣/區間損益估算前段分點的買超、賣超、持
   const buy = m.get("C_SMART_BUY")!;
   assert.equal(buy.text,
     "區間損益估算前段分點【凱基-台北】(3月 +500 萬)今日買超 +600 張(佔量 6.0%);"
-    + "低買高賣分點【群益金鼎-板橋】(短線派 買低 70%)近5日買超 +1,500 張(佔量 3.0%)");
+    + "低買高賣分點【群益金鼎-板橋】(短線派 買低 70%,本股 40%)近5日買超 +1,500 張(佔量 3.0%)");
   assert.equal(buy.side, "bull");
   assert.equal(buy.rank, 5);
   assert.equal(buy.magnitude, 6);
   const sell = m.get("C_SMART_SELL")!;
   assert.equal(sell.text,
-    "低買高賣分點【B1】(長線派 賣高 60%)今日賣超 −600 張(佔量 6.0%);"
+    "低買高賣分點【B1】(長線派 賣高 60%,本股 40%)今日賣超 −600 張(佔量 6.0%);"
     + "區間損益估算前段分點【富邦-建國】(3月 +300 萬)近5日賣超 −180 張(佔量 0.4%),估算持股減少 64%");
   assert.equal(sell.side, "bear");
   assert.equal(sell.risk, true);
@@ -174,7 +174,7 @@ test("分點:低買高賣/區間損益估算前段分點的買超、賣超、持
   assert.equal(m.get("C_SMART_HOLDING")?.side, "bull");
   // 帳面為負 → 背景,不是多方
   const neg = m.get("C_SMART_HOLDING_NEG")!;
-  assert.equal(neg.text, "低買高賣分點【A2】(短線派 買低 50%)仍有持股 300 張,帳面為負(3月估算)");
+  assert.equal(neg.text, "低買高賣分點【A2】(短線派 買低 70%,本股 40%)仍有持股 300 張,帳面為負(3月估算)");
   assert.equal(neg.side, "context");
   assert.equal(neg.rank, 2);
   // 份量不足(元大-士林 40 張)、超出前 5 名(永豐-竹北)、買側紀錄不足 → 都不點名
@@ -193,7 +193,7 @@ test("分點:強分點門檻——佔量 0.5% 或 500 張、50 張下限;前 2 �
   k.b = 450; k.net = 450;
   const big = f.candles.map((c) => ({ ...c, v: 200_000 }));
   const m = byCode(branchFacts(f, big, LAST, new Set()));
-  assert.equal(m.get("C_SMART_BUY")?.text, "低買高賣分點【群益金鼎-板橋】(短線派 買低 70%)近5日買超 +1,500 張(佔量 0.1%)");
+  assert.equal(m.get("C_SMART_BUY")?.text, "低買高賣分點【群益金鼎-板橋】(短線派 買低 70%,本股 40%)近5日買超 +1,500 張(佔量 0.1%)");
   assert.equal(m.get("C_SMART_BUY")?.rank, 4);
   // 3 家都成立 → 點名前 2 家 + 等 3 家
   const g = branchSmart();

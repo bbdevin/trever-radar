@@ -9,7 +9,7 @@
  *    進榜本身已過 pipeline 門檻(可見買進 ≥50 張、最大持有成本 ≥100 萬)。
  */
 import type { DerivedFact } from "../bullBear.ts";
-import { CAMP_KEYS, CAMP_NAMES, DEFAULT_VISIBLE as PCTILE_TOP, compactSide, normalizeBranchPctile, type CampKey } from "../branchPctile.ts";
+import { CAMP_KEYS, CAMP_NAMES, DEFAULT_VISIBLE as PCTILE_TOP, compactSide, normalizeBranchPctile, type CampKey, type SideNumbers } from "../branchPctile.ts";
 import { PNL_WINDOWS, fmtMoney as fmtPnl } from "../branchPnl.ts";
 import type { BranchPnlRow, Candle, StockJson } from "../types.ts";
 import { LOTS, fmtInt, mk, mmdd } from "./text.ts";
@@ -37,6 +37,26 @@ interface Cred {
 
 const winLabel = (w: string) => PNL_WINDOWS.find((x) => x.key === w)?.label ?? `${w}日`;
 
+/** 張數加權比例(舊資料退回次數);已知不足回 null。 */
+function sideShare(s: SideNumbers | null | undefined, minKnown: number): number | null {
+  if (!s || s.known < minKnown) return null;
+  if (s.lotsKnown != null && s.lotsHit != null && s.lotsKnown > 0) return s.lotsHit / s.lotsKnown;
+  return s.known > 0 ? s.hit / s.known : null;
+}
+
+/** 明顯勝過基準的幅度:至少高 10 個百分點,且為基準的 1.5 倍(19% vs 18% 不算強)。 */
+export const SMART_BASE_MARGIN_PP = 0.1;
+export const SMART_BASE_MULT = 1.5;
+
+/** 分點這一側的比例是否明顯勝過股票自身基準;基準缺時要求 ≥ 50%。 */
+function beatsBase(side: SideNumbers, base: SideNumbers | null, minKnown: number): boolean {
+  const s = sideShare(side, minKnown);
+  if (s == null) return false;
+  const b = sideShare(base, 1);
+  const eps = 1e-9; // 0.4×1.5 = 0.6000000000000001
+  return b == null ? s >= 0.5 : s + eps >= b + SMART_BASE_MARGIN_PP && s + eps >= b * SMART_BASE_MULT;
+}
+
 function credentials(data: Pick<StockJson, "branch_pctile_counts" | "branch_pnl_est">): Map<string, Cred> {
   const out = new Map<string, Cred>();
   const get = (n: string) => out.get(n) ?? (out.set(n, {}), out.get(n)!);
@@ -48,10 +68,23 @@ function credentials(data: Pick<StockJson, "branch_pctile_counts" | "branch_pnl_
       for (const row of camp.rows.slice(0, PCTILE_TOP)) {
         const buy = compactSide("buy", row.buy, model.minKnown);
         if (buy.insufficient) continue;
+        // 排行前段不等於「低買高賣」:買低、賣高兩側都要勝過這檔股票自己的基準
+        // (同 docs/43 的判讀口徑);股票基準缺時,買低比例至少一半才算。
+        if (!beatsBase(row.buy, camp.base.buy, model.minKnown)) continue;
+        if (row.sell.known >= model.minKnown && !beatsBase(row.sell, camp.base.sell, model.minKnown)) continue;
         const c = get(row.name);
         if (c.pctile) continue;
         const sell = compactSide("sell", row.sell, model.minKnown);
-        c.pctile = { camp: key, buy: buy.text, sell: sell.insufficient ? buy.text : sell.text };
+        // 附上本股基準,讓「買低 19%」這種數字有參照(長線派基準常只有一成上下)
+        const withBase = (text: string, base: SideNumbers | null) => {
+          const b = sideShare(base, 1);
+          return b == null ? text : `${text},本股 ${Math.round(b * 100)}%`;
+        };
+        c.pctile = {
+          camp: key,
+          buy: withBase(buy.text, camp.base.buy),
+          sell: sell.insufficient ? withBase(buy.text, camp.base.buy) : withBase(sell.text, camp.base.sell),
+        };
       }
     }
   }
