@@ -1,6 +1,6 @@
 "use client";
 
-import { ALargeSmall, LogOut, Moon, ShieldCheck, Sun } from "lucide-react";
+import { ALargeSmall, History, LogOut, Moon, ShieldCheck, Sun } from "lucide-react";
 import { useRouter } from "next/navigation";
 import {
   DropdownMenu,
@@ -11,6 +11,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { CURRENT_VERSION } from "@/lib/changelog";
 import { FONT_SCALE_LABEL, useUserPrefs } from "@/lib/userPrefs";
 import { signOut, useSession } from "@/lib/useSession";
 import { cn } from "@/lib/utils";
@@ -82,6 +83,17 @@ export default function AuthButton() {
             {isDark ? <Sun /> : <Moon />}
             {isDark ? "切換淺色模式" : "切換深色模式"}
           </button>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            className="cursor-pointer"
+            onClick={() => {
+              router.push("/changelog");
+            }}
+          >
+            <History />
+            版本更新紀錄
+            <span className="num ml-auto text-xs font-semibold text-primary">v{CURRENT_VERSION}</span>
+          </DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem variant="destructive" className="cursor-pointer" onClick={() => signOut()}>
             <LogOut />
