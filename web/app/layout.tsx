@@ -14,6 +14,8 @@ import { WatchlistProvider } from "@/lib/watchlist";
 import { BranchTrackProvider } from "@/lib/branchTrackList";
 import { UserPrefsProvider } from "@/lib/userPrefs";
 import { SessionProvider } from "@/lib/useSession";
+import Link from "next/link";
+import { CURRENT_VERSION } from "@/lib/changelog";
 import "./globals.css";
 
 // 數字與拉丁字用 Manrope(build 時自託管);中文走系統字體堆疊
@@ -99,6 +101,22 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               </header>
               <main className="container">{children}</main>
               <footer className="border-t border-border py-4 pb-[26px] text-[11.5px] text-muted-foreground max-md:mb-[calc(4.5rem+env(safe-area-inset-bottom))]">
+                <div className="container mb-2">
+                  {/* 版本號:全站每頁都看得到,點了看更新紀錄(資料在 lib/changelog.ts)。
+                      footer 本身在手機上已留出底部導航的高度,不會被蓋住。 */}
+                  <Link
+                    href="/changelog"
+                    prefetch={false}
+                    className="inline-flex min-h-11 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[12.5px] text-muted-foreground hover:text-foreground"
+                  >
+                    <span>Trever Radar 版本</span>
+                    <span className="num rounded-full bg-primary/12 px-2 py-0.5 text-[12px] font-bold text-primary">
+                      v{CURRENT_VERSION}
+                    </span>
+                    <span aria-hidden="true">·</span>
+                    <span className="text-primary underline-offset-2 hover:underline">版本更新紀錄</span>
+                  </Link>
+                </div>
                 <div className="container">
                   本系統僅彙整公開市場資料供個人研究,非投資建議;訊號不保證獲利;投資人應自行判斷並承擔風險。資料來源:臺灣證券交易所、證券櫃檯買賣中心。
                 </div>
