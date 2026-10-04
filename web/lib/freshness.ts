@@ -30,21 +30,23 @@ export type StaleLine = {
 /**
  * 每日自動更新時間表(週一至週五,台北時間;2026-10-02 依使用者要求整合到首頁的
  * 「尚未更新」區塊)。**來源是正式機的 crontab 與 vps/scripts/ 各輪實際匯入的資料**
- * (docs/08 §0、docs/35):14:10 daily-market、15:00 daily-tpex-quotes、16:10
- * daily-insti、17:40 / 22:00 daily-branches、21:20 daily-margin。改排程時這裡要一起改。
+ * (docs/08 §0、docs/35、docs/47):14:05 daily-market、14:45 daily-tpex-quotes、16:00
+ * daily-insti、17:30 / 22:30 daily-branches、20:45 daily-margin、週一 11:00 weekly-refdata。
+ * docs/47 起各輪是「起點」:腳本輪詢到來源公布就立刻上線,所以這裡寫「起」。
+ * 改排程時這裡要一起改。
  *
- * 期貨照實寫:16:10 抓當日,未到齊 17:40、22:00 重試;21:20 為官方日報覆核。
+ * 期貨照實寫:16:00 起隨法人輪詢抓當日,未到齊 17:30、22:30 重試;資券輪為官方日報覆核。
  */
 // `short` 是手機版一行放得下的寫法(使用者 2026-10-02:要考量手機畫面)。
 export const UPDATE_SCHEDULE: { key: string; label: string; when: string; short: string }[] = [
-  { key: "quotes", label: "股價", when: "上市 14:10、上櫃 15:00", short: "上市 14:10、上櫃 15:00" },
-  { key: "insti", label: "法人", when: "16:10(17:40 補抓)", short: "16:10、17:40 補抓" },
-  { key: "warrant", label: "權證", when: "16:10", short: "16:10" },
-  { key: "branch", label: "分點", when: "17:40 第一輪(常未到齊)、22:00 補齊", short: "17:40、22:00 補齊" },
-  { key: "margin", label: "融資券", when: "21:20", short: "21:20" },
-  { key: "futures", label: "個股期貨", when: "16:10（當日；未到齊則 17:40、22:00 重試）", short: "16:10 當日、17:40 補" },
-  { key: "themes", label: "題材分類", when: "每週一 14:10", short: "週一 14:10" },
-  { key: "scores", label: "評分與榜單", when: "每一輪都重算;資料齊全的版本約 23:10", short: "每輪重算,完整約 23:10" },
+  { key: "quotes", label: "股價", when: "上市 14:05 起、上櫃 14:45 起", short: "上市14:05、上櫃14:45起" },
+  { key: "insti", label: "法人", when: "16:00 起輪詢(到齊即上線)", short: "16:00 起輪詢" },
+  { key: "warrant", label: "權證", when: "16:00 起(隨法人輪)", short: "16:00 起" },
+  { key: "branch", label: "分點", when: "17:30 起偵測、齊全即抓", short: "17:30 起偵測、齊全即抓" },
+  { key: "margin", label: "融資券", when: "20:45 起輪詢", short: "20:45 起輪詢" },
+  { key: "futures", label: "個股期貨", when: "16:00 起（當日；未到齊則 17:30、22:30 重試）", short: "16:00 當日、17:30 補" },
+  { key: "themes", label: "題材分類", when: "每週一 11:00", short: "週一 11:00" },
+  { key: "scores", label: "評分與榜單", when: "每一輪都重算;資料齊全的版本約 22:00", short: "每輪重算,完整約 22:00" },
 ];
 
 export function scheduleFor(key: string): string | undefined {

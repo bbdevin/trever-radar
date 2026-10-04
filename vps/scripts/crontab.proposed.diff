@@ -1,0 +1,21 @@
+# docs/47 排程優化 — 正式機 crontab 要改的 7 行(6 改 + 1 新增)。
+# 套用前:crontab -l > ~/crontab-backup-$(date +%Y%m%d-%H%M).txt
+# 以「內容」比對,不要以行號:正式機 22:00 那行帶 BRANCH_ROUND_MODE=import 前綴
+# (2026-09-16 套用),是否有 `bash ` 以正式機為準,只改時刻、保留其餘原文。
+# 腳本在舊時刻也正確(各輪截止時刻寫在腳本裡),所以先 push 程式、再改 crontab 沒有空窗。
+--- crontab (production, before)
++++ crontab (production, after)
+@@ 每日輪(週一–五) @@
+-10 14 * * 1-5  bash /home/huang/trever-radar/vps/scripts/daily-market.sh      >> /home/huang/radar-cron.log 2>&1
+-0  15 * * 1-5  bash /home/huang/trever-radar/vps/scripts/daily-tpex-quotes.sh >> /home/huang/radar-cron.log 2>&1
+-10 16 * * 1-5  bash /home/huang/trever-radar/vps/scripts/daily-insti.sh       >> /home/huang/radar-cron.log 2>&1
+-40 17 * * 1-5  bash /home/huang/trever-radar/vps/scripts/daily-branches.sh    >> /home/huang/radar-cron.log 2>&1
+-20 21 * * 1-5  bash /home/huang/trever-radar/vps/scripts/daily-margin.sh      >> /home/huang/radar-cron.log 2>&1
+-0  22 * * 1-5  BRANCH_ROUND_MODE=import bash /home/huang/trever-radar/vps/scripts/daily-branches.sh >> /home/huang/radar-cron.log 2>&1
++5  14 * * 1-5  bash /home/huang/trever-radar/vps/scripts/daily-market.sh      >> /home/huang/radar-cron.log 2>&1
++45 14 * * 1-5  bash /home/huang/trever-radar/vps/scripts/daily-tpex-quotes.sh >> /home/huang/radar-cron.log 2>&1
++0  16 * * 1-5  bash /home/huang/trever-radar/vps/scripts/daily-insti.sh       >> /home/huang/radar-cron.log 2>&1
++30 17 * * 1-5  bash /home/huang/trever-radar/vps/scripts/daily-branches.sh    >> /home/huang/radar-cron.log 2>&1
++45 20 * * 1-5  bash /home/huang/trever-radar/vps/scripts/daily-margin.sh      >> /home/huang/radar-cron.log 2>&1
++30 22 * * 1-5  BRANCH_ROUND_MODE=import bash /home/huang/trever-radar/vps/scripts/daily-branches.sh >> /home/huang/radar-cron.log 2>&1
++0  11 * * 1    bash /home/huang/trever-radar/vps/scripts/weekly-refdata.sh    >> /home/huang/radar-cron.log 2>&1

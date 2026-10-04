@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
-# 17:40 + 22:00 台北(週一–五,同一支跑兩次,冪等)— 法人補抓 + 分點全量。
-# 17:40 跑完整鏈並上線;22:00 由 crontab 設 BRANCH_ROUND_MODE=import:匯入,並在
-# 17:40 那輪沒上線的日子接手完整鏈(該變數的名字比行為窄,見下面的說明)。
-# 融資融券不在此輪:交由 21:20 daily-margin(TWSE ~21:00 產製)。
-# 第二輪改 22:00,讓 21:20 資券先上線、避免搶 lock。
+# 17:30 + 22:30 台北(週一–五,同一支跑兩次,冪等)— 法人補抓 + 分點全量。
+# (docs/47 新排程;舊 crontab 是 17:40 + 22:00,本檔兩種時刻都正確。以下註解的
+#  「17:40」「22:00」指的是第一輪/第二輪,不是精確時刻。)
+# 17:30 先探測分點來源(probe-branch-day,每 15 分鐘抽 24 檔),達門檻或到 20:30 才
+# 全量爬,跑完整鏈並上線;收工時若已過 21:00 順手匯入資券。
+# 22:30 由 crontab 設 BRANCH_ROUND_MODE=import:第一輪覆蓋率已是 100% → 直接收工;
+# 否則匯入,並在第一輪沒上線的日子接手完整鏈(該變數的名字比行為窄,見下面的說明)。
+# 融資融券主輪仍是 daily-margin(20:45 起輪詢;TWSE ~21:00 產製)。
+# 非交易日(今天沒有日K)兩輪都直接收工,不再重爬 2,672 檔。
 source "$(dirname "$0")/lib.sh"
 
 # 本輪失敗的後果(run_step_or_fail 的通知會接在「本輪中止、未上線」之後)。
@@ -75,7 +79,27 @@ fi
 # 標記格式與其他腳本一致,cron log 裡可以直接用時間定位整輪的邊界。
 echo "=== daily-branches start $(taipei_date -Is) ==="
 
-acquire_db_lock
+# 非交易日(docs/47):今天沒有日K → 兩輪都不爬、不匯出。09-25、09-28 實測每輪照樣
+# 重爬 2,672 檔、export + deploy 一份沒變的網站,約 3.5 小時鎖、~5,000 個請求。
+if ! price_date_is_today; then
+  echo "非交易日（今天沒有日K）：分點輪略過"
+  echo "=== daily-branches done $(taipei_date -Is) ==="
+  exit 0
+fi
+
+# 第二輪且第一輪的覆蓋率已是 100%(完成標記的 coverage_ratio=,docs/47):再爬一次
+# 2,672 檔(41–104 分鐘)也不會多一列,直接收工。<1.0 或舊格式標記(沒有比例)→
+# 照舊重爬並刷新評分;沒有標記 → 照舊接手完整鏈。
+# (條件順序刻意把模式判斷放後面:測試以 `if [ "$BRANCH_ROUND_MODE" = "import" ]` 字面定位模式守衛。)
+FIRST_ROUND_RATIO="$(branch_marker_coverage_ratio "$ROUND_DATE")"
+if awk -v r="${FIRST_ROUND_RATIO:-0}" 'BEGIN { exit !(r + 0 >= 1) }' && [ "$BRANCH_ROUND_MODE" = "import" ]; then
+  echo "publish skipped: first round complete (coverage_ratio=${FIRST_ROUND_RATIO})"
+  echo "=== daily-branches done $(taipei_date -Is) ==="
+  exit 0
+fi
+
+# 等鎖不略過(docs/47):第一輪前面可能還有法人輪在輪詢、第二輪前面可能是資券輪。
+acquire_db_lock_wait 3600
 acquire_branch_source_lock
 sync_code
 
@@ -95,17 +119,45 @@ sync_code
 # 上櫃日K 若 14:10/16:10 仍 empty,此輪再抓,否則 --top 0 會漏掉無當日報價的上櫃。
 run_step_or_fail "import-daily" radar import-daily --datasets quotes,insti
 # 個股期貨當日(docs/38 §7.18;2026-10-02 起接上)。資料不齊時 import-futures-day 回 75 且一列都不寫;
-# 本輪(17:40／22:00)尚未齊全只記 log 不通知;22:00 是當天最後一次重試,其後 21:20 官方日報會在下個交易日補上。
-# 其他失敗只 warn,不擋本輪。
-fd_rc=0
-if radar import-futures-day; then :; else fd_rc=$?; fi
-if [ "$fd_rc" -eq 75 ]; then
-  echo "個股期貨當日尚未公布齊全(exit 75),22:00 重試;22:00 仍未齊則 21:20 官方日報會在下個交易日補上"
-elif [ "$fd_rc" -ne 0 ]; then
-  notify_warn "個股期貨當日匯入失敗（exit ${fd_rc}），本輪續跑；21:20 官方日報會在下個交易日補上"
+# 本輪尚未齊全只記 log 不通知;第二輪是當天最後一次重試,其後資券輪的官方日報會在下個交易日補上。
+# 其他失敗只 warn,不擋本輪。法人輪(16:00 起)已拿到今天的就不再重抓(docs/47)。
+futures_day_done() {
+  local n=""
+  n="$(radar_ro_sql "SELECT COUNT(*) FROM import_logs WHERE dataset = 'futures-day' AND status = 'ok' AND date = ?" "$ROUND_DATE" 2>/dev/null || true)"
+  [ "${n:-0}" -gt 0 ] 2>/dev/null
+}
+if futures_day_done; then
+  echo "個股期貨當日已匯入(法人輪),本輪不重抓"
+else
+  fd_rc=0
+  if radar import-futures-day; then :; else fd_rc=$?; fi
+  if [ "$fd_rc" -eq 75 ]; then
+    echo "個股期貨當日尚未公布齊全(exit 75),第二輪重試;仍未齊則資券輪的官方日報會在下個交易日補上"
+  elif [ "$fd_rc" -ne 0 ]; then
+    notify_warn "個股期貨當日匯入失敗（exit ${fd_rc}），本輪續跑；資券輪的官方日報會在下個交易日補上"
+  fi
 fi
 run_step_or_fail "compute-indicators" radar compute-indicators --all --days 5
 run_step_or_fail "seed-branches" radar seed-branches
+
+# 分點來源探測(docs/47 原則 3;只在第一輪,BRANCH_PROBE=0 = 舊行為直接爬)。
+# 17:30 起每 15 分鐘抽 24 檔問一次(probe-branch-day,唯讀、不寫 DB),≥22 檔有資料
+# 或到 20:30 才全量爬。實測 17:40 直接爬的覆蓋率常只有 33–56% 而被扣留,那 41–62 分鐘
+# 是白工。等待期間**放掉 DB 鎖**(探測不寫 DB),只握著分點來源鎖;探測出錯 = 照舊直接爬。
+if [ "$BRANCH_ROUND_MODE" != "import" ] && [ "${BRANCH_PROBE:-1}" != "0" ]; then
+  release_db_lock
+  if POLL_HOLD_DB_LOCK=0 poll_until "branch-probe" 2030 900 radar_timeout 1200 probe-branch-day --sample 24 --threshold 22 --sleep 1.0; then
+    :
+  else
+    probe_rc=$?
+    if [ "$probe_rc" -eq 75 ]; then
+      echo "branch-probe: 20:30 仍未達門檻,照常全量爬(覆蓋率閘門照舊把關)"
+    else
+      echo "branch-probe: 探測失敗 rc=${probe_rc},照舊直接全量爬"
+    fi
+  fi
+  acquire_db_lock_wait 3600
+fi
 # top=0: 當日有報價的全部 type=stock(不含 ETF)。
 # 全市場權證輪尚未通過容量/時間 PoC；過渡池只含標的是 active 普通股的
 # 上市認購／認售、當日成交金額至少 100 萬的權證。此模式取代 legacy --warrants Top-N，不能疊加。
@@ -224,6 +276,16 @@ if [ "$SCORES_REFRESH" = 1 ]; then
 else
   run_step_or_fail "compute-branch-stats" radar compute-branch-stats
 fi
+# 已過 21:00(TWSE ~21:00 產製資券)→ 順手匯入當天資券,讓這一次的評分與上線就帶著它;
+# 資券輪(20:45 起在等這把鎖)拿到鎖後看到資券已是今天就直接收工(docs/47)。
+# 抓不到只 warn:資券輪仍會照常輪詢。跨午夜也算「已過 21:00」(資料日以開跑日為準)。
+if [ "$(taipei_date +%H)" -ge 21 ] || [ "$(taipei_date +%F)" != "$ROUND_DATE" ]; then
+  if radar import-daily --datasets margin --date "${ROUND_DATE//-/}"; then
+    :
+  else
+    notify_warn "分點輪順手匯入資券失敗，資券輪會照常輪詢"
+  fi
+fi
 run_step_or_fail "compute-scores" radar compute-scores
 run_step_or_fail "compute-performance" radar compute-performance
 run_step_or_fail "export-json" radar export-json
@@ -245,6 +307,9 @@ if [ "$SCORES_REFRESH" = 1 ]; then
   echo "=== daily-branches done $(taipei_date -Is) ==="
   exit 0
 fi
-taipei_date -Is > "$(branch_round_marker "$ROUND_DATE")"
+# 第二行 coverage_ratio=:第二輪(import 模式)讀它決定要不要再爬一次(1.0 = 不必,docs/47)。
+# 第一行仍是完成時刻(夜間作業與人讀的都是第一行)。
+COVERAGE_RATIO="$(branch_round_coverage_ratio "$ROUND_DATE")"
+printf '%s\ncoverage_ratio=%s\n' "$(taipei_date -Is)" "${COVERAGE_RATIO:-unknown}" > "$(branch_round_marker "$ROUND_DATE")"
 notify_ok "分點籌碼已更新並上線（含法人補抓）"
 echo "=== daily-branches done $(taipei_date -Is) ==="

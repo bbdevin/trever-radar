@@ -2,6 +2,13 @@
 
 > 單一進度真相。每完成一個里程碑就更新本檔。規格細節看各編號文件,別寫在這裡。
 
+## 2026-10-04 日更排程優化:輪詢到公布為止(`docs/47`;程式已改,正式 crontab 待核准)
+
+- **為什麼**:12 個交易日的 cron log 顯示上市法人 7/12 天落後 3–5.7 小時、17:40 分點常白爬 41–62 分後被扣留、週一題材步驟讓 15:00 上櫃輪整輪消失、非交易日照樣跑 ~3.5 小時。
+- **做了什麼**:各輪改成「起點」,`poll_until` 輪詢到來源公布(每次嘗試之間放 DB 鎖);`import-daily --require`(沒到 = 75);分點先 `probe-branch-day` 探測(唯讀,24 抽 22)再全量爬;搶不到鎖會等(`acquire_db_lock_wait`);本輪沒寫進任何列 → `publish skipped: no change`;非交易日分點/資券/夜間輪收工;22:30 第二輪看到第一輪覆蓋率 100% 即收工;00:05 有算出帳本/分位才上線(且當晚就上線);週一題材/地緣/產業別搬到 11:00 `weekly-refdata.sh`。開關 `RADAR_POLL=0`、`BRANCH_PROBE=0` = 舊行為。
+- **待人類**:正式 crontab 7 行(6 改 1 增)見 `vps/scripts/crontab.proposed.diff`;腳本在舊時刻下也正確。首頁時間表文字已改成新時刻。
+- 驗證:pytest 全綠(新增 `test_poll_until_published`(含 WSL bash 實跑:睡的當下鎖確實放開)、`test_import_daily_require`、`test_probe_branch_day`);`node --test web/lib/freshness.test.ts` 11 pass。
+
 ## 2026-10-04 表格右滑提示＋搜尋換頁不等寫入
 
 - **表格右滑提示**:`ScrollHint` 新增 `variant="table"`(漸層鋪滿表高、箭頭起點在表頭列,長表 sticky 停在視窗中線,保留原生捲軸)。套用三大法人日表、個股資券表、融資使用率排行、權證成交表、分點下鑽日表、分點追蹤聚合表、「最近動向」卡內表、分點日別小柱條;沒溢出時不畫(字級「較大/最大」時三大法人等表才會溢出)。規則 `docs/19` 第 15 條。

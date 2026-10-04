@@ -1,26 +1,59 @@
 #!/usr/bin/env bash
-# 21:20 台北(週一–五)— 融資融券主輪。
-# TWSE 官方約 21:00 產製 MI_MARGN;留約 20 分緩衝。勿塞 17:40(必空)。
-# 分點第二輪在 22:00,避免與本輪搶 db lock。
+# 20:45 台北(週一–五)— 融資融券主輪。
+# TWSE 官方約 21:00 產製 MI_MARGN。docs/47:20:45 起每 5 分鐘輪詢(上市＋上櫃資券都要到)
+# 直到 22:15,到了就立刻上線(舊排程固定 21:20 才抓,實測落後 ≥35 分);
+# 舊 crontab 的 21:20 一樣適用(截止仍是 22:15)。
+# 分點輪若跑到 21:00 以後,收尾時會順手匯入資券——那天本輪看到資券已是今天就直接收工。
 # 若價格日 > 資券日 → 再對齊價格日補抓一次 + 繁中 warn。
 source "$(dirname "$0")/lib.sh"
 
 # 本輪失敗的後果(接在 run_step_or_fail 的「本輪中止、未上線」之後)。
 # 依據:**沒有任何後續排程會再匯入資券**。grep `--datasets` 全 vps/scripts:
-# 只有本檔、backfill-margin.sh(週日一次性,有 DONE flag)與 manual-catchup.sh
-# (手動)碰得到 margin;22:00 的 daily-branches.sh 匯的是 quotes,insti,00:05 的
-# safe-branch-stats.sh 只重算分點統計(它的 deploy 送的是磁碟上既有的 JSON)。
+# 只有本檔、daily-branches.sh(收尾已過 21:00 才順手匯入;第一輪通常早於本輪收工,
+# 22:30 第二輪只在第一輪覆蓋率不到 100% 而要重爬時才走到那一步)、backfill-margin.sh
+# (週日一次性,有 DONE flag)與 manual-catchup.sh / repair-window.sh(手動)碰得到 margin;
+# 00:05 的 safe-branch-stats.sh 只重算分點統計。
 # 而且本檔的落後補抓分支只會對齊**當下最新的**價格日,不會回頭撿昨天漏掉的那天。
-# 所以這一輪失敗是四輪裡唯一「不會自己好」的:那一天的資券要人工補。
-set_round_consequence "網站仍是 17:40 那輪的內容，融資融券未上線；之後沒有任何排程會再匯入資券（22:00 只匯分點與法人、00:05 夜間作業只重算分點），缺的那一天要人工補抓"
+# 所以這一輪失敗是四輪裡唯一「多半不會自己好」的:那一天的資券要人工補。
+set_round_consequence "網站仍是分點輪的內容，融資融券未上線；只有 22:30 分點第二輪需要重爬時才會順手補資券，其餘情況沒有任何排程會再匯入（00:05 夜間作業只重算分點），缺的那一天要人工補抓"
 
-acquire_db_lock
+# 非交易日:今天沒有日K,就不會有今天的資券(09-25、09-28 實測整輪空跑)。
+if ! price_date_is_today; then
+  echo "非交易日（今天沒有日K）：融資融券輪略過"
+  exit 0
+fi
+
+# 分點全量輪跑過 21:00 時會在收尾順手匯入資券並上線;那天本輪不必再跑一次。
+margin_is_today() {
+  [ "$(radar_ro_sql "SELECT MAX(date) FROM daily_margins" 2>/dev/null || true)" = "$(taipei_date +%F)" ]
+}
+if margin_is_today; then
+  echo "融資融券已由分點輪帶入（daily_margins 已是今天），本輪略過"
+  exit 0
+fi
+
+# 等鎖不略過:分點全量爬可能還握著鎖(最長到約 22:15)。
+acquire_db_lock_wait 5400
+# 等鎖期間分點輪可能已經帶入了。
+if margin_is_today; then
+  echo "融資融券已由分點輪帶入（daily_margins 已是今天），本輪略過"
+  exit 0
+fi
 sync_code
 
-# 順便再補日K(上櫃若稍早仍空)。
-# run_step_or_fail(lib.sh):裸呼叫時失敗發生在 `radar` 這個 shell **函式**內部,
-# ERR trap 不繼承進函式,整輪會靜默帶著離開碼死掉。
-run_step_or_fail "import-daily" radar import-daily --datasets quotes,margin
+# 順便再補日K(上櫃若稍早仍空)。輪詢資券(lib.sh poll_until):沒到(75)就放鎖、
+# 5 分鐘後再試,到 22:15 仍沒有 → warn、不上線。其他錯誤照舊 high + 原碼中止。
+if poll_until "margin" 2215 300 run_step "import-daily" radar import-daily --datasets quotes,margin --require twse:margin,tpex:margin; then
+  :
+else
+  margin_rc=$?
+  if [ "$margin_rc" -eq 75 ]; then
+    notify_warn "融資融券至 22:15 仍未公布齊全，本輪不發布；缺的那一天要人工補抓"
+    exit 0
+  fi
+  notify "import-daily 失敗（碼 ${margin_rc}），本輪中止、未上線；${ROUND_FAIL_CONSEQUENCE}" high "失敗"
+  exit "$margin_rc"
+fi
 
 # 若資券仍落後價格最新日(常見:前一晚腳本 Permission denied / 來源晚公布),對齊價格日再抓。
 MARGIN_META="$(docker run --rm \

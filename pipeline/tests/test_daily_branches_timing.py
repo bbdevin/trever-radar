@@ -190,7 +190,7 @@ class TestDailyBranchesTiming(unittest.TestCase):
         first_step = next(i for i, ln in enumerate(self.lines) if "run_step " in ln)
         self.assertLess(start, first_step, "開始標記要在第一步之前")
         lock = next(i for i, ln in enumerate(self.lines)
-                    if ln.strip() == "acquire_db_lock")
+                    if re.fullmatch(r"acquire_db_lock(_wait \d+)?", ln.strip()))
         self.assertLess(start, lock,
                         "開始標記要在搶鎖之前:搶不到而略過的那一輪也該看得到起點")
 

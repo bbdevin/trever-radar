@@ -18,9 +18,71 @@ def cmd_init_db(_args):
     print(f"db ready: {config.DB_URL}")
 
 
+# `import-daily --require src:ds[:minfrac]` 的離開碼(docs/47 原則 1「輪詢到公布為止」):
+#   0  每一個被要求的資料集都 ok、rows>0,而且(有給 minfrac 時)rows ≥ minfrac × 前一個
+#      有資料日的 ok 列數(import_logs)。
+#   75 至少一個被要求的資料集還沒到(empty、rows=0、比例不足,或 TPEx 520)。**已寫入的
+#      照樣留著**(upsert 冪等,下一次嘗試覆蓋),與 import-futures-day 的 75 同義:
+#      「等一下再來」。輪詢的 shell(lib.sh poll_until)靠它決定放鎖、睡、再試。
+#   1  任何一個 error(TPEx 520 除外——它只在 tpex:quotes 被要求時才算「還沒到」,
+#      沒被要求時這一輪根本不需要它)。
+# 沒給 --require = 舊行為逐字不變(含 tpex_520_only 的 75)。
+IMPORT_DAILY_PENDING_EXIT = 75
+_REQUIRE_SOURCES = ("twse", "tpex")
+_REQUIRE_DATASETS = ("quotes", "insti", "margin")
+
+
+def _parse_requirements(spec: str | None) -> list[tuple[str, str, float | None]]:
+    reqs: list[tuple[str, str, float | None]] = []
+    for part in (spec or "").split(","):
+        part = part.strip()
+        if not part:
+            continue
+        bits = part.split(":")
+        if len(bits) not in (2, 3) or bits[0] not in _REQUIRE_SOURCES \
+                or bits[1] not in _REQUIRE_DATASETS:
+            raise SystemExit(f"bad --require {part!r}: expected src:dataset[:minfrac], "
+                             f"src in {_REQUIRE_SOURCES}, dataset in {_REQUIRE_DATASETS}")
+        frac = None
+        if len(bits) == 3:
+            try:
+                frac = float(bits[2])
+            except ValueError:
+                raise SystemExit(f"bad --require {part!r}: minfrac must be a number") from None
+            if not 0 < frac <= 1:
+                raise SystemExit(f"bad --require {part!r}: minfrac must be in (0, 1]")
+        reqs.append((bits[0], bits[1], frac))
+    return reqs
+
+
+def _is_tpex_520(r: dict) -> bool:
+    return (r["source"] == "tpex" and r["dataset"] == "quotes" and r["status"] == "error"
+            and r.get("error_kind") == "http" and r.get("status_code") == 520)
+
+
+def _unmet_requirements(results: list[dict], reqs, date: str, baseline) -> list[str]:
+    """回傳還沒到的被要求資料集(人看的理由字串);空 = 全部到齊。"""
+    unmet = []
+    for src, ds, frac in reqs:
+        r = next((x for x in results if x["source"] == src and x["dataset"] == ds), None)
+        if r is None:
+            unmet.append(f"{src}:{ds} not imported")
+        elif r["status"] != "ok" or not r["rows"]:
+            unmet.append(f"{src}:{ds} {r['status']} rows={r['rows']}")
+        elif frac is not None:
+            base = baseline(src, ds, date)
+            if base and r["rows"] < frac * base:
+                unmet.append(f"{src}:{ds} rows={r['rows']} < {frac:g} x previous {base}")
+    return unmet
+
+
 def cmd_import_daily(args):
-    from .importer import import_daily
+    from .importer import import_daily, previous_ok_rows
     datasets = args.datasets.split(",") if args.datasets else None
+    reqs = _parse_requirements(getattr(args, "require", None))
+    for src, ds, _frac in reqs:
+        if datasets is not None and ds not in datasets:
+            raise SystemExit(f"--require {src}:{ds} but --datasets does not include {ds}")
     results = import_daily(args.date, datasets)
     bad = False
     for r in results:
@@ -29,6 +91,13 @@ def cmd_import_daily(args):
             bad = True
             line += f"  {r.get('error', '')[:120]}"
         print(line)
+    if reqs:
+        if any(r["status"] == "error" and not _is_tpex_520(r) for r in results):
+            sys.exit(1)
+        unmet = _unmet_requirements(results, reqs, args.date, previous_ok_rows)
+        for reason in unmet:
+            print(f"import-daily: pending — {reason}", file=sys.stderr)
+        sys.exit(IMPORT_DAILY_PENDING_EXIT if unmet else 0)
     errors = [r for r in results if r["status"] == "error"]
     tpex_520_only = (
         datasets == ["quotes"]
@@ -341,6 +410,23 @@ def cmd_probe_futures_day(args):
         f"regular_rows={info['regular_rows']} afterhours_rows={info['after_hours_rows']} "
         f"stock_codes={info['stock_codes']} sha={info['sha']}"
     )
+
+
+# `probe-branch-day`:0 = 抽樣達門檻,可以開始全量爬;75 = 還沒公布夠多,等一下再問。
+BRANCH_PROBE_PENDING_EXIT = 75
+
+
+def cmd_probe_branch_day(args):
+    """唯讀探測分點來源公布進度(不寫 DB、不記 import_logs)。一行輸出給 cron log。"""
+    from .importer import probe_branch_day
+
+    info = probe_branch_day(args.date, args.sample, args.threshold, args.sleep)
+    print(
+        f"branch-probe at={info['at']} date={info['date']} "
+        f"ok={info['ok']}/{info['sample']} threshold={info['threshold']} pool={info['pool']}"
+    )
+    if not info["ready"]:
+        raise SystemExit(BRANCH_PROBE_PENDING_EXIT)
 
 
 def cmd_backfill_futures(args):
@@ -828,6 +914,10 @@ def main(argv=None):
     imp = sub.add_parser("import-daily", help="import one trading day (quotes/insti/margin)")
     imp.add_argument("--date", default=_today(), help="YYYYMMDD, default today (Asia/Taipei)")
     imp.add_argument("--datasets", default=None, help="comma list: quotes,insti,margin")
+    imp.add_argument("--require", default=None,
+                     help="comma list src:dataset[:minfrac], e.g. twse:quotes,tpex:quotes:0.8; "
+                          "exit 75 (rows kept) while a required dataset is empty or below "
+                          "minfrac x the previous day's ok rows (docs/47)")
     imp.set_defaults(fn=cmd_import_daily)
 
     sub.add_parser("status", help="recent import logs + table counts").set_defaults(fn=cmd_status)
@@ -993,6 +1083,17 @@ def main(argv=None):
     )
     pfd.add_argument("--date", default=None, help="YYYY-MM-DD; default today (Asia/Taipei)")
     pfd.set_defaults(fn=cmd_probe_futures_day)
+
+    pbd = sub.add_parser(
+        "probe-branch-day",
+        help="read-only: fetch an evenly spaced sample of the --top 0 branch pool and "
+             "exit 0 when >= threshold have rows (75 = not published yet); no DB writes",
+    )
+    pbd.add_argument("--date", default=None, help="YYYYMMDD; default latest daily_prices date")
+    pbd.add_argument("--sample", type=int, default=24)
+    pbd.add_argument("--threshold", type=int, default=22)
+    pbd.add_argument("--sleep", type=float, default=1.0, help="request interval")
+    pbd.set_defaults(fn=cmd_probe_branch_day)
 
     bff = sub.add_parser(
         "backfill-futures",

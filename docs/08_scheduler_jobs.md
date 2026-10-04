@@ -12,17 +12,21 @@
 >
 > **2026-08-31 22:00 日常權證過渡池成功**：現行上市 active 普通股標的、認購／認售且成交額 `>=100萬` 的輪次完成 2,619 targets／61,687 rows／0 failed，`23:53:26 CMDEND`，data Worker=`5548186b-8d40-4fae-a00b-a596dee59564`。這不代表今日 TPEx endpoint 穩定；其狀態仍 unknown。2026-09-01 13:13 已在無鎖／無日更程序下 ff-only 同步 520 重試／安全降級程式至 VPS `e9ce054`；未手動跑正式 DB／import／export／deploy，未改 cron。
 
+> **2026-10-04 排程優化(`docs/47`)**:程式與 `crontab.example` 已改為「各輪是起點、腳本輪詢到來源公布為止、搶不到鎖會等、沒變動不上線、非交易日分點/資券/夜間輪收工」。**正式 crontab 尚未套用**(`vps/scripts/crontab.proposed.diff`,待人類核准);下表為**新時刻(舊時刻)**,腳本在舊時刻下也正確。
+>
+> 新增:週一 11:00 `weekly-refdata.sh`(題材/地緣/產業別,只寫 DB;crontab 套用前由 `daily-market.sh` 在 deploy 後補跑)。
+
 | 台北時間 | 執行者(VPS cron script / GitHub Actions) | 內容 |
 |---|---|---|
-| 平日 14:10 | VPS `vps/scripts/daily-market.sh` | 日K+權證成交(14:00 公布)→ 當日權證彙總 → 指標增量(--days 5)→ 綜合分 →(週一)概念股更新 + **import-geo**(公司/分點地址,docs/27 G1) → export-json(**含 Fugle 當日 1 分 K spark_day**,約 +3–4 分鐘;同日後續輪走 `data/spark_day.json` 快取)→ `wrangler deploy`。**上櫃 dailyQuotes 14:10 常尚未出表**(empty,上市通常已好) |
-| 平日 15:00 | VPS `vps/scripts/daily-tpex-quotes.sh` | **上櫃日K 主補抓**(約 14:57 起才有完整表)+ 權證彙總 + 指標增量 + 分數 → export-json → deploy |
-| 平日 16:10 | VPS `vps/scripts/daily-insti.sh` | **上櫃日K 保底再抓** → 法人買賣超(16:00 公布) → 權證主檔(失敗不擋後續) → **當日權證重新彙總**（成功用新主檔；失敗沿用既有主檔）→ 指標增量 → 重算分數 → export-json → deploy。唯一例外：quotes 僅 TPEx HTTP 520（TWSE 已成功）時 CLI exit 75；腳本仍跑法人／主檔，但 warn 後跳過彙總／計算／發布並把 75 留給 17:40，不能報成功。非 75 仍 High fail。時間仍為 16:10，不新增 cron。 |
-| 平日 17:40 | VPS `vps/scripts/daily-branches.sh` | **再補日K** + 法人補抓 + 指標增量 + **分點全股票 `--top 0`（不含 ETF）＋標的是 active 普通股的上市認購／認售、當日成交金額 `>=1,000,000` 元權證過渡池** + 分點統計 + 分數 + 績效回填 → export-json → prune → deploy。閾值模式明確取代 legacy `--warrants` Top-N，不疊加重複目標；權證 market 以 TWSE 定義，標的可為 TWSE／TPEx 普通股；全市場獨立輪仍未啟用，未改 cron。(**不含融資**:MI_MARGN 約 21:00 才產製,17:40 必空) |
-| 平日 21:20 | VPS `vps/scripts/daily-margin.sh` | **融資券主輪**(TWSE ~21:00 產製,約 20 分緩衝):再補日K + margin → 分數 → 績效 → export → deploy;若仍落後價格日則對齊再抓 + ntfy warn |
-| 平日 22:00 | VPS `vps/scripts/daily-branches.sh`(第二輪,`BRANCH_ROUND_MODE=import`) | 同上分點補抓(冪等);刻意排在資券之後,避免搶 lock。17:40 已上線 → 跳過 `compute-branch-stats`,但以補齊的分點**重算當日評分**並重新匯出上線、不重寫完成標記(2026-09-24 起,修當日評分凍結在缺分點版本的迴歸);17:40 未上線 → 接手完整鏈 |
+| 平日 14:05(舊 14:10) | VPS `vps/scripts/daily-market.sh` | 每 3 分輪詢上市日K(`--require twse:quotes`)至 14:40 → 當日權證彙總 → 指標增量(--days 5)→ 綜合分 → export-json(**含 Fugle 當日 1 分 K spark_day**)→ `wrangler deploy`。截止仍沒到 → warn、不上線。週一題材/地緣已搬到 11:00 |
+| 平日 14:45(舊 15:00) | VPS `vps/scripts/daily-tpex-quotes.sh` | 等鎖(≤45 分)→ 每 3 分輪詢**上櫃日K**(`--require tpex:quotes:0.8`,≥前一交易日 80% 列數)至 15:30 → 權證彙總 + 指標增量 + 分數 → export-json → deploy |
+| 平日 16:00(舊 16:10) | VPS `vps/scripts/daily-insti.sh` | **上櫃日K 保底再抓** → 每 5 分輪詢法人(上市＋上櫃都要到)至 17:10,每次順手試個股期貨當日 → 權證主檔(失敗不擋)/庫藏股 → **當日權證重新彙總** → 指標 → 分數 → export → deploy。截止仍缺 → 有其他變動先上線已到部分、否則略過。TPEx HTTP 520(TWSE 已成功)仍 exit 75 不發布,留給分點輪;非 75 仍 High fail |
+| 平日 17:30(舊 17:40) | VPS `vps/scripts/daily-branches.sh` | 非交易日收工 → **再補日K** + 法人補抓 + 期貨當日(已有則略過)+ 指標增量 → **探測分點來源**(`probe-branch-day`,每 15 分抽 24 檔、≥22 檔有資料或到 20:30 才爬;等待期間不握 DB 鎖)→ **分點全股票 `--top 0`（不含 ETF）＋標的是 active 普通股的上市認購／認售、當日成交金額 `>=1,000,000` 元權證過渡池** + 分點統計 →(已過 21:00 順手匯入資券)→ 分數 + 績效回填 → export-json → prune → deploy → 完成標記(第二行 `coverage_ratio=`) |
+| 平日 20:45(舊 21:20) | VPS `vps/scripts/daily-margin.sh` | **融資券主輪**:非交易日/資券已是今天(分點輪帶入)→ 收工;否則等鎖(≤90 分)→ 每 5 分輪詢資券(上市＋上櫃)至 22:15 → 期貨官方覆核 → 分數 → 績效 → export → deploy;若仍落後價格日則對齊再抓 + ntfy warn |
+| 平日 22:30(舊 22:00) | VPS `vps/scripts/daily-branches.sh`(第二輪,`BRANCH_ROUND_MODE=import`) | 第一輪覆蓋率 100%(標記 `coverage_ratio=1.0000`)→ `publish skipped: first round complete`;<100% → 重爬並跳過 `compute-branch-stats`、**重算當日評分**並重新上線、不重寫完成標記;無標記 → 接手完整鏈 |
 | 每天 01:10 | VPS `vps/scripts/data-backfill.sh` | 深歷史增量(已拉深自動跳過 → 日常近零請求,只補新上市/缺漏) |
 | 每天 03/09/12/20:00 | VPS `mid-backfill-publish.sh` | 回補中途上線:pause bf → 預設只 export → deploy(docs/33) |
-| 每天 23:30 | VPS `safe-branch-stats.sh` | pause bf → compute-branch-stats → **compute-scores** → export |
+| 週二–六 00:05 | VPS `safe-branch-stats.sh` | 前一日非交易日 → 收工;pause bf → compute-branch-stats → 帳本/分位 → **compute-scores** → export → deploy(evening ok 時只在帳本或分位有算出才 export+deploy,docs/47) |
 | 週六 05:00 | VPS `vps/scripts/weekly-backup.sh` | 備份:`wal_checkpoint(TRUNCATE)` → `integrity_check`(必須 `ok`)→ gzip → `rclone` 上傳 Google Drive(唯一雲端備份;retention 近 4 份+每月 1 份) |
 | 週六 06:30 | VPS `weekly-tdcc.sh` | TDCC 大戶全市場週更 → export → deploy（docs/34 B1；正式 cron 已掛） |
 | 週日 02:30 | VPS `backfill-margin.sh` | 資券約 240 日回補(done flag 則跳過;docs/34 A4) |
@@ -32,7 +36,7 @@
 | 平日 08:50–13:35 | 盤中訊號雷達 worker(docker+cron,同一台 VPS,docs/24 Part A) | 讀 `https://radar.techtrever.com/data/radar.json` 判定 I-1~I-4 訊號,寫 Supabase,首頁盤中面板即時顯示;13:35 自動收工 |
 | push `main` | GitHub Actions `deploy.yml` | checkout → npm build → wrangler pages deploy(**只管程式碼/前端,不碰資料**) |
 
-- **共用機制**(`vps/scripts/lib.sh`):`flock -n /tmp/radar-db.lock` 互斥(搶不到=跳過本輪+ntfy 通知)；開輪的 `git pull --ff-only`+docker build(layer cache)只適用於已獲授權且 working tree clean 的正常狀態。2026-08-31 快照因 VPS 有未追蹤檔，現階段**不得自行 pull**。另有**失敗 ntfy High／日更成功繁中摘要**，非交易日靠 `NoDataError` 安全空跑。
+- **共用機制**(`vps/scripts/lib.sh`):`/tmp/radar-db.lock` 互斥。2026-10-04 起五支日更輪與 `weekly-refdata.sh` 用 `acquire_db_lock_wait`(`flock -w`,等不到才 high 通知),輪詢期間每次嘗試之間放鎖(`poll_until`,docs/47);`data-backfill.sh` 等仍是 `flock -n`(搶不到=跳過本輪+ntfy 通知)；開輪的 `git pull --ff-only`+docker build(layer cache)只適用於已獲授權且 working tree clean 的正常狀態。2026-08-31 快照因 VPS 有未追蹤檔，現階段**不得自行 pull**。另有**失敗 ntfy High／日更成功繁中摘要**，非交易日靠 `NoDataError` 安全空跑。
 - **DB 續存**:VPS `data/radar.db` 為唯一常駐主本,無 Actions cache/release 續存鏈(已隨 WP-B3 退役)。
 - **權證全市場輪（2026-08-28 code-ready、未啟用）**:`daily-warrant-branches-poc.sh` 與 `import-warrant-branch-trades --market all` 將上市＋上櫃、當日有量有額、普通股標的的認購／認售合併成單一池；`--top` 是 fail-closed 安全上限而非截斷。VPS 2026-08-31 最新實測可用空間為 7.0GB，低於 20GB 閘門，且 sleep=1.0 約需 6–8 小時；正式 crontab 保持未加，未寫正式 DB、未 deploy。見 `docs/30`。
 - **舊 GitHub Actions 資料 workflow 已無觸發**:`daily-market/daily-insti/daily-branches/daily-margin/data-backfill.yml` 檔案仍在 repo，Cloudflare Worker trigger 的 cron 已清空。原訂 2026-08-01 後刪除但尚未執行；改 workflow 仍須人工確認，另案處理，勿由本文件更新順手刪除。

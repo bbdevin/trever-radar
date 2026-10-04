@@ -25,8 +25,9 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS_DIR = REPO_ROOT / "vps" / "scripts"
 
-# `acquire_db_lock`(呼叫,不是 lib.sh 裡的定義)或腳本自己開的 fd 9。
-CALLS_ACQUIRE = re.compile(r"^\s*acquire_db_lock\s*$")
+# `acquire_db_lock` / `acquire_db_lock_wait N`(呼叫,不是 lib.sh 裡的定義)或腳本自己開的 fd 9。
+# docs/47 起五支日更輪與 weekly-refdata.sh 改用會等的 `acquire_db_lock_wait N`,同一個 fd 9。
+CALLS_ACQUIRE = re.compile(r"^\s*acquire_db_lock(_wait\s+\d+)?\s*$")
 OPENS_FD9 = re.compile(r"^\s*exec\s+9>\s*/tmp/radar-db\.lock\s*$")
 # 關掉 fd 9 → 釋放鎖。
 CLOSES_FD9 = re.compile(r"^\s*exec\s+9>&-\s*$")
@@ -100,6 +101,14 @@ class TestVpsLockDiscipline(unittest.TestCase):
                     f"之後每一輪 acquire_db_lock 都會失敗"
                 )
         self.assertEqual([], violations, "\n" + "\n".join(violations))
+
+    def test_waiting_acquire_is_detected_as_a_holder(self):
+        """`acquire_db_lock_wait N` 也是持鎖;解析器若認不得,上面那條規則對新形狀就空轉。"""
+        for name in ("daily-market.sh", "daily-tpex-quotes.sh", "daily-insti.sh",
+                     "daily-branches.sh", "daily-margin.sh", "weekly-refdata.sh"):
+            with self.subTest(script=name):
+                self.assertIsNotNone(_classify(SCRIPTS_DIR / name)[0],
+                                     f"{name} 應被偵測為 DB 鎖持有者")
 
     def test_the_known_offenders_carry_the_release(self):
         """兩支已知會補起 daemon 的腳本必須明確帶著 `exec 9>&-`。

@@ -58,16 +58,19 @@ flowchart TB
 
 ### Layer 1 — 日更真相（已上線）
 
+> **2026-10-04 `docs/47` 排程優化**:下表為新時刻(括號為舊時刻;正式 crontab 待核准套用,見 `vps/scripts/crontab.proposed.diff`)。各輪是**起點**,腳本輪詢到來源公布(`poll_until`;每次嘗試之間放鎖),搶不到鎖會等(`acquire_db_lock_wait`),本輪沒寫進任何列就不上線,非交易日分點/資券/夜間輪收工。
+
 | 時間 | 腳本 | 含算分／統計 |
 |---|---|---|
-| 14:10 | `daily-market.sh` | indicators → **scores**；（週一）themes／geo。上櫃 quotes 此時常 empty |
-| 15:00 | `daily-tpex-quotes.sh` | **上櫃日K 主補抓** → indicators → **scores** → export |
-| 16:10 | `daily-insti.sh` | quotes 保底 → insti → 權證主檔（失敗不擋）→ **權證當日彙總** → indicators → **scores**；主檔成功即採新 mapping，失敗則沿用舊 mapping 完成彙總。唯一的 TPEx HTTP 520 partial（TWSE quotes ok）回 75：仍跑 insti／主檔，warn 後不做彙總、計算、export/deploy，等 17:40；其他錯誤照 High fail |
-| 17:40 | `daily-branches.sh` | 再補 quotes＋insti → indicators → 全股票分點 `--top 0`（不含 ETF）＋標的是 active 普通股的上市認購／認售、當日成交金額 `>=1,000,000` 元過渡池 → **branch-stats** → **scores** → **performance**（**不含 margin**）。權證 market 以 TWSE 定義，標的可為 TWSE／TPEx 普通股；此閾值取代、不疊加 legacy `--warrants` Top-N，非全市場獨立輪，未改 cron |
-| 21:20 | `daily-margin.sh` | 再補 quotes + **margin 主輪** → **scores** → **performance**（TWSE ~21:00 產製＋約 20 分緩衝） |
-| 22:00 | `daily-branches.sh` | 分點第二輪（排在資券後,避 lock）;17:40 已上線時不重算分點統計、只重算當日評分並重新上線(2026-09-24 起) |
+| 週一 11:00(新) | `weekly-refdata.sh` | themes／geo／stock-info,只寫 DB(14:05 一起上線) |
+| 14:05(14:10) | `daily-market.sh` | 輪詢上市 quotes 至 14:40 → indicators → **scores** → export |
+| 14:45(15:00) | `daily-tpex-quotes.sh` | 輪詢**上櫃日K**(≥前日 80%)至 15:30 → indicators → **scores** → export |
+| 16:00(16:10) | `daily-insti.sh` | quotes 保底 → 輪詢 insti(上市＋上櫃)至 17:10,順手試期貨當日 → 權證主檔（失敗不擋）→ **權證當日彙總** → indicators → **scores**。TPEx HTTP 520 partial 回 75 不發布(不變);其他錯誤照 High fail |
+| 17:30(17:40) | `daily-branches.sh` | 再補 quotes＋insti → indicators → **探測**(每 15 分抽 24 檔,≥22 或 20:30)→ 全股票分點 `--top 0`（不含 ETF）＋上市認購／認售 `>=1,000,000` 元過渡池 → **branch-stats** →(≥21:00 順手 margin)→ **scores** → **performance** |
+| 20:45(21:20) | `daily-margin.sh` | 資券已是今天 → 收工;否則輪詢 **margin 主輪**至 22:15 → **scores** → **performance** |
+| 22:30(22:00) | `daily-branches.sh` | 分點第二輪:第一輪覆蓋率 100% → 收工;否則重爬、只重算當日評分並重新上線(第一輪未上線則接手完整鏈) |
 
-皆握 `/tmp/radar-db.lock`，結束 export＋deploy。
+皆握 `/tmp/radar-db.lock`(輪詢等待期間除外)，有變動才 export＋deploy。
 
 ### Layer 2 — 加深／週更
 
@@ -83,7 +86,7 @@ flowchart TB
 | Job | 排程 | 行為 |
 |---|---|---|
 | mid-publish | 03／09／12／20 | pause bf → 預設只 export → deploy（省 RAM，略過 stats） |
-| safe-branch-stats | 23:30 | pause → stats → **目標加 scores** → export |
+| safe-branch-stats | 00:05(週二–六) | pause → stats → 帳本/分位 → scores → export＋deploy(evening ok 時只在帳本或分位有算出才上線;前一日非交易日收工,docs/47) |
 | 日更內 export | 隨 Layer 1 | 不變 |
 
 ### Layer 4 — 維運
@@ -106,16 +109,17 @@ flowchart LR
     w0850[08:50_intraday]
     m09[09:00_mid]
     m12[12:00_mid]
-    d1410[14:10_market]
-    d1500[15:00_tpex]
-    d1610[16:10_insti]
-    d1740[17:40_branches]
+    r1100[Mon_11:00_refdata]
+    d1410[14:05_market]
+    d1500[14:45_tpex]
+    d1610[16:00_insti]
+    d1740[17:30_branches_probe]
   end
   subgraph eve [晚間]
     m20[20:00_mid]
-    d2120[21:20_margin]
-    d2200[22:00_branches]
-    s2330[23:30_stats_scores]
+    d2120[20:45_margin]
+    d2200[22:30_branches]
+    s2330[00:05_stats_scores]
   end
   bf[bf_supervisor_jobs]
   bf -.->|pause_in_quiet_windows| d1410

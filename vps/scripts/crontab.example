@@ -5,15 +5,20 @@
 
 CRON_TZ=Asia/Taipei
 
-# 每日輪(週一–五)
+# 每日輪(週一–五)——docs/47 排程優化:各輪是「起點」,腳本內輪詢到來源公布為止
+# (上市日K ≤14:40、上櫃 ≤15:30、法人 ≤17:10、分點探測 ≤20:30、資券 ≤22:15),
+# 搶不到 DB 鎖會等、不再略過;非交易日分點/資券/夜間輪直接收工。
 # 一律 bash 呼叫:避免 git pull 後腳本失去 +x → cron Permission denied(2026-08-26 事故)。
-10 14 * * 1-5  bash /home/huang/trever-radar/vps/scripts/daily-market.sh      >> /home/huang/radar-cron.log 2>&1
-0  15 * * 1-5  bash /home/huang/trever-radar/vps/scripts/daily-tpex-quotes.sh >> /home/huang/radar-cron.log 2>&1
-10 16 * * 1-5  bash /home/huang/trever-radar/vps/scripts/daily-insti.sh       >> /home/huang/radar-cron.log 2>&1
-40 17 * * 1-5  bash /home/huang/trever-radar/vps/scripts/daily-branches.sh    >> /home/huang/radar-cron.log 2>&1
-# 融資主輪 21:20(TWSE ~21:00 產製;留約 20 分緩衝)。分點第二輪改 22:00,避免搶 lock。
-20 21 * * 1-5  bash /home/huang/trever-radar/vps/scripts/daily-margin.sh      >> /home/huang/radar-cron.log 2>&1
-0  22 * * 1-5  bash /home/huang/trever-radar/vps/scripts/daily-branches.sh    >> /home/huang/radar-cron.log 2>&1
+5  14 * * 1-5  bash /home/huang/trever-radar/vps/scripts/daily-market.sh      >> /home/huang/radar-cron.log 2>&1
+45 14 * * 1-5  bash /home/huang/trever-radar/vps/scripts/daily-tpex-quotes.sh >> /home/huang/radar-cron.log 2>&1
+0  16 * * 1-5  bash /home/huang/trever-radar/vps/scripts/daily-insti.sh       >> /home/huang/radar-cron.log 2>&1
+30 17 * * 1-5  bash /home/huang/trever-radar/vps/scripts/daily-branches.sh    >> /home/huang/radar-cron.log 2>&1
+# 融資主輪 20:45 起輪詢(TWSE ~21:00 產製)。分點第二輪 22:30(import 模式:第一輪覆蓋率 100% 即收工)。
+45 20 * * 1-5  bash /home/huang/trever-radar/vps/scripts/daily-margin.sh      >> /home/huang/radar-cron.log 2>&1
+30 22 * * 1-5  BRANCH_ROUND_MODE=import bash /home/huang/trever-radar/vps/scripts/daily-branches.sh >> /home/huang/radar-cron.log 2>&1
+
+# 每週參考資料(題材/地緣/產業別;docs/47):週一 11:00,只寫 DB,14:05 收盤輪一起上線
+0  11 * * 1    bash /home/huang/trever-radar/vps/scripts/weekly-refdata.sh    >> /home/huang/radar-cron.log 2>&1
 
 # Disabled candidate — all-market TWSE+TPEx warrant branches need 6–8h at
 # sleep=1.0; VPS free space was only 7.6GB on 2026-08-28 (<20GB gate).

@@ -68,6 +68,13 @@ if in_radar_quiet_window; then
   exit 0
 fi
 
+# 非交易日(docs/47):前一個日曆日沒有日K → 帳本 as_of 會解析回更早那天、同 PK 覆蓋,
+# 分點/分數也一列不會變。不通知:這不是故障,只是今晚沒事做。
+if ! price_date_is_today "${BRANCH_IMPORT_DATE:-$(TZ=Asia/Taipei date -d 'yesterday' +%Y-%m-%d)}"; then
+  echo "非交易日（前一日沒有日K）：分點排行略過"
+  exit 0
+fi
+
 # 直接搶鎖(而不是像過去只用 fuser 偷看),搶到就一路持有到本程序結束
 # (fd 9 在 EXIT 時由 kernel 自動關閉即釋放,不需要、也不應該手動 close/reuse fd 9)。
 # 只「看」不「拿」曾是本次事故唯一真正的第二層保護——安靜窗算錯之後,
@@ -170,7 +177,8 @@ BRANCH_ROW="$(branch_import_row 2>/dev/null || true)"
 BRANCH_STATUS="${BRANCH_ROW%%	*}"
 BRANCH_RUN_AT="${BRANCH_ROW#*	}"
 MARKER="$(branch_round_marker "$BRANCH_IMPORT_DATE")"
-MARKER_AT="$(cat "$MARKER" 2>/dev/null || true)"
+# 第一行是完成時刻;第二行起(coverage_ratio=,docs/47)給 22:30 那輪看,這裡不用。
+MARKER_AT="$(head -n 1 "$MARKER" 2>/dev/null || true)"
 echo "22:00 branch import_logs for ${BRANCH_IMPORT_DATE}: status='${BRANCH_STATUS:-<missing>}' run_at='${BRANCH_RUN_AT:-<missing>}'"
 echo "evening round marker: ${MARKER_AT:-<missing>}"
 
@@ -291,11 +299,20 @@ else
   SCORES_NOTE="skipped_env"
 fi
 
-# 匯出(export-json)與上線(deploy_data)分開判斷:前者是「今晚是否需要重算」
-# (rule 2,evening ok 就跳過),後者是「這批資料能不能上線」(rule 3,22:00
-# 那輪 status=error 就不上線)——兩條規則彼此獨立,不能合併成同一個 if。
-if [ "$EVENING_BRANCH_OK" = "1" ]; then
-  echo "skip export-json：${BRANCH_IMPORT_DATE} 那輪已整條跑完並上線（status=${BRANCH_STATUS}，標記 ${MARKER_AT}）"
+# 匯出(export-json)與上線(deploy_data)分開判斷:前者是「今晚有沒有新東西可匯出」,
+# 後者是「這批資料能不能上線」(rule 3,22:00 那輪 status=error 就不上線)——
+# 兩條規則彼此獨立,不能合併成同一個 if。
+#
+# 2026-10(docs/47)起:evening ok 的夜晚以前一律跳過匯出、卻照樣 deploy 磁碟上的舊 JSON,
+# 於是當晚算好的帳本(PIT)與分點×個股分位計數要等到隔天 14:05 才上線。現在改成:
+# 帳本或分位計數這一晚有算出來 → 匯出並上線;兩者都沒有(且 evening ok)→ 沒有變動,
+# 匯出與上線都跳過(`publish skipped: no change`)。evening 不 ok 的夜晚照舊全跑。
+PUBLISH_CHANGED=1
+if [ "$EVENING_BRANCH_OK" = "1" ] && [ "$PIT_NOTE" != "ok" ] && [ "$PAIR_PCTILE_NOTE" != "ok" ]; then
+  PUBLISH_CHANGED=0
+fi
+if [ "$PUBLISH_CHANGED" = "0" ]; then
+  echo "skip export-json：${BRANCH_IMPORT_DATE} 那輪已上線（標記 ${MARKER_AT}），今晚帳本與分位計數都沒有新結果"
 elif [ "${SKIP_EXPORT:-0}" != "1" ]; then
   run_step "export-json" radar export-json
 fi
@@ -303,6 +320,8 @@ fi
 if [ "$BRANCH_STATUS" = "error" ]; then
   echo "publish withheld：22:00 那輪 ${BRANCH_IMPORT_DATE} 的分點匯入 status=error，本輪不上線"
   notify_warn "22:00 分點匯入回報 status=error（${BRANCH_IMPORT_DATE}），本輪重算但不上線，待人工確認後再補發"
+elif [ "$PUBLISH_CHANGED" = "0" ]; then
+  echo "publish skipped: no change"
 elif [ "${SKIP_EXPORT:-0}" != "1" ]; then
   run_step "deploy" deploy_data
 fi
@@ -364,6 +383,7 @@ fi
 
 PUBLISH_NOTE="ok"
 [ "${SKIP_EXPORT:-0}" = "1" ] && PUBLISH_NOTE="skipped_env"
+[ "$PUBLISH_CHANGED" = "0" ] && PUBLISH_NOTE="skipped_no_change"
 [ "$BRANCH_STATUS" = "error" ] && PUBLISH_NOTE="withheld_evening_error"
 notify_ok "分點排行與分數夜間重算完成（統計=${STATS_NOTE}，帳本=${PIT_NOTE}，分位計數=${PAIR_PCTILE_NOTE}，分數=${SCORES_NOTE}，22:00分點=${BRANCH_STATUS:-missing}，上線=${PUBLISH_NOTE}）"
 echo "=== safe-branch-stats done $(taipei_date -Is) ==="

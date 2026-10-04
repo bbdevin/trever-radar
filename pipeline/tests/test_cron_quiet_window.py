@@ -51,8 +51,10 @@ RANGE_RE = re.compile(
 
 # `min hour dom month dow  bash .../scripts/<name>.sh ...`
 # 只吃直接 `bash` 呼叫的那一種——docker run / pgrep 保活行不匹配,天然被排除。
+# 允許 `KEY=value` 前綴(22:30 那行是 `BRANCH_ROUND_MODE=import bash …`)。
 JOB_LINE_RE = re.compile(
     r'^(?P<min>\S+)\s+(?P<hour>\S+)\s+(?P<dom>\S+)\s+(?P<mon>\S+)\s+(?P<dow>\S+)\s+'
+    r'(?:[A-Za-z_][A-Za-z0-9_]*=\S+\s+)*'
     r'bash\s+\S*/scripts/(?P<script>[\w.-]+\.sh)\b'
 )
 
@@ -303,6 +305,24 @@ class CronParsingTest(unittest.TestCase):
         self.assertEqual(_parse_field("2-6", 0, 7), [2, 3, 4, 5, 6])
         self.assertEqual(_cron_dow_to_date_u(_parse_field("0-2", 0, 7)), [1, 2, 7])
 
+    def test_docs47_daily_slots_parse(self):
+        """docs/47 新排程:各輪的起點時刻(輪詢截止寫在腳本裡)。22:30 那行帶
+        `BRANCH_ROUND_MODE=import` 前綴,解析器也要認得,否則它會從所有檢查裡消失。"""
+        got = {(j["script"], h, m)
+               for j in self.jobs for h in j["hours"] for m in j["minutes"]}
+        for slot in (("daily-market.sh", 14, 5), ("daily-tpex-quotes.sh", 14, 45),
+                     ("daily-insti.sh", 16, 0), ("daily-branches.sh", 17, 30),
+                     ("daily-margin.sh", 20, 45), ("daily-branches.sh", 22, 30),
+                     ("weekly-refdata.sh", 11, 0)):
+            with self.subTest(slot=slot):
+                self.assertIn(slot, got)
+        second = [j for j in self.jobs
+                  if j["script"] == "daily-branches.sh" and j["hours"] == [22]]
+        self.assertEqual(len(second), 1)
+        self.assertIn("BRANCH_ROUND_MODE=import", second[0]["raw"])
+        refdata = next(j for j in self.jobs if j["script"] == "weekly-refdata.sh")
+        self.assertEqual(refdata["dows"], [1], "題材/地緣/產業別只在週一")
+
     def test_mid_backfill_publish_multi_hour_slot_expands(self):
         job = next(j for j in self.jobs if j["script"] == "mid-backfill-publish.sh")
         self.assertEqual(sorted(job["hours"]), [3, 9, 12, 20])
@@ -362,6 +382,15 @@ class CronVsQuietWindowTest(unittest.TestCase):
         exempt = self._exempt_dows_for(job["script"])
         failures = evaluate_job(job, self.windows, exempt, SLOT_MARGIN_MINUTES)
         self.assertEqual(failures, [], f"current 00:05 slot unexpectedly flagged: {failures}")
+
+    def test_mid_publish_20_00_slot_stays_outside_the_weekday_window(self):
+        """docs/47 刻意不動安靜窗:資券輪提前到 20:45、分點全量爬可能從 20:30 才開始,
+        但 mid-backfill-publish 的 20:00 那一格仍不得被平日安靜窗(含 5 分緩衝)吞掉。"""
+        job = next(j for j in self.jobs if j["script"] == "mid-backfill-publish.sh")
+        self.assertIn(20, job["hours"])
+        for dow in WEEKDAY_DOWS:
+            with self.subTest(dow=dow):
+                self.assertIsNone(find_violation(2000, dow, self.windows, SLOT_MARGIN_MINUTES))
 
     def test_old_2330_slot_regresses_against_current_lib_sh(self):
         # 事故重現:把 safe-branch-stats.sh 的排程換回舊的 `30 23 * * *`,在目前

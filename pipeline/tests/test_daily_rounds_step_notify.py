@@ -42,9 +42,9 @@ TRAILING_COMMENT = re.compile(r"(?<=\s)#.*$")
 ROUNDS = ("daily-market.sh", "daily-tpex-quotes.sh", "daily-insti.sh", "daily-margin.sh")
 
 # 每一輪必須經過 run_step_or_fail 的步驟:(標籤, 那一行裡一定看得到的指令片段)。
+# 主匯入那一步(docs/47 起)改成輪詢形狀,見下面的 POLLED_STEPS。
 HELPER_STEPS = {
     "daily-market.sh": (
-        ("import-daily", "radar import-daily --datasets quotes"),
         ("aggregate-warrants", "radar aggregate-warrants"),
         ("compute-indicators", "radar compute-indicators"),
         ("compute-scores", "radar compute-scores"),
@@ -52,7 +52,6 @@ HELPER_STEPS = {
         ("deploy", "deploy_data"),
     ),
     "daily-tpex-quotes.sh": (
-        ("import-daily", "radar import-daily --datasets quotes"),
         ("aggregate-warrants", "radar aggregate-warrants"),
         ("compute-indicators", "radar compute-indicators"),
         ("compute-scores", "radar compute-scores"),
@@ -60,7 +59,6 @@ HELPER_STEPS = {
         ("deploy", "deploy_data"),
     ),
     "daily-insti.sh": (
-        ("import-insti", "radar import-daily --datasets insti"),
         ("aggregate-warrants", "radar aggregate-warrants"),
         ("compute-indicators", "radar compute-indicators"),
         ("compute-scores", "radar compute-scores"),
@@ -68,7 +66,6 @@ HELPER_STEPS = {
         ("deploy", "deploy_data"),
     ),
     "daily-margin.sh": (
-        ("import-daily", "radar import-daily --datasets quotes,margin"),
         ("import-margin-retry", "radar import-daily --datasets margin --date"),
         ("compute-scores", "radar compute-scores"),
         ("compute-performance", "radar compute-performance"),
@@ -76,6 +73,20 @@ HELPER_STEPS = {
         ("deploy", "deploy_data"),
     ),
 }
+
+# docs/47 原則 1:主匯入改成「輪詢到公布為止」(lib.sh poll_until),每一輪的形狀是
+#   if poll_until "<label>" <HHMM> <sec> <cmd…> --require …; then : else <rc>=$? …
+# 75(截止仍未公布)= warn、不上線;其他非 0 = 與 run_step_or_fail 同一句 high + 原碼 exit。
+# (腳本, poll 標籤, 截止 HHMM, 那一行一定看得到的指令片段, 接碼變數)
+POLLED_STEPS = (
+    ("daily-market.sh", "twse-quotes", "1440",
+     "radar import-daily --datasets quotes --require twse:quotes", "quotes_rc"),
+    ("daily-tpex-quotes.sh", "tpex-quotes", '"$TPEX_DEADLINE"',
+     "radar import-daily --datasets quotes --require tpex:quotes:0.8", "quotes_rc"),
+    ("daily-insti.sh", "insti", '"$INSTI_DEADLINE"', "insti_attempt", "insti_rc"),
+    ("daily-margin.sh", "margin", "2215",
+     "radar import-daily --datasets quotes,margin --require twse:margin,tpex:margin", "margin_rc"),
+)
 
 # 刻意**不**走 helper 的呼叫:它們已經有自己的分級與通知,套上去會雙重通知,
 # 而且第一則對「刻意續跑」的那些碼是錯的。
@@ -137,6 +148,38 @@ class TestDailyRoundsStepNotify(unittest.TestCase):
                     self.assertIsNotNone(
                         line,
                         f"{name} 的 {cmd} 失敗時沒有任何通知——正是這次要修的靜默失敗")
+
+    def test_main_import_is_poll_shaped_and_grades_its_own_codes(self):
+        """docs/47:主匯入輪詢到公布為止。75 = 截止仍未公布(warn、不上線、exit 0);
+        其他非 0 = 錯誤,一則指名步驟的 high + 原碼 exit——與 run_step_or_fail 同一個契約。"""
+        for name, label, deadline, cmd, rc_var in POLLED_STEPS:
+            with self.subTest(script=name):
+                code = self.code[name]
+                line = next((ln for ln in self.lines[name]
+                             if ln.strip().startswith(f'if poll_until "{label}" ')), None)
+                self.assertIsNotNone(line, f"{name} 的主匯入不是輪詢形狀")
+                self.assertIn(f' {deadline} ', line, "截止時刻要寫在那一行")
+                self.assertIn(cmd, line)
+                start = code.index(line)
+                block = code[start:start + 900]
+                self.assertIn(f"{rc_var}=$?", block, "失敗那支要接住真正的碼")
+                self.assertIn(f'"${rc_var}" -eq 75', block, "75 要另外分級")
+                self.assertIn("notify_warn", block, "截止仍未公布 = warn")
+                self.assertRegex(block, r'notify "[^"]*\$\{ROUND_FAIL_CONSEQUENCE\}" high "失敗"',
+                                 "其他錯誤要帶本輪後果句的 high")
+                self.assertIn(f'exit "${rc_var}"', block, "其他錯誤帶原碼離開")
+
+    def test_rounds_skip_publish_when_nothing_changed(self):
+        """docs/47 原則 2:本輪匯入一列都沒寫 → 不 compute/export/deploy。"""
+        for name in ROUNDS:
+            if name == "daily-margin.sh":
+                continue  # 資券輪的輪詢只有到齊才往下走,到齊必有變動
+            with self.subTest(script=name):
+                code = self.code[name]
+                self.assertIn("round_has_changes", code)
+                self.assertIn("publish skipped: no change", code)
+                self.assertLess(code.index("round_has_changes"),
+                                code.index('run_step_or_fail "compute-scores"'))
 
     def test_no_bare_radar_or_deploy_call_survives(self):
         """裸的 `radar …` / `deploy_data` 開頭那一行就是靜默失敗的形狀本身。
@@ -241,9 +284,10 @@ class TestDailyRoundsStepNotify(unittest.TestCase):
           (週日一次性)與 manual-catchup.sh(手動)碰得到 margin;22:00 匯的是
           quotes,insti,00:05 只重算分點。所以這一句必須明講要人工補。
         """
-        self.assertIn("15:00", self._consequence_line("daily-market.sh"))
-        self.assertIn("16:10", self._consequence_line("daily-tpex-quotes.sh"))
-        self.assertIn("17:40", self._consequence_line("daily-insti.sh"))
+        # docs/47 新排程(14:45 / 16:00 / 17:30);舊時刻仍寫在括號裡,crontab 套用前也準。
+        self.assertIn("14:45", self._consequence_line("daily-market.sh"))
+        self.assertIn("16:00", self._consequence_line("daily-tpex-quotes.sh"))
+        self.assertIn("17:30", self._consequence_line("daily-insti.sh"))
         margin = self._consequence_line("daily-margin.sh")
         self.assertRegex(margin, r"沒有任何排程|沒有人",
                          "21:20 是四輪裡唯一沒有後續補救者的")
@@ -261,11 +305,13 @@ class TestDailyRoundsStepNotify(unittest.TestCase):
                     break
         self.assertEqual(
             sorted(set(importers)),
-            # 其中只有 daily-margin.sh 在 crontab 裡每天跑;backfill-margin.sh 是
-            # 週日一次性(有 DONE flag,補的是 240 日歷史),manual-catchup.sh 與
+            # 其中 daily-margin.sh 是每天的主輪;daily-branches.sh 只在收尾已過 21:00
+            # 時順手匯入(docs/47:第一輪多半早於資券輪收工,22:30 第二輪只在要重爬時
+            # 才走到),後果句據此寫「只有 22:30 需要重爬時才會補」;backfill-margin.sh
+            # 是週日一次性(有 DONE flag,補的是 240 日歷史),manual-catchup.sh 與
             # repair-window.sh 都是人工工具——正是後果句說的「要人工補抓」。
-            ["backfill-margin.sh", "daily-margin.sh", "manual-catchup.sh",
-             "repair-window.sh"],
+            ["backfill-margin.sh", "daily-branches.sh", "daily-margin.sh",
+             "manual-catchup.sh", "repair-window.sh"],
             f"會匯入資券的腳本變了,daily-margin 的後果句要重寫:{importers}")
         cron = (SCRIPTS_DIR / "crontab.example").read_text(encoding="utf-8")
         for manual in ("manual-catchup.sh", "repair-window.sh"):

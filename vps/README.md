@@ -199,19 +199,22 @@ sqlite3 radar.db "PRAGMA integrity_check;"        # ok 才能用
 
 腳本在 `vps/scripts/`,一支 cron 項對應一支 script。多數鏡像舊 5 支 workflow 指令序;15:00 `daily-tpex-quotes.sh` 為 VPS 新增(上櫃晚公布):
 
+> **2026-10-04 排程優化(`docs/47`)**:時刻欄為新時刻(括號舊時刻);正式 crontab 待人類核准後依 `vps/scripts/crontab.proposed.diff` 套用,腳本在舊時刻下也正確。各輪腳本輪詢到來源公布(`poll_until`,每次嘗試之間放鎖)、搶不到鎖會等、沒變動不上線、非交易日分點/資券/夜間輪收工。開關:`RADAR_POLL=0`(只試一次,舊行為)、`BRANCH_PROBE=0`(不探測直接爬)。
+
 | Script | 時刻(台北) | 對應 workflow |
 |---|---|---|
-| `daily-market.sh` | 14:10 一–五 | daily-market(quotes→權證彙總→指標→分數→週一題材→export→deploy;上櫃常 empty) |
-| `daily-tpex-quotes.sh` | 15:00 一–五 | 上櫃日K 主補抓→權證彙總→指標→分數→export→deploy |
-| `daily-insti.sh` | 16:10 一–五 | daily-insti(quotes 保底→法人→權證主檔(失敗不擋)→**當日權證彙總**→指標→分數→export→deploy；2026-08-28 起確保新主檔先於彙總)。唯一例外是 TWSE quotes 成功、TPEx HTTP 520 的 exit 75：仍跑法人／主檔，warn 後跳過彙總、計算、export/deploy，等 17:40；非 75 仍 High fail。 |
-| `daily-branches.sh` | 17:40 + 22:00 一–五 | daily-branches(quotes/insti 補抓→指標→普通股全市場 `--top 0`＋**過渡期標的是 active 普通股的上市認購／認售、當日成交金額 `>=1,000,000` 元權證**→分點統計→分數→績效→export→prune→deploy;**不含融資**;第二輪在資券後)。權證 market 以 TWSE 定義，標的可為 TWSE／TPEx 普通股；閾值模式取代、不可與 legacy `--warrants` Top-N 疊加，非全市場獨立輪。 |
+| `weekly-refdata.sh` | 週一 11:00(新) | 題材/地緣/產業別,只寫 DB;crontab 未套用前由 `daily-market.sh` 在 deploy 後補跑 |
+| `daily-market.sh` | 14:05(14:10)一–五 | daily-market(輪詢上市 quotes 至 14:40→權證彙總→指標→分數→export→deploy) |
+| `daily-tpex-quotes.sh` | 14:45(15:00)一–五 | 輪詢上櫃日K(≥前日 80%)至 15:30→權證彙總→指標→分數→export→deploy |
+| `daily-insti.sh` | 16:00(16:10)一–五 | daily-insti(quotes 保底→輪詢法人(上市＋上櫃)至 17:10、順手試期貨當日→權證主檔(失敗不擋)→**當日權證彙總**→指標→分數→export→deploy)。TWSE quotes 成功、TPEx HTTP 520 的 exit 75 不變：仍跑法人／主檔，warn 後跳過發布，等分點輪；非 75 仍 High fail。 |
+| `daily-branches.sh` | 17:30 + 22:30(17:40 + 22:00)一–五 | daily-branches(quotes/insti 補抓→指標→**探測分點來源**(`probe-branch-day`,每 15 分抽 24 檔,≥22 或 20:30 才爬)→普通股全市場 `--top 0`＋**過渡期標的是 active 普通股的上市認購／認售、當日成交金額 `>=1,000,000` 元權證**→分點統計→(已過 21:00 順手匯入資券)→分數→績效→export→prune→deploy;第二輪:第一輪覆蓋率 100% 即收工)。權證 market 以 TWSE 定義，標的可為 TWSE／TPEx 普通股；閾值模式取代、不可與 legacy `--warrants` Top-N 疊加，非全市場獨立輪。 |
 | `daily-warrant-branches-poc.sh` | **未排程** | 上市＋上櫃權證單一全市場 PoC／未來日輪；20GB free-space、DB/source lock、BF pause/resume、hard timeout、atomic state resume。2026-08-28 的 7.6GB 是歷史快照；2026-08-31 最新為 7.0GB，故仍**不得啟用／不得寫正式 DB／不得 deploy**。 |
-| `daily-margin.sh` | 21:20 一–五 | daily-margin(日K+融資券主輪→分數→績效→export→deploy;TWSE ~21:00＋約 20 分緩衝) |
+| `daily-margin.sh` | 20:45(21:20)一–五 | daily-margin(資券已是今天則收工;否則等鎖→輪詢日K+融資券至 22:15→分數→績效→export→deploy) |
 | `data-backfill.sh` | 01:10 每日 | data-backfill task=deep(深歷史增量) |
 | `weekly-backup.sh` | 週六 05:00 | (新)checkpoint→integrity_check→gzip→Drive+retention |
 
 共用機制(`lib.sh`):
-- **flock 互斥**:`/tmp/radar-db.lock`,搶不到=跳過本輪+ntfy 通知(防上一輪超時堆疊)。長期歷史回補容器不拿這把鎖(docs/31 §2)。**2026-08-27 16:58** 已透過受控 pause→備份 `/home/huang/geo-before-import-20260827-1658.sql.gz`→`import-geo` 完成 1,985 筆／股務代理 1,985／1,985／3376 驗證→`export-json` 2,410 檔並完成 data Worker deploy（version `b377bc68-3c19-42eb-86f5-4e3c20d977d4`），其後回補已 resume。該次未跑 `import-themes`／`import-buybacks`，故未更新題材／庫藏股官方來源資料。回補活躍時仍不得自行手動寫 `radar.db` 或執行 import；須依既有受控程序。詳 `docs/27`。
+- **flock 互斥**:`/tmp/radar-db.lock`。2026-10-04 起日更五輪與 `weekly-refdata.sh` 搶不到會**等**(`acquire_db_lock_wait`,等滿才 high 通知),`data-backfill.sh` 等仍是搶不到=跳過本輪+ntfy 通知(防上一輪超時堆疊)。長期歷史回補容器不拿這把鎖(docs/31 §2)。**2026-08-27 16:58** 已透過受控 pause→備份 `/home/huang/geo-before-import-20260827-1658.sql.gz`→`import-geo` 完成 1,985 筆／股務代理 1,985／1,985／3376 驗證→`export-json` 2,410 檔並完成 data Worker deploy（version `b377bc68-3c19-42eb-86f5-4e3c20d977d4`），其後回補已 resume。該次未跑 `import-themes`／`import-buybacks`，故未更新題材／庫藏股官方來源資料。回補活躍時仍不得自行手動寫 `radar.db` 或執行 import；須依既有受控程序。詳 `docs/27`。
 - **2026-08-31 上櫃鎖／520 與手動恢復**：14:10 `daily-market.sh` 的週一題材／公司資料流程執行至 15:11，15:00 `daily-tpex-quotes.sh` 搶不到 DB lock 而安全略過；15:43 後 `fuser` 無 holder。`/tmp/radar-db.lock` 留下 0-byte path 是正常 flock 慣例，**不得把存在的 path 當 stale lock 刪除**。16:10 與後續三次手動完整腳本均因 `dailyQuotes` HTTP 520 fail closed；response 為 Cloudflare SJC、16-byte body，同 URL／IP 在分鐘內交替 200／520且不是 429。只能確認 Cloudflare edge 到 TPEx origin 路徑間歇異常；無供應商內部 log，不能斷言更深層原因。使用者授權後，以同一官方 URL 的 curl 長退避取得 payload，驗 `date=20260831`、`stat=ok`、19 欄／10,713 rows 後交既有 parser＋transaction 匯入；權證彙總 845、指標 5,078、scores 750、export 2,410 stocks、Worker deploy（version `51b690a4-9b50-407d-b981-1d6c26e9533c`）均成功。正式 DB 8/31 TPEx=888 stock／119 ETF／6 ETN／1 other，正式站 6488 已顯示 2026-08-31；未改 cron／code／workflow。中止唯讀查詢留下的單一 orphan process 已精確終止，writer／回補服務未受影響。
 - **2026-08-31 22:00 100 萬權證過渡池成功**：日常上市 active 普通股標的認購／認售、成交額 `>=100萬` 的分點輪完成 2,619 targets／61,687 rows／0 failed，`23:53:26 CMDEND`，Worker=`5548186b-8d40-4fae-a00b-a596dee59564`。此單輪成功不等同今日 TPEx endpoint 穩定（仍 unknown）；不得據此自行操作 VPS、正式 DB 或 cron。
 - **2026-08-31 分點明細受控發布**：使用者明確授權後，先確認 remote diff 不與既有未追蹤檔衝突，再保留全部未追蹤檔、ff-only 至 `591c09e`；重建 `radar-pipeline` 後只跑唯讀 `export-json`＋data Worker deploy，未寫 DB／未改 cron／未重啟回補。Worker version=`ca3eff26-680c-4e14-81ca-d3accde31a21`；正式 `branches/track` index=138，`華南永昌-大安` shard=4,824 rows／83 交易日，正式站已驗收可下鑽。

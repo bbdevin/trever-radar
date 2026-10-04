@@ -255,6 +255,11 @@ record() { printf '%s\\n' \"$1\" >> \"$RADAR_TEST_EVENTS\"; }
 set -euo pipefail
 trap 'record "err:$?:$BASH_COMMAND"' ERR
 acquire_db_lock() { record lock; }
+acquire_db_lock_wait() { record lock; }
+db_lock_take() { :; }
+release_db_lock() { :; }
+price_date_is_today() { return 0; }
+round_has_changes() { return 0; }
 sync_code() { record sync; }
 futures_probe() { :; }
 futures_digest() { record futures-digest; }
@@ -281,7 +286,9 @@ ROUND_FAIL_CONSEQUENCE=""
 """
                 + self._real_lib_function("set_round_consequence") + "\n"
                 + self._real_lib_function("run_step") + "\n"
-                + self._real_lib_function("run_step_or_fail") + "\n",
+                + self._real_lib_function("run_step_or_fail") + "\n"
+                # docs/47:法人那一步改成輪詢;輪詢迴圈本身也取真的那一份。
+                + self._real_lib_function("poll_until") + "\n",
                 encoding="utf-8",
                 newline="\n",
             )
@@ -307,7 +314,7 @@ ROUND_FAIL_CONSEQUENCE=""
         rc, events = self._run_daily_insti_harness(quotes_rc=75)
         self.assertEqual(rc, 75)
         quotes = events.index("radar:import-daily --datasets quotes")
-        insti = events.index("radar:import-daily --datasets insti")
+        insti = events.index("radar:import-daily --datasets insti --require twse:insti,tpex:insti")
         master = events.index("radar:import-warrant-master")
         self.assertLess(quotes, insti)
         self.assertLess(insti, master)
@@ -347,7 +354,7 @@ ROUND_FAIL_CONSEQUENCE=""
         rc, events = self._run_daily_insti_harness(insti_rc=42)
         self.assertEqual(rc, 42)
         self.assertIn("radar:import-daily --datasets quotes", events)
-        self.assertIn("radar:import-daily --datasets insti", events)
+        self.assertIn("radar:import-daily --datasets insti --require twse:insti,tpex:insti", events)
         self.assertFalse(any("warrant-master" in event or "aggregate-warrants" in event
                              or event == "deploy" or event.startswith("ok:") for event in events))
         self.assertEqual(sum(event.startswith("err:") for event in events), 0,

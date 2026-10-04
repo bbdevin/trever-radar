@@ -45,7 +45,9 @@ class ProbeIsWiredAndHarmless(unittest.TestCase):
                 lines = [ln.strip() for ln in _code_lines(SCRIPTS_DIR / name)]
                 self.assertIn("futures_probe", lines, f"{name} 沒有呼叫 futures_probe")
                 probe = lines.index("futures_probe")
-                lock = lines.index("acquire_db_lock")
+                # docs/47:搶不到鎖改成等(`acquire_db_lock_wait N`),仍在 probe 之後。
+                lock = next(i for i, ln in enumerate(lines)
+                            if re.fullmatch(r"acquire_db_lock(_wait \d+)?", ln))
                 self.assertLess(probe, lock, "probe 要在拿鎖之前,鎖被占的日子也要量到")
                 first_exit = next((i for i, ln in enumerate(lines)
                                    if re.search(r"\bexit\b|run_step_or_fail", ln)), len(lines))
@@ -94,8 +96,9 @@ class ImportFuturesDayIsWired(unittest.TestCase):
 
     def _branch_blocks(self, name: str) -> tuple[str, str, str]:
         code = "\n".join(_code_lines(SCRIPTS_DIR / name))
+        # docs/47 起這段可能包在函式(daily-insti 的 try_futures_day)或 if 裡,允許縮排。
         m = re.search(
-            r'if \[ "\$fd_rc" -eq 75 \]; then\n(.*?)\nelif \[ "\$fd_rc" -ne 0 \]; then\n(.*?)\nfi\n',
+            r'if \[ "\$fd_rc" -eq 75 \]; then\n(.*?)\n\s*elif \[ "\$fd_rc" -ne 0 \]; then\n(.*?)\n\s*fi\n',
             code, re.S)
         self.assertIsNotNone(m, f"{name} 找不到 75 / 其他非 0 的分級區塊")
         return code, m.group(1), m.group(2)

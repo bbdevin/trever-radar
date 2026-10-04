@@ -1434,6 +1434,106 @@ def _branch_date_fit(conn, d_iso: str, expected: int,
     }
 
 
+def _branch_stock_pool(conn, iso_d: str) -> list[str]:
+    """``--top 0`` 的股票目標池:當日有收盤價的全部 active 普通股(不含 ETF)。
+
+    匯入(import_branch_trades)與探測(probe_branch_day)共用這一份,探測量到的
+    才是正式那一輪真的會去要的股票。
+    """
+    from sqlalchemy import text
+
+    return [r[0] for r in conn.execute(text(
+        "SELECT p.stock_id FROM daily_prices p "
+        "JOIN stocks s ON s.id = p.stock_id AND s.type = 'stock' AND s.is_active = 1 "
+        "WHERE p.date = :d AND p.close IS NOT NULL "
+        "ORDER BY p.stock_id"), {"d": iso_d})]
+
+
+def _evenly_spaced(pool: list[str], n: int) -> list[str]:
+    """從排序好的池子等距取 n 檔(池子不足 n 檔就全取)。
+
+    等距而不是取前 n 檔:代號排序與上市/上櫃、產業大致相關,取前段只會量到
+    一小群股票的發布進度。也不用亂數:同一天各次探測要問同一批,結果才能互相比較。
+    """
+    if n <= 0 or not pool:
+        return []
+    if len(pool) <= n:
+        return list(pool)
+    return [pool[(i * len(pool)) // n] for i in range(n)]
+
+
+def probe_branch_day(date: str | None = None, sample: int = 24, threshold: int = 22,
+                     sleep_s: float = 1.0) -> dict:
+    """唯讀探測:分點來源此刻對 date 公布到什麼程度。**不寫資料庫、不記 import_logs**。
+
+    從 ``--top 0`` 目標池等距抽 ``sample`` 檔,逐檔抓一次富邦分點頁;抓得到列的算 ok,
+    NoDataError(還沒公布)與任何其他失敗都算沒到。ok 檔數 ≥ ``threshold`` 就是
+    「可以開始全量爬了」。17:30 起每 15 分鐘問一次,取代「17:40 一到就全量爬
+    2,672 檔、結果覆蓋率 33–56% 被扣留」的那 41–62 分鐘白工(docs/47)。
+
+    池子不足 ``sample`` 檔時門檻按比例縮(向上取整),免得小池子永遠過不了。
+    """
+    from sqlalchemy import text
+
+    from .providers import fubon
+
+    engine = get_engine()
+    with engine.connect() as conn:
+        if date is None:
+            latest = conn.execute(text("SELECT MAX(date) FROM daily_prices")).scalar()
+            if latest is None:
+                raise RuntimeError("probe-branch-day: daily_prices is empty")
+            date = latest.replace("-", "")
+        iso_d = iso(date)
+        pool = _branch_stock_pool(conn, iso_d)
+    picks = _evenly_spaced(pool, sample)
+    need = threshold
+    if picks and len(picks) < sample:
+        need = math.ceil(threshold * len(picks) / sample)
+    ok = 0
+    for sid in picks:
+        try:
+            rows = fubon.fetch_branch_trades(sid, date, throttle=sleep_s)
+        except NoDataError:
+            continue
+        except Exception as e:  # noqa: BLE001 - a probe counts, it never raises per stock
+            print(f"branch-probe {sid}: {type(e).__name__}: {str(e)[:100]}", flush=True)
+            continue
+        if rows:
+            ok += 1
+    return {
+        "at": datetime.now(ZoneInfo(config.TZ)).strftime("%H:%M"),
+        "date": iso_d,
+        "ok": ok,
+        "sample": len(picks),
+        "pool": len(pool),
+        "threshold": need,
+        "ready": bool(picks) and ok >= need,
+    }
+
+
+def previous_ok_rows(source: str, dataset: str, date: str) -> int | None:
+    """``date``(YYYYMMDD)之前最近一個有 ok 列的日期,該 source/dataset 的匯入列數。
+
+    同一天可能被匯入好幾次(輪詢、補抓),取那一天最大的 rows。查不到 → None
+    (第一次匯入、或 import_logs 被 prune 光了),呼叫端視為「沒有比例基準」。
+    唯讀。
+    """
+    from sqlalchemy import text
+
+    with get_engine().connect() as conn:
+        prev = conn.execute(text(
+            "SELECT MAX(date) FROM import_logs WHERE source = :s AND dataset = :ds "
+            "AND status = 'ok' AND rows > 0 AND date < :d"
+        ), {"s": source, "ds": dataset, "d": iso(date)}).scalar()
+        if prev is None:
+            return None
+        return int(conn.execute(text(
+            "SELECT MAX(rows) FROM import_logs WHERE source = :s AND dataset = :ds "
+            "AND status = 'ok' AND date = :p"
+        ), {"s": source, "ds": dataset, "p": prev}).scalar() or 0)
+
+
 def import_branch_trades(date: str | None = None, top: int = 80,
                          ids: list[str] | None = None, warrants: int = 200,
                          sleep_s: float = 1.2,
@@ -1483,12 +1583,7 @@ def import_branch_trades(date: str | None = None, top: int = 80,
         if ids:
             targets = ids
         elif top <= 0:
-            # 全股票(不含 ETF):當日有收盤價者
-            targets = [r[0] for r in conn.execute(text(
-                "SELECT p.stock_id FROM daily_prices p "
-                "JOIN stocks s ON s.id = p.stock_id AND s.type = 'stock' AND s.is_active = 1 "
-                "WHERE p.date = :d AND p.close IS NOT NULL "
-                "ORDER BY p.stock_id"), {"d": iso_d})]
+            targets = _branch_stock_pool(conn, iso_d)
         else:
             targets = [r[0] for r in conn.execute(text(
                 "SELECT ds.stock_id FROM daily_scores ds "

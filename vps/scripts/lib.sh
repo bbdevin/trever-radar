@@ -22,6 +22,7 @@ job_zh() {
     daily-insti.sh) echo "三大法人" ;;
     daily-branches.sh) echo "分點籌碼" ;;
     daily-margin.sh) echo "融資融券" ;;
+    weekly-refdata.sh) echo "題材地緣週更" ;;
     weekly-backup.sh) echo "週備份" ;;
     weekly-tdcc.sh) echo "大戶持股" ;;
     mid-backfill-publish.sh) echo "回補中途上線" ;;
@@ -327,6 +328,174 @@ deploy_data() {
 }
 
 taipei_date() { TZ=Asia/Taipei date "$@"; }
+
+# ── docs/47 排程優化:輪詢到公布為止、有變動才上線、等鎖不略過 ─────────────────
+#
+# 這一段的四個原則(完整理由與 12 個交易日的實測見 docs/47):
+#   1. 輪詢到公布為止:每輪有起點/間隔/截止;每次嘗試前 `flock -w` 拿 DB 鎖,
+#      匯入只要幾秒,沒到(exit 75)就**先放鎖再睡**——絕不握著鎖等來源。
+#   2. 有變動才上線:本輪所有匯入都沒寫進任何列 → 不 compute/export/deploy。
+#   3. 分點全量爬由探測觸發(probe-branch-day),不是時間一到就爬。
+#   4. 搶不到鎖就等,不略過(acquire_db_lock_wait;data-backfill.sh 仍維持 flock -n)。
+# 開關:RADAR_POLL=0 = 只試一次、75 當成已到(舊行為);BRANCH_PROBE=0 = 不探測直接爬。
+
+RADAR_DB_LOCK_FILE="${RADAR_DB_LOCK_FILE:-/tmp/radar-db.lock}"
+# 本輪開跑時刻(台北 ISO,與 import_logs.run_at 同格式,可直接字串比較)。
+ROUND_STARTED_AT="${ROUND_STARTED_AT:-$(TZ=Asia/Taipei date -Iseconds)}"
+
+# 等 DB 鎖最多 $1 秒。fd 9 還沒開就先開;已經握著同一個 fd 的鎖時立即成功
+# (flock 對同一個 open file description 重鎖是轉換,不會自己擋自己)。
+# 回傳 flock 的結果,不通知、不 exit——由呼叫端決定逾時的後果。
+db_lock_take() {
+  local secs="$1"
+  if ! { true >&9; } 2>/dev/null; then
+    exec 9>"$RADAR_DB_LOCK_FILE"
+  fi
+  flock -w "$secs" 9
+}
+
+# 只放鎖、不關 fd(之後 db_lock_take 用同一個 fd 再鎖)。
+release_db_lock() {
+  flock -u 9 2>/dev/null || true
+}
+
+# 五支日更輪的取鎖:搶不到就**等**(最多 $1 秒),不再像 acquire_db_lock 一樣
+# 立刻略過——2026-09 的 log:週一 14:10 那輪的題材/地緣/產業別跑 45–55 分鐘,
+# 15:00 上櫃輪 `flock -n` 失敗,整輪上櫃日K 靜默消失。等滿仍拿不到 = 上一輪卡住,
+# 這是要叫醒人的事故(high),本輪 exit 0。
+acquire_db_lock_wait() {
+  local secs="$1" t0
+  t0="$(date +%s)"
+  if db_lock_take "$secs"; then
+    echo "db lock acquired waited=$(( $(date +%s) - t0 ))s"
+    return 0
+  fi
+  notify "資料庫鎖等滿 ${secs} 秒仍未釋放（前一輪疑似卡住），本輪未執行" high "失敗"
+  exit 0
+}
+
+# poll_until LABEL DEADLINE_HHMM INTERVAL_SEC CMD...
+#
+# 反覆執行 CMD 直到它回 0(已公布)或其他非 75 的碼(錯誤,原碼回傳),
+# 或台北時間到了 DEADLINE_HHMM(回 75)。CMD 回 75 = 「還沒到,等一下再來」。
+# 每次嘗試前先拿 DB 鎖(POLL_HOLD_DB_LOCK=0 時不碰鎖,給唯讀探測用);
+# 75 之後**先 flock -u 放鎖再睡**。成功時回 0 並仍握著鎖,呼叫端接著 compute。
+# 每一輪 log 一行可 grep 的結果:
+#   poll <label> ready at=HH:MM attempts=N
+#   poll <label> deadline at=HH:MM attempts=N
+# RADAR_POLL=0:只試一次,75 當成已到(回 0)——舊行為,手動補跑或緊急關閉輪詢用。
+POLL_LOCK_WAIT_SECS="${POLL_LOCK_WAIT_SECS:-3600}"
+poll_until() {
+  local label="$1" deadline="$2" interval="$3"
+  shift 3
+  local attempts=0 rc=0 now_hhmm now_min dl_min left
+  dl_min=$(( (10#$deadline / 100) * 60 + 10#$deadline % 100 ))
+  while :; do
+    attempts=$(( attempts + 1 ))
+    if [ "${POLL_HOLD_DB_LOCK:-1}" = "1" ] && ! db_lock_take "${POLL_LOCK_WAIT_SECS:-3600}"; then
+      notify "${label}：資料庫鎖等滿 ${POLL_LOCK_WAIT_SECS:-3600} 秒仍未釋放，本輪中止" high "失敗"
+      exit 0
+    fi
+    if "$@"; then
+      rc=0
+    else
+      rc=$?
+    fi
+    if [ "$rc" -ne 75 ]; then
+      if [ "$rc" -eq 0 ]; then
+        echo "poll ${label} ready at=$(taipei_date +%H:%M) attempts=${attempts}"
+      fi
+      return "$rc"
+    fi
+    if [ "${RADAR_POLL:-1}" = "0" ]; then
+      echo "poll ${label} single attempt at=$(taipei_date +%H:%M) (RADAR_POLL=0: 75 treated as ready)"
+      return 0
+    fi
+    if [ "${POLL_HOLD_DB_LOCK:-1}" = "1" ]; then
+      release_db_lock
+    fi
+    now_hhmm="$(taipei_date +%H%M)"
+    now_min=$(( (10#$now_hhmm / 100) * 60 + 10#$now_hhmm % 100 ))
+    if [ "$now_min" -ge "$dl_min" ]; then
+      echo "poll ${label} deadline at=$(taipei_date +%H:%M) attempts=${attempts}"
+      return 75
+    fi
+    left=$(( (dl_min - now_min) * 60 ))
+    if [ "$interval" -lt "$left" ]; then
+      sleep "$interval"
+    else
+      sleep "$left"
+    fi
+  done
+}
+
+# 唯讀查一個值(?mode=ro,不搶寫鎖):$1 = SQL,其後 = 參數。印出第一列第一欄(NULL → 空)。
+radar_ro_sql() {
+  docker run --rm -v "$REPO/data":/app/data radar-pipeline \
+    python -c "import sqlite3,sys
+conn = sqlite3.connect('file:/app/data/radar.db?mode=ro', uri=True)
+row = conn.execute(sys.argv[1], sys.argv[2:]).fetchone()
+print('' if row is None or row[0] is None else row[0])" "$@"
+}
+
+# MAX(date) FROM daily_prices 是否等於 $1(預設台北今天)。非交易日 = 今天沒有
+# 日K,分點/資券/夜間輪就不該再爬 5,000 個請求、再 export 一份沒變的網站
+# (09-25、09-28 實測各浪費 ~3.5 小時鎖)。查詢失敗 → 視為是(照舊跑,寧可多跑)。
+price_date_is_today() {
+  local want="${1:-$(taipei_date +%F)}" got=""
+  got="$(radar_ro_sql "SELECT MAX(date) FROM daily_prices" 2>/dev/null)" || got=""
+  if [ -z "$got" ]; then
+    echo "price_date_is_today: 查不到 MAX(date)，視為交易日照常執行"
+    return 0
+  fi
+  echo "price date: max=${got} want=${want}"
+  [ "$got" = "$want" ]
+}
+
+# 本輪(ROUND_STARTED_AT 之後)有沒有任何匯入真的寫進列:import_logs 的
+# ok 且 rows>0(= cron log 裡的 `ok … rows=[1-9]`)。沒有 → 呼叫端印
+# `publish skipped: no change` 並不 compute/export/deploy。查詢失敗 → 視為有。
+round_has_changes() {
+  local n=""
+  n="$(radar_ro_sql "SELECT COUNT(*) FROM import_logs WHERE run_at >= ? AND status = 'ok' AND rows > 0 AND dataset IN ('quotes','insti','margin','futures-day','branch')" "$ROUND_STARTED_AT" 2>/dev/null)" || n=""
+  if [ -z "$n" ]; then
+    echo "round_has_changes: 查詢失敗，視為有變動"
+    return 0
+  fi
+  echo "round changes since ${ROUND_STARTED_AT}: ${n} import(s) wrote rows"
+  [ "$n" -gt 0 ]
+}
+
+# 分點匯入對 $1(YYYY-MM-DD)最新一次的覆蓋率(import_logs dataset='branch_coverage'
+# 的 ratio=,0.0000–1.0000)。查不到 → 空字串。寫進完成標記的 coverage_ratio=。
+branch_round_coverage_ratio() {
+  local note=""
+  note="$(radar_ro_sql "SELECT error FROM import_logs WHERE dataset = 'branch_coverage' AND date = ? ORDER BY id DESC LIMIT 1" "$1" 2>/dev/null)" || note=""
+  printf '%s\n' "$note" | sed -n 's/.*ratio=\([0-9.]*\).*/\1/p' | head -n 1
+}
+
+# 完成標記($1 = 日期)裡的 coverage_ratio=;舊格式(只有時間一行)→ 空字串。
+branch_marker_coverage_ratio() {
+  sed -n 's/^coverage_ratio=\([0-9.]*\)$/\1/p' "$(branch_round_marker "$1")" 2>/dev/null | head -n 1 || true
+}
+
+# 週一參考資料(題材/地緣/產業別)的「本 ISO 週已完成」標記。weekly-refdata.sh
+# (週一 11:00)寫;daily-market.sh 在 crontab 改好之前看不到它就自己補跑。
+refdata_marker() { echo "/tmp/radar-refdata-$(taipei_date +%G-W%V).done"; }
+
+# 每週一次的補充資料:失敗一律 warn-and-continue,不得擋當天行情上線。
+# (原本定義在 daily-market.sh;2026-10 搬來這裡給 weekly-refdata.sh 共用。)
+weekly_step() {
+  local label="$1"; shift
+  set +e
+  "$@"
+  local rc=$?
+  set -e
+  if [ "$rc" -ne 0 ]; then
+    echo "${label} failed rc=${rc} (continue)"
+    notify_warn "每週${label}失敗（碼 ${rc}），沿用既有資料"
+  fi
+}
 
 # 統一的計時 wrapper:鎖等待之外,每一個主要步驟(radar 子指令、deploy)都套
 # 這個,單一格式才追得出 93→138 分鐘是哪一步在長。用 if/then 取得結果而不是
