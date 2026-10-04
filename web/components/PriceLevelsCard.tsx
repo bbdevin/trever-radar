@@ -1,59 +1,20 @@
 import { ChevronDown } from "lucide-react";
 
-import SectionHeader from "@/components/SectionHeader";
 import {
   HOWTO_LINES,
   PL_LABELS,
   fmtDist,
   fmtLevelPrice,
   fmtShare,
-  insufficientText,
   type LadderRow,
-  type PriceLevelsView,
 } from "@/lib/priceLevels";
 import { cn } from "@/lib/utils";
 
 /**
- * 技術分頁「價格位置」卡(docs/45 §4):價格階梯(上方紅 +%、現價藍帶、下方綠 −%)、
- * 現價上下成交量雙色條、「怎麼算」收合(多空事實句在 docs/46 多空摘要)。只顯示事實,不影響任何分數。
- * 輸入是 `priceLevelsView()` 的結果,版面要搬動時只動這個元件或拆用其中的小元件。
+ * 價格位置的小元件(docs/45 §4):價格階梯(上方紅 +%、現價藍帶、下方綠 −%)、現價上下成交量雙色條、
+ * 「怎麼算」收合。docs/46 v2 起由多空分頁「壓力分析」段組裝(BullBearPanel),不再單獨成卡。
+ * 只顯示事實,不影響任何分數。
  */
-export default function PriceLevelsCard({ view, className }: { view: PriceLevelsView; className?: string }) {
-  if (view.state === "missing") {
-    return (
-      <div data-testid="price-levels" className={cn("rounded-[var(--r-lg)] border border-border bg-card px-3.5 py-3 text-[12.5px] text-muted-foreground", className)}>
-        <span className="font-bold text-foreground">{PL_LABELS.title}</span> {PL_LABELS.missing}
-      </div>
-    );
-  }
-  if (view.state === "insufficient") {
-    return (
-      <div data-testid="price-levels" className={cn("rounded-[var(--r-lg)] border border-border bg-card px-3.5 py-3 text-[12.5px] text-muted-foreground", className)}>
-        <span className="font-bold text-foreground">{PL_LABELS.title}</span> {insufficientText(view.bars)}
-      </div>
-    );
-  }
-  const { close } = view;
-  return (
-    <section
-      data-testid="price-levels"
-      aria-labelledby="price-levels-heading"
-      className={cn("grid min-w-0 gap-3 rounded-[var(--r-lg)] border border-border bg-card p-3.5 shadow-[var(--shadow-card)]", className)}
-    >
-      <SectionHeader
-        family="price"
-        as="h3"
-        id="price-levels-heading"
-        title={PL_LABELS.title}
-        meta={<>資料日 <span className="num">{view.asOf.slice(5).replace("-", "/")}</span> · {PL_LABELS.adjusted}</>}
-      />
-      <PriceLadder above={view.above} below={view.below} close={close} />
-      {view.volume && <VolumeSplit volume={view.volume} />}
-      <HowTo />
-    </section>
-  );
-}
-
 export function PriceLadder({ above, below, close }: { above: LadderRow[]; below: LadderRow[]; close: number }) {
   return (
     <ol className="grid min-w-0 gap-0.5" aria-label="價格階梯(由高到低)">

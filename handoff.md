@@ -1,5 +1,9 @@
 # Handoff — 2026-09-24（期貨切片從未真的渲染過的結構性 bug 已修、四輪日更補上失敗語音（過程自己又生一個更嚴重的）、期貨補到每契約每天、兩道守門缺口補上、一個記成已出貨卻沒上畫面的按鈕、一次自己的效能預測被實測打臉 2.5 倍、「隔天大漲」事前登記落地）
 
+## 2026-10-04 補記(多空 v2)
+
+- 多空分頁 v2 程式完成、未上線(未 push):三段分析 × 左右對開 × 全列 × 日/週/月 × 大戶比,事實產生器在 `web/lib/facts/*`,目錄與實作偏差見 `docs/46` §6。`web/tsconfig.json` 新增 `allowImportingTsExtensions`(lib 模組間 `.ts` 執行期 import)。上線後第一件事:正式 JSON(有 `price_levels`/`branch_tags`/`raw_risks`)抽 6488、一檔弱勢股看空方欄是否合理。
+
 ## 2026-10-02 補記
 
 - 首頁「尚未更新」區塊整合自動更新時間表、改手機優先版面(`web/lib/freshness.ts` `UPDATE_SCHEDULE`;**改 crontab 時要一起改**)。期貨下午落後 2 個交易日改為常態不報警(`json_export.py`),權證部分未到改顯示「部分未到(N 檔)」。細節見 `docs/STATUS.md` 同日條目。

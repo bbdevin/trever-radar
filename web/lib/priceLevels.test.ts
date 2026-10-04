@@ -97,7 +97,7 @@ test("均線與現價相等歸上方", () => {
   if (v.state !== "ok") throw new Error("state");
   assert.equal(v.above[0].label, "5日均線");
   assert.equal(v.above[0].dist, 0);
-  assert.deepEqual(priceLevelFacts(pl, "2026-10-03").map((f) => f.text), ["5 日線在上方", "5/10/20日均線空頭排列"]);
+  assert.deepEqual(priceLevelFacts(pl, "2026-10-03").map((f) => f.text), ["5 日線在上方,最接近 5日線 120.0(0.0%)", "5/10/20日均線空頭排列"]);
 });
 
 test("多空事實句與鏡像", () => {
@@ -108,15 +108,24 @@ test("多空事實句與鏡像", () => {
     highs: { "20": { p: 125, t: "2026-10-03" }, "60": { p: 125, t: "2026-10-03" }, "120": { p: 140, t: "2026-06-01" } },
   });
   const f = priceLevelFacts(pl, "2026-10-03", 64);
+  // F3(今日即 60 日最高)與 F4(收盤創 20 日新高)同側 → 合併成一句
   assert.deepEqual(f.filter((x) => x.side === "bull").map((x) => x.text), [
-    "站上 10/120/240 日線",
+    "站上 10/120/240 日線,最接近 10日線 118.9(−0.9%)",
     "5/10/20日均線多頭排列",
-    "今日即60日最高",
-    "收盤創20日新高",
+    "收盤創20日新高,今日高點亦為 60 日最高",
     "連2日量增價漲",
     "RSI14 64,位於 50–70",
   ]);
-  assert.deepEqual(f.filter((x) => x.side === "bear").map((x) => x.text), ["5/20/60 日線在上方"]);
+  assert.ok(!f.some((x) => x.code === "F3_HIGH_TODAY"));
+  assert.deepEqual(f.filter((x) => x.side === "bear").map((x) => x.text), ["5/20/60 日線在上方,最接近 5日線 121.0(+0.8%)"]);
+  // F1 進壓力段、帶距離;其餘進技術段日K;價格是 price 段
+  const f1 = f.find((x) => x.code === "F1_MA_ABOVE")!;
+  assert.deepEqual([f1.section, f1.tf, f1.dist?.toFixed(2)], ["levels", "D", "0.83"]);
+  assert.deepEqual(f1.segments?.filter((s) => s.kind), [{ t: "121.0", kind: "price" }, { t: "+0.8%", kind: "up" }]);
+  assert.ok(f.filter((x) => !x.code.startsWith("F1")).every((x) => x.section === "tech" && x.tf === "D"));
+  // 只有今日即最高、沒有創 20 日新高 → F3 單獨一句
+  const only = priceLevelFacts(ok({ highs: { "60": { p: 125, t: "2026-10-03" } } }), "2026-10-03");
+  assert.ok(only.some((x) => x.code === "F3_HIGH_TODAY" && x.text === "今日即60日最高"));
   // 20 日線在上方 → F1 多方不宣告 T1_MA20;其餘鏡像照宣告
   assert.deepEqual(f.find((x) => x.code === "F1_MA_BELOW")?.mirrors, undefined);
   assert.deepEqual(f.find((x) => x.code === "F2_BULL")?.mirrors, ["T1_BULL_MA"]);
@@ -128,9 +137,8 @@ test("多空事實句與鏡像", () => {
 
   const w = priceLevelFacts(ok({ new_low_20: true, vol_price_2d: "down", lows: { "20": { p: 119, t: "2026-10-03" } } }), "2026-10-03", 38.04);
   assert.deepEqual(w.filter((x) => x.side === "bear").map((x) => x.text), [
-    "5/20/60 日線在上方",
+    "5/20/60 日線在上方,最接近 5日線 121.0(+0.8%)",
     "5/10/20日均線空頭排列",
-    "今日即20日最低",
     "收盤創20日新低",
     "連2日量增價跌",
     "RSI14 38,低於 50",

@@ -6,8 +6,9 @@
  * 這些事實只供顯示,**不進任何分數**,也不混進 technical.reasons/risks。
  */
 import type { Candle, PriceLevelPoint, PriceLevels, PriceLevelZone } from "@/lib/types";
+import type { DerivedFact, Section, Seg, Source } from "@/lib/bullBear";
 
-type OkLevels = Extract<PriceLevels, { status: "ok" }>;
+export type OkLevels = Extract<PriceLevels, { status: "ok" }>;
 
 /** 價格小數位依台股升降單位:≥500 元 0 位、50–500 元 1 位、<50 元 2 位(K 線價格軸同一規則)。 */
 export function pricePrecision(close: number): number {
@@ -59,14 +60,14 @@ export type PriceFactCode =
   | "F1_MA_BELOW" | "F1_MA_ABOVE" | "F2_BULL" | "F2_BEAR" | "F3_HIGH_TODAY" | "F3_LOW_TODAY"
   | "F4_NEW_HIGH" | "F4_NEW_LOW" | "F5_UP" | "F5_DOWN" | "F8_RSI_OK" | "F8_RSI_LOW";
 
-/** 價格位置的多空事實句(進 docs/46 多空摘要)。mirrors = 同方向、同一天時可取代的技術理由 code。 */
-export interface PriceLevelFact {
+/**
+ * 價格位置的多空事實句(進 docs/46 多空)。mirrors = 同方向、同一天時可取代的技術理由 code;
+ * date(MM/DD)只在 price_levels 的 as_of 不是最新 K 棒日時帶(此時不取代任何技術理由)。
+ * F1 歸壓力段,其餘(F2–F5、F8)歸技術段日K。
+ */
+export interface PriceLevelFact extends DerivedFact {
   code: PriceFactCode;
   side: "bull" | "bear";
-  text: string;
-  mirrors?: string[];
-  /** MM/DD;只在 price_levels 的 as_of 不是最新 K 棒日時帶(此時不取代任何技術理由) */
-  date?: string;
 }
 
 export type PriceLevelsView =
@@ -85,7 +86,7 @@ const mmdd = (t: string) => `${t.slice(5, 7)}/${t.slice(8, 10)}`;
 const pct = (price: number, close: number) => ((price - close) / close) * 100;
 
 /** 同價同日的 N 日高/低合併成一列,標最長視窗;今日即高/低的那些不進階梯(改成事實句)。 */
-function extremes(map: OkLevels["highs"], asOf: string) {
+export function extremes(map: OkLevels["highs"], asOf: string) {
   const merged = new Map<string, { n: string; pt: PriceLevelPoint }>();
   let todayN: string | null = null;
   for (const n of HL_KEYS) {
@@ -121,21 +122,60 @@ function pickSide(fixed: LadderRow[], mas: LadderRow[]): LadderRow[] {
   return [...keep, ...nearest].sort((a, b) => (b.priceHi ?? b.price) - (a.priceHi ?? a.price) || a.key.localeCompare(b.key));
 }
 
-/** 均線在現價之上/之下的視窗(均線等於現價歸上方,docs/45 F1)。 */
-function maSides(pl: OkLevels) {
-  const above: (typeof MA_KEYS)[number][] = [];
-  const below: (typeof MA_KEYS)[number][] = [];
-  for (const n of MA_KEYS) {
-    const v = pl.ma[n];
-    if (v == null) continue;
-    (v >= pl.close ? above : below).push(n);
-  }
-  return { above, below };
+/** 有號距離片段(+ 紅、− 綠)。 */
+export function distSeg(d: number): Seg {
+  const t = fmtDist(d);
+  return { t, kind: t === "0.0%" ? "flat" : t.startsWith("+") ? "up" : "down" };
 }
 
+export type MaNear = { n: string; v: number };
+
+/** 均線分上下(均線等於現價歸上方,docs/45 F1),並找出各側最接近現價的一條。 */
+export function maSplit(ma: Partial<Record<string, number | null>>, keys: readonly string[], close: number) {
+  const above: string[] = [];
+  const below: string[] = [];
+  let nearAbove: MaNear | null = null;
+  let nearBelow: MaNear | null = null;
+  for (const n of keys) {
+    const v = ma[n];
+    if (v == null) continue;
+    if (v >= close) {
+      above.push(n);
+      if (!nearAbove || v < nearAbove.v) nearAbove = { n, v };
+    } else {
+      below.push(n);
+      if (!nearBelow || v > nearBelow.v) nearBelow = { n, v };
+    }
+  }
+  return { above, below, nearAbove, nearBelow };
+}
+
+/** F1 句:「站上 5/10/20 日線,最接近 20日線 952(−12.2%)」/「60/120 日線在上方,最接近 60日線 1,150(+6.0%)」 */
+export function maSideSegs(side: "above" | "below", keys: readonly string[], near: MaNear, close: number, unit: string): Seg[] {
+  const head = side === "below" ? `站上 ${keys.join("/")} ${unit}線` : `${keys.join("/")} ${unit}線在上方`;
+  return [
+    { t: `${head},最接近 ${near.n}${unit}線 ` },
+    { t: fmtLevelPrice(near.v, close), kind: "price" },
+    { t: "(" },
+    distSeg(pct(near.v, close)),
+    { t: ")" },
+  ];
+}
+
+const F_SECTION: Record<PriceFactCode, { section: Section; source: Source }> = {
+  F1_MA_BELOW: { section: "levels", source: "levels" },
+  F1_MA_ABOVE: { section: "levels", source: "levels" },
+  F2_BULL: { section: "tech", source: "tech" }, F2_BEAR: { section: "tech", source: "tech" },
+  F3_HIGH_TODAY: { section: "tech", source: "tech" }, F3_LOW_TODAY: { section: "tech", source: "tech" },
+  F4_NEW_HIGH: { section: "tech", source: "tech" }, F4_NEW_LOW: { section: "tech", source: "tech" },
+  F5_UP: { section: "tech", source: "tech" }, F5_DOWN: { section: "tech", source: "tech" },
+  F8_RSI_OK: { section: "tech", source: "tech" }, F8_RSI_LOW: { section: "tech", source: "tech" },
+};
+
 /**
- * 價格位置的多空事實(docs/46 §2.5)。lastCandleDate = 個股 K 棒最後一天;as_of 不同時每句帶日期、
+ * 價格位置的多空事實(docs/46 §2.5、v2 §2.1–2.2)。lastCandleDate = 個股 K 棒最後一天;as_of 不同時每句帶日期、
  * 不宣告 mirrors(不取代技術理由)。rsi14 來自 technical(F8:50–70 多方、<50 空方、70–80 不列)。
+ * F3(今日即 N 日高/低)與 F4(收盤創 20 日新高/低)同側成立時合併成一句。
  */
 export function priceLevelFacts(
   pl: PriceLevels | null | undefined,
@@ -144,29 +184,39 @@ export function priceLevelFacts(
 ): PriceLevelFact[] {
   if (!pl || pl.status !== "ok") return [];
   const date = lastCandleDate && pl.as_of !== lastCandleDate ? mmdd(pl.as_of) : undefined;
+  const close = pl.close;
   const out: PriceLevelFact[] = [];
-  const add = (code: PriceFactCode, side: "bull" | "bear", text: string, mirrors?: string[]) =>
-    out.push(date ? { code, side, text, date } : mirrors?.length ? { code, side, text, mirrors } : { code, side, text });
-  const ma = maSides(pl);
-  if (ma.below.length) {
+  const add = (code: PriceFactCode, side: "bull" | "bear", segs: Seg[], rank: number, extra: { mirrors?: string[]; dist?: number } = {}) => {
+    const f: PriceLevelFact = { code, side, ...F_SECTION[code], text: segs.map((s) => s.t).join(""), segments: segs, tf: "D", rank };
+    if (extra.dist != null) f.dist = extra.dist;
+    if (date) f.date = date;
+    else if (extra.mirrors?.length) f.mirrors = extra.mirrors;
+    out.push(f);
+  };
+  const ma = maSplit(pl.ma, MA_KEYS, close);
+  if (ma.nearBelow) {
     const mirrors = [...(ma.below.includes("20") ? ["T1_MA20"] : []), ...(ma.below.includes("60") ? ["T1_MA60"] : [])];
-    add("F1_MA_BELOW", "bull", `站上 ${ma.below.join("/")} 日線`, mirrors);
+    add("F1_MA_BELOW", "bull", maSideSegs("below", ma.below, ma.nearBelow, close, "日"), 2, { mirrors, dist: Math.abs(pct(ma.nearBelow.v, close)) });
   }
-  if (ma.above.length) add("F1_MA_ABOVE", "bear", `${ma.above.join("/")} 日線在上方`);
-  if (pl.ma_align === "bull") add("F2_BULL", "bull", "5/10/20日均線多頭排列", ["T1_BULL_MA"]);
-  if (pl.ma_align === "bear") add("F2_BEAR", "bear", "5/10/20日均線空頭排列");
+  if (ma.nearAbove) {
+    const d = Math.abs(pct(ma.nearAbove.v, close));
+    add("F1_MA_ABOVE", "bear", maSideSegs("above", ma.above, ma.nearAbove, close, "日"), d <= 3 ? 4 : 2, { dist: d });
+  }
+  if (pl.ma_align === "bull") add("F2_BULL", "bull", [{ t: "5/10/20日均線多頭排列" }], 3, { mirrors: ["T1_BULL_MA"] });
+  if (pl.ma_align === "bear") add("F2_BEAR", "bear", [{ t: "5/10/20日均線空頭排列" }], 3);
   const hiN = extremes(pl.highs, pl.as_of).todayN;
   const loN = extremes(pl.lows, pl.as_of).todayN;
-  if (hiN) add("F3_HIGH_TODAY", "bull", `今日即${hiN}日最高`);
-  if (loN) add("F3_LOW_TODAY", "bear", `今日即${loN}日最低`);
-  if (pl.new_high_20) add("F4_NEW_HIGH", "bull", "收盤創20日新高", ["T2_20D_HIGH"]);
-  if (pl.new_low_20) add("F4_NEW_LOW", "bear", "收盤創20日新低");
-  if (pl.vol_price_2d === "up") add("F5_UP", "bull", "連2日量增價漲", ["T4_PRICE_VOLUME_UP"]);
-  if (pl.vol_price_2d === "down") add("F5_DOWN", "bear", "連2日量增價跌");
+  const also = (n: string | null, word: string) => (n && n !== "20" ? `,今日${word}亦為 ${n} 日${word === "高點" ? "最高" : "最低"}` : "");
+  if (pl.new_high_20) add("F4_NEW_HIGH", "bull", [{ t: `收盤創20日新高${also(hiN, "高點")}` }], 4, { mirrors: ["T2_20D_HIGH"] });
+  else if (hiN) add("F3_HIGH_TODAY", "bull", [{ t: `今日即${hiN}日最高` }], 4);
+  if (pl.new_low_20) add("F4_NEW_LOW", "bear", [{ t: `收盤創20日新低${also(loN, "低點")}` }], 4);
+  else if (loN) add("F3_LOW_TODAY", "bear", [{ t: `今日即${loN}日最低` }], 4);
+  if (pl.vol_price_2d === "up") add("F5_UP", "bull", [{ t: "連2日量增價漲" }], 3, { mirrors: ["T4_PRICE_VOLUME_UP"] });
+  if (pl.vol_price_2d === "down") add("F5_DOWN", "bear", [{ t: "連2日量增價跌" }], 3);
   if (rsi14 != null) {
     const r = Math.round(rsi14);
-    if (rsi14 >= 50 && rsi14 <= 70) add("F8_RSI_OK", "bull", `RSI14 ${r},位於 50–70`, ["T5_RSI"]);
-    else if (rsi14 < 50) add("F8_RSI_LOW", "bear", `RSI14 ${r},低於 50`);
+    if (rsi14 >= 50 && rsi14 <= 70) add("F8_RSI_OK", "bull", [{ t: `RSI14 ${r},位於 50–70` }], 2, { mirrors: ["T5_RSI"] });
+    else if (rsi14 < 50) add("F8_RSI_LOW", "bear", [{ t: `RSI14 ${r},低於 50` }], 2);
   }
   return out;
 }
@@ -229,8 +279,15 @@ export const HOWTO_LINES: readonly string[] = [
   "均線:最近 5/10/20/60/120/240 根收盤的平均;均線等於現價時算在上方。",
   "N 日最高／最低:最近 20/60/120/240 根 K 棒(含今日)的最高價、最低價與日期;K 棒不足 N 根的視窗不列,不縮短。同價同日只列最長的視窗。",
   "現價之上／之下成交:最近 120 根 K 棒,把每根的成交量平均攤在當日最低到最高之間,算有多少落在現價之上、之下。常被稱為套牢賣壓;這裡只算區間內的成交,無法知道是否已經換手。",
-  "成交最密集區:同樣 120 根,以現價的 1% 為一格,現價之上、之下各取成交量最多的一格,「佔」是佔 120 日總量的比例。",
-  "均線、前高前低等句子另外整理在上方的多方／空方清單;這裡只把現況並列出來,不加減任何分數,也不代表之後的走勢。",
+  "成交最密集區:同樣 120 根,以現價的 1% 為一格,現價之上、之下各取成交量最多的一格,「佔」是佔 120 日總量的比例(低於 0.5% 不列)。",
+  "週K、月K:由還原後的日K合併(週一為一週的起點、月以日曆月),量也一併還原。最後一根是進行中的這週/這個月,事件型的句子會標「本週」「本月」;週/月均線用 5/10/20/60 根,不足不列。",
+  "未回補缺口:最近 120 根 K 棒裡,某天最低價高於前一天最高價(向上)或最高價低於前一天最低價(向下),而且之後還沒被完全回補的價格區間;寬度不到現價 0.5% 不列,每側最多 2 個。今日的缺口寫在技術分析。",
+  "60 日區間位置:現價在近 60 日最低到最高之間的位置,≥90% 叫上緣、≤10% 叫下緣。資料內最高/最低是這份 K 線資料(年數標在句中)的極值。",
+  "距離 3% 以內的價位句尾標「接近」。",
+  "法人:外資當日買賣超達當日成交量 1% 或 1,000 張、投信達 1% 或 500 張才列,並附連續天數與累計;單日不到門檻時,近 20 日累計達期間成交量 2% 才列。自營商不列。",
+  "分點:每天只保留淨額前 12 大分點,所以合計與天數都是下限;囤貨/出貨的判準與籌碼日報相同。",
+  "大戶:集保股權分散表每週更新一次,400 張以上持股週變化 ≥0.3 個百分點才列,1000 張以上只在方向與 400 張相反或變化 ≥0.5 個百分點時另列;級距是集保分級,不等於分點主力。",
+  "均線、前高前低等句子整理在上方的多方／空方清單;這裡只把現況並列出來,不加減任何分數,也不代表之後的走勢。",
 ];
 
 export type ChartLevel = { price: number; label: string; side: "above" | "below" };

@@ -136,6 +136,10 @@ try {
   assert(!basicOverflow, "基本資料分頁造成頁面橫向溢出");
   await page.getByRole("tab", { name: "多空" }).click();
   await page.getByTestId("bullbear-panel").waitFor({ state: "visible", timeout: 5000 });
+  for (const sec of ["tech", "chips", "levels"]) {
+    assert(await page.getByTestId(`bullbear-section-${sec}`).isVisible(), `多空分頁缺少 ${sec} 段`);
+  }
+  assert((await page.getByTestId("bullbear-panel").locator("[aria-expanded]").count()) === 0, "多空分頁不應有展開按鈕(全部列出)");
   await page.getByText("技術分").first().waitFor({ state: "visible", timeout: 5000 });
   await page.getByRole("tab", { name: "權證" }).click();
   await page.getByRole("heading", { name: "權證分點動向" }).waitFor({ state: "visible", timeout: 5000 });
