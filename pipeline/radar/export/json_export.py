@@ -17,6 +17,7 @@ from sqlalchemy import bindparam, text
 
 from .. import config
 from ..db import get_engine, init_db
+from ..branch_source import date_window_from
 from .spark_day import attach_spark_day
 from ..geo import normalize_branch_name
 from ..pocket import (
@@ -2446,19 +2447,22 @@ def _export_branches(out: Path, engine, date: str):
         d40 = conn.execute(text(
             "SELECT MIN(date) FROM (SELECT DISTINCT date FROM daily_prices "
             "ORDER BY date DESC LIMIT 40)")).scalar()
-        movers = [dict(r._mapping) for r in conn.execute(text("""
-            SELECT b.branch_name,
-                   b.stock_id AS warrant_id, w.name AS warrant_name, w.kind,
+        # Date window across all warrants: read through the covering date index
+        # (branch_source.date_window_from); with ANALYZE stats the planner otherwise
+        # scans branch_dim + ix_branch_trades_raw_branch (2.5x slower, docs/43).
+        movers = [dict(r._mapping) for r in conn.execute(text(f"""
+            SELECT d.branch_name,
+                   r.stock_id AS warrant_id, w.name AS warrant_name, w.kind,
                    w.stock_id AS underlying_id, s.name AS underlying_name,
-                   SUM(b.net_lots) AS net_lots, SUM(b.buy_lots) AS buy_lots,
-                   COUNT(*) AS active_days, MAX(b.date) AS last_date
-            FROM branch_trades b
-            JOIN warrants w ON w.id = b.stock_id
+                   SUM(r.net_lots) AS net_lots, SUM(r.buy_lots) AS buy_lots,
+                   COUNT(*) AS active_days, MAX(r.date) AS last_date
+            FROM {date_window_from(conn)}
+            JOIN warrants w ON w.id = r.stock_id
             LEFT JOIN stocks s ON s.id = w.stock_id
-            WHERE LENGTH(b.stock_id) = 6 AND b.date >= :d40
-            GROUP BY b.branch_name, b.stock_id
-            HAVING SUM(b.net_lots) >= 300
-            ORDER BY SUM(b.net_lots) DESC
+            WHERE LENGTH(r.stock_id) = 6 AND r.date >= :d40
+            GROUP BY d.branch_name, r.stock_id
+            HAVING SUM(r.net_lots) >= 300
+            ORDER BY SUM(r.net_lots) DESC
             LIMIT 60
         """), {"d40": d40})]
         (branches_dir / "warrant_movers.json").write_text(
