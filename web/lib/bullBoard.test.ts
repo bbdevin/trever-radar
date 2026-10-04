@@ -30,6 +30,7 @@ import {
   GROUP_SUMMARY_LABEL,
   type BoardCandidate,
 } from "./bullBoard.ts";
+import { hottestListedTheme } from "./themeGroups.ts";
 import type { BullBoardEntry, BullBoardJson } from "./types.ts";
 
 const DAY = "2026-10-02";
@@ -236,7 +237,7 @@ test("禁詞:分頁名、定義句、狀態句", () => {
     BOARD_TAB_LABEL, BOARD_DEFINITION, BOARD_MISSING, BOARD_NO_BEAR,
     emptyText(b), staleText(b, RADAR)!, incompleteText(b)!, countLine(b), inputsLine(b), recordLine(b),
     BOARD_VIEW_LABEL.facts, BOARD_VIEW_LABEL.group, BOARD_OTHER_GROUP, groupHeatText(1.34)!, GROUP_SUMMARY_LABEL,
-    groupSummaryText([{ name: "AI", n: 3, target: "AI" }, { name: BOARD_OTHER_GROUP, n: 2, target: "x" }]),
+    groupSummaryText([{ key: "theme:AI", name: "AI", n: 3, target: "theme:AI" }, { key: "other:x", name: BOARD_OTHER_GROUP, n: 2, target: "x" }]),
   ];
   for (const t of texts) assert.ok(!banned.test(t), t);
   assert.ok(banned.test(word(0x6a5f, 0x7387)), "regex 本身有效");
@@ -348,13 +349,66 @@ test("族群分布:同一個分組與順序,前 6 個有名字的族群,其餘�
   const gs = groupBoardEntries(es);
   const chips = groupSummary(gs);
   assert.deepEqual(chips.map((c) => [c.name, c.n]), [["A1", 4], ["B產業", 3], ["C3", 2], ["D4", 1], ["E5", 1], ["F6", 1], [BOARD_OTHER_GROUP, 4]]);
-  assert.equal(chips.at(-1)!.target, "G7");
+  assert.equal(chips.at(-1)!.target, "theme:G7");
   assert.equal(chips.reduce((n, c) => n + c.n, 0), es.length);
   assert.equal(groupSummaryText(chips.slice(0, 2)), "多方集中:A1 4 檔、B產業 3 檔");
   // 只有「其他」時:一顆「其他」,目標就是「其他」組
   const onlyOther = groupSummary(groupBoardEntries([entry("X", { theme: null, industry: null })]));
-  assert.deepEqual(onlyOther, [{ name: BOARD_OTHER_GROUP, n: 1, target: BOARD_OTHER_GROUP }]);
+  assert.deepEqual(onlyOther, [{ key: "other:其他", name: BOARD_OTHER_GROUP, n: 1, target: "other:其他" }]);
   // 族群少於上限 → 不加「其他」
   assert.deepEqual(groupSummary(groupBoardEntries([entry("Y", { theme: T("AI") })])).map((c) => c.name), ["AI"]);
   assert.deepEqual(groupSummary([]), []);
+});
+// ---------------------------------------------------------------------------
+// 族群 key 碰撞(驗證者 2026-10-04):產業字面「其他」、題材與產業同名、空白題材名
+// ---------------------------------------------------------------------------
+
+test("族群:產業字面「其他」= 沒有產業,與 null 併成同一個「其他」並排最後、不標產業", () => {
+  const es = [
+    entry("A", { theme: null, industry: "其他" }),
+    entry("B", { theme: null, industry: null }),
+    entry("C", { theme: null, industry: "  " }),
+    entry("D", { theme: T("AI", 1.2) }),
+  ];
+  const gs = groupBoardEntries(es);
+  assert.deepEqual(shape(gs), [["AI", "theme", ["D"]], [BOARD_OTHER_GROUP, "other", ["A", "B", "C"]]]);
+  assert.equal(gs.at(-1)!.kind, "other"); // 畫面上「產業」小標只給 kind === "industry"
+  assert.equal(new Set(gs.map((g) => g.key)).size, gs.length);
+});
+
+test("族群分布:7 個題材 + 產業「其他」→ 只有一顆「其他」,鍵唯一;6 個題材時「其他」指向保底組", () => {
+  const themes7 = ["T1", "T2", "T3", "T4", "T5", "T6", "T7"].map((n, k) => entry(`T${k}`, { theme: T(n) }));
+  const tail = entry("Z", { theme: null, industry: "其他" });
+  const chips = groupSummary(groupBoardEntries([...themes7, tail]));
+  assert.deepEqual(chips.map((c) => [c.name, c.n]), [["T1", 1], ["T2", 1], ["T3", 1], ["T4", 1], ["T5", 1], ["T6", 1], [BOARD_OTHER_GROUP, 2]]);
+  assert.equal(chips.filter((c) => c.name === BOARD_OTHER_GROUP).length, 1);
+  assert.equal(new Set(chips.map((c) => c.key)).size, chips.length);
+  assert.equal(chips.at(-1)!.target, "theme:T7"); // 捲到被併進「其他」的第一組(T7),保底組緊接其後
+  const six = groupSummary(groupBoardEntries([...themes7.slice(0, 6), tail]));
+  assert.deepEqual(six.at(-1), { key: "other:其他", name: BOARD_OTHER_GROUP, n: 1, target: "other:其他" });
+});
+
+test("族群:題材與產業同名 → 兩組,各自的 kind 與熱度", () => {
+  const es = [
+    entry("A", { theme: null, industry: "半導體業" }),
+    entry("B", { theme: T("半導體業", 3) }),
+    entry("C", { theme: T("半導體業", 3) }),
+  ];
+  const gs = groupBoardEntries(es, { sectors: [T("半導體業", 0.5)] });
+  assert.deepEqual(shape(gs), [["半導體業", "theme", ["B", "C"]], ["半導體業", "industry", ["A"]]]);
+  assert.deepEqual(gs.map((g) => [g.key, g.vs20]), [["theme:半導體業", 3], ["industry:半導體業", 0.5]]);
+  const chips = groupSummary(gs);
+  assert.equal(new Set(chips.map((c) => c.key)).size, chips.length);
+});
+
+test("族群:空白題材名不算題材,改用產業", () => {
+  assert.equal(hottestListedTheme(["", "  "], [T("", 2), T("  ", 3)]), null);
+  assert.deepEqual(hottestListedTheme([" ", "AI"], [T(" ", 9), T("AI", 1.1)]), T("AI", 1.1));
+  // payload 裡已帶空白名 → 依產業
+  const gs = groupBoardEntries([entry("A", { theme: T("  ", 2), industry: "航運業" })]);
+  assert.deepEqual(shape(gs), [["航運業", "industry", ["A"]]]);
+  // 舊 payload 從 radar.json 補查:空白名被略過
+  const old = entry("B", { industry: "航運業" });
+  delete old.theme;
+  assert.deepEqual(shape(groupBoardEntries([old], { stocks: [{ id: "B", themes: [""] }], themes: [T("", 5)] })), [["航運業", "industry", ["B"]]]);
 });

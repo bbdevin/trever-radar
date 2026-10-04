@@ -322,6 +322,8 @@ export const BOARD_VIEW_LABEL: Record<BoardViewMode, string> = { facts: "事實"
 export const BOARD_OTHER_GROUP = "其他";
 
 export interface BoardGroup {
+  /** `${kind}:${name}`:題材與產業同名時仍是兩組 */
+  key: string;
   name: string;
   kind: "theme" | "industry" | "other";
   /** 今日成交金額 / 近 20 日均;不知道時 null */
@@ -347,15 +349,19 @@ export function groupBoardEntries(entries: BullBoardEntry[], ctx: BoardGroupCont
   const groups = new Map<string, BoardGroup>();
   entries.forEach((e, i) => {
     const theme = e.theme !== undefined ? e.theme : hottestListedTheme(themesById.get(e.id), ctx.themes);
-    const industry = e.industry?.trim() || null;
-    const kind: BoardGroup["kind"] = theme ? "theme" : industry ? "industry" : "other";
-    const name = theme ? theme.name : industry ?? BOARD_OTHER_GROUP;
-    const vs20 = theme ? theme.vs20 : industry ? (sectorVs20.get(industry) ?? null) : null;
-    const g = groups.get(name);
+    const themeName = theme?.name.trim() || null;
+    // 產業字面就是「其他」(約 136 檔)等於沒有產業:併進同一個「其他」,不另開一組
+    const ind = e.industry?.trim() || null;
+    const industry = ind && ind !== BOARD_OTHER_GROUP ? ind : null;
+    const kind: BoardGroup["kind"] = themeName ? "theme" : industry ? "industry" : "other";
+    const name = themeName ?? industry ?? BOARD_OTHER_GROUP;
+    const vs20 = themeName ? (theme?.vs20 ?? null) : industry ? (sectorVs20.get(industry) ?? null) : null;
+    const key = `${kind}:${name}`;
+    const g = groups.get(key);
     if (g) {
       g.items.push({ e, i });
       if (g.vs20 == null) g.vs20 = vs20;
-    } else groups.set(name, { name, kind, vs20, items: [{ e, i }] });
+    } else groups.set(key, { key, name, kind, vs20, items: [{ e, i }] });
   });
   return [...groups.values()].sort(
     (a, b) =>
@@ -369,9 +375,11 @@ export const GROUP_SUMMARY_LABEL = "多方集中";
 export const GROUP_SUMMARY_MAX = 6;
 
 export interface GroupChip {
+  /** 唯一鍵(React key) */
+  key: string;
   name: string;
   n: number;
-  /** 點下去要捲到的族群(「其他」= 前幾名之後的第一個族群) */
+  /** 點下去要捲到的族群 key(「其他」= 前幾名之後的第一個族群) */
   target: string;
 }
 
@@ -382,9 +390,9 @@ export interface GroupChip {
 export function groupSummary(groups: BoardGroup[], max = GROUP_SUMMARY_MAX): GroupChip[] {
   const top = groups.filter((g) => g.kind !== "other").slice(0, max);
   const rest = groups.filter((g) => !top.includes(g));
-  const chips: GroupChip[] = top.map((g) => ({ name: g.name, n: g.items.length, target: g.name }));
+  const chips: GroupChip[] = top.map((g) => ({ key: g.key, name: g.name, n: g.items.length, target: g.key }));
   const restN = rest.reduce((n, g) => n + g.items.length, 0);
-  if (restN > 0) chips.push({ name: BOARD_OTHER_GROUP, n: restN, target: rest[0].name });
+  if (restN > 0) chips.push({ key: `other:${BOARD_OTHER_GROUP}`, name: BOARD_OTHER_GROUP, n: restN, target: rest[0].key });
   return chips;
 }
 

@@ -52,7 +52,7 @@ export default function BullBoardList({ board, radar }: { board: BullBoardJson |
 
   useEffect(() => {
     if (jump == null || mode !== "group") return;
-    document.querySelector(`[data-group-name="${CSS.escape(jump)}"]`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    document.querySelector(`[data-group-key="${CSS.escape(jump)}"]`)?.scrollIntoView({ behavior: "smooth", block: "start" });
     setJump(null);
   }, [jump, mode]);
 
@@ -135,7 +135,7 @@ export default function BullBoardList({ board, radar }: { board: BullBoardJson |
               >
                 {chips.map((c) => (
                   <button
-                    key={c.name}
+                    key={c.key}
                     type="button"
                     data-testid="bull-board-chip"
                     aria-label={`${c.name} ${c.n} 檔`}
@@ -197,8 +197,8 @@ function BoardGroups({ groups }: { groups: BoardGroup[] }) {
         const heat = groupHeatText(g.vs20);
         return (
           <section
-            key={g.name}
-            data-group-name={g.name}
+            key={g.key}
+            data-group-key={g.key}
             aria-label={`${g.name} ${g.items.length} 檔`}
             className="grid min-w-0 scroll-mt-[var(--header-offset)] gap-2.5"
           >

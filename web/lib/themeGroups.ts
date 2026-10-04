@@ -54,7 +54,8 @@ export function hottestListedTheme(
   if (!stockThemes?.length || !themeFlows?.length) return null;
   const vs20ByName = new Map<string, number | null>();
   for (const t of themeFlows) vs20ByName.set(t.name, t.vs20);
-  const name = pickHottestTheme(stockThemes.filter((n) => vs20ByName.has(n)), vs20ByName);
+  // 空白題材名不算題材(呼叫端改用產業)
+  const name = pickHottestTheme(stockThemes.filter((n) => n?.trim() && vs20ByName.has(n)), vs20ByName);
   return name == null ? null : { name, vs20: vs20ByName.get(name) ?? null };
 }
 
