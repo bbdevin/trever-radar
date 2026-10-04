@@ -1,5 +1,6 @@
+from itertools import groupby
+
 from sqlalchemy import create_engine, event
-from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from . import config
 from .schema import BRANCH_STOCK_PCTILE_ADDED_COLUMNS, metadata
@@ -16,11 +17,17 @@ def get_engine():
         if _engine.dialect.name == "sqlite":
             # 64 MiB page cache per connection (default is 2 MiB). docs/43: the clustered
             # WITHOUT ROWID tables re-visit the same pages within one query; with 2 MiB they
-            # are re-fetched from the OS each time. Only the cache size changes here.
+            # are re-fetched from the OS each time.
+            # synchronous=NORMAL only on WAL files (docs/44 D-P0.5): in WAL mode it
+            # cannot corrupt the DB, a power loss can at most drop the last commits;
+            # it saves an fsync per commit. temp_store / mmap stay at their defaults.
             @event.listens_for(_engine, "connect")
-            def _sqlite_cache(dbapi_conn, _record):
+            def _sqlite_pragmas(dbapi_conn, _record):
                 cur = dbapi_conn.cursor()
                 cur.execute("PRAGMA cache_size = -65536")
+                mode = cur.execute("PRAGMA journal_mode").fetchone()
+                if mode and str(mode[0]).lower() == "wal":
+                    cur.execute("PRAGMA synchronous = NORMAL")
                 cur.close()
     return _engine
 
@@ -31,6 +38,7 @@ def init_db():
     if engine.dialect.name == "sqlite":
         with engine.begin() as conn:
             conn.exec_driver_sql("PRAGMA journal_mode=WAL")  # readers don't block the writer
+            conn.exec_driver_sql("PRAGMA synchronous=NORMAL")  # this conn opened before WAL
             _migrate_sqlite(conn)
             _normalize_branch_names(conn)
 
@@ -202,25 +210,75 @@ def _migrate_sqlite(conn):
         """)
 
 
-def upsert(conn, table, rows: list[dict], chunk: int = 800) -> int:
-    """SQLite upsert on primary key. Returns number of rows written.
+def _bulk_write(conn, table, rows: list[dict], chunk: int, on_conflict: bool) -> int:
+    """Driver-level executemany: one prepared INSERT per run of rows sharing a key set.
 
-    Only columns present in the row dicts are updated on conflict — columns the
-    import doesn't carry (e.g. stocks.industry) keep their existing values.
+    docs/44 D-P0.5: the old SQLAlchemy multi-VALUES statement (800 rows x N binds,
+    compiled per chunk) dominated compute_all's write phase. SQLAlchemy is still
+    used for exactly what it did for us before: each column type's bind processor
+    (e.g. Boolean -> 0/1) and Python-side scalar defaults (stocks.is_active,
+    import_logs.rows) for columns a row leaves out. Only *consecutive* rows with
+    the same key set share a statement, so the original row order is kept (a later
+    row for the same PK still wins).
     """
     if not rows:
         return 0
+    dialect = conn.dialect
+    quote = dialect.identifier_preparer.quote
     pk = [c.name for c in table.primary_key.columns]
-    row_cols = [k for k in rows[0].keys() if k not in pk]
+    columns = table.c
     written = 0
-    for i in range(0, len(rows), chunk):
-        batch = rows[i : i + chunk]
-        stmt = sqlite_insert(table).values(batch)
-        update_cols = {name: stmt.excluded[name] for name in row_cols}
-        if update_cols:
-            stmt = stmt.on_conflict_do_update(index_elements=pk, set_=update_cols)
+    for key_set, run in groupby(rows, key=frozenset):
+        run = list(run)
+        unknown = key_set - set(columns.keys())
+        if unknown:
+            raise ValueError(f"{table.name}: unknown column(s) {sorted(unknown)}")
+        names = list(run[0])
+        defaults = []
+        for col in columns:
+            if col.name in key_set or col.default is None:
+                continue
+            if not col.default.is_scalar:
+                raise NotImplementedError(f"{table.name}.{col.name}: non-scalar default")
+            defaults.append((col.name, col.default.arg))
+        insert_cols = names + [n for n, _ in defaults]
+        sql = (f"INSERT INTO {quote(table.name)} ({', '.join(quote(n) for n in insert_cols)}) "
+               f"VALUES ({', '.join('?' * len(insert_cols))})")
+        if on_conflict:
+            target = ", ".join(quote(n) for n in pk)
+            update_cols = [n for n in names if n not in pk]
+            if update_cols:
+                sql += (f" ON CONFLICT ({target}) DO UPDATE SET "
+                        + ", ".join(f"{quote(n)} = excluded.{quote(n)}" for n in update_cols))
+            else:
+                sql += f" ON CONFLICT ({target}) DO NOTHING"
+        default_vals = tuple(v for _, v in defaults)
+        procs = [(n, columns[n].type._cached_bind_processor(dialect)) for n in names]
+        if any(p for _, p in procs):
+            def params(r):
+                return tuple(r[n] if p is None or r[n] is None else p(r[n])
+                             for n, p in procs) + default_vals
         else:
-            stmt = stmt.on_conflict_do_nothing(index_elements=pk)
-        conn.execute(stmt)
-        written += len(batch)
+            def params(r):
+                return tuple([r[n] for n in names]) + default_vals
+        for i in range(0, len(run), chunk):
+            conn.exec_driver_sql(sql, [params(r) for r in run[i : i + chunk]])
+        written += len(run)
     return written
+
+
+def upsert(conn, table, rows: list[dict], chunk: int = 5000) -> int:
+    """SQLite upsert on primary key. Returns number of rows written.
+
+    Only columns present in the row dicts are updated on conflict: columns the
+    import doesn't carry (e.g. stocks.industry) keep their existing values. Rows
+    may carry different key sets; each row updates only its own columns.
+    `chunk` = rows per executemany call (memory bound only, not semantics).
+    """
+    return _bulk_write(conn, table, rows, chunk, on_conflict=True)
+
+
+def insert_many(conn, table, rows: list[dict], chunk: int = 5000) -> int:
+    """Plain INSERT (a PK conflict raises), same executemany path as upsert()."""
+    return _bulk_write(conn, table, rows, chunk, on_conflict=False)
+

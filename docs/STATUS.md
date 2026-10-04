@@ -2,6 +2,11 @@
 
 > 單一進度真相。每完成一個里程碑就更新本檔。規格細節看各編號文件,別寫在這裡。
 
+## 2026-10-04 D-P0.5:批次寫入改 executemany＋WAL synchronous=NORMAL
+
+- `db.upsert()` 改 driver 層 executemany(每組欄位一句預備 `INSERT … ON CONFLICT DO UPDATE`),語意不變(只更新有帶的欄、key set 不同可混寫、回傳列數);新增 `insert_many()` 給分位計數整表重寫。WAL 連線 `synchronous=NORMAL`;cache 64 MB 保留,temp_store/mmap 不動。
+- 一致性:合成庫新舊程式跑 00:05 鏈,26 張表 PK 排序 SHA-256 全同;分點匯入/部分欄位更新另比對亦同。效能:合成庫分點統計寫入 71 s → 3 s;正式寫入段 212 s 估降至約 10–20 s,待 VPS 下一輪 log 確認。細節 `docs/44` §7。
+
 ## 2026-10-04 網站 W-P0 上線:登入單例、站內換頁、靜態快取、右滑提示
 
 - **登入狀態單例**(`web/lib/useSession.ts` `SessionProvider`):首頁 `app_profiles` 請求 14(正式 ~90)→ 1。profile 綁 user id(換帳號時不沿用前一人的核准);分頁回前景／token 更新時背景重查(不閃閘門),撤銷/核准切回分頁即生效;背景重查遇連線錯誤保留上次確定結果(資料仍由 Worker 擋)。

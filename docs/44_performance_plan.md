@@ -21,7 +21,7 @@
 |---|---|---|---|---|
 | **W-P0** 網站(純前端) | ①登入狀態單例 ②站內導航改客戶端換頁(`next/link`/`router.push`,個股頁 `key={id}`)③`_headers` 讓 `/_next/static/*` 一年快取 ④正式站基準量測 | 每次換頁省 1–2 s(中階手機);首頁 Supabase 請求 ~90 → 1 | 否(一般前端修正) | 只動 `web/` |
 | **D-P0** 維護窗(資料庫) | 離線把 `branch_trades_raw` + `daily_prices` 轉 WITHOUT ROWID、丟 1.33 GB 覆蓋索引、壓實;`page_size`/`ANALYZE` 各自以基準決定 | export 每輪 −9～−10 分(一天 −1 小時);夜間分位 −5～−8 分;9.03 → 6–6.5 GB | **是**(正式 DB 重建 + schema 變更 + 停機窗) | VPS 停寫一段時間,網站照常 |
-| **D-P0.5** 同批程式 | `db.py` 連線 PRAGMA(`synchronous=NORMAL`、`cache_size=-65536`、`mmap 256MB`;`temp_store` 維持 FILE);`upsert()` 改 executemany;export 分段計時 log | `compute_all` 寫入 212 s → 40–60 s;寫入段 −20～−40% | 否 | 只動程式,不改檔案格式 |
+| **D-P0.5** 同批程式 ✅ 2026-10-04 程式完成(見 §7) | `db.py` 連線 PRAGMA(`synchronous=NORMAL`(僅 WAL)、`cache_size=-65536`;`temp_store` 維持 FILE;**mmap 不設**);`upsert()` 改 executemany;export 分段計時 log | `compute_all` 寫入 212 s → 40–60 s;寫入段 −20～−40% | 否 | 只動程式,不改檔案格式 |
 | **P1** 資料格式拆檔(前後端一起) | 見 §3:個股 JSON 拆「核心＋K線歷史(內容雜湊檔名,一年快取)＋籌碼區段」,每輪只重算有變動的區段;`separators` 去空白、移除前端沒用到的 `af`;`no-store` → `no-cache`(304) | 一天 export ~2 h → ~35–45 分;手機首屏下載 0.5–1.5 MB raw → ~100 KB;重複看同一檔近乎 0 下載 | **格式請你過目**;Worker 規則需資安審查 + 核准 | 前端先上雙讀 → VPS 切格式 → Worker |
 | **P1** Worker 驗證優化 | 同時多個請求只查一次 Supabase;JWKS 本地驗簽;profile 快取 5 分 | 冷啟動每頁 −0.25～−0.5 s | **是 + 資安審查**(門鎖) | `cloudflare-data-worker/` |
 | **P2** 觀察後再決定 | 個股分頁元件按需載入、點擊預抓、爬蟲段不持 DB 鎖、權證分點增量彙總、`radar.json` 瘦身、權證分點列保留天數 | 邊際 | 部分需核准 | — |
@@ -96,3 +96,11 @@ stocks/chips/{id}.json      branch_history、branch_pnl_est、branch_pctile_coun
 2. ✅ `daily_prices` 同窗轉換(基準不過就自動剔除)。
 3. ✅ W-P0 前端三項:今晚開工,**驗證通過後 00:00 之後才推上線**。
 4. 待決:權證分點列保留天數(資料刪除,不決定則 12–15 個月後再壓實一次)。
+
+## 7. D-P0.5 執行紀錄(2026-10-04)
+
+- **`db.upsert()`**:由 SQLAlchemy 多列 VALUES(每 800 列一句、每句重新編譯)改為 driver 層 `executemany`,每組欄位一句預備好的 `INSERT … ON CONFLICT(pk) DO UPDATE SET col=excluded.col`。語意不變:只更新 row 內有的欄、沒帶的欄保留舊值;全 PK 列 → `DO NOTHING`;Python 端 scalar default(`stocks.is_active`、`import_logs.rows`)與型別綁定(Boolean→0/1)照 SQLAlchemy 原規則;**連續**同 key set 的列共用一句(原順序保留,同 PK 後列勝出),key set 不同也能混寫;回傳寫入列數。新增 `db.insert_many()`(純 INSERT,同一路徑)給整表 DELETE+INSERT 的 `branch_stock_pctile_counts`。`compute_branch_stats`(整表重寫)、分點匯入 `upsert_branch_trades`、`daily_scores`、指標、PIT 都經 `upsert()` 自動受益。
+- **PRAGMA**:連線事件在 journal_mode=WAL 時設 `synchronous=NORMAL`(WAL 下斷電最多丟最後幾次 commit,不會損壞);`init_db` 切 WAL 的那條連線同步設定。`cache_size=-65536` 保留;`temp_store`、mmap 維持預設。
+- **一致性**:合成庫(`make_synthetic_branch_db.py`,預設 60 檔 ×120 日,及 600 檔 ×250 日 ×400 分點、239 萬分點列)以 `compute_parity.py --old-code <HEAD 匯出> --new-code .` 跑 00:05 鏈(branch-stats/PIT/pctile/scores,小庫另含 indicators),**全部 26 張表(原始＋衍生)PK 排序 SHA-256 相同**。分點匯入／stocks 部分欄位／daily_scores 部分欄位更新另以腳本新舊程式各寫一份,含 `typeof` 的雜湊相同。
+- **效能(本機 PC)**:600 檔合成庫 `compute-branch-stats` 寫入段 71 s → 3 s(21.3 萬列),整步 113 s → 49 s;單測 30 萬列 `branch_stock_stats` DELETE+upsert 129 s → 3 s;分點匯入 9 萬列 23 s → 3.6 s;daily_scores 9,000 列 1.6 s → 0.09 s。正式 `compute_all` 寫入段(114 萬列,212–227 s)依比例估 **約 10–20 s**(VPS CPU 較慢、真實索引較多,以 VPS 下一輪 `branch stats timing: write=` 為準)。`branch-stock-pctile-counts` 本來就是 executemany,只省綁定開銷(87 → 76 s,計算為主)。
+- 未做:export 分段計時已於 WITHOUT ROWID 批次上線(`export timing:`),本批不動 `json_export.py`。
