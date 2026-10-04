@@ -1,7 +1,7 @@
-import { AlertTriangle, CandlestickChart } from "lucide-react";
+import { CandlestickChart } from "lucide-react";
 import type { ReactNode } from "react";
 
-import ChangeText, { CHANGE_CLASS } from "@/components/ChangeText";
+import FactLine, { PRIMARY_PILL, SOURCE_TONE } from "@/components/FactLine";
 import { HowTo, PriceLadder, VolumeSplit } from "@/components/PriceLevelsCard";
 import SectionHeader from "@/components/SectionHeader";
 import {
@@ -15,38 +15,15 @@ import {
   SECTION_SHORT,
   SIDE_DEFINITION,
   SIDE_LABEL,
-  TF_CHIP,
   groupColumn,
   type BullBearItem,
   type BullBearSummary,
   type Section,
   type SectionBuckets,
-  type Source,
 } from "@/lib/bullBear";
 import { CHIPS_HOWTO_LINES, PL_LABELS, insufficientText, type PriceLevelsView } from "@/lib/priceLevels";
 import type { MetricTone, TechMetric } from "@/lib/techMetrics";
 import { cn } from "@/lib/utils";
-
-/** 群組頭小膠囊的家族色(docs/19 §4 的同一組 token + /12 淡底;零新色票)。 */
-const ACCENT2_PILL = "bg-[color:var(--accent-2)]/12 text-[color:var(--accent-2)]";
-const PRIMARY_PILL = "bg-primary/12 text-primary";
-const WARN_PILL = "bg-warn/12 text-warn";
-const INK_PILL = "bg-[color:var(--ink-2)]/12 text-[color:var(--ink-2)]";
-const SOURCE_TONE: Record<Source, string> = {
-  chips: ACCENT2_PILL,
-  inst: ACCENT2_PILL,
-  margin: ACCENT2_PILL,
-  holders: ACCENT2_PILL,
-  futures: ACCENT2_PILL,
-  tech: PRIMARY_PILL,
-  price: PRIMARY_PILL,
-  levels: PRIMARY_PILL,
-  strategy: PRIMARY_PILL,
-  warrant: WARN_PILL,
-  theme: WARN_PILL,
-  company: INK_PILL,
-  other: INK_PILL,
-};
 
 /** 兩欄的側別淡底、重點列的較深底與左側色條(--up 紅 / --down 綠)。 */
 const SIDE_TINT: Record<"bull" | "bear", { col: string; key: string }> = {
@@ -311,22 +288,7 @@ function FactRow({ it, className, lagDate }: { it: BullBearItem; className?: str
   const date = it.date ?? (lagDate ? it.dataDate : undefined);
   return (
     <li className={cn("min-w-0 break-words text-[12.5px] leading-snug text-foreground", className)}>
-      {it.risk && it.side === "bear" && <AlertTriangle aria-hidden className="mr-1 inline h-3 w-3 -translate-y-px text-down" />}
-      {it.tf && it.tf !== "D" && (
-        <span className="mr-1 inline-flex -translate-y-px items-center rounded-[4px] border border-[color:var(--line)] px-1 text-[10.5px] font-semibold leading-[1.35] text-[color:var(--ink-2)]">
-          {TF_CHIP[it.tf]}
-        </span>
-      )}
-      {it.segments ? (
-        it.segments.map((s, i) => (
-          <span key={i} className={s.kind ? CHANGE_CLASS[s.kind] : undefined}>
-            {s.t}
-          </span>
-        ))
-      ) : (
-        <ChangeText text={it.text} prices={false} />
-      )}
-      {date && <span className="num ml-1.5 whitespace-nowrap text-[11px] text-muted-foreground">{date}</span>}
+      <FactLine text={it.text} segments={it.segments} tf={it.tf} riskIcon={it.risk && it.side === "bear"} date={date} />
     </li>
   );
 }

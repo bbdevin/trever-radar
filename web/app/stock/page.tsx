@@ -54,18 +54,16 @@ import StockPageSkeleton from "@/components/StockPageSkeleton";
 import WatchlistButton from "@/components/WatchlistButton";
 import { normalizeBranchPctile } from "@/lib/branchPctile";
 import { chartLevels, priceLevelsView } from "@/lib/priceLevels";
-import { deriveAllFacts } from "@/lib/facts";
-import { buildBullBear, topOfSide, type BullBearSummary } from "@/lib/bullBear";
+import { topOfSide, type BullBearSummary } from "@/lib/bullBear";
+import { summaryFromStockJson } from "@/lib/bullBearFromStock";
 import { techMetrics } from "@/lib/techMetrics";
 import { useBranchTrack } from "@/lib/branchTrackList";
-import { pocketBadgeVisible } from "@/lib/branchTrackResolve";
 import BullBearPanel, { CountChip } from "@/components/BullBearPanel";
-import { pocketDisplayText } from "@/components/PocketBadges";
 import { normalizePnl } from "@/lib/branchPnl";
 import { dataFetch } from "@/lib/dataFetch";
 import { OFFLINE_DATA_COPY, isBrowserOffline } from "@/lib/pwa";
 import type { Buyback, CompanyTheme, RecentThemeHeat, StockJson } from "@/lib/types";
-import { MARKET_LABEL, chgClass, fmtE8, fmtX, legacyReasonText, toneClass } from "@/lib/format";
+import { MARKET_LABEL, chgClass, fmtE8, fmtX, toneClass } from "@/lib/format";
 import { signInWithGoogle, useSession } from "@/lib/useSession";
 import { cn, pillTabClass } from "@/lib/utils";
 
@@ -191,22 +189,8 @@ function StockView() {
   const { muted } = useBranchTrack();
   const bullBear = useMemo<BullBearSummary | null>(() => {
     if (!data) return null;
-    const lastT = data.candles[data.candles.length - 1]?.t ?? "";
-    return buildBullBear({
-      rawReasons: data.raw_reasons,
-      reasons: data.reasons ?? [],
-      rawRisks: data.raw_risks,
-      risks: data.risks ?? [],
-      technical: data.technical,
-      pocketTags: data.pocket_tags?.filter(
-        (t) => !(t.code === "T1_TRACKED_BUY" || t.code === "K1_KEY_BUY") || pocketBadgeVisible(t.branches, muted),
-      ),
-      // docs/46 v2:技術/籌碼/壓力三段的前端事實(含 price_levels 的 F 句)
-      derivedFacts: deriveAllFacts(data, lastT, muted),
-      asOf: lastT,
-      reasonText: (code, text) => legacyReasonText(code, text),
-      pocketText: pocketDisplayText,
-    });
+    // 與首頁多方榜建置器同一個組裝(docs/48 §1)
+    return summaryFromStockJson(data, muted);
   }, [data, muted]);
 
   // 分點理由過濾：B* 系列(分點) + S11 起的籌碼事件策略

@@ -889,6 +889,63 @@ export interface RadarJson {
   stocks: RadarStock[];
 }
 
+/** bull_board.json 卡片上的一條事實(docs/48 §1.1)。沒有 rank/magnitude/score/position。 */
+export interface BullBoardFact {
+  code: string | null;
+  source: string;
+  section: "tech" | "chips" | "levels";
+  text: string;
+  segments?: { t: string; kind?: "price" | "up" | "down" | "flat" }[];
+  /** 技術段的週期;日K 不輸出 */
+  tf?: "W" | "M";
+}
+
+export interface BullBoardBearFact extends BullBoardFact {
+  risk: boolean;
+  /** 滯後資料的日期(MM/DD);當日事實沒有 */
+  date?: string;
+}
+
+export interface BullBoardEntry {
+  id: string;
+  name: string;
+  market: "twse" | "tpex";
+  industry: string | null;
+  close: number | null;
+  chg_pct: number | null;
+  turnover: number | null;
+  final: number | null;
+  state: RadarStock["state"] | null;
+  bull_key_n: number;
+  bear_key_n: number;
+  bull: BullBoardFact[];
+  bear: BullBoardBearFact | null;
+  counts: Record<"tech" | "chips" | "levels", { bull: number; bear: number }>;
+}
+
+/**
+ * 首頁「多方榜」(docs/48)。**三態**:檔不存在(404)= 沒算過;`qualified 0` 且 `entries []`
+ * = 算過、沒有股票入榜;非空 = 名單。entries 的順序就是排序,畫面不顯示名次。
+ */
+export interface BullBoardJson {
+  version: string;
+  data_date: string;
+  generated_at: string;
+  radar_generated_at: string;
+  /** 紀錄(bull_board_log)最早的資料日;沒有紀錄時 null */
+  log_from: string | null;
+  universe: number;
+  qualified: number;
+  min_bull_key: number;
+  inputs: {
+    insti: { date: string | null; stale: boolean } | null;
+    branch: { date: string | null; stale: boolean } | null;
+    margin: { date: string | null; stale: boolean } | null;
+    holders_week: string | null;
+  };
+  entries: BullBoardEntry[];
+}
+
 export interface MetaJson {
   generated_at: string;
   datasets: {
