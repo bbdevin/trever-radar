@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  CHIPS_HOWTO_LINES,
   HOWTO_LINES,
   MAX_ROWS_PER_SIDE,
   PL_LABELS,
@@ -191,7 +192,7 @@ test("K 線價位線:上下各 ≤2、取最近、有日期的換回原始價", 
 });
 
 test("禁用詞鎖:所有會上畫面的字", () => {
-  const texts: string[] = [...HOWTO_LINES, insufficientText(3), ...Object.values(PL_LABELS)];
+  const texts: string[] = [...HOWTO_LINES, ...CHIPS_HOWTO_LINES, insufficientText(3), ...Object.values(PL_LABELS)];
   for (const pl of [ok(), ok({ ma_align: "bull", new_high_20: true, vol_price_2d: "up" }), ok({ new_low_20: true, vol_price_2d: "down" })]) {
     for (const rsi of [30, 60, 90]) {
       texts.push(...priceLevelFacts(pl, "2026-10-03", rsi).map((f) => f.text));
