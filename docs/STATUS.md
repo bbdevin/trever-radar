@@ -2,6 +2,11 @@
 
 > 單一進度真相。每完成一個里程碑就更新本檔。規格細節看各編號文件,別寫在這裡。
 
+## 2026-10-04 使用者決定:依 Fable 建議(多方榜、融資共動)
+
+- **首頁「綜合」改為「多方榜」**(Fable 規劃 2026-10-04):docs/20 §1 例外核准(新名單規則,只用既有事實計數與 rank 表,不新增分數/策略、不改 `final`);名單紀錄 `bull_board_log/*.jsonl` 隨 deploy 上 Cloudflare 作異地副本(核准);隔天表現走 `docs/48` 事前登記,≥60 市場日後檢定,過了才顯示次數。
+- **融資 × 分點集中度**:採 Fable 方案——新增背景/空方共動事實(`C_MARGIN_UP_CONC`/`C_MARGIN_UP_DISPERSED`/`C_MARGIN_BUILDUP_CONC`);`C_MARGIN_HOT` 維持空方,有集中證據時 rank 3→2;**不採選項 B**(不改背景);評分 `R_MARGIN_HOT` 不改。
+
 ## 2026-10-04 日更排程優化:輪詢到公布為止(`docs/47`;程式與正式 crontab 已上線)
 
 - ✅ 2026-10-04 13:09 使用者授權後由 agent 在 VPS 套用(備份 `~/crontab-backup-20261004-1309.txt`;6 行改時刻 + 週一 11:00 `weekly-refdata.sh`);程式 `7badba4` 已 pull。兩輪獨立 verifier(第二輪 9 項全 CONFIRMED)。回滾:`crontab ~/crontab-backup-20261004-1309.txt`。第一週依 `docs/47` §5 grep 驗證。
