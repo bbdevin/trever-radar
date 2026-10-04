@@ -1,7 +1,9 @@
 # 45 — 技術分頁「價格位置」:多空事實並陳(規劃)
 
 > 2026-10-03 Fable Planner 唯讀規劃。使用者:「個股的技術資訊都講正面的,能否也講負面的——壓力線、均線、前方大量套牢賣壓、低點多少」;範圍 = 個股頁「技術」分頁。
-> 狀態:📝 規劃,待使用者決定 §6;實作排在 `docs/43` 轉換工具那批 `json_export.py` 修改 commit 之後(同檔,避免互相覆蓋)。
+> 狀態:✅ **P0-a / P0-b / P1 已實作(2026-10-04,未上線;JSON 要等 VPS 下一輪 export-json)**。§6 使用者已決定。多空句子後來改由 `docs/46` 多空摘要呈現(卡內不再畫「多方 N | 空方 N」兩列,句型見 `web/lib/priceLevels.ts priceLevelFacts()`)。
+>
+> 實作:`pipeline/radar/compute/price_levels.py`(純函式,F1–F7)→ `json_export.py` 每檔迴圈用已讀進的 K 棒算(`export timing:` 多一段 `levels=`;無新查詢)→ `stocks/{id}.json` 頂層 `price_levels`(K 棒 <20 根 → `{"status":"insufficient"}`;完全沒有 K 棒 → `null`)。成交量也依 af 反向還原(`v × af_today / af`),所以分割前後逐值相等;剛好落在現價的量(如一價到底的漲跌停)兩邊都不算,另給 `at`。密集區格線以現價為起點、寬 1%,同量取近者。前端 `web/lib/priceLevels.ts`(階梯 ≤5 列/側:前高前低與密集區必列、剩下給最近的均線;同價同日合併標最長視窗;今日即 N 日高低不進階梯而成為事實句)、`web/components/PriceLevelsCard.tsx`(技術→多空分頁)、K 線「壓力/支撐」chip 預設關(前高前低用該日 af 換回原始價、密集區取中點)。測試:`pipeline/tests/test_price_levels.py`、`web/lib/priceLevels.test.ts`;合成 DB 匯出 parity:除新鍵外其餘鍵逐位元相同。
 
 ## 1. 現況
 

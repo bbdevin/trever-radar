@@ -2,6 +2,12 @@
 
 > 單一進度真相。每完成一個里程碑就更新本檔。規格細節看各編號文件,別寫在這裡。
 
+## 2026-10-04 個股「多空」分頁 + 價格位置(docs/45 P0/P1 + docs/46,程式完成、未上線)
+
+- **資料**(`json_export.py`):個股 JSON 新鍵 `price_levels`(`compute/price_levels.py` 純函式:還原均線 5–240、N 日高低+日期、20 日新高/新低、2 日量價、近 120 日現價之上/之下成交比例、上下最密集 1% 區)與 `raw_risks`(帶 code 的完整風險項 ≤7;未評分 = [])。不進 technical、不進 radar.json、不動任何分數與 Armed 狀態;`export timing:` 多一段 `levels=`。合成 DB parity:其餘鍵逐位元相同。正式 JSON 要等 VPS 下一輪 export-json 才有這兩鍵,前端對舊 JSON 照常(價格位置卡顯示「還沒有」、多空用風險字串回推)。
+- **前端**:原「技術」分頁改名「多空」移到 K線 右邊(key 仍 `tech`)。分頁內:多空摘要(`web/lib/bullBear.ts` + `BullBearPanel`;理由/風險/口袋/價格事實分多方、空方、背景;同方向同一天的價格事實取代 T1_MA20/T1_MA60/T1_BULL_MA/T2_20D_HIGH/T4/T5_RSI)→ 價格位置卡(階梯、上下成交雙色條、怎麼算;取代 MA20/MA60 兩格)→ 技術指標(技術分/RSI/量比、觀察/失效、收合的技術訊號原文,含以前沒畫的 `t.risks`)。標頭只留綜合分 + 「多方 N · 空方 N ›」+ 各一條最前面的事實。K 線均線列「壓力/支撐」chip 預設關,開了畫上下各 2 條虛線。
+- **測試**:`test_price_levels.py`(golden、分割不變、決定性、export 鍵)、`test_bull_bear_codes.py`(後端每個 code 都在 `SIDE_BY_CODE`)、`priceLevels.test.ts`、`bullBear.test.ts`(每個 code 恰一次、舊 JSON、禁用詞鎖)。
+
 ## 2026-10-04 網站 W-P0 上線:登入單例、站內換頁、靜態快取、右滑提示
 
 - **登入狀態單例**(`web/lib/useSession.ts` `SessionProvider`):首頁 `app_profiles` 請求 14(正式 ~90)→ 1。profile 綁 user id(換帳號時不沿用前一人的核准);分頁回前景／token 更新時背景重查(不閃閘門),撤銷/核准切回分頁即生效;背景重查遇連線錯誤保留上次確定結果(資料仍由 Worker 擋)。
