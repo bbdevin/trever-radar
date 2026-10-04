@@ -155,11 +155,11 @@ ALLOWLIST: list[tuple[str, str, str]] = [
         "指示整段刪除。",
     ),
     (
-        "web/components/PocketBadges.tsx",
+        "web/lib/pocketText.ts",
         "關鍵分點同買",
         "K1_KEY_BUY → T1_TRACKED_BUY 改名(見 9a79fe7 / 998acaa)的顯示期轉場常"
         "數,與上面 format.ts 那條同一形狀:舊 payload 的 tag `text` 仍是這個舊"
-        "字串,`displayText` 只拿它比對,換成『追蹤分點同買』之後才顯示,舊字串"
+        "字串,`pocketDisplayText` 只拿它比對,換成『追蹤分點同買』之後才顯示,舊字串"
         "本身不會到畫面上。這是保留名稱『關鍵分點』唯一被允許存在的地方——因為"
         "它的用途正是把那個名字從畫面上拿掉。新 export 上線後與 META 裡的 "
         "K1_KEY_BUY 條目一起刪除。",

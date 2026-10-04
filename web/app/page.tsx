@@ -19,14 +19,17 @@ import { useSession, signInWithGoogle } from "@/lib/useSession";
 import { cn, navPillClass, pillTabClass } from "@/lib/utils";
 import { dataFetch } from "@/lib/dataFetch";
 import { OFFLINE_DATA_COPY, isBrowserOffline } from "@/lib/pwa";
-import type { ListKey, MetaJson, RadarJson, StrategyMeta } from "@/lib/types";
+import type { BullBoardJson, ListKey, MetaJson, RadarJson, StrategyMeta } from "@/lib/types";
 import { SOURCE_LABEL, fmtE8 } from "@/lib/format";
 import { UPDATE_SCHEDULE, staleAutoFills, staleFreshnessLines } from "@/lib/freshness";
-import { scoreListEmptyText } from "@/lib/scoreList";
+import { BOARD_DEFINITION, BOARD_TAB_LABEL } from "@/lib/bullBoard";
+import BullBoardList from "@/components/BullBoardList";
 
 // TabKey for the main task-oriented tabs（資券嵌首頁，手機 BottomNav 不另開第 5 項）
+// 2026-10-04 「綜合」分頁換成「多方榜」(docs/48;使用者核准)。radar.json 的 lists.score 契約保留,只是沒有分頁;
+// 舊連結 ?tab=score 落回預設。
 type TabKey =
-  | "score"
+  | "board"
   | "armed"
   | "triggered"
   | "extended"
@@ -43,9 +46,9 @@ type ScanModeKey = "hot" | "surge" | "strong" | "weak";
 
 const TABS: { key: TabKey; label: string; hint: string; icon: any }[] = [
   {
-    key: "score",
-    label: "綜合",
-    hint: "依盤後綜合分排序（分點／權證／技術／法人加權 − 風險扣分）。≥65 為觀察門檻——用來掃「今天籌碼與技術都偏強」的名單。",
+    key: "board",
+    label: BOARD_TAB_LABEL,
+    hint: BOARD_DEFINITION,
     icon: IconRadar,
   },
   {
@@ -156,7 +159,7 @@ function isRetiredStrategy(meta: StrategyMeta | undefined) {
   return meta?.status === "retired";
 }
 
-const THEME_SORT_TABS = new Set<TabKey>(["score", "scan", "pocket"]);
+const THEME_SORT_TABS = new Set<TabKey>(["scan", "pocket"]);
 const LS_LIST_SORT = "trever.home.listSort.v1";
 type ListSort = "score" | "theme";
 
@@ -190,7 +193,9 @@ function RadarView() {
   const [radar, setRadar] = useState<RadarJson | null>(null);
   const [meta, setMeta] = useState<MetaJson | null>(null);
   const [error, setError] = useState(false);
-  const [tab, setTab] = useState<TabKey>("score");
+  const [tab, setTab] = useState<TabKey>("board");
+  // 多方榜(docs/48):undefined = 載入中;null = 檔不存在/讀取失敗(這一版沒算過)
+  const [board, setBoard] = useState<BullBoardJson | null | undefined>(undefined);
   const [scanMode, setScanMode] = useState<ScanModeKey>("hot");
   const [strategy, setStrategy] = useState<string>("S11_INSTI_BREAKOUT");
   // F4.2: 已展開的策略組(session 內即可,不持久化);預設只展開籌碼事件。
@@ -270,11 +275,15 @@ function RadarView() {
       .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
       .then(setMeta)
       .catch(() => {});
+    dataFetch("/data/bull_board.json")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((b: BullBoardJson | null) => setBoard(b))
+      .catch(() => setBoard(null));
   }, []);
 
   const shown = useMemo(() => {
     // margin 與 futures 有自己的資料來源(不是 radar.lists 的股票清單),不走這裡。
-    if (!radar || tab === "margin" || tab === "futures") return [];
+    if (!radar || tab === "margin" || tab === "futures" || tab === "board") return [];
     const byId = new Map(radar.stocks.map((s) => [s.id, s]));
     if (tab === "mark") {
       return (radar.strategies?.[strategy] ?? []).map((id) => byId.get(id)!).filter(Boolean);
@@ -296,7 +305,7 @@ function RadarView() {
     setTab(next);
     try {
       const url = new URL(window.location.href);
-      if (next === "score") url.searchParams.delete("tab");
+      if (next === "board") url.searchParams.delete("tab");
       else url.searchParams.set("tab", next);
       window.history.replaceState(null, "", url.pathname + url.search + url.hash);
     } catch {
@@ -431,7 +440,10 @@ function RadarView() {
             const count =
               t.key === "scan"
                 ? radar.lists?.[scanMode]?.length ?? 0
-                : t.key === "futures"
+                : t.key === "board"
+                  // 沒算過或還在載入 → 不顯示數字(0 會講成「算過、沒人入榜」)
+                  ? board?.qualified ?? null
+                  : t.key === "futures"
                   // 缺鍵 = 沒有算過 → 不顯示數字。顯示 0 會把「沒算」講成「今天沒有異常」。
                   ? radar.futures_volume_anomalies?.length ?? null
                   : t.key === "mark" || t.key === "margin"
@@ -459,7 +471,7 @@ function RadarView() {
             );
           })}
         </ScrollHint>
-        {tab !== "margin" && (
+        {tab !== "margin" && tab !== "board" && (
           <p
             className="mt-2.5 rounded-[var(--r-md)] border border-border/80 bg-muted/25 px-3 py-2 text-[12.5px] leading-relaxed text-foreground/90"
             role="note"
@@ -676,7 +688,11 @@ function RadarView() {
         </div>
       )}
 
-      {tab === "margin" ? (
+      {tab === "board" ? (
+        <div className="mb-4">
+          <BullBoardList board={board} radar={radar} />
+        </div>
+      ) : tab === "margin" ? (
         <div className="mb-4 animate-[fadeUp_0.35s_ease_backwards]">
           <MarginUsageRank embedded />
         </div>
@@ -747,9 +763,7 @@ function RadarView() {
           {tab === "pocket"
             ? (radar.pocket_note
               ?? "口袋名單要至少兩個獨立理由(地緣/追蹤分點/題材/未發動或集中度)才入榜。地緣目前僅涵蓋每日評分池,且要等公司住址匯入後才會出現。")
-            : tab === "score" && scoreListEmptyText(radar.score_list_meta)
-            ? scoreListEmptyText(radar.score_list_meta)
-            : tab === "score" || tab === "mark"
+            : tab === "mark"
             ? "今日無達門檻的標的。寧缺勿濫是一大設計原則——沒有符合條件時不硬湊，也可能是盤後分點尚未更新。"
             : "今日此榜無符合條件的標的，或該類資料尚未更新。稍後回來再看，系統會依交易所公佈時間分批更新。"}
         </div>
