@@ -1,4 +1,4 @@
-import { ChevronDown } from "lucide-react";
+import { Info } from "lucide-react";
 
 import {
   HOWTO_LINES,
@@ -12,7 +12,7 @@ import { cn } from "@/lib/utils";
 
 /**
  * 價格位置的小元件(docs/45 §4):價格階梯(上方紅 +%、現價藍帶、下方綠 −%)、現價上下成交量雙色條、
- * 「怎麼算」收合。docs/46 v2 起由多空分頁「壓力分析」段組裝(BullBearPanel),不再單獨成卡。
+ * 「怎麼算」精簡說明(常駐)。docs/46 起由多空分頁「技術分析」卡內的壓力分析小節組裝(BullBearPanel),不再單獨成卡。
  * 只顯示事實,不影響任何分數。
  */
 export function PriceLadder({ above, below, close }: { above: LadderRow[]; below: LadderRow[]; close: number }) {
@@ -77,16 +77,17 @@ export function VolumeSplit({ volume }: { volume: { window: number; above: numbe
   );
 }
 
-export function HowTo() {
+/** 「怎麼算」精簡說明:常駐顯示的幾行小字(使用者不喜歡收合,docs/46 §6.8)。 */
+export function HowTo({ lines = HOWTO_LINES, testId = "price-levels-howto" }: { lines?: readonly string[]; testId?: string }) {
   return (
-    <details className="group min-w-0 rounded-[var(--r-sm)] border border-[color:var(--line)]">
-      <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-2 px-3 text-[12.5px] font-semibold text-[color:var(--ink-2)] [&::-webkit-details-marker]:hidden">
+    <div data-testid={testId} className="grid min-w-0 gap-0.5 border-l-2 border-[color:var(--line)] pl-2.5">
+      <p className="flex items-center gap-1 text-[11.5px] font-bold text-[color:var(--ink-2)]">
+        <Info size={12} aria-hidden />
         {PL_LABELS.howto}
-        <ChevronDown size={16} aria-hidden className="transition-transform duration-200 group-open:rotate-180" />
-      </summary>
-      <ul className="grid gap-1.5 px-3 pb-3 text-[12px] leading-relaxed text-[color:var(--ink-2)]">
-        {HOWTO_LINES.map((l) => <li key={l}>{l}</li>)}
+      </p>
+      <ul className="grid gap-0.5 text-[11.5px] leading-snug text-[color:var(--ink-2)]">
+        {lines.map((l) => <li key={l}>{l}</li>)}
       </ul>
-    </details>
+    </div>
   );
 }

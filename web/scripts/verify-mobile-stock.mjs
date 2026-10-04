@@ -140,6 +140,11 @@ try {
     assert(await page.getByTestId(`bullbear-section-${sec}`).isVisible(), `多空分頁缺少 ${sec} 段`);
   }
   assert((await page.getByTestId("bullbear-panel").locator("[aria-expanded]").count()) === 0, "多空分頁不應有展開按鈕(全部列出)");
+  assert((await page.getByTestId("bullbear-panel").locator("details").count()) === 0, "多空分頁不應有收合區(details),「怎麼算」常駐顯示");
+  // docs/46 §6.8:壓力分析併入技術分析卡成小節;籌碼分析為第二張卡。
+  assert((await page.getByTestId("bullbear-section-tech").getByTestId("bullbear-section-levels").count()) === 1, "壓力分析應是技術分析卡內的小節");
+  { const cards = await page.getByTestId("bullbear-panel").evaluate((el) => [...el.children].map((c) => c.getAttribute("data-testid")));
+    assert(cards.join() === "bullbear-overview,bullbear-section-tech,bullbear-section-chips", `多空卡片順序應為 總覽→技術→籌碼(實際 ${cards})`); }
   // docs/46 §6.7:技術指標併入技術分析段頂(指標列),不再有獨立卡片與「技術訊號原文」收合區。
   { const techSec = page.getByTestId("bullbear-section-tech");
     const metrics = techSec.getByTestId("tech-metrics");

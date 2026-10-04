@@ -156,6 +156,8 @@ export const SOURCE_ORDER: readonly Source[] = [
 export const SECTION_ORDER: readonly Section[] = ["tech", "chips", "levels"];
 export const SECTION_LABEL: Record<Section, string> = { tech: "技術分析", chips: "籌碼分析", levels: "壓力分析" };
 export const SECTION_SHORT: Record<Section, string> = { tech: "技術", chips: "籌碼", levels: "壓力" };
+/** 多空分頁的畫面順序:技術分析卡(內含壓力分析小節)→ 籌碼分析卡;總覽列計數照此序。 */
+export const PANEL_ORDER: readonly Section[] = ["tech", "levels", "chips"];
 /** 欄頭:壓力段左欄是下方支撐、右欄是上方壓力 */
 export const COLUMN_LABEL: Record<Section, Record<"bull" | "bear", string>> = {
   tech: { bull: "多方", bear: "空方" },

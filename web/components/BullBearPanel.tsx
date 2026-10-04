@@ -1,4 +1,4 @@
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, CandlestickChart } from "lucide-react";
 import type { ReactNode } from "react";
 
 import ChangeText, { CHANGE_CLASS } from "@/components/ChangeText";
@@ -9,9 +9,9 @@ import {
   CONTEXT_LABEL,
   COUNT_NOTE,
   EMPTY_SIDE,
+  PANEL_ORDER,
   PANEL_TITLE,
   SECTION_LABEL,
-  SECTION_ORDER,
   SECTION_SHORT,
   SIDE_DEFINITION,
   SIDE_LABEL,
@@ -20,9 +20,10 @@ import {
   type BullBearItem,
   type BullBearSummary,
   type Section,
+  type SectionBuckets,
   type Source,
 } from "@/lib/bullBear";
-import { PL_LABELS, insufficientText, type PriceLevelsView } from "@/lib/priceLevels";
+import { CHIPS_HOWTO_LINES, PL_LABELS, insufficientText, type PriceLevelsView } from "@/lib/priceLevels";
 import type { MetricTone, TechMetric } from "@/lib/techMetrics";
 import { cn } from "@/lib/utils";
 
@@ -56,10 +57,10 @@ const SIDE_TINT: Record<"bull" | "bear", { col: string; key: string }> = {
 const CARD = "grid min-w-0 gap-3 rounded-[var(--r-lg)] border border-border bg-card p-3.5 shadow-[var(--shadow-card)]";
 
 /**
- * 多空分頁(docs/46 v2 §1):總覽列 → 技術分析 / 籌碼分析 / 壓力分析三段。每段左多方(紅)、右空方(綠),
- * 中間 1px 分隔線貫穿較高的那一欄;全部列出,不收合。計數是事實數量,不相減、不比大小。
- * 技術段頭下接指標列(技術分/RSI14/量比/觀察價/失效價,docs/46 §6.7);壓力段兩欄之下接價格階梯、
- * 現價上下成交與「怎麼算」(docs/45)。
+ * 多空分頁(docs/46 v2 §1、§6.8):總覽列 → 技術分析卡 → 籌碼分析卡。每段左多方(紅)、右空方(綠);
+ * 全部列出,不收合。計數是事實數量,不相減、不比大小。
+ * 技術卡:指標列(docs/46 §6.7)→ 技術兩欄 → 「壓力分析」小節(小標+自己的計數、下方支撐/上方壓力兩欄、
+ * 價格階梯、現價上下成交、常駐「怎麼算」,docs/45)。籌碼卡底附常駐門檻說明。
  */
 export default function BullBearPanel({
   summary,
@@ -94,7 +95,7 @@ export default function BullBearPanel({
           <span className="text-muted-foreground">{COUNT_NOTE}</span>
         </p>
         <p className="num flex flex-wrap gap-x-2 gap-y-0.5 text-[12.5px] font-semibold text-foreground">
-          {SECTION_ORDER.map((sec, i) => {
+          {PANEL_ORDER.map((sec, i) => {
             const b = summary.sections[sec];
             return (
               <span key={sec} className="whitespace-nowrap">
@@ -105,11 +106,13 @@ export default function BullBearPanel({
           })}
         </p>
       </section>
-      {SECTION_ORDER.map((sec) => (
-        <AnalysisSection key={sec} section={sec} summary={summary} levels={sec === "levels" ? levels : undefined}>
-          {sec === "tech" && <TechMetricsRow metrics={metrics} />}
-        </AnalysisSection>
-      ))}
+      <AnalysisSection
+        section="tech"
+        summary={summary}
+        top={<TechMetricsRow metrics={metrics} />}
+        bottom={<LevelsSubsection summary={summary} levels={levels} />}
+      />
+      <AnalysisSection section="chips" summary={summary} bottom={<HowTo lines={CHIPS_HOWTO_LINES} testId="bullbear-chips-howto" />} />
     </div>
   );
 }
@@ -130,17 +133,17 @@ export function CountChip({ side, n, className, testId }: { side: "bull" | "bear
   );
 }
 
+/** 一張分析卡:段頭 → top(技術卡的指標列)→ 兩欄 → 背景 → bottom(技術卡的壓力分析小節、籌碼卡的門檻說明)。 */
 function AnalysisSection({
   section,
   summary,
-  levels,
-  children,
+  top,
+  bottom,
 }: {
   section: Section;
   summary: BullBearSummary;
-  levels?: PriceLevelsView;
-  /** 段頭與兩欄之間(技術段的指標列) */
-  children?: ReactNode;
+  top?: ReactNode;
+  bottom?: ReactNode;
 }) {
   const b = summary.sections[section];
   const id = `bullbear-${section}-heading`;
@@ -151,20 +154,63 @@ function AnalysisSection({
         as="h3"
         id={id}
         title={SECTION_LABEL[section]}
-        right={
-          <>
-            <CountChip side="bull" n={b.bull.length} testId={null} />
-            <CountChip side="bear" n={b.bear.length} testId={null} />
-          </>
-        }
+        right={<SideCounts b={b} />}
       />
-      {children}
+      {top}
+      <SideColumns section={section} b={b} />
+      {bottom}
+    </section>
+  );
+}
+
+function SideCounts({ b, size }: { b: SectionBuckets; size?: "sm" }) {
+  const cls = size === "sm" ? "px-1.5 py-px text-[11px]" : undefined;
+  return (
+    <>
+      <CountChip side="bull" n={b.bull.length} testId={null} className={cls} />
+      <CountChip side="bear" n={b.bear.length} testId={null} className={cls} />
+    </>
+  );
+}
+
+function SideColumns({ section, b, sub }: { section: Section; b: SectionBuckets; sub?: boolean }) {
+  return (
+    <>
       <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-x-2">
-        <Column side="bull" section={section} items={b.bull} />
-        <Column side="bear" section={section} items={b.bear} />
+        <Column side="bull" section={section} items={b.bull} sub={sub} />
+        <Column side="bear" section={section} items={b.bear} sub={sub} />
       </div>
-      {b.context.length > 0 && <ContextStrip items={b.context} section={section} />}
-      {levels && <LevelsExtra view={levels} />}
+      {b.context.length > 0 && <ContextStrip items={b.context} section={section} sub={sub} />}
+    </>
+  );
+}
+
+/**
+ * 技術分析卡內的「壓力分析」小節(docs/46 §6.8):比卡片段頭小一級的小標(價格家族 icon + 自己的計數),
+ * 兩欄下方支撐/上方壓力,再接價格階梯、現價上下成交與常駐「怎麼算」。
+ */
+function LevelsSubsection({ summary, levels }: { summary: BullBearSummary; levels: PriceLevelsView }) {
+  const b = summary.sections.levels;
+  const id = "bullbear-levels-heading";
+  return (
+    <section
+      data-testid="bullbear-section-levels"
+      aria-labelledby={id}
+      className="grid min-w-0 gap-3 border-t border-[color:var(--line)] pt-3"
+    >
+      <div className="flex min-w-0 items-center justify-between gap-x-3 gap-y-1">
+        <h4 id={id} className="flex min-w-0 items-center gap-1.5 text-[13px] font-bold text-foreground">
+          <span aria-hidden className="grid h-5 w-5 shrink-0 place-items-center rounded-[6px] bg-primary/12 text-primary">
+            <CandlestickChart size={13} strokeWidth={1.8} />
+          </span>
+          {SECTION_LABEL.levels}
+        </h4>
+        <div className="flex shrink-0 flex-wrap items-center justify-end gap-1">
+          <SideCounts b={b} size="sm" />
+        </div>
+      </div>
+      <SideColumns section="levels" b={b} sub />
+      <LevelsExtra view={levels} />
     </section>
   );
 }
@@ -210,19 +256,21 @@ function TechMetricsRow({ metrics }: { metrics: TechMetric[] | null }) {
   );
 }
 
-function Column({ side, section, items }: { side: "bull" | "bear"; section: Section; items: BullBearItem[] }) {
+/** sub:位於小節(h4)之下,欄頭降一級為 h5。 */
+function Column({ side, section, items, sub }: { side: "bull" | "bear"; section: Section; items: BullBearItem[]; sub?: boolean }) {
   const groups = groupColumn(items, section);
   const tint = SIDE_TINT[side];
+  const H = sub ? "h5" : "h4";
   return (
     <div
       data-testid={`bullbear-${side}`}
       data-section={section}
       className={cn("grid min-w-0 content-start gap-2 rounded-[var(--r-sm)] p-1.5", tint.col)}
     >
-      <h4 className={cn("text-[13px] font-bold", side === "bull" ? "text-up" : "text-down")}>
+      <H className={cn("text-[13px] font-bold", side === "bull" ? "text-up" : "text-down")}>
         <span aria-hidden>{side === "bull" ? "▲" : "▼"} </span>
         {COLUMN_LABEL[section][side]}
-      </h4>
+      </H>
       {items.length === 0 ? (
         <p className="text-[12.5px] leading-snug text-muted-foreground">{EMPTY_SIDE[side]}</p>
       ) : (
@@ -283,10 +331,11 @@ function FactRow({ it, className, lagDate }: { it: BullBearItem; className?: str
   );
 }
 
-function ContextStrip({ items, section }: { items: BullBearItem[]; section: Section }) {
+function ContextStrip({ items, section, sub }: { items: BullBearItem[]; section: Section; sub?: boolean }) {
+  const H = sub ? "h5" : "h4";
   return (
     <div data-testid="bullbear-context" data-section={section} className="grid min-w-0 gap-1 border-l-2 border-[color:var(--line)] pl-2.5">
-      <h4 className="text-[12px] font-bold text-[color:var(--ink-2)]">{CONTEXT_LABEL}</h4>
+      <H className="text-[12px] font-bold text-[color:var(--ink-2)]">{CONTEXT_LABEL}</H>
       <ul className="grid min-w-0 gap-1">
         {items.map((it) => (
           <FactRow key={it.key} it={it} />
@@ -309,7 +358,7 @@ function LevelsExtra({ view }: { view: PriceLevelsView }) {
     );
   }
   return (
-    <div data-testid="price-levels" className="grid min-w-0 gap-3 border-t border-[color:var(--line)] pt-3">
+    <div data-testid="price-levels" className="grid min-w-0 gap-3">
       <p className="text-[11.5px] text-muted-foreground">
         {PL_LABELS.title} · 資料日 <span className="num">{view.asOf.slice(5).replace("-", "/")}</span> · {PL_LABELS.adjusted}
       </p>
