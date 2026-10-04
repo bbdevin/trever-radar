@@ -38,7 +38,7 @@
 
 - `db.upsert()` 改 driver 層 executemany(每組欄位一句預備 `INSERT … ON CONFLICT DO UPDATE`),語意不變(只更新有帶的欄、key set 不同可混寫、回傳列數);新增 `insert_many()` 給分位計數整表重寫。WAL 連線 `synchronous=NORMAL`;cache 64 MB 保留,temp_store/mmap 不動。
 - 一致性:合成庫新舊程式跑 00:05 鏈,26 張表 PK 排序 SHA-256 全同;分點匯入/部分欄位更新另比對亦同。效能:合成庫分點統計寫入 71 s → 3 s;正式寫入段 212 s 估降至約 10–20 s,待 VPS 下一輪 log 確認。細節 `docs/44` §7。
-## 2026-10-04 多空分頁 v2:三段分析 × 左右對開 × 全列 × 日/週/月 × 大戶比(docs/46 §6,程式完成、未上線)
+## 2026-10-04 多空分頁 v2:三段分析 × 左右對開 × 全列 × 日/週/月 × 大戶比(docs/46 §6,✅ 已上線)
 
 - **壓力分析併入技術分析卡(同日追加,docs/46 §6.8)**:技術分析卡內以小標「壓力分析」(自帶多方/空方小計數)接下方支撐/上方壓力兩欄、價格階梯、現價上下成交;籌碼分析改為第二張卡;總覽計數序 技術·壓力·籌碼。「怎麼算」取消收合,改常駐 4 行精簡說明,籌碼門檻 2 行移到籌碼卡底。node 252 項、tsc、build 過;parity:只有多空分頁不同;390px 深淺色 6488/6805 截圖無溢位。
 - **強分點動向(同日追加,docs/46 §6.8)**:籌碼分析新增 `C_SMART_BUY`(多方)、`C_SMART_SELL`(空方 ⚠)、`C_SMART_HOLDING`(多方 rank 3),`web/lib/facts/smartFacts.ts`。強分點沿用既有名單:分位排行每派前 5(面板預設展開數、買側紀錄足)∪ 區間損益估算 3月/1年 前 3 名且 >0;買賣超 ≥50 張且(佔期間量 ≥0.5% 或 ≥500 張),或損益前段近 5 日賣掉估算持股 ≥30%;佔量 ≥2% rank 5、否則 4。`branch_pctile_counts` 從 STOCK_KEYS_NOT_FACTS 移到 USED。node 255 項;不改分數。
@@ -51,12 +51,12 @@
 - **測試**:node 241 項(新增 `web/lib/facts/*.test.ts` 25 項:重取樣/還原、技術、壓力、籌碼、大戶、目錄覆蓋率與禁用詞);`test_bull_bear_codes.py` 加 `futures_volume_anomaly.py` 與「個股 payload 每個頂層鍵都要在 STOCK_KEYS_USED ∪ STOCK_KEYS_NOT_FACTS」閘門;pipeline 全套 1309 passed。parity:只有 /stock 標頭兩行與多空分頁不同。
 - **重點排序＋配色(同日追加,docs/46 §6.6)**:每段每欄最上方「重點」(rank ≥4 前 3 條,當日先於滯後、rank、magnitude;移出原群組不重複),其餘群組依最高 rank 排;影響力 rank 表微調(大額法人/分點流向、囤貨、融資背離、近支撐升級,例行狀態降級,集保封頂 4)。兩欄側別淡底、重點列較深底+左色條、群組頭家族色膠囊,不新增色票。node 247 項;parity:只有多空分頁與標頭最強一條(rank 調整所致)不同。
 
-## 2026-10-04 個股「多空」分頁 + 價格位置(docs/45 P0/P1 + docs/46,程式完成、未上線)
+## 2026-10-04 個股「多空」分頁 + 價格位置(docs/45 P0/P1 + docs/46,✅ 已上線)
 
 - **資料**(`json_export.py`):個股 JSON 新鍵 `price_levels`(`compute/price_levels.py` 純函式:還原均線 5–240、N 日高低+日期、20 日新高/新低、2 日量價、近 120 日現價之上/之下成交比例、上下最密集 1% 區)與 `raw_risks`(帶 code 的完整風險項 ≤7;未評分 = [])。不進 technical、不進 radar.json、不動任何分數與 Armed 狀態;`export timing:` 多一段 `levels=`。合成 DB parity:其餘鍵逐位元相同。正式 JSON 要等 VPS 下一輪 export-json 才有這兩鍵,前端對舊 JSON 照常(價格位置卡顯示「還沒有」、多空用風險字串回推)。
 - **前端**:原「技術」分頁改名「多空」移到 K線 右邊(key 仍 `tech`)。分頁內:多空摘要(`web/lib/bullBear.ts` + `BullBearPanel`;理由/風險/口袋/價格事實分多方、空方、背景;同方向同一天的價格事實取代 T1_MA20/T1_MA60/T1_BULL_MA/T2_20D_HIGH/T4/T5_RSI)→ 價格位置卡(階梯、上下成交雙色條、怎麼算;取代 MA20/MA60 兩格)→ 技術指標(技術分/RSI/量比、觀察/失效、收合的技術訊號原文,含以前沒畫的 `t.risks`)。標頭只留綜合分 + 「多方 N · 空方 N ›」+ 各一條最前面的事實。K 線均線列「壓力/支撐」chip 預設關,開了畫上下各 2 條虛線。
 - **測試**:`test_price_levels.py`(golden、分割不變、決定性、export 鍵)、`test_bull_bear_codes.py`(後端每個 code 都在 `SIDE_BY_CODE`)、`priceLevels.test.ts`、`bullBear.test.ts`(每個 code 恰一次、舊 JSON、禁用詞鎖)。
-## 2026-10-04 `/data` Worker 驗證優化(docs/44 P1):獨立資安審查通過(4 個 Low 已修),⏳ 待使用者核准,未上線
+## 2026-10-04 `/data` Worker 驗證優化(docs/44 P1):✅ 已上線 15:10(Version c7d92323);紅線 401/401/200 通過,使用者手機實測正常;撤銷延遲 ≤5 分已獲使用者接受;回滾 `npx wrangler rollback 2a7a0111-e7cc-415d-9858-49136957a08c`
 
 - 分支已 commit、**未合 main、未 deploy**(合入後下一輪 VPS deploy 會自動上線,所以必須先過審)。
 - 內容:JWT 改 ES256 + Supabase JWKS 本地驗簽,拿掉 `/auth/v1/user`(無 HS256 fallback、Worker 不持 service_role);`app_profiles` 仍用使用者 JWT 經 RLS 查,以 `sub` 快取 5 分;同時多個請求 JWKS／REST 各只查一次。service key、路由、標頭、401/403/503 格式不變。
