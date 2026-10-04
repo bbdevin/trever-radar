@@ -2,6 +2,13 @@
 
 > 單一進度真相。每完成一個里程碑就更新本檔。規格細節看各編號文件,別寫在這裡。
 
+## 2026-10-04 盤中 worker:斷線自動重連＋試撮不出訊號(`docs/24` §2.4)
+
+- **為什麼**:正式 log 25 個交易日有 6 天盤中斷線後不重連、整天失明;每天 08:50–09:00 試撮也出 4–7 則訊號。
+- **做了什麼**:斷線/錯誤即重連(2→60 秒退避、重訂全部代號,13:35 前不退出);斷線 > 5 分鐘告警一次(ERROR log＋heartbeat `offline`＋選配 ntfy,`pipeline/intraday/.env` 設 `NTFY=` 才推),恢復再通知一次;盤中 3 分鐘無任何成交就強制重連;試撮(`isTrial`)與 09:00 前/13:30 後成交不碰狀態也不出訊號;每 5 分鐘一行 `liveness …` 遙測。順修:Fugle `volume` 是累計量,舊碼當本筆量用,I-1/I-2 高估 → 改用 `size`。
+- **待人類**:合併後在 VPS 執行 `docker build -t radar-worker pipeline/intraday`(映像不會隨 `git pull` 更新),下個 08:50 生效;想收 ntfy 就在 `pipeline/intraday/.env` 加 `NTFY=<主題>`。
+- 驗證:`pipeline/tests/test_intraday_worker.py` 43 passed(新增斷線重連、退避與單次告警、stall、試撮/時段外、遙測、13:35 收工);pipeline 全套 1373 passed;本機以真 SDK 測連線被拒與握手卡住兩種失敗都能脫離並退避。
+
 ## 2026-10-04 使用者決定:依 Fable 建議(多方榜、融資共動)
 
 - **首頁「綜合」改為「多方榜」**(Fable 規劃 2026-10-04):docs/20 §1 例外核准(新名單規則,只用既有事實計數與 rank 表,不新增分數/策略、不改 `final`);名單紀錄 `bull_board_log/*.jsonl` 隨 deploy 上 Cloudflare 作異地副本(核准);隔天表現走 `docs/48` 事前登記,≥60 市場日後檢定,過了才顯示次數。

@@ -116,12 +116,14 @@ def _reset_state(monkeypatch):
     worker.armed_stocks.clear()
     worker.sent_signals.clear()
     worker._subscribed_symbols.clear()
+    worker.feed_stats.reset()
     monkeypatch.setattr(worker, "supabase", None)
     monkeypatch.setattr(worker.time, "sleep", lambda *a, **k: None)
     yield
     worker.armed_stocks.clear()
     worker.sent_signals.clear()
     worker._subscribed_symbols.clear()
+    worker.feed_stats.reset()
 
 
 def test_fetch_200_populates_armed_list(monkeypatch):
@@ -370,10 +372,11 @@ def test_process_trade_delivers_signal_without_a_running_event_loop(monkeypatch)
         "name": "台積電", "watch_price": 99999, "adv20": 0,
         "last_price": 0, "volume": 0, "trades_5m": [],
     }
-    # price*qty*1000 = 500*20*1000 = 1000萬 >= 500萬門檻 → 應觸發 I-1
+    # price*size*1000 = 500*20*1000 = 1000萬 >= 500萬門檻 → 應觸發 I-1
+    # (Fugle trades:size=本筆成交量,volume=當日累計量)
     message = json.dumps({
         "event": "data",
-        "data": {"symbol": "2330", "price": 500.0, "volume": 20},
+        "data": {"symbol": "2330", "price": 500.0, "size": 20, "volume": 20},
     })
 
     worker.process_trade(message)
@@ -526,3 +529,320 @@ def test_i4_not_triggered_below_watch_price():
     now = datetime(2026, 7, 20, 9, 30)
     signals = worker.evaluate_signals(state, price=99.0, qty=0, now=now)
     assert not any(s[0] == "I-4" for s in signals)
+
+
+# ---------------------------------------------------------------------------
+# 連線韌性(2026-10-04):斷線重連、退避告警、stall 看門狗、試撮把關、liveness 遙測
+# ---------------------------------------------------------------------------
+
+class _FakeWsClient:
+    """模擬 fugle_marketdata 的 WebSocketStockClient(on/connect/subscribe/disconnect)。"""
+
+    def __init__(self, fail=None):
+        self.handlers = {}
+        self.subscribed = []
+        self.fail = fail
+        self.connect_calls = 0
+        self.disconnect_calls = 0
+
+    def on(self, event, fn):
+        self.handlers.setdefault(event, []).append(fn)
+
+    def emit(self, event, *args):
+        for fn in self.handlers.get(event, []):
+            fn(*args)
+
+    def connect(self):
+        self.connect_calls += 1
+        if self.fail:
+            raise self.fail
+
+    def subscribe(self, params):
+        assert params["channel"] == "trades"
+        self.subscribed.append(params["symbol"])
+
+    def disconnect(self):
+        self.disconnect_calls += 1
+
+
+class _Clock:
+    def __init__(self, mono=1000.0, wall=datetime(2026, 10, 5, 10, 0)):
+        self.mono = mono
+        self.wall = wall
+
+    def advance(self, seconds):
+        self.mono += seconds
+        self.wall += timedelta(seconds=seconds)
+
+
+def _make_feed(clock, clients, *, fail=lambda n: False, notifier=None, heartbeat=None):
+    """clients 會收到每個新建的 fake client;fail(n) 為真的第 n 次(1 起算)連線失敗。"""
+    state = {"n": 0}
+
+    def factory():
+        state["n"] += 1
+        fail_exc = ConnectionError("refused") if fail(state["n"]) else None
+        c = _FakeWsClient(fail=fail_exc)
+        clients.append(c)
+        return c
+
+    return worker.FeedSupervisor(
+        factory,
+        mono=lambda: clock.mono,
+        wall=lambda: clock.wall,
+        rng=lambda: 0.0,
+        sleep=lambda *_: None,
+        notifier=notifier or MagicMock(),
+        heartbeat=heartbeat,
+        stats=worker.feed_stats,
+        alert_after=300,
+        stall_seconds=180,
+        connect_timeout=5,
+    )
+
+
+def _monitor(*sids):
+    for sid in sids:
+        worker.armed_stocks[sid] = _signal_state(name=sid, pool="armed")
+
+
+def test_disconnect_triggers_reconnect_and_resubscribe():
+    _monitor("2330", "2454")
+    clock, clients = _Clock(), []
+    feed = _make_feed(clock, clients)
+
+    feed.tick()
+    assert feed.connected and len(clients) == 1
+    assert sorted(clients[0].subscribed) == ["2330", "2454"]
+
+    # 正式 log 的情境:SDK 先發 error(Connection to remote host was lost)再發 disconnect
+    clients[0].emit("error", ConnectionError("Connection to remote host was lost."))
+    clients[0].emit("disconnect", None, None)
+    assert not feed.connected
+
+    feed.tick()  # 第一次重試立即進行
+    assert feed.connected and len(clients) == 2
+    assert sorted(clients[1].subscribed) == ["2330", "2454"]
+    assert feed.reconnects == 1
+    assert worker._subscribed_symbols == {"2330", "2454"}
+
+    # 舊 client 的遲到 callback 不得把新連線標成斷線、也不得處理其訊息
+    clients[0].emit("disconnect", 1006, "late")
+    assert feed.connected
+
+
+def test_repeated_failures_backoff_and_single_alert_then_recovery():
+    _monitor("2330")
+    clock, clients = _Clock(), []
+    notifier = MagicMock()
+    heartbeat = MagicMock()
+    # 第 1 次連線成功,第 2–13 次失敗,之後成功
+    feed = _make_feed(clock, clients, fail=lambda n: 2 <= n <= 13,
+                      notifier=notifier, heartbeat=heartbeat)
+
+    feed.tick()
+    assert feed.connected
+    clients[0].emit("disconnect", 1006, "lost")
+
+    delays = []
+    for _ in range(10):
+        feed.tick()  # 嘗試一次(失敗)並排定下一次
+        delays.append(feed.next_attempt_at - clock.mono)
+        clock.advance(feed.next_attempt_at - clock.mono)
+    assert len(clients) == 11
+    assert delays[:7] == [2, 4, 8, 16, 32, 60, 60]  # rng=0 → 無 jitter,上限 60
+    assert not feed.connected
+
+    # 第 10 次失敗時已斷 302s(> 300s):只告警一次(high),heartbeat 標 offline
+    high = [c for c in notifier.call_args_list if c.args[2] == "high"]
+    assert len(high) == 1
+    assert feed.heartbeat_status() == "offline"
+    heartbeat.assert_any_call("offline")
+    for _ in range(2):  # 仍失敗,不重複告警
+        feed.tick()
+        clock.advance(60)
+    assert not feed.connected
+    assert len([c for c in notifier.call_args_list if c.args[2] == "high"]) == 1
+
+    # 之後連線成功 → 恢復通知一次
+    while not feed.connected:
+        clock.advance(60)
+        feed.tick()
+    recovery = [c for c in notifier.call_args_list if c.args[2] == "default"]
+    assert len(recovery) == 1
+    assert feed.heartbeat_status() == "online"
+    feed.tick()
+    assert notifier.call_count == 2
+
+
+def test_jitter_never_exceeds_cap():
+    feed = worker.FeedSupervisor(lambda: _FakeWsClient(), rng=lambda: 0.999)
+    assert 2 <= feed.backoff_delay(1) <= 2.5
+    assert feed.backoff_delay(20) == 60
+
+
+def test_stall_forces_reconnect_during_continuous_trading(caplog):
+    _monitor("2330")
+    clock, clients = _Clock(wall=datetime(2026, 10, 5, 10, 0)), []
+    feed = _make_feed(clock, clients)
+    feed.tick()
+    assert len(clients) == 1
+
+    clock.advance(170)
+    feed.tick()
+    assert len(clients) == 1  # 未滿 180s 不動作
+
+    with caplog.at_level(logging.WARNING):
+        clock.advance(20)
+        feed.tick()
+    assert clients[0].disconnect_calls == 1
+    assert len(clients) == 2 and feed.connected
+    assert feed.reconnects == 1
+    assert "stall" in caplog.text
+
+    # 重連後仍無成交(如休市):門檻倍增(360s),避免整天每 3 分鐘重連
+    clock.advance(200)
+    feed.tick()
+    assert len(clients) == 2
+    clock.advance(200)
+    feed.tick()
+    assert len(clients) == 3
+
+    # 收到成交 → 門檻回到 180s 且不會誤判
+    clock.advance(1)
+    worker.feed_stats.record("2330", clock.mono, clock.wall)
+    clock.advance(170)
+    feed.tick()
+    assert len(clients) == 3
+    assert feed.stall_strikes == 0
+
+
+def test_no_stall_reconnect_outside_continuous_trading():
+    _monitor("2330")
+    clock, clients = _Clock(wall=datetime(2026, 10, 5, 8, 50)), []
+    feed = _make_feed(clock, clients)
+    feed.tick()
+    clock.advance(9 * 60)  # 08:59,試撮期間沒有成交不算 stall
+    feed.tick()
+    assert len(clients) == 1
+    clock.advance(120)  # 09:01:00,連續競價才剛開始 1 分鐘(stall 從 09:00 起算)
+    feed.tick()
+    assert len(clients) == 1
+
+
+class _FixedDatetime(datetime):
+    fixed = datetime(2026, 10, 5, 10, 0)
+
+    @classmethod
+    def now(cls, tz=None):
+        return cls.fixed
+
+
+def _trade_msg(sid="2330", price=500.0, size=20, volume=1000, **extra):
+    data = {"symbol": sid, "price": price, "size": size, "volume": volume}
+    data.update(extra)
+    return json.dumps({"event": "data", "data": data, "channel": "trades"})
+
+
+def _tw_micros(dt):
+    return int(dt.replace(tzinfo=worker.TW_TZ).timestamp() * 1_000_000)
+
+
+@pytest.fixture
+def _trade_env(monkeypatch):
+    pushed = []
+    monkeypatch.setattr(worker, "datetime", _FixedDatetime)
+    monkeypatch.setattr(worker, "push_signal", lambda *a, **k: pushed.append(a))
+    worker.armed_stocks["2330"] = _signal_state(
+        name="台積電", turnover=2_000_000_000, watch_price=100.0, adv20=1000, pool="armed"
+    )
+    return pushed
+
+
+@pytest.mark.parametrize(
+    "wall, extra",
+    [
+        (datetime(2026, 10, 5, 10, 0), {"isTrial": True}),                 # 盤中試撮旗標
+        (datetime(2026, 10, 5, 8, 53), {}),                                  # 開盤前試撮時段
+        (datetime(2026, 10, 5, 13, 31), {}),                                 # 收盤後
+        (datetime(2026, 10, 5, 10, 0), {"time": _tw_micros(datetime(2026, 10, 5, 8, 53))}),  # 容器 TZ 錯
+    ],
+)
+def test_trial_and_out_of_session_trades_produce_no_signal(_trade_env, wall, extra):
+    _FixedDatetime.fixed = wall
+    worker.process_trade(_trade_msg(**extra))
+
+    state = worker.armed_stocks["2330"]
+    assert _trade_env == []
+    assert state["trades_5m"] == []      # 不以試撮價種 5 分鐘窗
+    assert state["volume"] == 0
+    assert state["last_price"] == 0
+    assert worker.feed_stats.trades == 1  # 但 liveness 仍計入(資料流活著)
+
+
+def test_continuous_trade_uses_size_and_cumulative_volume(_trade_env):
+    _FixedDatetime.fixed = datetime(2026, 10, 5, 10, 0)
+    worker.process_trade(_trade_msg(time=_tw_micros(datetime(2026, 10, 5, 10, 0)), volume=1000))
+
+    state = worker.armed_stocks["2330"]
+    assert state["volume"] == 1000           # 累計量取代,不是相加
+    assert state["last_price"] == 500.0
+    types = [a[2] for a in _trade_env]
+    assert "I-1" in types                    # 500*20(size)*1000 = 1000萬 ≥ 500萬
+    worker.process_trade(_trade_msg(size=1, volume=1001))
+    assert state["volume"] == 1001
+
+
+def test_liveness_line_format():
+    line = worker.format_liveness(12, 3, datetime(2026, 10, 5, 10, 5, 7), 2)
+    assert line == "liveness trades_5m=12 symbols_with_trades=3 last_trade_at=10:05:07 reconnects=2"
+    assert "last_trade_at=- " in worker.format_liveness(0, 0, None, 0)
+
+
+def _run_session(feed, clock, until_close_after, reload_fn=None):
+    import asyncio
+
+    calls = {"n": 0}
+
+    def now_fn():
+        calls["n"] += 1
+        return datetime(2026, 10, 5, 13, 35) if calls["n"] > until_close_after else clock.wall
+
+    async def sleep_fn(_):
+        clock.advance(100)
+
+    asyncio.run(worker.run_session(
+        feed, now_fn=now_fn, mono_fn=lambda: clock.mono, sleep_fn=sleep_fn,
+        reload_fn=reload_fn or (lambda: None),
+    ))
+    return calls["n"]
+
+
+def test_run_session_emits_liveness_and_shuts_down_at_1335(caplog):
+    _monitor("2330")
+    clock, clients = _Clock(wall=datetime(2026, 10, 5, 8, 0)), []  # 盤前:不觸發 stall
+    feed = _make_feed(clock, clients)
+    reload_fn = MagicMock()
+    worker.feed_stats.record("2330", clock.mono, datetime(2026, 10, 5, 10, 0, 1))
+
+    with caplog.at_level(logging.INFO):
+        _run_session(feed, clock, until_close_after=8, reload_fn=reload_fn)
+
+    assert "liveness trades_5m=1 symbols_with_trades=1 last_trade_at=10:00:01 reconnects=0" in caplog.text
+    assert "Market closed. Shutting down worker." in caplog.text
+    assert reload_fn.called
+    assert feed.closing and not feed.connected
+    assert clients[-1].disconnect_calls == 1
+
+
+def test_run_session_keeps_running_while_disconnected():
+    """連線一直失敗也不提早退出,持續重試直到 13:35。"""
+    _monitor("2330")
+    clock, clients = _Clock(), []
+    feed = _make_feed(clock, clients, fail=lambda n: True)
+
+    n = _run_session(feed, clock, until_close_after=20)
+
+    assert n == 21
+    assert len(clients) >= 5
+    assert not feed.connected

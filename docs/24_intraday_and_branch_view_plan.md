@@ -51,6 +51,18 @@ export: Armed 池 + watch/stop 價     worker(Python,08:55–13:35)
 
 **風險**:Fugle 免費方案額度/條款變動(I0 先驗);訊號雜訊(先 Shadow,不進任何分數);盤中面板誘發追價(風險提示常駐)。**不做**:自動下單、雲端常駐 worker、全市場掃描。
 
+### 2.4 Worker 連線韌性與時段把關(2026-10-04 實作)
+
+起因:正式 `~/radar-worker.log` 25 個交易日中 6 天盤中斷線(`Connection to remote host was lost`)後不重連,整天失明;另每天 08:50–09:00 試撮都出 4–7 則訊號。
+
+- **連線管理**(`FeedSupervisor`):掛 SDK `disconnect`/`error` 事件(未掛 `error` 時 pyee 會拋例外,即 log 的 `error from callback <…__on_error…>`)。斷線後第一次立即重連,之後指數退避 2→4→…→60 秒(+0–25% jitter,不超過 60);每次重連建新 client 並**重訂全部監控代號**;13:35 前絕不因斷線結束程序。SDK `connect()` 會無限忙等驗證,worker 以 15 秒逾時與錯誤事件解開。
+- **告警**:斷線連續 > `INTRADAY_RECONNECT_ALERT_SECONDS`(預設 300)→ 一則 ERROR log、`worker_heartbeat.status='offline'`(前端即顯示離線)、選配 ntfy high(在 `pipeline/intraday/.env` 設 `NTFY=<主題>`,未設則只寫 log/heartbeat);恢復時通知一次。短暫斷線期間 heartbeat 寫 `reconnecting`。
+- **Stall 看門狗**:09:00–13:30 所有訂閱代號超過 `INTRADAY_STALL_SECONDS`(預設 180)沒有任何成交訊息 → 強制重連(log `Forcing Fugle WebSocket reconnect: stall…`)。重連後仍無成交(如休市日)門檻倍增至最多 48 分鐘,收到成交即回到 180 秒。
+- **時段把關**:`isTrial=true`(試撮)或牆鐘/成交自帶 `time`(微秒,換算 UTC+8)任一不在 09:00–13:30 → 不更新價量、不進 5 分鐘窗、不出訊號(用成交自帶時間,容器 TZ 設錯也不會在試撮出訊號)。
+- **欄位修正**:Fugle trades `size`=本筆成交量、`volume`=當日累計量(官方文件 `websocket-api/market-data-channels/trades`)。舊碼把 `volume` 當本筆量相加,I-1 金額與 I-2 累積量嚴重高估;現改 I-1 用 `size`、I-2 用累計 `volume`。
+- **遙測**:每 5 分鐘一行 `liveness trades_5m=N symbols_with_trades=K last_trade_at=HH:MM:SS reconnects=R`(試撮成交也計入,代表資料流活著)。`worker_heartbeat` 無自由欄位,不改 schema,遙測只寫 log。
+- **部署**:worker 是 Docker 映像,合併後須在 VPS `docker build -t radar-worker pipeline/intraday`,下個 08:50 生效。驗證:`grep -E 'liveness|reconnect|stall' ~/radar-worker.log`。
+
 ---
 
 ## 3. Part B:分點追蹤視角(常見分點 → 近 N 日買最多)
