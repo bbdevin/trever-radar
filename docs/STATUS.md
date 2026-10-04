@@ -11,6 +11,8 @@
 - 驗證:node 265 pass(新增 `bullBoard`/`bullBearFromStock`/`bullBoardBuild` 冒煙)、tsc、build、pytest score_list_contract + label_honesty;parity 72 畫面:個股頁全部逐字相同,首頁只有分頁內容與分頁標籤「綜合→多方榜 N」不同;390 深/淺 + 1280 截圖五態(正常、0 檔、404、停在上一版、未到齊)。
 ## 2026-10-04 盤中 worker:斷線自動重連＋試撮不出訊號(`docs/24` §2.4)
 
+- ✅ 兩輪獨立 verifier(真 SDK＋本機 WS server 模擬;第一輪抓到舊連線未關導致無法收工等 4 項,第二輪 CONFIRMED)。16:24 已在 VPS 重建 `radar-worker`(`1f7c907`;Dockerfile 鎖 `fugle-marketdata==2.4.1`、`websocket-client==1.9.0`),唯讀探針正常(核准 8 人、自選 60 檔、radar.json 經 Worker ok)。**週一 08:50 首次生效**,觀察 `grep -E 'liveness|reconnect|stall|authenticated' ~/radar-worker.log`。背景:25 個交易日中 6 天盤中斷線後整天沒監控(09-03/09-04/09-11/09-25/10-01/10-02)。
+
 - **為什麼**:正式 log 25 個交易日有 6 天盤中斷線後不重連、整天失明;每天 08:50–09:00 試撮也出 4–7 則訊號。
 - **做了什麼**:斷線/錯誤即重連(2→60 秒退避、重訂全部代號,13:35 前不退出);重連前一定關掉舊連線(任何時刻最多一條,收工不殘留執行緒,程序結尾 `os._exit` 兜底);連上不到 60 秒又斷算 flapping,照退避並計入告警;訂閱失敗也當連線失敗重來;斷線或不穩 > 5 分鐘告警一次(ERROR log＋heartbeat `offline`＋選配 ntfy,`pipeline/intraday/.env` 設 `NTFY=` 才推),穩定 60 秒後通知恢復一次;盤中 3 分鐘沒收到任何 Fugle 訊息就強制重連;試撮(`isTrial`)與 09:00 前/13:30 後成交不碰狀態也不出訊號,開/收盤集合競價撮合只更新價量不判訊號;每 5 分鐘一行 `liveness …` 遙測。順修:Fugle `volume` 是累計量,舊碼當本筆量用,I-1/I-2 高估 → 改用 `size`。
 - **待人類**:合併後在 VPS 執行 `docker build -t radar-worker pipeline/intraday`(映像不會隨 `git pull` 更新),下個 08:50 生效;想收 ntfy 就在 `pipeline/intraday/.env` 加 `NTFY=<主題>`。
