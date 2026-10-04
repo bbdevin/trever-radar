@@ -63,7 +63,7 @@
 
 > 你是 Trever Radar 的 **Executor**。請用 Cursor **Auto agent**。先讀 AGENTS.md、docs/17 Workflow D、docs/STATUS.md、handoff.md,以及 Planner 給的 Confirmed Scope。
 >
-> 依 Scope 實作;跑相關測試/build;**同一輪**更新 handoff.md、docs/STATUS.md 與任務相關規劃檔;然後 **git commit + git push**,**不需再問使用者**。
+> 依 Scope 實作;跑相關測試/build;**同一輪**更新 handoff.md、docs/STATUS.md 與任務相關規劃檔;**使用者看得到的改動另須寫進 `web/lib/changelog.ts`**(當天已有版本就併進該版,否則在最前面新增次版;規則見 `docs/19` 第 16 條);然後 **git commit + git push**,**不需再問使用者**。
 >
 > 禁止:擴大 Scope、force push、未批准的高風險項(見 AGENTS.md 常駐指令「仍須人工確認」)。
 

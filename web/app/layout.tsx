@@ -106,6 +106,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                       footer 本身在手機上已留出底部導航的高度,不會被蓋住。 */}
                   <Link
                     href="/changelog"
+                    prefetch={false}
                     className="inline-flex min-h-11 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[12.5px] text-muted-foreground hover:text-foreground"
                   >
                     <span>Trever Radar 版本</span>
