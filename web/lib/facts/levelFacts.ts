@@ -5,14 +5,27 @@
  */
 import type { DerivedFact, Seg, Tf } from "../bullBear.ts";
 import type { PriceLevels } from "../types.ts";
-import { NEAR_PCT, denseZone, extremes, isNear, maLevelSegs, maSideSegs, maSplit } from "../priceLevels.ts";
+import { AT_PRICE, NEAR_PCT, denseZone, distSeg, extremes, isAtPrice, isNear, maLevelSegs, maSideSegs, maSplit } from "../priceLevels.ts";
 import type { AllSeries } from "./series.ts";
 import { MA_BY_TF } from "./series.ts";
-import { P, PCT, mk, mmdd, share } from "./text.ts";
+import { P, mk, mmdd, share } from "./text.ts";
 
 const pct = (price: number, close: number) => ((price - close) / close) * 100;
 /** ≤3% 視為「接近」:句尾加註,rank 升級(標頭優先);與技術段 nearLevelFacts 同一門檻 */
 const NEAR = NEAR_PCT;
+/**
+ * 單一價位的「在上方 +1.2%」/「在下方 −1.2%」;距離四捨五入為 0 時改寫「貼近現價」(不寫「在上方 0.0%」)。
+ * d 帶號(上方 +、下方 −)。
+ */
+const sideDist = (side: "above" | "below", d: number): (Seg | string)[] => (isAtPrice(d) ? [AT_PRICE] : [side === "above" ? "在上方 " : "在下方 ", distSeg(d)]);
+/**
+ * 成交最密集區的位置:格子以現價為錨(現價 1% 一格),最近的一格就從現價起算,邊緣等於現價是常態、現價不會落在格子裡面。
+ * 那時寫「自現價向上/向下」——這一格的量全在現價之上/之下,仍是該側最近的價位,不寫「現價位於區內」也不寫 0.0%。
+ */
+const zoneDist = (side: "above" | "below", d: number): (Seg | string)[] =>
+  isAtPrice(d) ? [side === "above" ? " 自現價向上" : " 自現價向下"] : [side === "above" ? " 在上方 " : " 在下方 ", distSeg(d)];
+/** 句尾「,接近」:≤3% 才加;已寫「貼近現價」的不再重複 */
+const nearTag = (d: number) => (isNear(d) && !isAtPrice(d) ? ",接近" : "");
 /** 缺口:近 120 根、寬度 ≥ 現價 0.5% 才列,每側最多 2 個 */
 const GAP_WINDOW = 120;
 const GAP_MIN = 0.005;
@@ -71,11 +84,11 @@ function gapFacts(series: AllSeries, close: number, date?: string): DerivedFact[
   const near = (a: { lo: number; hi: number }) => Math.abs(pct(a.lo > close ? a.lo : a.hi, close));
   above.sort((a, b) => near(a) - near(b)).slice(0, GAP_PER_SIDE).forEach((g, k) => {
     const d = near(g);
-    out.push(mk("L_GAP_ABOVE", ["未回補缺口 ", P(g.lo, close), "–", P(g.hi, close), `(${mmdd(g.t)})在上方 `, PCT(d)], { rank: isNear(d) ? 4 : 2, dist: d, variant: String(k), date, level: gapLevel(g, close) }));
+    out.push(mk("L_GAP_ABOVE", ["未回補缺口 ", P(g.lo, close), "–", P(g.hi, close), `(${mmdd(g.t)})`, ...sideDist("above", d)], { rank: isNear(d) ? 4 : 2, dist: d, variant: String(k), date, level: gapLevel(g, close) }));
   });
   below.sort((a, b) => near(a) - near(b)).slice(0, GAP_PER_SIDE).forEach((g, k) => {
     const d = near(g);
-    out.push(mk("L_GAP_BELOW", ["未回補缺口 ", P(g.lo, close), "–", P(g.hi, close), `(${mmdd(g.t)})在下方 `, PCT(-d)], { rank: isNear(d) ? 4 : 2, dist: d, variant: String(k), date, level: gapLevel(g, close) }));
+    out.push(mk("L_GAP_BELOW", ["未回補缺口 ", P(g.lo, close), "–", P(g.hi, close), `(${mmdd(g.t)})`, ...sideDist("below", -d)], { rank: isNear(d) ? 4 : 2, dist: d, variant: String(k), date, level: gapLevel(g, close) }));
   });
   return out;
 }
@@ -92,12 +105,12 @@ export function levelFacts(pl: PriceLevels | null | undefined, series: AllSeries
   const lo = extremes(pl.lows, pl.as_of).rows;
   for (const { n, pt } of hi) {
     const d = pct(pt.p, close);
-    out.push(mk("L_HIGH_ABOVE", [`${n}日最高 `, P(pt.p, close), `(${mmdd(pt.t)})在上方 `, PCT(d), isNear(d) ? ",接近" : ""],
+    out.push(mk("L_HIGH_ABOVE", [`${n}日最高 `, P(pt.p, close), `(${mmdd(pt.t)})`, ...sideDist("above", d), nearTag(d)],
       { rank: isNear(d) ? 5 : 2, dist: Math.abs(d), magnitude: isNear(d) ? Math.max(0, NEAR - d) : undefined, variant: n, date, level: [{ t: `${n}日最高 ` }, P(pt.p, close)] }));
   }
   for (const { n, pt } of lo) {
     const d = pct(pt.p, close);
-    out.push(mk("L_LOW_BELOW", [`${n}日最低 `, P(pt.p, close), `(${mmdd(pt.t)})在下方 `, PCT(d), isNear(-d) ? ",接近" : ""],
+    out.push(mk("L_LOW_BELOW", [`${n}日最低 `, P(pt.p, close), `(${mmdd(pt.t)})`, ...sideDist("below", d), nearTag(d)],
       { rank: isNear(-d) ? 5 : 2, dist: Math.abs(d), variant: n, date, level: [{ t: `${n}日最低 ` }, P(pt.p, close)] }));
   }
 
@@ -116,12 +129,12 @@ export function levelFacts(pl: PriceLevels | null | undefined, series: AllSeries
     const last = A.c.length - 1;
     if (hiI !== last && A.h[hiI] > close && (h240 == null || Math.abs(A.h[hiI] / h240 - 1) > 0.001)) {
       const d = pct(A.h[hiI], close);
-      out.push(mk("L_ALLTIME_HIGH", [`近 ${years} 年資料最高 `, P(A.h[hiI], close), `(${ymd(A.t[hiI])})在上方 `, PCT(d)],
+      out.push(mk("L_ALLTIME_HIGH", [`近 ${years} 年資料最高 `, P(A.h[hiI], close), `(${ymd(A.t[hiI])})`, ...sideDist("above", d)],
         { rank: 1, dist: Math.abs(d), date, level: [{ t: `近 ${years} 年資料最高 ` }, P(A.h[hiI], close)] }));
     }
     if (loI !== last && A.l[loI] < close && (l240 == null || Math.abs(A.l[loI] / l240 - 1) > 0.001)) {
       const d = pct(A.l[loI], close);
-      out.push(mk("L_ALLTIME_LOW", [`近 ${years} 年資料最低 `, P(A.l[loI], close), `(${ymd(A.t[loI])})在下方 `, PCT(d)],
+      out.push(mk("L_ALLTIME_LOW", [`近 ${years} 年資料最低 `, P(A.l[loI], close), `(${ymd(A.t[loI])})`, ...sideDist("below", d)],
         { rank: 1, dist: Math.abs(d), date, level: [{ t: `近 ${years} 年資料最低 ` }, P(A.l[loI], close)] }));
     }
   }
@@ -130,13 +143,13 @@ export function levelFacts(pl: PriceLevels | null | undefined, series: AllSeries
   const za = denseZone(pl, "above");
   if (za) {
     const d = pct(za.lo, close);
-    out.push(mk("L_DENSE_ABOVE", ["成交最密集區 ", P(za.lo, close), "–", P(za.hi, close), " 在上方 ", PCT(d), `(佔近120日成交 ${share(za.share, za.share < 0.1 ? 1 : 0)})`, isNear(d) ? ",接近" : ""],
+    out.push(mk("L_DENSE_ABOVE", ["成交最密集區 ", P(za.lo, close), "–", P(za.hi, close), ...zoneDist("above", d), `(佔近120日成交 ${share(za.share, za.share < 0.1 ? 1 : 0)})`, nearTag(d)],
       { rank: isNear(d) ? 5 : 2, dist: Math.abs(d), date, level: rangeLevel("成交最密集區 ", za, close) }));
   }
   const zb = denseZone(pl, "below");
   if (zb) {
     const d = pct(zb.hi, close);
-    out.push(mk("L_DENSE_BELOW", ["成交最密集區 ", P(zb.lo, close), "–", P(zb.hi, close), " 在下方 ", PCT(d), `(佔近120日成交 ${share(zb.share, zb.share < 0.1 ? 1 : 0)})`, isNear(-d) ? ",接近" : ""],
+    out.push(mk("L_DENSE_BELOW", ["成交最密集區 ", P(zb.lo, close), "–", P(zb.hi, close), ...zoneDist("below", d), `(佔近120日成交 ${share(zb.share, zb.share < 0.1 ? 1 : 0)})`, nearTag(d)],
       { rank: isNear(-d) ? 5 : 2, dist: Math.abs(d), date, level: rangeLevel("成交最密集區 ", zb, close) }));
   }
 
@@ -181,7 +194,7 @@ export function nearLevelFacts(facts: readonly DerivedFact[]): DerivedFact[] {
     const segs: (Seg | string)[] = [side === "bear" ? `上方 ${NEAR}% 內有壓力價位:` : `下方 ${NEAR}% 內有支撐價位:`];
     near.slice(0, NEAR_NAMED).forEach((f, k) => {
       if (k) segs.push("、");
-      segs.push(...f.level!, "(", PCT(side === "bear" ? f.dist! : -f.dist!), ")");
+      segs.push(...f.level!, "(", distSeg(side === "bear" ? f.dist! : -f.dist!), ")");
     });
     if (near.length > NEAR_NAMED) segs.push(`等 ${near.length} 處`);
     const date = near.find((f) => f.date)?.date;

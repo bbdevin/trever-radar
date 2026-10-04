@@ -469,7 +469,8 @@ test("1342 型:壓力段有 ≤3% 的上方密集區 → 技術段空方不再�
   const data = nearResistanceStock();
   const s = summaryOf(data);
   assert.ok(s.sections.levels.bear.some((i) => i.code === "L_DENSE_ABOVE" && i.rank === 5), "壓力段照舊有接近的密集區");
-  assert.deepEqual(s.sections.tech.bear.map((i) => i.text), ["上方 3% 內有壓力價位:成交最密集區 116.5–117.7(0.0%)"]);
+  assert.deepEqual(s.sections.tech.bear.map((i) => i.text), ["上方 3% 內有壓力價位:成交最密集區 116.5–117.7(貼近現價)"]);
+  assert.equal(s.sections.levels.bear.find((i) => i.code === "L_DENSE_ABOVE")?.text, "成交最密集區 116.5–117.7 自現價向上(佔近120日成交 2.8%)");
   assert.deepEqual(s.sections.tech.bull.map((i) => i.text), ["下方 3% 內有支撐價位:5日線 115.0(−1.3%)"]);
   // 技術段只有 rank 3 的那一句時,它就是該欄重點
   assert.equal(keyItems(s.sections.tech.bear)[0].code, "X_LEVEL_ABOVE_NEAR");

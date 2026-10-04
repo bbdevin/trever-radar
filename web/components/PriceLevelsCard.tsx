@@ -3,7 +3,7 @@ import { Info } from "lucide-react";
 import {
   HOWTO_LINES,
   PL_LABELS,
-  fmtDist,
+  distSeg,
   fmtLevelPrice,
   fmtShare,
   type LadderRow,
@@ -33,7 +33,9 @@ export function PriceLadder({ above, below, close }: { above: LadderRow[]; below
 
 function LadderLine({ row, close }: { row: LadderRow; close: number }) {
   const isZone = row.kind === "zone";
-  const tone = row.dist > 0 ? "text-up" : row.dist < 0 ? "text-down" : "text-foreground";
+  // 距離字與色調同一個 distSeg:四捨五入為 0 的寫「貼近現價」、中性色,不會一邊紅字一邊說貼近
+  const dist = distSeg(row.dist);
+  const tone = dist.kind === "up" ? "text-up" : dist.kind === "down" ? "text-down" : "text-foreground";
   return (
     <li className="grid min-h-8 grid-cols-[minmax(0,1fr)_auto_4.25rem] items-center gap-2 px-2.5 text-[12.5px]">
       <span className="min-w-0 truncate text-[color:var(--ink-2)]" title={row.label}>
@@ -47,7 +49,7 @@ function LadderLine({ row, close }: { row: LadderRow; close: number }) {
       {isZone && row.share != null ? (
         <span className="num text-right font-semibold text-[color:var(--ink-2)]">{PL_LABELS.share} {fmtShare(row.share)}</span>
       ) : (
-        <span className={cn("num text-right font-semibold", tone)}>{fmtDist(row.dist)}</span>
+        <span className={cn("num text-right font-semibold", tone)}>{dist.t}</span>
       )}
     </li>
   );
