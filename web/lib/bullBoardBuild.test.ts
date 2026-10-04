@@ -29,7 +29,8 @@ function fixture(dir: string) {
     data_date: DAY,
     generated_at: `${DAY}T22:00:00+08:00`,
     freshness: { insti: { date: DAY, stale: false }, branch: { date: DAY, stale: false }, margin: { date: "2026-09-07", stale: true } },
-    stocks: [{ id: "1111", name: "多方甲", market: "twse", industry: "電子", close: 89.5, chg_pct: 0.56, turnover: 5e8, scores: { final: 55 }, state: "armed" }],
+    themes: [{ name: "散熱", vs20: 1.4 }, { name: "AI", vs20: 2.2 }],
+    stocks: [{ id: "1111", name: "多方甲", market: "twse", industry: "電子", themes: ["冷門", "散熱", "AI"], close: 89.5, chg_pct: 0.56, turnover: 5e8, scores: { final: 55 }, state: "armed" }],
   };
   fs.writeFileSync(path.join(dir, "radar.json"), JSON.stringify(radar));
   // 三條 rank 4 的多方(分點、法人、技術),入榜
@@ -72,6 +73,8 @@ test("建置器對自造 fixture 跑兩次:輸出可解析、紀錄多一行、�
     assert.equal(board.entries[0].id, "1111");
     assert.equal(board.entries[0].name, "多方甲");
     assert.equal(board.entries[0].state, "armed");
+    // 族群檢視用(只影響顯示):今日在榜題材中最熱的那個
+    assert.deepEqual(board.entries[0].theme, { name: "AI", vs20: 2.2 });
     assert.ok(board.entries[0].bull_key_n >= 3);
     assert.match(board.generated_at, /\+08:00$/);
     assert.ok(!fs.existsSync(path.join(data, "bull_board.json.tmp")));

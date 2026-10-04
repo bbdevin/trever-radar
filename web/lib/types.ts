@@ -921,6 +921,11 @@ export interface BullBoardEntry {
   bull: BullBoardFact[];
   bear: BullBoardBearFact | null;
   counts: Record<"tech" | "chips" | "levels", { bull: number; bear: number }>;
+  /**
+   * 族群檢視用(docs/48 §1.1,只影響顯示,不屬凍結規則):今日題材資金流上最熱的題材;
+   * null = 今日沒有在榜題材(畫面改用產業)。缺鍵 = 舊 payload(畫面從 radar.json 補查)。
+   */
+  theme?: { name: string; vs20: number | null } | null;
 }
 
 /**

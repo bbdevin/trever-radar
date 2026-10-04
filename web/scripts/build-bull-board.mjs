@@ -16,6 +16,7 @@ import { fileURLToPath } from "node:url";
 
 import { boardLogLine, buildBullBoard, selectBoard } from "../lib/bullBoard.ts";
 import { lastCandleDate, summaryFromStockJson } from "../lib/bullBearFromStock.ts";
+import { hottestListedTheme } from "../lib/themeGroups.ts";
 
 const t0 = performance.now();
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -109,6 +110,8 @@ for (const f of files) {
     scored,
     lastT,
     summary,
+    // 族群檢視用(docs/48 §1.1,只影響顯示):與首頁「題材」排序同一個最熱題材挑法,只取今日在榜題材
+    theme: hottestListedTheme(r?.themes, radar.themes),
   });
 }
 const readMs = performance.now() - tRead;
