@@ -53,11 +53,11 @@ import PocketBadges from "@/components/PocketBadges";
 import StockPageSkeleton from "@/components/StockPageSkeleton";
 import WatchlistButton from "@/components/WatchlistButton";
 import { normalizeBranchPctile } from "@/lib/branchPctile";
-import { chartLevels, priceLevelFacts, priceLevelsView } from "@/lib/priceLevels";
+import { chartLevels, priceLevelsView } from "@/lib/priceLevels";
+import { deriveAllFacts } from "@/lib/facts";
 import { buildBullBear, techDetailsSummary, topOfSide, type BullBearSummary } from "@/lib/bullBear";
 import { useBranchTrack } from "@/lib/branchTrackList";
 import { pocketBadgeVisible } from "@/lib/branchTrackResolve";
-import PriceLevelsCard from "@/components/PriceLevelsCard";
 import BullBearPanel, { CountChip } from "@/components/BullBearPanel";
 import { pocketDisplayText } from "@/components/PocketBadges";
 import StatTile from "@/components/StatTile";
@@ -201,7 +201,8 @@ function StockView() {
       pocketTags: data.pocket_tags?.filter(
         (t) => !(t.code === "T1_TRACKED_BUY" || t.code === "K1_KEY_BUY") || pocketBadgeVisible(t.branches, muted),
       ),
-      priceFacts: priceLevelFacts(data.price_levels, lastT, data.technical?.rsi14),
+      // docs/46 v2:技術/籌碼/壓力三段的前端事實(含 price_levels 的 F 句)
+      derivedFacts: deriveAllFacts(data, lastT, muted),
       asOf: lastT,
       reasonText: (code, text) => legacyReasonText(code, text),
       pocketText: pocketDisplayText,
@@ -1064,14 +1065,13 @@ function FuturesDailyBlock({ futures, labels }: { futures: StockJson["futures"];
   );
 }
 
-/** 多空分頁(key 仍是 tech,docs/46 §1.3):多空摘要 → 價格位置卡(docs/45)→ 技術指標。
- *  MA20/MA60 兩格由價格階梯取代(使用者 2026-10-03);technical 為 null 仍畫前兩張。 */
+/** 多空分頁(key 仍是 tech,docs/46 v2):總覽 → 技術分析 / 籌碼分析 / 壓力分析(含價格階梯,docs/45)→ 技術指標。
+ *  technical 為 null 仍畫多空三段。 */
 function TechnicalPanel({ data, summary }: { data: StockJson; summary: BullBearSummary }) {
   const levels = useMemo(() => priceLevelsView(data.price_levels), [data.price_levels]);
   return (
     <div className="mt-3.5 grid min-w-0 grid-cols-1 gap-3">
-      <BullBearPanel summary={summary} />
-      <PriceLevelsCard view={levels} />
+      <BullBearPanel summary={summary} levels={levels} />
       <TechnicalScoreCard data={data} />
     </div>
   );
