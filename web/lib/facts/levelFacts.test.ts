@@ -4,8 +4,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { chartLevels, isNear, priceLevelFacts, priceLevelsView } from "../priceLevels.ts";
-import { LAST, levelSeries, okLevels } from "./fixtures.ts";
+import { chartLevels, distSeg, fmtLevelDist, isAtPrice, isNear, priceLevelFacts, priceLevelsView } from "../priceLevels.ts";
+import { LAST, levelSeries, nearResistanceStock, okLevels } from "./fixtures.ts";
 import { levelFacts, nearLevelFacts } from "./levelFacts.ts";
 
 test("上方壓力:240 日最高(60/120 同價同日合併)、密集區、現價之上成交、缺口、資料內最高", () => {
@@ -18,7 +18,7 @@ test("上方壓力:240 日最高(60/120 同價同日合併)、密集區、現價
   assert.ok(bear.includes("L_GAP_ABOVE|未回補缺口 1,095–1,240(" + "08/07" + ")在上方 +0.9%") || bear.some((b) => b.startsWith("L_GAP_ABOVE|未回補缺口 1,095–1,240(")), bear.join("\n"));
   assert.ok(bear.some((b) => b.startsWith("L_ALLTIME_HIGH|近 0.8 年資料最高 2,050(")));
   assert.ok(bear.includes("F1_MA_ABOVE|20 週線在上方,最接近 20週線 1,120(+3.2%)"));
-  assert.ok(bear.includes("F1_MA_ABOVE|5/20/60 月線在上方,最接近 20月線 1,085(0.0%)"));
+  assert.ok(bear.includes("F1_MA_ABOVE|5/20/60 月線在上方,最接近 20月線 1,085(貼近現價)"));
   // 接近(≤3%)的 rank 5
   assert.equal(fs.find((f) => f.code === "L_DENSE_ABOVE")?.rank, 5);
   assert.equal(fs.find((f) => f.code === "L_HIGH_ABOVE")?.rank, 2);
@@ -78,13 +78,52 @@ test("isNear:依畫面一位小數判斷(畫面 +3.0% 算接近,+3.1% 不算)", 
   assert.ok(isNear(0));
 });
 
+test("距離四捨五入為 0:不寫「0.0%」——單一價位寫「貼近現價」、密集區寫「自現價向上/向下」,不再加「,接近」", () => {
+  // isAtPrice 與 fmtDist 同一個四捨五入:畫面會寫 0.0% 的才算貼近
+  assert.ok(isAtPrice(0) && isAtPrice(0.04) && isAtPrice(-0.049));
+  assert.ok(!isAtPrice(0.05) && !isAtPrice(-0.05));
+  assert.equal(fmtLevelDist(0.04), "貼近現價");
+  assert.equal(fmtLevelDist(0.05), "+0.1%");
+  assert.deepEqual(distSeg(0.01), { t: "貼近現價", kind: "flat" });
+  // 1342 型:收盤 116.5 = 上方密集區下緣(格子以現價為錨,邊緣等於現價是常態)
+  const pl = nearResistanceStock().price_levels;
+  const fs = levelFacts(pl, levelSeries(), LAST);
+  const dense = fs.find((f) => f.code === "L_DENSE_ABOVE")!;
+  assert.equal(dense.text, "成交最密集區 116.5–117.7 自現價向上(佔近120日成交 2.8%)");
+  assert.ok(!dense.text.includes("0.0%") && !dense.text.includes("在上方"));
+  // code / rank / dist 不變(多方榜選股與排序只看這些)
+  assert.deepEqual([dense.rank, dense.dist, dense.side], [5, 0, "bear"]);
+  // 下方密集區上緣 = 現價
+  const below = levelFacts(nearResistanceStock({ dense_below: { lo: 115.3, hi: 116.5, share: 0.05 } }).price_levels, levelSeries(), LAST).find((f) => f.code === "L_DENSE_BELOW")!;
+  assert.equal(below.text, "成交最密集區 115.3–116.5 自現價向下(佔近120日成交 5.0%)");
+  assert.equal(below.rank, 5);
+  // 前高剛好等於現價(非今日):「貼近現價」取代「在上方 0.0%,接近」;rank 5 照舊
+  const hi = levelFacts(nearResistanceStock({ highs: { "60": { p: 116.5, t: "2026-09-15" } } }).price_levels, levelSeries(), LAST).find((f) => f.code === "L_HIGH_ABOVE")!;
+  assert.equal(hi.text, "60日最高 116.5(09/15)貼近現價");
+  assert.equal(hi.rank, 5);
+  const lo = levelFacts(nearResistanceStock({ lows: { "20": { p: 116.48, t: "2026-09-05" } } }).price_levels, levelSeries(), LAST).find((f) => f.code === "L_LOW_BELOW")!;
+  assert.equal(lo.text, "20日最低 116.5(09/05)貼近現價");
+  // 技術段「3% 內」句用同一個字
+  // (levelSeries 的週/月線是 1085 那組,與這份 price_levels 無關,只看日K)
+  const near = nearLevelFacts([...priceLevelFacts(pl, LAST, 60), ...fs.filter((f) => f.tf !== "W" && f.tf !== "M")]);
+  assert.equal(near.find((f) => f.code === "X_LEVEL_ABOVE_NEAR")?.text, "上方 3% 內有壓力價位:成交最密集區 116.5–117.7(貼近現價)");
+  // 階梯:均線等於現價的那列也寫「貼近現價」、中性色
+  const v = priceLevelsView(nearResistanceStock({ ma: { "5": 116.5 }, dense_above: null }).price_levels);
+  assert.ok(v.state === "ok");
+  if (v.state !== "ok") return;
+  const ma = v.above.find((r) => r.key === "ma-5")!;
+  assert.deepEqual(distSeg(ma.dist), { t: "貼近現價", kind: "flat" });
+  // 畫面會寫到的字沒有 0.0%
+  for (const f of [...fs, ...near]) assert.ok(!f.text.includes("0.0%"), f.text);
+});
+
 test("nearLevelFacts:壓力段 ≤3% 的價位在技術段日K 併成一句,由近到遠點名 2 個、其餘「等 N 處」;rank 3", () => {
   const facts = [...priceLevelFacts(okLevels(), LAST, 60), ...levelFacts(okLevels(), levelSeries(), LAST)];
   const near = nearLevelFacts(facts);
   const bear = near.find((f) => f.code === "X_LEVEL_ABOVE_NEAR")!;
   const bull = near.find((f) => f.code === "X_LEVEL_BELOW_NEAR")!;
   // 上方 ≤3%:20月線 0.0%、缺口 +0.9%、120日線 +1.4%、密集區 +1.4%(20週線 +3.2% 不算)
-  assert.equal(bear.text, "上方 3% 內有壓力價位:20月線 1,085(0.0%)、未回補缺口 1,095–1,240(+0.9%)等 4 處");
+  assert.equal(bear.text, "上方 3% 內有壓力價位:20月線 1,085(貼近現價)、未回補缺口 1,095–1,240(+0.9%)等 4 處");
   assert.equal(bull.text, "下方 3% 內有支撐價位:未回補缺口 1,060–1,075(−0.9%)、5週線 1,070(−1.4%)等 4 處");
   for (const f of near) {
     assert.equal(f.section, "tech");

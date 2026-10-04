@@ -20,12 +20,26 @@ export function fmtLevelPrice(price: number, close: number): string {
   return price.toLocaleString("zh-TW", { minimumFractionDigits: d, maximumFractionDigits: d });
 }
 
-/** 與現價的距離(%):上方為 +、下方為 −(U+2212,ChangeText 會上紅/綠)。 */
+/** 與現價的距離(%):上方為 +、下方為 −(U+2212,ChangeText 會上紅/綠)。純數字版(觀察價/失效價用)。 */
 export function fmtDist(pct: number): string {
   // 對稱四捨五入(Math.round(-62.5) 會得 -62)
   const r = (Math.sign(pct) * Math.round(Math.abs(pct) * 10)) / 10;
   if (r === 0) return "0.0%";
   return `${r > 0 ? "+" : "−"}${Math.abs(r).toFixed(1)}%`;
+}
+
+/**
+ * 價位距離四捨五入到畫面一位小數後為 0(|d| < 0.05%):均線、前高前低、缺口等單一價位與現價幾乎相等。
+ * 畫面不寫「在上方 0.0%」,寫 AT_PRICE;與 fmtDist 同一個四捨五入,字和判斷不會打架。
+ */
+export function isAtPrice(distPct: number): boolean {
+  return Math.round(Math.abs(distPct) * 10) === 0;
+}
+export const AT_PRICE = "貼近現價";
+
+/** 價位距離的畫面字(階梯、壓力段句、技術段「3% 內」句共用):貼近現價 / +1.2% / −1.2%。 */
+export function fmtLevelDist(pct: number): string {
+  return isAtPrice(pct) ? AT_PRICE : fmtDist(pct);
 }
 
 export function fmtShare(share: number): string {
@@ -139,10 +153,11 @@ function pickSide(fixed: LadderRow[], mas: LadderRow[]): LadderRow[] {
   return [...keep, ...nearest].sort((a, b) => (b.priceHi ?? b.price) - (a.priceHi ?? a.price) || a.key.localeCompare(b.key));
 }
 
-/** 有號距離片段(+ 紅、− 綠)。 */
+/** 價位距離片段(+ 紅、− 綠;貼近現價中性)。 */
 export function distSeg(d: number): Seg {
+  if (isAtPrice(d)) return { t: AT_PRICE, kind: "flat" };
   const t = fmtDist(d);
-  return { t, kind: t === "0.0%" ? "flat" : t.startsWith("+") ? "up" : "down" };
+  return { t, kind: t.startsWith("+") ? "up" : "down" };
 }
 
 export type MaNear = { n: string; v: number };

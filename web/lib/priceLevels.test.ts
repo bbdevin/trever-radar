@@ -10,7 +10,9 @@ import {
   MAX_ROWS_PER_SIDE,
   PL_LABELS,
   chartLevels,
+  distSeg,
   fmtDist,
+  fmtLevelDist,
   fmtLevelPrice,
   insufficientText,
   priceLevelFacts,
@@ -98,7 +100,8 @@ test("均線與現價相等歸上方", () => {
   if (v.state !== "ok") throw new Error("state");
   assert.equal(v.above[0].label, "5日均線");
   assert.equal(v.above[0].dist, 0);
-  assert.deepEqual(priceLevelFacts(pl, "2026-10-03").map((f) => f.text), ["5 日線在上方,最接近 5日線 120.0(0.0%)", "5/10/20日均線空頭排列"]);
+  assert.deepEqual(priceLevelFacts(pl, "2026-10-03").map((f) => f.text), ["5 日線在上方,最接近 5日線 120.0(貼近現價)", "5/10/20日均線空頭排列"]);
+  assert.deepEqual(distSeg(v.above[0].dist), { t: "貼近現價", kind: "flat" });
 });
 
 test("多空事實句與鏡像", () => {
@@ -169,6 +172,11 @@ test("精度與正負號", () => {
   assert.equal(fmtDist(12.49), "+12.5%");
   assert.equal(fmtDist(-6.25), "−6.3%");
   assert.equal(fmtDist(0.01), "0.0%");
+  // 價位距離:四捨五入為 0 的不寫 0.0%(觀察價/失效價的 fmtDist 維持數字)
+  assert.equal(fmtLevelDist(0.01), "貼近現價");
+  assert.equal(fmtLevelDist(-0.049), "貼近現價");
+  assert.equal(fmtLevelDist(-6.25), "−6.3%");
+  assert.deepEqual(distSeg(-0.05), { t: "−0.1%", kind: "down" });
   assert.equal(volumeSplitText({ window: 120, above: 0.384, below: 0.616 }), "近120日成交:現價之上 38%、之下 62%");
 });
 
