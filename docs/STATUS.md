@@ -19,6 +19,10 @@
 - Planner 定案(`docs/44` §6.4、`docs/29` §2.4):`branch_trades_raw` 6 碼(權證)列保留 150 個交易日,與 `warrant_daily` **共用同一個 `war_cutoff`**;4 碼個股/ETF 列永久保留。`radar prune` 新增 `--warrant-branches 150`(0 關閉)、`--max-dates 10`、`--dry-run`;由新到舊每輪最多 10 日、一日一交易、連續 3 空日即停,每刪一日寫 `import_logs(dataset='warrant_branch_prune')`(date=執行日、`error='data_date=…'`,才不會被 180 天 log 清理刪掉);不補刪、不 VACUUM。只在新版面(有 `ix_branch_trades_raw_date_cover`)啟用。排程不變(17:40 那輪本來就跑 prune)。
 - 使用者要求「今天能做的就先做」→ 10-04 提前合併(舊版面自動略過,換檔後才生效);第一次正式刪除前先跑 `docker run --rm -v ~/trever-radar/data:/app/data radar-pipeline python -m radar prune --dry-run`,看 `backlog would delete total=… dates=…` 那行(全部積壓總數),預期 2026-01/02 約 4.5k 列可刪。
 - 測試:`pipeline/tests/test_prune_warrant_branches.py` 9 項;pipeline 全套 1280 passed。
+## 2026-10-04 D-P0.5:批次寫入改 executemany＋WAL synchronous=NORMAL
+
+- `db.upsert()` 改 driver 層 executemany(每組欄位一句預備 `INSERT … ON CONFLICT DO UPDATE`),語意不變(只更新有帶的欄、key set 不同可混寫、回傳列數);新增 `insert_many()` 給分位計數整表重寫。WAL 連線 `synchronous=NORMAL`;cache 64 MB 保留,temp_store/mmap 不動。
+- 一致性:合成庫新舊程式跑 00:05 鏈,26 張表 PK 排序 SHA-256 全同;分點匯入/部分欄位更新另比對亦同。效能:合成庫分點統計寫入 71 s → 3 s;正式寫入段 212 s 估降至約 10–20 s,待 VPS 下一輪 log 確認。細節 `docs/44` §7。
 
 ## 2026-10-04 網站 W-P0 上線:登入單例、站內換頁、靜態快取、右滑提示
 

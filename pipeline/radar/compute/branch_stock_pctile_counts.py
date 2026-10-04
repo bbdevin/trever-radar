@@ -96,7 +96,7 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy import text
 
-from ..db import get_engine, init_db
+from ..db import get_engine, init_db, insert_many
 from ..schema import branch_stock_pctile_counts
 from .branch_same_day import merge_by_date
 from .branch_point_in_time_persist import (
@@ -361,7 +361,7 @@ def compute_branch_stock_pctile_counts(
 
         def flush(force: bool = False) -> None:
             if buffer and (force or len(buffer) >= WRITE_CHUNK_ROWS):
-                write_conn.execute(branch_stock_pctile_counts.insert(), buffer)
+                insert_many(write_conn, branch_stock_pctile_counts, buffer)
                 buffer.clear()
 
         # stock-major:每檔個股的價格切片只載入一次就釋放,而且一檔算完就能
