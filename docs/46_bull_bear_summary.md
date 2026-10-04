@@ -91,14 +91,14 @@ P2:期貨背景列;F9–F11。
 ### 6.2 契約(`web/lib/bullBear.ts`)
 `BullBearItem` 加 `section`、`segments?`、`tf?`、`dataDate?`、`rank`(1–5)、`magnitude?`、`dist?`;`BullBearSummary.sections`。`buildBullBear({..., derivedFacts})`;`SECTION_BY_SOURCE`(tech/strategy→技術、price/levels→壓力、其餘→籌碼);Source 加 `holders`、`levels`。分類調整:R_HOT5/R_HOT10 來源 price→tech(技術段日K)、S11→inst、S12→chips、S13→margin;F1_FUTURES_VOLUME_60D_HIGH、R_FUTURES_VOLUME_NO_DIRECTION 進表(背景/期貨)。去重:①後端 code 只一次 ②前端事實(無 date/dataDate)的 mirrors 取代同方向後端 code,含風險與口袋 ③`YIELD_TO_BACKEND`:R_HOT5/10→X_CHG5_UP、R_GAP_FADE→X_GAP_UP_TODAY、R_SHOOTING→X_BIG_BLACK ④事實鍵 code+tf+variant 只一次。排序:段內先分組,再 rank↓ → magnitude↓ → points↓ → 原順序;壓力段距離↑。`topOfSide`:rank → magnitude → 段序(壓力距離 ≤3% → 籌碼 → 技術 → 其餘壓力)→ 來源序。
 
-### 6.3 事實目錄(`web/lib/facts/catalogue.ts`,97 個 code;產生器 `techFacts`/`levelFacts`/`instFacts`/`marginFacts`/`branchFacts`/`holdersFacts`/`otherFacts`,彙整 `facts/index.ts deriveAllFacts`)
+### 6.3 事實目錄(`web/lib/facts/catalogue.ts`,100 個 code;產生器 `techFacts`/`levelFacts`/`instFacts`/`marginFacts`/`branchFacts`/`holdersFacts`/`otherFacts`,彙整 `facts/index.ts deriveAllFacts`)
 | 段/來源 | P0 | P1 | P2 |
 |---|---|---|---|
 | 技術(日K F2/F3/F4/F5/F8 由 `priceLevelFacts`) | F2_BULL/BEAR、X_ALIGN_BULL/BEAR(W/M)、X_MA_CROSS_UP/DOWN、X_MACD_CROSS_UP/DOWN、X_KD_GOLDEN_LOW/X_KD_DEATH_HIGH、F8_RSI_OK/LOW、X_VOL_SURGE_UP/DOWN、F5_UP/DOWN、F4_NEW_HIGH/LOW、F3_HIGH/LOW_TODAY、X_UP/DOWN_STREAK、X_CHG1_UP/DOWN、X_CHG5_UP/DOWN | X_MA20_SLOPE_UP/DOWN、X_MA60_SLOPE_UP/DOWN、X_MACD_STATE_POS/NEG、X_KD_OVER80、X_GAP_UP/DOWN_TODAY、X_BIG_BLACK(週/月版 F4/F5/F8 亦屬 P1) | X_VOL_DRY |
 | 壓力 | F1_MA_BELOW/ABOVE(日/週/月,附最接近均線價位與距離)、L_HIGH_ABOVE、L_LOW_BELOW、L_DENSE_ABOVE/BELOW、L_SUPPLY_ABOVE/BELOW | L_ALLTIME_HIGH/LOW、L_GAP_ABOVE/BELOW、L_RANGE_POS_TOP/BOTTOM | — |
 | 法人 | C_FOREIGN_BUY/SELL、C_TRUST_BUY/SELL、C_BOTH_BUY/SELL、C_NET_SHARE_BUY/SELL | C_FOREIGN_20D_BUY/SELL、C_TRUST_20D_BUY/SELL | — |
 | 資券 | C_MARGIN_HOT/OK、C_MARGIN_UP_PRICE_DOWN、C_MARGIN_DOWN_PRICE_UP | C_SHORT_CHANGE | C_SHORT_MARGIN_RATIO |
-| 分點 | C_TOP15_FLOW_BUY/SELL、C_ACC_1M、C_DIST_1M、C_DAYTRADE_BUY、C_TRACKED_SELL | C_ACC_1W、C_DIST_1W、C_GEO_BUY/SELL、C_PNL_GAINERS/LOSERS_HOLDING | — |
+| 分點 | C_TOP15_FLOW_BUY/SELL、C_ACC_1M、C_DIST_1M、C_DAYTRADE_BUY、C_TRACKED_SELL、C_SMART_BUY、C_SMART_SELL(⚠)(§6.8) | C_ACC_1W、C_DIST_1W、C_GEO_BUY/SELL、C_PNL_GAINERS/LOSERS_HOLDING、C_SMART_HOLDING(§6.8) | — |
 | 大戶 | H_MAJOR400_UP/DOWN、H_MAJOR1000_UP/DOWN、H_RETAIL_DOWN/UP | H_MAJOR_COUNT、H_INSIDER_UP/DOWN | H_PLEDGE_HIGH |
 | 權證/期貨/題材/公司 | C_PUT_DOMINANT | C_PUT_SURGE、C_FUT_VOLUME_HIGH、C_THEME_HOT/COLD、C_BUYBACK | (C_WARRANT_QUIET、C_FUT_OI_CHANGE 未做) |
 
@@ -119,9 +119,9 @@ P2:期貨背景列;F9–F11。
 **影響力 rank 表**(magnitude 為同 rank 內主排序:佔量 %、漲跌幅 |%|、量比、合計張數佔量;週/月 = 日K 減一級;滯後的集保/董監封頂 4):
 | rank | 事實 |
 |---|---|
-| 5 | 外資/投信單日買賣超佔量 ≥3%;三大法人合計佔量 ≥5%;前12大分點淨買賣佔量 ≥5%;近1月出貨分點;分點反手賣出(B_RISK_REVERSAL);日K 跌破 20 日線、MACD 柱翻正/翻負;壓力/支撐 ≤3%(前高前低、成交密集區) |
-| 4 | 外資/投信單日佔量 1–3%(或張數門檻);外資投信同步;三大法人 3–5%;前12大分點 2–5%;囤貨分點(1 月/1 週)、近1週出貨分點;當沖分點買超、追蹤分點賣超、地緣分點;融資增加股價跌 / 融資減少股價漲;認售成交暴增;日K 站回 20 日線、KD 低檔金叉/高檔死叉、爆量收紅/收黑(量比 ≥1.5)、創 20 日新高/新低、今日 N 日高低、單日 ±3%、跳空、長黑;最接近均線 ≤3%(上下對稱)、未回補缺口 ≤3%;集保大戶週變化 ≥0.5 個百分點(封頂);後端事件型 R_*、分點/法人/T2 類理由 |
-| 3 | 均線多空排列(日)、連漲連跌、2 日量增價漲/跌、近 5 日 ±8%、法人 20 日累計、融資使用率 ≥60%(含 R_MARGIN_HOT、R_RSI_OVERHEAT 狀態型風險)、認售為認購倍數、散戶人數、週/月最接近均線 ≤3%、後端其餘技術/策略理由 |
+| 5 | 外資/投信單日買賣超佔量 ≥3%;三大法人合計佔量 ≥5%;前12大分點淨買賣佔量 ≥5%;低買高賣/區間損益前段分點買賣超佔量 ≥2%(§6.8);近1月出貨分點;分點反手賣出(B_RISK_REVERSAL);日K 跌破 20 日線、MACD 柱翻正/翻負;壓力/支撐 ≤3%(前高前低、成交密集區) |
+| 4 | 外資/投信單日佔量 1–3%(或張數門檻);外資投信同步;三大法人 3–5%;前12大分點 2–5%;低買高賣/區間損益前段分點買賣超(其餘);囤貨分點(1 月/1 週)、近1週出貨分點;當沖分點買超、追蹤分點賣超、地緣分點;融資增加股價跌 / 融資減少股價漲;認售成交暴增;日K 站回 20 日線、KD 低檔金叉/高檔死叉、爆量收紅/收黑(量比 ≥1.5)、創 20 日新高/新低、今日 N 日高低、單日 ±3%、跳空、長黑;最接近均線 ≤3%(上下對稱)、未回補缺口 ≤3%;集保大戶週變化 ≥0.5 個百分點(封頂);後端事件型 R_*、分點/法人/T2 類理由 |
+| 3 | 強分點仍有持股(C_SMART_HOLDING)、均線多空排列(日)、連漲連跌、2 日量增價漲/跌、近 5 日 ±8%、法人 20 日累計、融資使用率 ≥60%(含 R_MARGIN_HOT、R_RSI_OVERHEAT 狀態型風險)、認售為認購倍數、散戶人數、週/月最接近均線 ≤3%、後端其餘技術/策略理由 |
 | 2 | RSI 區間、KD >80、均線斜率、MACD 在零軸上/下(原 3,屬例行狀態)、遠距壓力支撐(>3%)、區間上下緣、題材熱度、分點帳面損益家數、董監持股 |
 | 1 | 量縮、融資使用率 <60%、券增減、券資比、期貨量、庫藏股、董監質押、資料內最高最低、遠距週/月均線 |
 本次調整(其餘不動):外資/投信單日 ≥3% 由「僅外資賣超」改為多空、外資投信一致;三大法人合計與前12大分點 ≥5% 升 5;囤貨分點 3→4;融資增減股價反向 3→4;日K 最接近下方均線 ≤3% 2→4、週/月 1→3(與上方對稱);MACD 零軸狀態 3→2;集保大戶 5→4;後端 R_RSI_OVERHEAT、R_MARGIN_HOT 4→3。
@@ -137,6 +137,16 @@ P2:期貨背景列;F9–F11。
 - 總覽列計數仍三組,順序跟畫面一致:技術 · 壓力 · 籌碼(`PANEL_ORDER`;資料排序用的 `SECTION_ORDER` 與標頭最強一條的段序都不變)。
 - 「怎麼算」不再用 `<details>`:常駐 11.5px `--ink-2` 小字、左 2px 線,`HOWTO_LINES` 由 13 條精簡為 4 條關鍵定義(還原價、均線/N 日高低/缺口/接近、現價上下成交與密集區、週月K合併)。原本混在裡面的法人/分點/大戶門檻改為籌碼分析卡底 2 行(`CHIPS_HOWTO_LINES`,testid `bullbear-chips-howto`)。被刪掉的細節(N 日視窗不縮短、同價同日只列最長、60 日區間上下緣、1000 張級距另列條件等)只留在本檔與程式註解,不再上畫面。
 - 驗收:`verify-mobile-stock.mjs` 鎖 levels 巢狀於 tech、卡片序 總覽→技術→籌碼、多空分頁無 `details`。
+### 6.8 低買高賣/區間損益估算前段分點的動向(2026-10-04 使用者:「籌碼分析 要把低買高賣的強分點 或是區間獲利多的分點考量進去」)
+產生器 `web/lib/facts/smartFacts.ts`(由 `branchFacts` 呼叫);純呈現,不進任何分數。「強分點」不另立定義,沿用既有兩份名單:
+- **低買高賣**:`branch_pctile_counts` 經 `normalizeBranchPctile`,短線派/長線派各取排行前 `DEFAULT_VISIBLE`(5)名——即面板預設展開的那幾家(整份排行 30 家太寬,第 30 名不能稱「強」);買側紀錄未達 `minKnown` 的(`compactSide` 判「不足」)不算,與分點標籤同一規則。短線派優先。v1 舊 JSON 只有短線派,照樣可用。
+- **區間損益估算前段**:`branch_pnl_est` 3月(60)、1年(240)窗口 `gainers` 依估算合計前 3 名且 >0(進榜已過 pipeline 門檻:可見買進 ≥50 張、最大持有成本 ≥100 萬)。2年窗口太舊,不用。
+- **份量**:分點近 5 日(`branch_history` 前 5 天,每天只留前 12 大,看不到的日子算 0)或今日淨買賣超,須 ≥50 張,且佔同期間成交量 ≥0.5% 或 ≥500 張(500 張同 `C_TRACKED_SELL`,大型股 0.5% 太難達到;50 張下限擋小量股的幾張雜訊)。近 5 日的量全在今日 → 寫「今日」;否則先看近 5 日,不成立才看今日。一家分點只寫一句。
+- **減碼**:區間損益前段分點近 5 日淨賣 ≥50 張且 ≥ 估算持股的 30%(賣出 ÷(估算持股 + 賣出);估算日不早於分點資料日才算)→ 也列入 `C_SMART_SELL`,句尾「估算持股減少 N%」。
+- **句子**:`C_SMART_BUY`(多方)/`C_SMART_SELL`(空方 ⚠)點名前 2 家(依佔量排),其餘「等 N 家」;資格寫在名字前後,例「低買高賣分點【群益金鼎-板橋】(短線派 買低 70%)近5日買超 +1,500 張(佔量 3.0%)」「區間損益估算前段分點【凱基-台北】(3月 +500 萬)今日買超 +600 張(佔量 6.0%)」。賣超句的分位標示用「賣高 N%」(賣側紀錄不足時用買低)。rank:最大佔量 ≥2% → 5,否則 4;magnitude = 佔量 %。分點資料日落後 → 帶日期、「今日」字樣拿掉。
+- **持股**:沒被買賣句點名的強分點,在區間損益估算有持股 ≥50 張 → `C_SMART_HOLDING`(多方,rank 3)「…仍有持股 800 張,帳面為正(估算)」,一家一句、最多 2 家。這些分點不再算進 `C_PNL_GAINERS/LOSERS_HOLDING` 家數,有排除時家數句首加「另有」。
+- **去重**:`C_TRACKED_SELL` 已點名的今日賣超分點不再出現在 `C_SMART_SELL`。
+- `branch_pctile_counts` 由 `STOCK_KEYS_NOT_FACTS` 移到 `STOCK_KEYS_USED`(原註記「只呈現次數,不得做成判定」:這裡只點名排行前段分點的買賣超事實並附分位佔比,不做評分與判定)。
 
 ### 6.5 測試
 `web/lib/bullBear.test.ts`(完整性 fixture:240 日高 +46.9%、上方密集區、現價之上成交、外資連 5 日賣超取代 R_FOREIGN_SELL5;讓位;鏡像含口袋;標頭 rank;分組;每 code 恰一次)、`web/lib/facts/{series,techFacts,levelFacts,holdersFacts,chipsFacts,catalogue}.test.ts`(重取樣:部分週/週中與週一假日/跨年週/月桶/分割前後還原相等/零量;目錄覆蓋率=每個 code 都有 fixture 產生;segments 接起來等於 text;mirrors ⊆ 目錄;禁用詞)。`pipeline/tests/test_bull_bear_codes.py`:SOURCES 加 `futures_volume_anomaly.py`;json_export 個股 payload 頂層鍵 ⊆ `STOCK_KEYS_USED ∪ STOCK_KEYS_NOT_FACTS`(且不得列 payload 沒有的鍵)。

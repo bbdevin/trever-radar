@@ -6,7 +6,7 @@ import { test } from "node:test";
 
 import type { DerivedFact } from "../bullBear.ts";
 import { branchFacts } from "./branchFacts.ts";
-import { LAST, branchMonth, branchWeek, insti20d, instiBothBuy, instiBothSell, instiSellStreak, marginHotUp, marginOkDown } from "./fixtures.ts";
+import { LAST, branchMonth, branchSmart, branchWeek, insti20d, instiBothBuy, instiBothSell, instiSellStreak, marginHotUp, marginOkDown } from "./fixtures.ts";
 import { instFacts } from "./instFacts.ts";
 import { marginFacts } from "./marginFacts.ts";
 import { futuresFacts, themeFacts, warrantFacts } from "./otherFacts.ts";
@@ -67,7 +67,79 @@ test("分點:前 12 大淨流、1 月囤貨/出貨、隔日沖買超、地緣、
   assert.equal(m.get("C_DAYTRADE_BUY")?.text, "今日買超分點中有隔日沖紀錄者 1 家,合計 +1,000 張(佔量 10.0%)");
   assert.deepEqual(m.get("C_GEO_BUY")?.mirrors, ["G1_GEO_BUY"]);
   assert.equal(m.get("C_PNL_LOSERS_HOLDING")?.text, "近60日仍有持股且帳面為負的分點 2 家,合計持股 600 張(估算)");
+  // 區間損益估算前 3 名(甲乙戊)由 C_SMART_HOLDING 逐家寫(戊沒持股不寫),家數句不重算、改「另有」
+  assert.equal(m.get("C_SMART_HOLDING")?.text,
+    "區間損益估算前段分點【甲】(3月 +200 萬)仍有持股 500 張,帳面為正(估算);區間損益估算前段分點【乙】(3月 +100 萬)仍有持股 300 張,帳面為正(估算)");
+  assert.equal(m.get("C_PNL_GAINERS_HOLDING")?.text, "另有近60日仍有持股且帳面為正的分點 2 家,合計持股 200 張(估算)");
   assert.equal(m.get("C_PNL_GAINERS_HOLDING")?.side, "bull");
+});
+
+test("分點:低買高賣/區間損益估算前段分點的買超、賣超、持股(docs/46 §6.8)", () => {
+  const f = branchSmart();
+  const facts = branchFacts(f, f.candles, LAST, new Set());
+  const m = byCode(facts);
+  const buy = m.get("C_SMART_BUY")!;
+  assert.equal(buy.text,
+    "區間損益估算前段分點【凱基-台北】(3月 +500 萬)今日買超 +600 張(佔量 6.0%);"
+    + "低買高賣分點【群益金鼎-板橋】(短線派 買低 70%)近5日買超 +1,500 張(佔量 3.0%)");
+  assert.equal(buy.side, "bull");
+  assert.equal(buy.rank, 5);
+  assert.equal(buy.magnitude, 6);
+  const sell = m.get("C_SMART_SELL")!;
+  assert.equal(sell.text,
+    "低買高賣分點【B1】(長線派 賣高 60%)今日賣超 −600 張(佔量 6.0%);"
+    + "區間損益估算前段分點【富邦-建國】(3月 +300 萬)近5日賣超 −180 張(佔量 0.4%),估算持股減少 64%");
+  assert.equal(sell.side, "bear");
+  assert.equal(sell.risk, true);
+  assert.equal(m.get("C_SMART_HOLDING")?.text, "區間損益估算前段分點【國泰-敦南】(1年 +900 萬)仍有持股 800 張,帳面為正(估算)");
+  assert.equal(m.get("C_SMART_HOLDING")?.rank, 3);
+  // 份量不足(元大-士林 40 張)、超出前 5 名(永豐-竹北)、買側紀錄不足 → 都不點名
+  const all = facts.map((x) => x.text).join("\n");
+  for (const n of ["元大-士林", "永豐-竹北", "紀錄不足", "A1"]) assert.ok(!all.includes(`【${n}】`), n);
+  // 一家分點只出現在一句
+  for (const n of ["凱基-台北", "群益金鼎-板橋", "B1", "富邦-建國", "國泰-敦南"])
+    assert.equal(facts.filter((x) => x.text.includes(`【${n}】`)).length, 1, n);
+});
+
+test("分點:強分點門檻——佔量 0.5% 或 500 張、50 張下限;前 2 家點名,其餘「等 N 家」", () => {
+  const f = branchSmart();
+  // 量放大到 200,000 張/日:群益 5 日 1,500 = 0.15%、凱基今日改 450 = 0.23%,都未達 0.5%;
+  // 群益 1,500 ≥500 張 → 仍成立,凱基 450 <500 張 → 不列
+  const k = f.branch_history![0].branches.find((b) => b.n === "凱基-台北")!;
+  k.b = 450; k.net = 450;
+  const big = f.candles.map((c) => ({ ...c, v: 200_000 }));
+  const m = byCode(branchFacts(f, big, LAST, new Set()));
+  assert.equal(m.get("C_SMART_BUY")?.text, "低買高賣分點【群益金鼎-板橋】(短線派 買低 70%)近5日買超 +1,500 張(佔量 0.1%)");
+  assert.equal(m.get("C_SMART_BUY")?.rank, 4);
+  // 3 家都成立 → 點名前 2 家 + 等 3 家
+  const g = branchSmart();
+  g.branch_history![0].branches.push({ n: "A1", b: 900, s: 0, net: 900 });
+  const t = byCode(branchFacts(g, g.candles, LAST, new Set())).get("C_SMART_BUY")!.text;
+  assert.ok(t.endsWith(" 等 3 家"), t);
+  assert.equal((t.match(/【/g) ?? []).length, 2);
+});
+
+test("分點:強分點賣超與追蹤分點賣超不重複;資料日落後帶日期;舊 JSON 不丟例外", () => {
+  const f = branchSmart();
+  f.branch_tags!.tracked = ["B1"];
+  const m = byCode(branchFacts(f, f.candles, LAST, new Set()));
+  assert.equal(m.get("C_TRACKED_SELL")?.text, "追蹤分點今日淨賣超 1 家:B1 −600 張");
+  assert.ok(!m.get("C_SMART_SELL")!.text.includes("【B1】"));
+  const late = byCode(branchFacts(f, f.candles, "2026-10-02", new Set()));
+  assert.equal(late.get("C_SMART_BUY")?.date, "10/01");
+  assert.ok(late.get("C_SMART_BUY")!.text.includes("【凱基-台北】(3月 +500 萬)買超 +600 張"));
+  // 舊 JSON:沒有 branch_pctile_counts / branch_pnl_est、v1 分位(沒有長線派)
+  const g = branchSmart();
+  assert.ok(!byCode(branchFacts({ branch_history: g.branch_history }, g.candles, LAST, new Set())).has("C_SMART_BUY"));
+  const v1 = {
+    version: 1 as const, as_of: LAST, window_market_days: 20, window_from: null, computed_at: null, definitions_version: null,
+    min_known_episodes_per_side: 5, max_branches: 10, stock_buy_pctile_known: null, stock_low_buy_count: null,
+    stock_sell_pctile_known: null, stock_high_sell_count: null,
+    branches: [{ branch_name: "群益金鼎-板橋", buy_pctile_known: 10, buy_pctile_unknown: 0, low_buy_count: 7, sell_pctile_known: 10, sell_pctile_unknown: 0, high_sell_count: 8 }],
+  };
+  const old = byCode(branchFacts({ branch_history: g.branch_history, branch_pctile_counts: v1 }, g.candles, LAST, new Set()));
+  assert.equal(old.get("C_SMART_BUY")?.text, "低買高賣分點【群益金鼎-板橋】(短線派 買低 70%)近5日買超 +1,500 張(佔量 3.0%)");
+  assert.doesNotThrow(() => branchFacts({ branch_pctile_counts: { version: 2 } as never, branch_pnl_est: { as_of: LAST, definitions_version: "x", windows: {} } }, [], LAST, new Set()));
 });
 
 test("分點:只有 1 週的囤貨/出貨、追蹤分點賣超(關掉的不算)、地緣賣超、前 12 大淨賣", () => {

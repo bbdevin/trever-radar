@@ -5,6 +5,7 @@
 import type { DerivedFact } from "../bullBear.ts";
 import type { Candle, StockJson } from "../types.ts";
 import { TOP_N_PER_DAY, computeWindow, type AccRow } from "../accumulation.ts";
+import { smartBranchFacts } from "./smartFacts.ts";
 import { LOTS, fmtInt, mk, mmdd } from "./text.ts";
 
 const dayNet = (d: { branches: { n: string; net: number }[] }) => {
@@ -23,9 +24,16 @@ function nameList(rows: { name: string; net: number }[], max = 2) {
   return segs;
 }
 
-export function branchFacts(data: Pick<StockJson, "branch_history" | "branch_tags" | "branch_pnl_est">, candles: readonly Candle[], lastT: string, muted: ReadonlySet<string>): DerivedFact[] {
+export function branchFacts(
+  data: Pick<StockJson, "branch_history" | "branch_tags" | "branch_pnl_est" | "branch_pctile_counts">,
+  candles: readonly Candle[],
+  lastT: string,
+  muted: ReadonlySet<string>,
+): DerivedFact[] {
   const bh = data.branch_history;
   const out: DerivedFact[] = [];
+  // C_TRACKED_SELL 已點名的今日賣超分點:低買高賣/區間損益前段的賣超句不再重複列
+  const trackedSellers = new Set<string>();
   const volBy = new Map(candles.map((c) => [c.t, c.v || 0]));
   if (bh?.length) {
     const d0 = bh[0];
@@ -86,9 +94,11 @@ export function branchFacts(data: Pick<StockJson, "branch_history" | "branch_tag
       const tracked = new Set((tags.tracked ?? []).filter((n) => !muted.has(n)));
       const ts = [...nets].filter(([n, v]) => v < 0 && tracked.has(n)).map(([name, net]) => ({ name, net })).sort((a, b) => a.net - b.net);
       const tsSum = ts.reduce((s, r) => s + r.net, 0);
-      if (ts.length && (-tsSum >= vol * 0.003 || -tsSum >= 500))
+      if (ts.length && (-tsSum >= vol * 0.003 || -tsSum >= 500)) {
+        for (const r of ts) trackedSellers.add(r.name);
         out.push(mk("C_TRACKED_SELL", [`追蹤分點${today}淨賣超 ${ts.length} 家:`, ...nameList(ts), ...(ts.length > 1 ? [",合計 ", LOTS(tsSum)] : [])],
           { rank: 4, magnitude: (-tsSum / vol) * 100, date }));
+      }
 
       // 地緣分點
       const geo = new Set(tags.geo?.names ?? []);
@@ -102,19 +112,31 @@ export function branchFacts(data: Pick<StockJson, "branch_history" | "branch_tag
     }
   }
 
-  // 區間損益(估算):近 60 日仍有持股的分點,帳面為正/為負的家數
+  // 低買高賣/區間損益估算前段分點的買賣超與持股(docs/46 §6.8)
+  const smart = smartBranchFacts(data, candles, lastT, trackedSellers);
+  out.push(...smart.facts);
+
+  // 區間損益(估算):近 60 日仍有持股的分點,帳面為正/為負的家數。
+  // C_SMART_HOLDING 已逐家寫過的分點不重算,句首改「另有」。
   const pnl = data.branch_pnl_est;
   const w = pnl?.windows?.["60"];
   if (w) {
-    const byName = new Map<string, { pos: number; un: number }>();
-    for (const r of [...(w.gainers ?? []), ...(w.losers ?? [])]) if (!byName.has(r.name)) byName.set(r.name, { pos: r.pos_lots, un: r.unrealized });
+    const byName = new Map<string, { pos: number; un: number; named: boolean }>();
+    for (const r of [...(w.gainers ?? []), ...(w.losers ?? [])])
+      if (!byName.has(r.name)) byName.set(r.name, { pos: r.pos_lots, un: r.unrealized, named: smart.holdingNamed.has(r.name) });
     const holding = [...byName.values()].filter((r) => r.pos > 0);
     const neg = holding.filter((r) => r.un < 0);
     const pos = holding.filter((r) => r.un > 0);
     const date = pnl.as_of && pnl.as_of !== lastT ? mmdd(pnl.as_of) : undefined;
     const lots = (xs: { pos: number }[]) => fmtInt(xs.reduce((s, r) => s + r.pos, 0));
-    if (neg.length >= 2) out.push(mk("C_PNL_LOSERS_HOLDING", [`近60日仍有持股且帳面為負的分點 ${neg.length} 家,合計持股 ${lots(neg)} 張(估算)`], { rank: 2, date }));
-    if (pos.length >= 2) out.push(mk("C_PNL_GAINERS_HOLDING", [`近60日仍有持股且帳面為正的分點 ${pos.length} 家,合計持股 ${lots(pos)} 張(估算)`], { rank: 2, date }));
+    const agg = (code: string, xs: typeof holding, word: string) => {
+      const rest = xs.filter((r) => !r.named);
+      if (rest.length < 2) return;
+      const also = rest.length < xs.length ? "另有" : "";
+      out.push(mk(code, [`${also}近60日仍有持股且帳面為${word}的分點 ${rest.length} 家,合計持股 ${lots(rest)} 張(估算)`], { rank: 2, date }));
+    };
+    agg("C_PNL_LOSERS_HOLDING", neg, "負");
+    agg("C_PNL_GAINERS_HOLDING", pos, "正");
   }
   return out;
 }

@@ -119,6 +119,10 @@ export const FACT_CATALOGUE: Record<string, CatalogueEntry> = {
   C_GEO_SELL: chip("chips", "bear", 1, { mirrors: ["G2_GEO_SELL"] }),
   C_PNL_GAINERS_HOLDING: chip("chips", "bull", 1),
   C_PNL_LOSERS_HOLDING: chip("chips", "bear", 1),
+  // 低買高賣排行前段/區間損益估算前段分點(docs/46 §6.8)
+  C_SMART_BUY: chip("chips", "bull", 0),
+  C_SMART_SELL: chip("chips", "bear", 0, { risk: true }),
+  C_SMART_HOLDING: chip("chips", "bull", 1),
 
   // ── 大戶(集保週資料)/ 董監 ──
   H_MAJOR400_UP: chip("holders", "bull", 0),

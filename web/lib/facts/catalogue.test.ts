@@ -11,7 +11,7 @@ import type { StockJson } from "../types.ts";
 import { branchFacts } from "./branchFacts.ts";
 import { FACT_CATALOGUE } from "./catalogue.ts";
 import {
-  DIRECTORS_PLEDGED, LAST, branchMonth, branchWeek, holdersBear, holdersBull, insti20d, instiBothBuy, instiBothSell,
+  DIRECTORS_PLEDGED, LAST, branchMonth, branchSmart, branchWeek, holdersBear, holdersBull, insti20d, instiBothBuy, instiBothSell,
   instiSellStreak, levelSeries, marginHotUp, marginOkDown, okLevels, techBearSeries, techBullSeries, techQuietSeries,
 } from "./fixtures.ts";
 import { holdersFacts } from "./holdersFacts.ts";
@@ -44,7 +44,7 @@ function everyFixtureFact(): DerivedFact[] {
   out.push(...levelFacts(okLevels({ lows: { "60": { p: 1080, t: "2026-09-30" } } }), levelSeries(), LAST));
   for (const f of [instiSellStreak(), instiBothBuy(), instiBothSell(), insti20d(), insti20d(true)]) out.push(...instFacts(f.ih, f.candles, LAST));
   for (const f of [marginHotUp(), marginOkDown()]) out.push(...marginFacts(f.mh, f.adjusted, LAST));
-  for (const f of [branchMonth(), branchWeek()]) out.push(...branchFacts(f, f.candles, LAST, new Set()));
+  for (const f of [branchMonth(), branchWeek(), branchSmart()]) out.push(...branchFacts(f, f.candles, LAST, new Set()));
   out.push(...holdersFacts(holdersBull(), { display_from: "", display_to: "", db_earliest: null, insider_as_of_ym: "2026-08" }, DIRECTORS_PLEDGED));
   out.push(...holdersFacts(holdersBear(), undefined, null));
   out.push(...warrantFacts(
