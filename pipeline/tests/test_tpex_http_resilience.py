@@ -255,9 +255,11 @@ record() { printf '%s\\n' \"$1\" >> \"$RADAR_TEST_EVENTS\"; }
 set -euo pipefail
 trap 'record "err:$?:$BASH_COMMAND"' ERR
 acquire_db_lock() { record lock; }
-acquire_db_lock_wait() { record lock; }
-db_lock_take() { :; }
-release_db_lock() { :; }
+LOCKED=0
+acquire_db_lock_wait() { LOCKED=1; record lock; }
+db_lock_take() { LOCKED=1; }
+release_db_lock() { LOCKED=0; }
+guard_locked() { [ "$LOCKED" = 1 ] || record "UNLOCKED:$1"; }
 price_date_is_today() { return 0; }
 round_has_changes() { return 0; }
 sync_code() { record sync; }
@@ -267,8 +269,9 @@ notify() { record \"notify:$1:$2:$3\"; }
 notify_warn() { record \"warn:$1\"; }
 notify_ok() { record \"ok:$1\"; }
 taipei_date() { echo 20260901; }
-deploy_data() { record deploy; }
+deploy_data() { guard_locked deploy; record deploy; }
 radar() {
+  guard_locked \"radar:$*\"
   record \"radar:$*\"
   if [ \"$1\" = import-daily ] && [ \"$2\" = --datasets ] && [ \"$3\" = quotes ]; then
     return \"${QUOTES_RC:-0}\"
@@ -375,6 +378,17 @@ ROUND_FAIL_CONSEQUENCE=""
         self.assertTrue(any("aggregate-warrants" in event for event in events))
         self.assertIn("deploy", events)
         self.assertTrue(any(event.startswith("ok:") for event in events))
+
+    def test_daily_insti_deadline_publishes_only_while_holding_the_db_lock(self):
+        """2026-10-04 驗證者:法人輪詢到截止(75)後,權證主檔／庫藏股／彙總／匯出／
+        deploy 都還會跑——舊版 poll_until 在截止前就放了鎖,那些步驟全部無鎖寫 DB。
+        這裡用真的 poll_until,假的鎖會記下任何一個在無鎖狀態下呼叫的 radar/deploy。"""
+        rc, events = self._run_daily_insti_harness(insti_rc=75)
+        self.assertEqual(rc, 0, events)
+        self.assertIn("deploy", events, "截止仍有其他變動 → 先上線已到的部分")
+        self.assertTrue(any("radar:import-warrant-master" in e for e in events))
+        unlocked = [e for e in events if e.startswith("UNLOCKED:")]
+        self.assertEqual(unlocked, [], f"有步驟在沒有 DB 鎖時執行:{unlocked}")
 
     def test_daily_insti_success_runs_publish_sequence(self):
         rc, events = self._run_daily_insti_harness()

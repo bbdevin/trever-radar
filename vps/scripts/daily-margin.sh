@@ -17,18 +17,16 @@ source "$(dirname "$0")/lib.sh"
 # 所以這一輪失敗是四輪裡唯一「多半不會自己好」的:那一天的資券要人工補。
 set_round_consequence "網站仍是分點輪的內容，融資融券未上線；只有 22:30 分點第二輪需要重爬時才會順手補資券，其餘情況沒有任何排程會再匯入（00:05 夜間作業只重算分點），缺的那一天要人工補抓"
 
-# 非交易日:今天沒有日K,就不會有今天的資券(09-25、09-28 實測整輪空跑)。
-if ! price_date_is_today; then
-  echo "非交易日（今天沒有日K）：融資融券輪略過"
-  exit 0
-fi
-
 # 分點全量輪跑過 21:00 時會在收尾順手匯入資券並上線;那天本輪不必再跑一次。
+# 「已帶入」要求**上市與上櫃兩個市場**今天都有 ok 且 rows>0 的資券紀錄——只看
+# MAX(date) 的話,只到一邊的那天會讓另一邊被靜默跳過(2026-10-04 驗證者抓到)。
 margin_is_today() {
-  [ "$(radar_ro_sql "SELECT MAX(date) FROM daily_margins" 2>/dev/null || true)" = "$(taipei_date +%F)" ]
+  local n=""
+  n="$(radar_ro_sql "SELECT COUNT(DISTINCT source) FROM import_logs WHERE dataset = 'margin' AND status = 'ok' AND rows > 0 AND source IN ('twse','tpex') AND date = ?" "$(taipei_date +%F)" 2>/dev/null || true)"
+  [ "${n:-0}" -ge 2 ] 2>/dev/null
 }
 if margin_is_today; then
-  echo "融資融券已由分點輪帶入（daily_margins 已是今天），本輪略過"
+  echo "融資融券已由分點輪帶入（上市＋上櫃今天都已匯入），本輪略過"
   exit 0
 fi
 
@@ -36,11 +34,26 @@ fi
 acquire_db_lock_wait 5400
 # 等鎖期間分點輪可能已經帶入了。
 if margin_is_today; then
-  echo "融資融券已由分點輪帶入（daily_margins 已是今天），本輪略過"
+  echo "融資融券已由分點輪帶入（上市＋上櫃今天都已匯入），本輪略過"
   exit 0
 fi
 sync_code
 
+# 非交易日(docs/47):**先自己補一次日K、再判斷**。前面幾輪若壞掉,本輪的日K匯入
+# 是當天的補救之一,不能在匯入之前就認定休市。日K匯入只是保底:empty/TPEx 520(75)
+# 都照常往下判斷,其他錯誤只 warn(下面輪詢那一步還會再匯一次日K)。
+if radar import-daily --datasets quotes; then
+  :
+else
+  q_rc=$?
+  if [ "$q_rc" -ne 75 ]; then
+    notify_warn "資券輪保底日K匯入失敗（exit ${q_rc}），續跑"
+  fi
+fi
+if ! price_date_is_today; then
+  notify_warn "匯入後仍沒有今天的日K（休市或交易所未出表），融資融券輪不輪詢、不上線"
+  exit 0
+fi
 # 順便再補日K(上櫃若稍早仍空)。輪詢資券(lib.sh poll_until):沒到(75)就放鎖、
 # 5 分鐘後再試,到 22:15 仍沒有 → warn、不上線。其他錯誤照舊 high + 原碼中止。
 if poll_until "margin" 2215 300 run_step "import-daily" radar import-daily --datasets quotes,margin --require twse:margin,tpex:margin; then

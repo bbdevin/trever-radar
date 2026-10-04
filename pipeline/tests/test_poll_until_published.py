@@ -106,16 +106,57 @@ class RoundsUseTheWaitingLock(unittest.TestCase):
         self.assertRegex(after, r"acquire_db_lock_wait \d+", "全量爬之前要重新拿鎖")
         self.assertIn('"${BRANCH_PROBE:-1}" != "0"', code, "BRANCH_PROBE=0 = 舊行為")
 
-    def test_non_trading_day_guards(self):
-        for name in ("daily-branches.sh", "daily-margin.sh", "safe-branch-stats.sh"):
+    def test_deadline_is_checked_before_the_lock_is_released(self):
+        body = _fn("poll_until")
+        self.assertLess(body.index("return 75"), body.index("release_db_lock"),
+                        "截止回 75 必須在放鎖之前(回 75 時仍握著鎖)")
+
+    def test_non_trading_day_is_decided_only_after_the_round_imported_quotes(self):
+        """先匯入、再判斷休市:前幾輪壞掉時,這些輪自己的日K匯入是當天的補救;
+        匯入之前就判斷會把整天靜默丟掉(2026-10-04 驗證者)。判斷成立要 warn。"""
+        for name, imp in (("daily-branches.sh", 'run_step_or_fail "import-daily" radar import-daily --datasets quotes,insti'),
+                          ("daily-margin.sh", "if radar import-daily --datasets quotes; then")):
             with self.subTest(script=name):
-                self.assertIn("price_date_is_today", _code(SCRIPTS / name))
+                code = _code(SCRIPTS / name)
+                guard = code.index("if ! price_date_is_today")
+                self.assertLess(code.index(imp), guard)
+                self.assertEqual(code.count("price_date_is_today"), 1)
+                self.assertIn("notify_warn", code[guard:guard + 300])
+        nightly = _code(SCRIPTS / "safe-branch-stats.sh")
+        guard = nightly.index("price_date_is_today")
+        self.assertLess(nightly.index('BRANCH_ROW="$(branch_import_row'), guard,
+                        "夜間作業要先看那一天有沒有任何分點匯入")
+        line = nightly[nightly.rfind("\n", 0, guard):nightly.index("\n", guard)]
+        self.assertIn('-z "$BRANCH_STATUS"', line, "有任何分點匯入紀錄就照舊全跑")
+        self.assertIn("notify_warn", nightly[guard:guard + 400])
+
+    def test_monday_refdata_still_runs_when_the_market_round_does_not_publish(self):
+        code = _code(SCRIPTS / "daily-market.sh")
+        self.assertIn("refdata_catchup() {", code)
+        dl = code.index('"$quotes_rc" -eq 75')
+        self.assertIn("refdata_catchup", code[dl:code.index("exit 0", dl)])
+        nc = code.index('echo "publish skipped: no change"')
+        self.assertIn("refdata_catchup", code[nc:code.index("exit 0", nc)])
+        self.assertGreater(code.rindex("refdata_catchup"), code.index("deploy_data"))
+
+    def test_branch_round_margin_needs_both_markets_and_margin_round_checks_both(self):
+        code = _code(SCRIPTS / "daily-branches.sh")
+        line = next(ln for ln in code.splitlines() if "--datasets margin" in ln)
+        self.assertIn("--require twse:margin,tpex:margin", line)
+        margin = _code(SCRIPTS / "daily-margin.sh")
+        body = margin[margin.index("margin_is_today() {"):]
+        body = body[:body.index("\n}")]
+        self.assertIn("COUNT(DISTINCT source)", body)
+        self.assertIn("-ge 2", body)
+        self.assertNotIn("MAX(date) FROM daily_margins", body)
 
     def test_second_branch_round_skips_when_first_round_was_complete(self):
         code = _code(SCRIPTS / "daily-branches.sh")
         self.assertIn("publish skipped: first round complete", code)
         skip = code.index("publish skipped: first round complete")
-        self.assertLess(skip, code.index("acquire_db_lock_wait"), "不必等鎖就能收工")
+        self.assertGreater(skip, code.index("radar import-futures-day"),
+                           "第二輪收工前仍要做期貨當日的最後一次重試")
+        self.assertLess(skip, code.index("radar compute-indicators"))
         self.assertIn("coverage_ratio=", code[code.index("printf '%s\\ncoverage_ratio="):])
 
 
@@ -185,14 +226,32 @@ class PollUntilSmoke(unittest.TestCase):
         self.assertNotIn("LOCK_HELD_DURING_SLEEP", out)
         self.assertIn("HELD=yes", out, "到齊時仍握著鎖,呼叫端接著 compute")
 
-    def test_deadline_returns_75_and_releases_the_lock(self):
+    def test_deadline_returns_75_still_holding_the_lock(self):
+        """截止回 75 時仍握著鎖:呼叫端之後還會寫 DB(insti 的部分上線、週一題材補跑)。
+        2026-10-04 驗證者抓到舊版在截止前先放鎖,之後的寫入全部沒有鎖。"""
         rc, out, err = self._run(
             'if poll_until demo 0000 1 fake 99; then echo RC=0; else echo RC=$?; fi\n'
             'if flock -n "$RADAR_DB_LOCK_FILE" true; then echo HELD=no; else echo HELD=yes; fi\n')
         self.assertEqual(rc, 0, err)
         self.assertIn("RC=75", out)
         self.assertRegex(out, r"poll demo deadline at=\d\d:\d\d attempts=1")
-        self.assertIn("HELD=no", out)
+        self.assertIn("HELD=yes", out)
+
+    def test_deadline_after_sleeping_relocks_before_returning(self):
+        """睡過一次(放了鎖)之後才到截止:下一次嘗試前已重新拿鎖,所以回 75 時仍握著。"""
+        rc, out, err = self._run(
+            # $(taipei_date …) 跑在子 shell,計數要放檔案。
+            'echo 0 > "$TMPD/clock"\n'
+            'taipei_date() { if [ "$1" = "+%H%M" ]; then n=$(( $(cat "$TMPD/clock") + 1 )); '
+            'echo "$n" > "$TMPD/clock"; [ "$n" -ge 2 ] && echo 2359 || echo 0000; '
+            'else command date "$@"; fi; }\n'
+            'if poll_until demo 2358 1 fake 99; then echo RC=0; else echo RC=$?; fi\n'
+            'if flock -n "$RADAR_DB_LOCK_FILE" true; then echo HELD=no; else echo HELD=yes; fi\n')
+        self.assertEqual(rc, 0, err)
+        self.assertIn("RC=75", out)
+        self.assertIn("LOCK_FREE_DURING_SLEEP", out)
+        self.assertRegex(out, r"attempts=2")
+        self.assertIn("HELD=yes", out)
 
     def test_other_codes_pass_through(self):
         rc, out, err = self._run(

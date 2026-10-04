@@ -68,13 +68,6 @@ if in_radar_quiet_window; then
   exit 0
 fi
 
-# 非交易日(docs/47):前一個日曆日沒有日K → 帳本 as_of 會解析回更早那天、同 PK 覆蓋,
-# 分點/分數也一列不會變。不通知:這不是故障,只是今晚沒事做。
-if ! price_date_is_today "${BRANCH_IMPORT_DATE:-$(TZ=Asia/Taipei date -d 'yesterday' +%Y-%m-%d)}"; then
-  echo "非交易日（前一日沒有日K）：分點排行略過"
-  exit 0
-fi
-
 # 直接搶鎖(而不是像過去只用 fuser 偷看),搶到就一路持有到本程序結束
 # (fd 9 在 EXIT 時由 kernel 自動關閉即釋放,不需要、也不應該手動 close/reuse fd 9)。
 # 只「看」不「拿」曾是本次事故唯一真正的第二層保護——安靜窗算錯之後,
@@ -181,6 +174,17 @@ MARKER="$(branch_round_marker "$BRANCH_IMPORT_DATE")"
 MARKER_AT="$(head -n 1 "$MARKER" 2>/dev/null || true)"
 echo "22:00 branch import_logs for ${BRANCH_IMPORT_DATE}: status='${BRANCH_STATUS:-<missing>}' run_at='${BRANCH_RUN_AT:-<missing>}'"
 echo "evening round marker: ${MARKER_AT:-<missing>}"
+
+# 非交易日(docs/47):那一天**沒有任何分點匯入紀錄**而且**沒有那一天的日K** → 帳本
+# as_of 會解析回更早那天、同 PK 覆蓋,分點/分數一列都不會變,不必重算 80 分鐘。
+# 兩個條件都要成立:只要有任何一輪寫過那天的分點、或日K已在庫,就照舊全跑(那正是
+# 本作業當備援的時候)。這個判斷刻意排在既有守衛與取鎖之後、用的是已發生的匯入結果,
+# 不是開跑前的猜測;用 warn:若其實是白天各輪全壞了,值班的人要知道。
+if [ -z "$BRANCH_STATUS" ] && ! price_date_is_today "$BRANCH_IMPORT_DATE"; then
+  echo "非交易日（${BRANCH_IMPORT_DATE} 沒有日K、也沒有分點匯入）：分點排行略過"
+  notify_warn "${BRANCH_IMPORT_DATE} 沒有日K也沒有分點匯入（休市，或白天各輪都沒跑成），夜間分點排行略過"
+  exit 0
+fi
 
 # 跳過重算需要兩個條件同時成立,少一個都要走完整補跑路徑:
 #

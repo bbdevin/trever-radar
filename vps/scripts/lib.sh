@@ -379,7 +379,8 @@ acquire_db_lock_wait() {
 # 反覆執行 CMD 直到它回 0(已公布)或其他非 75 的碼(錯誤,原碼回傳),
 # 或台北時間到了 DEADLINE_HHMM(回 75)。CMD 回 75 = 「還沒到,等一下再來」。
 # 每次嘗試前先拿 DB 鎖(POLL_HOLD_DB_LOCK=0 時不碰鎖,給唯讀探測用);
-# 75 之後**先 flock -u 放鎖再睡**。成功時回 0 並仍握著鎖,呼叫端接著 compute。
+# 75 之後**先 flock -u 放鎖再睡**。成功時回 0、截止時回 75,兩者都仍握著鎖
+# (只有「睡覺」那段沒有鎖),呼叫端之後寫 DB 是安全的。
 # 每一輪 log 一行可 grep 的結果:
 #   poll <label> ready at=HH:MM attempts=N
 #   poll <label> deadline at=HH:MM attempts=N
@@ -411,14 +412,17 @@ poll_until() {
       echo "poll ${label} single attempt at=$(taipei_date +%H:%M) (RADAR_POLL=0: 75 treated as ready)"
       return 0
     fi
-    if [ "${POLL_HOLD_DB_LOCK:-1}" = "1" ]; then
-      release_db_lock
-    fi
+    # 截止判斷在放鎖**之前**:截止時回 75 仍握著鎖。呼叫端常在 75 之後還要寫 DB
+    # (daily-insti 的權證主檔、庫藏股、部分上線;週一題材補跑),若這裡先放鎖,
+    # 那些步驟就會在沒有鎖的情況下寫正式 DB(2026-10-04 驗證者抓到)。
     now_hhmm="$(taipei_date +%H%M)"
     now_min=$(( (10#$now_hhmm / 100) * 60 + 10#$now_hhmm % 100 ))
     if [ "$now_min" -ge "$dl_min" ]; then
       echo "poll ${label} deadline at=$(taipei_date +%H:%M) attempts=${attempts}"
       return 75
+    fi
+    if [ "${POLL_HOLD_DB_LOCK:-1}" = "1" ]; then
+      release_db_lock
     fi
     left=$(( (dl_min - now_min) * 60 ))
     if [ "$interval" -lt "$left" ]; then

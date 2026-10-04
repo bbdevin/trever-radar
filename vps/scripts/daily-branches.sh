@@ -79,25 +79,6 @@ fi
 # 標記格式與其他腳本一致,cron log 裡可以直接用時間定位整輪的邊界。
 echo "=== daily-branches start $(taipei_date -Is) ==="
 
-# 非交易日(docs/47):今天沒有日K → 兩輪都不爬、不匯出。09-25、09-28 實測每輪照樣
-# 重爬 2,672 檔、export + deploy 一份沒變的網站,約 3.5 小時鎖、~5,000 個請求。
-if ! price_date_is_today; then
-  echo "非交易日（今天沒有日K）：分點輪略過"
-  echo "=== daily-branches done $(taipei_date -Is) ==="
-  exit 0
-fi
-
-# 第二輪且第一輪的覆蓋率已是 100%(完成標記的 coverage_ratio=,docs/47):再爬一次
-# 2,672 檔(41–104 分鐘)也不會多一列,直接收工。<1.0 或舊格式標記(沒有比例)→
-# 照舊重爬並刷新評分;沒有標記 → 照舊接手完整鏈。
-# (條件順序刻意把模式判斷放後面:測試以 `if [ "$BRANCH_ROUND_MODE" = "import" ]` 字面定位模式守衛。)
-FIRST_ROUND_RATIO="$(branch_marker_coverage_ratio "$ROUND_DATE")"
-if awk -v r="${FIRST_ROUND_RATIO:-0}" 'BEGIN { exit !(r + 0 >= 1) }' && [ "$BRANCH_ROUND_MODE" = "import" ]; then
-  echo "publish skipped: first round complete (coverage_ratio=${FIRST_ROUND_RATIO})"
-  echo "=== daily-branches done $(taipei_date -Is) ==="
-  exit 0
-fi
-
 # 等鎖不略過(docs/47):第一輪前面可能還有法人輪在輪詢、第二輪前面可能是資券輪。
 acquire_db_lock_wait 3600
 acquire_branch_source_lock
@@ -118,6 +99,18 @@ sync_code
 # 九個步驟共用 lib.sh 裡的**那一份**實作,措辭不會在九個地方漂移。
 # 上櫃日K 若 14:10/16:10 仍 empty,此輪再抓,否則 --top 0 會漏掉無當日報價的上櫃。
 run_step_or_fail "import-daily" radar import-daily --datasets quotes,insti
+
+# 非交易日(docs/47):**先匯入、再判斷**。今天的日K在自己匯入之後仍不在庫裡 →
+# 休市(或交易所整天沒出表),不爬 2,672 檔、不匯出(09-25、09-28 實測每輪照樣
+# 重爬、export + deploy 一份沒變的網站,約 3.5 小時鎖、~5,000 個請求)。
+# 不能在匯入之前就判斷:前面幾輪若壞掉(sync_code/docker/來源),本輪自己的日K
+# 匯入就是當天唯一的補救,先判斷會把整天靜默丟掉(2026-10-04 驗證者抓到)。
+# 用 warn 而不是只寫 log:休市日一則提醒,遠好過真的出事卻沒人知道。
+if ! price_date_is_today; then
+  notify_warn "匯入後仍沒有今天的日K（休市或交易所未出表），分點輪不爬、不上線"
+  echo "=== daily-branches done $(taipei_date -Is) ==="
+  exit 0
+fi
 # 個股期貨當日(docs/38 §7.18;2026-10-02 起接上)。資料不齊時 import-futures-day 回 75 且一列都不寫;
 # 本輪尚未齊全只記 log 不通知;第二輪是當天最後一次重試,其後資券輪的官方日報會在下個交易日補上。
 # 其他失敗只 warn,不擋本輪。法人輪(16:00 起)已拿到今天的就不再重抓(docs/47)。
@@ -136,6 +129,18 @@ else
   elif [ "$fd_rc" -ne 0 ]; then
     notify_warn "個股期貨當日匯入失敗（exit ${fd_rc}），本輪續跑；資券輪的官方日報會在下個交易日補上"
   fi
+fi
+
+# 第二輪且第一輪的覆蓋率已是 100%(完成標記的 coverage_ratio=,docs/47):再爬一次
+# 2,672 檔(41–104 分鐘)也不會多一列,直接收工。<1.0 或舊格式標記(沒有比例)→
+# 照舊重爬並刷新評分;沒有標記 → 照舊接手完整鏈。
+# 放在日K/法人與期貨當日**之後**:第二輪仍是期貨當日的最後一次重試,也要補晚到的法人。
+# (條件順序刻意把模式判斷放後面:測試以 `if [ "$BRANCH_ROUND_MODE" = "import" ]` 字面定位模式守衛。)
+FIRST_ROUND_RATIO="$(branch_marker_coverage_ratio "$ROUND_DATE")"
+if awk -v r="${FIRST_ROUND_RATIO:-0}" 'BEGIN { exit !(r + 0 >= 1) }' && [ "$BRANCH_ROUND_MODE" = "import" ]; then
+  echo "publish skipped: first round complete (coverage_ratio=${FIRST_ROUND_RATIO})"
+  echo "=== daily-branches done $(taipei_date -Is) ==="
+  exit 0
 fi
 run_step_or_fail "compute-indicators" radar compute-indicators --all --days 5
 run_step_or_fail "seed-branches" radar seed-branches
@@ -278,12 +283,20 @@ else
 fi
 # 已過 21:00(TWSE ~21:00 產製資券)→ 順手匯入當天資券,讓這一次的評分與上線就帶著它;
 # 資券輪(20:45 起在等這把鎖)拿到鎖後看到資券已是今天就直接收工(docs/47)。
+# `--require` 上市＋上櫃都要到:只到一邊(75)就整個留給資券輪——資券輪只在**兩個市場**
+# 今天都有 ok 紀錄時才收工,所以這裡寫進一半不會讓另一半被靜默跳過。
 # 抓不到只 warn:資券輪仍會照常輪詢。跨午夜也算「已過 21:00」(資料日以開跑日為準)。
 if [ "$(taipei_date +%H)" -ge 21 ] || [ "$(taipei_date +%F)" != "$ROUND_DATE" ]; then
-  if radar import-daily --datasets margin --date "${ROUND_DATE//-/}"; then
+  margin_rc=0
+  if radar import-daily --datasets margin --date "${ROUND_DATE//-/}" --require twse:margin,tpex:margin; then
     :
   else
-    notify_warn "分點輪順手匯入資券失敗，資券輪會照常輪詢"
+    margin_rc=$?
+  fi
+  if [ "$margin_rc" -eq 75 ]; then
+    echo "資券尚未兩市場到齊(exit 75),留給資券輪輪詢"
+  elif [ "$margin_rc" -ne 0 ]; then
+    notify_warn "分點輪順手匯入資券失敗（exit ${margin_rc}），資券輪會照常輪詢"
   fi
 fi
 run_step_or_fail "compute-scores" radar compute-scores

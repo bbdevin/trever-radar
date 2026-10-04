@@ -6,7 +6,8 @@
 
 - **為什麼**:12 個交易日的 cron log 顯示上市法人 7/12 天落後 3–5.7 小時、17:40 分點常白爬 41–62 分後被扣留、週一題材步驟讓 15:00 上櫃輪整輪消失、非交易日照樣跑 ~3.5 小時。
 - **做了什麼**:各輪改成「起點」,`poll_until` 輪詢到來源公布(每次嘗試之間放 DB 鎖);`import-daily --require`(沒到 = 75);分點先 `probe-branch-day` 探測(唯讀,24 抽 22)再全量爬;搶不到鎖會等(`acquire_db_lock_wait`);本輪沒寫進任何列 → `publish skipped: no change`;非交易日分點/資券/夜間輪收工;22:30 第二輪看到第一輪覆蓋率 100% 即收工;00:05 有算出帳本/分位才上線(且當晚就上線);週一題材/地緣/產業別搬到 11:00 `weekly-refdata.sh`。開關 `RADAR_POLL=0`、`BRANCH_PROBE=0` = 舊行為。
-- **待人類**:正式 crontab 7 行(6 改 1 增)見 `vps/scripts/crontab.proposed.diff`;腳本在舊時刻下也正確。首頁時間表文字已改成新時刻。
+- **待人類**:正式 crontab 7 行(6 改 1 增)見 `vps/scripts/crontab.proposed.diff`;腳本在舊時刻下也正確。首頁時間表文字已改成新時刻——**合併與 crontab 套用要同一次做**。
+- **驗證者修正(同日,`docs/47` §3.1)**:輪詢截止回 75 時仍握 DB 鎖(法人輪截止後的寫入原本無鎖);非交易日改成各輪自己先匯入日K再判斷並 warn(原本匯入前就判斷,前幾輪壞掉會整天靜默遺失);分點輪順手匯資券要求兩市場到齊、資券輪的「已帶入」也要求兩市場;22:30 收工前仍重試期貨當日;週一休市時題材補跑不再被跳過。
 - 驗證:pytest 全綠(新增 `test_poll_until_published`(含 WSL bash 實跑:睡的當下鎖確實放開)、`test_import_daily_require`、`test_probe_branch_day`);`node --test web/lib/freshness.test.ts` 11 pass。
 
 ## 2026-10-04 版本更新紀錄頁＋全站版本號(目前 v3.2)

@@ -21,6 +21,22 @@ futures_probe
 acquire_db_lock_wait 1800
 sync_code
 
+# 每週一的補充資料(題材/地緣/產業別)已搬到週一 11:00 的 weekly-refdata.sh
+# (docs/47:以前排在 export 之前跑 45–55 分鐘,15:00 上櫃輪因此搶不到鎖整輪消失)。
+# 過渡:正式機 crontab 還沒加那一行時,本 ISO 週沒有完成標記 → 本輪補跑,而且排在
+# 上線之後,行情不再被它擋住。**本輪不上線的出口(截止仍沒日K、沒有變動)也要補跑**:
+# 週一休市時本輪一定走那些出口,不補就整週沒有題材更新。呼叫時一律握著 DB 鎖
+# (poll_until 截止回 75 時仍握著鎖)。失敗一律 warn-and-continue(lib.sh weekly_step)。
+refdata_catchup() {
+  if [ "$(taipei_date +%u)" = "1" ] && [ ! -e "$(refdata_marker)" ]; then
+    weekly_step "題材更新" radar import-themes
+    weekly_step "分點地緣" radar import-geo
+    # 產業別:新上市個股永遠不會補上——FinMind TaiwanStockInfo 一次請求取全清單。
+    weekly_step "產業別更新" radar import-stock-info
+    date -Is > "$(refdata_marker)"
+  fi
+}
+
 # 輪詢上市日K(lib.sh poll_until):沒到(import-daily 回 75)就放鎖、3 分鐘後再試,
 # 到 14:40 仍沒有 → 不算不上線,只 warn。其他錯誤(1 等)= 原碼,照舊 high + 中止。
 if poll_until "twse-quotes" 1440 180 run_step "import-daily" radar import-daily --datasets quotes --require twse:quotes; then
@@ -29,6 +45,7 @@ else
   quotes_rc=$?
   if [ "$quotes_rc" -eq 75 ]; then
     notify_warn "上市日K至 14:40 仍未公布，本輪不發布（若今天休市可忽略）；14:45 上櫃日K輪會再抓"
+    refdata_catchup
     exit 0
   fi
   notify "import-daily 失敗（碼 ${quotes_rc}），本輪中止、未上線；${ROUND_FAIL_CONSEQUENCE}" high "失敗"
@@ -36,6 +53,7 @@ else
 fi
 if ! round_has_changes; then
   echo "publish skipped: no change"
+  refdata_catchup
   exit 0
 fi
 run_step_or_fail "aggregate-warrants" radar aggregate-warrants --date "$(taipei_date +%Y%m%d)"
@@ -44,15 +62,4 @@ run_step_or_fail "compute-scores" radar compute-scores
 run_step_or_fail "export-json" radar export-json
 run_step_or_fail "deploy" deploy_data
 notify_ok "收盤行情已更新並上線（上市日K／指標／分數）"
-
-# 每週一的補充資料(題材/地緣/產業別)已搬到週一 11:00 的 weekly-refdata.sh
-# (docs/47:以前排在 export 之前跑 45–55 分鐘,15:00 上櫃輪因此搶不到鎖整輪消失)。
-# 過渡:正式機 crontab 還沒加那一行時,本 ISO 週沒有完成標記 → 本輪在**上線之後**補跑,
-# 行情不再被它擋住。失敗一律 warn-and-continue(lib.sh weekly_step)。
-if [ "$(taipei_date +%u)" = "1" ] && [ ! -e "$(refdata_marker)" ]; then
-  weekly_step "題材更新" radar import-themes
-  weekly_step "分點地緣" radar import-geo
-  # 產業別:新上市個股永遠不會補上——FinMind TaiwanStockInfo 一次請求取全清單。
-  weekly_step "產業別更新" radar import-stock-info
-  date -Is > "$(refdata_marker)"
-fi
+refdata_catchup

@@ -39,9 +39,17 @@
 | 14:45(15:00) | `daily-tpex-quotes.sh` | `acquire_db_lock_wait 2700` → 每 3 分輪詢 `--require tpex:quotes:0.8` 至 15:30 → 彙總 → 指標 → 分數 → export → deploy。今天上市日K不在庫(休市)→ 只試一次 |
 | 16:00(16:10) | `daily-insti.sh` | 日K保底(TPEx 520 → 75 分支保留)→ 每 5 分輪詢 `--datasets insti --require twse:insti,tpex:insti` 至 17:10,每次嘗試順手 `import-futures-day`(75 下次再試、0 不再試)→ 權證主檔、庫藏股(warn-and-continue)→ 彙總 → 指標 → 分數 → export → deploy → futures_digest。**截止仍缺**:有其他變動(上櫃法人/期貨等)→ warn 並先上線已到的部分(舊 16:10 也是先上線上櫃法人;不讓它陪等到 20:30);沒有 → `publish skipped` |
 | 17:30(17:40) | `daily-branches.sh` | 非交易日收工 → 等鎖 → 日K+法人(保底)→ 期貨當日(法人輪已拿到就略過)→ 指標 → seed → **探測迴圈**(放 DB 鎖)→ 重新等鎖 → 全量爬 → 分級 → 分點統計 → 已過 21:00 順手匯入資券 → 分數 → 績效 → export → prune → deploy → 完成標記(含 `coverage_ratio=`) |
-| 20:45(21:20) | `daily-margin.sh` | 非交易日收工;資券已是今天(分點輪帶入)→ 收工;`acquire_db_lock_wait 5400` → 再查一次 → 每 5 分輪詢 `--datasets quotes,margin --require twse:margin,tpex:margin` 至 22:15 → import-futures(官方覆核)→ 分數 → 績效 → export → deploy;落後補抓分支保留 |
+| 20:45(21:20) | `daily-margin.sh` | 上市＋上櫃資券今天都已匯入(分點輪帶入)→ 收工;保底日K匯入後仍無今天日K → warn 收工(§3.1);`acquire_db_lock_wait 5400` → 再查一次 → 每 5 分輪詢 `--datasets quotes,margin --require twse:margin,tpex:margin` 至 22:15 → import-futures(官方覆核)→ 分數 → 績效 → export → deploy;落後補抓分支保留 |
 | 22:30(22:00) | `daily-branches.sh`(`BRANCH_ROUND_MODE=import`) | 原則 3 |
 | 00:05(不變) | `safe-branch-stats.sh` | 既有守衛 + 前一日非交易日收工;PIT 或分位計數有算出 → export + deploy(不再跳過 export);evening ok 且兩者都沒有 → 不 export 也不 deploy |
+
+### 3.1 驗證者修正(2026-10-04,同日;優先於上表與 §2 的對應敘述)
+
+1. **`poll_until` 截止回 75 時仍握著 DB 鎖**(截止判斷移到放鎖之前)。舊版截止前先放鎖,`daily-insti.sh` 截止後的權證主檔/庫藏股/部分上線、休市路徑都在無鎖狀態寫 DB。只有「睡覺」那段沒有鎖。
+2. **非交易日改成「先匯入、再判斷」**:分點輪在自己的 `import-daily quotes,insti` 之後、資券輪在自己的保底日K匯入之後,今天的日K仍不在庫才收工,並 `notify_warn`。夜間 00:05 只在「那一天沒有任何分點匯入紀錄**且**沒有那天的日K」才略過(warn)。前幾輪壞掉時,這些輪自己的匯入就是當天的補救,匯入前就判斷會把整天靜默丟掉。週一 `daily-market.sh` 在截止/無變動的出口也補跑題材/地緣/產業別(週一休市時本輪一定走那些出口)。
+3. **分點輪順手匯入資券加 `--require twse:margin,tpex:margin`**(只到一邊 → 75 → 留給資券輪);資券輪「已由分點輪帶入」改成要求**上市與上櫃**今天都有 `import_logs` 的 ok、rows>0 紀錄,不再只看 `MAX(date)`。
+4. 22:30 第二輪的「第一輪覆蓋率 100% → 收工」移到日K/法人匯入與期貨當日重試**之後**(仍是期貨當日的最後一次重試)。
+5. 首頁時間表(`web/lib/freshness.ts`)已是新時刻:**合併與正式 crontab 套用要同一次完成**,否則首頁時刻會與實際差 5–35 分。
 
 ## 4. 預期效果(依 §1 實測推估,套用後要以 log 驗證)
 
