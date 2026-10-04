@@ -23,6 +23,13 @@
 
 - `db.upsert()` 改 driver 層 executemany(每組欄位一句預備 `INSERT … ON CONFLICT DO UPDATE`),語意不變(只更新有帶的欄、key set 不同可混寫、回傳列數);新增 `insert_many()` 給分位計數整表重寫。WAL 連線 `synchronous=NORMAL`;cache 64 MB 保留,temp_store/mmap 不動。
 - 一致性:合成庫新舊程式跑 00:05 鏈,26 張表 PK 排序 SHA-256 全同;分點匯入/部分欄位更新另比對亦同。效能:合成庫分點統計寫入 71 s → 3 s;正式寫入段 212 s 估降至約 10–20 s,待 VPS 下一輪 log 確認。細節 `docs/44` §7。
+## 2026-10-04 多空分頁 v2:三段分析 × 左右對開 × 全列 × 日/週/月 × 大戶比(docs/46 §6,程式完成、未上線)
+
+- **版面**:多空分頁改為總覽列 → 技術分析 / 籌碼分析 / 壓力分析三段,每段左多方(紅)、右空方(綠)、中間 1px 分隔線,全部列出(不再「還有 N 項」);技術段依日K/週K/月K分組(週/月列帶「週」「月」小 chip),籌碼段依分點/法人/資券/大戶(集保 MM/DD)/權證/題材/公司/期貨分組,壓力段由近到遠、下接價格階梯與「怎麼算」(價格位置卡不再單獨成卡)。價格藍、±% 紅綠由事實句的 segments 上色(≥500 元股價也會變藍)。
+- **事實**:新增 `web/lib/facts/*`(純函式,只讀現有個股 JSON 鍵,不改分數/radar.json/DB):技術 37 個 code(含週/月)、壓力 14、法人 12、資券 6、分點 12、大戶 10、權證/期貨/題材/公司 6;目錄 `facts/catalogue.ts`。同方向同一天的前端事實取代對應後端 code(例:外資連 5 日賣超的 C_FOREIGN_SELL 取代 R_FOREIGN_SELL5);後端 R_HOT5/10、R_GAP_FADE、R_SHOOTING 存在時對應前端事實讓位。標頭「最強一條」改依 rank(1–5)挑。
+- **設定**:`web/tsconfig.json` 加 `allowImportingTsExtensions`(noEmit 下合法)——lib 模組之間需要 `.ts` 副檔名的執行期 import 才能同時給 `node --test` 與 next build 用;順帶消掉測試檔的 TS5097。
+- **測試**:node 241 項(新增 `web/lib/facts/*.test.ts` 25 項:重取樣/還原、技術、壓力、籌碼、大戶、目錄覆蓋率與禁用詞);`test_bull_bear_codes.py` 加 `futures_volume_anomaly.py` 與「個股 payload 每個頂層鍵都要在 STOCK_KEYS_USED ∪ STOCK_KEYS_NOT_FACTS」閘門;pipeline 全套 1309 passed。parity:只有 /stock 標頭兩行與多空分頁不同。
+
 ## 2026-10-04 個股「多空」分頁 + 價格位置(docs/45 P0/P1 + docs/46,程式完成、未上線)
 
 - **資料**(`json_export.py`):個股 JSON 新鍵 `price_levels`(`compute/price_levels.py` 純函式:還原均線 5–240、N 日高低+日期、20 日新高/新低、2 日量價、近 120 日現價之上/之下成交比例、上下最密集 1% 區)與 `raw_risks`(帶 code 的完整風險項 ≤7;未評分 = [])。不進 technical、不進 radar.json、不動任何分數與 Armed 狀態;`export timing:` 多一段 `levels=`。合成 DB parity:其餘鍵逐位元相同。正式 JSON 要等 VPS 下一輪 export-json 才有這兩鍵,前端對舊 JSON 照常(價格位置卡顯示「還沒有」、多空用風險字串回推)。

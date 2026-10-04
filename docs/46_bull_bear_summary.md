@@ -1,6 +1,6 @@
 # 46 — 個股頁「多空摘要」(Fable 規劃 2026-10-04,已核定)
 
-> 狀態:✅ **P0/P1 已實作(2026-10-04,未上線)**;P2(期貨背景列、F9–F11)未做。實作偏差一則:§3.2 的 `raw_risks` 沒有放進 `all_stocks` 列(那些列會原樣進 radar.json,違反 §5「不改 radar.json」),改放旁表 `raw_risks_by_id`,只寫進個股 payload。
+> 狀態:✅ **v2(§6)P0/P1/P2 已實作(2026-10-04,未上線)**——三段分析、左右對開、全列、日/週/月、大戶比;§1.3 的「每側 6 列 + 還有 N 項」與單欄版面已被 §6 取代。v1:✅ P0/P1 已實作(2026-10-04)。實作偏差一則:§3.2 的 `raw_risks` 沒有放進 `all_stocks` 列(那些列會原樣進 radar.json,違反 §5「不改 radar.json」),改放旁表 `raw_risks_by_id`,只寫進個股 payload。
 
 承 docs/45(價格位置)與使用者「這紅框資訊可以整合至技術」「可以列出做多理由 做空理由」。純呈現/IA,不改分數、不加策略、不動 derive_radar_state。
 
@@ -81,6 +81,39 @@ P0(docs/45 批次追加):json_export raw_risks;priceLevelFacts();PriceLevelsCard
 P1:bullBear.ts+test;BullBearPanel.tsx;page.tsx:TechnicalPanel 重組(BullBearPanel → PriceLevelsCard → 技術指標卡),technical null 仍畫多空卡;分頁 {key:"tech",label:"多空"} 移到第二格;StockDecisionHeader 改 §1.1(StockView useMemo buildBullBear 一次,按鈕 setView("tech"),PocketBadges hidden sm:flex);verify-mobile-stock.mjs 斷言更新;文件 docs/46、45、25、19 §4、07 §4、STATUS。
 P2:期貨背景列;F9–F11。
 驗收:node tests、pytest(含 test_bull_bear_codes、test_label_honesty)、build、tsc;截圖 390 深淺 + 1280:高分多理由多風險股、非評分池有 price_levels、舊 JSON、只有風險無理由;標頭高度不超過右欄行情摘要。
+
+## 6. v2(2026-10-04 Fable 規劃、使用者核定;已實作)
+使用者:三段(技術/籌碼/壓力)、每段左多右空中間分隔線、全部列出不收合、空方要完整(6488 的 240 日高、上方密集區、上方成交、外資賣超、前大分點淨賣都要出現)、日/週/月、大戶比(集保週資料帶資料日)。純呈現:不改分數、radar.json、DB;全部事實由現有個股 JSON 鍵算出。
+
+### 6.1 版面(`web/components/BullBearPanel.tsx`)
+總覽卡(`bullbear-overview`:定義句、計數、「技術 ▲n ▼n ・ 籌碼 … ・ 壓力 …」)→ 三張段卡(`bullbear-section-tech|chips|levels`)→ 技術指標卡。段卡 = SectionHeader + 兩顆計數 chip → `grid-cols-[minmax(0,1fr)_1px_minmax(0,1fr)] items-start`(中間格 `self-stretch` 分隔線貫穿較高欄)→ 背景列(有才出現)。欄頭 `▲ 多方`/`▼ 空方`(壓力段 `▲ 下方支撐`/`▼ 上方壓力`),欄 testid 仍 `bullbear-bull|bear` 加 `data-section`。群組頭取代每列來源標籤:技術段 日K/週K/月K;籌碼段依來源(大戶顯示「大戶(集保 MM/DD)」);壓力段不分組、依距離由近到遠,兩欄之下接價格階梯、現價上下成交、「怎麼算」(`PriceLevelsCard.tsx` 只剩這三個小元件)。週/月列前綴描邊小 chip「週」「月」;事件型空方(R*、B_RISK_REVERSAL、空方口袋、出貨、跌破 20 線、MACD 翻負、KD 高檔死叉、跳空下跌、長黑)前綴 ⚠。前端事實帶 `segments`(價格藍、+ 紅、− 綠),後端原文仍走 ChangeText。
+
+### 6.2 契約(`web/lib/bullBear.ts`)
+`BullBearItem` 加 `section`、`segments?`、`tf?`、`dataDate?`、`rank`(1–5)、`magnitude?`、`dist?`;`BullBearSummary.sections`。`buildBullBear({..., derivedFacts})`;`SECTION_BY_SOURCE`(tech/strategy→技術、price/levels→壓力、其餘→籌碼);Source 加 `holders`、`levels`。分類調整:R_HOT5/R_HOT10 來源 price→tech(技術段日K)、S11→inst、S12→chips、S13→margin;F1_FUTURES_VOLUME_60D_HIGH、R_FUTURES_VOLUME_NO_DIRECTION 進表(背景/期貨)。去重:①後端 code 只一次 ②前端事實(無 date/dataDate)的 mirrors 取代同方向後端 code,含風險與口袋 ③`YIELD_TO_BACKEND`:R_HOT5/10→X_CHG5_UP、R_GAP_FADE→X_GAP_UP_TODAY、R_SHOOTING→X_BIG_BLACK ④事實鍵 code+tf+variant 只一次。排序:段內先分組,再 rank↓ → magnitude↓ → points↓ → 原順序;壓力段距離↑。`topOfSide`:rank → magnitude → 段序(壓力距離 ≤3% → 籌碼 → 技術 → 其餘壓力)→ 來源序。
+
+### 6.3 事實目錄(`web/lib/facts/catalogue.ts`,97 個 code;產生器 `techFacts`/`levelFacts`/`instFacts`/`marginFacts`/`branchFacts`/`holdersFacts`/`otherFacts`,彙整 `facts/index.ts deriveAllFacts`)
+| 段/來源 | P0 | P1 | P2 |
+|---|---|---|---|
+| 技術(日K F2/F3/F4/F5/F8 由 `priceLevelFacts`) | F2_BULL/BEAR、X_ALIGN_BULL/BEAR(W/M)、X_MA_CROSS_UP/DOWN、X_MACD_CROSS_UP/DOWN、X_KD_GOLDEN_LOW/X_KD_DEATH_HIGH、F8_RSI_OK/LOW、X_VOL_SURGE_UP/DOWN、F5_UP/DOWN、F4_NEW_HIGH/LOW、F3_HIGH/LOW_TODAY、X_UP/DOWN_STREAK、X_CHG1_UP/DOWN、X_CHG5_UP/DOWN | X_MA20_SLOPE_UP/DOWN、X_MA60_SLOPE_UP/DOWN、X_MACD_STATE_POS/NEG、X_KD_OVER80、X_GAP_UP/DOWN_TODAY、X_BIG_BLACK(週/月版 F4/F5/F8 亦屬 P1) | X_VOL_DRY |
+| 壓力 | F1_MA_BELOW/ABOVE(日/週/月,附最接近均線價位與距離)、L_HIGH_ABOVE、L_LOW_BELOW、L_DENSE_ABOVE/BELOW、L_SUPPLY_ABOVE/BELOW | L_ALLTIME_HIGH/LOW、L_GAP_ABOVE/BELOW、L_RANGE_POS_TOP/BOTTOM | — |
+| 法人 | C_FOREIGN_BUY/SELL、C_TRUST_BUY/SELL、C_BOTH_BUY/SELL、C_NET_SHARE_BUY/SELL | C_FOREIGN_20D_BUY/SELL、C_TRUST_20D_BUY/SELL | — |
+| 資券 | C_MARGIN_HOT/OK、C_MARGIN_UP_PRICE_DOWN、C_MARGIN_DOWN_PRICE_UP | C_SHORT_CHANGE | C_SHORT_MARGIN_RATIO |
+| 分點 | C_TOP15_FLOW_BUY/SELL、C_ACC_1M、C_DIST_1M、C_DAYTRADE_BUY、C_TRACKED_SELL | C_ACC_1W、C_DIST_1W、C_GEO_BUY/SELL、C_PNL_GAINERS/LOSERS_HOLDING | — |
+| 大戶 | H_MAJOR400_UP/DOWN、H_MAJOR1000_UP/DOWN、H_RETAIL_DOWN/UP | H_MAJOR_COUNT、H_INSIDER_UP/DOWN | H_PLEDGE_HIGH |
+| 權證/期貨/題材/公司 | C_PUT_DOMINANT | C_PUT_SURGE、C_FUT_VOLUME_HIGH、C_THEME_HOT/COLD、C_BUYBACK | (C_WARRANT_QUIET、C_FUT_OI_CHANGE 未做) |
+
+### 6.4 與規劃稿的偏差(實作時決定)
+- **L_SUPPLY_ABOVE/BELOW 兩側都列**(≥5% 才列;之上 ≥30%、之下 ≥70% 的 rank 較高),不是只在門檻以上才列——6488 現價之上只有 18%,照門檻就不會出現,而使用者點名要看到「上方成交」。
+- **成交最密集區佔量 <0.5% 不列**(K 棒很少的股票會出現「佔 0%」的空殼區)。
+- **C_TOP15_FLOW 句子寫「前12大分點」**:個股 payload 每天只留淨額前 12 大,寫 15 會不誠實;code 名照規劃稿。
+- **法人單日沒有連續時**,若近 10 日有 ≥5 日同方向,句尾加「近10日有 N 日賣超,10日合計 …」(6488 外資 10/01 賣、09/30 買,連續天數只有 1)。
+- 外資/投信 20 日累計拆成 `_BUY/_SELL` 兩個 code(目錄每個 code 側別固定)。
+- 期貨用新 code `C_FUT_VOLUME_HIGH`(背景,帶「行情 MM/DD」);後端兩個期貨 code 只進分類表。權證/期貨/題材/公司合在 `facts/otherFacts.ts`。
+- `web/tsconfig.json` 加 `allowImportingTsExtensions`:facts 模組彼此要用 `.ts` 副檔名 import,`node --test` 才跑得動,next build 的型別檢查原本會擋。
+- 週/月的量比用「日均量」比(進行中的那根才不會被少算);週/月事實 rank 比日K 低一級。
+
+### 6.5 測試
+`web/lib/bullBear.test.ts`(完整性 fixture:240 日高 +46.9%、上方密集區、現價之上成交、外資連 5 日賣超取代 R_FOREIGN_SELL5;讓位;鏡像含口袋;標頭 rank;分組;每 code 恰一次)、`web/lib/facts/{series,techFacts,levelFacts,holdersFacts,chipsFacts,catalogue}.test.ts`(重取樣:部分週/週中與週一假日/跨年週/月桶/分割前後還原相等/零量;目錄覆蓋率=每個 code 都有 fixture 產生;segments 接起來等於 text;mirrors ⊆ 目錄;禁用詞)。`pipeline/tests/test_bull_bear_codes.py`:SOURCES 加 `futures_volume_anomaly.py`;json_export 個股 payload 頂層鍵 ⊆ `STOCK_KEYS_USED ∪ STOCK_KEYS_NOT_FACTS`(且不得列 payload 沒有的鍵)。
 
 ## 5. 不做
 不改 tech_score/final/risk_deductions/Armed;不加 S14/R_RESIST;不把 F 事實放 technical.*;不改 reasons/risks 字串陣列與 radar.json;不顯示 points、不相減計數;UI 不出現 做多/做空/看多/看空/買進/賣出/建議;不改預設分頁與其他分頁順序;不新增色票;不改伺服器原文;不碰 adj_factor。
