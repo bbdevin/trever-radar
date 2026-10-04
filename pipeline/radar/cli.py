@@ -804,8 +804,17 @@ def cmd_import_descriptions(args):
 
 def cmd_prune(args):
     from .prune import prune_db
-    info = prune_db(args.indicators, args.warrants, args.logs, args.vacuum)
-    print(f"pruned: {info['indicators']} indicators, {info['warrants']} warrants, {info['logs']} logs")
+    info = prune_db(args.indicators, args.warrants, args.logs, args.vacuum,
+                    warrant_branches_days=args.warrant_branches, max_dates=args.max_dates,
+                    dry_run=args.dry_run)
+    wb = info["warrant_branches"]
+    head = "would prune" if info["dry_run"] else "pruned"
+    print(f"{head}: {info['indicators']} indicators, {info['warrants']} warrants, {info['logs']} logs, "
+          f"{wb['deleted_rows']} warrant-branch rows over {len(wb['dates'])} dates"
+          + (f" (skipped: {wb['skipped_reason']})" if wb["skipped_reason"] else "")
+          + (f", freelist {wb['freelist_count']} pages" if wb["freelist_count"] is not None else "")
+          + (f"; backlog {wb['backlog_rows']} warrant-branch rows over {wb['backlog_dates']} dates"
+             if "backlog_rows" in wb else ""))
     if info['vacuum']:
         print("vacuum completed")
 
@@ -1257,6 +1266,12 @@ def main(argv=None):
     pr.add_argument("--warrants", type=int, default=150, help="days to keep in warrant_daily")
     pr.add_argument("--logs", type=int, default=180, help="days to keep in import_logs")
     pr.add_argument("--vacuum", action="store_true", help="run VACUUM after pruning")
+    pr.add_argument("--warrant-branches", type=int, default=150,
+                    help="prune 6-char (warrant) rows of branch_trades_raw older than the warrant_daily "
+                         "cutoff; 0 disables (the cutoff itself is always --warrants)")
+    pr.add_argument("--max-dates", type=int, default=10,
+                    help="max expired dates of warrant-branch rows deleted per run")
+    pr.add_argument("--dry-run", action="store_true", help="count only, write nothing")
     pr.set_defaults(fn=cmd_prune)
 
     args = p.parse_args(argv)

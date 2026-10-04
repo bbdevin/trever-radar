@@ -8,6 +8,12 @@
 - **搜尋換頁更快**:`SearchBox` 不再等搜尋歷史寫入 Supabase 才換頁——先換頁,寫入在背景完成(client 導覽不卸載 layout,請求不會被取消;歷史列表本就樂觀更新,失敗照舊靜默)。實測寫入延遲 3 秒時,點選後 ~0.1 秒換網址、寫入仍於背景完成。
 - 驗證:node 189 pass、tsc、build;parity 72 個畫面文字改前改後逐字相同;390px 截圖檢查表格提示(深/淺色)、頁面無橫向溢出。
 
+## 2026-10-04 權證分點列保留 150 交易日(已合併;換檔前自動停用)
+
+- Planner 定案(`docs/44` §6.4、`docs/29` §2.4):`branch_trades_raw` 6 碼(權證)列保留 150 個交易日,與 `warrant_daily` **共用同一個 `war_cutoff`**;4 碼個股/ETF 列永久保留。`radar prune` 新增 `--warrant-branches 150`(0 關閉)、`--max-dates 10`、`--dry-run`;由新到舊每輪最多 10 日、一日一交易、連續 3 空日即停,每刪一日寫 `import_logs(dataset='warrant_branch_prune')`(date=執行日、`error='data_date=…'`,才不會被 180 天 log 清理刪掉);不補刪、不 VACUUM。只在新版面(有 `ix_branch_trades_raw_date_cover`)啟用。排程不變(17:40 那輪本來就跑 prune)。
+- 使用者要求「今天能做的就先做」→ 10-04 提前合併(舊版面自動略過,換檔後才生效);第一次正式刪除前先跑 `docker run --rm -v ~/trever-radar/data:/app/data radar-pipeline python -m radar prune --dry-run`,看 `backlog would delete total=… dates=…` 那行(全部積壓總數),預期 2026-01/02 約 4.5k 列可刪。
+- 測試:`pipeline/tests/test_prune_warrant_branches.py` 9 項;pipeline 全套 1280 passed。
+
 ## 2026-10-04 網站 W-P0 上線:登入單例、站內換頁、靜態快取、右滑提示
 
 - **登入狀態單例**(`web/lib/useSession.ts` `SessionProvider`):首頁 `app_profiles` 請求 14(正式 ~90)→ 1。profile 綁 user id(換帳號時不沿用前一人的核准);分頁回前景／token 更新時背景重查(不閃閘門),撤銷/核准切回分頁即生效;背景重查遇連線錯誤保留上次確定結果(資料仍由 Worker 擋)。

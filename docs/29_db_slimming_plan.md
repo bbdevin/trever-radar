@@ -1,5 +1,6 @@
 # 29 雲端 DB 瘦身計畫(WP-M3R,2026-07-14 規劃)
 
+> **2026-10-04 更新**:§2.4 新增 `branch_trades_raw` 權證分點列(6 碼)保留政策——150 個交易日、與 `warrant_daily` 同一條 cutoff;個股列永久保留。已實作於 `radar prune`(10-07 合併)。
 > **2026-07-15 更新**:Phase 0/1 與 Phase 2 的 branch_dim 正規化**已實作上線**(commits `980524d`/`3a72c8d`,prune 已入 daily-branches);§1 容量實測數字仍為真相。**Phase 2 剩餘項(分點 130 日窗口、branch_hist.db 拆分)與 §7 待決問題 2/5/6 因 B 案定案而作廢**——見 `docs/31_plan_b_vps_data_home.md`。
 > **狀態(原始):Planner 提案,尚未執行**。本檔記錄 2026-07-13夜間~2026-07-14 一次即時事故排查(法人/分點資料斷層 → 查出 `radar.db` 已達 7.35GB,GitHub Release 備份逼近 2GB 硬上限)延伸出的完整規劃。取代 `docs/26` WP-M3 原本「只拆分點」的假設——實測發現分點資料不是主要肥胖來源。
 > 本檔完成前,`docs/26` WP-M3/WP-M4 的容量估算(`<1.5GB`、`+3-6GB`)已知過時,以本檔數字為準。
@@ -67,6 +68,12 @@
 **建議策略**:只保留近 **150個交易日**(比 docs/05 原本的2年短,但足夠涵蓋現有所有讀取功能,含120日權證大戶追蹤窗)。
 
 **預估效果**:0.90GB → **~0.55GB**。
+
+**權證分點列(`branch_trades_raw` 6 碼列)保留政策 —— ✅ 2026-10-04 Planner 定案,程式已實作**(`docs/44` §6.4):
+- 保留 **150 個交易日**,與 `warrant_daily` **共用 `prune.py` 同一個 `war_cutoff` 變數**(`date < war_cutoff` 刪,等於 cutoff 那天保留)。兩條線若分開會讓權證頁與權證分點明細對不上,測試 `test_prune_warrant_branches.py` 鎖住同一天邊界。
+- **4 碼個股/ETF 列永久保留**(評分、分點勝率、E2 帳本的根資料,歷史只能慢速回補)。
+- 執行方式:`radar prune`(17:40 那輪既有步驟)由新到舊逐日刪,每輪最多 `--max-dates 10` 個日期、連續 3 個空日即停;每刪一日寫一列 `import_logs(source='prune', dataset='warrant_branch_prune', date=執行日(台北), error='data_date=YYYY-MM-DD', status='ok')`——`date` 刻意用執行日,用資料日的話會被下一輪 `logs_days=180` 刪掉。不做一次性補刪、不 VACUUM(freelist 重用)。`--dry-run` 只計數不寫,另外印出**全部積壓**的列數與日期數(不受 `--max-dates`/空日停止限制)。
+- 只在新版面(有 `ix_branch_trades_raw_date_cover`,docs/43)啟用;舊版面印 `warrant-branch prune skipped: no ix_branch_trades_raw_date_cover` 並跳過。`--warrant-branches 0` 關閉。
 
 ## 3. 瘦身後總量預估
 
