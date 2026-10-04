@@ -67,15 +67,11 @@ export default function SearchBox() {
     if (open) router.prefetch("/stock");
   }, [open, router]);
 
-  const go = async (id: string) => {
-    // 點下去立刻轉圈圈:下面要先等搜尋歷史寫入(一次 Supabase 來回)才換頁。
+  const go = (id: string) => {
     markNavPending(null, `/stock?id=${id}`);
-    // 先等寫入完成再換頁(以前是 hard navigate,會取消 upsert);改 client 導覽後保留同樣順序。
-    try {
-      await pushSearch(id);
-    } catch {
-      /* 仍導向個股 */
-    }
+    // 搜尋歷史在背景寫入,不擋換頁:client 導覽不卸載頁面(SearchBox 與 UserPrefsProvider 都在
+    // layout),請求不會被取消;列表已先樂觀更新。失敗照舊靜默(pushSearch 內部已 console.warn)。
+    pushSearch(id).catch(() => {});
     setOpen(false);
     setQ("");
     router.push(`/stock?id=${id}`);
