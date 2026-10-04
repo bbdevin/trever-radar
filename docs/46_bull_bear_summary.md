@@ -132,6 +132,12 @@ P2:期貨背景列;F9–F11。
 - `technical` 為 null 時,指標列位置改顯示「尚未產出技術指標;請先跑 compute-indicators。」(`tech-metrics-missing`),三段照畫。
 - 「技術訊號原文」`<details>` **移除**(`techDetailsSummary` 一併刪):`bullBear.test.ts` 鎖定 technical.reasons/risks 的每個 code 不是在多空列(bull/bear/context),就是被 suppressed 且取代它的鏡像事實列仍在畫面上,故不需要補列。
 
+### 6.8 壓力分析併入技術分析卡、「怎麼算」常駐(2026-10-04 使用者:「壓力分析也能整併至技術分析 只是會變成有一個小標題是壓力分析」;不喜歡收合)
+- 卡片改兩張:**技術分析**(指標列 → 技術兩欄 → `border-t` 分隔的「壓力分析」小節 → 價格階梯 → 現價上下成交 → 怎麼算)、**籌碼分析**(第二張)。小節標題 13px 粗體 + 20px 價格家族 icon + 自己的 ▲多方/▼空方 小計數膠囊,比卡片段頭小一級(`h4`,其下欄頭降為 `h5`)。testid 不變:`bullbear-section-levels` 現在巢狀在 `bullbear-section-tech` 內。
+- 總覽列計數仍三組,順序跟畫面一致:技術 · 壓力 · 籌碼(`PANEL_ORDER`;資料排序用的 `SECTION_ORDER` 與標頭最強一條的段序都不變)。
+- 「怎麼算」不再用 `<details>`:常駐 11.5px `--ink-2` 小字、左 2px 線,`HOWTO_LINES` 由 13 條精簡為 4 條關鍵定義(還原價、均線/N 日高低/缺口/接近、現價上下成交與密集區、週月K合併)。原本混在裡面的法人/分點/大戶門檻改為籌碼分析卡底 2 行(`CHIPS_HOWTO_LINES`,testid `bullbear-chips-howto`)。被刪掉的細節(N 日視窗不縮短、同價同日只列最長、60 日區間上下緣、1000 張級距另列條件等)只留在本檔與程式註解,不再上畫面。
+- 驗收:`verify-mobile-stock.mjs` 鎖 levels 巢狀於 tech、卡片序 總覽→技術→籌碼、多空分頁無 `details`。
+
 ### 6.5 測試
 `web/lib/bullBear.test.ts`(完整性 fixture:240 日高 +46.9%、上方密集區、現價之上成交、外資連 5 日賣超取代 R_FOREIGN_SELL5;讓位;鏡像含口袋;標頭 rank;分組;每 code 恰一次)、`web/lib/facts/{series,techFacts,levelFacts,holdersFacts,chipsFacts,catalogue}.test.ts`(重取樣:部分週/週中與週一假日/跨年週/月桶/分割前後還原相等/零量;目錄覆蓋率=每個 code 都有 fixture 產生;segments 接起來等於 text;mirrors ⊆ 目錄;禁用詞)。`pipeline/tests/test_bull_bear_codes.py`:SOURCES 加 `futures_volume_anomaly.py`;json_export 個股 payload 頂層鍵 ⊆ `STOCK_KEYS_USED ∪ STOCK_KEYS_NOT_FACTS`(且不得列 payload 沒有的鍵)。
 
