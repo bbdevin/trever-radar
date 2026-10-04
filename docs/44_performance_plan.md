@@ -43,7 +43,7 @@
 網站端提「核心檔 + 雜湊歷史檔」(為了快取),VPS 端提「head + 分頁區段」(為了每輪少算、首屏變小)。兩者相容,採**合併設計**:
 
 ```
-stocks/{id}.json            核心:meta、scores、reasons、technical、當日分點、權證、期貨摘要、
+stocks/{id}.json            核心:meta、scores、reasons、raw_risks、technical、price_levels(docs/45)、當日分點、權證、期貨摘要、
                             近 12–24 個月 candles(cut = 前一年 1/1)、指向下面兩檔的指標
 stocks/hist/{id}.{hash8}.json   cut 以前的 K 線(內容雜湊檔名 → 一年 immutable 快取;年初滾動一次)
 stocks/chips/{id}.json      branch_history、branch_pnl_est、branch_pctile_counts、branch_tags

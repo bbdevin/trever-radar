@@ -40,6 +40,11 @@ const META: Record<string, { label: string; icon: typeof Star }> = {
 const LEGACY_TEXT_PREFIX = "關鍵分點同買";
 const CURRENT_TEXT_PREFIX = "追蹤分點同買";
 
+/** 多空摘要(docs/46)也用這個轉場,所以匯出。 */
+export function pocketDisplayText(t: PocketTag): string {
+  return displayText(t);
+}
+
 function displayText(t: PocketTag): string {
   if (t.code === "K1_KEY_BUY" && t.text.startsWith(LEGACY_TEXT_PREFIX)) {
     return CURRENT_TEXT_PREFIX + t.text.slice(LEGACY_TEXT_PREFIX.length);

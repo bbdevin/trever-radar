@@ -59,7 +59,11 @@ try {
   const nameBox = await page.getByTestId("stock-name").boundingBox();
   assert(priceBox && nameBox && priceBox.y >= nameBox.y + nameBox.height - 2, "股價列應在名稱下方");
   assert(await page.getByTestId("stock-decision").isVisible(), "評分區塊應固定顯示");
-  assert(await page.getByTestId("stock-decision").getByRole("button").count() === 0, "評分區塊不應再有展開收合按鈕");
+  // docs/46:標頭只剩一顆「多方 N · 空方 N ›」按鈕(切到多空分頁),不再有展開收合。
+  assert(await page.getByTestId("stock-decision").getByRole("button").count() === 1, "評分區塊應只有多空連結一顆按鈕");
+  assert(await page.getByTestId("stock-bullbear-link").isVisible(), "標頭缺少多空連結");
+  { const order = await page.locator('[data-testid^="stock-tab-"]').evaluateAll((els) => els.slice(0, 2).map((e) => e.getAttribute("data-testid")));
+    assert(order.join() === "stock-tab-chart,stock-tab-tech", `多空分頁應在 K線 右邊第二格(實際 ${order})`); }
   assert(await page.getByTestId("stock-decision").getByTestId("stock-price-targets").count() === 0, "觀察／失效應移出左側評分區");
   for (const testId of ["stock-header", "stock-context-grid"]) {
     const hasOverflow = await page.getByTestId(testId).evaluate((element) => element.scrollWidth > element.clientWidth + 1);
@@ -105,7 +109,7 @@ try {
   assert(await sellTab.getAttribute("aria-selected") === "true", "切到賣方分頁失敗");
   await buyTab.click();
 
-  // 5) 法人 / 基本資料 / 技術 tab 存在；基本資料是公司、題材、庫藏股的單一連續面板。
+  // 5) 法人 / 基本資料 / 多空 tab 存在；基本資料是公司、題材、庫藏股的單一連續面板。
   await page.getByRole("tab", { name: "法人" }).click();
   await page.getByText("法人分").first().waitFor({ state: "visible", timeout: 5000 });
   await page.getByRole("tab", { name: "基本資料" }).click();
@@ -130,7 +134,8 @@ try {
   assert(!infoTabs.includes("公司資料") && !infoTabs.includes("題材") && !infoTabs.includes("庫藏股"), "基本資料不應有公司／題材／庫藏股內部分頁");
   const basicOverflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1);
   assert(!basicOverflow, "基本資料分頁造成頁面橫向溢出");
-  await page.getByRole("tab", { name: "技術" }).click();
+  await page.getByRole("tab", { name: "多空" }).click();
+  await page.getByTestId("bullbear-panel").waitFor({ state: "visible", timeout: 5000 });
   await page.getByText("技術分").first().waitFor({ state: "visible", timeout: 5000 });
   await page.getByRole("tab", { name: "權證" }).click();
   await page.getByRole("heading", { name: "權證分點動向" }).waitFor({ state: "visible", timeout: 5000 });
@@ -154,7 +159,7 @@ try {
   console.log(`✓ 手機 viewport ${viewportLabel} 驗收通過`);
   console.log("  - 無頁面橫向溢出");
   console.log("  - 籌碼日報買方/賣方對半切可切");
-  console.log("  - 法人 / 基本資料 / 技術 / 權證獨立 tab；權證資料日與來源裁剪限制可見");
+  console.log("  - 法人 / 基本資料 / 多空 / 權證獨立 tab；權證資料日與來源裁剪限制可見");
   console.log("  - 點分點進入下鑽並可返回");
 } catch (e) {
   failures.push(`執行錯誤: ${e.message}`);
