@@ -90,6 +90,19 @@ function geoNote(rule: unknown): string {
   return `地緣：分點地址與公司登記地${where}（統計推測，不是內部人）`;
 }
 
+/**
+ * 名單期間:history 新→舊的交易日,取最近 days 天。days 可能是使用者亂打的
+ * 負數/0/NaN(自訂天數輸入框擋不住打字),一律夾在 [1, 深度],絕不越界;沒資料回 null。
+ */
+export function historyWindow(
+  history: readonly { t: string }[] | null | undefined,
+  days: number,
+): { from: string; to: string } | null {
+  if (!history?.length) return null;
+  const n = Number.isFinite(days) ? Math.min(Math.max(Math.trunc(days), 1), history.length) : 1;
+  return { from: history[n - 1].t, to: history[0].t };
+}
+
 /** YYYY-MM-DD → YYYY-MM;格式不對原樣回傳。 */
 function fmtMonth(iso: string): string {
   const m = /^(\d{4})-(\d{2})/.exec(iso);
@@ -114,12 +127,27 @@ export function agentPeriods(tags: BranchTags | null | undefined): BranchAgentPe
   const raw: unknown[] = Array.isArray(agent.periods) && agent.periods.length
     ? agent.periods
     : current ? [{ from: null, to: null, broker: current.broker ?? null, names: current.names }] : [];
-  return raw.filter((p): p is BranchAgentPeriod => {
+  const valid = raw.filter((p): p is BranchAgentPeriod => {
     if (!p || typeof p !== "object") return false;
     const q = p as Record<string, unknown>;
     return (q.broker === null || typeof q.broker === "string")
       && isDateOrNull(q.from ?? null) && isDateOrNull(q.to ?? null) && Array.isArray(q.names);
   });
+  // 相鄰同券商的段併成一段(export 已合併;這裡再擋一次舊 JSON),不會說「換過股代」卻前後同一家。
+  const merged: BranchAgentPeriod[] = [];
+  for (const p of valid) {
+    const prev = merged[merged.length - 1];
+    if (prev && prev.broker === p.broker) {
+      merged[merged.length - 1] = {
+        ...prev,
+        to: p.to,
+        names: [...new Set([...prev.names, ...p.names])],
+      };
+    } else {
+      merged.push(p);
+    }
+  }
+  return merged;
 }
 
 /**

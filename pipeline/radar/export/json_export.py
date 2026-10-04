@@ -502,7 +502,11 @@ def _agent_payload(
     names = 這檔 payload 裡、該段股代券商的總公司席位。current = 最新一段。
     """
     if history:
-        spans = list(history)
+        spans = []
+        for first_seen, broker in history:
+            if spans and spans[-1][1] == broker:
+                continue  # 相鄰同券商併成一段(匯入端已保證,這裡再擋一次)
+            spans.append((first_seen, broker))
     else:
         spans = [(None, transfer_agent_broker((profile or {}).get("transfer_agent")))]
     periods = []

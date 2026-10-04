@@ -207,11 +207,40 @@ class TransferAgentHistoryTests(unittest.TestCase):
             ("6217", "2026-09-07", "2026-09-07", "凱基", "凱基證券股份有限公司"),
             ("6217", "2026-09-14", "2026-09-14", "元大", "元大證券股務代理部"),
         ])
-        # 換回來也是新的一段,不改寫舊段
-        self.assertEqual(self._run("2026-09-21", {"6217": "凱基證券股份有限公司"}),
+        # 元大這段再被觀察一次 → 是真的換了;之後換回凱基是新的一段,不改寫舊段
+        self.assertEqual(self._run("2026-09-21", {"6217": "元大證券股務代理部"}), [])
+        self.assertEqual(self._run("2026-09-28", {"6217": "凱基證券股份有限公司"}),
                          [{"stock_id": "6217", "from": "元大", "to": "凱基"}])
-        self.assertEqual([r[1] for r in self._rows() if r[0] == "6217"],
-                         ["2026-09-07", "2026-09-14", "2026-09-21"])
+        self.assertEqual([(r[1], r[3]) for r in self._rows() if r[0] == "6217"],
+                         [("2026-09-07", "凱基"), ("2026-09-14", "元大"), ("2026-09-28", "凱基")])
+
+    def test_one_off_flip_flop_is_folded_back(self):
+        """A→B→A 且 B 只出現在一次匯入:B 那段刪掉,A 延長,記成 reverted,不會有相鄰同券商。"""
+        self._run("2026-09-07", {"6217": "凱基證券股份有限公司"})
+        self._run("2026-09-14", {"6217": "凱基證券股份有限公司"})
+        self._run("2026-09-21", {"6217": "元大證券股務代理部"})
+        changes = self._run("2026-09-28", {"6217": "凱基證券(股)公司股務代理部"})
+        self.assertEqual(changes, [{"stock_id": "6217", "from": "元大", "to": "凱基",
+                                    "reverted": True}])
+        self.assertEqual(self._rows(), [
+            ("6217", "2026-09-07", "2026-09-28", "凱基", "凱基證券(股)公司股務代理部"),
+        ])
+        # 再跑一次照常延長,不再有變動
+        self.assertEqual(self._run("2026-10-05", {"6217": "凱基證券股份有限公司"}), [])
+        rows = self._rows()
+        self.assertEqual(len(rows), 1)
+        brokers = [r[3] for r in rows]
+        self.assertTrue(all(a != b for a, b in zip(brokers, brokers[1:])))
+
+    def test_export_collapses_adjacent_same_broker_periods(self):
+        from radar.export.json_export import _agent_payload
+        agent = _agent_payload({"凱基", "元大證券"}, None, [
+            ("2026-09-07", "凱基"), ("2026-09-14", "凱基"), ("2026-09-21", "元大"),
+        ])
+        self.assertEqual(agent["periods"], [
+            {"from": "2026-09-07", "to": "2026-09-21", "broker": "凱基", "names": ["凱基"]},
+            {"from": "2026-09-21", "to": None, "broker": "元大", "names": ["元大證券"]},
+        ])
 
     def test_same_day_rerun_overwrites_instead_of_zero_length_period(self):
         self._run("2026-09-07", {"6217": "凱基證券股份有限公司"})

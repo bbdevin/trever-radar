@@ -12,7 +12,9 @@ import {
   TAG_PRIORITY,
   TRACKED_OVERRIDE_NOTE,
   agentPeriodAt,
+  agentPeriods,
   branchTags,
+  historyWindow,
   tagDefinitions,
   tagLegendFootnote,
   type TagContext,
@@ -238,6 +240,28 @@ test("股代換過:依日期找當時的股代,最早觀察之前依最早觀察
   // 壞掉的段丟掉,不標錯
   const broken = ctx({ ...TAGS, agent: { current: { broker: "凱基", names: ["凱基"] }, periods: [{ broker: "凱基", from: "x", to: null, names: ["凱基"] }] } });
   assert.ok(!agentOf("凱基", broken));
+});
+
+test("名單期間:自訂天數亂打(負數/0/NaN/超過深度)不越界", () => {
+  const h = [{ t: "2026-10-02" }, { t: "2026-10-01" }, { t: "2026-09-30" }];
+  assert.deepEqual(historyWindow(h, 2), { from: "2026-10-01", to: "2026-10-02" });
+  assert.deepEqual(historyWindow(h, -3), { from: "2026-10-02", to: "2026-10-02" });
+  assert.deepEqual(historyWindow(h, 0), { from: "2026-10-02", to: "2026-10-02" });
+  assert.deepEqual(historyWindow(h, Number.NaN), { from: "2026-10-02", to: "2026-10-02" });
+  assert.deepEqual(historyWindow(h, 99), { from: "2026-09-30", to: "2026-10-02" });
+  assert.equal(historyWindow([], 5), null);
+  assert.equal(historyWindow(undefined, 5), null);
+});
+
+test("股代相鄰同券商的段合併(舊 JSON 也不會出現「…為凱基、…起為凱基」)", () => {
+  const periods = [
+    { from: "2026-07-06", to: "2026-08-03", broker: "凱基", names: ["凱基"] },
+    { from: "2026-08-03", to: "2026-08-10", broker: "凱基", names: ["凱基"] },
+  ];
+  const c = ctx({ ...TAGS, agent: { current: { broker: "凱基", names: ["凱基"] }, periods } });
+  assert.equal(agentPeriods(c.tags).length, 1);
+  const def = tagDefinitions(c).find((d) => d.label === "股代")!.text;
+  assert.ok(!def.includes("換過股代"), def);
 });
 
 test("定義的數字從 payload 讀", () => {

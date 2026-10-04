@@ -93,7 +93,8 @@ A2 是語意決策關卡，不是單純修 UI。Executor 先產出對照表與�
 - **Export**：`branch_tags.agent = {current:{broker,names}, periods:[{from,to,broker,names}]}`，names 只限此股 payload 會出現的分點；表還沒資料時以 `company_profiles` 現值當唯一一段（`from=null`）。
 - **UI**：pill「股代」，與總公司同色（`--warn`，不新增色票）＋ `Building2` 圖示；優先序 GEO > DT > TRACKED > AGENT > LOW/HIGH > SEAT。說明：「股代：本公司登記的股務代理機構是這家券商（官方公司基本資料，每週核對）；只標總公司席位，不是單一主力。」換過股代時加「（YYYY-MM 起）」／「（YYYY-MM 起已換成其他機構）」。`branchTags(name, side, ctx, date?)`；合計多日的名單用 `ctx.window`（期間內有效的段都算）。「標籤怎麼看」講出券商名，總公司席位不在名單時註明「本檔近兩年前 12 大無其總公司席位」。舊 JSON 無 `agent` 鍵 → 不標。
 - **延後**：用重大訊息回補換股代的實際日期（現在只有每週觀察）、興櫃 `t187ap03_R`、更多合併別名（需公開合併紀錄才加）。
-- **正式環境待人類核准**：①部署後第一次 `init_db()`（任何 radar 指令都會跑）會自動建立空表 `transfer_agent_history`（additive，不動既有表）；②合併後手動跑一次 `import-geo` 建第一段觀察，再 `export-json` 上線。
+- **A→B→A**：B 只出現在一次匯入（`first_seen = last_seen`）就換回 A → 刪掉 B 那段、A 延長，`import_logs` 明細記 `(revert)`；B 觀察到兩次以上才算真的換過。永遠不會有相鄰兩段同一家券商；export 與前端也各自把相鄰同券商的段併成一段。
+- **上線方式（使用者已核准建表）**：`vps/scripts/lib.sh` 的 `sync_code()` 每輪自動 `git pull`，**合併進 `main` 就是正式上線**：下一輪排程的 `init_db()` 自動建立空表 `transfer_agent_history`（additive，不動既有表），週一 `daily-market.sh`／`weekly-refdata.sh` 的 `import-geo` 寫入第一段觀察；之前的 export 以 `company_profiles` 現值當唯一一段，標籤照常出現。要提早生效可在合併後手動跑一次 `import-geo`＋`export-json`（非必要）。
 
 ## 4. C：題材完整化
 

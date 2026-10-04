@@ -34,24 +34,39 @@ def update_transfer_agent_history(conn, companies: list[dict], day: str) -> list
 
     比的是券商(transfer_agent_broker),不是原文——同一家券商換個寫法(「元大證券股份有限公司」
     →「元大證券(股)公司股務代理部」)不算換股代。這次沒出現在官方表的公司不動(下市/漏列)。
+
+    A→B→A 且 B 只被觀察到一次(first_seen = last_seen,多半是官方表一時填錯):刪掉 B 那段、
+    把前一段 A 延長到今天,變動記成 reverted。保證永遠不會有相鄰兩段是同一家券商。
     """
-    latest = {
-        r[0]: {"first_seen": r[1], "broker": r[2]}
-        for r in conn.execute(text(
-            "SELECT h.stock_id, h.first_seen, h.broker FROM transfer_agent_history h "
-            "JOIN (SELECT stock_id, MAX(first_seen) AS f FROM transfer_agent_history "
-            "      GROUP BY stock_id) m ON m.stock_id = h.stock_id AND m.f = h.first_seen"
-        ))
-    }
+    tail: dict[str, list[dict]] = {}   # stock_id → 最後兩段(舊→新)
+    for r in conn.execute(text(
+        "SELECT stock_id, first_seen, last_seen, broker FROM transfer_agent_history "
+        "ORDER BY stock_id, first_seen"
+    )):
+        seq = tail.setdefault(r[0], [])
+        seq.append({"first_seen": r[1], "last_seen": r[2], "broker": r[3]})
+        del seq[:-2]
+    t = schema.transfer_agent_history
     rows: list[dict] = []
     changes: list[dict] = []
     for c in companies:
         sid = c["stock_id"]
         broker = transfer_agent_broker(c.get("transfer_agent"))
-        prev = latest.get(sid)
+        seq = tail.get(sid, [])
+        prev = seq[-1] if seq else None
+        before = seq[-2] if len(seq) > 1 else None
         if prev is not None and prev["broker"] == broker:
             rows.append({"stock_id": sid, "first_seen": prev["first_seen"], "last_seen": day,
                          "agent_text": c.get("transfer_agent")})
+            continue
+        if (prev is not None and before is not None and before["broker"] == broker
+                and prev["first_seen"] == prev["last_seen"]):
+            conn.execute(t.delete().where(t.c.stock_id == sid)
+                         .where(t.c.first_seen == prev["first_seen"]))
+            rows.append({"stock_id": sid, "first_seen": before["first_seen"], "last_seen": day,
+                         "agent_text": c.get("transfer_agent")})
+            changes.append({"stock_id": sid, "from": prev["broker"], "to": broker,
+                            "reverted": True})
             continue
         if prev is not None and prev["first_seen"] >= day:
             # 同一天重跑又換了:覆寫當天那一段,不留零長度的段
@@ -158,7 +173,9 @@ def import_geo() -> dict:
         # 換股代記一筆 import_logs:rows = 變動家數,error 欄當備註放明細
         # (同 branch_coverage 的用法;status 仍是 ok,不讓健康檢查誤判成失敗)。
         _log(conn, "twse+tpex", "transfer_agent_change", today, len(agent_changes), "ok",
-             error="; ".join(f"{c['stock_id']}:{c['from']}->{c['to']}" for c in agent_changes)[:2000]
+             error="; ".join(
+                 f"{c['stock_id']}:{c['from']}->{c['to']}" + ("(revert)" if c.get("reverted") else "")
+                 for c in agent_changes)[:2000]
              or None)
 
     print(
