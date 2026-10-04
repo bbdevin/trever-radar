@@ -2,12 +2,13 @@
 
 > 單一進度真相。每完成一個里程碑就更新本檔。規格細節看各編號文件,別寫在這裡。
 
-## 2026-10-04 `/data` Worker 驗證優化(docs/44 P1):⏳ 待資安審查 + 使用者核准,未上線
+## 2026-10-04 `/data` Worker 驗證優化(docs/44 P1):獨立資安審查通過(4 個 Low 已修),⏳ 待使用者核准,未上線
 
 - 分支已 commit、**未合 main、未 deploy**(合入後下一輪 VPS deploy 會自動上線,所以必須先過審)。
 - 內容:JWT 改 ES256 + Supabase JWKS 本地驗簽,拿掉 `/auth/v1/user`(無 HS256 fallback、Worker 不持 service_role);`app_profiles` 仍用使用者 JWT 經 RLS 查,以 `sub` 快取 5 分;同時多個請求 JWKS／REST 各只查一次。service key、路由、標頭、401/403/503 格式不變。
 - 取捨:撤銷核准最長 5 分生效;登出不會讓已發 token 立即失效(到 exp,預設 1 小時)。細節 `cloudflare-data-worker/README.md`。
-- 測試:`node --test test/auth.test.mjs test/worker.test.mjs` 36 pass(stub fetch、自簽 token、假時鐘)。
+- 測試:`node --test test/auth.test.mjs test/worker.test.mjs` 40 pass(stub fetch、自簽 token、假時鐘)。
+- 審查修正:JWKS 2xx 且 keys 陣列無可用金鑰 → 舊金鑰作廢(503);錯誤回應不進邊緣快取;無金鑰時抓取失敗退避 10 秒;README 補金鑰輪替 ≥30 分與外洩撤銷說明。
 
 ## 2026-10-04 網站 W-P0 上線:登入單例、站內換頁、靜態快取、右滑提示
 

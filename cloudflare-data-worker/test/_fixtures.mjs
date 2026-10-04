@@ -98,6 +98,7 @@ export function fakeSupabase(keys) {
     if (url === JWKS) {
       calls.jwks++;
       calls.jwksInit.push(init);
+      if (state.rawJwks !== undefined) return new Response(state.rawJwks, { status: 200 });
       const r = state.jwks();
       if (r instanceof Error) throw r;
       return new Response(JSON.stringify(r.body), { status: r.status });

@@ -7,6 +7,7 @@ import {
   createAuthorizer,
   CACHE_MAX_ENTRIES,
   JWKS_TTL_MS,
+  JWKS_FAIL_BACKOFF_MS,
   PROFILE_TTL_MS,
   PROFILE_FAIL_TTL_MS,
 } from "../src/auth.js";
@@ -53,7 +54,9 @@ test("valid ES256 + approved → ok; REST uses same URL/headers as before; no /a
   const t = await tok(clock);
   assert.deepEqual(await run(t), { ok: true });
   assert.equal(sb.calls.jwks, 1);
-  assert.deepEqual(sb.calls.jwksInit[0], { cf: { cacheTtl: 600, cacheEverything: true } });
+  assert.deepEqual(sb.calls.jwksInit[0], {
+    cf: { cacheTtlByStatus: { "200-299": 600, "300-599": 0 }, cacheEverything: true },
+  });
   assert.equal(sb.calls.rest, 1);
   const { url, init } = sb.calls.restReqs[0];
   assert.equal(
@@ -352,6 +355,69 @@ test("JWKS refresh fails with cached keys → stale keys keep working, retry bac
   clock.t += 30_000;
   assert.deepEqual(await run(await tok(clock)), { ok: true });
   assert.equal(sb.calls.jwks, 2); // 60 秒內不重試
+});
+
+test("L1: authoritative JWKS (200 + keys array) with no usable EC key revokes stale keys", async () => {
+  for (const onlyKeys of [
+    [{ kty: "RSA", kid: "kid-rsa", alg: "RS256", use: "sig", n: "AQAB", e: "AQAB" }],
+    [{ kty: "oct", kid: KEY.kid, k: "c2VjcmV0" }],
+    [],
+  ]) {
+    const { sb, clock, run } = setup();
+    assert.deepEqual(await run(await tok(clock)), { ok: true });
+    sb.state.jwks = () => ({ status: 200, body: { keys: onlyKeys } });
+    clock.t += JWKS_TTL_MS;
+    const r = await run(await tok(clock));
+    assert.equal(r.ok, false, JSON.stringify(onlyKeys));
+    assert.equal(r.status, 503); // 沒有任何可用金鑰 = fail closed
+    assert.equal(sb.calls.jwks, 2);
+  }
+});
+
+test("L1: non-authoritative JWKS responses (500 / bad JSON / no keys array) keep stale keys", async () => {
+  for (const bad of [
+    () => ({ status: 500, body: { keys: [] } }),
+    () => ({ status: 200, body: { nokeys: true } }),
+    () => ({ status: 200, body: "not-an-object" }),
+  ]) {
+    const { sb, clock, run } = setup();
+    assert.deepEqual(await run(await tok(clock)), { ok: true });
+    sb.state.jwks = bad;
+    clock.t += JWKS_TTL_MS;
+    assert.deepEqual(await run(await tok(clock)), { ok: true });
+  }
+  // 非 JSON 本體
+  const { sb, clock, run } = setup();
+  assert.deepEqual(await run(await tok(clock)), { ok: true });
+  sb.state.rawJwks = "<html>oops</html>";
+  clock.t += JWKS_TTL_MS;
+  assert.deepEqual(await run(await tok(clock)), { ok: true });
+  assert.equal(sb.calls.jwks, 2);
+});
+
+test("L4: JWKS outage with no keys → 503 and refetch backs off (10 sequential requests ≤ 2 fetches)", async () => {
+  const { sb, clock, run } = setup();
+  sb.state.jwks = () => new Error("down");
+  const t = await tok(clock);
+  for (let i = 0; i < 10; i++) {
+    assert.deepEqual(await run(t), FAILED);
+    clock.t += 1_500; // 共 15 秒:退避 10 秒 → 最多 2 次
+  }
+  assert.ok(sb.calls.jwks >= 1 && sb.calls.jwks <= 2, `jwks fetches = ${sb.calls.jwks}`);
+  // 恢復後、退避結束即可通過
+  sb.state.jwks = () => ({ status: 200, body: { keys: [KEY.jwk] } });
+  clock.t += JWKS_FAIL_BACKOFF_MS;
+  assert.deepEqual(await run(t), { ok: true });
+});
+
+test("L4: concurrent requests during outage share one JWKS fetch", async () => {
+  const { sb, clock, run } = setup();
+  sb.state.jwks = () => new Error("down");
+  sb.state.delayMs = 20;
+  const t = await tok(clock);
+  const rs = await Promise.all(Array.from({ length: 10 }, () => run(t)));
+  for (const r of rs) assert.deepEqual(r, FAILED);
+  assert.equal(sb.calls.jwks, 1);
 });
 
 test(`profile cache bounded: ${CACHE_MAX_ENTRIES + 1} distinct subs → size ≤ ${CACHE_MAX_ENTRIES}`, async () => {

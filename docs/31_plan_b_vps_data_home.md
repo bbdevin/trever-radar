@@ -201,7 +201,7 @@ Worker trigger 的 `GH_TOKEN` PAT 在回滾窗結束後由使用者親自 revoke
 - 功能級授權:白名單表帶 feature flags(如 `intraday`, `branch`),Worker 依 path 前綴判定。
 - **切換順序**:✅ **2026-08-20 完成**。VPS secret + deploy → 無 key=401、帶 key=200 → Zero Trust 關閉 Access → 裸 curl `/data/radar.json` 直接 401。
 - **2026-08-20 WP-B7 完成**:`/data` Worker 驗 Bearer JWT + `app_profiles.approved`,或 `X-Radar-Service-Key`。前端 `dataFetch` 帶 token。盤中 worker 用 service key。Cloudflare Access 已關。
-- **2026-10-04 docs/44 P1(分支已 commit,⏳ 待獨立資安審查 + 使用者核准,未合 main、未上線)**:Worker 改 ES256 + Supabase JWKS 本地驗簽(移除 `/auth/v1/user`、無 HS256 fallback、無 service_role),`app_profiles` 仍以使用者 JWT 經 RLS 讀、以 `sub` 快取 5 分(撤銷最長 5 分;登出不即時,至 token exp),並發去重;細節見 `cloudflare-data-worker/README.md`。
+- **2026-10-04 docs/44 P1(分支已 commit,獨立資安審查通過、4 個 Low 已修,⏳ 待使用者核准,未合 main、未上線)**:Worker 改 ES256 + Supabase JWKS 本地驗簽(移除 `/auth/v1/user`、無 HS256 fallback、無 service_role),`app_profiles` 仍以使用者 JWT 經 RLS 讀、以 `sub` 快取 5 分(撤銷最長 5 分;登出不即時,至 token exp),並發去重;細節見 `cloudflare-data-worker/README.md`。
 - **驗收紅線**:任何時點都不允許「未認證可抓到 /data」的空窗。Access 關閉後 `docs/21` Access 章節改歷史紀錄,門禁真相以本節與 `cloudflare-data-worker/README.md` 為準。
 
 ## 7. 各工作包風險表

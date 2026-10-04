@@ -138,6 +138,10 @@ test("JWKS failure: no cache → 503; with cache → 200", async (t) => {
   const auth = { Authorization: `Bearer ${await token()}` };
   await assertJsonError(await call("/data/x.json", { headers: auth }), 503, "auth lookup failed");
   sb.state.jwks = () => ({ status: 200, body: { keys: [KEY.jwk] } });
+  // 無金鑰時失敗後退避 10 秒:退避期內仍 503,過後恢復
+  await assertJsonError(await call("/data/x.json", { headers: auth }), 503, "auth lookup failed");
+  assert.equal(sb.calls.jwks, 1);
+  clock.t += 10_000;
   assert.equal((await call("/data/x.json", { headers: auth })).status, 200);
   sb.state.jwks = () => new Error("down again");
   clock.t += 11 * 60 * 1000;

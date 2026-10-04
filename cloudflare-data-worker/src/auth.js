@@ -1,6 +1,6 @@
 // Supabase JWT 本地驗簽 + app_profiles 狀態快取(docs/44 P1 Worker 驗證優化;門禁真相 docs/31 WP-B7)
 //
-// 2026-10-04 Planner 定案(待獨立資安審查 + 使用者核准才可上線):
+// 2026-10-04 Planner 定案(獨立資安審查通過、L1–L4 已修;使用者核准後才可上線):
 //   - 只接受 ES256(釘死 alg),以 Supabase JWKS 本地驗簽,不再呼叫 /auth/v1/user。
 //   - 沒有 HS256 fallback;Worker 不持有 service_role key。
 //   - app_profiles 仍以使用者自己的 JWT 經 RLS 讀(URL/headers 與舊版相同),
@@ -16,6 +16,7 @@
 export const JWKS_TTL_MS = 10 * 60 * 1000; // isolate 記憶體內 JWKS 有效期
 export const JWKS_CF_CACHE_TTL_S = 600; // fetch 的 Cloudflare 邊緣快取秒數
 export const JWKS_FORCE_MIN_MS = 60 * 1000; // 未知 kid 強制重抓,每 60 秒最多一次
+export const JWKS_FAIL_BACKOFF_MS = 10 * 1000; // 完全沒有金鑰時,抓取失敗後的重試退避
 export const PROFILE_TTL_MS = 5 * 60 * 1000; // sub → ok/denied 快取(= 撤銷最長延遲)
 export const PROFILE_FAIL_TTL_MS = 45 * 1000; // REST 非 2xx 的負快取
 export const CACHE_MAX_ENTRIES = 1000; // profile 快取上限,超過淘汰最舊
@@ -146,8 +147,10 @@ export function createAuthorizer({ fetch: fetchFn, now, subtle }) {
   const crypto = () => subtle || globalThis.crypto.subtle;
 
   // JWKS:kid → CryptoKey
-  let keys = null;
-  let jwksRefreshAt = 0; // 到期即重抓(成功 = +10 分;失敗且有舊金鑰 = +60 秒後再試)
+  let keys = null; // null = 沒有任何可用金鑰 → fail closed(503)
+  // 到期即重抓:成功 = +10 分;權威回應但無可用金鑰 / 抓取失敗且無金鑰 = +10 秒;
+  // 抓取失敗但有舊金鑰 = +60 秒
+  let jwksRefreshAt = 0;
   let lastForcedAt = -Infinity;
   let jwksInflight = null;
 
@@ -161,36 +164,49 @@ export function createAuthorizer({ fetch: fetchFn, now, subtle }) {
   }
 
   async function loadJwks(env) {
+    let list;
     try {
       const res = await fetchFn(jwksUrl(env), {
-        cf: { cacheTtl: JWKS_CF_CACHE_TTL_S, cacheEverything: true },
+        // 只有 2xx 進邊緣快取;錯誤回應不快取(review L2)
+        cf: {
+          cacheTtlByStatus: { "200-299": JWKS_CF_CACHE_TTL_S, "300-599": 0 },
+          cacheEverything: true,
+        },
       });
       if (!res.ok) throw new Error("jwks status");
       const body = await res.json();
-      const list = body && Array.isArray(body.keys) ? body.keys : [];
-      const next = new Map();
-      for (const jwk of list) {
-        if (!usableJwk(jwk) || next.has(jwk.kid)) continue;
-        try {
-          const key = await crypto().importKey(
-            "jwk",
-            { kty: "EC", crv: "P-256", x: jwk.x, y: jwk.y },
-            { name: "ECDSA", namedCurve: "P-256" },
-            false,
-            ["verify"],
-          );
-          next.set(jwk.kid, key);
-        } catch {
-          // 壞掉的單把金鑰略過,不影響其他金鑰
-        }
-      }
-      if (next.size === 0) throw new Error("jwks has no usable key");
-      keys = next; // 整組替換:JWKS 移除的 kid 立即失效
-      jwksRefreshAt = now() + JWKS_TTL_MS;
+      if (!body || !Array.isArray(body.keys)) throw new Error("jwks malformed");
+      list = body.keys;
     } catch {
-      // 有舊金鑰 → 繼續用,60 秒後再試;完全沒有 → 呼叫端 fail closed(503)
-      if (keys) jwksRefreshAt = now() + JWKS_FORCE_MIN_MS;
+      // 網路錯誤 / 非 2xx / 無法解析:有舊金鑰 → 沿用,60 秒後再試;
+      // 完全沒有 → 呼叫端 fail closed(503),10 秒內不再重抓(review L4)
+      jwksRefreshAt = now() + (keys ? JWKS_FORCE_MIN_MS : JWKS_FAIL_BACKOFF_MS);
+      return;
     }
+    // 權威回應(2xx + keys 陣列):一律整組替換,即使沒有任何可用金鑰(review L1)
+    const next = new Map();
+    for (const jwk of list) {
+      if (!usableJwk(jwk) || next.has(jwk.kid)) continue;
+      try {
+        const key = await crypto().importKey(
+          "jwk",
+          { kty: "EC", crv: "P-256", x: jwk.x, y: jwk.y },
+          { name: "ECDSA", namedCurve: "P-256" },
+          false,
+          ["verify"],
+        );
+        next.set(jwk.kid, key);
+      } catch {
+        // 壞掉的單把金鑰略過,不影響其他金鑰
+      }
+    }
+    if (next.size === 0) {
+      keys = null; // 舊金鑰一併作廢 → 503,10 秒後再看
+      jwksRefreshAt = now() + JWKS_FAIL_BACKOFF_MS;
+      return;
+    }
+    keys = next; // 整組替換:JWKS 移除的 kid 立即失效
+    jwksRefreshAt = now() + JWKS_TTL_MS;
   }
 
   function refreshJwks(env, ctx) {
@@ -206,7 +222,8 @@ export function createAuthorizer({ fetch: fetchFn, now, subtle }) {
 
   async function getKey(env, kid, ctx) {
     let justLoaded = false;
-    if (!keys || now() >= jwksRefreshAt) {
+    if (now() >= jwksRefreshAt) {
+      // jwksRefreshAt 初值 0 → 第一次必抓;無金鑰且在退避期內 → 不抓,直接 503
       await refreshJwks(env, ctx);
       justLoaded = true;
     }

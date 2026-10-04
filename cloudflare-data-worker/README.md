@@ -9,7 +9,7 @@
 - **2026-08-19 WP-B7:本 worker 必須驗身分**,未通過一律 401/403,不得回 JSON。通過條件二擇一:
   1. `X-Radar-Service-Key` 對上 wrangler secret `RADAR_SERVICE_KEY`(盤中 worker;優先於 JWT)
   2. `Authorization: Bearer <Supabase JWT>`,且 `app_profiles.status = approved`
-- **JWT 驗證(2026-10-04 docs/44 P1,`src/auth.js`;待資安審查 + 使用者核准,未上線)**:
+- **JWT 驗證(2026-10-04 docs/44 P1,`src/auth.js`;資安審查通過,待使用者核准,未上線)**:
   - 只收 **ES256**(alg 釘死;none/HS256/RS256 一律 401),以 Supabase JWKS
     (`${SUPABASE_URL}/auth/v1/.well-known/jwks.json`)**本地驗簽**,不再呼叫 `/auth/v1/user`。
     **沒有 HS256 fallback;Worker 不持有 service_role key。**
@@ -104,7 +104,7 @@ node --test test/auth.test.mjs test/worker.test.mjs   # Node ≥20.19/22.12(.js 
 
 | 快取 | 內容 | TTL | 影響 |
 |---|---|---|---|
-| JWKS | kid → CryptoKey | 10 分(fetch 另帶 `cf.cacheTtl=600` 邊緣快取) | 未知 kid 每 60 秒最多強制重抓一次;重抓失敗但有舊金鑰 → 沿用舊金鑰,60 秒後再試 |
+| JWKS | kid → CryptoKey | 10 分(fetch 另帶邊緣快取:只有 2xx 快取 600 秒,錯誤回應不快取) | 未知 kid 每 60 秒最多強制重抓一次;網路錯誤/非 2xx/無法解析且有舊金鑰 → 沿用舊金鑰,60 秒後再試;完全沒有金鑰 → 503,10 秒後再試;2xx 且 `keys` 陣列內沒有可用 EC 金鑰 → 舊金鑰一併作廢(503) |
 | profile | `sub` → approved / denied | 5 分 | **撤銷(改 rejected/pending)最長 5 分生效**;核准同理最長 5 分 |
 | profile 失敗 | `sub` → REST 非 2xx | 45 秒 | 期間該使用者 401 |
 | 上限 | profile 快取 1000 筆 | — | 超過淘汰最舊 |
@@ -112,5 +112,10 @@ node --test test/auth.test.mjs test/worker.test.mjs   # Node ≥20.19/22.12(.js 
 - token 本身每次都驗:過期立即 401,不受 profile 快取影響。
 - **登出 / Supabase 撤銷 session 不會讓已發出的 access token 立刻失效**(不再問 `/auth/v1/user`),
   最長到該 token `exp`(Supabase 預設 1 小時)。要立即擋人 → 把 `app_profiles.status` 改掉(≤5 分)。
-- 輪替 JWKS 金鑰:先在 Supabase 建 standby key、等 ≥20 分(邊緣快取 10 分 + isolate 10 分)再設為 current。
+- 輪替 JWKS 金鑰:先在 Supabase 建 standby key,**standby 存在 ≥30 分後**才切成 current
+  (邊緣快取 10 分 + isolate 10 分 + 餘裕),否則切換後新 token 可能短暫 401。
+- **金鑰外洩緊急撤銷**:Supabase 撤掉金鑰後,最長約 30 分才傳到 Worker(JWKS 持續抓取失敗時更久,
+  因為會沿用舊金鑰)。要立即擋人 → 同時把相關使用者的 `app_profiles.status` 改掉(≤5 分生效)。
+  注意外洩的簽章金鑰可偽造**任何**已核准使用者的 `sub`,所以真正的金鑰外洩要把**全部** approved
+  暫時改掉(全站暫停)才擋得住,等 JWKS 撤銷生效後再改回。
 - 同一 isolate 同時多個請求:JWKS 只抓一次、同一 `sub` 的 REST 只查一次(共用 promise,交給 `ctx.waitUntil`)。
