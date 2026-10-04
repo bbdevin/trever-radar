@@ -46,8 +46,9 @@ export function shouldAppendLogLine(existing: string, line: LogRec): boolean {
 export type DedupeResult = { text: string; total: number; kept: number; dropped: number; corrupt: number };
 
 /**
- * 壓縮既有月檔:與同一 data_date 上一個保留行內容相同(忽略時間戳)的行刪掉,留第一行。
- * 結果與「建置器一開始就跳過相同重建」會寫出的檔案相同。壞行原樣保留,空白行去掉。
+ * 壓縮單一月檔:與同一 data_date 上一個保留行內容相同(忽略時間戳)的行刪掉,留第一行。
+ * 檔內的結果與「建置器一開始就跳過相同重建」相同;但它逐檔處理,建置器會跳過的跨月重複
+ * (例:11/01 重建 10/31,重複行在 11 月檔、前一行在 10 月檔)它看不到、不會刪。壞行原樣保留,空白行去掉。
  */
 export function dedupeLogText(text: string): DedupeResult {
   const lastByDate = new Map<unknown, string>();

@@ -119,7 +119,8 @@ for (const f of files) {
 const readMs = performance.now() - tRead;
 
 const sel = selectBoard(cands, radar.data_date);
-const generatedAt = taipeiIso();
+// BULL_BOARD_NOW(ISO)只給測試固定時鐘用(跨月重建);正式環境不設。
+const generatedAt = taipeiIso(process.env.BULL_BOARD_NOW ? new Date(process.env.BULL_BOARD_NOW) : new Date());
 const logged = earliestLogged(LOG);
 const logFrom = logged && logged < radar.data_date ? logged : radar.data_date;
 const board = buildBullBoard(radar, sel, { generatedAt, logFrom, holdersWeek });
@@ -142,7 +143,10 @@ if (shouldAppendLogLine(history, logLine)) {
 } else {
   console.log("bull-board log: unchanged, skipped");
 }
-writeAtomic(path.join(DATA, "bull_board_log", `${month}.jsonl`), fs.readFileSync(logFile, "utf8"));
+// 異地副本:資料日那個月與當月,存在的才複製(跳過追加時當月檔可能還不存在)。
+for (const f of new Set([dataMonthFile, logFile])) {
+  if (fs.existsSync(f)) writeAtomic(path.join(DATA, "bull_board_log", path.basename(f)), fs.readFileSync(f, "utf8"));
+}
 
 const elapsed = (performance.now() - t0) / 1000;
 console.log(
