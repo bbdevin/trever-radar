@@ -185,6 +185,10 @@ class StockPartsWriter:
             target = self.stock_dir / name
             expected = len(parts["hist_text"].encode("utf-8"))
             if target.exists() and target.stat().st_size == expected:
+                # 重用也要把 mtime 刷新到現在:寬限期保護的是「正在被 core 指到的檔」,
+                # 否則一個一年沒變的 hist 的 mtime 早就老過 24 小時,另一個同時在跑、
+                # index 裡沒有這檔的 export 會在 finish() 把它刪掉(驗證者反例 S2/S3)。
+                os.utime(target, (self._now, self._now))
                 self.hist_reused += 1
             else:
                 write_atomic(target, parts["hist_text"])
@@ -196,6 +200,16 @@ class StockPartsWriter:
         write_atomic(self.stock_dir / "chips" / f"{sid}.json",
                      dumps_compact({"version": CHIPS_VERSION, "id": sid, **parts["chips"]}))
         write_atomic(self.stock_dir / "core" / f"{sid}.json", dumps_compact(core))
+
+    def _referenced_by_core(self, sid: str) -> set[str]:
+        """磁碟上 core/{sid}.json 目前指到的 hist 檔名(沒有 core 或讀不出來 → 空集合)。"""
+        core_path = self.stock_dir / "core" / f"{sid}.json"
+        try:
+            parts = json.loads(core_path.read_text(encoding="utf-8")).get("parts") or {}
+        except (OSError, ValueError):
+            return set()
+        hist = parts.get("hist") or {}
+        return {Path(hist["file"]).name} if hist.get("file") else set()
 
     def _stale(self, p: Path) -> bool:
         try:
@@ -212,6 +226,10 @@ class StockPartsWriter:
             if p.name == "index.json" or p.name in current:
                 continue
             if p.name.endswith(".json") and self._stale(p):
+                # 第二道保險:磁碟上該 id 的 core 若還指著這個檔(另一個 export 剛寫的
+                # core、或這一輪沒匯出到的 id),就不刪。只為候選檔讀一個 core,I/O 很小。
+                if p.name in self._referenced_by_core(p.name.split(".")[0]):
+                    continue
                 p.unlink()
             elif ".tmp-" in p.name and self._stale(p):
                 p.unlink()

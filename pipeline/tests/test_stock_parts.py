@@ -19,6 +19,7 @@ from radar.export.json_export import export_json
 from radar.export.stock_parts import (
     CHIPS_KEYS,
     StockPartsWriter,
+    dumps_compact,
     hist_cut,
     merge_stock_parts,
     read_merged_stock,
@@ -160,6 +161,60 @@ class SplitMergeTests(unittest.TestCase):
             w3.write(split_stock_payload(_payload(400), cut=None))
             w3.finish()
             self.assertEqual([p.name for p in (stock_dir / "hist").glob("*.json")], ["index.json"])
+
+    def test_concurrent_exports_do_not_delete_each_others_hist(self):
+        """驗證者反例(2026-10-05):重用的 hist 保有舊 mtime(可能一年沒變),另一個同時在跑、
+        index 沒指到它的 export 會在 finish() 刪掉它,而這一輪最後寫出的 core 卻指著它。
+        S2:兩輪雜湊不同;S3:兩輪聯集不同(更常見)。"""
+        day = 24 * 3600
+        with TemporaryDirectory() as tmp:
+            stock_dir = Path(tmp)
+            # 一年前:A 檔的 hist 寫下來,之後每輪都重用(mtime 若不刷新就停在這裡)
+            t0 = 1_700_000_000.0
+            a_old = _payload(400)
+            w0 = StockPartsWriter(stock_dir, now=t0)
+            w0.write(split_stock_payload(a_old, cut="2024-01-01"))
+            w0.finish()
+            a_hist = stock_dir / split_stock_payload(a_old, cut="2024-01-01")["hist_name"]
+            os.utime(a_hist, (t0, t0))
+
+            # S3:今天兩個 export 重疊。run1 聯集含 A(重用 a_hist,然後寫 core 指著它);
+            # run2 聯集不含 A(A 不在它的 index),run2 的 finish() 跑在 run1 的 write 之後。
+            now = t0 + 365 * day
+            run1 = StockPartsWriter(stock_dir, now=now)
+            run1.write(split_stock_payload(a_old, cut="2024-01-01"))   # 重用 → mtime 刷新
+            run2 = StockPartsWriter(stock_dir, now=now + 60)
+            run2.write(split_stock_payload(a_old, cut=None))             # A 在 run2 不是聯集股
+            run2.finish()
+            self.assertTrue(a_hist.exists(), "另一個 export 正在用的 hist 不可被刪")
+            run1.finish()
+            self.assertTrue(a_hist.exists())
+            self.assertEqual(read_merged_stock(stock_dir, "2330"), a_old)
+
+            # S2:兩輪雜湊不同(run1 用舊 af、run2 用重算後的 af),各自的 core 都要能接回
+            a_new = _payload(400)
+            a_new["candles"][0]["af"] = 0.5
+            r1 = StockPartsWriter(stock_dir, now=now + 2 * day)
+            r1.write(split_stock_payload(a_old, cut="2024-01-01"))       # 重用 a_hist(刷新 mtime)
+            r2 = StockPartsWriter(stock_dir, now=now + 2 * day + 60)
+            r2.write(split_stock_payload(a_new, cut="2024-01-01"))       # 新雜湊,core 最後指到新檔
+            r2.finish()                                                   # a_hist 不在 r2 的 index
+            self.assertTrue(a_hist.exists(), "mtime 剛刷新,寬限期內不刪")
+            # 即使 mtime 很老(極端:重用那一輪在 24 小時前),磁碟上的 core 若還指著就也不刪
+            os.utime(a_hist, (t0, t0))
+            r3 = StockPartsWriter(stock_dir, now=now + 3 * day)
+            r3.write(split_stock_payload(_payload(10, first="2025-01-01", id="9999"), cut="2024-01-01"))
+            # 讓磁碟上 2330 的 core 指著 a_hist(模擬 r1 的 core 是最後落地的那一份)
+            (stock_dir / "core" / "2330.json").write_text(
+                dumps_compact(split_stock_payload(a_old, cut="2024-01-01")["core"]), encoding="utf-8")
+            r3.finish()
+            self.assertTrue(a_hist.exists(), "core 還指著的 hist 不刪(第二道保險)")
+            # core 改指新檔、mtime 老 → 這時才刪
+            (stock_dir / "core" / "2330.json").write_text(
+                dumps_compact(split_stock_payload(a_new, cut="2024-01-01")["core"]), encoding="utf-8")
+            r4 = StockPartsWriter(stock_dir, now=now + 4 * day)
+            r4.finish()
+            self.assertFalse(a_hist.exists())
 
     def test_writer_rewrites_truncated_hist_and_writes_hist_before_core(self):
         with TemporaryDirectory() as tmp:

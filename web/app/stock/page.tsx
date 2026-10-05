@@ -500,6 +500,19 @@ function StockView() {
       {view === "holders" && <HoldersPanel data={data} />}
       {view === "basic" && <BasicInfoPanel data={data} quoteDate={last.t} />}
       {view === "tech" && bullBear && <TechnicalPanel data={data} summary={bullBear} />}
+      {/* 多空摘要等 K 線歷史(docs/44 P1):等待中畫骨架;最後抓不到就用與標頭同一句說明,不留白。 */}
+      {view === "tech" && !bullBear && !complete && (
+        histFailed ? (
+          <p data-testid="stock-tech-hist-failed" className="mt-3.5 rounded-[var(--r-md)] border border-border bg-card px-3 py-4 text-[13px] leading-snug text-muted-foreground">
+            較早的 K 線歷史未能載入,多空摘要暫不顯示;重新整理可再試。
+          </p>
+        ) : (
+          <div data-testid="stock-tech-pending" role="status" aria-label="載入中" className="mt-3.5 grid gap-2">
+            <Skeleton className="h-[72px] rounded-[var(--r-md)]" />
+            <Skeleton className="h-[160px] rounded-[var(--r-md)]" />
+          </div>
+        )
+      )}
       {view === "warrant" && <WarrantPanel data={data} />}
       {view === "futures" && futuresTab.show && <FuturesPanel futures={data.futures} labels={futuresLabels} />}
 
