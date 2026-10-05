@@ -169,6 +169,20 @@ test("拆檔佈局(docs/44 P1):建置器讀 core+chips+hist 接回,bull_board.js
     const boardB = fs.readFileSync(path.join(b, "bull_board.json"), "utf8");
     assert.equal(boardB, boardA);
     assert.ok(JSON.parse(boardA).qualified === 1);
+
+    // hist 檔不見了(並行 export 剛換雜湊):有舊單一檔 → 讀舊檔,輸出不變;沒有 → 略過該檔、不中斷
+    const c = path.join(root, "split-hist-missing");
+    fixture(c);
+    toSplitLayout(c);
+    fs.rmSync(path.join(c, "stocks", "hist", "1111.deadbeef.json"));
+    fs.writeFileSync(path.join(c, "stocks", "1111.json"), fs.readFileSync(path.join(a, "stocks", "1111.json")));
+    const outC = run(c, path.join(root, "logC"));
+    assert.match(outC, /layout=split universe=2 qualified=1 failed=0/);
+    assert.equal(fs.readFileSync(path.join(c, "bull_board.json"), "utf8"), boardA);
+    fs.rmSync(path.join(c, "stocks", "1111.json"));
+    const outD = run(c, path.join(root, "logD"));
+    assert.match(outD, /layout=split universe=1 qualified=0 failed=1/); // 警告走 stderr;略過那檔、不中斷
+    assert.ok(fs.existsSync(path.join(c, "bull_board.json")));
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

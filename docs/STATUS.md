@@ -8,7 +8,8 @@
 - **一致性證據**:本機 968 檔真實舊 JSON(2026-07-08)用正式 `split_stock_payload` 拆開、用前端 `mergeStockParts` 接回 → **968/968 deepStrictEqual、0 mismatch**(`pipeline/tools/split_legacy_dir.py` + `web/scripts/verify-split-merge.mjs`);pytest 種子 DB 匯出三份接回 == 舊檔、舊檔仍是原本序列化;Playwright `parity-snapshot.mjs` 同一份 build 餵舊/新佈局,頁面文字相同(見下);建置器對拆檔 fixture 與舊 fixture 建出逐位元相同的 `bull_board.json`。
 - **大小(本機 7 月資料,brotli q5 估)**:6488(聯集,2,908 根)舊檔 720 KB/122 KB(br) → 首畫面 core+chips 403 KB/74 KB(br),hist 218 KB/45 KB(br) 之後到且可快取;非聯集股(89%)沒有 hist,大小與以前相同(只省 separators 的空白)。正式機數字見 `docs/44` §3.1(2330 1.42 MB 中 811 KB 是歷史 K 線)。首頁 radar.json 不在 P1 範圍,未變。
 - **相容矩陣**:舊前端×新資料(讀舊單一檔,內容不變)✅;新前端×舊資料(core 404 退回;每檔多一次 404 探測,只在 Pages 先上、VPS 還沒 export 的那幾小時)✅;新前端×新資料 ✅;建置器兩種佈局 ✅。Playwright 同一份 build 餵舊/新佈局:72 個畫面文字快照 0 差異;390px 截圖(首頁、6488 聯集股、4967 非聯集)兩邊相同。本機量測(新前端):6488 首次載入 /data 739 KB → 621 KB raw(首畫面 403 KB,hist 218 KB 之後到),4967 53 KB → 30 KB;首頁不變。檔數估 ~6,400 → ~11,500(上限 20,000),清理後 ~9,100。
-- **待人類**:合併進 `main`(Pages 先上程式,VPS 下一輪 export 才有新檔);觀察一週後做 `docs/44` §3.2 清理步驟(腳本加 `--no-legacy-stocks`、刪頂層舊檔、Worker 對 `stocks/hist/*` 給長快取——Worker 改動要資安審查)。
+- **誠實註記**:hist 目前**沒有**瀏覽器快取效益(`dataFetch` no-store、Worker max-age=60),聯集股首次載入總位元組與今天相同,只是核心先畫;過渡期 VPS 磁碟約 +1.2 GB(剩 6.8 GB,週備份另需 2.1 GB 暫存 → 最低約 3.5 GB)、wrangler 每輪上傳約 +80%。並行 export 安全:tmp+rename、hist 先寫、截斷檔重寫、舊 hist 過 24 小時才刪。前端 hist 失敗不整頁變錯誤(退舊檔或標一行說明)。細節 `docs/44` §3.2。
+- **待人類**:合併進 `main`(Pages 先上程式,VPS 下一輪 export 才有新檔);**連續 2–3 個乾淨交易日後就做清理**(`docs/44` §3.2 步驟 ①–④:腳本加 `--no-legacy-stocks`、刪頂層舊檔、Worker 對 `stocks/hist/*` 給長快取——Worker 改動要資安審查)。
 - 驗證:pytest 全套、node 全套(新增 `stockParts`/`stockLoad`/`bullBoardBuild` 拆檔案例)、tsc、next build、Playwright 文字快照、390px 截圖。
 
 ## 2026-10-04 分點「股代」標籤＋股代變動史(`docs/37` §3.1;程式完成、未上線)

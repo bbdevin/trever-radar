@@ -102,6 +102,7 @@ function StockView() {
   const tabParam = useSearchParams().get("tab");
   const [data, setData] = useState<StockJson | null>(null);
   const [complete, setComplete] = useState(false);
+  const [histFailed, setHistFailed] = useState(false);
   const [error, setError] = useState(false);
   const [range, setRange] = useState<(typeof RANGES)[number]["key"]>("3m"); // 使用者 2026-10-02:預設 3 月(手機上 K 棒較大)
   const [view, setView] = useState<"chart" | "chips" | "insti" | "margin" | "holders" | "basic" | "tech" | "warrant" | "futures">("chart");
@@ -140,12 +141,14 @@ function StockView() {
     if (!id) return;
     setDrillBranch(null);
     setComplete(false);
+    setHistFailed(false);
     return loadStock(
       id,
       dataFetch,
       (s) => {
         setData(s.data);
         setComplete(s.complete);
+        setHistFailed(!!s.histFailed);
       },
       () => setError(true),
     );
@@ -326,7 +329,7 @@ function StockView() {
               </div>
             )}
           </header>
-          <StockDecisionHeader data={data} summary={complete ? bullBear : undefined} onOpenBullBear={() => setView("tech")} className="mt-auto mb-0 min-h-0 flex-1" />
+          <StockDecisionHeader data={data} summary={complete ? bullBear : undefined} histFailed={histFailed} onOpenBullBear={() => setView("tech")} className="mt-auto mb-0 min-h-0 flex-1" />
         </div>
         <section data-testid="stock-market-summary" className="flex min-h-full min-w-0 flex-col px-0.5" aria-label={`行情摘要，資料日 ${last.t}`}>
           <div data-testid="stock-watchlist" className="inline-flex size-11 shrink-0 items-center justify-center self-end">
@@ -726,11 +729,14 @@ function StockPriceTargets({
 function StockDecisionHeader({
   data,
   summary,
+  histFailed = false,
   onOpenBullBear,
   className,
 }: {
   data: StockJson;
   summary: BullBearSummary | null | undefined;
+  /** 較早的 K 線歷史最後仍抓不到:骨架換成一行中性說明(頁面其餘照畫,不整頁變錯誤)。 */
+  histFailed?: boolean;
   onOpenBullBear: () => void;
   className?: string;
 }) {
@@ -759,7 +765,11 @@ function StockDecisionHeader({
           </span>
         </div>
       )}
-      {pending ? (
+      {pending && histFailed ? (
+        <p data-testid="stock-bullbear-hist-failed" className="flex min-h-11 w-full shrink-0 items-center px-2.5 text-[12px] leading-snug text-muted-foreground">
+          較早的 K 線歷史未能載入,多空摘要暫不顯示;重新整理可再試。
+        </p>
+      ) : pending ? (
         <div data-testid="stock-bullbear-pending" role="status" aria-label="載入中" className="flex min-h-11 w-full shrink-0 items-center gap-1.5 px-2.5">
           <Skeleton className="h-5 w-16 rounded-full" />
           <Skeleton className="h-5 w-16 rounded-full" />

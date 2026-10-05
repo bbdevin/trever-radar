@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import time
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -143,11 +145,29 @@ def read_merged_stock(stock_dir: Path, sid: str) -> dict | None:
     return None
 
 
+def write_atomic(path: Path, text: str) -> None:
+    """tmp + os.replace:讀的人(wrangler、建置器、另一個並行的 export)永遠只看到完整檔。"""
+    tmp = path.with_name(f"{path.name}.tmp-{os.getpid()}")
+    tmp.write_text(text, encoding="utf-8")
+    os.replace(tmp, path)
+
+
+# 刪舊 hist 的寬限期:mid-backfill-publish.sh 的 export 不持 DB 鎖,兩個 export 可能重疊。
+# 只刪「目前 index 沒指到、而且 mtime 已經老過這麼久」的檔,另一個正在跑的 export 剛寫的
+# 檔(它的 core 會指到)就不會被這一個誤刪;代價是換雜湊後舊檔多留一天(wrangler 多傳一天)。
+HIST_STALE_GRACE_SECONDS = 24 * 3600
+
+
 class StockPartsWriter:
     """export_json 個股迴圈用的寫檔器:core/chips 每檔都寫,hist 只在內容變了才寫,
-    並在收尾時刪掉本輪沒寫到的 hist 檔、寫 ``hist/index.json``。"""
+    並在收尾時刪掉本輪沒寫到且已過寬限期的 hist 檔、寫 ``hist/index.json``。
 
-    def __init__(self, stock_dir: Path):
+    並行安全(docs/44 §3.2):每個檔 tmp+rename;**hist 先寫、core 最後寫**(core 指到的檔
+    一定已經完整存在);「同名已存在就重用」只在大小與這次要寫的內容相同時成立,被截斷的
+    檔會被重寫。
+    """
+
+    def __init__(self, stock_dir: Path, *, now: float | None = None):
         self.stock_dir = stock_dir
         (stock_dir / "core").mkdir(exist_ok=True)
         (stock_dir / "chips").mkdir(exist_ok=True)
@@ -155,44 +175,47 @@ class StockPartsWriter:
         self.index: dict[str, dict] = {}
         self.hist_written = 0
         self.hist_reused = 0
+        self._now = time.time() if now is None else now
 
     def write(self, parts: dict) -> None:
         core = parts["core"]
         sid = core["id"]
-        (self.stock_dir / "core" / f"{sid}.json").write_text(dumps_compact(core), encoding="utf-8")
-        (self.stock_dir / "chips" / f"{sid}.json").write_text(
-            dumps_compact({"version": CHIPS_VERSION, "id": sid, **parts["chips"]}), encoding="utf-8")
-        if parts["hist"] is None:
-            self._drop_hist(sid, keep=None)
-            return
-        name = parts["hist_name"]
-        target = self.stock_dir / name
-        if target.exists():
-            self.hist_reused += 1
-        else:
-            target.write_text(parts["hist_text"], encoding="utf-8")
-            self.hist_written += 1
-        self._drop_hist(sid, keep=target.name)
-        self.index[sid] = {
-            "file": name, "hash": target.name.split(".")[1], "bars": parts["hist"]["bars"],
-            "cut": parts["hist"]["cut"], "first": parts["hist"]["candles"][0]["t"],
-        }
+        if parts["hist"] is not None:
+            name = parts["hist_name"]
+            target = self.stock_dir / name
+            expected = len(parts["hist_text"].encode("utf-8"))
+            if target.exists() and target.stat().st_size == expected:
+                self.hist_reused += 1
+            else:
+                write_atomic(target, parts["hist_text"])
+                self.hist_written += 1
+            self.index[sid] = {
+                "file": name, "hash": target.name.split(".")[1], "bars": parts["hist"]["bars"],
+                "cut": parts["hist"]["cut"], "first": parts["hist"]["candles"][0]["t"],
+            }
+        write_atomic(self.stock_dir / "chips" / f"{sid}.json",
+                     dumps_compact({"version": CHIPS_VERSION, "id": sid, **parts["chips"]}))
+        write_atomic(self.stock_dir / "core" / f"{sid}.json", dumps_compact(core))
 
-    def _drop_hist(self, sid: str, keep: str | None) -> None:
-        for p in (self.stock_dir / "hist").glob(f"{sid}.*.json"):
-            if p.name != keep:
-                p.unlink()
+    def _stale(self, p: Path) -> bool:
+        try:
+            return self._now - p.stat().st_mtime > HIST_STALE_GRACE_SECONDS
+        except FileNotFoundError:
+            return False
 
     def finish(self) -> None:
-        """退出聯集(或不再匯出)的 id:舊 hist 檔刪掉,不讓 wrangler 一直上傳。"""
-        for p in (self.stock_dir / "hist").glob("*.json"):
-            if p.name == "index.json":
+        """index 沒指到(換雜湊、退出聯集、不再匯出)且過了寬限期的 hist 檔刪掉,不讓 wrangler
+        一直上傳、不佔 VPS 磁碟;留下的殘檔(tmp)一併清。"""
+        current = {Path(v["file"]).name for v in self.index.values()}
+        hist_dir = self.stock_dir / "hist"
+        for p in hist_dir.iterdir():
+            if p.name == "index.json" or p.name in current:
                 continue
-            sid = p.name.split(".")[0]
-            if sid not in self.index:
+            if p.name.endswith(".json") and self._stale(p):
                 p.unlink()
-        (self.stock_dir / "hist" / "index.json").write_text(
-            dumps_compact(dict(sorted(self.index.items()))), encoding="utf-8")
+            elif ".tmp-" in p.name and self._stale(p):
+                p.unlink()
+        write_atomic(hist_dir / "index.json", dumps_compact(dict(sorted(self.index.items()))))
 
 
 def size_entry(payload: dict) -> dict[str, int]:

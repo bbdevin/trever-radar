@@ -109,7 +109,12 @@ stocks/chips/{id}.json        branch_history / branch_pctile_counts / branch_tag
 
 **檔數**:Workers 靜態資產每版上限 20,000 檔。估今天 ~6,400(2,418 個股 + 權證分點明細 ~3,800 + 其餘);過渡期 +2,418 core +2,418 chips +~275 hist +1 ≈ **11,500**;清理後 ≈ 9,100。單檔 25 MB 無虞(最大的個股檔 1.4 MB)。
 
-**清理步驟(觀察一週後,另案)**:① 確認正式站新前端已上線一週、Sentry/手機實測無 404 退回;② VPS 腳本的 `radar export-json` 改成 `radar export-json --no-legacy-stocks`(12 支腳本,見 `test_bull_board_vps_wiring.py` 的清單)或把預設翻過來;③ 刪掉 VPS `web/public/data/stocks/*.json`(頂層那 2,418 個)讓 wrangler 下一輪移除;④ Worker 加 `stocks/hist/*` 長快取(資安審查)。清理前 export 每輪多寫約 0.9 GB(核心+chips 幾乎等於舊檔),是已知的過渡成本。
+**誠實註記(2026-10-05 驗證者要求)**:
+- **hist 目前沒有瀏覽器快取效益**:`dataFetch` 是 `no-store`,Worker 對 `stocks/hist/*` 也只給 `private, max-age=60`(同其他檔)。`stockLoad` 對 hist 用 `cache: "default"`,但要等清理步驟 ④ 改 Worker 標頭(資安審查)才會真的快取;在那之前聯集股每次進頁都重抓 hist,**首次載入總位元組與今天相同**(只差 separators 的空白),得到的是「核心先畫、hist 後到」的體感與 export/deploy 端的好處。
+- **過渡期成本(實測比例)**:本機 968 檔 46.0 MB → core 26.6 + chips 0.3 + hist 12.6 MB;正式機 2,418 檔估 stocks 約 1.13 GB → 新增 core ≈ 0.65 GB + chips ≈ 0.25 GB + hist ≈ 0.3 GB,**磁碟約 +1.2 GB、wrangler 每輪上傳位元組約 +80%**(hist 內容不變不重傳,core+chips 每輪都變)。VPS `df` 2026-10-05:`/` 29 GB、已用 76%、**剩 6.8 GB**;週六 05:00 `weekly-backup.sh` 另需約 2.1 GB 暫存 gzip → 過渡期最低點約 6.8 − 1.2 − 2.1 ≈ **3.5 GB**,不會撞牆,但 D-P0 前的 9 GB DB 若再長就更緊,所以過渡期要短。
+- **並行 export(`mid-backfill-publish.sh` 不持 DB 鎖)**:三份都 tmp+rename、hist 先寫 core 後寫、同名 hist 只在檔案大小等於這次內容才重用(截斷檔會重寫)、index 沒指到的 hist 檔要 **mtime 老過 24 小時**才刪(另一個 export 剛寫的檔不會被誤刪;代價是換雜湊後舊檔多留一天)。前端:chips 抓不到→退舊檔;hist 404→重抓 core,core 404 或再 404→退舊檔;hist 網路錯誤→重試一次,再失敗保留已畫的頁面並在多空列標一行說明(`histFailed`),不整頁變錯誤。建置器:母體外的檔只讀核心;hist 不在時讀舊單一檔,沒有就略過該檔不中斷。
+
+**清理步驟(縮短過渡:上線後連續 2–3 個乾淨交易日即可,不必等一週;另案)**:① 看 radar-cron.log 的 `export parts:`(hist_reused 應接近 hist_total)、正式站個股頁無 404 退回、建置器 `layout=split`;② VPS 腳本的 `radar export-json` 改成 `radar export-json --no-legacy-stocks`(12 支腳本,見 `test_bull_board_vps_wiring.py` 的清單)或把預設翻過來;③ 刪掉 VPS `web/public/data/stocks/*.json`(頂層那 2,418 個)讓 wrangler 下一輪移除(磁碟與每輪上傳回到比今天還少);④ Worker 加 `stocks/hist/*` 長快取 + `dataFetch` 對 hist 放行快取(資安審查),hist 才真正「一年只下載一次」。
 
 **驗證方式**:pytest `test_stock_parts.py`(純函式 + 種子 DB 匯出:合併 == 舊檔、hist 不重寫、退出聯集刪檔、`--no-legacy-stocks`、`--size-report`);node `stockParts.test.ts` / `stockLoad.test.ts` / `bullBoardBuild.test.ts`(拆檔 fixture 與舊 fixture 建出同一份 bull_board.json);`pipeline/tools/split_legacy_dir.py` 把本機 968 檔真實舊 JSON(2026-07-08)用同一個 `split_stock_payload` 拆成新佈局,`web/scripts/verify-split-merge.mjs` 用前端的 `mergeStockParts` 接回逐檔 deepStrictEqual 並統計 raw/brotli 大小;Playwright `parity-snapshot.mjs` 對同一份 build 分別餵舊/新佈局,全部頁面文字相同;390px 截圖。
 

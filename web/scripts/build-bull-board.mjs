@@ -75,10 +75,15 @@ const coreDir = path.join(stockDir, "core");
 const splitLayout = fs.existsSync(coreDir) && fs.statSync(coreDir).isDirectory();
 const readDir = splitLayout ? coreDir : stockDir;
 const files = fs.readdirSync(readDir).filter((f) => f.endsWith(".json")).sort();
-const readStock = (f) => {
-  const json = readJson(path.join(readDir, f));
-  return splitLayout ? mergeIfSplit(json, (rel) => readJson(path.join(stockDir, rel))) : json;
-};
+// 拆檔佈局下 hist/chips 接回;hist 檔不在(並行 export 剛換雜湊)→ 有舊單一檔就讀舊檔,沒有就丟出讓外層略過。
+const mergeParts = (f, core) =>
+  mergeIfSplit(core, (rel) => {
+    const p = path.join(stockDir, rel);
+    if (fs.existsSync(p)) return readJson(p);
+    const legacy = path.join(stockDir, f);
+    if (rel.startsWith("hist/") && fs.existsSync(legacy)) throw Object.assign(new Error("hist missing"), { legacy });
+    throw new Error(`part missing: ${rel}`);
+  });
 
 const cands = [];
 let holdersWeek = null;
@@ -87,16 +92,35 @@ const tRead = performance.now();
 for (const f of files) {
   let data;
   try {
-    data = readStock(f);
+    data = readJson(path.join(readDir, f));
   } catch (e) {
     failed += 1;
     console.warn(`bull-board: skip ${f}: ${e?.message ?? e}`);
     continue;
   }
+  // 最後一根 K 與 scores 都在核心:母體外的檔連 hist/chips 都不必讀(省時間)。母體判斷仍交給 selectBoard。
   const lastT = lastCandleDate(data);
   const scored = data.scores != null;
-  // 母體外的檔不必算多空(省時間);母體判斷仍交給 selectBoard。
   if (!scored || lastT !== radar.data_date) continue;
+  if (splitLayout) {
+    try {
+      data = mergeParts(f, data);
+    } catch (e) {
+      if (e?.legacy) {
+        try {
+          data = readJson(e.legacy);
+        } catch (e2) {
+          failed += 1;
+          console.warn(`bull-board: skip ${f}: ${e2?.message ?? e2}`);
+          continue;
+        }
+      } else {
+        failed += 1;
+        console.warn(`bull-board: skip ${f}: ${e?.message ?? e}`);
+        continue;
+      }
+    }
+  }
   const r = radarById.get(data.id);
   const last = data.candles[data.candles.length - 1];
   const hw = data.holders_history?.[0]?.t ?? null;

@@ -122,6 +122,65 @@ test("hist 兩次都 404:退回舊單一檔", async () => {
   assert.deepStrictEqual(states.at(-1), { data: FULL, complete: true });
 });
 
+test("chips 404(第一次畫面前):退回舊單一檔,不走 onError", async () => {
+  const fetcher = fakeFetch({ "/data/stocks/core/2330.json": CORE, "/data/stocks/hist/2330.aaaaaaaa.json": HIST, "/data/stocks/2330.json": FULL });
+  const { states, errors, done } = collect();
+  loadStock("2330", fetcher, (s) => states.push(s), (e) => errors.push(e));
+  await done;
+  assert.deepStrictEqual(errors, []);
+  assert.deepStrictEqual(states, [{ data: FULL, complete: true }]);
+});
+
+test("hist 404 後重抓 core 也 404(清理後的競態):退回舊單一檔", async () => {
+  let coreCalls = 0;
+  const fetcher = fakeFetch({
+    "/data/stocks/core/2330.json": () => { coreCalls++; return coreCalls === 1 ? CORE : undefined; },
+    "/data/stocks/chips/2330.json": CHIPS,
+    "/data/stocks/2330.json": FULL,
+  });
+  const { states, errors, done } = collect();
+  loadStock("2330", fetcher, (s) => states.push(s), (e) => errors.push(e));
+  await done;
+  assert.deepStrictEqual(errors, []);
+  assert.equal(states[0].complete, false);
+  assert.deepStrictEqual(states.at(-1), { data: FULL, complete: true });
+});
+
+test("hist 網路錯誤(第一次畫面之後):重試一次成功 → complete", async () => {
+  let histCalls = 0;
+  const base = fakeFetch({ "/data/stocks/core/2330.json": CORE, "/data/stocks/chips/2330.json": CHIPS, "/data/stocks/hist/2330.aaaaaaaa.json": HIST });
+  const fetcher: Fetcher = async (path, init) => {
+    if (path.includes("/hist/") && histCalls++ === 0) throw new TypeError("Failed to fetch");
+    return base(path, init);
+  };
+  const { states, errors, done } = collect();
+  loadStock("2330", fetcher, (s) => states.push(s), (e) => errors.push(e));
+  await done;
+  assert.deepStrictEqual(errors, []);
+  assert.equal(histCalls, 2);
+  assert.deepStrictEqual(states.at(-1), { data: FULL, complete: true });
+});
+
+test("hist 網路錯誤兩次:保留已畫的核心畫面 + histFailed,不走 onError、不碰舊檔", async () => {
+  const log: string[] = [];
+  const base = fakeFetch({ "/data/stocks/core/2330.json": CORE, "/data/stocks/chips/2330.json": CHIPS, "/data/stocks/2330.json": FULL }, log);
+  const fetcher: Fetcher = async (path, init) => {
+    if (path.includes("/hist/")) { log.push(path); throw new TypeError("Failed to fetch"); }
+    return base(path, init);
+  };
+  const states: StockLoadState[] = [];
+  const errors: unknown[] = [];
+  loadStock("2330", fetcher, (s) => states.push(s), (e) => errors.push(e));
+  await new Promise<void>((resolve) => { const tick = () => (states.some((s) => s.histFailed) || errors.length ? resolve() : setTimeout(tick, 5)); tick(); });
+  assert.deepStrictEqual(errors, []);
+  assert.equal(states.length, 2);
+  assert.equal(states[0].complete, false);
+  assert.deepStrictEqual(states[1], { data: states[0].data, complete: false, histFailed: true });
+  assert.deepStrictEqual(states[1].data.candles, CORE.candles);
+  assert.ok(!log.includes("/data/stocks/2330.json"));
+  assert.equal(log.filter((p) => p.includes("/hist/")).length, 2);
+});
+
 test("core 與舊檔都 404 → onError,沒有 onUpdate", async () => {
   const fetcher = fakeFetch({});
   const { states, errors, done } = collect();

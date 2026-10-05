@@ -6,6 +6,7 @@
 就不重寫、退出聯集就刪檔、--no-legacy-stocks、--size-report、--verify-split。
 """
 import json
+import os
 import unittest
 from datetime import date, timedelta
 from pathlib import Path
@@ -132,26 +133,47 @@ class SplitMergeTests(unittest.TestCase):
             index = json.loads((stock_dir / "hist" / "index.json").read_text(encoding="utf-8"))
             self.assertEqual(index["2330"]["file"], parts["hist_name"])
             self.assertEqual(read_merged_stock(stock_dir, "2330"), _payload(400))
+            # 沒有殘留 tmp
+            self.assertEqual([p.name for p in stock_dir.rglob("*.tmp-*")], [])
 
-            # 第二輪:內容相同 → 不重寫;另一個 id 的舊雜湊檔與不再匯出的 id 都被刪
-            stale = stock_dir / "hist" / "2330.deadbeef.json"
-            stale.write_text("{}", encoding="utf-8")
-            gone = stock_dir / "hist" / "9999.00000000.json"
-            gone.write_text("{}", encoding="utf-8")
-            w2 = StockPartsWriter(stock_dir)
+            # 第二輪:內容相同 → 不重寫;index 沒指到的檔只有過了寬限期才刪(並行 export 保護)
+            stale_old = stock_dir / "hist" / "2330.deadbeef.json"
+            stale_old.write_text("{}", encoding="utf-8")
+            gone_old = stock_dir / "hist" / "9999.00000000.json"
+            gone_old.write_text("{}", encoding="utf-8")
+            fresh = stock_dir / "hist" / "8888.11111111.json"
+            fresh.write_text("{}", encoding="utf-8")
+            day_later = stale_old.stat().st_mtime + 2 * 3600 + 24 * 3600
+            os.utime(fresh, (day_later - 60, day_later - 60))  # 一分鐘前剛被另一個 export 寫的
+            w2 = StockPartsWriter(stock_dir, now=day_later)
             w2.write(split_stock_payload(_payload(400), cut="2024-01-01"))
             w2.finish()
             self.assertEqual((w2.hist_written, w2.hist_reused), (0, 1))
-            self.assertFalse(stale.exists())
-            self.assertFalse(gone.exists())
+            self.assertFalse(stale_old.exists())
+            self.assertFalse(gone_old.exists())
+            self.assertTrue(fresh.exists())
             self.assertEqual(sorted(p.name for p in (stock_dir / "hist").glob("*.json")),
-                             sorted([Path(parts["hist_name"]).name, "index.json"]))
+                             sorted([Path(parts["hist_name"]).name, "8888.11111111.json", "index.json"]))
 
-            # 第三輪:這檔退出聯集(cut=None)→ 它的 hist 也刪
-            w3 = StockPartsWriter(stock_dir)
+            # 第三輪:這檔退出聯集(cut=None)→ 過了寬限期它的 hist 也刪
+            w3 = StockPartsWriter(stock_dir, now=day_later + 2 * 24 * 3600)
             w3.write(split_stock_payload(_payload(400), cut=None))
             w3.finish()
             self.assertEqual([p.name for p in (stock_dir / "hist").glob("*.json")], ["index.json"])
+
+    def test_writer_rewrites_truncated_hist_and_writes_hist_before_core(self):
+        with TemporaryDirectory() as tmp:
+            stock_dir = Path(tmp)
+            parts = split_stock_payload(_payload(400), cut="2024-01-01")
+            (stock_dir / "hist").mkdir()
+            truncated = stock_dir / parts["hist_name"]
+            truncated.write_text(parts["hist_text"][: len(parts["hist_text"]) // 2], encoding="utf-8")
+            w = StockPartsWriter(stock_dir)
+            w.write(parts)
+            self.assertEqual((w.hist_written, w.hist_reused), (1, 0))
+            self.assertEqual(truncated.read_text(encoding="utf-8"), parts["hist_text"])
+            # hist 的 mtime 不晚於 core(core 指到的檔先落地)
+            self.assertLessEqual(truncated.stat().st_mtime, (stock_dir / "core" / "2330.json").stat().st_mtime)
 
     def test_size_report_groups(self):
         entries = {"A": size_entry(_payload(10)), "B": size_entry(_payload(20)), "C": size_entry(_payload(30))}
