@@ -117,40 +117,36 @@ def fetch_institutional(date: str) -> list[InstiRow]:
 
 
 def fetch_margin(date: str) -> list[MarginRow]:
-    """margin/balance 融資融券餘額(張). Unique field names → name lookup."""
+    """margin/balance 融資融券餘額(張). Unique field names → name lookup.
+
+    Real header (checked 2024-01 … 2026-10): 代號 名稱 前資餘額(張) 資買 資賣 現償
+    資餘額 資屬證金 資使用率(%) 資限額 前券餘額(張) 券賣 券買 券償 券餘額 … 備註.
+    Note the 融券 side lists 券賣 before 券買. Every column we store is required:
+    the flow columns used to be optional under guessed names (資買進/券賣出/…),
+    which never matched, so margin_buy etc. were silently NULL for all TPEx rows.
+    """
     j = get_json(f"{BASE}/margin/balance", {"date": roc_date(date), "response": "json"})
     table = _table(j, "margin/balance", date, "代號")
     fields = [f.strip() for f in table["fields"]]
     idx = {name: i for i, name in enumerate(fields)}
-    need = ["代號", "資餘額", "前資餘額(張)", "資限額", "券餘額", "前券餘額(張)"]
+    need = ["代號", "前資餘額(張)", "資買", "資賣", "現償", "資餘額", "資限額",
+            "前券餘額(張)", "券賣", "券買", "券償", "券餘額"]
     missing = [n for n in need if n not in idx]
     if missing:
         raise RuntimeError(f"tpex margin {date}: missing fields {missing}; got {fields}")
-    opt = {
-        "margin_buy": idx.get("資買進"),
-        "margin_sell": idx.get("資賣出"),
-        "margin_repay": idx.get("資現償"),
-        "short_buy": idx.get("券買進"),
-        "short_sell": idx.get("券賣出"),
-        "short_repay": idx.get("券現償"),
-    }
     rows = []
     for r in table["data"]:
-        def _col(key: str) -> int | None:
-            i = opt.get(key)
-            return to_int(r[i]) if i is not None else None
-
         rows.append(MarginRow(
             code=str(r[idx["代號"]]).strip(),
-            margin_buy=_col("margin_buy"),
-            margin_sell=_col("margin_sell"),
-            margin_repay=_col("margin_repay"),
+            margin_buy=to_int(r[idx["資買"]]),
+            margin_sell=to_int(r[idx["資賣"]]),
+            margin_repay=to_int(r[idx["現償"]]),
             margin_balance=to_int(r[idx["資餘額"]]),
             margin_prev=to_int(r[idx["前資餘額(張)"]]),
             margin_limit=to_int(r[idx["資限額"]]),
-            short_buy=_col("short_buy"),
-            short_sell=_col("short_sell"),
-            short_repay=_col("short_repay"),
+            short_buy=to_int(r[idx["券買"]]),
+            short_sell=to_int(r[idx["券賣"]]),
+            short_repay=to_int(r[idx["券償"]]),
             short_balance=to_int(r[idx["券餘額"]]),
             short_prev=to_int(r[idx["前券餘額(張)"]]),
         ))
