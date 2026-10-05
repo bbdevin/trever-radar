@@ -1,7 +1,7 @@
 -- 使用者資料表寫入加固：watchlist／search_history／user_ui_prefs 只有 approved 帳號能新增／修改，並設每人列數與欄長上限
 -- 在 Supabase Dashboard → SQL Editor 貼上整段執行一次即可；可重跑（冪等）。本體無註解，可直接整段貼上。
 -- 不含任何金鑰，可安全進版控。
--- 執行狀態：未執行（人工執行後在 STATUS／README 打勾）。
+-- 執行狀態：已執行（2026-10-05，使用者於 Supabase SQL Editor 手動執行）。
 -- 依賴：20260710002358_create_watchlist.sql、20260826114421_create_user_ui_prefs.sql（＋115525 theme 欄）、
 --       20260819171000_create_app_profiles.sql（app_profiles.status）。
 --
