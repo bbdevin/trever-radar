@@ -184,11 +184,18 @@ class StockPartsWriter:
             name = parts["hist_name"]
             target = self.stock_dir / name
             expected = len(parts["hist_text"].encode("utf-8"))
+            reused = False
             if target.exists() and target.stat().st_size == expected:
                 # 重用也要把 mtime 刷新到現在:寬限期保護的是「正在被 core 指到的檔」,
                 # 否則一個一年沒變的 hist 的 mtime 早就老過 24 小時,另一個同時在跑、
                 # index 裡沒有這檔的 export 會在 finish() 把它刪掉(驗證者反例 S2/S3)。
-                os.utime(target, (self._now, self._now))
+                # exists() 與 utime 之間檔案若被並行 export 刪掉,改走重寫,不讓整輪中止。
+                try:
+                    os.utime(target, (self._now, self._now))
+                    reused = True
+                except FileNotFoundError:
+                    reused = False
+            if reused:
                 self.hist_reused += 1
             else:
                 write_atomic(target, parts["hist_text"])
