@@ -18,6 +18,7 @@ import { fileURLToPath } from "node:url";
 import { boardLogLine, buildBullBoard, selectBoard } from "../lib/bullBoard.ts";
 import { lastCandleDate, summaryFromStockJson } from "../lib/bullBearFromStock.ts";
 import { shouldAppendLogLine } from "../lib/bullBoardLog.ts";
+import { mergeIfSplit } from "../lib/stockParts.ts";
 import { hottestListedTheme } from "../lib/themeGroups.ts";
 
 const t0 = performance.now();
@@ -68,7 +69,16 @@ function earliestLogged(dir) {
 const radar = readJson(path.join(DATA, "radar.json"));
 const radarById = new Map((radar.stocks ?? []).map((s) => [s.id, s]));
 const stockDir = path.join(DATA, "stocks");
-const files = fs.readdirSync(stockDir).filter((f) => f.endsWith(".json")).sort();
+// 拆檔佈局(docs/44 P1 §3.2):有 stocks/core/ 就讀核心並把 chips/hist 接回(與個股頁同一個
+// mergeStockParts);沒有就讀舊單一檔 stocks/*.json。兩種佈局算出來的 bull_board.json 相同。
+const coreDir = path.join(stockDir, "core");
+const splitLayout = fs.existsSync(coreDir) && fs.statSync(coreDir).isDirectory();
+const readDir = splitLayout ? coreDir : stockDir;
+const files = fs.readdirSync(readDir).filter((f) => f.endsWith(".json")).sort();
+const readStock = (f) => {
+  const json = readJson(path.join(readDir, f));
+  return splitLayout ? mergeIfSplit(json, (rel) => readJson(path.join(stockDir, rel))) : json;
+};
 
 const cands = [];
 let holdersWeek = null;
@@ -77,7 +87,7 @@ const tRead = performance.now();
 for (const f of files) {
   let data;
   try {
-    data = readJson(path.join(stockDir, f));
+    data = readStock(f);
   } catch (e) {
     failed += 1;
     console.warn(`bull-board: skip ${f}: ${e?.message ?? e}`);
@@ -150,7 +160,7 @@ for (const f of new Set([dataMonthFile, logFile])) {
 
 const elapsed = (performance.now() - t0) / 1000;
 console.log(
-  `bull-board timing: files=${files.length} universe=${board.universe} qualified=${board.qualified} ` +
+  `bull-board timing: files=${files.length} layout=${splitLayout ? "split" : "legacy"} universe=${board.universe} qualified=${board.qualified} ` +
     `failed=${failed} read+summary=${(readMs / 1000).toFixed(2)}s per_file=${files.length ? (readMs / files.length).toFixed(2) : 0}ms ` +
     `elapsed=${elapsed.toFixed(2)}s`,
 );

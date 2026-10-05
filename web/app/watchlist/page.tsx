@@ -10,6 +10,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import ChangeText from "@/components/ChangeText";
 import WatchlistButton from "@/components/WatchlistButton";
 import { dataFetch } from "@/lib/dataFetch";
+import { fetchStockCore } from "@/lib/stockLoad";
 import type { RadarJson, StockJson } from "@/lib/types";
 import { chgClass, fmtPct, MARKET_LABEL } from "@/lib/format";
 import { signInWithGoogle, useSession } from "@/lib/useSession";
@@ -186,9 +187,8 @@ export default function WatchlistPage() {
     Promise.all(
       items.map(async (it) => {
         try {
-          const res = await dataFetch(`/data/stocks/${it.stock_id}.json`);
-          if (!res.ok) return { stock_id: it.stock_id, data: null, found: false };
-          const data = (await res.json()) as StockJson;
+          // 只要核心(docs/44 P1):這頁只讀最後兩根 K 線與 scores,都在 stocks/core/;舊資料退回舊單一檔。
+          const data = await fetchStockCore(it.stock_id, dataFetch);
           return { stock_id: it.stock_id, data, found: true };
         } catch {
           return { stock_id: it.stock_id, data: null, found: false };

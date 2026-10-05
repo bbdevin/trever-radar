@@ -2,6 +2,15 @@
 
 > 單一進度真相。每完成一個里程碑就更新本檔。規格細節看各編號文件,別寫在這裡。
 
+## 2026-10-05 個股 JSON 拆檔(`docs/44` P1-a/P1-b,§3.2;程式完成於分支、未合 main、未上線)
+
+- **做了什麼**:`export-json` 每檔多寫 `stocks/core/{id}.json`(舊檔扣掉四個籌碼鍵、K 線只留前兩年 1/1 起,多 `parts` 指標)、`stocks/chips/{id}.json`(branch_history/pctile/tags/pnl)、聯集股另有 `stocks/hist/{id}.{hash8}.json`(cut 以前的 K 線,內容不變不重寫、換雜湊刪舊檔、退出聯集刪檔)+ `hist/index.json`;**舊單一檔 `stocks/{id}.json` 過渡期照寫、逐位元不變**(`--no-legacy-stocks` 為清理步驟)。新旗標 `--verify-split`(每檔在記憶體內接回比對)、`--size-report PATH`。前端 `lib/stockParts.ts`(合併)+ `lib/stockLoad.ts`(core 優先、404 退舊檔、hist 雜湊換了重抓、最後退舊檔):個股頁 core+chips 到就畫,hist 到了多空摘要才算(之前骨架,不是 0·0);自選頁只抓 core;多方榜建置器看到 `stocks/core/` 就讀新佈局接回。Worker、crontab、VPS 腳本**都沒改**。
+- **一致性證據**:本機 968 檔真實舊 JSON(2026-07-08)用正式 `split_stock_payload` 拆開、用前端 `mergeStockParts` 接回 → **968/968 deepStrictEqual、0 mismatch**(`pipeline/tools/split_legacy_dir.py` + `web/scripts/verify-split-merge.mjs`);pytest 種子 DB 匯出三份接回 == 舊檔、舊檔仍是原本序列化;Playwright `parity-snapshot.mjs` 同一份 build 餵舊/新佈局,頁面文字相同(見下);建置器對拆檔 fixture 與舊 fixture 建出逐位元相同的 `bull_board.json`。
+- **大小(本機 7 月資料,brotli q5 估)**:6488(聯集,2,908 根)舊檔 720 KB/122 KB(br) → 首畫面 core+chips 403 KB/74 KB(br),hist 218 KB/45 KB(br) 之後到且可快取;非聯集股(89%)沒有 hist,大小與以前相同(只省 separators 的空白)。正式機數字見 `docs/44` §3.1(2330 1.42 MB 中 811 KB 是歷史 K 線)。首頁 radar.json 不在 P1 範圍,未變。
+- **相容矩陣**:舊前端×新資料(讀舊單一檔,內容不變)✅;新前端×舊資料(core 404 退回;每檔多一次 404 探測,只在 Pages 先上、VPS 還沒 export 的那幾小時)✅;新前端×新資料 ✅;建置器兩種佈局 ✅。Playwright 同一份 build 餵舊/新佈局:72 個畫面文字快照 0 差異;390px 截圖(首頁、6488 聯集股、4967 非聯集)兩邊相同。本機量測(新前端):6488 首次載入 /data 739 KB → 621 KB raw(首畫面 403 KB,hist 218 KB 之後到),4967 53 KB → 30 KB;首頁不變。檔數估 ~6,400 → ~11,500(上限 20,000),清理後 ~9,100。
+- **待人類**:合併進 `main`(Pages 先上程式,VPS 下一輪 export 才有新檔);觀察一週後做 `docs/44` §3.2 清理步驟(腳本加 `--no-legacy-stocks`、刪頂層舊檔、Worker 對 `stocks/hist/*` 給長快取——Worker 改動要資安審查)。
+- 驗證:pytest 全套、node 全套(新增 `stockParts`/`stockLoad`/`bullBoardBuild` 拆檔案例)、tsc、next build、Playwright 文字快照、390px 截圖。
+
 ## 2026-10-04 分點「股代」標籤＋股代變動史(`docs/37` §3.1;程式完成、未上線)
 
 - 公司的股務代理是券商時,籌碼日報／囤貨出貨列上該券商的**總公司席位**標「股代」(分公司不標;中探針 6217 股代凱基 → 只標「凱基」)。解析官方「股票過戶機構」自由文字(190 多種寫法、HTML 實體、異體字),銀行代理部與公司自辦不標;別名表＋元大/元富、國泰/國票、富邦/福邦防撞測試。實抓 1,987 家:券商 1,653(83.2%),全部對得到 brokerList 總公司。
