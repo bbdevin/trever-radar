@@ -7,6 +7,11 @@
 - **後續(同日,Fable 建議、使用者「能做的都做」)**:新增 `pipeline/tests/test_risk_deductions.py`(28 tests,鎖六個 code、每條邊界、HOT5/HOT10 只扣一次、−40 上限;不改行為);`scores.py` 模組 docstring 不再寫「題材未實作」;docs/04 新 §7b 照 `score_inst` 補寫法人融資分(0.15),§2 B7「併入分點分」更正為獨立分項;§0 核對:只有 `type='stock'` 與 ADV20 < 3,000 萬兩道過濾,全額交割/處置/注意股/上市未滿 60 日全部未實作(pipeline 與 web 無對應欄位)。權證品質過濾(§1)維持未實作、不動程式。
 
 - `docs/04` §8 新增「程式」欄:實作六項(`R_HOT5/R_HOT10`、`R_SHOOTING`、`R_GAP_FADE`、`R_RSI_OVERHEAT`(原表漏列)、`R_FOREIGN_SELL5`(只外資)、`R_MARGIN_HOT`(只使用率 ≥0.6));隔日沖進駐／注意股／大盤風險／當沖過熱／權證風險／壓力區標「未實作」。順修 §2 隔日沖扣分未實作、§6 T5 cross-ref、§10 權重重歸一化＋「綜合」分頁已由多方榜取代(`docs/48`)＋權證榜實際規則、§13「程式仍把 S1–S10 加進 tech_score」已過時(2026-07-10 解耦,歷史列未重算)。一條「待確認」提案:`R_SHOOTING` 十字線(實體 0)不扣的例外,要改須重算＋差異報告。pytest scores/indicators/score_list_contract/label_honesty 93 passed。
+## 2026-10-05 修正:上櫃融資券買賣欄全 NULL(`docs/34` §5.5.3 註;程式完成、回補待核准)
+
+- **原因**:`tpex.fetch_margin` 找 `資買進/資賣出/資現償/券買進/券賣出/券現償`,TPEx `margin/balance` 實際欄名是 `資買/資賣/現償/券賣/券買/券償`(2024–2026 皆同),欄位又是「選配」→ 對不到就靜默寫 NULL。上櫃全部列的 `margin_buy/sell/repay`、`short_buy/sell/repay` 從 A0 起都是 NULL(餘額/限額正常),上櫃個股資券頁「成本(估)」因此永遠空白。
+- **修正**:改正確欄名並列為必要欄(缺欄 RuntimeError,不再靜默 NULL)。測試 `test_tpex_margin_parse.py`:2026-10-02 真實回應 5 列(fixture)逐值比對＋融資/融券餘額恆等式。
+- **待人類**:合併後 VPS 跑 `FORCE=1 MARGIN_BF_DAYS=240 bash vps/scripts/backfill-margin.sh`(握 DB 鎖、約 30 分以上＋export/deploy;詳見 docs/34)。使用者已核准回補(2026-10-05)。不回補的話只有合併後的新日子有值。
 
 ## 2026-10-04 分點「股代」標籤＋股代變動史(`docs/37` §3.1;程式完成、未上線)
 

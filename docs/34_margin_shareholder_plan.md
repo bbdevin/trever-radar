@@ -328,6 +328,18 @@ python -m radar backfill-margin --days 240 --dry-run
 sqlite3 data/radar.db "SELECT date, COUNT(*), SUM(margin_buy IS NULL) FROM daily_margins GROUP BY date ORDER BY date DESC LIMIT 5;"
 ```
 
+> **2026-10-05 修正：上櫃買賣欄全 NULL**。`tpex.fetch_margin` 原以 `資買進／資賣出／資現償／券買進／券賣出／券現償` 找欄，TPEx `margin/balance` 實際欄名是 `資買／資賣／現償／券賣／券買／券償`（2024-01～2026-10 皆同；融券側「券賣」在「券買」前），從未對上 → 全部上櫃列的 `margin_buy/sell/repay`、`short_buy/sell/repay` 一直是 NULL（餘額／前日／限額正常），上櫃個股「成本(估)」因此永遠空白。已改為正確欄名且列為必要欄（缺欄直接 RuntimeError，不再靜默 NULL）；測試 `pipeline/tests/test_tpex_margin_parse.py` 以 2026-10-02 真實回應逐值比對＋餘額恆等式。
+>
+> **回補（需使用者核准；程式上 VPS 後跑）**：既有 CLI 沒有「只補上櫃」選項；`backfill-margin` 會把 `margin_buy IS NULL` > 5% 的日子（上櫃約占 45% 列 → 窗內每一天）整天重抓上市＋上櫃。上市重抓是同值 upsert，無害。
+>
+> ```bash
+> # VPS（週日 02:30 槽或平日非安靜窗；腳本自取 /tmp/radar-db.lock、自 pause bf、自 sync_code、跑完 export＋deploy）
+> cd /home/huang/trever-radar && bash -c 'source vps/scripts/lib.sh; radar backfill-margin --days 240 --dry-run'   # 先看會補幾天（唯讀列出）
+> FORCE=1 MARGIN_BF_DAYS=240 bash vps/scripts/backfill-margin.sh >> ~/radar-cron.log 2>&1
+> ```
+>
+> 預估 240 日 × 2 源 ≈ 480 請求，約 30 分鐘以上(全域節流 3 秒/請求)＋一次 export/deploy;避開 mid-publish 整點(03/09/12/20)與 00:05 safe-stats,跑完確認 bf 容器已 unpause(腳本失敗路徑不會自動恢復)；**需要 DB 鎖**（腳本內 `acquire_db_lock`，搶不到即略過）。驗收：`SELECT date, COUNT(*), SUM(margin_buy IS NULL) FROM daily_margins GROUP BY date ORDER BY date DESC LIMIT 5;` 的 NULL 數應降到個位數（僅剩來源本身空白者）。
+
 #### 5.5.4 Export 調整（A4）
 
 | 項目 | 定案 |
