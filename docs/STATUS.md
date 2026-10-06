@@ -8,6 +8,12 @@
 - **多方榜不變(docs/48 v1)**:合成母體 150 檔同一份 K 棒,main 舊 compute+main 建置器 vs 新 compute+本分支建置器:universe/qualified/入榜 22 檔順序/卡片多空 code/紀錄行完全相同,只有 20 張卡 `counts.tech` 多 1(F11 計數);新程式讀舊 JSON 建出的 `bull_board.json` 與 main 逐位元相同。`bullBear.test.ts` 鎖 `boardKeys` 有無新鍵相同。
 - **驗證**:pytest `test_price_levels.py` 25 passed(+9)、`test_bull_bear_codes`/`test_stock_parts`/`test_label_honesty` 綠;node 全套 321 passed(+5);tsc、next build 綠;390px 深/淺色截圖(合成股 1206,無橫向捲動)。
 - **待人類**:合併進 `main`;VPS 下一輪 export-json 後缺口才會出現在階梯與 K 線(其間舊 JSON 走回退路徑)。
+## 2026-10-06 首頁拆檔(`docs/44` P2,§3.3;程式完成於分支、未合 main、未上線)
+
+- **做了什麼**:`export-json` 多寫 `home/head.json`(`radar.json` 扣掉 `stocks` 與首頁沒讀的 `concentration`/`summary_text`/`score_list_meta`)與 `home/stocks.json`(逐檔丟掉卡片沒畫的 `technical`/`volume_lots`/`transactions`/`margin_chg_lots`/`chg5_pct`/`pocket_score`/`pocket_families`,`warrant` 只留三鍵;其餘值與順序不變),兩檔同 `generated_at`、緊湊序列化、tmp+rename、stocks 先寫;**`radar.json` 照寫、逐位元不變**(分點頁、自選頁、盤中 worker、建置器、期貨推播都還讀它)。前端 `lib/homeLoad.ts`:首頁先抓 head,第一次切到未發動/策略/掃描/期貨等分頁才抓 stocks(等待時卡片區骨架,表頭與分頁檔數已畫好);不同輪夾到靠 `generated_at` 對齊,對不上或任一檔抓不到都退回 `radar.json`;舊資料(沒有 `home/`)自動退回。Worker、crontab、VPS 腳本都沒改。
+- **大小(本機 7 月 fixture,139 檔)**:`radar.json` 203 KB raw / 33.5 KB br → 預設分頁只要 head 34 KB / 7.2 KB br(**−83% / −78%**);股票分頁 head+stocks 112 KB / 24.2 KB br(−45% / −28%)。正式機 770 KB 本機拿不到(要金鑰),上線後 `radar-cron.log` 的 `export home:` 一行會印 raw bytes。
+- **一致性證據**:pytest `test_home_split.py` 8 tests(投影只丟不加、接回 == 投影、種子 DB 匯出 radar.json 序列化不變、TS 清單一致);node `homeLoad.test.ts` 9 tests;Playwright `parity-snapshot.mjs` 同一份 build 餵「只有 radar.json」與「radar.json + home/」(真實 fixture 與補成現行形狀的 fixture 各一組),首頁全部分頁 390/1280 文字快照 diff 為空(見 docs/44 §3.3);390px 截圖。
+- **待人類**:合併後下一輪 VPS export 自動產生 `home/`;清理步驟與 Worker `NO_STORE` 追加見 docs/44 §3.3(另案)。
 
 ## 2026-10-05 docs/04 §8 風險扣分逐條對齊程式(只改文件,不改分數)
 

@@ -10,7 +10,8 @@
  * /data/* 不驗 JWT(本機伺服器直接回檔案)。
  *
  * 用法:
- *   node scripts/parity-snapshot.mjs --out out --snap ../tmp/snap-base
+ *   node scripts/parity-snapshot.mjs --out out --snap ../tmp/snap-base [--shots ../tmp/shots]
+ *   --shots DIR:另存首頁各分頁的 390px 截圖(docs/44 P2 驗收用;不給就不截)。
  * 環境變數:
  *   PLAYWRIGHT_MODULE  playwright 或 playwright-core 的路徑(預設 "playwright")
  *   CHROMIUM_PATH      chromium 執行檔(預設 %LOCALAPPDATA%/ms-playwright/chromium_headless_shell-1234/...)
@@ -25,6 +26,7 @@ const args = Object.fromEntries(
 );
 const OUT_DIR = path.resolve(args.out ?? "out");
 const SNAP_DIR = path.resolve(args.snap ?? "parity-snap");
+const SHOTS_DIR = args.shots ? path.resolve(args.shots) : null;
 const PORT = Number(args.port ?? 3471);
 const BASE = `http://127.0.0.1:${PORT}`;
 
@@ -143,7 +145,14 @@ async function snap(name, page) {
   snapshots[name] = await dump(page);
 }
 
-async function snapTabs(page, prefix, tabLocator) {
+const fileName = (name) => name.replace(/[^\w.=-]+/g, "_").slice(0, 80);
+async function shot(name, page) {
+  if (!SHOTS_DIR) return;
+  fs.mkdirSync(SHOTS_DIR, { recursive: true });
+  await page.screenshot({ path: path.join(SHOTS_DIR, `${fileName(name)}.png`), fullPage: true });
+}
+
+async function snapTabs(page, prefix, tabLocator, { shots = false } = {}) {
   const count = await tabLocator.count();
   const labels = [];
   for (let i = 0; i < count; i += 1) labels.push(((await tabLocator.nth(i).innerText()) || `#${i}`).replace(/\s+/g, " ").trim());
@@ -151,6 +160,7 @@ async function snapTabs(page, prefix, tabLocator) {
     await tabLocator.nth(i).click();
     await settle(page);
     await snap(`${prefix} tab[${i}] ${labels[i]}`, page);
+    if (shots) await shot(`${prefix} tab[${i}] ${labels[i]}`, page);
   }
 }
 
@@ -175,7 +185,9 @@ try {
     await page.waitForTimeout(1200); // 涵蓋 700ms 的 profile 重試窗
     navResult[`${vpLabel} app_profiles on homepage load`] = profileRequests;
     await snap(`${vpLabel} / default`, page);
-    await snapTabs(page, `${vpLabel} /`, page.locator("main [role=tablist]").first().locator("[role=tab]"));
+    const homeShots = vp.width === 390;
+    if (homeShots) await shot(`${vpLabel} / default`, page);
+    await snapTabs(page, `${vpLabel} /`, page.locator("main [role=tablist]").first().locator("[role=tab]"), { shots: homeShots });
 
     for (const id of STOCKS) {
       await page.goto(`${BASE}/stock?id=${id}`, { waitUntil: "load" });
@@ -307,7 +319,7 @@ try {
 fs.mkdirSync(SNAP_DIR, { recursive: true });
 const names = Object.keys(snapshots);
 for (const [i, name] of names.entries()) {
-  const file = `${String(i).padStart(3, "0")}_${name.replace(/[^\w.=-]+/g, "_").slice(0, 80)}.txt`;
+  const file = `${String(i).padStart(3, "0")}_${fileName(name)}.txt`;
   fs.writeFileSync(path.join(SNAP_DIR, file), `# ${name}\n${snapshots[name]}\n`);
 }
 fs.writeFileSync(path.join(SNAP_DIR, "_nav.json"), `${JSON.stringify(navResult, null, 2)}\n`);

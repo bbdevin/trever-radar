@@ -24,7 +24,7 @@
 | **D-P0.5** 同批程式 ✅ 2026-10-04 程式完成(見 §7) | `db.py` 連線 PRAGMA(`synchronous=NORMAL`(僅 WAL)、`cache_size=-65536`;`temp_store` 維持 FILE;**mmap 不設**);`upsert()` 改 executemany;export 分段計時 log | `compute_all` 寫入 212 s → 40–60 s;寫入段 −20～−40% | 否 | 只動程式,不改檔案格式 |
 | **P1** 資料格式拆檔(前後端一起)**— 2026-10-05 程式完成於分支(§3.2),待合 main** | 見 §3:個股 JSON 拆「核心＋K線歷史(內容雜湊檔名,一年快取)＋籌碼區段」,每輪只重算有變動的區段;`separators` 去空白、移除前端沒用到的 `af`;`no-store` → `no-cache`(304) | 一天 export ~2 h → ~35–45 分;手機首屏下載 0.5–1.5 MB raw → ~100 KB;重複看同一檔近乎 0 下載 | **格式請你過目**;Worker 規則需資安審查 + 核准 | 前端先上雙讀 → VPS 切格式 → Worker |
 | **P1** Worker 驗證優化 | 同時多個請求只查一次 Supabase;JWKS 本地驗簽(ES256 釘死、移除 `/auth/v1/user`);profile 以 `sub` 快取 5 分。**2026-10-04 已在分支實作(`src/auth.js` + `test/*.test.mjs`),獨立資安審查通過(4 個 Low 已修),⏳ 待使用者核准,未合 main、未上線** | 冷啟動每頁 −0.25～−0.5 s | **是 + 資安審查**(門鎖) | `cloudflare-data-worker/` |
-| **P2** 觀察後再決定 | 個股分頁元件按需載入、點擊預抓、爬蟲段不持 DB 鎖、權證分點增量彙總、`radar.json` 瘦身、權證分點列保留天數 | 邊際 | 部分需核准 | — |
+| **P2** 觀察後再決定 | 個股分頁元件按需載入、點擊預抓、爬蟲段不持 DB 鎖、權證分點增量彙總、`radar.json` 瘦身(**2026-10-06 程式完成於分支,§3.3**)、權證分點列保留天數 | 邊際 | 部分需核准 | — |
 
 > **P2「爬蟲段不持 DB 鎖」的進度(2026-10-04,`docs/47`)**:分點輪改成先**探測**來源(等待期間放掉 DB 鎖,只握分點來源鎖),達門檻才全量爬;各日更輪的輪詢在每次嘗試之間放鎖;非交易日分點/資券/夜間輪收工。估 DB 鎖忙碌 4.3–5.5 → ~2.6–3.0 小時/日、非交易日 ~3.5 → ~0.1 小時。**全量爬本身仍持鎖**(逐檔 commit),那一段不變。deploy 全量重傳(`generated_at`)仍屬 P1。
 
@@ -117,6 +117,60 @@ stocks/chips/{id}.json        branch_history / branch_pctile_counts / branch_tag
 **清理步驟(縮短過渡:上線後連續 2–3 個乾淨交易日即可,不必等一週;另案)**:① 看 radar-cron.log 的 `export parts:`(hist_reused 應接近 hist_total)、正式站個股頁無 404 退回、建置器 `layout=split`;② VPS 腳本的 `radar export-json` 改成 `radar export-json --no-legacy-stocks`(12 支腳本,見 `test_bull_board_vps_wiring.py` 的清單)或把預設翻過來;③ 刪掉 VPS `web/public/data/stocks/*.json`(頂層那 2,418 個)讓 wrangler 下一輪移除(磁碟與每輪上傳回到比今天還少);④ Worker 加 `stocks/hist/*` 長快取 + `dataFetch` 對 hist 放行快取(資安審查),hist 才真正「一年只下載一次」。
 
 **驗證方式**:pytest `test_stock_parts.py`(純函式 + 種子 DB 匯出:合併 == 舊檔、hist 不重寫、退出聯集刪檔、`--no-legacy-stocks`、`--size-report`);node `stockParts.test.ts` / `stockLoad.test.ts` / `bullBoardBuild.test.ts`(拆檔 fixture 與舊 fixture 建出同一份 bull_board.json);`pipeline/tools/split_legacy_dir.py` 把本機 968 檔真實舊 JSON(2026-07-08)用同一個 `split_stock_payload` 拆成新佈局,`web/scripts/verify-split-merge.mjs` 用前端的 `mergeStockParts` 接回逐檔 deepStrictEqual 並統計 raw/brotli 大小;Playwright `parity-snapshot.mjs` 對同一份 build 分別餵舊/新佈局,全部頁面文字相同;390px 截圖。
+
+### 3.3 P2 首頁拆檔(`radar.json` 瘦身;2026-10-06,Fable Planner+Executor;程式在分支,未合 main)
+
+**問題**:`radar.json`(正式約 770 KB raw,本機 7 月 fixture 203 KB)每次打開首頁整包下載、`no-store` 不快取;而 2026-10-04 起預設分頁是「多方榜」(讀 `bull_board.json`),從 `radar.json` 只用到表頭(資料日、成交額、各分頁檔數、題材/產業資金流、策略 meta、期貨名單);`stocks`(榜單聯集 ~275 檔,raw 佔 ~85%)要到未發動／策略／掃描等分頁才用。逐檔裡 `technical`(含 reasons/risks 兩個陣列,約每檔 raw 的 1/3)、`volume_lots`、`transactions`、`margin_chg_lots`、`chg5_pct`、`pocket_score`、`pocket_families` 與 `warrant` 的 6 個欄位,首頁卡片完全沒畫。
+
+**選項與決定**(使用者「按照 Fable 建議」):
+
+| 選項 | 決定 | 理由 |
+|---|---|---|
+| 丟首頁沒用的欄位 | ✅ 做(只在新檔) | 零畫面風險;`technical` 一項就是逐檔 raw 的 1/3 |
+| 短鍵名／欄式陣列 | ❌ 不做 | brotli 後鍵名幾乎免費(fixture:compact 序列化省 10% raw、brotli 後 0%);換格式得動每個讀的人 |
+| 依分頁拆、切到才抓 | ✅ 做成「表頭 + stocks」兩檔 | 各分頁共用同一份 `stocks`(lists 只是 id),再細拆只是重複;預設分頁完全不需要 stocks |
+| 把少用的區塊搬出去 | ✅ `concentration`(分點頁用)、`summary_text`、`score_list_meta`(前端沒讀)不進表頭 | 都很小,順手 |
+| 直接改 `radar.json` | ❌ 不改 | 分點頁、自選頁、盤中 worker、建置器、期貨推播、`futures-anomaly-digest` 都讀它;過渡期需要舊前端照常 |
+
+**檔案佈局(VPS `export-json` 每輪寫,緊湊序列化,各自 tmp+rename,stocks 先寫 head 後寫)**
+
+```
+radar.json             照寫、逐位元不變(所有既有讀者不動)
+home/head.json         {version:1} + radar.json 扣掉 stocks 與 concentration / summary_text / score_list_meta
+home/stocks.json       {version:1, data_date, generated_at, stocks:[逐檔投影]}
+```
+
+- 逐檔投影 = 原列扣掉 `HOME_DROPPED_STOCK` 七個鍵,`warrant` 只留 `call_turnover / call_turnover_ratio / call_count`;**順序、其餘每個值與 `radar.stocks` 相同**(`home_split.py`;清單與 `web/lib/homeLoad.ts` 一致,pytest 讀 TS 檔核對)。
+- 兩檔帶同一個 `generated_at`。前端先抓 head(多方榜、資券只要它),第一次切到要畫股票的分頁才抓 stocks;`generated_at` 對不上(mid-backfill 並行 export 夾到)→ 重抓 head 一次、再不行重抓 stocks 一次、還是不行退回 `radar.json`(一個檔永遠自洽)。head 抓不到(404／網路)→ 退回 `radar.json`;stocks 抓不到 → 退回 `radar.json`。
+- 等 stocks 的那一瞬間:表頭、分頁列與檔數已經畫好,只有卡片區是骨架(與今天整頁骨架同一款);期貨分頁也等 stocks(股名從 stocks 取,不然 `useStockNames` 會去抓 113 KB 的 `stocks_index.json`);多方榜只在**舊 payload**(entries 沒有 `theme` 鍵)時才等 stocks;「策略」分頁沒登入時只畫登入提示、不抓。
+- `RadarStock` 型別把丟掉的欄位標為可選、`warrant` 收成三鍵的 `Pick`:以後有人在卡片上讀它們,tsc 會擋。
+
+**大小(本機 2026-07-08 fixture,139 檔;brotli q5 / q11)**
+
+| | raw | br q5 | br q11 |
+|---|---|---|---|
+| `radar.json`(今天) | 203.0 KB | 33.5 KB | 27.1 KB |
+| `home/head.json`(預設分頁只要這個) | 34.2 KB | 7.2 KB | 5.9 KB |
+| `home/stocks.json` | 78.1 KB | 18.9 KB | 15.3 KB |
+| head + stocks(股票分頁) | 112.3 KB | 24.2 KB | 20.4 KB |
+
+預設分頁 **−83% raw / −78% brotli**;股票分頁 −45% raw / −28% brotli。補成今天 export 形狀的 fixture(加 raw_reasons / strategy_signals / strategy_meta / futures / pocket 假值)比例相近(221.7 → 41.6 + 106.5 KB raw;43.8 → 8.5 + 27.2 KB br)。正式機數字(770 KB raw)**本機拿不到**(`/data` 要 JWT 或 service key;本任務不 SSH),`export-json` 每輪會印一行 `export home: radar=… head=… stocks=…`(raw bytes),上線後看 `radar-cron.log` 即可。
+
+**相容矩陣**(程式走 Pages push 即上線;資料等 VPS 下一輪 `sync_code` 後 export)
+
+| | 舊資料(只有 `radar.json`) | 新資料(三份都有) |
+|---|---|---|
+| 舊前端 | 今天的狀態 | 讀 `radar.json`,逐位元同舊版 → 正常 |
+| 新前端 | `home/head.json` 404 → `radar.json` 一次到齊(多一次 404 探測,只在 Pages 先上、VPS 還沒 export 的那幾小時) | head → 需要時 stocks;夾到不同輪就對齊或退回 `radar.json` |
+| 分點頁／自選頁／盤中 worker／建置器／期貨推播／`futures-anomaly-digest` | `radar.json` | `radar.json`(不變) |
+
+**驗證**:pytest `test_home_split.py`(投影只丟不加、鍵序、warrant 三鍵、接回 == 投影、不同輪擲例外、寫檔順序與緊湊序列化、種子 DB 匯出 radar.json 序列化不變 + home 兩檔接回 == 投影、TS 清單一致);node `homeLoad.test.ts`(拆檔／舊資料／stocks 404／head 網路錯誤／三種夾到情境／卡片讀的欄位都不在丟棄清單);`pipeline/tools/split_home_json.py` 對真實 fixture 拆檔、接回比對並量 raw/brotli;Playwright `parity-snapshot.mjs` 同一份 build 分別餵「只有 radar.json」與「radar.json + home/」(fixture 與補齊形狀的 fixture 各一組),首頁全部分頁 390px 與 1280px 文字快照 diff 為空;`--shots` 另存 390px 截圖。
+
+**Worker(只核對,不改)**:`cloudflare-data-worker/src/index.js` 把 `env.ASSETS.fetch` 的回應原樣串流、只覆寫 `cache-control` 與 `vary`,沒有自己設 `content-encoding`,所以 brotli 由 Cloudflare 邊緣依 `Accept-Encoding` 對 `application/json` 自動做(2026-10-03 兩位 Planner 以正式站標頭量到的「線上 brotli」即此)。本任務本機沒有金鑰,**沒有重新量正式站標頭**;核對指令:`curl -sS -D - -o /dev/null -H "Accept-Encoding: br" -H "X-Radar-Service-Key: …" https://radar.techtrever.com/data/home/head.json | grep -i -E "content-encoding|cache-control"`。另:Worker 的 `NO_STORE` 只認 basename `radar.json`/`meta.json`,`home/*.json` 會拿到 `private, max-age=60`(`dataFetch` 是 `no-store`,瀏覽器不會用到;要與 `radar.json` 同語意可把兩個新檔名加進 `NO_STORE`——改 Worker 需資安審查,另案)。
+
+**清理步驟(另案)**:`radar.json` **不會停產**(分點頁、自選頁、worker、建置器、推播都讀它);可做的是 ① 分點頁改讀自己的小檔(concentration)、自選頁改讀 `home/head.json` 的 `lists.armed`,讓 `radar.json` 只剩機器讀者;② 前端拿掉 `home/head.json` 404 退回(新資料上線 2–3 個交易日後);③ Worker `NO_STORE` 加 `home/head.json`、`home/stocks.json`。沒有磁碟或檔數壓力(兩個檔、合計比 `radar.json` 小),過渡期可以長。
+
+**沒做、留著以後量**:`spark`(30 根收盤)在有 `spark_day` 的檔其實沒畫(卡片畫分時),fixture 裡 `spark` 佔逐檔 raw 14%;要省得把「有 spark_day 就不給 spark」寫進 export,與卡片的判斷耦合,先不做。`themes[].top` / `sectors[].subs`(資金流向面板,預設收合)約 33 KB raw,也可延後抓,但多方榜族群檢視要 `themes`/`sectors` 的 `vs20`,拆了省不多。
 
 ## 4. 明確不做
 

@@ -18,6 +18,7 @@ from sqlalchemy import bindparam, text
 from .. import config
 from ..db import get_engine, init_db
 from ..branch_source import date_window_from
+from .home_split import write_home
 from .spark_day import attach_spark_day
 from .stock_parts import (
     StockPartsWriter,
@@ -2170,6 +2171,9 @@ def export_json(
         ],
     }
     (out / "radar.json").write_text(json.dumps(radar, ensure_ascii=False), encoding="utf-8")
+    # 首頁拆檔(docs/44 P2):home/head.json + home/stocks.json 是 radar 的投影,radar.json 本身
+    # 照寫、逐位元不變(分點頁、自選頁、盤中 worker、建置器、期貨推播都還讀它)。
+    home_sizes = write_home(out, radar)
     (out / "meta.json").write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
 
     with engine.connect() as conn:
@@ -2475,9 +2479,13 @@ def export_json(
     print(f"export parts: hist_written={parts_writer.hist_written} "
           f"hist_reused={parts_writer.hist_reused} hist_total={len(parts_writer.index)} "
           f"legacy={'on' if legacy_stocks else 'off'}", flush=True)
+    # docs/44 P2:首頁拆檔的 raw bytes,正式機 radar-cron.log 可直接 grep 'export home:'。
+    print(f"export home: radar={len(json.dumps(radar, ensure_ascii=False).encode('utf-8'))} "
+          f"head={home_sizes['head']} stocks={home_sizes['stocks']} union={len(union)}", flush=True)
 
     return {"out": str(out), "date": d, "stocks": len(export_ids),
-            "hist_written": parts_writer.hist_written, "hist_reused": parts_writer.hist_reused}
+            "hist_written": parts_writer.hist_written, "hist_reused": parts_writer.hist_reused,
+            "home_bytes": home_sizes}
 
 def _export_branches(out: Path, engine, date: str):
     branches_dir = out / "branches"
