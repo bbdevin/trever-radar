@@ -199,9 +199,57 @@ test("K 線價位線:上下各 ≤2、取最近、有日期的換回原始價", 
   assert.equal(chartLevels(ok({ highs: { "120": { p: 135, t: "2026-09-12" } }, dense_above: null }))[0].price, 135);
 });
 
+test("P2 缺口:階梯列(區間+日期+距離)、超過 5 列留最近的、K 線虛線取中點;舊 JSON 沒有鍵就不畫", () => {
+  const pl = ok({
+    gaps_above: [{ lo: 130, hi: 132, t: "2026-09-20" }, { lo: 140, hi: 141, t: "2026-08-20" }],
+    gaps_below: [{ lo: 100, hi: 108, t: "2026-07-01" }],
+  });
+  const v = priceLevelsView(pl);
+  if (v.state !== "ok") throw new Error("state");
+  // 上方固定列:3 前高 + 密集區 + 2 缺口 = 6 > 5 → 最遠的 240 日最高(+25%)被擠掉,缺口都留
+  assert.equal(v.above.length, MAX_ROWS_PER_SIDE);
+  assert.ok(!v.above.some((r) => r.label === "240日最高"));
+  const gaps = v.above.filter((r) => r.kind === "gap");
+  assert.deepEqual(gaps.map((r) => [r.label, r.date, r.price, r.priceHi, Math.round(r.dist * 10) / 10]), [["未回補缺口", "08/20", 140, 141, 16.7], ["未回補缺口", "09/20", 130, 132, 8.3]]);
+  // 下方缺口的距離看上緣(108 → −10%)
+  const gb = v.below.find((r) => r.kind === "gap")!;
+  assert.equal(Math.round(gb.dist * 10) / 10, -10);
+  // 由高到低(區間用上緣排)
+  for (let i = 1; i < v.above.length; i += 1) assert.ok((v.above[i - 1].priceHi ?? v.above[i - 1].price) >= (v.above[i].priceHi ?? v.above[i].price));
+  // K 線:缺口取中點、與前高/密集區一起比距離(上方最近 2 條 = 密集區 +3.3%、20日高 +5%;拿掉 20 日高後 09/20 缺口補上)
+  const lv = chartLevels(pl);
+  assert.deepEqual(lv.filter((l) => l.side === "above").map((l) => [l.label, l.price]), [["密集區", 124.6], ["20日高", 126]]);
+  // 下方:密集區 −2%、20日低 −6.3% 比缺口(上緣 108,−10%)近;放寬到 3 條才輪到缺口(中點 104)
+  assert.ok(!lv.some((l) => l.side === "below" && l.label === "缺口"));
+  assert.ok(chartLevels(pl, [], 3).some((l) => l.side === "below" && l.label === "缺口" && l.price === 104));
+  const lv2 = chartLevels(ok({ ...pl, highs: { "240": pl.highs["240"] } }));
+  assert.deepEqual(lv2.filter((l) => l.side === "above").map((l) => [l.label, l.price]), [["密集區", 124.6], ["缺口", 131]]);
+  // 舊 JSON(version 1,沒有 gaps_*):階梯與 K 線都沒有缺口
+  const old = priceLevelsView(ok());
+  if (old.state !== "ok") throw new Error("state");
+  assert.ok(![...old.above, ...old.below].some((r) => r.kind === "gap"));
+  assert.ok(!chartLevels(ok()).some((l) => l.label === "缺口"));
+});
+
+test("P2 連續天數:站上/低於 20 日線第 N 日(rank 2、技術段);第 1 日交給站回/跌破事件句;capped 寫「以上」;舊 JSON 不列", () => {
+  const up = priceLevelFacts(ok({ ma20_streak: { n: 12, side: "above", capped: false } }), "2026-10-03");
+  const f = up.find((x) => x.code === "F11_MA20_ABOVE_N")!;
+  assert.deepEqual([f.text, f.side, f.section, f.tf, f.rank, f.mirrors], ["收盤連 12 日站上20日線", "bull", "tech", "D", 2, undefined]);
+  const dn = priceLevelFacts(ok({ ma20_streak: { n: 221, side: "below", capped: true } }), "2026-10-03");
+  assert.equal(dn.find((x) => x.code === "F11_MA20_BELOW_N")?.text, "收盤連 221 日以上低於20日線");
+  assert.ok(!priceLevelFacts(ok({ ma20_streak: { n: 1, side: "above", capped: false } }), "2026-10-03").some((x) => x.code.startsWith("F11")));
+  assert.ok(!priceLevelFacts(ok(), "2026-10-03").some((x) => x.code.startsWith("F11")));
+  // 價格位置落後 → 帶日期
+  assert.equal(priceLevelFacts(ok({ ma20_streak: { n: 3, side: "above", capped: false } }), "2026-10-06").find((x) => x.code === "F11_MA20_ABOVE_N")?.date, "10/03");
+});
+
 test("禁用詞鎖:所有會上畫面的字", () => {
   const texts: string[] = [...HOWTO_LINES, ...CHIPS_HOWTO_LINES, insufficientText(3), ...Object.values(PL_LABELS)];
-  for (const pl of [ok(), ok({ ma_align: "bull", new_high_20: true, vol_price_2d: "up" }), ok({ new_low_20: true, vol_price_2d: "down" })]) {
+  const p2 = ok({
+    ma20_streak: { n: 7, side: "below", capped: true },
+    gaps_above: [{ lo: 130, hi: 132, t: "2026-09-20" }], gaps_below: [{ lo: 100, hi: 108, t: "2026-07-01" }],
+  });
+  for (const pl of [ok(), ok({ ma_align: "bull", new_high_20: true, vol_price_2d: "up" }), ok({ new_low_20: true, vol_price_2d: "down" }), p2]) {
     for (const rsi of [30, 60, 90]) {
       texts.push(...priceLevelFacts(pl, "2026-10-03", rsi).map((f) => f.text));
       const v = priceLevelsView(pl);

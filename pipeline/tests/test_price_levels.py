@@ -38,7 +38,7 @@ class BasicShapes(unittest.TestCase):
     def test_insufficient_under_20(self):
         rows = _rows([100.0] * 19)
         out = compute_price_levels(rows)
-        self.assertEqual(out, {"version": 1, "status": "insufficient", "as_of": rows[-1][0], "bars": 19})
+        self.assertEqual(out, {"version": 2, "status": "insufficient", "as_of": rows[-1][0], "bars": 19})
 
     def test_monotonic_up(self):
         closes = [100.0 + i for i in range(240)]
@@ -62,6 +62,11 @@ class BasicShapes(unittest.TestCase):
         self.assertGreater(vp["at"], 0.0)
         self.assertIsNone(out["dense_above"])
         self.assertIsNotNone(out["dense_below"])
+        # spread 0 且每天 +1:每根都是跳空 1 元,但寬度 < 現價 0.5%(339 × 0.5% = 1.7)→ 不列
+        self.assertEqual(out["gaps_above"], [])
+        self.assertEqual(out["gaps_below"], [])
+        # 收盤一路在 MA20 之上:可算的 221 根全同向 → capped
+        self.assertEqual(out["ma20_streak"], {"n": 221, "side": "above", "capped": True})
 
     def test_monotonic_down(self):
         closes = [400.0 - i for i in range(240)]
@@ -73,6 +78,7 @@ class BasicShapes(unittest.TestCase):
         self.assertEqual(out["lows"]["20"]["t"], _dates(240)[-1])
         self.assertEqual(out["vol_profile"]["below"], 0.0)
         self.assertIsNone(out["dense_below"])
+        self.assertEqual(out["ma20_streak"], {"n": 221, "side": "below", "capped": True})
 
     def test_missing_windows_are_null_not_shortened(self):
         out = compute_price_levels(_rows([100.0 + (i % 7) for i in range(100)]))
@@ -107,6 +113,95 @@ class BasicShapes(unittest.TestCase):
         closes[12] = closes[25] = 120.0
         out = compute_price_levels(_rows(closes))
         self.assertEqual(out["highs"]["20"]["t"], _dates(30)[25])
+
+
+class Gaps(unittest.TestCase):
+    """F9:缺口只看昨天以前、近 120 根;之後的 K 棒吃掉多少就縮多少;寬度 ≥ 現價 0.5%;每側 ≤2、近者在前。"""
+
+    def _bars(self, n, base=100.0, spread=1.0):
+        dates = _dates(n)
+        return [[dates[i], base, base + spread, base - spread, base, 1000, 1.0] for i in range(n)]
+
+    def test_up_gap_partially_filled_is_support_below(self):
+        rows = self._bars(150)
+        # 第 100 根跳空向上:前根 high 101,當根 low 110;之後最低 106 → 剩 101–106;現價 120 在上方
+        for i in range(100, 150):
+            rows[i][1:5] = [120.0, 121.0, 119.0, 120.0]
+        rows[100][3] = 110.0
+        rows[105][3] = 106.0
+        out = compute_price_levels([tuple(r) for r in rows])
+        self.assertEqual(out["gaps_below"], [{"lo": 101.0, "hi": 106.0, "t": rows[100][0]}])
+        self.assertEqual(out["gaps_above"], [])
+
+    def test_down_gap_is_resistance_above_and_filled_gap_dropped(self):
+        rows = self._bars(150, base=120.0)
+        # 第 100 根跳空向下:前根 low 119,當根 high 110 → 缺口 110–119;現價 100 在下方
+        for i in range(100, 150):
+            rows[i][1:5] = [100.0, 101.0, 99.0, 100.0]
+        rows[100][2] = 110.0
+        out = compute_price_levels([tuple(r) for r in rows])
+        self.assertEqual(out["gaps_above"], [{"lo": 110.0, "hi": 119.0, "t": rows[100][0]}])
+        # 之後有一根衝到 119.5 → 回補完 → 不列
+        rows[120][2] = 119.5
+        out2 = compute_price_levels([tuple(r) for r in rows])
+        self.assertEqual(out2["gaps_above"], [])
+
+    def test_today_gap_and_outside_window_excluded(self):
+        rows = self._bars(240)
+        # 今日跳空(由技術段「今日跳空」講,這裡不列)
+        rows[-1][1:5] = [110.0, 111.0, 109.0, 110.0]
+        out = compute_price_levels([tuple(r) for r in rows])
+        self.assertEqual(out["gaps_below"], [])
+        # 第 100 根(距今 140 根,超出 120 根視窗)的向上缺口不列;第 150 根的列
+        rows = self._bars(240)
+        for i in range(100, 240):
+            rows[i][1:5] = [110.0, 111.0, 109.0, 110.0]
+        rows[100][3] = 108.0  # 缺口 101–108
+        for i in range(150, 240):
+            rows[i][1:5] = [120.0, 121.0, 119.0, 120.0]
+        rows[150][3] = 118.0  # 缺口 111–118
+        out = compute_price_levels([tuple(r) for r in rows])
+        self.assertEqual(out["gaps_below"], [{"lo": 111.0, "hi": 118.0, "t": rows[150][0]}])
+
+    def test_nearest_two_per_side(self):
+        rows = self._bars(150)
+        levels = [(100, 105.0), (110, 115.0), (120, 125.0)]  # 三個向上缺口,之後價格一路在上
+        for j, (idx, lo_after) in enumerate(levels):
+            for i in range(idx, 150):
+                p = lo_after + 1
+                rows[i][1:5] = [p, p + 1, p - 1, p]
+            rows[idx][3] = lo_after + 2  # 當根 low 比後面高一點,缺口 = 前根 high … 之後最低
+        out = compute_price_levels([tuple(r) for r in rows])
+        self.assertEqual(len(out["gaps_below"]), 2)
+        # 近者在前:最後一個缺口(第 120 根)離現價最近
+        self.assertEqual([g["t"] for g in out["gaps_below"]], [rows[120][0], rows[110][0]])
+        self.assertTrue(out["gaps_below"][0]["hi"] > out["gaps_below"][1]["hi"])
+
+    def test_gap_adjusted_for_split(self):
+        rows = self._bars(150)
+        for i in range(100, 150):
+            rows[i][1:5] = [120.0, 121.0, 119.0, 120.0]
+        rows[100][3] = 110.0
+        plain = [tuple(r) for r in rows]
+        split = [
+            (t, o * 2, h * 2, l * 2, c * 2, v // 2, 0.5) if i < 120 else (t, o, h, l, c, v, af)
+            for i, (t, o, h, l, c, v, af) in enumerate(plain)
+        ]
+        self.assertEqual(compute_price_levels(plain)["gaps_below"], compute_price_levels(split)["gaps_below"])
+
+
+class Ma20Streak(unittest.TestCase):
+    def test_counts_from_today_and_not_capped(self):
+        closes = [100.0] * 60 + [90.0] * 5 + [110.0] * 3  # 先跌破 5 天,再站上 3 天
+        out = compute_price_levels(_rows(closes))
+        self.assertEqual(out["ma20_streak"], {"n": 3, "side": "above", "capped": False})
+        closes = [100.0] * 60 + [90.0] * 5
+        out = compute_price_levels(_rows(closes))
+        self.assertEqual(out["ma20_streak"], {"n": 5, "side": "below", "capped": False})
+
+    def test_equal_counts_as_above(self):
+        out = compute_price_levels(_rows([100.0] * 30))
+        self.assertEqual(out["ma20_streak"], {"n": 11, "side": "above", "capped": True})
 
 
 class VolumeProfile(unittest.TestCase):

@@ -5,7 +5,7 @@
  * 原則:只寫價位、距離、比例、日期——不寫目標價、不寫預測或「有效／沉重」之類形容(docs/45 §2、§7)。
  * 這些事實只供顯示,**不進任何分數**,也不混進 technical.reasons/risks。
  */
-import type { Candle, PriceLevelPoint, PriceLevels, PriceLevelZone } from "@/lib/types";
+import type { Candle, PriceLevelGap, PriceLevelPoint, PriceLevels, PriceLevelZone } from "@/lib/types";
 import type { DerivedFact, Section, Seg, Source } from "@/lib/bullBear";
 
 export type OkLevels = Extract<PriceLevels, { status: "ok" }>;
@@ -70,18 +70,29 @@ export function denseZone(pl: OkLevels, side: "above" | "below"): PriceLevelZone
   return z && z.share >= DENSE_MIN_SHARE ? z : null;
 }
 
+/**
+ * 未回補缺口(docs/45 F9):export 算好的 `gaps_above/below`(version ≥2,每側 ≤2、近者在前)。
+ * 舊 JSON 沒有這兩個鍵 → null:壓力段改由 K 棒自算(levelFacts 回退,同一條定義),價格階梯與 K 線不畫缺口。
+ * 階梯、K 線虛線、事實句都從這裡取,不各自判斷。
+ */
+export function levelGaps(pl: OkLevels, side: "above" | "below"): PriceLevelGap[] | null {
+  const g = side === "above" ? pl.gaps_above : pl.gaps_below;
+  return Array.isArray(g) ? g : null;
+}
+export const GAP_LABEL = "未回補缺口";
+
 export type LadderRow = {
   key: string;
-  kind: "ma" | "high" | "low" | "zone";
+  kind: "ma" | "high" | "low" | "zone" | "gap";
   side: "above" | "below";
   label: string;
-  /** MM/DD;只有前高/前低有 */
+  /** MM/DD;前高/前低與缺口有 */
   date?: string;
-  /** zone 為下緣 */
+  /** zone / gap 為下緣 */
   price: number;
-  /** zone 的上緣 */
+  /** zone / gap 的上緣 */
   priceHi?: number;
-  /** 與現價的距離(%);zone 取靠近現價那一側的邊 */
+  /** 與現價的距離(%);zone / gap 取靠近現價那一側的邊 */
   dist: number;
   /** zone:該格成交量佔視窗總量 */
   share?: number;
@@ -89,7 +100,8 @@ export type LadderRow = {
 
 export type PriceFactCode =
   | "F1_MA_BELOW" | "F1_MA_ABOVE" | "F2_BULL" | "F2_BEAR" | "F3_HIGH_TODAY" | "F3_LOW_TODAY"
-  | "F4_NEW_HIGH" | "F4_NEW_LOW" | "F5_UP" | "F5_DOWN" | "F8_RSI_OK" | "F8_RSI_LOW";
+  | "F4_NEW_HIGH" | "F4_NEW_LOW" | "F5_UP" | "F5_DOWN" | "F8_RSI_OK" | "F8_RSI_LOW"
+  | "F11_MA20_ABOVE_N" | "F11_MA20_BELOW_N";
 
 /**
  * 價格位置的多空事實句(進 docs/46 多空)。mirrors = 同方向、同一天時可取代的技術理由 code;
@@ -145,11 +157,29 @@ function zoneRow(z: PriceLevelZone, side: "above" | "below", close: number): Lad
   };
 }
 
-/** 一側的階梯:前高/前低與密集區一定留,剩下的位子給離現價最近的均線;最後由高到低排。 */
+function gapRow(g: PriceLevelGap, side: "above" | "below", close: number): LadderRow {
+  return {
+    key: `gap-${side}-${g.t}`,
+    kind: "gap",
+    side,
+    label: GAP_LABEL,
+    date: mmdd(g.t),
+    price: g.lo,
+    priceHi: g.hi,
+    dist: pct(side === "above" ? g.lo : g.hi, close),
+  };
+}
+
+const byNearest = (a: LadderRow, b: LadderRow) => Math.abs(a.dist) - Math.abs(b.dist) || a.key.localeCompare(b.key);
+
+/**
+ * 一側的階梯:前高/前低、密集區與缺口優先留(超過 5 列時留離現價最近的),剩下的位子給離現價最近的均線;
+ * 最後由高到低排。
+ */
 function pickSide(fixed: LadderRow[], mas: LadderRow[]): LadderRow[] {
-  const keep = fixed.slice(0, MAX_ROWS_PER_SIDE);
+  const keep = (fixed.length > MAX_ROWS_PER_SIDE ? [...fixed].sort(byNearest) : fixed).slice(0, MAX_ROWS_PER_SIDE);
   const room = MAX_ROWS_PER_SIDE - keep.length;
-  const nearest = [...mas].sort((a, b) => Math.abs(a.dist) - Math.abs(b.dist) || a.key.localeCompare(b.key)).slice(0, Math.max(0, room));
+  const nearest = [...mas].sort(byNearest).slice(0, Math.max(0, room));
   return [...keep, ...nearest].sort((a, b) => (b.priceHi ?? b.price) - (a.priceHi ?? a.price) || a.key.localeCompare(b.key));
 }
 
@@ -207,6 +237,7 @@ const F_SECTION: Record<PriceFactCode, { section: Section; source: Source }> = {
   F4_NEW_HIGH: { section: "tech", source: "tech" }, F4_NEW_LOW: { section: "tech", source: "tech" },
   F5_UP: { section: "tech", source: "tech" }, F5_DOWN: { section: "tech", source: "tech" },
   F8_RSI_OK: { section: "tech", source: "tech" }, F8_RSI_LOW: { section: "tech", source: "tech" },
+  F11_MA20_ABOVE_N: { section: "tech", source: "tech" }, F11_MA20_BELOW_N: { section: "tech", source: "tech" },
 };
 
 /**
@@ -260,6 +291,14 @@ export function priceLevelFacts(
     if (rsi14 >= 50 && rsi14 <= 70) add("F8_RSI_OK", "bull", [{ t: `RSI14 ${r},位於 50–70` }], 2, { mirrors: ["T5_RSI"] });
     else if (rsi14 < 50) add("F8_RSI_LOW", "bear", [{ t: `RSI14 ${r},低於 50` }], 2);
   }
+  // F11 連續天數(docs/45 P2):第 1 日就是今天站回/跌破,由技術段 X_MA_CROSS_UP/DOWN 事件句講,這裡不重複;
+  // 舊 JSON 沒有 ma20_streak → 不列。狀態型 rank 2,不進多方榜 K 鍵。
+  const st = pl.ma20_streak;
+  if (st && st.n >= 2) {
+    const days = `${st.n} 日${st.capped ? "以上" : ""}`;
+    if (st.side === "above") add("F11_MA20_ABOVE_N", "bull", [{ t: `收盤連 ${days}站上20日線` }], 2);
+    else add("F11_MA20_BELOW_N", "bear", [{ t: `收盤連 ${days}低於20日線` }], 2);
+  }
   return out;
 }
 
@@ -287,6 +326,8 @@ export function priceLevelsView(pl: PriceLevels | null | undefined): PriceLevels
   const zb = denseZone(pl, "below");
   if (za) above.push(zoneRow(za, "above", close));
   if (zb) below.push(zoneRow(zb, "below", close));
+  for (const g of levelGaps(pl, "above") ?? []) above.push(gapRow(g, "above", close));
+  for (const g of levelGaps(pl, "below") ?? []) below.push(gapRow(g, "below", close));
 
   return {
     state: "ok",
@@ -342,9 +383,9 @@ export const CHIPS_HOWTO_LINES: readonly string[] = [
 export type ChartLevel = { price: number; label: string; side: "above" | "below" };
 
 /**
- * K 線上的壓力/支撐虛線(docs/45 P1):前高/前低與成交最密集區,現價之上、之下各取最近 2 條。
+ * K 線上的壓力/支撐虛線(docs/45 P1):前高/前低、成交最密集區與未回補缺口(P2),現價之上、之下各取最近 2 條。
  * K 線畫的是原始價:有日期的前高/前低用該日 af 換回原始價,讓線貼著那根 K 棒;
- * 密集區(跨多日)維持還原價,取一格的中點。
+ * 密集區(跨多日)維持還原價,取一格的中點;缺口取中點、用跳空那天的 af 換回原始價。
  */
 export function chartLevels(pl: PriceLevels | null | undefined, candles: readonly Candle[] = [], perSide = 2): ChartLevel[] {
   if (!pl || pl.status !== "ok") return [];
@@ -361,7 +402,9 @@ export function chartLevels(pl: PriceLevels | null | undefined, candles: readonl
   const dzb = denseZone(pl, "below");
   const za = dza ? [{ price: (dza.lo + dza.hi) / 2, adj: dza.lo, label: "密集區", side: "above" as const }] : [];
   const zb = dzb ? [{ price: (dzb.lo + dzb.hi) / 2, adj: dzb.hi, label: "密集區", side: "below" as const }] : [];
+  const ga = (levelGaps(pl, "above") ?? []).map((g) => ({ price: toRaw((g.lo + g.hi) / 2, g.t), adj: g.lo, label: "缺口", side: "above" as const }));
+  const gb = (levelGaps(pl, "below") ?? []).map((g) => ({ price: toRaw((g.lo + g.hi) / 2, g.t), adj: g.hi, label: "缺口", side: "below" as const }));
   const near = (xs: { price: number; adj: number; label: string; side: "above" | "below" }[]) =>
     xs.sort((a, b) => Math.abs(a.adj - close) - Math.abs(b.adj - close) || a.label.localeCompare(b.label)).slice(0, perSide);
-  return [...near([...hi, ...za]), ...near([...lo, ...zb])].map(({ price, label, side }) => ({ price, label, side }));
+  return [...near([...hi, ...za, ...ga]), ...near([...lo, ...zb, ...gb])].map(({ price, label, side }) => ({ price, label, side }));
 }

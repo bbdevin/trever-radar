@@ -37,14 +37,15 @@ function LadderLine({ row, close }: { row: LadderRow; close: number }) {
   const dist = distSeg(row.dist);
   const tone = dist.kind === "up" ? "text-up" : dist.kind === "down" ? "text-down" : "text-foreground";
   return (
-    <li className="grid min-h-8 grid-cols-[minmax(0,1fr)_auto_4.25rem] items-center gap-2 px-2.5 text-[12.5px]">
+    <li className="grid min-h-8 grid-cols-[minmax(0,1fr)_auto_4.25rem] items-center gap-2 px-2.5 text-[12.5px]" data-kind={row.kind}>
       <span className="min-w-0 truncate text-[color:var(--ink-2)]" title={row.label}>
         {row.label}
         {row.date && <span className="num ml-1.5 text-[11px] text-muted-foreground">{row.date}</span>}
       </span>
       <span className="num font-bold text-primary">
         {fmtLevelPrice(row.price, close)}
-        {isZone && row.priceHi != null && <>–{fmtLevelPrice(row.priceHi, close)}</>}
+        {/* 密集區與缺口是一段區間:下緣–上緣 */}
+        {row.priceHi != null && <>–{fmtLevelPrice(row.priceHi, close)}</>}
       </span>
       {isZone && row.share != null ? (
         <span className="num text-right font-semibold text-[color:var(--ink-2)]">{PL_LABELS.share} {fmtShare(row.share)}</span>

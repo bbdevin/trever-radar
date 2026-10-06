@@ -2,6 +2,13 @@
 
 > 單一進度真相。每完成一個里程碑就更新本檔。規格細節看各編號文件,別寫在這裡。
 
+## 2026-10-06 價格位置 P2:未回補缺口進階梯/K 線、20 日線連續天數(`docs/45` §8;程式完成於分支、未上線)
+
+- **做了什麼**:`price_levels` version 1→2,export 多算 `gaps_above/below`(近 120 根、昨天以前、每側 ≤2、近者在前,定義與前端既有回退算法逐字相同)與 `ma20_streak`(收盤 ≥/< MA20 連續根數,封頂標 `capped`)。前端 `priceLevels.levelGaps()` 單一取用點:價格階梯多「未回補缺口 MM/DD lo–hi ±x%」列(固定列超過 5 時留最近 5)、K 線壓力/支撐虛線加缺口中點(標「缺口」)、壓力段 `L_GAP_*` 改讀 export 鍵、技術段 3% 內句自動點名;新事實 `F11_MA20_ABOVE_N/BELOW_N`「收盤連 N 日站上/低於20日線」(rank 2,第 1 日交給站回/跌破事件句)。舊 JSON(無新鍵)照舊:缺口由 K 棒自算只進壓力段,連續天數不列。MACD/KD 鏡像與 Header 摘要已由 docs/46 涵蓋,不另做。只顯示、不改分數/`technical`/`radar.json`/DB;拆檔不需改(鍵在核心)。
+- **多方榜不變(docs/48 v1)**:合成母體 150 檔同一份 K 棒,main 舊 compute+main 建置器 vs 新 compute+本分支建置器:universe/qualified/入榜 22 檔順序/卡片多空 code/紀錄行完全相同,只有 20 張卡 `counts.tech` 多 1(F11 計數);新程式讀舊 JSON 建出的 `bull_board.json` 與 main 逐位元相同。`bullBear.test.ts` 鎖 `boardKeys` 有無新鍵相同。
+- **驗證**:pytest `test_price_levels.py` 25 passed(+9)、`test_bull_bear_codes`/`test_stock_parts`/`test_label_honesty` 綠;node 全套 321 passed(+5);tsc、next build 綠;390px 深/淺色截圖(合成股 1206,無橫向捲動)。
+- **待人類**:合併進 `main`;VPS 下一輪 export-json 後缺口才會出現在階梯與 K 線(其間舊 JSON 走回退路徑)。
+
 ## 2026-10-05 docs/04 §8 風險扣分逐條對齊程式(只改文件,不改分數)
 
 - **後續(同日,Fable 建議、使用者「能做的都做」)**:新增 `pipeline/tests/test_risk_deductions.py`(28 tests,鎖六個 code、每條邊界、HOT5/HOT10 只扣一次、−40 上限;不改行為);`scores.py` 模組 docstring 不再寫「題材未實作」;docs/04 新 §7b 照 `score_inst` 補寫法人融資分(0.15),§2 B7「併入分點分」更正為獨立分項;§0 核對:只有 `type='stock'` 與 ADV20 < 3,000 萬兩道過濾,全額交割/處置/注意股/上市未滿 60 日全部未實作(pipeline 與 web 無對應欄位)。權證品質過濾(§1)維持未實作、不動程式。

@@ -39,7 +39,8 @@ function everyFixtureFact(): DerivedFact[] {
     ma_align: "bear", new_high_20: false, new_low_20: false, vol_price_2d: "down",
     highs: { "60": { p: 1100, t: LAST } }, lows: { "20": { p: 1000, t: LAST } },
   }), LAST, 40));
-  out.push(...priceLevelFacts(okLevels({ new_high_20: false, new_low_20: true }), LAST, 75));
+  out.push(...priceLevelFacts(okLevels({ new_high_20: false, new_low_20: true, ma20_streak: { n: 4, side: "below", capped: false } }), LAST, 75));
+  out.push(...priceLevelFacts(okLevels({ ma20_streak: { n: 30, side: "above", capped: true } }), LAST, 60));
   out.push(...levelFacts(okLevels(), levelSeries(), LAST));
   out.push(...levelFacts(okLevels({ highs: { "60": { p: 1090, t: "2026-09-30" } } }), levelSeries(), LAST));
   out.push(...levelFacts(okLevels({ lows: { "60": { p: 1080, t: "2026-09-30" } } }), levelSeries(), LAST));

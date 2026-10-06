@@ -46,6 +46,18 @@ export interface PriceLevelZone {
   /** 該格成交量 ÷ 視窗總量 */
   share: number;
 }
+/** 未回補缺口(docs/45 F9,version ≥2):還原價 lo–hi,t = 跳空那天 */
+export interface PriceLevelGap {
+  lo: number;
+  hi: number;
+  t: string;
+}
+/** 收盤相對 20 日線的連續天數(docs/45 F11,version ≥2);capped = 可算的 K 棒全同向,真實天數只多不少 */
+export interface Ma20Streak {
+  n: number;
+  side: "above" | "below";
+  capped: boolean;
+}
 export type PriceLevels =
   | { version: number; status: "insufficient"; as_of: string; bars: number }
   | {
@@ -64,6 +76,10 @@ export type PriceLevels =
       vol_profile: { window: number; above: number; below: number; at: number } | null;
       dense_above: PriceLevelZone | null;
       dense_below: PriceLevelZone | null;
+      /** version 1 的舊 JSON 沒有這三個鍵:缺口改由前端 K 棒自算(只進壓力段),連續天數不列 */
+      gaps_above?: PriceLevelGap[] | null;
+      gaps_below?: PriceLevelGap[] | null;
+      ma20_streak?: Ma20Streak | null;
     };
 
 export interface WarrantSummary {

@@ -5,7 +5,7 @@
  */
 import type { DerivedFact, Seg, Tf } from "../bullBear.ts";
 import type { PriceLevels } from "../types.ts";
-import { AT_PRICE, NEAR_PCT, denseZone, distSeg, extremes, isAtPrice, isNear, maLevelSegs, maSideSegs, maSplit } from "../priceLevels.ts";
+import { AT_PRICE, GAP_LABEL, NEAR_PCT, denseZone, distSeg, extremes, isAtPrice, isNear, levelGaps, maLevelSegs, maSideSegs, maSplit, type OkLevels } from "../priceLevels.ts";
 import type { AllSeries } from "./series.ts";
 import { MA_BY_TF } from "./series.ts";
 import { P, mk, mmdd, share } from "./text.ts";
@@ -26,7 +26,7 @@ const zoneDist = (side: "above" | "below", d: number): (Seg | string)[] =>
   isAtPrice(d) ? [side === "above" ? " 自現價向上" : " 自現價向下"] : [side === "above" ? " 在上方 " : " 在下方 ", distSeg(d)];
 /** 句尾「,接近」:≤3% 才加;已寫「貼近現價」的不再重複 */
 const nearTag = (d: number) => (isNear(d) && !isAtPrice(d) ? ",接近" : "");
-/** 缺口:近 120 根、寬度 ≥ 現價 0.5% 才列,每側最多 2 個 */
+/** 缺口(舊 JSON 回退算法,與 pipeline price_levels.py F9 同一條定義):近 120 根、寬度 ≥ 現價 0.5% 才列,每側最多 2 個 */
 const GAP_WINDOW = 120;
 const GAP_MIN = 0.005;
 const GAP_PER_SIDE = 2;
@@ -35,7 +35,7 @@ const SUPPLY_MIN = 0.05;
 const ymd = (t: string) => `${t.slice(0, 4)}/${t.slice(5, 7)}/${t.slice(8, 10)}`;
 /** 區間價位的短標(DerivedFact.level):「成交最密集區 1,100–1,111」 */
 const rangeLevel = (label: string, z: { lo: number; hi: number }, close: number): Seg[] => [{ t: label }, P(z.lo, close), { t: "–" }, P(z.hi, close)];
-const gapLevel = (g: { lo: number; hi: number }, close: number) => rangeLevel("未回補缺口 ", g, close);
+const gapLevel = (g: { lo: number; hi: number }, close: number) => rangeLevel(`${GAP_LABEL} `, g, close);
 
 function maFactsFor(series: AllSeries, tf: Exclude<Tf, "D">): DerivedFact[] {
   const S = series[tf];
@@ -58,13 +58,16 @@ function maFactsFor(series: AllSeries, tf: Exclude<Tf, "D">): DerivedFact[] {
   return out;
 }
 
-function gapFacts(series: AllSeries, close: number, date?: string): DerivedFact[] {
+type Gap = { lo: number; hi: number; t: string };
+
+/** 舊 JSON(price_levels version 1)沒有 gaps_* 鍵時,從還原日K 自算;定義與 pipeline 相同。 */
+function gapsFromSeries(series: AllSeries, close: number): { above: Gap[]; below: Gap[] } {
   const S = series.D;
   const n = S.c.length;
-  if (n < 3) return [];
+  const above: Gap[] = [];
+  const below: Gap[] = [];
+  if (n < 3) return { above, below };
   const i = n - 1;
-  const above: { lo: number; hi: number; t: string }[] = [];
-  const below: { lo: number; hi: number; t: string }[] = [];
   // 今日的缺口由技術段「今日跳空」講,這裡從昨天往前找
   for (let j = Math.max(1, n - GAP_WINDOW); j < i; j++) {
     if (S.l[j] > S.h[j - 1]) {
@@ -80,15 +83,27 @@ function gapFacts(series: AllSeries, close: number, date?: string): DerivedFact[
       if (hi - lo >= close * GAP_MIN && lo > close) above.push({ lo, hi, t: S.t[j] });
     }
   }
+  const near = (a: Gap) => Math.abs(pct(a.lo > close ? a.lo : a.hi, close));
+  return { above: above.sort((a, b) => near(a) - near(b)).slice(0, GAP_PER_SIDE), below: below.sort((a, b) => near(a) - near(b)).slice(0, GAP_PER_SIDE) };
+}
+
+/**
+ * 未回補缺口:price_levels 有 gaps_*(version ≥2)就用它(與價格階梯、K 線虛線同一份 `levelGaps`),
+ * 舊 JSON 回退為 K 棒自算。每側 ≤2、近者在前,句型相同。
+ */
+function gapFacts(pl: OkLevels, series: AllSeries, close: number, date?: string): DerivedFact[] {
+  const fromPl = { above: levelGaps(pl, "above"), below: levelGaps(pl, "below") };
+  const fb = fromPl.above && fromPl.below ? null : gapsFromSeries(series, close);
+  const above = fromPl.above ?? fb!.above;
+  const below = fromPl.below ?? fb!.below;
   const out: DerivedFact[] = [];
-  const near = (a: { lo: number; hi: number }) => Math.abs(pct(a.lo > close ? a.lo : a.hi, close));
-  above.sort((a, b) => near(a) - near(b)).slice(0, GAP_PER_SIDE).forEach((g, k) => {
-    const d = near(g);
-    out.push(mk("L_GAP_ABOVE", ["未回補缺口 ", P(g.lo, close), "–", P(g.hi, close), `(${mmdd(g.t)})`, ...sideDist("above", d)], { rank: isNear(d) ? 4 : 2, dist: d, variant: String(k), date, level: gapLevel(g, close) }));
+  above.forEach((g, k) => {
+    const d = Math.abs(pct(g.lo, close));
+    out.push(mk("L_GAP_ABOVE", [`${GAP_LABEL} `, P(g.lo, close), "–", P(g.hi, close), `(${mmdd(g.t)})`, ...sideDist("above", d)], { rank: isNear(d) ? 4 : 2, dist: d, variant: String(k), date, level: gapLevel(g, close) }));
   });
-  below.sort((a, b) => near(a) - near(b)).slice(0, GAP_PER_SIDE).forEach((g, k) => {
-    const d = near(g);
-    out.push(mk("L_GAP_BELOW", ["未回補缺口 ", P(g.lo, close), "–", P(g.hi, close), `(${mmdd(g.t)})`, ...sideDist("below", -d)], { rank: isNear(d) ? 4 : 2, dist: d, variant: String(k), date, level: gapLevel(g, close) }));
+  below.forEach((g, k) => {
+    const d = Math.abs(pct(g.hi, close));
+    out.push(mk("L_GAP_BELOW", [`${GAP_LABEL} `, P(g.lo, close), "–", P(g.hi, close), `(${mmdd(g.t)})`, ...sideDist("below", -d)], { rank: isNear(d) ? 4 : 2, dist: d, variant: String(k), date, level: gapLevel(g, close) }));
   });
   return out;
 }
@@ -160,7 +175,7 @@ export function levelFacts(pl: PriceLevels | null | undefined, series: AllSeries
     if (vp.below >= SUPPLY_MIN) out.push(mk("L_SUPPLY_BELOW", [`近${vp.window}日成交 ${share(vp.below)} 在現價之下`], { rank: vp.below >= 0.7 ? 2 : 1, magnitude: vp.below, date }));
   }
 
-  out.push(...gapFacts(series, close, date));
+  out.push(...gapFacts(pl, series, close, date));
 
   // 60 日高低區間位置
   const h60 = pl.highs["60"]?.p;
