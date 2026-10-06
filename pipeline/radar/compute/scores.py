@@ -445,98 +445,120 @@ def compute_scores(date: str | None = None) -> dict:
         d = f"{date[:4]}-{date[4:6]}-{date[6:8]}" if date else dates[0]
         if d not in dates:
             raise RuntimeError(f"{d} not in recent price dates")
-        di = dates.index(d)
-        recent = dates[di:di + 11]                 # d 與其前 10 個交易日
-        base20_start = dates[min(di + 20, len(dates) - 1)]
+        out_rows = score_date(conn, d, dates)
 
-        # 價格(近 11 日)
-        prices: dict[str, dict[str, tuple]] = {}
-        for r in conn.execute(text(
-            "SELECT stock_id, date, open, high, low, close, volume FROM daily_prices "
-            "WHERE date >= :lo AND date <= :d AND close IS NOT NULL"),
-                {"lo": recent[-1], "d": d}):
-            prices.setdefault(r[0], {})[r[1]] = r
+    with engine.begin() as conn:
+        n = upsert(conn, schema.daily_scores, out_rows)
+        conn.execute(schema.import_logs.insert().values(
+            run_at=datetime.now(ZoneInfo(config.TZ)).isoformat(timespec="seconds"),
+            source="compute", dataset="scores", date=d, rows=n, status="ok"))
+    qualified = sum(1 for r in out_rows if r["final"] >= 65)
+    return {"date": d, "scored": len(out_rows), "watchlist": qualified}
 
-        volumes: dict[str, dict[str, int]] = {}
-        for r in conn.execute(text(
-            "SELECT stock_id, date, volume FROM daily_prices "
-            "WHERE date >= :lo AND date <= :d AND volume IS NOT NULL"),
-                {"lo": base20_start, "d": d}):
-            volumes.setdefault(r[0], {})[r[1]] = r[2]
 
-        adv = {r[0]: r[1] for r in conn.execute(text(
-            "SELECT stock_id, AVG(turnover) FROM daily_prices "
-            "WHERE date >= :lo AND date < :d GROUP BY stock_id"),
-            {"lo": base20_start, "d": d})}
+def score_date(conn, d: str, dates: list[str], tech: dict | None = None) -> list[dict]:
+    """Score every stock on date ``d`` and return the daily_scores rows; never writes.
 
-        stocks = {r[0] for r in conn.execute(text(
-            "SELECT id FROM stocks WHERE type = 'stock'"))}
+    ``conn`` is only read (SELECTs).  ``dates`` are trading dates, newest first,
+    containing ``d`` (compute_scores passes the latest 22).  ``tech`` replaces the
+    ``indicators_daily`` read for ``d`` when given: {stock_id: (stock_id, tech_score,
+    volume_ratio, risks_json, reasons_json, ma5, box_high60)} — used by the read-only
+    recompute diff (pipeline/tools/score_recompute_diff.py) to score with freshly
+    computed technicals instead of the stored ones.
+    """
+    di = dates.index(d)
+    recent = dates[di:di + 11]                 # d 與其前 10 個交易日
+    base20_start = dates[min(di + 20, len(dates) - 1)]
 
-        # 權證:今日與前2日 + 20日均
-        w_rows: dict[str, dict[str, tuple]] = {}
-        for r in conn.execute(text(
-            "SELECT stock_id, date, call_turnover, call_volume, put_turnover "
-            "FROM warrant_stock_daily WHERE date >= :lo AND date <= :d"),
-                {"lo": recent[min(2, len(recent) - 1)], "d": d}):
-            w_rows.setdefault(r[0], {})[r[1]] = r
-        w_avg = {r[0]: (r[1], r[2]) for r in conn.execute(text(
-            "SELECT stock_id, AVG(call_turnover), AVG(call_volume) "
-            "FROM warrant_stock_daily WHERE date >= :lo AND date < :d GROUP BY stock_id"),
-            {"lo": base20_start, "d": d})}
+    # 價格(近 11 日)
+    prices: dict[str, dict[str, tuple]] = {}
+    for r in conn.execute(text(
+        "SELECT stock_id, date, open, high, low, close, volume FROM daily_prices "
+        "WHERE date >= :lo AND date <= :d AND close IS NOT NULL"),
+            {"lo": recent[-1], "d": d}):
+        prices.setdefault(r[0], {})[r[1]] = r
 
+    volumes: dict[str, dict[str, int]] = {}
+    for r in conn.execute(text(
+        "SELECT stock_id, date, volume FROM daily_prices "
+        "WHERE date >= :lo AND date <= :d AND volume IS NOT NULL"),
+            {"lo": base20_start, "d": d}):
+        volumes.setdefault(r[0], {})[r[1]] = r[2]
+
+    adv = {r[0]: r[1] for r in conn.execute(text(
+        "SELECT stock_id, AVG(turnover) FROM daily_prices "
+        "WHERE date >= :lo AND date < :d GROUP BY stock_id"),
+        {"lo": base20_start, "d": d})}
+
+    stocks = {r[0] for r in conn.execute(text(
+        "SELECT id FROM stocks WHERE type = 'stock'"))}
+
+    # 權證:今日與前2日 + 20日均
+    w_rows: dict[str, dict[str, tuple]] = {}
+    for r in conn.execute(text(
+        "SELECT stock_id, date, call_turnover, call_volume, put_turnover "
+        "FROM warrant_stock_daily WHERE date >= :lo AND date <= :d"),
+            {"lo": recent[min(2, len(recent) - 1)], "d": d}):
+        w_rows.setdefault(r[0], {})[r[1]] = r
+    w_avg = {r[0]: (r[1], r[2]) for r in conn.execute(text(
+        "SELECT stock_id, AVG(call_turnover), AVG(call_volume) "
+        "FROM warrant_stock_daily WHERE date >= :lo AND date < :d GROUP BY stock_id"),
+        {"lo": base20_start, "d": d})}
+
+    if tech is None:
         tech = {r[0]: r for r in conn.execute(text(
             "SELECT stock_id, tech_score, volume_ratio, risks, reasons, ma5, box_high60 "
             "FROM indicators_daily WHERE date = :d"), {"d": d})}
 
-        insti: dict[str, dict[str, tuple]] = {}
-        for r in conn.execute(text(
-            "SELECT stock_id, date, foreign_net, trust_net, total_net "
-            "FROM daily_institutional WHERE date >= :lo AND date <= :d"),
-                {"lo": recent[min(4, len(recent) - 1)], "d": d}):
-            insti.setdefault(r[0], {})[r[1]] = r
+    insti: dict[str, dict[str, tuple]] = {}
+    for r in conn.execute(text(
+        "SELECT stock_id, date, foreign_net, trust_net, total_net "
+        "FROM daily_institutional WHERE date >= :lo AND date <= :d"),
+            {"lo": recent[min(4, len(recent) - 1)], "d": d}):
+        insti.setdefault(r[0], {})[r[1]] = r
 
-        margins = {r[0]: r for r in conn.execute(text(
-            "SELECT stock_id, margin_balance, margin_limit, short_balance, short_prev FROM daily_margins "
-            "WHERE date = :d"), {"d": d})}
+    margins = {r[0]: r for r in conn.execute(text(
+        "SELECT stock_id, margin_balance, margin_limit, short_balance, short_prev FROM daily_margins "
+        "WHERE date = :d"), {"d": d})}
 
-        branches: dict[str, dict[str, list[dict]]] = {}
-        # 全市場 20 日窗:走依日期連續的覆蓋索引(radar/branch_source.py,docs/43)。
-        for r in conn.execute(text(
-            "SELECT r.stock_id, r.date, d.branch_key, d.branch_name, r.buy_lots, r.sell_lots, "
-            f"r.net_lots, r.pct FROM {date_window_from(conn)} "
-            "WHERE r.date >= :lo AND r.date <= :d AND LENGTH(r.stock_id) = 4"),
-                {"lo": base20_start, "d": d}):
-            branches.setdefault(r[0], {}).setdefault(r[1], []).append({
-                "branch_key": r[2], "branch_name": r[3], "buy_lots": r[4],
-                "sell_lots": r[5], "net_lots": r[6], "pct": r[7],
-            })
+    branches: dict[str, dict[str, list[dict]]] = {}
+    # 全市場 20 日窗:走依日期連續的覆蓋索引(radar/branch_source.py,docs/43)。
+    for r in conn.execute(text(
+        "SELECT r.stock_id, r.date, d.branch_key, d.branch_name, r.buy_lots, r.sell_lots, "
+        f"r.net_lots, r.pct FROM {date_window_from(conn)} "
+        "WHERE r.date >= :lo AND r.date <= :d AND LENGTH(r.stock_id) = 4"),
+            {"lo": base20_start, "d": d}):
+        branches.setdefault(r[0], {}).setdefault(r[1], []).append({
+            "branch_key": r[2], "branch_name": r[3], "buy_lots": r[4],
+            "sell_lots": r[5], "net_lots": r[6], "pct": r[7],
+        })
 
-        # 題材所需之價格與成交額 (近 21 個交易日)
-        theme_dates = dates[di:di + 21]
-        lo_theme_date = theme_dates[-1]
-        theme_prices: dict[str, dict[str, tuple]] = {}
-        for r in conn.execute(text(
-            "SELECT stock_id, date, close, turnover FROM daily_prices "
-            "WHERE date >= :lo AND date <= :d AND close IS NOT NULL"),
-                {"lo": lo_theme_date, "d": d}):
-            theme_prices.setdefault(r[0], {})[r[1]] = (r[2], r[3] or 0)
+    # 題材所需之價格與成交額 (近 21 個交易日)
+    theme_dates = dates[di:di + 21]
+    lo_theme_date = theme_dates[-1]
+    theme_prices: dict[str, dict[str, tuple]] = {}
+    for r in conn.execute(text(
+        "SELECT stock_id, date, close, turnover FROM daily_prices "
+        "WHERE date >= :lo AND date <= :d AND close IS NOT NULL"),
+            {"lo": lo_theme_date, "d": d}):
+        theme_prices.setdefault(r[0], {})[r[1]] = (r[2], r[3] or 0)
 
-        # 題材與個股對照
-        theme_stocks = {}
-        for r in conn.execute(text("SELECT theme_id, stock_id FROM stock_themes")):
-            theme_stocks.setdefault(r[0], []).append(r[1])
+    # 題材與個股對照
+    theme_stocks = {}
+    for r in conn.execute(text("SELECT theme_id, stock_id FROM stock_themes")):
+        theme_stocks.setdefault(r[0], []).append(r[1])
 
-        # 題材名稱對照
-        theme_names = {r[0]: r[1] for r in conn.execute(text("SELECT id, name FROM themes"))}
+    # 題材名稱對照
+    theme_names = {r[0]: r[1] for r in conn.execute(text("SELECT id, name FROM themes"))}
 
-        # 題材今日分數計算
-        theme_scores_by_id = score_themes(theme_stocks, theme_prices, theme_dates, d)
+    # 題材今日分數計算
+    theme_scores_by_id = score_themes(theme_stocks, theme_prices, theme_dates, d)
 
-        # 映射 stock_id -> list of theme_ids
-        stock_to_themes = {}
-        for tid, sids in theme_stocks.items():
-            for sid in sids:
-                stock_to_themes.setdefault(sid, []).append(tid)
+    # 映射 stock_id -> list of theme_ids
+    stock_to_themes = {}
+    for tid, sids in theme_stocks.items():
+        for sid in sids:
+            stock_to_themes.setdefault(sid, []).append(tid)
 
     out_rows = []
     for sid in stocks:
@@ -665,11 +687,4 @@ def compute_scores(date: str | None = None) -> dict:
             "buy_concentration": round(buy_conc, 4) if buy_conc is not None else None,
             "concentration_avg20": round(conc_avg20, 4) if conc_avg20 is not None else None,
         })
-
-    with engine.begin() as conn:
-        n = upsert(conn, schema.daily_scores, out_rows)
-        conn.execute(schema.import_logs.insert().values(
-            run_at=datetime.now(ZoneInfo(config.TZ)).isoformat(timespec="seconds"),
-            source="compute", dataset="scores", date=d, rows=n, status="ok"))
-    qualified = sum(1 for r in out_rows if r["final"] >= 65)
-    return {"date": d, "scored": len(out_rows), "watchlist": qualified}
+    return out_rows
