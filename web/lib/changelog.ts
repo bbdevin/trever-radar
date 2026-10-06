@@ -39,6 +39,15 @@ export const KIND_LABEL: Record<ChangeKind, string> = {
 
 export const CHANGELOG: Release[] = [
   {
+    version: "3.3",
+    date: "2026-10-06",
+    title: "個股頁載入加快、上櫃資券補齊",
+    items: [
+      { kind: "improve", text: "個股頁資料拆成主檔與籌碼檔,較早的 K 線另外補上,大型個股第一次開頁更快;自選頁只讀主檔,載入更輕" },
+      { kind: "fix", text: "上櫃股票的融資買賣與現償、融券買賣與償還欄位原本一直是空白,已修正並回補約一年的資料;上櫃股的融資成本(估)開始顯示" },
+    ],
+  },
+  {
     version: "3.2",
     date: "2026-10-04",
     title: "首頁多方榜、換頁變快、版本紀錄上線",
