@@ -369,6 +369,12 @@ export interface StockJson {
    * list_as_of 確實不含這檔,是一個正面主張,不是缺資料。兩者不得混同。
    */
   futures?: FuturesInfo;
+  /**
+   * 拆檔指標(docs/44 P1 §3.2):只出現在 `stocks/core/{id}.json`。有它代表 chips 四鍵在
+   * `stocks/chips/{id}.json`、cut 以前的 K 線(若有)在 `hist` 指到的檔;舊單一檔沒有這個鍵。
+   * 型別在 `lib/stockParts.ts`;接回後的 StockJson 沒有它。
+   */
+  parts?: import("./stockParts.ts").StockParts;
 }
 
 /** 個股期貨:存在與否的事實,外加(若當日已公布)原始量/未平倉,無比率無名次。 */

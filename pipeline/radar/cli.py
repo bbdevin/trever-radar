@@ -838,7 +838,12 @@ def cmd_import_stock_info(_args):
 
 def cmd_export_json(args):
     from .export.json_export import export_json
-    info = export_json(args.out)
+    info = export_json(
+        args.out,
+        legacy_stocks=not args.no_legacy_stocks,
+        verify_split=args.verify_split,
+        size_report=args.size_report,
+    )
     print(f"exported {info['stocks']} stocks for {info['date']} -> {info['out']}")
 
 
@@ -1351,6 +1356,14 @@ def main(argv=None):
 
     exp = sub.add_parser("export-json", help="write web/public/data/*.json for the frontend")
     exp.add_argument("--out", default=None, help="output dir (default web/public/data)")
+    # docs/44 P1(§3.2)個股拆檔。舊單一檔 stocks/{id}.json 過渡期預設照寫;清理步驟才加
+    # --no-legacy-stocks。--verify-split 每檔在記憶體內把三份接回與原 payload 比對。
+    exp.add_argument("--no-legacy-stocks", action="store_true",
+                     help="do not write the legacy single-file stocks/{id}.json (cleanup step)")
+    exp.add_argument("--verify-split", action="store_true",
+                     help="assert core+hist+chips merge back to the single payload for every stock")
+    exp.add_argument("--size-report", default=None, metavar="PATH",
+                     help="write per-key size distribution (union vs other) to PATH")
     exp.set_defaults(fn=cmd_export_json)
 
     fad = sub.add_parser(

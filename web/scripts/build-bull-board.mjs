@@ -18,6 +18,7 @@ import { fileURLToPath } from "node:url";
 import { boardLogLine, buildBullBoard, selectBoard } from "../lib/bullBoard.ts";
 import { lastCandleDate, summaryFromStockJson } from "../lib/bullBearFromStock.ts";
 import { shouldAppendLogLine } from "../lib/bullBoardLog.ts";
+import { mergeIfSplit } from "../lib/stockParts.ts";
 import { hottestListedTheme } from "../lib/themeGroups.ts";
 
 const t0 = performance.now();
@@ -68,7 +69,21 @@ function earliestLogged(dir) {
 const radar = readJson(path.join(DATA, "radar.json"));
 const radarById = new Map((radar.stocks ?? []).map((s) => [s.id, s]));
 const stockDir = path.join(DATA, "stocks");
-const files = fs.readdirSync(stockDir).filter((f) => f.endsWith(".json")).sort();
+// 拆檔佈局(docs/44 P1 §3.2):有 stocks/core/ 就讀核心並把 chips/hist 接回(與個股頁同一個
+// mergeStockParts);沒有就讀舊單一檔 stocks/*.json。兩種佈局算出來的 bull_board.json 相同。
+const coreDir = path.join(stockDir, "core");
+const splitLayout = fs.existsSync(coreDir) && fs.statSync(coreDir).isDirectory();
+const readDir = splitLayout ? coreDir : stockDir;
+const files = fs.readdirSync(readDir).filter((f) => f.endsWith(".json")).sort();
+// 拆檔佈局下 hist/chips 接回;hist 檔不在(並行 export 剛換雜湊)→ 有舊單一檔就讀舊檔,沒有就丟出讓外層略過。
+const mergeParts = (f, core) =>
+  mergeIfSplit(core, (rel) => {
+    const p = path.join(stockDir, rel);
+    if (fs.existsSync(p)) return readJson(p);
+    const legacy = path.join(stockDir, f);
+    if (rel.startsWith("hist/") && fs.existsSync(legacy)) throw Object.assign(new Error("hist missing"), { legacy });
+    throw new Error(`part missing: ${rel}`);
+  });
 
 const cands = [];
 let holdersWeek = null;
@@ -77,16 +92,35 @@ const tRead = performance.now();
 for (const f of files) {
   let data;
   try {
-    data = readJson(path.join(stockDir, f));
+    data = readJson(path.join(readDir, f));
   } catch (e) {
     failed += 1;
     console.warn(`bull-board: skip ${f}: ${e?.message ?? e}`);
     continue;
   }
+  // 最後一根 K 與 scores 都在核心:母體外的檔連 hist/chips 都不必讀(省時間)。母體判斷仍交給 selectBoard。
   const lastT = lastCandleDate(data);
   const scored = data.scores != null;
-  // 母體外的檔不必算多空(省時間);母體判斷仍交給 selectBoard。
   if (!scored || lastT !== radar.data_date) continue;
+  if (splitLayout) {
+    try {
+      data = mergeParts(f, data);
+    } catch (e) {
+      if (e?.legacy) {
+        try {
+          data = readJson(e.legacy);
+        } catch (e2) {
+          failed += 1;
+          console.warn(`bull-board: skip ${f}: ${e2?.message ?? e2}`);
+          continue;
+        }
+      } else {
+        failed += 1;
+        console.warn(`bull-board: skip ${f}: ${e?.message ?? e}`);
+        continue;
+      }
+    }
+  }
   const r = radarById.get(data.id);
   const last = data.candles[data.candles.length - 1];
   const hw = data.holders_history?.[0]?.t ?? null;
@@ -150,7 +184,7 @@ for (const f of new Set([dataMonthFile, logFile])) {
 
 const elapsed = (performance.now() - t0) / 1000;
 console.log(
-  `bull-board timing: files=${files.length} universe=${board.universe} qualified=${board.qualified} ` +
+  `bull-board timing: files=${files.length} layout=${splitLayout ? "split" : "legacy"} universe=${board.universe} qualified=${board.qualified} ` +
     `failed=${failed} read+summary=${(readMs / 1000).toFixed(2)}s per_file=${files.length ? (readMs / files.length).toFixed(2) : 0}ms ` +
     `elapsed=${elapsed.toFixed(2)}s`,
 );

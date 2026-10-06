@@ -19,6 +19,14 @@ from .. import config
 from ..db import get_engine, init_db
 from ..branch_source import date_window_from
 from .spark_day import attach_spark_day
+from .stock_parts import (
+    StockPartsWriter,
+    hist_cut,
+    merge_stock_parts,
+    size_entry,
+    split_stock_payload,
+    summarize_sizes,
+)
 from ..geo import is_agent_seat, normalize_branch_name, transfer_agent_broker
 from ..pocket import (
     apply_pocket,
@@ -1340,7 +1348,21 @@ def _export_margin_usage(out: Path, conn, d: str, m_date: str | None) -> None:
     )
 
 
-def export_json(out_dir: Path | None = None) -> dict:
+def export_json(
+    out_dir: Path | None = None,
+    *,
+    legacy_stocks: bool = True,
+    verify_split: bool = False,
+    size_report: Path | None = None,
+) -> dict:
+    """匯出全部前端 JSON。
+
+    個股檔(docs/44 P1,§3.2)每檔寫三份:``stocks/core/{id}.json``、
+    ``stocks/chips/{id}.json``、(聯集股)``stocks/hist/{id}.{hash}.json``;
+    ``legacy_stocks=True``(預設,過渡期)時舊單一檔 ``stocks/{id}.json`` 照寫、逐位元不變。
+    ``verify_split`` 對每一檔在記憶體內把三份接回,與單一 payload 深度比對,不相等就擲例外。
+    ``size_report`` 給路徑時寫每鍵大小分布(聯集/其餘兩組)。
+    """
     out = Path(out_dir) if out_dir else DEFAULT_OUT
     out.mkdir(parents=True, exist_ok=True)
     init_db()
@@ -2213,6 +2235,10 @@ def export_json(out_dir: Path | None = None) -> dict:
         # 各段累計秒數(docs/43):只印一行 log,輸出的 JSON 一個位元都不變。
         timing = {k: 0.0 for k in ("branch_history", "candles", "pctile", "pnl",
                                    "levels", "warrant_shards", "tracked", "write")}
+        # 拆檔(docs/44 §3.2):聯集股的 K 線以 cut 切出 hist;其餘不切。
+        parts_writer = StockPartsWriter(stock_dir)
+        cut = hist_cut(d)
+        size_entries: dict[str, dict[str, int]] = {}
         for sid in export_ids:
             s = by_id_all.get(sid)
             if s is None:
@@ -2412,9 +2438,25 @@ def export_json(out_dir: Path | None = None) -> dict:
                             futures_history, futures_history_meta, sid),
                     }
             t_sec = time.perf_counter()
-            (stock_dir / f"{sid}.json").write_text(
-                json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+            if legacy_stocks:
+                (stock_dir / f"{sid}.json").write_text(
+                    json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+            parts = split_stock_payload(payload, cut=cut if sid in union else None)
+            if verify_split:
+                merged = merge_stock_parts(parts["core"], parts["hist"], parts["chips"])
+                if merged != payload:
+                    raise RuntimeError(f"split/merge mismatch for {sid}")
+            parts_writer.write(parts)
+            if size_report is not None:
+                size_entries[sid] = size_entry(payload)
             timing["write"] += time.perf_counter() - t_sec
+        parts_writer.finish()
+        if size_report is not None:
+            Path(size_report).write_text(json.dumps({
+                "data_date": d, "generated_at": now, "cut": cut,
+                "union": len(union), "stocks": len(size_entries),
+                **summarize_sizes(size_entries, set(union.keys())),
+            }, ensure_ascii=False, indent=1), encoding="utf-8")
 
     (out / "groups.json").write_text(json.dumps({
         "version": 1, "data_date": d, "generated_at": now, "groups": groups,
@@ -2430,8 +2472,12 @@ def export_json(out_dir: Path | None = None) -> dict:
     timing["tracked"] += time.perf_counter() - t_sec
     # 一行、固定鍵序,正式機 radar-cron.log 可直接 grep 'export timing:' 比較前後。
     print("export timing: " + " ".join(f"{k}={v:.1f}s" for k, v in timing.items()), flush=True)
+    print(f"export parts: hist_written={parts_writer.hist_written} "
+          f"hist_reused={parts_writer.hist_reused} hist_total={len(parts_writer.index)} "
+          f"legacy={'on' if legacy_stocks else 'off'}", flush=True)
 
-    return {"out": str(out), "date": d, "stocks": len(export_ids)}
+    return {"out": str(out), "date": d, "stocks": len(export_ids),
+            "hist_written": parts_writer.hist_written, "hist_reused": parts_writer.hist_reused}
 
 def _export_branches(out: Path, engine, date: str):
     branches_dir = out / "branches"

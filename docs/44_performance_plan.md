@@ -22,7 +22,7 @@
 | **W-P0** 網站(純前端) | ①登入狀態單例 ②站內導航改客戶端換頁(`next/link`/`router.push`,個股頁 `key={id}`)③`_headers` 讓 `/_next/static/*` 一年快取 ④正式站基準量測 | 每次換頁省 1–2 s(中階手機);首頁 Supabase 請求 ~90 → 1 | 否(一般前端修正) | 只動 `web/` |
 | **D-P0** 維護窗(資料庫) | 離線把 `branch_trades_raw` + `daily_prices` 轉 WITHOUT ROWID、丟 1.33 GB 覆蓋索引、壓實;`page_size`/`ANALYZE` 各自以基準決定 | export 每輪 −9～−10 分(一天 −1 小時);夜間分位 −5～−8 分;9.03 → 6–6.5 GB | **是**(正式 DB 重建 + schema 變更 + 停機窗) | VPS 停寫一段時間,網站照常 |
 | **D-P0.5** 同批程式 ✅ 2026-10-04 程式完成(見 §7) | `db.py` 連線 PRAGMA(`synchronous=NORMAL`(僅 WAL)、`cache_size=-65536`;`temp_store` 維持 FILE;**mmap 不設**);`upsert()` 改 executemany;export 分段計時 log | `compute_all` 寫入 212 s → 40–60 s;寫入段 −20～−40% | 否 | 只動程式,不改檔案格式 |
-| **P1** 資料格式拆檔(前後端一起) | 見 §3:個股 JSON 拆「核心＋K線歷史(內容雜湊檔名,一年快取)＋籌碼區段」,每輪只重算有變動的區段;`separators` 去空白、移除前端沒用到的 `af`;`no-store` → `no-cache`(304) | 一天 export ~2 h → ~35–45 分;手機首屏下載 0.5–1.5 MB raw → ~100 KB;重複看同一檔近乎 0 下載 | **格式請你過目**;Worker 規則需資安審查 + 核准 | 前端先上雙讀 → VPS 切格式 → Worker |
+| **P1** 資料格式拆檔(前後端一起)**— 2026-10-05 程式完成於分支(§3.2),待合 main** | 見 §3:個股 JSON 拆「核心＋K線歷史(內容雜湊檔名,一年快取)＋籌碼區段」,每輪只重算有變動的區段;`separators` 去空白、移除前端沒用到的 `af`;`no-store` → `no-cache`(304) | 一天 export ~2 h → ~35–45 分;手機首屏下載 0.5–1.5 MB raw → ~100 KB;重複看同一檔近乎 0 下載 | **格式請你過目**;Worker 規則需資安審查 + 核准 | 前端先上雙讀 → VPS 切格式 → Worker |
 | **P1** Worker 驗證優化 | 同時多個請求只查一次 Supabase;JWKS 本地驗簽(ES256 釘死、移除 `/auth/v1/user`);profile 以 `sub` 快取 5 分。**2026-10-04 已在分支實作(`src/auth.js` + `test/*.test.mjs`),獨立資安審查通過(4 個 Low 已修),⏳ 待使用者核准,未合 main、未上線** | 冷啟動每頁 −0.25～−0.5 s | **是 + 資安審查**(門鎖) | `cloudflare-data-worker/` |
 | **P2** 觀察後再決定 | 個股分頁元件按需載入、點擊預抓、爬蟲段不持 DB 鎖、權證分點增量彙總、`radar.json` 瘦身、權證分點列保留天數 | 邊際 | 部分需核准 | — |
 
@@ -75,6 +75,48 @@ stocks/chips/{id}.json      branch_history、branch_pnl_est、branch_pctile_coun
   - `separators` 主要省 VPS 寫入(每輪 1.13 → ~0.9 GB),線上 brotli 下載量幾乎不變。
   - `af`(還原因子):前端與盤中 worker 都沒讀;排後由使用者決定,建議改出一份稀疏的 `adj`(只有除權息日)而不是直接丟掉。
   - `cloudflare-data-worker` 的任何 commit 會在**下一輪 VPS deploy 自動上線**(不經 GitHub),改 Worker 前要先告知並完成資安審查。
+
+### 3.2 P1 拆檔實作決定(2026-10-05,Fable Planner+Executor;程式在分支,未合 main)
+
+使用者交代「現在能做的就都做,按照 Fable 決定」。硬前提不變:**每一個畫面上的數字改前改後一致,只換包裝**。以下是定案與理由。
+
+**檔案佈局(VPS `export-json` 每輪都寫)**
+
+```
+stocks/{id}.json              舊單一檔(**過渡期照寫**,逐位元不變;舊前端與尚未更新的分頁靠它)
+stocks/core/{id}.json         核心:舊檔扣掉 chips 四鍵、K 線只留 cut 之後;多一個 parts 指標
+stocks/hist/{id}.{hash8}.json cut 以前的 K 線(只有「榜單聯集」那 ~275 檔有;內容雜湊檔名)
+stocks/hist/index.json        id → {file, hash, bars, cut, first}(維運用;前端讀 core.parts 不讀它)
+stocks/chips/{id}.json        branch_history / branch_pctile_counts / branch_tags / branch_pnl_est
+```
+
+- `core.parts = {version: 1, hist: {file, bars, cut, first} | null, chips: {file, keys}}`。前端把 `hist.candles + core.candles` 接回、chips 四鍵塞回、刪掉 `parts`,**必須與舊單一檔逐鍵深度相等**(node 與 pytest 都鎖這條;`export-json --verify-split` 在匯出時對每一檔在記憶體內再比一次)。
+- **cut = 資料日前兩年的 1/1**(`hist_cut`),不是 §3 草案的「前一年 1/1」:核心因此至少有 ~490 根,涵蓋「1 年」區間(240 根)+ 年線回看(240 根),K 線分頁六個區間裡只有「5 年／全部」在 hist 到之前會少畫;均線不會斷。代價是核心多約 245 根(~22 KB raw)。
+- **hist 只給聯集股**:非聯集股本來就只有 600 根(滑動視窗),若也切會天天換雜湊、天天新檔;聯集股的 cut 以前內容一年不變,只在除權息重算 af 時換檔。寫檔前先看同名檔是否已存在(存在就不重寫),再刪同 id 其他雜湊檔;本輪沒寫到 hist 的 id(退出聯集)其舊檔一併刪,`stocks/hist/` 不會累積。
+- 新檔一律 `separators=(",", ":")`(raw −15~20%);舊單一檔維持原序列化,所以「舊檔逐位元不變」可直接驗。
+- **chips 不延後抓**:多空摘要(標頭「多方 N·空方 N」與多空分頁)要 branch_history/pnl/pctile/tags,K 線的主力買賣超 pane 也要 branch_history;延後抓等於先畫一個不同的畫面。所以個股頁第一次畫面 = core + chips 都到(兩個請求並行);**只有 hist 是漸進的**:多空摘要與多空分頁等 hist 到才算(之前是骨架,不是 0·0),其餘(報價、K 線預設 3 月、籌碼日報、法人、資券…)先畫。非聯集股沒有 hist,行為與今天完全相同。
+- `--sections`(依輪次只重算 chips)**不做**:`branch_pnl_est` 的未實現損益用到當日收盤、`branch_tags.as_of` = 資料日,chips 每一輪本來就會變,略過重算就是輸出舊數字。P2 若要省 export 時間,路線是 §3 的「分點無新列就整段跳過」而不是這個旗標。
+- `af` 不動(待使用者決定);`dataFetch` 的 `no-store` 不動(改 `no-cache`/304 要連 Worker 標頭一起看);Worker **不改**——`stocks/hist/*` 目前跟其他檔一樣 `private, max-age=60`,要拿到「一年 immutable」必須改 Worker(資安審查 + 核准,見下方待辦)。
+
+**相容矩陣(程式走 Pages push 即上線;資料等 VPS 下一輪 `sync_code` 後 export)**
+
+| | 舊資料(只有 `stocks/{id}.json`) | 新資料(三份都有) |
+|---|---|---|
+| 舊前端 | 今天的狀態 | 讀 `stocks/{id}.json`,內容逐位元同舊版 → 正常 |
+| 新前端 | 先抓 `stocks/core/{id}.json` → 404 → 退回 `stocks/{id}.json` → 正常 | 走新佈局;hist 抓不到(部署瞬間雜湊換了)重抓一次 core,再不行退回舊單一檔 |
+| 多方榜建置器(VPS) | 舊路徑 | `stocks/core/` 存在就讀 core+chips+hist 合併(同一個 `mergeStockParts`),輸出不變 |
+| 自選頁 | 舊路徑 | 只抓 core(最後兩根 K 與 scores 就在 core)→ 每檔 ~500 KB → ~120 KB |
+
+**檔數**:Workers 靜態資產每版上限 20,000 檔。估今天 ~6,400(2,418 個股 + 權證分點明細 ~3,800 + 其餘);過渡期 +2,418 core +2,418 chips +~275 hist +1 ≈ **11,500**;清理後 ≈ 9,100。單檔 25 MB 無虞(最大的個股檔 1.4 MB)。
+
+**誠實註記(2026-10-05 驗證者要求)**:
+- **hist 目前沒有瀏覽器快取效益**:`dataFetch` 是 `no-store`,Worker 對 `stocks/hist/*` 也只給 `private, max-age=60`(同其他檔)。`stockLoad` 對 hist 用 `cache: "default"`,但要等清理步驟 ④ 改 Worker 標頭(資安審查)才會真的快取;在那之前聯集股每次進頁都重抓 hist,**首次載入總位元組與今天相同**(只差 separators 的空白),得到的是「核心先畫、hist 後到」的體感與 export/deploy 端的好處。
+- **過渡期成本(實測比例)**:本機 968 檔 46.0 MB → core 26.6 + chips 0.3 + hist 12.6 MB;正式機 2,418 檔估 stocks 約 1.13 GB → 新增 core ≈ 0.65 GB + chips ≈ 0.25 GB + hist ≈ 0.3 GB,**磁碟約 +1.2 GB、wrangler 每輪上傳位元組約 +80%**(hist 內容不變不重傳,core+chips 每輪都變)。VPS `df` 2026-10-05:`/` 29 GB、已用 76%、**剩 6.8 GB**;週六 05:00 `weekly-backup.sh` 另需約 2.1 GB 暫存 gzip → 過渡期最低點約 6.8 − 1.2 − 2.1 ≈ **3.5 GB**,不會撞牆,但 D-P0 前的 9 GB DB 若再長就更緊,所以過渡期要短。
+- **並行 export(`mid-backfill-publish.sh` 不持 DB 鎖)**:三份都 tmp+rename、hist 先寫 core 後寫、同名 hist 只在檔案大小等於這次內容才重用(截斷檔會重寫)、index 沒指到的 hist 檔要 **mtime 老過 24 小時**才刪,而且**重用時會把 mtime 刷新到現在**(否則一年沒變的 hist 早就老過寬限期,另一個聯集/雜湊不同的並行 export 會刪掉它——驗證者反例 S2/S3);第二道保險:磁碟上該 id 的 core 若仍指著這個檔也不刪(只為刪除候選檔讀一個 core)。代價是換雜湊後舊檔多留一天。前端:chips 抓不到→退舊檔;hist 404→重抓 core,core 404 或再 404→退舊檔;hist 網路錯誤→重試一次,再失敗保留已畫的頁面並在多空列標一行說明(`histFailed`),不整頁變錯誤。建置器:母體外的檔只讀核心;hist 不在時讀舊單一檔,沒有就略過該檔不中斷。
+
+**清理步驟(縮短過渡:上線後連續 2–3 個乾淨交易日即可,不必等一週;另案)**:① 看 radar-cron.log 的 `export parts:`(hist_reused 應接近 hist_total)、正式站個股頁無 404 退回、建置器 `layout=split`;② VPS 腳本的 `radar export-json` 改成 `radar export-json --no-legacy-stocks`(12 支腳本,見 `test_bull_board_vps_wiring.py` 的清單)或把預設翻過來;③ 刪掉 VPS `web/public/data/stocks/*.json`(頂層那 2,418 個)讓 wrangler 下一輪移除(磁碟與每輪上傳回到比今天還少);④ Worker 加 `stocks/hist/*` 長快取 + `dataFetch` 對 hist 放行快取(資安審查),hist 才真正「一年只下載一次」。
+
+**驗證方式**:pytest `test_stock_parts.py`(純函式 + 種子 DB 匯出:合併 == 舊檔、hist 不重寫、退出聯集刪檔、`--no-legacy-stocks`、`--size-report`);node `stockParts.test.ts` / `stockLoad.test.ts` / `bullBoardBuild.test.ts`(拆檔 fixture 與舊 fixture 建出同一份 bull_board.json);`pipeline/tools/split_legacy_dir.py` 把本機 968 檔真實舊 JSON(2026-07-08)用同一個 `split_stock_payload` 拆成新佈局,`web/scripts/verify-split-merge.mjs` 用前端的 `mergeStockParts` 接回逐檔 deepStrictEqual 並統計 raw/brotli 大小;Playwright `parity-snapshot.mjs` 對同一份 build 分別餵舊/新佈局,全部頁面文字相同;390px 截圖。
 
 ## 4. 明確不做
 

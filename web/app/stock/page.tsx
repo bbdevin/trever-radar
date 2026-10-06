@@ -61,6 +61,8 @@ import { useBranchTrack } from "@/lib/branchTrackList";
 import BullBearPanel, { CountChip } from "@/components/BullBearPanel";
 import { normalizePnl } from "@/lib/branchPnl";
 import { dataFetch } from "@/lib/dataFetch";
+import { loadStock } from "@/lib/stockLoad";
+import { Skeleton } from "@/components/ui/skeleton";
 import { OFFLINE_DATA_COPY, isBrowserOffline } from "@/lib/pwa";
 import type { Buyback, CompanyTheme, RecentThemeHeat, StockJson } from "@/lib/types";
 import { MARKET_LABEL, chgClass, fmtE8, fmtX, toneClass } from "@/lib/format";
@@ -99,6 +101,8 @@ function StockView() {
   const id = useSearchParams().get("id");
   const tabParam = useSearchParams().get("tab");
   const [data, setData] = useState<StockJson | null>(null);
+  const [complete, setComplete] = useState(false);
+  const [histFailed, setHistFailed] = useState(false);
   const [error, setError] = useState(false);
   const [range, setRange] = useState<(typeof RANGES)[number]["key"]>("3m"); // 使用者 2026-10-02:預設 3 月(手機上 K 棒較大)
   const [view, setView] = useState<"chart" | "chips" | "insti" | "margin" | "holders" | "basic" | "tech" | "warrant" | "futures">("chart");
@@ -130,13 +134,24 @@ function StockView() {
     }
   }, []);
 
+  // 拆檔載入(docs/44 P1 §3.2):core + chips 到就先畫;聯集股的 hist(cut 以前的 K 線)到了
+  // complete 才為 true——多空摘要要等它(「資料內最高/最低」看全部 K 棒),之前顯示骨架而不是 0·0。
+  // 舊資料(只有單一檔)一次到齊,行為與以前相同。
   useEffect(() => {
     if (!id) return;
     setDrillBranch(null);
-    dataFetch(`/data/stocks/${id}.json`)
-      .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
-      .then(setData)
-      .catch(() => setError(true));
+    setComplete(false);
+    setHistFailed(false);
+    return loadStock(
+      id,
+      dataFetch,
+      (s) => {
+        setData(s.data);
+        setComplete(s.complete);
+        setHistFailed(!!s.histFailed);
+      },
+      () => setError(true),
+    );
   }, [id]);
 
   // #branch hash：開籌碼日報分頁（IA-5；舊行為是捲到 K 線下方分點區）
@@ -188,10 +203,11 @@ function StockView() {
   // 多空摘要(docs/46):標頭與多空分頁共用同一份。使用者關掉的追蹤分點,口袋標籤照 PocketBadges 一樣不列。
   const { muted } = useBranchTrack();
   const bullBear = useMemo<BullBearSummary | null>(() => {
-    if (!data) return null;
+    // hist 還沒到時不算:算出來的會跟舊單一檔不同(資料內最高/最低、年數),寧可先空著。
+    if (!data || !complete) return null;
     // 與首頁多方榜建置器同一個組裝(docs/48 §1)
     return summaryFromStockJson(data, muted);
-  }, [data, muted]);
+  }, [data, complete, muted]);
 
   // 分點理由過濾：B* 系列(分點) + S11 起的籌碼事件策略
   // 舊寫法是 ["S11","S12","S13"].includes(c),但 c 是完整 code(如
@@ -313,7 +329,7 @@ function StockView() {
               </div>
             )}
           </header>
-          <StockDecisionHeader data={data} summary={bullBear} onOpenBullBear={() => setView("tech")} className="mt-auto mb-0 min-h-0 flex-1" />
+          <StockDecisionHeader data={data} summary={complete ? bullBear : undefined} histFailed={histFailed} onOpenBullBear={() => setView("tech")} className="mt-auto mb-0 min-h-0 flex-1" />
         </div>
         <section data-testid="stock-market-summary" className="flex min-h-full min-w-0 flex-col px-0.5" aria-label={`行情摘要，資料日 ${last.t}`}>
           <div data-testid="stock-watchlist" className="inline-flex size-11 shrink-0 items-center justify-center self-end">
@@ -484,6 +500,19 @@ function StockView() {
       {view === "holders" && <HoldersPanel data={data} />}
       {view === "basic" && <BasicInfoPanel data={data} quoteDate={last.t} />}
       {view === "tech" && bullBear && <TechnicalPanel data={data} summary={bullBear} />}
+      {/* 多空摘要等 K 線歷史(docs/44 P1):等待中畫骨架;最後抓不到就用與標頭同一句說明,不留白。 */}
+      {view === "tech" && !bullBear && !complete && (
+        histFailed ? (
+          <p data-testid="stock-tech-hist-failed" className="mt-3.5 rounded-[var(--r-md)] border border-border bg-card px-3 py-4 text-[13px] leading-snug text-muted-foreground">
+            較早的 K 線歷史未能載入,多空摘要暫不顯示;重新整理可再試。
+          </p>
+        ) : (
+          <div data-testid="stock-tech-pending" role="status" aria-label="載入中" className="mt-3.5 grid gap-2">
+            <Skeleton className="h-[72px] rounded-[var(--r-md)]" />
+            <Skeleton className="h-[160px] rounded-[var(--r-md)]" />
+          </div>
+        )
+      )}
       {view === "warrant" && <WarrantPanel data={data} />}
       {view === "futures" && futuresTab.show && <FuturesPanel futures={data.futures} labels={futuresLabels} />}
 
@@ -708,15 +737,19 @@ function StockPriceTargets({
 }
 
 /** IA-2 + F3 → docs/46 §1.1:綜合分 + 來源徽章 + 「多方 N · 空方 N ›」(切到多空分頁)+ 各一條最前面的事實。
- *  完整理由/風險移到多空分頁;口袋徽章手機也在那裡,≥sm 標頭照留。 */
+ *  完整理由/風險移到多空分頁;口袋徽章手機也在那裡,≥sm 標頭照留。
+ *  `summary === undefined` = 還在等 K 線歷史(docs/44 P1):多空那一列畫骨架,不畫 0·0。 */
 function StockDecisionHeader({
   data,
   summary,
+  histFailed = false,
   onOpenBullBear,
   className,
 }: {
   data: StockJson;
-  summary: BullBearSummary | null;
+  summary: BullBearSummary | null | undefined;
+  /** 較早的 K 線歷史最後仍抓不到:骨架換成一行中性說明(頁面其餘照畫,不整頁變錯誤)。 */
+  histFailed?: boolean;
   onOpenBullBear: () => void;
   className?: string;
 }) {
@@ -724,12 +757,13 @@ function StockDecisionHeader({
   const hasBranch = (scores?.branch ?? 0) > 0;
   const hasWarrant = (scores?.warrant ?? 0) > 0;
   const sourceLabel = hasBranch && hasWarrant ? "分點+權證" : hasBranch ? "分點" : hasWarrant ? "權證" : null;
+  const pending = summary === undefined;
   const nBull = summary?.bull.length ?? 0;
   const nBear = summary?.bear.length ?? 0;
   const topBull = summary ? topOfSide(summary, "bull") : null;
   const topBear = summary ? topOfSide(summary, "bear") : null;
 
-  if (!scores && nBull === 0 && nBear === 0) return null;
+  if (!scores && nBull === 0 && nBear === 0 && !pending) return null;
 
   return (
     <div data-testid="stock-decision" className={cn("flex min-h-0 flex-col overflow-hidden rounded-[var(--r-md)] border border-border bg-card shadow-[var(--shadow-card)]", className)}>
@@ -744,17 +778,28 @@ function StockDecisionHeader({
           </span>
         </div>
       )}
-      <button
-        type="button"
-        data-testid="stock-bullbear-link"
-        onClick={onOpenBullBear}
-        aria-label={`多方 ${nBull} 項、空方 ${nBear} 項,開啟多空分頁`}
-        className="flex min-h-11 w-full shrink-0 cursor-pointer items-center gap-1.5 px-2.5 text-left transition-colors duration-200 hover:bg-secondary/80"
-      >
-        <CountChip side="bull" n={nBull} />
-        <CountChip side="bear" n={nBear} />
-        <ChevronRight size={16} aria-hidden className="ml-auto shrink-0 text-muted-foreground" />
-      </button>
+      {pending && histFailed ? (
+        <p data-testid="stock-bullbear-hist-failed" className="flex min-h-11 w-full shrink-0 items-center px-2.5 text-[12px] leading-snug text-muted-foreground">
+          較早的 K 線歷史未能載入,多空摘要暫不顯示;重新整理可再試。
+        </p>
+      ) : pending ? (
+        <div data-testid="stock-bullbear-pending" role="status" aria-label="載入中" className="flex min-h-11 w-full shrink-0 items-center gap-1.5 px-2.5">
+          <Skeleton className="h-5 w-16 rounded-full" />
+          <Skeleton className="h-5 w-16 rounded-full" />
+        </div>
+      ) : (
+        <button
+          type="button"
+          data-testid="stock-bullbear-link"
+          onClick={onOpenBullBear}
+          aria-label={`多方 ${nBull} 項、空方 ${nBear} 項,開啟多空分頁`}
+          className="flex min-h-11 w-full shrink-0 cursor-pointer items-center gap-1.5 px-2.5 text-left transition-colors duration-200 hover:bg-secondary/80"
+        >
+          <CountChip side="bull" n={nBull} />
+          <CountChip side="bear" n={nBear} />
+          <ChevronRight size={16} aria-hidden className="ml-auto shrink-0 text-muted-foreground" />
+        </button>
+      )}
       {(topBull || topBear) && (
         <div className="grid min-w-0 gap-1 border-t border-[color:var(--line)] px-2.5 py-2 text-[12px] leading-snug">
           {topBull && (

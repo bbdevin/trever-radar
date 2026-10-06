@@ -65,7 +65,7 @@ test("建置器對自造 fixture 跑兩次:輸出可解析、相同重建不追�
     const run = () =>
       execFileSync(process.execPath, ["--experimental-strip-types", "--no-warnings", SCRIPT, "--data", data, "--log", log], { encoding: "utf8" });
     const out1 = run();
-    assert.match(out1, /bull-board timing: files=3 universe=2 qualified=1 /);
+    assert.match(out1, /bull-board timing: files=3 layout=legacy universe=2 qualified=1 /);
     const board = JSON.parse(fs.readFileSync(path.join(data, "bull_board.json"), "utf8"));
     assert.equal(board.version, "bull-board-v1");
     assert.equal(board.universe, 2);
@@ -117,6 +117,76 @@ function withBuilder(fn: (h: { data: string; run: () => string; logLines: () => 
     fs.rmSync(root, { recursive: true, force: true });
   }
 }
+
+/** 把 fixture 的 stocks/*.json 改寫成拆檔佈局(core/chips/hist),舊單一檔刪掉。 */
+function toSplitLayout(data: string, cut = "2026-09-01") {
+  const stockDir = path.join(data, "stocks");
+  for (const d of ["core", "chips", "hist"]) fs.mkdirSync(path.join(stockDir, d), { recursive: true });
+  for (const f of fs.readdirSync(stockDir).filter((n) => n.endsWith(".json"))) {
+    const full = JSON.parse(fs.readFileSync(path.join(stockDir, f), "utf8"));
+    const chips: Record<string, unknown> = { version: 1, id: full.id };
+    const core: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(full)) {
+      if (["branch_history", "branch_pctile_counts", "branch_tags", "branch_pnl_est"].includes(k)) chips[k] = v;
+      else core[k] = v;
+    }
+    const idx = full.candles.findIndex((c: { t: string }) => c.t >= cut);
+    let hist = null;
+    if (idx > 0) {
+      hist = { version: 1, id: full.id, cut, bars: idx, candles: full.candles.slice(0, idx) };
+      core.candles = full.candles.slice(idx);
+      fs.writeFileSync(path.join(stockDir, "hist", `${full.id}.deadbeef.json`), JSON.stringify(hist));
+    }
+    core.parts = {
+      version: 1,
+      hist: hist ? { file: `hist/${full.id}.deadbeef.json`, bars: hist.bars, cut, first: hist.candles[0].t } : null,
+      chips: { file: `chips/${full.id}.json`, keys: Object.keys(chips).filter((k) => k !== "version" && k !== "id") },
+    };
+    fs.writeFileSync(path.join(stockDir, "core", f), JSON.stringify(core));
+    fs.writeFileSync(path.join(stockDir, "chips", f), JSON.stringify(chips));
+    fs.rmSync(path.join(stockDir, f));
+  }
+}
+
+test("拆檔佈局(docs/44 P1):建置器讀 core+chips+hist 接回,bull_board.json 與舊佈局相同", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "bull-board-split-"));
+  try {
+    const env = { ...process.env, BULL_BOARD_NOW: "2026-09-08T14:00:00Z" };
+    const run = (data: string, log: string) =>
+      execFileSync(process.execPath, ["--experimental-strip-types", "--no-warnings", SCRIPT, "--data", data, "--log", log], { encoding: "utf8", env });
+    const a = path.join(root, "legacy");
+    const b = path.join(root, "split");
+    fixture(a);
+    fixture(b);
+    toSplitLayout(b);
+    assert.ok(!fs.existsSync(path.join(b, "stocks", "1111.json")));
+    assert.ok(fs.existsSync(path.join(b, "stocks", "hist", "1111.deadbeef.json")));
+    const outA = run(a, path.join(root, "logA"));
+    const outB = run(b, path.join(root, "logB"));
+    assert.match(outA, /layout=legacy/);
+    assert.match(outB, /files=3 layout=split universe=2 qualified=1 /);
+    const boardA = fs.readFileSync(path.join(a, "bull_board.json"), "utf8");
+    const boardB = fs.readFileSync(path.join(b, "bull_board.json"), "utf8");
+    assert.equal(boardB, boardA);
+    assert.ok(JSON.parse(boardA).qualified === 1);
+
+    // hist 檔不見了(並行 export 剛換雜湊):有舊單一檔 → 讀舊檔,輸出不變;沒有 → 略過該檔、不中斷
+    const c = path.join(root, "split-hist-missing");
+    fixture(c);
+    toSplitLayout(c);
+    fs.rmSync(path.join(c, "stocks", "hist", "1111.deadbeef.json"));
+    fs.writeFileSync(path.join(c, "stocks", "1111.json"), fs.readFileSync(path.join(a, "stocks", "1111.json")));
+    const outC = run(c, path.join(root, "logC"));
+    assert.match(outC, /layout=split universe=2 qualified=1 failed=0/);
+    assert.equal(fs.readFileSync(path.join(c, "bull_board.json"), "utf8"), boardA);
+    fs.rmSync(path.join(c, "stocks", "1111.json"));
+    const outD = run(c, path.join(root, "logD"));
+    assert.match(outD, /layout=split universe=1 qualified=0 failed=1/); // 警告走 stderr;略過那檔、不中斷
+    assert.ok(fs.existsSync(path.join(c, "bull_board.json")));
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test("名單變了(例:晚間分點到齊)→ 同一 data_date 照樣追加,保留當日演變", () => {
   withBuilder(({ data, run, logLines }) => {

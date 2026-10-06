@@ -1,0 +1,355 @@
+# -*- coding: utf-8 -*-
+"""docs/44 P1(§3.2)個股 JSON 拆檔:core + hist(雜湊檔名)+ chips。
+
+純函式:split/merge 互為反函式、cut 邊界、沒有 chips 鍵、沒有早於 cut 的 K 線。
+種子 DB 匯出:舊單一檔逐位元不變、三份接回 == 舊檔、聯集股才有 hist、hist 內容不變
+就不重寫、退出聯集就刪檔、--no-legacy-stocks、--size-report、--verify-split。
+"""
+import json
+import os
+import unittest
+from datetime import date, timedelta
+from pathlib import Path
+from tempfile import TemporaryDirectory
+
+import radar.config as config
+import radar.db as db
+from radar import schema
+from radar.export.json_export import export_json
+from radar.export.stock_parts import (
+    CHIPS_KEYS,
+    StockPartsWriter,
+    dumps_compact,
+    hist_cut,
+    merge_stock_parts,
+    read_merged_stock,
+    split_stock_payload,
+    summarize_sizes,
+    size_entry,
+)
+
+
+def _payload(n_candles: int, first: str = "2023-06-01", **extra) -> dict:
+    start = date.fromisoformat(first)
+    candles = [
+        {"t": (start + timedelta(days=i)).isoformat(), "o": 1.0 + i, "h": 2.0 + i,
+         "l": 0.5 + i, "c": 1.5 + i, "v": 10 + i, "amt": 100 + i, "af": 1.0}
+        for i in range(n_candles)
+    ]
+    base = {
+        "id": "2330", "name": "台積電", "market": "twse", "industry": "半導體",
+        "candles": candles, "technical": None, "price_levels": {"status": "ok"},
+        "scores": None, "reasons": [], "raw_reasons": [], "risks": [], "raw_risks": [],
+        "branches": [{"name": "凱基-台北", "buy": 1, "sell": 0, "net": 1, "pct": 0.1}],
+        "branch_history": [{"t": "2024-01-02", "branches": [{"n": "凱基-台北", "b": 1, "s": 0, "net": 1}]}],
+        "branch_pctile_counts": {"version": 2, "short": {}, "long": {}},
+        "branch_tags": {"as_of": "2024-01-02", "tracked": []},
+        "warrant": None, "warrant_history": [], "active_warrants": [],
+        "insti_history": [], "margin_history": [], "holders_history": [],
+        "directors_latest": None,
+        "branch_pnl_est": {"as_of": "2024-01-02", "windows": {}},
+        "futures": {"version": 1, "contracts": []},
+    }
+    base.update(extra)
+    return base
+
+
+class SplitMergeTests(unittest.TestCase):
+    def test_hist_cut_is_jan_1_two_years_back(self):
+        self.assertEqual(hist_cut("2026-10-05"), "2024-01-01")
+        self.assertEqual(hist_cut("2026-01-02"), "2024-01-01")
+
+    def test_round_trip_with_cut(self):
+        p = _payload(400, first="2023-06-01")
+        parts = split_stock_payload(p, cut="2024-01-01")
+        core, hist, chips = parts["core"], parts["hist"], parts["chips"]
+        # K 線:cut 以前進 hist,cut 當天起留核心
+        self.assertEqual(hist["bars"], len([c for c in p["candles"] if c["t"] < "2024-01-01"]))
+        self.assertEqual(hist["candles"][-1]["t"], "2023-12-31")
+        self.assertEqual(core["candles"][0]["t"], "2024-01-01")
+        self.assertEqual(hist["candles"] + core["candles"], p["candles"])
+        # chips 四鍵離開核心
+        for k in CHIPS_KEYS:
+            self.assertNotIn(k, core)
+            self.assertIn(k, chips)
+        # 指標
+        self.assertEqual(core["parts"]["version"], 1)
+        self.assertRegex(core["parts"]["hist"]["file"], r"^hist/2330\.[0-9a-f]{8}\.json$")
+        self.assertEqual(core["parts"]["hist"]["cut"], "2024-01-01")
+        self.assertEqual(core["parts"]["hist"]["first"], "2023-06-01")
+        self.assertEqual(core["parts"]["chips"], {"file": "chips/2330.json", "keys": list(CHIPS_KEYS)})
+        # 接回 == 原 payload,連鍵序都一樣
+        merged = merge_stock_parts(core, hist, {"version": 1, "id": "2330", **chips})
+        self.assertEqual(merged, p)
+        self.assertEqual(list(merged.keys()), list(p.keys()))
+        self.assertEqual(json.dumps(merged, ensure_ascii=False), json.dumps(p, ensure_ascii=False))
+        # 原 payload 沒被改到
+        self.assertIn("branch_history", p)
+        self.assertEqual(len(p["candles"]), 400)
+
+    def test_no_cut_keeps_all_candles(self):
+        p = _payload(50)
+        parts = split_stock_payload(p, cut=None)
+        self.assertIsNone(parts["hist"])
+        self.assertIsNone(parts["hist_name"])
+        self.assertEqual(parts["core"]["candles"], p["candles"])
+        self.assertIsNone(parts["core"]["parts"]["hist"])
+        self.assertEqual(merge_stock_parts(parts["core"], None, parts["chips"]), p)
+
+    def test_cut_before_first_candle_means_no_hist(self):
+        p = _payload(50, first="2025-03-01")
+        parts = split_stock_payload(p, cut="2024-01-01")
+        self.assertIsNone(parts["hist"])
+        self.assertEqual(merge_stock_parts(parts["core"], None, parts["chips"]), p)
+
+    def test_missing_chips_keys_are_not_invented(self):
+        p = _payload(10)
+        del p["branch_pnl_est"]
+        del p["futures"]
+        parts = split_stock_payload(p, cut=None)
+        self.assertEqual(parts["core"]["parts"]["chips"]["keys"],
+                         ["branch_history", "branch_pctile_counts", "branch_tags"])
+        merged = merge_stock_parts(parts["core"], None, parts["chips"])
+        self.assertEqual(merged, p)
+        self.assertEqual(list(merged.keys()), list(p.keys()))
+
+    def test_hash_follows_content(self):
+        a = split_stock_payload(_payload(400), cut="2024-01-01")
+        b = split_stock_payload(_payload(400), cut="2024-01-01")
+        self.assertEqual(a["hist_name"], b["hist_name"])
+        p2 = _payload(400)
+        p2["candles"][0]["af"] = 0.5  # 除權息重算
+        c = split_stock_payload(p2, cut="2024-01-01")
+        self.assertNotEqual(a["hist_name"], c["hist_name"])
+
+    def test_writer_reuses_unchanged_hist_and_drops_stale(self):
+        with TemporaryDirectory() as tmp:
+            stock_dir = Path(tmp)
+            w = StockPartsWriter(stock_dir)
+            parts = split_stock_payload(_payload(400), cut="2024-01-01")
+            w.write(parts)
+            w.finish()
+            self.assertEqual((w.hist_written, w.hist_reused), (1, 0))
+            self.assertTrue((stock_dir / parts["hist_name"]).exists())
+            index = json.loads((stock_dir / "hist" / "index.json").read_text(encoding="utf-8"))
+            self.assertEqual(index["2330"]["file"], parts["hist_name"])
+            self.assertEqual(read_merged_stock(stock_dir, "2330"), _payload(400))
+            # 沒有殘留 tmp
+            self.assertEqual([p.name for p in stock_dir.rglob("*.tmp-*")], [])
+
+            # 第二輪:內容相同 → 不重寫;index 沒指到的檔只有過了寬限期才刪(並行 export 保護)
+            stale_old = stock_dir / "hist" / "2330.deadbeef.json"
+            stale_old.write_text("{}", encoding="utf-8")
+            gone_old = stock_dir / "hist" / "9999.00000000.json"
+            gone_old.write_text("{}", encoding="utf-8")
+            fresh = stock_dir / "hist" / "8888.11111111.json"
+            fresh.write_text("{}", encoding="utf-8")
+            day_later = stale_old.stat().st_mtime + 2 * 3600 + 24 * 3600
+            os.utime(fresh, (day_later - 60, day_later - 60))  # 一分鐘前剛被另一個 export 寫的
+            w2 = StockPartsWriter(stock_dir, now=day_later)
+            w2.write(split_stock_payload(_payload(400), cut="2024-01-01"))
+            w2.finish()
+            self.assertEqual((w2.hist_written, w2.hist_reused), (0, 1))
+            self.assertFalse(stale_old.exists())
+            self.assertFalse(gone_old.exists())
+            self.assertTrue(fresh.exists())
+            self.assertEqual(sorted(p.name for p in (stock_dir / "hist").glob("*.json")),
+                             sorted([Path(parts["hist_name"]).name, "8888.11111111.json", "index.json"]))
+
+            # 第三輪:這檔退出聯集(cut=None)→ 過了寬限期它的 hist 也刪
+            w3 = StockPartsWriter(stock_dir, now=day_later + 2 * 24 * 3600)
+            w3.write(split_stock_payload(_payload(400), cut=None))
+            w3.finish()
+            self.assertEqual([p.name for p in (stock_dir / "hist").glob("*.json")], ["index.json"])
+
+    def test_concurrent_exports_do_not_delete_each_others_hist(self):
+        """驗證者反例(2026-10-05):重用的 hist 保有舊 mtime(可能一年沒變),另一個同時在跑、
+        index 沒指到它的 export 會在 finish() 刪掉它,而這一輪最後寫出的 core 卻指著它。
+        S2:兩輪雜湊不同;S3:兩輪聯集不同(更常見)。"""
+        day = 24 * 3600
+        with TemporaryDirectory() as tmp:
+            stock_dir = Path(tmp)
+            # 一年前:A 檔的 hist 寫下來,之後每輪都重用(mtime 若不刷新就停在這裡)
+            t0 = 1_700_000_000.0
+            a_old = _payload(400)
+            w0 = StockPartsWriter(stock_dir, now=t0)
+            w0.write(split_stock_payload(a_old, cut="2024-01-01"))
+            w0.finish()
+            a_hist = stock_dir / split_stock_payload(a_old, cut="2024-01-01")["hist_name"]
+            os.utime(a_hist, (t0, t0))
+
+            # S3:今天兩個 export 重疊。run1 聯集含 A(重用 a_hist,然後寫 core 指著它);
+            # run2 聯集不含 A(A 不在它的 index),run2 的 finish() 跑在 run1 的 write 之後。
+            now = t0 + 365 * day
+            run1 = StockPartsWriter(stock_dir, now=now)
+            run1.write(split_stock_payload(a_old, cut="2024-01-01"))   # 重用 → mtime 刷新
+            run2 = StockPartsWriter(stock_dir, now=now + 60)
+            run2.write(split_stock_payload(a_old, cut=None))             # A 在 run2 不是聯集股
+            run2.finish()
+            self.assertTrue(a_hist.exists(), "另一個 export 正在用的 hist 不可被刪")
+            run1.finish()
+            self.assertTrue(a_hist.exists())
+            self.assertEqual(read_merged_stock(stock_dir, "2330"), a_old)
+
+            # S2:兩輪雜湊不同(run1 用舊 af、run2 用重算後的 af),各自的 core 都要能接回
+            a_new = _payload(400)
+            a_new["candles"][0]["af"] = 0.5
+            r1 = StockPartsWriter(stock_dir, now=now + 2 * day)
+            r1.write(split_stock_payload(a_old, cut="2024-01-01"))       # 重用 a_hist(刷新 mtime)
+            r2 = StockPartsWriter(stock_dir, now=now + 2 * day + 60)
+            r2.write(split_stock_payload(a_new, cut="2024-01-01"))       # 新雜湊,core 最後指到新檔
+            r2.finish()                                                   # a_hist 不在 r2 的 index
+            self.assertTrue(a_hist.exists(), "mtime 剛刷新,寬限期內不刪")
+            # 即使 mtime 很老(極端:重用那一輪在 24 小時前),磁碟上的 core 若還指著就也不刪
+            os.utime(a_hist, (t0, t0))
+            r3 = StockPartsWriter(stock_dir, now=now + 3 * day)
+            r3.write(split_stock_payload(_payload(10, first="2025-01-01", id="9999"), cut="2024-01-01"))
+            # 讓磁碟上 2330 的 core 指著 a_hist(模擬 r1 的 core 是最後落地的那一份)
+            (stock_dir / "core" / "2330.json").write_text(
+                dumps_compact(split_stock_payload(a_old, cut="2024-01-01")["core"]), encoding="utf-8")
+            r3.finish()
+            self.assertTrue(a_hist.exists(), "core 還指著的 hist 不刪(第二道保險)")
+            # core 改指新檔、mtime 老 → 這時才刪
+            (stock_dir / "core" / "2330.json").write_text(
+                dumps_compact(split_stock_payload(a_new, cut="2024-01-01")["core"]), encoding="utf-8")
+            r4 = StockPartsWriter(stock_dir, now=now + 4 * day)
+            r4.finish()
+            self.assertFalse(a_hist.exists())
+
+    def test_writer_rewrites_truncated_hist_and_writes_hist_before_core(self):
+        with TemporaryDirectory() as tmp:
+            stock_dir = Path(tmp)
+            parts = split_stock_payload(_payload(400), cut="2024-01-01")
+            (stock_dir / "hist").mkdir()
+            truncated = stock_dir / parts["hist_name"]
+            truncated.write_text(parts["hist_text"][: len(parts["hist_text"]) // 2], encoding="utf-8")
+            w = StockPartsWriter(stock_dir)
+            w.write(parts)
+            self.assertEqual((w.hist_written, w.hist_reused), (1, 0))
+            self.assertEqual(truncated.read_text(encoding="utf-8"), parts["hist_text"])
+            # hist 的 mtime 不晚於 core(core 指到的檔先落地)
+            self.assertLessEqual(truncated.stat().st_mtime, (stock_dir / "core" / "2330.json").stat().st_mtime)
+
+    def test_size_report_groups(self):
+        entries = {"A": size_entry(_payload(10)), "B": size_entry(_payload(20)), "C": size_entry(_payload(30))}
+        rep = summarize_sizes(entries, {"A"})
+        self.assertEqual(rep["union"]["stocks"], 1)
+        self.assertEqual(rep["other"]["stocks"], 2)
+        self.assertEqual(rep["other"]["keys"]["candles"]["n"], 2)
+        self.assertGreater(rep["other"]["keys"]["_total"]["max"], rep["union"]["keys"]["_total"]["max"])
+
+
+def _dates(n: int, end: str) -> list[str]:
+    last = date.fromisoformat(end)
+    return [(last - timedelta(days=n - 1 - i)).isoformat() for i in range(n)]
+
+
+class ExportSplitTests(unittest.TestCase):
+    """種子 DB:2330 成交 2 億 → 熱門榜 → 聯集(全歷史,跨 cut);2317 成交金額 NULL → 非聯集。"""
+
+    D = "2026-07-09"
+
+    def setUp(self):
+        self._tmp = TemporaryDirectory()
+        tmp = Path(self._tmp.name)
+        self._old = (config.DB_URL, config.DATA_DIR)
+        config.DATA_DIR = tmp
+        config.DB_URL = "sqlite:///" + (tmp / "t.db").as_posix()
+        db._engine = None
+        db.init_db()
+        days = _dates(1000, self.D)  # 2023-10-14 起;cut = hist_cut("2026-07-09") = 2024-01-01 之前約 79 根
+        with db.get_engine().begin() as conn:
+            conn.execute(schema.stocks.insert(), [
+                {"id": "2330", "name": "台積電", "market": "twse", "type": "stock", "industry": "半導體", "is_active": 1},
+                {"id": "2317", "name": "鴻海", "market": "twse", "type": "stock", "industry": "電子", "is_active": 1},
+            ])
+            conn.execute(schema.daily_prices.insert(), [
+                {"stock_id": "2330", "date": day, "open": 100.0 + i % 7, "high": 101.0 + i % 7,
+                 "low": 99.0 + i % 7, "close": 100.0 + i % 7, "volume": 5_000_000, "turnover": 200_000_000}
+                for i, day in enumerate(days)
+            ])
+            conn.execute(schema.daily_prices.insert(), [
+                # turnover NULL:熱門榜(不足 15 檔時補滿)也挑不到它 → 非聯集
+                {"stock_id": "2317", "date": day, "open": 50.0, "high": 51.0, "low": 49.0,
+                 "close": 50.0, "volume": 1_000_000, "turnover": None}
+                for day in days
+            ])
+
+    def tearDown(self):
+        if db._engine is not None:
+            db._engine.dispose()
+        db._engine = None
+        config.DB_URL, config.DATA_DIR = self._old
+        self._tmp.cleanup()
+
+    def _read(self, out: Path, rel: str) -> dict:
+        return json.loads((out / rel).read_text(encoding="utf-8"))
+
+    def test_export_writes_three_layouts_that_merge_back(self):
+        out = Path(self._tmp.name) / "out"
+        report = Path(self._tmp.name) / "sizes.json"
+        info = export_json(out, verify_split=True, size_report=report)
+        radar = self._read(out, "radar.json")
+        union_ids = {s["id"] for s in radar["stocks"]}
+        self.assertIn("2330", union_ids)
+        self.assertNotIn("2317", union_ids)
+        cut = hist_cut(self.D)
+        self.assertEqual(cut, "2024-01-01")
+
+        # 聯集股:core + hist + chips 接回 == 舊單一檔
+        legacy = self._read(out, "stocks/2330.json")
+        core = self._read(out, "stocks/core/2330.json")
+        self.assertEqual(core["parts"]["hist"]["cut"], cut)
+        hist = self._read(out, core["parts"]["hist"]["file"].replace("hist/", "stocks/hist/"))
+        chips = self._read(out, "stocks/chips/2330.json")
+        self.assertEqual(hist["bars"], len([c for c in legacy["candles"] if c["t"] < cut]))
+        self.assertGreater(hist["bars"], 0)
+        self.assertEqual(core["candles"][0]["t"], min(c["t"] for c in legacy["candles"] if c["t"] >= cut))
+        self.assertEqual(merge_stock_parts(core, hist, chips), legacy)
+        self.assertEqual(read_merged_stock(out / "stocks", "2330"), legacy)
+        for k in CHIPS_KEYS:
+            self.assertNotIn(k, core)
+        self.assertEqual(set(chips) - {"version", "id"}, set(core["parts"]["chips"]["keys"]))
+        self.assertEqual(info["hist_written"], 1)
+
+        # 非聯集股:沒有 hist,K 線全在核心(600 根上限照舊)
+        legacy2 = self._read(out, "stocks/2317.json")
+        core2 = self._read(out, "stocks/core/2317.json")
+        self.assertIsNone(core2["parts"]["hist"])
+        self.assertEqual(len(core2["candles"]), 600)
+        self.assertEqual(merge_stock_parts(core2, None, self._read(out, "stocks/chips/2317.json")), legacy2)
+
+        index = self._read(out, "stocks/hist/index.json")
+        self.assertEqual(list(index), ["2330"])
+        self.assertEqual(index["2330"]["file"], core["parts"]["hist"]["file"])
+
+        # 新檔緊湊序列化;舊檔維持原本有空白的序列化
+        self.assertNotIn(": ", (out / "stocks/core/2330.json").read_text(encoding="utf-8")[:200])
+        self.assertIn(": ", (out / "stocks/2330.json").read_text(encoding="utf-8")[:200])
+
+        # 大小報告
+        rep = json.loads(report.read_text(encoding="utf-8"))
+        self.assertEqual((rep["union"]["stocks"], rep["other"]["stocks"]), (1, 1))
+        self.assertIn("candles", rep["union"]["keys"])
+
+        # 第二輪:hist 內容相同 → 不重寫(檔名相同、hist_written=0)
+        before = (out / "stocks/hist").glob("2330.*.json")
+        before_names = sorted(p.name for p in before)
+        info2 = export_json(out)
+        self.assertEqual((info2["hist_written"], info2["hist_reused"]), (0, 1))
+        self.assertEqual(sorted(p.name for p in (out / "stocks/hist").glob("2330.*.json")), before_names)
+
+    def test_no_legacy_stocks_flag(self):
+        out = Path(self._tmp.name) / "out"
+        export_json(out, legacy_stocks=False)
+        self.assertFalse((out / "stocks/2330.json").exists())
+        self.assertTrue((out / "stocks/core/2330.json").exists())
+        self.assertTrue((out / "stocks/chips/2330.json").exists())
+        merged = read_merged_stock(out / "stocks", "2330")
+        self.assertEqual(merged["id"], "2330")
+        self.assertNotIn("parts", merged)
+        self.assertIn("branch_history", merged)
+
+
+if __name__ == "__main__":
+    unittest.main()
