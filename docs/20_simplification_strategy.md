@@ -200,6 +200,21 @@ frozen reason code 或任何歷史績效資料。
 
 > **G-RO 唯讀硬化（2026-08-31）**：Phase 2 diff 與 Phase 3 strategy-performance 兩個報表入口不再呼叫 `init_db()`；只開既存實體 SQLite 的 URI `mode=ro`，先驗檔頭與必要表，缺 DB／非 SQLite／缺表立即 fail closed。`--out` 不可指向 DB、`-wal/-shm/-journal` 或其既有 symlink／hardlink alias。為看見 active writer 的最新 WAL frames，SQLite 可能改寫 `-shm` reader-lock/read-mark 協調 metadata；報表本身不改 DB／WAL 內容、不做 DDL/DML／migration。完整 pipeline pytest **278 passed、58 subtests**，Luna High review **APPROVE**；**未跑正式 VPS 報表、未作正式 DB 回算或動 cron。**
 
+> **全範圍重算差異報告(2026-10-06,`pipeline/tools/score_recompute_diff.py`)**:`phase2-diff-report` 只看單日、且以「回加 S1–S10 points」模擬舊制;本工具反過來,把已存的 `daily_scores` 列與「今天的程式重算同一 (股票, 日期) 會得到的值」逐列比對,供使用者決定要不要做正式重算。**唯讀**:經 `read_only_sqlite` 以 URI `mode=ro` 開庫,只有 SELECT,SQLite 本身拒絕寫入;不寫任何分數。技術分以 `indicators.compute_series` 從日價(含現行 `adj_factor`,前置 `WARMUP_BARS`)當場重算——歷史 `indicators_daily.tech_score` 仍含策略 bonus,沿用它會把要找的差異藏起來(`--tech-source stored` 可改用已存指標,只看分數層);其餘照 `scores.score_date`(由 `compute_scores` 抽出、行為不變)以「該日為最新日」的 22 交易日窗計分。輸出:stdout 摘要(比對列數、變動比例、`final` 與各分項 |diff| 平均/中位/P95、≥65 上榜門檻跨越數(未模擬 40 檔上限與 `score_list_gate` 扣榜)、Top 20 變動),`--out` 為所有變動列 CSV(串流寫入)。逐日處理、記憶體約一次 `compute-scores` 加上範圍內重算技術分(120 日全市場約 60–100 MB)。
+>
+> VPS 執行(**不需拿 DB 鎖**:WAL 下讀者不擋寫者;但 VPS 只有 1.7 GB RAM,請避開日更輪次,例如 22:30 後或週末;最新一日若中途被重寫,該日比對以讀到的那版為準)。`radar()` 只能跑 `python -m radar` 子指令,故直接 `docker run`;`data/` **不可掛 `:ro`**——`mode=ro` 的 WAL 讀者仍須在 `-shm` 協調讀鎖,唯讀掛載會讓它開不了庫或讀不到 writer 最新的 WAL;防寫由 `mode=ro` 保證。程式碼掛 `:ro`,輸出寫 `/tmp`:
+>
+> ```bash
+> cd ~/trever-radar && mkdir -p /tmp/score-diff
+> nohup docker run --rm --memory=1200m -e PYTHONDONTWRITEBYTECODE=1 \
+>   -v "$PWD/pipeline":/app/pipeline:ro -v "$PWD/data":/app/data -v /tmp/score-diff:/out \
+>   radar-pipeline python tools/score_recompute_diff.py --out /out/score_diff.csv --days 120 \
+>   > /tmp/score-diff/run.log 2>&1 &
+> tail -f /tmp/score-diff/run.log      # 進度:tech i/N stocks、[k/120] 日期 compared/changed + ETA
+> ```
+>
+> 先用 `--days 5` 試跑校準:每日耗時約等於一次 `compute-scores`(不含寫入),技術分階段約為 `compute-indicators --all --days 5` 的 1.3 倍。本機合成庫(300 檔、每日 15 分點)實測:技術分 0.35 s/檔、計分 0.65 s/日;依比例推估正式庫(~1,900 檔、5.5 GB、VPS CPU 較慢)技術分約 15–25 分鐘、計分 120 日約 30–90 分鐘,合計約 **1–2 小時**,以試跑的 ETA 為準。產出的 CSV 只供決策;**正式重算／回灌仍須使用者另行核准**(見下方禁止事項)。
+
 **禁止事項**:完成程式碼不等於可重算正式資料。全市場 `compute-indicators --all`
 與重新部署會改變正式榜單,必須先由使用者另外確認 VPS / Actions 重算與回灌方式;
 不得自行 push `main`、觸發 `task=adjust` 或清 Actions cache。
