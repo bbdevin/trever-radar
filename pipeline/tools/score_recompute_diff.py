@@ -91,7 +91,7 @@ def recompute_tech(engine, start: str, end: str, *, log=print) -> dict[str, dict
     """{date: {stock_id: indicators row tuple}} for start..end, freshly computed.
 
     Tuple shape is what score_date reads from indicators_daily; reasons are left
-    out (None) ??they only feed the reasons JSON, which this report ignores.
+    out (None): they only feed the reasons JSON, which this report ignores.
     """
     with engine.connect() as conn:
         lo = conn.execute(text(
