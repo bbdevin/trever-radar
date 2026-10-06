@@ -45,6 +45,14 @@ def _get(url: str, params: dict | None = None, throttle: float | None = None,
     total attempts without changing the ordinary retry budget.  Exponential
     backoff and bounded jitter are opt-in so existing callers retain their
     previous linear, jitter-free timing contract.
+
+    Transient body-read failures are retried like any other fetch failure:
+    ``_session.get`` is not streamed, so requests reads the whole body inside
+    the call and a truncated response surfaces right here as
+    ``ChunkedEncodingError`` (urllib3 ``ProtocolError``), ``ConnectionError``
+    or ``ReadTimeout``.  They get the ordinary attempt budget and backoff;
+    after the last attempt the original error is re-raised wrapped in
+    ``RadarHTTPError`` (never swallowed).
     """
     global _last_request_at
     interval = config.THROTTLE_SECONDS if throttle is None else throttle
