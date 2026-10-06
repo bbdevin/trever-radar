@@ -523,3 +523,24 @@ test("多方榜不受影響:技術段對應句 rank 3,不進 K_bull/K_bear(rank 
     assert.deepEqual(k(all), k(without));
   }
 });
+
+test("多方榜不受影響(docs/45 P2):連續天數 F11 rank 2、缺口在壓力段 → K_bull/K_bear/排除與沒有這些鍵時相同", () => {
+  const k = (data: StockJson) => {
+    const bk = boardKeys(buildBullBear({ reasons: [], risks: [], technical: null, derivedFacts: deriveAllFacts(data, LAST), asOf: LAST }));
+    return { bull: bk.bull.map((i) => i.key), bear: bk.bear.map((i) => i.key), excl: bk.excl.map((i) => i.key) };
+  };
+  const base = nearResistanceStock();
+  const p2 = (over: Partial<Extract<PriceLevels, { status: "ok" }>>) => ({ ...base, price_levels: { ...base.price_levels, ...over } } as StockJson);
+  const cases = [
+    p2({ ma20_streak: { n: 15, side: "above", capped: false } }),
+    p2({ ma20_streak: { n: 221, side: "below", capped: true } }),
+    // 3% 內的缺口:壓力段 rank 4,但壓力段不進 K 鍵;技術段只多一句 rank 3 的 3% 內句
+    p2({ gaps_above: [{ lo: 117, hi: 118, t: "2026-09-10" }], gaps_below: [{ lo: 114, hi: 115.5, t: "2026-09-20" }] }),
+    p2({ ma20_streak: { n: 5, side: "below", capped: false }, gaps_above: [{ lo: 117, hi: 118, t: "2026-09-10" }], gaps_below: [] }),
+  ];
+  for (const data of cases) {
+    const facts = deriveAllFacts(data, LAST);
+    assert.ok(facts.some((f) => f.code.startsWith("F11") || f.code.startsWith("L_GAP")), "新事實有產生");
+    assert.deepEqual(k(data), k(base));
+  }
+});

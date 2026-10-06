@@ -117,6 +117,36 @@ test("距離四捨五入為 0:不寫「0.0%」——單一價位寫「貼近現�
   for (const f of [...fs, ...near]) assert.ok(!f.text.includes("0.0%"), f.text);
 });
 
+test("P2 缺口單一來源:price_levels 有 gaps_* 就用它(不再看 K 棒),句型與回退算法相同;階梯、K 線、事實句、技術段 3% 內句一致", () => {
+  // pipeline 算出來的缺口(與 levelSeries 的不同,證明用的是 price_levels)
+  const pl = okLevels({
+    gaps_above: [{ lo: 1100, hi: 1110, t: "2026-09-10" }],
+    gaps_below: [{ lo: 1070, hi: 1079, t: "2026-09-20" }, { lo: 980, hi: 1000, t: "2026-08-01" }],
+  });
+  const fs = levelFacts(pl, levelSeries(), LAST);
+  const txt = fs.filter((f) => f.code.startsWith("L_GAP")).map((f) => `${f.code}|${f.text}|${f.rank}|${f.variant}`);
+  assert.deepEqual(txt, [
+    "L_GAP_ABOVE|未回補缺口 1,100–1,110(09/10)在上方 +1.4%|4|0",
+    "L_GAP_BELOW|未回補缺口 1,070–1,079(09/20)在下方 −0.6%|4|0",
+    "L_GAP_BELOW|未回補缺口 980–1,000(08/01)在下方 −7.8%|2|1",
+  ]);
+  // 回退(沒有鍵)仍由 K 棒自算:levelSeries 的 08/07 缺口
+  const fb = levelFacts(okLevels(), levelSeries(), LAST).filter((f) => f.code.startsWith("L_GAP")).map((f) => f.text);
+  assert.ok(fb.some((t) => t.startsWith("未回補缺口 1,095–1,240(")), fb.join("\n"));
+  // 階梯與 K 線同一份
+  const v = priceLevelsView(pl);
+  if (v.state !== "ok") throw new Error("state");
+  assert.deepEqual(v.above.filter((r) => r.kind === "gap").map((r) => r.date), ["09/10"]);
+  assert.deepEqual(v.below.filter((r) => r.kind === "gap").map((r) => r.date), ["09/20", "08/01"]);
+  assert.equal(chartLevels(pl).filter((l) => l.label === "缺口").length, 2);
+  // 技術段 3% 內句點名同一個缺口
+  const near = nearLevelFacts([...priceLevelFacts(pl, LAST, 60), ...fs]);
+  assert.ok(near.find((f) => f.code === "X_LEVEL_BELOW_NEAR")?.text.startsWith("下方 3% 內有支撐價位:未回補缺口 1,070–1,079(−0.6%)"));
+  // 空清單也是「有鍵」:不回退、不列
+  const none = levelFacts(okLevels({ gaps_above: [], gaps_below: [] }), levelSeries(), LAST);
+  assert.ok(!none.some((f) => f.code.startsWith("L_GAP")));
+});
+
 test("nearLevelFacts:壓力段 ≤3% 的價位在技術段日K 併成一句,由近到遠點名 2 個、其餘「等 N 處」;rank 3", () => {
   const facts = [...priceLevelFacts(okLevels(), LAST, 60), ...levelFacts(okLevels(), levelSeries(), LAST)];
   const near = nearLevelFacts(facts);

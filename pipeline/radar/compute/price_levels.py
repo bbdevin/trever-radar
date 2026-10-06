@@ -18,6 +18,12 @@ v_adj(t) = v(t) × af(today) / af(t)(分割前後股數口徑一致,分割前後
      算落在現價之上/之下的比例;剛好等於現價的量兩邊都不算(另給 at)。不足 120 根 → null。
   F7 同視窗分價量,bin 寬 = 現價 1%,以現價為格線起點(沒有一格跨過現價);
      上方/下方各取量最大的一格,同量取離現價近者。
+  F9 未回補缺口(P2,version 2):近 120 根裡「昨天以前」的跳空(今日的跳空由技術段「今日跳空」講),
+     向上缺口 = 當根 low > 前根 high,之後各根的 low 往下吃掉多少就縮多少;向下缺口鏡像。
+     剩餘寬度 ≥ 現價 0.5% 且整段在現價之下(向上缺口 → 下方支撐)/ 之上(向下缺口 → 上方壓力)才列;
+     每側最多 2 個,離現價近者在前。與前端 levelFacts 舊 JSON 回退算法同一條定義。
+  F11 收盤相對 20 日線的連續天數(P2,version 2):side = 今日收盤 ≥ MA20 → above,否則 below;
+     n = 由今日往回數、關係相同的連續根數;capped = 可算 MA20 的根數全部同向(真實天數只多不少)。
 
 邊界:有效 K 棒 < 20 根 → {"status": "insufficient"};零成交量的 K 棒不貢獻量;
 as_of = 最後一根 K 棒的日期(停牌股會早於資料日)。
@@ -26,13 +32,16 @@ from __future__ import annotations
 
 from typing import Iterable, Sequence
 
-VERSION = 1
+VERSION = 2
 MA_WINDOWS = (5, 10, 20, 60, 120, 240)
 HL_WINDOWS = (20, 60, 120, 240)
 VP_WINDOW = 120
 MIN_BARS = 20
 MAX_BARS = max(max(MA_WINDOWS), max(HL_WINDOWS), VP_WINDOW)
 BIN_PCT = 0.01
+GAP_WINDOW = 120
+GAP_MIN_PCT = 0.005
+GAP_PER_SIDE = 2
 
 
 def _r(x: float | None, digits: int = 2) -> float | None:
@@ -101,6 +110,7 @@ def compute_price_levels(
             vp2 = "up" if c2 > c1 > c0 else "down" if c2 < c1 < c0 else None
 
     profile, dense_above, dense_below = _volume_profile(highs, lows, vols, close, n)
+    gaps_above, gaps_below = _gaps(highs, lows, dates, close, n)
 
     return {
         "version": VERSION,
@@ -118,7 +128,52 @@ def compute_price_levels(
         "vol_profile": profile,
         "dense_above": dense_above,
         "dense_below": dense_below,
+        "gaps_above": gaps_above,
+        "gaps_below": gaps_below,
+        "ma20_streak": _ma20_streak(closes, n),
     }
+
+
+def _gaps(highs, lows, dates, close, n):
+    """F9:近 GAP_WINDOW 根、昨天以前的未回補缺口;回 (上方, 下方),各 ≤ GAP_PER_SIDE、近者在前。"""
+    if n < 3 or close <= 0:
+        return [], []
+    i = n - 1
+    above, below = [], []
+    for j in range(max(1, n - GAP_WINDOW), i):
+        if lows[j] > highs[j - 1]:
+            lo = highs[j - 1]
+            hi = lows[j]
+            for k in range(j + 1, i + 1):
+                hi = min(hi, lows[k])
+            if hi - lo >= close * GAP_MIN_PCT and hi < close:
+                below.append({"lo": _r(lo), "hi": _r(hi), "t": dates[j]})
+        elif highs[j] < lows[j - 1]:
+            lo = highs[j]
+            hi = lows[j - 1]
+            for k in range(j + 1, i + 1):
+                lo = max(lo, highs[k])
+            if hi - lo >= close * GAP_MIN_PCT and lo > close:
+                above.append({"lo": _r(lo), "hi": _r(hi), "t": dates[j]})
+    # 近者在前(上方看下緣、下方看上緣);同距離依日期舊→新(sort 穩定,掃描順序即日期序)
+    above.sort(key=lambda g: g["lo"] - close)
+    below.sort(key=lambda g: close - g["hi"])
+    return above[:GAP_PER_SIDE], below[:GAP_PER_SIDE]
+
+
+def _ma20_streak(closes, n):
+    """F11:收盤 ≥/< MA20 的連續根數(含今日)。可算 MA20 的根數 = n - 19。"""
+    if n < 20:
+        return None
+    ma20 = [sum(closes[j - 19:j + 1]) / 20 for j in range(19, n)]
+    rel = [c >= m for c, m in zip(closes[19:], ma20)]
+    side = rel[-1]
+    k = 0
+    for r in reversed(rel):
+        if r != side:
+            break
+        k += 1
+    return {"n": k, "side": "above" if side else "below", "capped": k == len(rel)}
 
 
 def _volume_profile(highs, lows, vols, close, n):

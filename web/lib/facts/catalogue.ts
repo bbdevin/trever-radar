@@ -70,6 +70,9 @@ export const FACT_CATALOGUE: Record<string, CatalogueEntry> = {
   // 壓力段 ≤3% 的價位在技術段的對應句(levelFacts.nearLevelFacts,docs/46 §6.9)
   X_LEVEL_ABOVE_NEAR: tech("bear", D, 0),
   X_LEVEL_BELOW_NEAR: tech("bull", D, 0),
+  // 收盤相對 20 日線的連續天數(docs/45 F11,P2;狀態型 rank 2,不進多方榜 K 鍵)
+  F11_MA20_ABOVE_N: tech("bull", D, 2),
+  F11_MA20_BELOW_N: tech("bear", D, 2),
 
   // ── 壓力 ──
   F1_MA_BELOW: lvl("bull", DWM, 0, { mirrors: ["T1_MA20", "T1_MA60"] }),
