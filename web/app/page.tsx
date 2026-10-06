@@ -18,8 +18,9 @@ import { FUTURES_VIEW_KEY, parseFuturesView, type FuturesView } from "@/lib/futu
 import { useSession, signInWithGoogle } from "@/lib/useSession";
 import { cn, navPillClass, pillTabClass } from "@/lib/utils";
 import { dataFetch } from "@/lib/dataFetch";
+import { loadHomeHead, loadHomeStocks, type HomeData } from "@/lib/homeLoad";
 import { OFFLINE_DATA_COPY, isBrowserOffline } from "@/lib/pwa";
-import type { BullBoardJson, ListKey, MetaJson, RadarJson, StrategyMeta } from "@/lib/types";
+import type { BullBoardJson, ListKey, MetaJson, StrategyMeta } from "@/lib/types";
 import { SOURCE_LABEL, fmtE8 } from "@/lib/format";
 import { UPDATE_SCHEDULE, staleAutoFills, staleFreshnessLines } from "@/lib/freshness";
 import { BOARD_DEFINITION, BOARD_TAB_LABEL } from "@/lib/bullBoard";
@@ -160,8 +161,20 @@ function isRetiredStrategy(meta: StrategyMeta | undefined) {
 }
 
 const THEME_SORT_TABS = new Set<TabKey>(["scan", "pocket"]);
+// 要畫股票卡片(或要股名)的分頁:這些才抓 home/stocks.json(docs/44 P2);多方榜與資券只要表頭。
+const STOCK_TABS = new Set<TabKey>(["armed", "triggered", "extended", "faded", "pocket", "scan", "mark", "warrant", "futures"]);
 const LS_LIST_SORT = "trever.home.listSort.v1";
 type ListSort = "score" | "theme";
+
+function CardGridSkeleton() {
+  return (
+    <div className="grid grid-cols-1 gap-2.5 pb-[46px] md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+      {[0, 1, 2, 3].map((i) => (
+        <Skeleton key={i} className="h-[105px] rounded-[var(--r-lg)]" />
+      ))}
+    </div>
+  );
+}
 
 function LoadingSkeleton() {
   return (
@@ -171,11 +184,7 @@ function LoadingSkeleton() {
           <Skeleton key={i} className="h-[52px] w-full min-w-[120px] shrink-0 rounded-[var(--r-md)]" />
         ))}
       </div>
-      <div className="grid grid-cols-1 gap-2.5 pb-[46px] md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-        {[0, 1, 2, 3].map((i) => (
-          <Skeleton key={i} className="h-[105px] rounded-[var(--r-lg)]" />
-        ))}
-      </div>
+      <CardGridSkeleton />
     </>
   );
 }
@@ -190,7 +199,11 @@ export default function RadarPage() {
 
 function RadarView() {
   const searchParams = useSearchParams();
-  const [radar, setRadar] = useState<RadarJson | null>(null);
+  // docs/44 P2:表頭(home/head.json 或舊 radar.json)先到;stocks 等到要畫股票的分頁才抓。
+  const [home, setHome] = useState<HomeData | null>(null);
+  const radar = home?.head ?? null;
+  const stocks = home?.stocks ?? null;
+  const stocksLoading = useRef(false);
   const [meta, setMeta] = useState<MetaJson | null>(null);
   const [error, setError] = useState(false);
   const [tab, setTab] = useState<TabKey>("board");
@@ -267,9 +280,8 @@ function RadarView() {
     });
 
   useEffect(() => {
-    dataFetch("/data/radar.json")
-      .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
-      .then(setRadar)
+    loadHomeHead(dataFetch)
+      .then(setHome)
       .catch(() => setError(true));
     dataFetch("/data/meta.json")
       .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
@@ -281,10 +293,26 @@ function RadarView() {
       .catch(() => setBoard(null));
   }, []);
 
+  // 多方榜只有舊 payload(entries 沒有 theme 鍵)才要從 stocks 補查題材;策略分頁沒登入時只畫登入提示。
+  const boardNeedsStocks = tab === "board" && !!board?.entries.some((e) => e.theme === undefined);
+  const needStocks = boardNeedsStocks || (STOCK_TABS.has(tab) && !(tab === "mark" && !loading && !session));
+  const stocksPending = needStocks && stocks == null;
+
+  useEffect(() => {
+    if (!home || home.stocks || !needStocks || stocksLoading.current) return;
+    stocksLoading.current = true;
+    loadHomeStocks(dataFetch, home)
+      .then(setHome)
+      .catch(() => setError(true))
+      .finally(() => {
+        stocksLoading.current = false;
+      });
+  }, [home, needStocks]);
+
   const shown = useMemo(() => {
     // margin 與 futures 有自己的資料來源(不是 radar.lists 的股票清單),不走這裡。
-    if (!radar || tab === "margin" || tab === "futures" || tab === "board") return [];
-    const byId = new Map(radar.stocks.map((s) => [s.id, s]));
+    if (!radar || !stocks || tab === "margin" || tab === "futures" || tab === "board") return [];
+    const byId = new Map(stocks.map((s) => [s.id, s]));
     if (tab === "mark") {
       return (radar.strategies?.[strategy] ?? []).map((id) => byId.get(id)!).filter(Boolean);
     }
@@ -292,13 +320,13 @@ function RadarView() {
       return (radar.lists?.[scanMode] ?? []).map((id) => byId.get(id)!).filter(Boolean);
     }
     return (radar.lists?.[tab as ListKey] ?? []).map((id) => byId.get(id)!).filter(Boolean);
-  }, [radar, tab, scanMode, strategy]);
+  }, [radar, stocks, tab, scanMode, strategy]);
 
   // 期貨異常名單只有 stock_id;股名從首頁既有的 radar.stocks 取。取不到就顯示 id 本身
   // (radar.stocks 是評分池,不是全市場,所以取不到是正常的,不可以編一個標籤出來)。
   const nameById = useMemo(
-    () => new Map((radar?.stocks ?? []).map((s) => [s.id, s.name])),
-    [radar],
+    () => new Map((stocks ?? []).map((s) => [s.id, s.name])),
+    [stocks],
   );
 
   const selectTab = (next: TabKey) => {
@@ -690,12 +718,16 @@ function RadarView() {
 
       {tab === "board" ? (
         <div className="mb-4">
-          <BullBoardList board={board} radar={radar} />
+          {/* 舊 payload 要從 stocks 補查題材時,stocks 還沒到就先給骨架(undefined = 載入中) */}
+          <BullBoardList board={stocksPending ? undefined : board} radar={{ ...radar, stocks: stocks ?? undefined }} />
         </div>
       ) : tab === "margin" ? (
         <div className="mb-4 animate-[fadeUp_0.35s_ease_backwards]">
           <MarginUsageRank embedded />
         </div>
+      ) : stocksPending ? (
+        // 第一次切到要畫股票的分頁:home/stocks.json 還在路上(表頭與分頁檔數已經畫好了)
+        <CardGridSkeleton />
       ) : tab === "futures" ? (
         <div className="animate-[fadeUp_0.35s_ease_backwards]">
           {/* 當日｜近 N 日(docs/38 §7.19)。舊 payload 沒有紀錄時不出現切換,只有當日。

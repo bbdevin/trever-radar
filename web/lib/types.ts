@@ -809,16 +809,20 @@ export interface RadarStock {
   themes?: string[];
   close: number;
   chg_pct: number | null;
+  /** 首頁沒畫 → `home/stocks.json` 沒有這個鍵(docs/44 P2);radar.json 仍有。 */
   chg5_pct?: number | null;
   volume_ratio: number | null; // 今日量 / 20 日均量
   turnover: number;
-  volume_lots: number;
-  transactions: number | null;
+  /** 首頁沒畫 → `home/stocks.json` 沒有(同 chg5_pct)。 */
+  volume_lots?: number;
+  transactions?: number | null;
   foreign_net_lots: number | null;
   trust_net_lots: number | null;
-  margin_chg_lots: number | null;
-  warrant: WarrantSummary | null;
-  technical: TechnicalSummary | null;
+  margin_chg_lots?: number | null;
+  /** 首頁卡片只畫這三個權證欄位;`home/stocks.json` 也只給這三個,radar.json 是完整的 WarrantSummary。 */
+  warrant: Pick<WarrantSummary, "call_turnover" | "call_turnover_ratio" | "call_count"> | null;
+  /** 首頁沒畫 → `home/stocks.json` 沒有(個股頁讀的是 StockJson.technical)。 */
+  technical?: TechnicalSummary | null;
   scores: ScoreBreakdown | null; // null = 該股當日未評分(流動性門檻未過等)
   state?: "armed" | "triggered" | "extended" | "faded" | null;
   sources?: ("branch" | "warrant")[];
@@ -912,6 +916,12 @@ export interface RadarJson {
   futures_open_interest_direction?: FuturesOpenInterestDirection;
   stocks: RadarStock[];
 }
+
+/**
+ * `home/head.json`(docs/44 P2)= radar.json 扣掉 `stocks` 與首頁沒讀的 `concentration` /
+ * `summary_text` / `score_list_meta`;舊資料退回 radar.json 時也用這個型別(多出來的鍵不讀)。
+ */
+export type RadarHeadJson = Omit<RadarJson, "stocks"> & { version?: number };
 
 /** bull_board.json 卡片上的一條事實(docs/48 §1.1)。沒有 rank/magnitude/score/position。 */
 export interface BullBoardFact {

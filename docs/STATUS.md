@@ -2,6 +2,13 @@
 
 > 單一進度真相。每完成一個里程碑就更新本檔。規格細節看各編號文件,別寫在這裡。
 
+## 2026-10-06 首頁拆檔(`docs/44` P2,§3.3;程式完成於分支、未合 main、未上線)
+
+- **做了什麼**:`export-json` 多寫 `home/head.json`(`radar.json` 扣掉 `stocks` 與首頁沒讀的 `concentration`/`summary_text`/`score_list_meta`)與 `home/stocks.json`(逐檔丟掉卡片沒畫的 `technical`/`volume_lots`/`transactions`/`margin_chg_lots`/`chg5_pct`/`pocket_score`/`pocket_families`,`warrant` 只留三鍵;其餘值與順序不變),兩檔同 `generated_at`、緊湊序列化、tmp+rename、stocks 先寫;**`radar.json` 照寫、逐位元不變**(分點頁、自選頁、盤中 worker、建置器、期貨推播都還讀它)。前端 `lib/homeLoad.ts`:首頁先抓 head,第一次切到未發動/策略/掃描/期貨等分頁才抓 stocks(等待時卡片區骨架,表頭與分頁檔數已畫好);不同輪夾到靠 `generated_at` 對齊,對不上或任一檔抓不到都退回 `radar.json`;舊資料(沒有 `home/`)自動退回。Worker、crontab、VPS 腳本都沒改。
+- **大小(本機 7 月 fixture,139 檔)**:`radar.json` 203 KB raw / 33.5 KB br → 預設分頁只要 head 34 KB / 7.2 KB br(**−83% / −78%**);股票分頁 head+stocks 112 KB / 24.2 KB br(−45% / −28%)。正式機 770 KB 本機拿不到(要金鑰),上線後 `radar-cron.log` 的 `export home:` 一行會印 raw bytes。
+- **一致性證據**:pytest `test_home_split.py` 8 tests(投影只丟不加、接回 == 投影、種子 DB 匯出 radar.json 序列化不變、TS 清單一致);node `homeLoad.test.ts` 9 tests;Playwright `parity-snapshot.mjs` 同一份 build 餵「只有 radar.json」與「radar.json + home/」(真實 fixture 與補成現行形狀的 fixture 各一組),首頁全部分頁 390/1280 文字快照 diff 為空(見 docs/44 §3.3);390px 截圖。
+- **待人類**:合併後下一輪 VPS export 自動產生 `home/`;清理步驟與 Worker `NO_STORE` 追加見 docs/44 §3.3(另案)。
+
 ## 2026-10-05 docs/04 §8 風險扣分逐條對齊程式(只改文件,不改分數)
 
 - **後續(同日,Fable 建議、使用者「能做的都做」)**:新增 `pipeline/tests/test_risk_deductions.py`(28 tests,鎖六個 code、每條邊界、HOT5/HOT10 只扣一次、−40 上限;不改行為);`scores.py` 模組 docstring 不再寫「題材未實作」;docs/04 新 §7b 照 `score_inst` 補寫法人融資分(0.15),§2 B7「併入分點分」更正為獨立分項;§0 核對:只有 `type='stock'` 與 ADV20 < 3,000 萬兩道過濾,全額交割/處置/注意股/上市未滿 60 日全部未實作(pipeline 與 web 無對應欄位)。權證品質過濾(§1)維持未實作、不動程式。
