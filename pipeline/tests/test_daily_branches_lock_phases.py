@@ -284,8 +284,18 @@ class LockPhasesInTheScript(unittest.TestCase):
 
     def test_stage_tmp_is_cleaned_on_every_exit_and_old_stages_are_purged(self):
         self.assertIn("trap 'branch_stage_cleanup' EXIT", self.code)
-        self.assertLess(self._idx("trap 'branch_stage_cleanup' EXIT"), self._idx("sync_code"),
-                        "要裝在第一次呼叫 radar 之前")
+        trap = self._idx("trap 'branch_stage_cleanup' EXIT")
+        self.assertLess(trap, self._idx("sync_code"), "要裝在第一次呼叫 radar 之前")
+        # 第二次驗證的競賽:清理在拿到來源鎖**之後**——鎖拿到之前,今天的 .tmp 可能是還在抓的
+        # 第一輪正在寫的檔。trap、立即清理、find 三者都要在來源鎖之後、DB 鎖之前。
+        src = self._idx("acquire_branch_source_lock_wait 3600")
+        find = self._idx("find \"$REPO/data\" -maxdepth 1 -name 'branch-stage-*.json*'")
+        self.assertLess(src, trap)
+        self.assertLess(src, find)
+        self.assertLess(find, self._idx("acquire_db_lock_wait 3600"))
+        self.assertEqual(self.code.count("branch_stage_cleanup"), 3, "定義、trap、立即清理各一")
+        self.assertNotIn("branch_stage_cleanup", self.code[:src].replace("branch_stage_cleanup() {", ""),
+                         "來源鎖之前不得呼叫清理")
         m = re.search(r"branch_stage_cleanup\(\)\s*\{(.*?)\n\}", self.code, re.S)
         self.assertIsNotNone(m)
         self.assertIn('"${STAGE_FILE_HOST}.tmp"', m.group(1))

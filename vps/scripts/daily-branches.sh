@@ -68,10 +68,8 @@ STAGE_FILE_HOST="$REPO/data/branch-stage-${ROUND_DATE}.json"
 branch_stage_cleanup() {
   rm -f "${STAGE_FILE_HOST}.tmp" 2>/dev/null || true
 }
-# 裝在第一次呼叫 radar 之前(lib.sh 的金鑰暫存檔清理會把既有 EXIT trap 串在前面)。
-trap 'branch_stage_cleanup' EXIT
-find "$REPO/data" -maxdepth 1 -name 'branch-stage-*.json*' ! -name "branch-stage-${ROUND_DATE}.json" \
-  -delete 2>/dev/null || true
+# ⚠️ 清理(trap 與 find)都在**拿到分點來源鎖之後**才做(見下面):鎖拿到之前,今天的
+# .tmp 可能正是還在抓的第一輪在寫的檔(2026-10-07 第二次驗證抓到的競賽)。
 
 # 第二輪且今天已有完成標記:失敗後果的那一句**從第一步起**就要換掉。預設那句
 # 「00:05 夜間作業會重算」在這裡不成立——safe-branch-stats.sh 看到標記就整夜略過
@@ -105,6 +103,12 @@ echo "=== daily-branches start $(taipei_date -Is) ==="
 # (warrant-backfill.sh、daily-warrant-branches-poc.sh)都是 flock -n,搶不到就收工,
 # 所以沒有人會握著 DB 鎖**等**來源鎖。
 acquire_branch_source_lock_wait 3600
+# 來源鎖在手:今天的暫存檔沒有別人會寫。現在才清 .tmp(EXIT trap;裝在第一次呼叫 radar
+# 之前,lib.sh 的金鑰暫存檔清理會把既有 EXIT trap 串在前面)與別天的暫存檔。
+trap 'branch_stage_cleanup' EXIT
+branch_stage_cleanup
+find "$REPO/data" -maxdepth 1 -name 'branch-stage-*.json*' ! -name "branch-stage-${ROUND_DATE}.json" \
+  -delete 2>/dev/null || true
 acquire_db_lock_wait 3600
 sync_code
 

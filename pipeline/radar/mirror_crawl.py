@@ -86,8 +86,29 @@ def crawl_in_order(targets: list[str], fetch, hosts: list[str], per_host_interva
     work: queue.Queue = queue.Queue()
     for i, t in enumerate(targets):
         work.put((i, t))
+    # 還活著的 worker 數:監督執行緒靠它判斷「沒人在抓了、待命站又進不來」要收工,
+    # 不能等到 7200 秒硬上限(2026-10-07 第二次驗證抓到:全死 + 待命站永遠不過 = 卡死)。
+    live = {"n": 0}
+
+    def _on_result_safe(idx: int, res: Result) -> None:
+        # 呼叫端的 checkpoint 寫檔失敗(磁碟滿、權限)不准殺掉 worker:記一行、繼續抓,
+        # 下一個 checkpoint 再試;收尾那次寫入由主執行緒做,失敗會正常拋出。
+        try:
+            on_result(idx, res)
+        except Exception as e:  # noqa: BLE001
+            print(f"branch crawl: on_result failed for {res.target}: "
+                  f"{type(e).__name__}: {str(e)[:100]} (continuing)", flush=True)
 
     def worker(host: str) -> None:
+        with results_lock:
+            live["n"] += 1
+        try:
+            _worker(host)
+        finally:
+            with results_lock:
+                live["n"] -= 1
+
+    def _worker(host: str) -> None:
         st = stats[host]
         while not stop.is_set():
             try:
@@ -113,7 +134,7 @@ def crawl_in_order(targets: list[str], fetch, hosts: list[str], per_host_interva
             with results_lock:
                 results[idx] = res
                 if on_result is not None:
-                    on_result(idx, res)
+                    _on_result_safe(idx, res)
             if st.consecutive_failed >= dead_after:
                 st.dead = True
                 return
@@ -130,6 +151,7 @@ def crawl_in_order(targets: list[str], fetch, hosts: list[str], per_host_interva
             pending = list(standby)
             while pending and not stop.is_set() and not work.empty():
                 still = []
+                joined = 0
                 for host in pending:
                     if stop.is_set() or work.empty():
                         return
@@ -144,9 +166,18 @@ def crawl_in_order(targets: list[str], fetch, hosts: list[str], per_host_interva
                                              name=f"branch-{host}", daemon=True)
                         threads.append(t)
                         t.start()
+                        joined += 1
                     else:
                         still.append(host)
                 pending = still
+                # 沒有活著的 worker、這一輪待命站也一個都沒進來:再等下去只是等硬上限。
+                # 剩下的標的回 pending/"no live mirror"(舊行為),交給重試輪 / 76 / 覆蓋率閘門。
+                with results_lock:
+                    nobody = live["n"] == 0
+                if pending and nobody and joined == 0:
+                    print(f"branch crawl: no live mirror and {len(pending)} standby mirror(s) "
+                          f"still not ready; giving up on {work.qsize()} target(s)", flush=True)
+                    return
                 if pending:
                     stop.wait(standby_every)
         sup = threading.Thread(target=supervisor, name="branch-standby", daemon=True)

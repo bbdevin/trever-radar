@@ -273,8 +273,9 @@ class BranchCrawlParity(unittest.TestCase):
             payload = json.loads(stage.read_text(encoding="utf-8"))
             self.assertFalse(payload["complete"])
             n_done = sum(1 for x in payload["results"] if x["outcome"] == "done")
+            n_empty = sum(1 for x in payload["results"] if x["outcome"] == "empty")
             n_pending = sum(1 for x in payload["results"] if x["outcome"] == "pending")
-            self.assertGreaterEqual(n_done, 8, "第一個 checkpoint 之前抓到的都在")
+            self.assertGreaterEqual(n_done + n_empty, 8, "第一個 checkpoint 之前抓到的都在")
             self.assertGreater(n_pending, 0, "沒抓完的標成 pending")
             self.assertEqual(r.snapshot()["raw"], [], "一列都沒進資料庫")
             self.assertGreaterEqual(len(writes), 2, "途中至少一次 checkpoint + 收尾一次")
@@ -287,6 +288,53 @@ class BranchCrawlParity(unittest.TestCase):
             self.assertEqual(info["resumed"], n_done)
             self.assertTrue(json.loads(stage.read_text(encoding="utf-8"))["complete"])
             self.assertEqual(info["done"], 37)
+
+
+class StageResumeRules(unittest.TestCase):
+    """續抓只接「同一天、未完成、形狀正確」的暫存檔;其他一律當不存在、整份重爬。"""
+
+    def _run_with_stage(self, stage_payload):
+        calls = []
+        with _Runner() as r, mock.patch.object(fubon, "get_text", side_effect=_http_stub(calls)):
+            stage = r.dir / "stage.json"
+            stage.write_text(json.dumps(stage_payload, ensure_ascii=False), encoding="utf-8")
+            import io
+            import contextlib
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                info = import_branch_trades(DATE_COMPACT, top=0, warrants=0, sleep_s=0,
+                                            workers=5, stage_to=stage)
+            return info, {c[0] for c in calls}, out.getvalue()
+
+    def test_malformed_stage_is_ignored_with_a_warning_not_a_crash(self):
+        """LOW(第二次驗證):結果缺 sid 以前會 KeyError,把兩輪都炸掉。"""
+        bad = {"date": DATE, "complete": False, "targets": sorted(STOCKS),
+               "expected": len(STOCKS),
+               "results": [{"outcome": "done", "rows": []}, {"sid": "2001", "outcome": "weird"}]}
+        info, fetched, out = self._run_with_stage(bad)
+        self.assertEqual(info["resumed"], 0)
+        self.assertEqual(fetched, set(STOCKS), "整份重爬")
+        self.assertIn("malformed, ignored", out)
+
+    def test_complete_stage_is_not_resumed_the_round_crawls_everything_again(self):
+        """設計決定(docs/47 §8.2 第 3 點):已完成的暫存檔 = 那一輪抓完了。留下來的只會是
+        不合格那一支,第二輪要做 main 上 22:30 的事——全部重爬,晚公布的才補得到。"""
+        done = {"date": DATE, "complete": True, "targets": sorted(STOCKS),
+                "expected": len(STOCKS),
+                "results": [{"sid": sid, "outcome": "done", "rows": _rows_via_parser(sid)}
+                            for sid in sorted(STOCKS)]}
+        info, fetched, out = self._run_with_stage(done)
+        self.assertEqual(info["resumed"], 0)
+        self.assertEqual(fetched, set(STOCKS))
+        self.assertIn("complete stage ignored", out)
+
+    def test_other_days_stage_is_ignored(self):
+        other = {"date": "2026-10-06", "complete": False, "targets": sorted(STOCKS),
+                 "expected": len(STOCKS),
+                 "results": [{"sid": sid, "outcome": "done", "rows": []} for sid in STOCKS]}
+        info, fetched, _ = self._run_with_stage(other)
+        self.assertEqual(info["resumed"], 0)
+        self.assertEqual(fetched, set(STOCKS))
 
 
 def _rows_via_parser(sid: str) -> list[dict]:

@@ -155,6 +155,57 @@ class CrawlInOrder(unittest.TestCase):
         self.assertTrue(all(r.error == "stopped" for r in pending))
         self.assertEqual(sorted(seen), list(range(6)), "on_result 只為抓到的呼叫,帶原索引")
 
+    def test_supervisor_gives_up_when_no_worker_is_alive_and_standby_never_passes(self):
+        """第二次驗證(2026-10-07):活站全死 + 待命站永遠不過 → 以前會等到 7200 秒硬上限。
+        現在:沒有活 worker、這一輪待命站也沒進來 → 收工,剩下的 pending/"no live mirror"。"""
+        checks = {"n": 0}
+
+        def check(host):
+            checks["n"] += 1
+            return False
+
+        def fetch(t, host, interval):
+            raise RuntimeError("down")
+
+        t0 = time.monotonic()
+        results, stats = crawl_in_order(
+            [f"t{i}" for i in range(40)], fetch, ["a"], 0, dead_after=2,
+            standby_hosts=["b", "c"], standby_check=check, standby_every=60)
+        self.assertLess(time.monotonic() - t0, 5, "不能等到 standby_every / 硬上限")
+        self.assertTrue(stats["a"].dead)
+        self.assertEqual(sum(1 for r in results if r.outcome == "failed"), 2)
+        self.assertEqual(sum(1 for r in results if r.outcome == "pending"
+                             and r.error == "no live mirror"), 38)
+        self.assertGreaterEqual(checks["n"], 2, "待命站至少各問過一次")
+
+    def test_supervisor_keeps_waiting_while_a_worker_is_alive(self):
+        """活 worker 還在抓時,待命站沒過不算理由收工。"""
+        def check(host):
+            return False
+
+        def fetch(t, host, interval):
+            time.sleep(0.01)
+            return []
+
+        results, _ = crawl_in_order([f"t{i}" for i in range(30)], fetch, ["a"], 0,
+                                    standby_hosts=["b"], standby_check=check, standby_every=0.01)
+        self.assertEqual(sum(1 for r in results if r.outcome == "done"), 30)
+
+    def test_on_result_exception_does_not_kill_the_worker(self):
+        """checkpoint 寫檔失敗(磁碟滿)不准殺掉 worker:記一行、繼續抓。"""
+        calls = {"n": 0}
+
+        def on_result(i, r):
+            calls["n"] += 1
+            if calls["n"] == 3:
+                raise OSError("disk full")
+
+        results, stats = crawl_in_order([f"t{i}" for i in range(20)], lambda t, h, i: [{"t": t}],
+                                        ["a"], 0, on_result=on_result)
+        self.assertEqual(sum(1 for r in results if r.outcome == "done"), 20)
+        self.assertEqual(calls["n"], 20, "之後的 on_result 照常被呼叫")
+        self.assertFalse(stats["a"].dead)
+
     def test_live_hosts_prefers_hosts_that_actually_delivered(self):
         stats = {"a": HostStats(done=0, empty=5), "b": HostStats(done=3), "c": HostStats(dead=True)}
         self.assertEqual(live_hosts(stats), ["b"])

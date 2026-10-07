@@ -1720,13 +1720,36 @@ def _commit_branch_results(engine, results: list[dict]) -> tuple[int, int, int, 
     return done, empty, failed, written
 
 
+_STAGE_OUTCOMES = {"done", "empty", "failed", "pending"}
+
+
 def _load_branch_stage(path: Path, iso_d: str) -> dict | None:
-    """同一天的暫存檔(續抓用);不存在、壞掉、或不是這一天 → None。"""
+    """同一天**未完成**的暫存檔(續抓用);不存在、壞掉、不是這一天、形狀不對、或已完成 → None。
+
+    續抓只接 ``complete=false``(被硬上限/SIGTERM 砍掉的那種)。已完成的暫存檔代表那一輪
+    抓完了:寫入成功的會被腳本刪掉;留下來的是不合格(覆蓋率掉出地板)那一支——這時
+    第二輪要做的就是 main 上 22:30 一直在做的事:**全部重爬**(晚公布的那些才補得到),
+    不是沿用第一輪抓到的 done 列。形狀不對(缺 sid、outcome 不認得)→ 整份當作不存在、
+    印一行警告,免得一個壞檔把兩輪都炸掉(KeyError)。
+    """
     try:
         stage = json.loads(Path(path).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
-    if stage.get("date") != iso_d or not isinstance(stage.get("results"), list):
+    if not isinstance(stage, dict) or stage.get("date") != iso_d:
+        return None
+    if stage.get("complete", True):
+        print(f"branch stage {path}: complete stage ignored, crawling everything again",
+              flush=True)
+        return None
+    results = stage.get("results")
+    ok_shape = isinstance(results, list) and all(
+        isinstance(r, dict) and isinstance(r.get("sid"), str)
+        and r.get("outcome") in _STAGE_OUTCOMES
+        and (r.get("outcome") != "done" or isinstance(r.get("rows"), list))
+        for r in results)
+    if not ok_shape:
+        print(f"branch stage {path}: malformed, ignored (treated as missing)", flush=True)
         return None
     return stage
 
