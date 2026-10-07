@@ -98,12 +98,15 @@ class RoundsUseTheWaitingLock(unittest.TestCase):
         probe = code.index("probe-branch-day")
         line = code[code.rfind("\n", 0, probe) + 1:code.index("\n", probe)]
         self.assertIn("POLL_HOLD_DB_LOCK=0 poll_until", line)
-        self.assertIn(" 2030 900 ", line, "17:30 起每 15 分鐘,最晚 20:30")
+        self.assertIn(" 2030 600 ", line, "16:30 起每 10 分鐘,最晚 20:30(docs/47 §8)")
         self.assertLess(code.rfind("release_db_lock", 0, probe), probe)
         self.assertGreater(code.rfind("release_db_lock", 0, probe), -1,
                            "探測前要先放 DB 鎖")
-        after = code[probe:code.index("radar import-branch-trades")]
-        self.assertRegex(after, r"acquire_db_lock_wait \d+", "全量爬之前要重新拿鎖")
+        # docs/47 §8:全量**抓取**(--stage-to)也不握 DB 鎖;重新拿鎖是在**寫入**(--from-stage)之前。
+        fetch = code.index("import-branch-trades --top 0")
+        self.assertNotIn("acquire_db_lock_wait", code[probe:fetch], "抓取前不可以重新拿鎖")
+        after = code[fetch:code.index("radar import-branch-trades --from-stage")]
+        self.assertRegex(after, r"acquire_db_lock_wait \d+", "寫入之前要重新拿鎖")
         self.assertIn('"${BRANCH_PROBE:-1}" != "0"', code, "BRANCH_PROBE=0 = 舊行為")
 
     def test_deadline_is_checked_before_the_lock_is_released(self):
@@ -114,13 +117,16 @@ class RoundsUseTheWaitingLock(unittest.TestCase):
     def test_non_trading_day_is_decided_only_after_the_round_imported_quotes(self):
         """先匯入、再判斷休市:前幾輪壞掉時,這些輪自己的日K匯入是當天的補救;
         匯入之前就判斷會把整天靜默丟掉(2026-10-04 驗證者)。判斷成立要 warn。"""
-        for name, imp in (("daily-branches.sh", 'run_step_or_fail "import-daily" radar import-daily --datasets quotes,insti'),
-                          ("daily-margin.sh", "if radar import-daily --datasets quotes; then")):
+        # daily-branches 多一次:補抓失敗時的述詞(run_step_or_fail_unless … price_date_is_today,
+        # docs/47 §8.3),那不是第二個休市判斷。
+        for name, imp, n in (("daily-branches.sh", 'run_step_or_fail_unless "import-daily" price_date_is_today radar import-daily --datasets quotes,insti', 2),
+                             ("daily-margin.sh", "if radar import-daily --datasets quotes; then", 1)):
             with self.subTest(script=name):
                 code = _code(SCRIPTS / name)
                 guard = code.index("if ! price_date_is_today")
                 self.assertLess(code.index(imp), guard)
-                self.assertEqual(code.count("price_date_is_today"), 1)
+                self.assertEqual(code.count("price_date_is_today"), n)
+                self.assertEqual(code.count("if ! price_date_is_today"), 1, "休市判斷只有一處")
                 self.assertIn("notify_warn", code[guard:guard + 300])
         nightly = _code(SCRIPTS / "safe-branch-stats.sh")
         guard = nightly.index("price_date_is_today")

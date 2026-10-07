@@ -66,11 +66,11 @@ test("每一筆待更新都帶出它的排程時間(使用者 2026-10-02 要求)
   const by = Object.fromEntries(lines.map((l) => [l.key, l.schedule]));
   // docs/47 排程優化:各輪是起點,腳本輪詢到公布為止。
   assert.equal(by.insti, "16:00 起輪詢(到齊即上線)");
-  assert.equal(by.branch, "17:30 起偵測、齊全即抓");
+  assert.equal(by.branch, "16:30 起偵測、齊全即抓");
   assert.equal(by.margin, "20:45 起輪詢");
   assert.equal(by.warrant, "16:00 起(隨法人輪)");
   assert.equal(by.themes, "每週一 11:00");
-  // 期貨照實講:16:00 起抓當日,未到齊 17:30、22:30 重試。
+  // 期貨照實講:16:00 起抓當日,未到齊 16:30、22:30 重試。
   assert.ok(by.futures?.includes("當日"), by.futures);
 });
 
@@ -80,7 +80,7 @@ test("手機精簡欄位:名稱、MM-DD、短排程;期貨不講「今日」也�
   assert.equal(margin.shortDate, "10-01");
   assert.equal(margin.shortSchedule, "20:45 起輪詢");
   const [fut] = staleFreshnessLines({ futures: D("2026-09-30", true) } as never);
-  assert.equal(fut.shortSchedule, "16:00 當日、17:30 補");
+  assert.equal(fut.shortSchedule, "16:00 當日、16:30 補");
   for (const s of UPDATE_SCHEDULE) assert.ok(s.short.length <= 18, `${s.key} 短排程太長:${s.short}`);
 });
 

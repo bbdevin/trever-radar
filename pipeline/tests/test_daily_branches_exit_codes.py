@@ -236,20 +236,31 @@ class TestDailyBranchesExitCodes(unittest.TestCase):
         block = self.code[guard:self.code.index("\nfi\n", guard)]
         self.assertIn("SCORES_REFRESH=1", block,
                       "今天已有完成標記時要進入只刷新評分的路徑")
+        # docs/47 §8.2 兩段式上線:評分 → 第一段上線(publish_site)→ 刷新輪在這裡離開
+        # → 分點統計 → prune → 第二段上線。所以 compute-branch-stats 不再需要旗標擋,
+        # 它本來就在刷新輪的 exit 之後。
         stats = self._index("radar compute-branch-stats")
-        gate = self.code.rfind('if [ "$SCORES_REFRESH" = 1 ]', 0, stats)
-        self.assertGreater(gate, guard, "compute-branch-stats 要被刷新旗標擋住")
-        self.assertIn("else", self.code[gate:stats],
-                      "compute-branch-stats 只在非刷新路徑(else)執行")
         refresh_exit = self._refresh_exit()
-        for step in ("radar compute-scores", "radar export-json", "deploy_data"):
+        self.assertGreater(stats, refresh_exit, "分點統計在刷新輪離開之後(第二段)")
+        first_publish = self._index("\npublish_site\n")
+        for step in ("radar compute-scores", "radar compute-performance", "radar prune"):
             with self.subTest(step=step):
                 idx = self._index(step)
-                self.assertGreater(idx, stats, f"{step} 在分點統計之後")
+                self.assertGreater(idx, guard)
+                self.assertLess(idx, first_publish, f"{step} 在第一段上線之前")
                 self.assertLess(idx, refresh_exit, f"{step} 在刷新路徑也要跑到")
                 line = self.code[self.code.rfind("\n", 0, idx) + 1:idx]
                 self.assertFalse(line.startswith(" "),
                                  f"{step} 不可以被任何條件包住(頂層、無縮排)")
+        self.assertLess(first_publish, refresh_exit, "第一段上線在刷新路徑也要跑到")
+        # publish_site 函式體裡 export 與 deploy 各一次,順序 export → 多方榜 → deploy。
+        body = self.code[self._index("publish_site() {"):self.code.index("\n}\n", self._index("publish_site() {"))]
+        self.assertIn('run_step_or_fail "export-json" radar export-json', body)
+        self.assertIn("build_bull_board", body)
+        self.assertIn('run_step_or_fail "deploy" deploy_data', body)
+        self.assertLess(body.index("export-json"), body.index("build_bull_board"))
+        self.assertLess(body.index("build_bull_board"), body.index("deploy_data"))
+        self.assertEqual(self.code.count("\npublish_site\n"), 2, "兩段式:上線恰好兩次")
 
     def test_import_only_mode_still_runs_the_imports(self):
         """只匯入不等於什麼都不做:22:00 這一輪存在的理由就是把當晚較晚才
@@ -299,7 +310,7 @@ class TestDailyBranchesExitCodes(unittest.TestCase):
         self.assertIn("當日評分", refresh_arm)
         tail = self.code[self._index('if [ "$SCORES_REFRESH" = 1 ]; then\n  notify_ok'):
                          self._refresh_exit()]
-        self.assertIn("分點統計仍是 17:40 版本", tail)
+        self.assertIn("分點統計仍是第一輪版本", tail)
 
     def test_scores_refresh_declares_its_own_failure_consequence(self):
         """刷新路徑失敗時,沒有任何一輪會再補當日評分——通知要講這句實話,
@@ -320,18 +331,21 @@ class TestDailyBranchesExitCodes(unittest.TestCase):
         block = self.code[guard:self.code.index("\nfi\n", guard)]
         self.assertIn('set_round_consequence "$REFRESH_CONSEQUENCE"', block)
 
-    def test_the_refresh_flag_is_read_exactly_twice(self):
-        """刷新旗標只准在兩處被讀:擋 compute-branch-stats、以及 deploy 之後離開。
+    def test_the_refresh_flag_is_read_exactly_once(self):
+        """刷新旗標只准在一處被讀:第一段上線之後、分點統計之前離開。
 
-        驗證者的變異:在 deploy 前插一行 ``if [ "$SCORES_REFRESH" = 1 ]; then exit 0; fi``,
-        刷新輪就會靜靜略過上線、回 0、不發任何通知——而那時整份測試全綠。任何第三處
-        讀取都是在旗標上長出新的分岔,必須有人刻意改這條測試。
+        (兩段式上線之前是兩處:擋 compute-branch-stats、deploy 後離開。現在統計本來就
+        排在刷新輪的 exit 之後,不需要再擋。)驗證者的變異:在第一段上線前插一行
+        ``if [ "$SCORES_REFRESH" = 1 ]; then exit 0; fi``,刷新輪就會靜靜略過上線、回 0、
+        不發任何通知——而那時整份測試全綠。任何第二處讀取都是在旗標上長出新的分岔,
+        必須有人刻意改這條測試。
         """
         reads = [m.start() for m in re.finditer(r'"\$SCORES_REFRESH"', self.code)]
-        self.assertEqual(len(reads), 2, "旗標只能被讀兩次")
-        self.assertLess(reads[0], self._index("radar compute-branch-stats"))
-        self.assertGreater(reads[1], self._index("deploy_data"),
-                           "第二次讀取(離開)必須在 deploy_data 之後")
+        self.assertEqual(len(reads), 1, "旗標只能被讀一次")
+        self.assertGreater(reads[0], self._index("\npublish_site\n"),
+                           "讀取(離開)必須在第一段上線之後")
+        self.assertLess(reads[0], self._index("radar compute-branch-stats"),
+                        "……而且在分點統計之前(刷新輪不算統計)")
 
     # ── 第二輪備援:17:40 沒上線的日子由 22:00 接手 ──────────────────────
     def _guard_block(self) -> str:

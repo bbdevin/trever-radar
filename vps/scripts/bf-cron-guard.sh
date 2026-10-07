@@ -19,10 +19,14 @@ fi
 log() { echo "$(TZ=Asia/Taipei date '+%F %T') $*" >> "$LOG"; }
 
 lock_held() { fuser /tmp/radar-db.lock >/dev/null 2>&1; }
+# 分點來源鎖(docs/47 §8):daily-branches.sh 整輪握著它(含不握 DB 鎖的探測與抓取段)。
+# bf 容器打的是同五個鏡像站,所以它握著的時候 bf 也要停,否則單站負載加倍。
+# 以前這段時間 bf 是被 lock_held「順便」停住的(分點輪的 fd 9 整輪開著);現在明講。
+source_held() { fuser /tmp/radar-branch-source.lock >/dev/null 2>&1; }
 mid_publish() { [ -f "$FLAG" ]; }
 margin_job() { [ -f "$MARGIN_FLAG" ]; }
 tdcc_job() { [ -f "$TDCC_FLAG" ]; }
-should_pause() { mid_publish || margin_job || tdcc_job || lock_held || in_radar_quiet_window; }
+should_pause() { mid_publish || margin_job || tdcc_job || lock_held || source_held || in_radar_quiet_window; }
 
 any_bf_alive() {
   local c
@@ -51,6 +55,7 @@ while true; do
       STATE=paused
       reason=window
       lock_held && reason=lock
+      source_held && reason=branch-source
       mid_publish && reason=mid-publish
       margin_job && reason=margin
       tdcc_job && reason=tdcc

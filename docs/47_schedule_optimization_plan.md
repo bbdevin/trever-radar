@@ -88,3 +88,102 @@ cat /tmp/radar-branch-round-$(date +%F).done                            # 第二
 - **docs/20 Phase 4 的「兩次 deploy」舊提案作廢**:16:10–21:00 只寫 DB 不上線 = 法人/分點晚數小時上站,與使用者目標相反。本方案是反方向:到了就上線,沒變就不上線。
 - deploy 全量重傳(`generated_at`)、export 增量化屬 `docs/44` P1,不在本次。
 - 安靜窗範圍不動;`data-backfill.sh` 不改成會等。
+
+## 8. 分點輪提速(2026-10-07 定案並實作;正式 crontab 待人類套用)
+
+> 使用者原話:「分點的資料是不是抓很慢」「其他網站分點資料五點就更新了 我還要等到八點」「我目標就是能在我的系統快點看到資料」。
+> 主指標 = **來源公布 → 網站看得到** 的時間。程式在舊時刻(17:30)也正確;先合併、後改 crontab 沒有空窗。
+
+### 8.1 實測(`~/radar-cron.log`)與各段耗時
+
+| 日期 | 來源就緒(探測) | 全量爬 | 之後各段 | 上線 | 公布→上線 |
+|---|---|---|---|---|---|
+| 10-07 | 17:32 0/24、17:47 0/24、18:03 5/24、18:18 8/24、18:34 21/24、**18:49 24/24** | 3,263 s(54 分,1,962 檔,1.66 s/檔) | stats 600 s、export 840 s、多方榜 29 s、deploy ~180 s、scores/perf/prune ~90 s | 20:12 | **83 分** |
+| 10-05 | 19:42(fubon 一次 ReadTimeout) | **6,119 s(102 分,3.1 s/檔)** | 同上 | ~21:55 | ~130 分 |
+| 10-06 | — | — | 17:30 第一步 `import-daily quotes,insti` 回 1(TPEx ChunkedEncodingError,瞬時)→ `run_step_or_fail` 整輪中止;分點靠 22:30 第二輪(爬 3,221 s)約 00:00 上線 | 00:00 | **約 5 小時延後** |
+
+10-05 為何兩倍:循序爬是「全域 1 秒一請求、五站輪替」,每檔耗時 = max(1 s, 來源回應時間)+寫入;一站回應慢(ReadTimeout 30 s × 3 次重試 + 退避 5/10 s,單檔最長 ~105 s)時,輪到那一站的 1/5 標的全部陪等——10-05 探測就抓到 fubon 站 ReadTimeout。**不是** mid-backfill-publish 或 bf 容器:分點輪整輪開著 fd 9,`fuser /tmp/radar-db.lock` 看得到,mid 20:00 會略過、bf-cron-guard 會 pause(只憑 log 無法百分之百排除,但機制上它們進不來)。
+
+來源調查(2026-10-07,唯讀):證交所「買賣日報表」16:00 產製但要驗證碼(既定不破解;e-shop 為付費產品);櫃買「券商買賣證券日報表」16:00 起提供但已加 Google reCAPTCHA;TWSE/TPEx OpenAPI 沒有任何分點資料集(只有券商名單);其他網站 17:00 就有,是交易所資料(付費或破解驗證碼)。**免費、無驗證碼的來源只有 MoneyDJ 五鏡像(富邦/元富/永豐金/國泰/凱基)**,實測 18:00–18:50 逐步公布。五站是否同時更新**今天量不到**(資料已公布),已改成逐站探測並逐站記 log(§8.2 第 2 點),明天 16:30 起的 log 就有答案。
+
+### 8.2 改了什麼(`vps/scripts/daily-branches.sh`、`lib.sh`、`pipeline/radar/{importer,mirror_crawl,http,cli}.py`、`providers/fubon.py`)
+
+1. **五站平行、單站節奏不變**(`--workers 5`,`radar/mirror_crawl.py`):每站一個 worker **釘在那一站**,單站間隔 = `--sleep 1.0 × 5 站 = 5 秒`(循序輪替到同一站最快也是 5 秒一次,來源負載不變);總吞吐上限 1 請求/秒,2,000 檔 **~33 分鐘,不隨來源變慢而變長**(單站回應 < 5 秒即可)。共用一條佇列(慢的站拿得少);連續失敗 5 次的站視為死站退出,剩下由活站接手;重試輪只用活站。節流改 `http.py` 的 per-key(鎖內預約時槽),不碰全域 `_last_request_at`;`workers=1`(預設、回補、探測以外的呼叫)逐字維持舊行為。
+2. **逐站探測、哪站先好先用哪站**:`probe-branch-day` 每站各抓同一批等距樣本(平行、各自節流),ok ≥ 門檻的站算就緒;**至少 3 站就緒**(`--min-ready-hosts 3`)或到 20:30 才全量爬——只有一站就緒時單站 5 秒間隔抓 2,000 檔要 10,000 秒,超過 7200 硬上限(2026-10-07 驗證者)。log 多逐站一行 `branch-probe mirror=<站> at=HH:MM ok=k/n ready=0/1`。全量爬開跑前再每站各抓 6 檔確認(`BRANCH_MIRROR_CHECK_SAMPLE`),已公布的站開工、**其餘站待命**(`mirror_crawl` standby:每 5 分鐘一個請求問一次,公布了就加進來當 worker);一站都沒到(20:30 截止的情況)用全部,閘門照舊把關。探測改 **16:30 起每 10 分鐘、每站 12 檔、門檻 11**(每站 12 請求/10 分鐘,早起沒有成本)。
+3. **抓與寫分離,抓的時候不握 DB 鎖**:`import-branch-trades --stage-to`(只抓不寫,結果照目標順序落 `data/branch-stage-<日>.json`,**每 50 檔 checkpoint**(tmp+rename),不碰 DB、不記 import_logs,exit 0,硬上限 `radar_timeout 7200`)→ `acquire_db_lock_wait 3600` → `--from-stage`(只寫不抓,照順序 upsert、記 import_logs、量覆蓋率,離開碼 0/75/76/1 分級**逐字不變**;暫存檔裡 pending 的算 failed)。**續抓(設計決定,2026-10-07 第二次驗證)**:只接**同一天、`complete=false`**(被硬上限/SIGTERM 砍掉)的暫存檔,`--stage-to` 只重抓 pending/failed/empty,done 的不重抓——這是「同一輪鏈的續抓」,不是「第二輪沿用第一輪」。已完成的暫存檔一律忽略、整份重爬:寫入成功的會被腳本刪掉,留下來的只有不合格(覆蓋率掉出地板)那一支,而那正是 main 上 22:30 第二輪的語意(標記 ratio<1 或無標記 → **全部重爬**,晚公布的才補得到;ratio=1.0 → 收工)——新版逐字維持。形狀不對(缺 sid、outcome 不認得)→ 整份當不存在、印一行警告。取捨:被砍掉的那一輪 done 列最多舊 2 小時(抓取硬上限),來源公布後的「事後修正」不是已知現象,而且隔天第一輪冪等重抓同一天會覆蓋;不做「done 超過 N 小時重抓」。worker 裡的 checkpoint 寫檔失敗(磁碟滿)只記一行、繼續抓,收尾那次由主執行緒寫、失敗正常拋出。待命站的監督:**沒有活 worker、這一輪待命站也一個都沒進來 → 收工**,剩下的標的 pending/"no live mirror"(舊行為,交給重試輪 / 76 / 覆蓋率閘門),不再等到硬上限。暫存檔的清理(`.tmp` EXIT trap、別天的 `find -delete`)在**拿到來源鎖之後**才做:鎖拿到之前,今天的 .tmp 可能是還在抓的第一輪在寫的。**SIGTERM**:容器 `--init`(tini 當 PID 1 轉送;以前 python 是 PID 1,`timeout` 只殺得掉 docker CLI、容器變孤兒),CLI 在 `--stage-to` 時裝 handler:收到就不再領新工作、寫 checkpoint、以 143 離開。DB 鎖握持從「整輪 ~90–140 分」降到「前置 ~5 分 + 寫入與上線 ~30 分」。
+4. **原始資料一致**(`tests/test_branch_crawl_parity.py`,只 mock HTTP、走真的解析器):循序 / 平行 / 暫存 / 續抓四條路的 `branch_trades_raw`、`branch_dim`(含新分點的 id——id 由插入順序決定,所以 worker 不准寫,主執行緒照目標順序 commit)、import_logs 位元級相同。**兩個已知的註記**:(a) 目標順序改成成交金額大的先(第 7 點),所以**全新**分點拿到的 `branch_dim.id` 與舊版(代號序)會不同——那是代理鍵,只有 raw 列的 `branch_id` 引用它,所有 join 走 id,沒有任何地方依賴 id 的大小;(b) 同一檔由哪一站抓取決於排程,若兩站對同一檔回傳不同內容,結果就不是決定性的——五站實測位元級相同(`docs/vps_backfill_plan.md` 附錄),一致性的前提是這個;某站改版時解析失敗會以 failed/死站的形式出現在 `branch crawl mirror=` 行。
+5. **兩段式上線**:寫入 → scores → performance → prune → **export → 多方榜 → deploy(分點明細與評分上站)** → `set_round_consequence`「已於第一段上線…00:05 會重算排行統計」→ `notify_ok`(含覆蓋率、「排行統計約 25 分鐘後更新」)→ compute-branch-stats → 再 export/deploy → 完成標記。第一段上線的分點是**完整日**(覆蓋率閘門已放行),不是部分日;只有排行/分位統計是前一版,通知裡講明。`publish_site()` 只有一份,被呼叫兩次。第二輪只刷新評分的路徑在第一段之後離開(不算統計、不重寫標記,與以前相同;prune 在它之前,兩條路都走到)。
+6. **前置步驟分級**(§8.3)。
+7. **成交金額大的先抓**(`--top 0` 池改依 turnover 排序;探測的等距抽樣仍用代號序的池子;分母與覆蓋率不變):抓到一半被硬上限砍掉時,留在暫存檔外的是冷門股。
+8. `bf-cron-guard.sh` 多一個 pause 條件:分點來源鎖被握著(`fuser /tmp/radar-branch-source.lock`)。bf 容器打同五個站,以前是靠分點輪開著 fd 9「順便」停住的,現在明講。
+9. 首頁時間表 `web/lib/freshness.ts` 改 16:30;changelog v3.4。
+
+### 8.3 前置步驟:哪些失敗可以續跑(`lib.sh` `run_step_or_fail_unless` / `run_step_or_warn`)
+
+| 步驟 | 失敗時 | 理由 |
+|---|---|---|
+| `import-daily quotes,insti` | 今天的日K已在庫(`price_date_is_today`)→ **warn 續跑**;不在庫 → high + 原碼中止 | 只是補抓(14:05/16:00 早進庫);不在庫時它是當天唯一補救 |
+| 休市判斷(`if ! price_date_is_today`) | 不變:先匯入再判斷,休市 warn 收工 | |
+| `import-futures-day` | 不變:75 只記 log、其他 warn | |
+| `compute-indicators --all --days 5` | 今天的指標已在庫(`indicators_date_is_today`)→ warn 續跑;不在庫 → 中止 | 三輪早算過;缺今天的指標評分會缺技術分 |
+| `seed-branches` | **永遠 warn 續跑** | 追蹤名單沿用上次;CLI 本身設計成永不失敗 |
+| `fetch-branch-trades`(抓) | high + 中止(什麼都沒進庫;暫存檔留著已抓到的,第二輪續抓) | 超時 124 / SIGTERM 143 |
+| `import-branch-trades --from-stage`(寫)| 0/75/76/其他 分級不變 | |
+| scores / performance / export / deploy / stats / prune | 不變:high + 中止 | 它們就是上線鏈 |
+
+### 8.4 預期時間線(公布→看得到;各段估計依 §8.1 實測)
+
+| 段 | 舊 | 新 |
+|---|---|---|
+| 探測偵測延遲 | 0–15 分(每 15 分一次) | 0–10 分(每 10 分一次,每站各 12 檔 ~1 分) |
+| 全量爬 | 54 分(好日)/102 分(壞日) | **~34 分**(含開跑前每站 6 檔確認、重試輪),壞日相同 |
+| 寫入 | 含在爬裡 | ~1–2 分(2,000 檔逐檔 commit) |
+| scores + performance | ~1.5 分 | ~1.5 分 |
+| compute-branch-stats | 10 分(**在上線前**) | 10 分(**移到第一段上線之後**) |
+| export + 多方榜 + deploy | 14 + 0.5 + 3 分 | 同(第一段);第二段再一次 |
+| **公布→分點明細可見** | **~83–90 分**(10-07:18:49→20:12) | **~60 分**(偵測 5 + 爬 34 + 寫 2 + 分數 2 + 匯出 14 + 榜 0.5 + 佈署 3) |
+| 排行統計可見 | 同上 | 第一段 + ~28 分 |
+| DB 鎖握持 | 整輪 ~90–140 分 | ~35 分(抓取期間完全不握) |
+
+| 來源就緒 | 舊:分點可見 | 新:分點可見 | 新:排行統計可見 |
+|---|---|---|---|
+| 17:00(假設) | 不可能早於 17:30 探測 → ~18:55 | **~18:00** | ~18:30 |
+| 18:30 | ~20:00(10-07 實測 18:49 → 20:12) | **~19:30** | ~20:00 |
+
+剩下最大的固定段是 **export 14 分**(全量匯出 ~6,400 檔),其次 deploy 3 分:`wrangler deploy` 本來就只上傳 hash 變動的資產,但每檔都帶 `generated_at` 所以幾乎全部重傳(§1)。**下一步**(未做):export 只匯出本輪分點有變動的個股 chips 檔 + radar.json(`docs/44` P1 增量化),第一段可再省 ~10 分;compute-branch-stats 改只算新日期(未評估安全性,先不動);更早的部分上線(聯集/自選先抓 ~300 檔 → 先上線)需要上面的 subset export 才划算,而且要在資料與 UI 標「分點資料更新中 n/N」,否則違反覆蓋率閘門的用意——留待 subset export 完成後再議。
+
+### 8.5 鎖表(新架構;「撞到」= 另一輪同時要用時怎麼辦)
+
+| 腳本(時刻) | 鎖 | 握著的時段 | 撞到時 |
+|---|---|---|---|
+| `daily-branches.sh`(16:30 / 22:30) | 分點來源鎖 fd 8 `/tmp/radar-branch-source.lock`(**先拿**) | 整輪(含 ②) | `acquire_branch_source_lock_wait 3600`:**等**(不握 DB 鎖地等);等滿 = 第一輪抓取卡住(它有 7200 s 硬上限,正常不會)→ high + exit 0。22:30 撞上還在抓的第一輪:等第一輪收工(最晚 ~23:05)再接手,不再靜默略過 |
+| 同上 | DB 鎖 fd 9 `/tmp/radar-db.lock`(**後拿**) | ① 開輪 → 前置步驟結束(~5 分);② **放掉**:探測 + 抓取(10–100 分,`release_db_lock`,fd 仍開著);③ 寫入前 `acquire_db_lock_wait 3600` → 第二段 deploy 結束(~35 分) | 等,最多 3600 s;等滿 high 通知 + exit 0 |
+| `daily-insti.sh`(16:00–17:10 輪詢) | DB 鎖 | 每次嘗試前 `flock -w 3600`,75 之後放鎖再睡 | 與 16:30 分點輪交錯:誰先拿誰先做,對方等 ≤3600 s |
+| `daily-margin.sh`(20:45) | DB 鎖 | `acquire_db_lock_wait 5400` → 收工 | 分點輪多半已在 19:30 前結束;撞到就等(≤5400 s) |
+| `mid-backfill-publish.sh`(03/09/12/20) | 不拿鎖;`fuser` 看 DB 鎖檔有沒有人開著 | export + deploy ~15 分 | 任何日更輪活著(含分點輪的 ② 相位,fd 9 仍開)→ **略過**。刻意保守:它只服務 bf 容器,沒有 bf 時本來就 noop |
+| `safe-branch-stats.sh`(00:05) | DB 鎖 `flock -w LOCK_WAIT_SECS` | 統計 → 上線 | 等;有完成標記 → 整夜略過;分點輪第二段失敗沒寫標記 → 它補 |
+| `weekly-backup.sh`(週六 05:00) | DB 鎖 `acquire_db_lock`(`flock -n`) | 備份全程 | 搶不到 → 略過 + 通知(週六沒有日更輪) |
+| `data-backfill.sh`(01:10) | DB 鎖 `flock -n` | | 搶不到 → 略過(可續跑) |
+| `warrant-backfill.sh` | 來源鎖(就地 `flock -n`)→ 再 DB 鎖 | | 分點輪握著來源鎖 → 略過 |
+| `bf-cron-guard.sh`(常駐) | 不拿鎖;看 DB 鎖檔(`fuser`)、來源鎖檔(`fuser`,新)、安靜窗、flag | | 任一成立 → pause bf 容器 |
+
+無死鎖:`daily-branches.sh` 的順序是**來源鎖(等)→ DB 鎖(等)**,等來源鎖時不握 DB 鎖;其他拿來源鎖的腳本(`warrant-backfill.sh`、`daily-warrant-branches-poc.sh`)先握 DB 鎖、再**非阻塞**拿來源鎖(拿不到就收工),所以沒有人會握著 DB 鎖等來源鎖,也沒有人會握著來源鎖無上限地等 DB 鎖(分點輪等 DB 鎖 ≤3600 s)。(反過來「先 DB 後等來源」會讓第一輪寫入時拿不到 DB 鎖、第二輪拿不到來源鎖,互等到逾時——驗證者 MED 3 的修法刻意避開。)每一次等鎖都有上限(3600 / 5400 / `LOCK_WAIT_SECS`)。沒有部分上線,所以沒有「部分與完整互相競賽」的問題;兩段式上線在同一輪、同一把鎖之下依序進行。寫 DB 的只有握著 DB 鎖的那一個程序(抓取 worker 只抓不寫)。**當天一定有人上線的保證**:第一輪抓取最晚 20:30 開始、7200 s 硬上限、寫入+上線 ~35 分 → 最晚 ~23:05 收工;第二輪 22:30 起最多等 3600 s 來源鎖(到 23:30)→ 第一輪有標記就只刷新評分、沒標記就從暫存檔續抓並接手完整鏈。測試:`tests/test_daily_branches_lock_phases.py`(對真的 lib.sh 用 stub 量:放鎖期間別的程序 `flock -n` 拿得到、`fuser` 仍看得到 fd、重新拿回;等鎖逾時;來源鎖等待版拿得到/逾時 high、非阻塞版略過;`--init`;鎖序)。
+
+### 8.6 正式機要做的事(人類)
+
+1. 合併後 VPS 下一輪 `sync_code` 自動拉到新腳本(舊 crontab 17:30 也正確)。
+2. **改 crontab**(與 `web/lib/freshness.ts` 的 16:30 同一次上線,否則首頁時刻差 60 分):`30 17 * * 1-5 … daily-branches.sh` → `30 16 * * 1-5 … daily-branches.sh`(見 `crontab.example`);22:30 那行不變。
+3. 明天核對:`grep -E '^branch-probe (at|mirror)=' ~/radar-cron.log`(各站幾點先有)、`grep -E 'step (fetch-branch-trades|import-branch-trades|compute-branch-stats|export-json|deploy) done' ~/radar-cron.log`(各段耗時)、`grep -E '^branch crawl' ~/radar-cron.log`(哪些站用上、死站)。
+4. 回滾:`git revert`;`--workers 1` 即舊循序爬;`BRANCH_PROBE=0` 不探測。
+
+### 8.7 SIGTERM 真的到得了容器:人工核對
+
+**已於 2026-10-07 在正式機核對**(人類執行):Docker 27.1.2,`docker info` 的 InitBinary = docker-init;`docker run --rm --init radar-pipeline python -c 'import sys; sys.exit(75)'` 回傳 rc=75(`--init` 可用、離開碼經 docker-init 逐位元轉回)。本機測試只鎖 lib.sh 的文字。要再驗「TERM 真的進到 python」可跑(不碰正式 DB、不寫任何東西):
+
+```bash
+cd ~/trever-radar
+docker run --rm --init --name radar-sigterm-check radar-pipeline python -c 'import signal,time; signal.signal(signal.SIGTERM, lambda *_: (print("TERM received", flush=True), exit(143))); print("ready", flush=True); time.sleep(120)' &
+sleep 3; timeout --signal=TERM 5s docker attach radar-sigterm-check; docker ps --filter name=radar-sigterm-check --format '{{.Names}}'
+```
+
+預期:印出 `TERM received`,`docker ps` 沒有列出那個容器(沒有孤兒)。拿掉 `--init` 重跑,預期容器還活著(這就是驗證者抓到的洞)。

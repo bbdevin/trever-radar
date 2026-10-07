@@ -311,7 +311,7 @@ class CronParsingTest(unittest.TestCase):
         got = {(j["script"], h, m)
                for j in self.jobs for h in j["hours"] for m in j["minutes"]}
         for slot in (("daily-market.sh", 14, 5), ("daily-tpex-quotes.sh", 14, 45),
-                     ("daily-insti.sh", 16, 0), ("daily-branches.sh", 17, 30),
+                     ("daily-insti.sh", 16, 0), ("daily-branches.sh", 16, 30),
                      ("daily-margin.sh", 20, 45), ("daily-branches.sh", 22, 30),
                      ("weekly-refdata.sh", 11, 0)):
             with self.subTest(slot=slot):

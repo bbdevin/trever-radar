@@ -39,6 +39,16 @@ export const KIND_LABEL: Record<ChangeKind, string> = {
 
 export const CHANGELOG: Release[] = [
   {
+    version: "3.4",
+    date: "2026-10-07",
+    title: "分點資料更早上線",
+    items: [
+      { kind: "improve", text: "分點資料抓取加速:五個來源站同時抓(每站的節奏不變),抓完先把當天的分點明細與評分送上站,分點排行統計約 25 分鐘後再更新;公布後更早上線" },
+      { kind: "improve", text: "分點來源從 16:30 起每 10 分鐘逐站偵測,哪一站先公布就先從那一站抓;首頁「尚未更新」時間表跟著改為 16:30 起" },
+      { kind: "fix", text: "修正盤後補抓日K失敗時整輪分點延後的問題:日K已在庫時只提醒、照常抓分點,不再等到深夜第二輪" },
+    ],
+  },
+  {
     version: "3.3",
     date: "2026-10-06",
     title: "個股頁載入加快、上櫃資券補齊",

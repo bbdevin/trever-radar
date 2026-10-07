@@ -37,7 +37,9 @@ STEPS = (
     ("import-daily", "radar import-daily"),
     ("compute-indicators", "radar compute-indicators"),
     ("seed-branches", "radar seed-branches"),
-    ("import-branch-trades", "radar import-branch-trades"),
+    # docs/47 §8:抓(不握 DB 鎖、暫存檔)與寫(握鎖、--from-stage)分成兩步,各自計時。
+    ("fetch-branch-trades", "import-branch-trades --top 0"),
+    ("import-branch-trades", "radar import-branch-trades --from-stage"),
     ("compute-branch-stats", "radar compute-branch-stats"),
     ("compute-scores", "radar compute-scores"),
     ("compute-performance", "radar compute-performance"),
@@ -45,6 +47,8 @@ STEPS = (
     ("prune", "radar prune"),
     ("deploy", "deploy_data"),
 )
+# 三種會「講話」的 wrapper 前綴(都在 lib.sh、內部都走 run_step)。
+WRAPPER = r'run_step(_or_fail(_unless)?|_or_warn)?'
 
 
 def _code_lines(path: Path) -> list[str]:
@@ -107,7 +111,7 @@ class TestDailyBranchesTiming(unittest.TestCase):
                 self.assertIsNotNone(line, f"找不到 {cmd} 這一步")
                 self.assertRegex(
                     line.strip(),
-                    r'^(if )?run_step(_or_fail)? "' + re.escape(label) + '" ',
+                    r'^(if )?' + WRAPPER + ' "' + re.escape(label) + '" ',
                     f"{cmd} 應該經過 run_step「{label}」,才有與夜間同格式的計時",
                 )
 
@@ -152,14 +156,18 @@ class TestDailyBranchesTiming(unittest.TestCase):
         """上面那條在所有呼叫都改用 run_step_or_fail 之後會變成空轉,所以另外
         釘住「每一步都是三種形狀之一」,而且形狀的統計不得為零。"""
         shaped = [ln.strip() for ln in self.lines
-                  if ln.strip().startswith(("run_step ", "if run_step ", "run_step_or_fail "))]
+                  if ln.strip().startswith(("run_step ", "if run_step ", "run_step_or_fail ",
+                                            "run_step_or_fail_unless ", "run_step_or_warn "))]
         self.assertEqual(len(shaped), len(STEPS),
                          f"每一步各一行,實際:{shaped}")
         self.assertTrue(any(s.startswith("if run_step ") for s in shaped),
                         "分點匯入要保留 `if run_step …` 自己分級")
-        self.assertGreaterEqual(
-            sum(1 for s in shaped if s.startswith("run_step_or_fail ")), 9,
-            "其餘九步都要用會自己通知的 run_step_or_fail")
+        self.assertEqual(
+            sum(1 for s in shaped if s.startswith("run_step_or_fail ")), 7,
+            "抓取、統計、評分、績效、匯出、prune、deploy 七步用會中止的 run_step_or_fail")
+        self.assertEqual(
+            sum(1 for s in shaped if s.startswith(("run_step_or_fail_unless ", "run_step_or_warn "))), 3,
+            "三個前置步驟用寬鬆版(docs/47 §8.3)")
 
     def test_exit_codes_are_unchanged_by_the_wrapper(self):
         """分點匯入的離開碼是本輪唯一的判斷依據,包 wrapper 不得動到它。

@@ -10,6 +10,7 @@
 """
 import contextlib
 import io
+import re
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -65,9 +66,12 @@ class _TempDb(unittest.TestCase):
                          for t in ("import_logs", "branch_trades_raw", "daily_prices", "stocks"))
 
 
-def _fetch_ok_for(ok_ids, calls):
-    def fake(sid, date, throttle=None):
-        calls.append((sid, date, throttle))
+def _fetch_ok_for(ok_ids, calls, ok_hosts=None):
+    """``ok_hosts`` 給定時只有那些站回得出列(其他站一律「還沒公布」)。"""
+    def fake(sid, date, throttle=None, host=None):
+        calls.append((sid, date, throttle, host))
+        if ok_hosts is not None and host not in ok_hosts:
+            raise NoDataError("not yet on this mirror")
         if sid in ok_ids:
             return [{"stock_id": sid}]
         if sid.endswith("7"):
@@ -111,13 +115,58 @@ class ProbeBranchDay(_TempDb):
         with mock.patch("radar.providers.fubon.fetch_branch_trades",
                         side_effect=_fetch_ok_for(set(), calls)):
             info = importer.probe_branch_day(sample=24, threshold=22, sleep_s=0.5)
+        from radar.providers import fubon
+
+        picks = importer._evenly_spaced(IDS, 24)
         asked = [c[0] for c in calls]
-        self.assertEqual(asked, importer._evenly_spaced(IDS, 24))
+        # 逐站探測(docs/47 §8):每一站各問同一批等距樣本一次,釘在那一站。
+        self.assertEqual(sorted(set(asked)), sorted(picks))
+        for host in fubon.MIRROR_HOSTS:
+            with self.subTest(host=host):
+                self.assertEqual([c[0] for c in calls if c[3] == host], picks,
+                                 "每一站都要問完同一批樣本、同一個順序")
+        self.assertEqual(len(calls), len(picks) * len(fubon.MIRROR_HOSTS))
         self.assertEqual(info["pool"], 48, "ETF、下市股不進池子(與 --top 0 同一份)")
         self.assertNotIn("0050", asked)
         self.assertNotIn("9998", asked)
         self.assertEqual({c[1] for c in calls}, {"20261002"}, "預設 MAX(date) FROM daily_prices")
-        self.assertEqual({c[2] for c in calls}, {0.5})
+        # 單站間隔 = 全域間隔 × 站數:五站平行時每一站看到的節奏與循序輪替相同。
+        self.assertEqual({c[2] for c in calls}, {0.5 * len(fubon.MIRROR_HOSTS)})
+
+    def test_one_ready_mirror_is_enough_and_is_named(self):
+        """五站各自更新時間可能不同:只要有一站達門檻就可以開始爬,而且要說是哪一站。"""
+        from radar.providers import fubon
+
+        early = fubon.MIRROR_HOSTS[2]
+        with mock.patch("radar.providers.fubon.fetch_branch_trades",
+                        side_effect=_fetch_ok_for(set(IDS), [], ok_hosts={early})):
+            info = importer.probe_branch_day(sample=24, threshold=22, sleep_s=0)
+        self.assertTrue(info["ready"])
+        self.assertEqual(info["ready_hosts"], [early])
+        self.assertEqual(info["ok"], 24, "ok 是各站裡最好的那一站")
+        self.assertEqual(info["mirrors"][early], 24)
+        self.assertEqual(sum(info["mirrors"].values()), 24, "其他四站都是 0")
+
+    def test_min_ready_hosts_gates_the_start_of_the_crawl(self):
+        """HIGH 1(2026-10-07 驗證者):只有一站就緒時不能開爬(單站 5 秒 × 2,000 檔 =
+        10,000 秒 > 7200 硬上限)。daily-branches.sh 要求 3 站;站數上限夾在站總數。"""
+        from radar.providers import fubon
+
+        two = set(fubon.MIRROR_HOSTS[:2])
+        with mock.patch("radar.providers.fubon.fetch_branch_trades",
+                        side_effect=_fetch_ok_for(set(IDS), [], ok_hosts=two)):
+            info3 = importer.probe_branch_day(sample=24, threshold=22, sleep_s=0, min_ready_hosts=3)
+            info2 = importer.probe_branch_day(sample=24, threshold=22, sleep_s=0, min_ready_hosts=2)
+            info9 = importer.probe_branch_day(sample=24, threshold=22, sleep_s=0, min_ready_hosts=9)
+        self.assertEqual(sorted(info3["ready_hosts"]), sorted(two))
+        self.assertFalse(info3["ready"], "兩站就緒、要求三站 → 還不能爬(75)")
+        self.assertTrue(info2["ready"])
+        self.assertEqual(info9["min_ready_hosts"], len(fubon.MIRROR_HOSTS), "夾在站總數")
+        self.assertFalse(info9["ready"])
+        with mock.patch("radar.providers.fubon.fetch_branch_trades",
+                        side_effect=_fetch_ok_for(set(IDS), [])):
+            self.assertTrue(importer.probe_branch_day(sample=24, threshold=22, sleep_s=0,
+                                                      min_ready_hosts=9)["ready"], "五站全到")
 
     def test_threshold(self):
         picks = importer._evenly_spaced(IDS, 24)
@@ -139,14 +188,20 @@ class ProbeBranchDay(_TempDb):
                      contextlib.redirect_stdout(out):
                     try:
                         cli.cmd_probe_branch_day(SimpleNamespace(
-                            date=None, sample=24, threshold=22, sleep=0))
+                            date=None, sample=24, threshold=22, sleep=0, min_ready_hosts=1))
                         got = None
                     except SystemExit as e:
                         got = e.code
                 self.assertEqual(got, code)
                 self.assertRegex(out.getvalue(),
-                                 rf"^branch-probe at=\d\d:\d\d date={DAY} ok={n_ok}/24 ",
+                                 rf"(?m)^branch-probe at=\d\d:\d\d date={DAY} ok={n_ok}/24 ",
                                  "一行可 grep 的探測結果")
+                # 逐站各一行:明天的 cron log 才量得出每一站幾點先有今天的資料。
+                self.assertRegex(out.getvalue(),
+                                 rf"(?m)^branch-probe mirror=https://\S+ at=\d\d:\d\d "
+                                 rf"date={DAY} ok={n_ok}/24 ready=[01]$")
+                self.assertEqual(
+                    len(re.findall(r"(?m)^branch-probe mirror=", out.getvalue())), 5)
 
     def test_small_pool_scales_the_threshold(self):
         with mock.patch("radar.providers.fubon.fetch_branch_trades",

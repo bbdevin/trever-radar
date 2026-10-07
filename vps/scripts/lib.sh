@@ -90,6 +90,23 @@ acquire_branch_source_lock() {
   fi
 }
 
+# 等分點來源鎖最多 $1 秒(docs/47 §8.5):22:30 第二輪撞上還在抓的第一輪時要**等**,不能
+# 靜默略過——略過的結果可能是「今天沒有任何一輪上線」。等滿仍拿不到 = 第一輪卡住
+# (它的抓取有 7200 秒硬上限,正常不會發生),high 通知、exit 0。
+# 鎖序不變:呼叫端先拿 DB 鎖再呼叫這個;握著來源鎖等 DB 鎖的人(warrant-backfill.sh)拿的是
+# 非阻塞 DB 鎖,所以兩邊仍不可能互相等待。等的期間**不握 DB 鎖**(呼叫端要先放)。
+acquire_branch_source_lock_wait() {
+  local secs="$1" t0
+  t0="$(date +%s)"
+  exec 8>/tmp/radar-branch-source.lock
+  if flock -w "$secs" 8; then
+    echo "branch source lock acquired waited=$(( $(date +%s) - t0 ))s"
+    return 0
+  fi
+  notify "分點來源鎖等滿 ${secs} 秒仍未釋放（前一輪分點抓取疑似卡住），本輪未執行" high "失敗"
+  exit 0
+}
+
 # 開輪先拉 code(策略邏輯在程式碼裡,舊碼算出舊 reasons——既有教訓);
 # 映像重 build 靠 docker layer cache,requirements.txt 沒變時近零成本。
 # core.filemode=false:VPS 上 chmod +x script 不會被 git 當成「本地修改」擋 pull
@@ -180,10 +197,15 @@ radar_secret_env_new() {
 
 # 跑管線一個指令。容器內 /app = repo 根;第三個 -v 必掛,export-json 產物才會落地主機。
 # 只傳 RADAR_FINMIND_TOKEN / FUGLE_API_KEY 進容器(deploy 憑證留在主機,權限分離)。
+# --init(docs/47 §8.7):容器內 python 是 PID 1,沒有 init 時 SIGTERM 會被核心忽略——
+# `timeout --signal=TERM` 只殺得掉 docker CLI,容器裡的爬蟲變孤兒、沒人握來源鎖還在打
+# 鏡像站(2026-10-07 驗證者抓到)。--init 讓 tini 當 PID 1 轉送 SIGTERM;docker run 前景
+# 模式預設 --sig-proxy 會把 CLI 收到的 TERM 送進容器。分點抓取的 CLI 另裝 handler,
+# 收到 TERM 寫 checkpoint 後以 143 離開;其他指令照 python 預設直接結束。
 radar() {
   local rc=0
   radar_secret_env_new
-  docker run --rm \
+  docker run --rm --init \
     --env-file "$RADAR_SECRET_ENV_FILE" \
     -v "$REPO/pipeline":/app/pipeline \
     -v "$REPO/data":/app/data \
@@ -206,7 +228,7 @@ radar_timeout() {
   local rc=0
   radar_secret_env_new
   timeout --signal=TERM --kill-after=30s "${hard_timeout_seconds}s" \
-    docker run --rm \
+    docker run --rm --init \
       --env-file "$RADAR_SECRET_ENV_FILE" \
       -v "$REPO/pipeline":/app/pipeline \
       -v "$REPO/data":/app/data \
@@ -590,6 +612,66 @@ run_step_or_fail() {
   fi
   notify "${label} 失敗（碼 ${rc}），本輪中止、未上線；${ROUND_FAIL_CONSEQUENCE}" high "失敗"
   exit "$rc"
+}
+
+# ── 前置步驟的兩種寬鬆版(docs/47 §8.3)─────────────────────────────────
+#
+# 2026-10-06 的事故:17:30 分點輪第一步 `import-daily quotes,insti` 只是**補抓**
+# (日K與法人早在 14:05/16:00 就進庫了),TPEx 一個瞬時的 ChunkedEncodingError 讓它回 1,
+# run_step_or_fail 於是把整輪中止——當天的分點要等 22:30 第二輪,約 00:00 才上線,
+# 晚了 5 小時。補抓失敗而資料早就在庫,代價只是「少補到晚到的幾列」,不該賠上整輪。
+#
+# run_step_or_fail_unless LABEL PREDICATE CMD…:失敗時先問 PREDICATE(一個 shell
+# 函式,例如 price_date_is_today);成立 → warn 一則、續跑(return 0);不成立 →
+# 與 run_step_or_fail 逐字相同的契約(指名步驟與碼的 high 通知 + 原碼 exit)。
+# 取碼形狀與 run_step_or_fail 相同(if 取碼、else 第一行接 $?、exit 原碼),理由見該函式。
+run_step_or_fail_unless() {
+  local label="$1" pred="$2"
+  local rc=0
+  shift 2
+  if [ -z "${ROUND_FAIL_CONSEQUENCE:-}" ]; then
+    echo "run_step_or_fail_unless: ${SCRIPT_NAME} 未宣告本輪失敗後果（缺 set_round_consequence），拒絕執行 ${label}" >&2
+    notify "${SCRIPT_NAME} 未呼叫 set_round_consequence，拒絕執行步驟 ${label}（這是腳本本身的錯,不是資料問題）" high "失敗"
+    exit 78
+  fi
+  if run_step "$label" "$@"; then
+    return 0
+  else
+    rc=$?
+  fi
+  if "$pred"; then
+    notify_warn "${label} 失敗（碼 ${rc}），但今天的資料已在庫，本輪續跑"
+    return 0
+  fi
+  notify "${label} 失敗（碼 ${rc}）且今天的資料不在庫，本輪中止、未上線；${ROUND_FAIL_CONSEQUENCE}" high "失敗"
+  exit "$rc"
+}
+
+# run_step_or_warn LABEL CMD…:失敗只 warn 一則、永遠續跑(return 0)。給「沿用既有
+# 資料就好」的步驟(seed-branches 的追蹤名單同步)。
+run_step_or_warn() {
+  local label="$1"
+  local rc=0
+  if run_step "$@"; then
+    return 0
+  else
+    rc=$?
+  fi
+  notify_warn "${label} 失敗（碼 ${rc}），本輪續跑，沿用既有資料"
+  return 0
+}
+
+# MAX(date) FROM indicators_daily 是否等於 $1(預設台北今天):與 price_date_is_today
+# 同形,給分點輪的 compute-indicators 當「今天的指標早在 14:05/14:45/16:00 算過了」的述詞。
+indicators_date_is_today() {
+  local want="${1:-$(taipei_date +%F)}" got=""
+  got="$(radar_ro_sql "SELECT MAX(date) FROM indicators_daily" 2>/dev/null)" || got=""
+  if [ -z "$got" ]; then
+    echo "indicators_date_is_today: 查不到 MAX(date)，視為已算過"
+    return 0
+  fi
+  echo "indicators date: max=${got} want=${want}"
+  [ "$got" = "$want" ]
 }
 
 # 「那一輪 daily-branches 真的整條跑完(含 deploy_data)」的完成標記。
