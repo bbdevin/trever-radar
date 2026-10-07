@@ -2,6 +2,12 @@
 
 > 單一進度真相。每完成一個里程碑就更新本檔。規格細節看各編號文件,別寫在這裡。
 
+## 2026-10-07 docs/20 Phase 2 結案:決議不重算歷史綜合分(只改文件)
+
+- **決議**:Fable 決定(使用者已授權 Fable 決定)不做歷史綜合分正式重算,Phase 2 標 ✅ 完成(決議不重算)。
+- **依據**:正式庫唯讀差異(`score_recompute_diff.py`,56 日 2026-07-06..10-06)——最近 5 日 6.1% 列變動、無 ≥65 跨越;全 56 日 66.6% 變動、`final` mean |d| 1.66、跨越進 9／出 16,全屬 look-ahead(今天題材成員、事後回補分點、09-04 adj_factor、TPEx 缺口)。原動機已消失(策略 07-10 起不加分,唯一有分數日 07-06 為 0/77 受影響);寫回違反 docs/04 §12、2026-09-24 不回補歷史、docs/39 §3.8、docs/20 §4.1;無網頁讀歷史 `final`。
+- **改動**:`docs/20` §1.1 表與 Phase 2 註記、`docs/04` §13 notice、新增 `docs/evidence/score_recompute_diff_20261007.md`(摘要＋工具原始輸出,不附 CSV)。未改程式、未動 DB。
+- **若日後推翻**:只重算 2026-07-06(`--tech-source recompute`),週六備份後、持 DB 鎖、`import_logs` dataset `scores-recompute`;絕不對歷史跑 `compute-indicators --all`。
 ## 2026-10-06 價格位置 P2:未回補缺口進階梯/K 線、20 日線連續天數(`docs/45` §8;程式完成於分支、未上線)
 
 - **做了什麼**:`price_levels` version 1→2,export 多算 `gaps_above/below`(近 120 根、昨天以前、每側 ≤2、近者在前,定義與前端既有回退算法逐字相同)與 `ma20_streak`(收盤 ≥/< MA20 連續根數,封頂標 `capped`)。前端 `priceLevels.levelGaps()` 單一取用點:價格階梯多「未回補缺口 MM/DD lo–hi ±x%」列(固定列超過 5 時留最近 5)、K 線壓力/支撐虛線加缺口中點(標「缺口」)、壓力段 `L_GAP_*` 改讀 export 鍵、技術段 3% 內句自動點名;新事實 `F11_MA20_ABOVE_N/BELOW_N`「收盤連 N 日站上/低於20日線」(rank 2,第 1 日交給站回/跌破事件句)。舊 JSON(無新鍵)照舊:缺口由 K 棒自算只進壓力段,連續天數不列。MACD/KD 鏡像與 Header 摘要已由 docs/46 涵蓋,不另做。只顯示、不改分數/`technical`/`radar.json`/DB;拆檔不需改(鍵在核心)。
