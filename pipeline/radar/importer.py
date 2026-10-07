@@ -3,7 +3,10 @@ import hashlib
 import json
 import math
 import os
+import signal
+import sys
 import tempfile
+import threading
 import time
 from datetime import date as date_cls, datetime, timedelta
 from pathlib import Path
@@ -1497,13 +1500,16 @@ def probe_mirrors(picks: list[str], date: str, hosts: list[str],
 
 
 def probe_branch_day(date: str | None = None, sample: int = 24, threshold: int = 22,
-                     sleep_s: float = 1.0, hosts: list[str] | None = None) -> dict:
+                     sleep_s: float = 1.0, hosts: list[str] | None = None,
+                     min_ready_hosts: int = 1) -> dict:
     """唯讀探測:分點來源此刻對 date 公布到什麼程度。**不寫資料庫、不記 import_logs**。
 
     從 ``--top 0`` 目標池等距抽 ``sample`` 檔,**每一站各抓一次**(釘站、平行、單站間隔
     = ``sleep_s`` × 站數,單站節奏與循序爬相同);抓得到列的算 ok,NoDataError(還沒公布)
-    與任何其他失敗都算沒到。**任一站** ok ≥ ``threshold`` 就是「可以開始全量爬了」
-    (``ready_hosts`` 列出已達門檻的站;全量爬只用這些站,見 import_branch_trades)。
+    與任何其他失敗都算沒到。ok ≥ ``threshold`` 的站算就緒(``ready_hosts``);就緒的站
+    ≥ ``min_ready_hosts`` 才是「可以開始全量爬了」。門檻站數的理由:只有一站就緒時全量爬
+    只能用那一站(單站 5 秒間隔 → 2,000 檔 10,000 秒,超過硬上限);daily-branches.sh 用 3,
+    其餘站在爬的途中待命、公布了就加進來(mirror_crawl standby)。
     逐站探測是因為五站各自更新時間可能不同(2026-10-07 使用者觀察):一站 17:00 就有、
     另一站 18:30 才有的話,循序輪替的探測要等到多數站都有才過門檻。
 
@@ -1537,9 +1543,10 @@ def probe_branch_day(date: str | None = None, sample: int = 24, threshold: int =
         "sample": len(picks),
         "pool": len(pool),
         "threshold": need,
-        "ready": bool(ready_hosts),
+        "ready": len(ready_hosts) >= max(1, min(min_ready_hosts, len(hosts))),
         "mirrors": counts,
         "ready_hosts": ready_hosts,
+        "min_ready_hosts": max(1, min(min_ready_hosts, len(hosts))),
     }
 
 
@@ -1571,19 +1578,48 @@ def previous_ok_rows(source: str, dataset: str, date: str) -> int | None:
 BRANCH_MIRROR_CHECK_SAMPLE = 6
 
 
+# 暫存檔每抓幾檔寫一次 checkpoint(tmp + rename)。被硬上限砍掉或收到 SIGTERM 時,
+# 已抓到的不會丟;下一次 --stage-to(同一天)從暫存檔續抓,只重抓 pending/failed/empty。
+BRANCH_STAGE_CHECKPOINT_EVERY = 50
+# 收到 SIGTERM 中止抓取時的離開碼(與 `timeout` 殺掉的 124 區分)。
+BRANCH_FETCH_STOPPED_EXIT = 143
+
+
 def _fetch_branch_targets(targets: list[str], date: str, sleep_s: float,
-                          workers: int) -> tuple[list[dict], dict]:
+                          workers: int, *, prior: dict[str, dict] | None = None,
+                          checkpoint=None, stop: threading.Event | None = None,
+                          ) -> tuple[list[dict], dict]:
     """抓完 ``targets``(含恰好一次的重試輪),回傳**照 targets 順序**的結果與鏡像站報告。
 
-    每個結果:``{"sid", "outcome": done|empty|failed, "rows": list|None}``。
+    每個結果:``{"sid", "outcome": done|empty|failed|pending, "rows": list|None}``。
     ``workers <= 1`` = 改動前的循序爬,逐字相同(鏡像輪替 + 全域節流);
-    ``workers > 1`` = 每站一個 worker(mirror_crawl),單站間隔 = sleep_s × 站數。
+    ``workers > 1`` = 每站一個 worker(mirror_crawl),單站間隔 = sleep_s × 站數;
+    開爬時只用已公布的站,其餘站待命、每 5 分鐘問一次、公布了就加進來。
+    ``prior``(sid → 結果)= 上一次暫存檔裡已抓到的(只有 done 算數,其餘重抓);
+    ``checkpoint(results)`` 每 BRANCH_STAGE_CHECKPOINT_EVERY 檔呼叫一次(worker 執行緒內);
+    ``stop`` 被 set(SIGTERM)→ 不再領新工作,回傳的結果裡沒抓的是 pending。
     **這裡不寫資料庫**:寫入在 _commit_branch_results,照順序。
     """
     from .mirror_crawl import crawl_in_order, live_hosts
     from .providers import fubon
 
     report: dict = {"workers": max(1, workers)}
+    prior = prior or {}
+    resumed = {sid: r for sid, r in prior.items() if r.get("outcome") == "done"}
+    if resumed:
+        print(f"branch fetch: resuming, {len(resumed)} target(s) already fetched", flush=True)
+    todo_idx = [i for i, sid in enumerate(targets) if sid not in resumed]
+    todo = [targets[i] for i in todo_idx]
+    results: list[dict] = [
+        resumed.get(sid) or {"sid": sid, "outcome": "pending", "rows": None} for sid in targets]
+    n_fresh = {"n": 0}
+
+    def _record(i: int, r) -> None:
+        results[i] = {"sid": r.target, "outcome": r.outcome, "rows": r.rows}
+        if checkpoint is not None and r.outcome != "pending":
+            n_fresh["n"] += 1
+            if n_fresh["n"] % BRANCH_STAGE_CHECKPOINT_EVERY == 0:
+                checkpoint(results)
 
     def _fetch_one_seq(sid: str) -> dict:
         try:
@@ -1596,7 +1632,8 @@ def _fetch_branch_targets(targets: list[str], date: str, sleep_s: float,
         return {"sid": sid, "outcome": "done", "rows": rows}
 
     if workers <= 1:
-        results = [_fetch_one_seq(sid) for sid in targets]
+        for i in todo_idx:
+            results[i] = _fetch_one_seq(targets[i])
         # 剛好一次的重試,不是重試框架。1,988 檔裡的單一次失誤,第二次請求成功的
         # 機率遠高於它是真的壞掉;而同一個標的連兩次都失敗,才值得寫進狀態欄。
         retry_idx = [i for i, r in enumerate(results) if r["outcome"] == "failed"]
@@ -1610,17 +1647,18 @@ def _fetch_branch_targets(targets: list[str], date: str, sleep_s: float,
     per_host = sleep_s * len(all_hosts)
     hosts = all_hosts[:workers]
     # 哪些站今天已經公布:抽 6 檔每站各問一次(釘站、平行,約 30 秒)。
-    picks = _evenly_spaced(targets, BRANCH_MIRROR_CHECK_SAMPLE)
+    picks = _evenly_spaced(todo or targets, BRANCH_MIRROR_CHECK_SAMPLE)
     counts = probe_mirrors(picks, date, hosts, per_host) if picks else {}
     need = max(1, len(picks) - 1)
     ready = [h for h in hosts if counts.get(h, 0) >= need]
+    standby = [h for h in hosts if h not in ready]
     report["mirror_check"] = counts
     if not ready:
         print(f"branch crawl: no mirror passed the readiness check "
               f"({counts}); using all {len(hosts)} mirrors", flush=True)
-        ready = hosts
+        ready, standby = hosts, []
     print(f"branch crawl: {len(ready)}/{len(hosts)} mirror(s) ready, "
-          f"per-host interval {per_host:.1f}s: {ready}", flush=True)
+          f"per-host interval {per_host:.1f}s: {ready}; standby: {standby}", flush=True)
 
     def fetch(sid: str, host: str, interval: float) -> list[dict]:
         return fubon.fetch_branch_trades(sid, date, throttle=interval, host=host)
@@ -1628,22 +1666,42 @@ def _fetch_branch_targets(targets: list[str], date: str, sleep_s: float,
     def on_failure(sid: str, host: str, exc: Exception) -> None:
         print(f"branch {sid} FAILED @{host}: {str(exc)[:100]}", flush=True)
 
-    ordered, stats = crawl_in_order(targets, fetch, ready, per_host, on_failure=on_failure)
-    results = [{"sid": r.target, "outcome": r.outcome, "rows": r.rows} for r in ordered]
+    # 待命站的檢查:抽樣裡第一檔再問一次(一個請求,釘站、照單站間隔)。
+    check_sid = picks[0] if picks else None
+
+    def standby_check(host: str) -> bool:
+        if check_sid is None:
+            return False
+        try:
+            ok = bool(fubon.fetch_branch_trades(check_sid, date, throttle=per_host, host=host))
+        except NoDataError:
+            ok = False
+        print(f"branch crawl standby mirror={host} ready={int(ok)}", flush=True)
+        return ok
+
+    def on_result(j: int, r) -> None:
+        _record(todo_idx[j], r)
+
+    ordered, stats = crawl_in_order(
+        todo, fetch, ready, per_host, on_failure=on_failure, on_result=on_result, stop=stop,
+        standby_hosts=standby, standby_check=standby_check)
     for h, st in stats.items():
         print(f"branch crawl mirror={h} done={st.done} empty={st.empty} "
-              f"failed={st.failed} dead={int(st.dead)}", flush=True)
-    retry_idx = [i for i, r in enumerate(results) if r["outcome"] == "failed"]
-    if retry_idx:
-        retry_hosts = live_hosts(stats)
-        print(f"branch trades retry pass: {len(retry_idx)} target(s) on {retry_hosts}",
-              flush=True)
-        again, _ = crawl_in_order([targets[i] for i in retry_idx], fetch, retry_hosts,
-                                  per_host, on_failure=on_failure)
-        for i, r in zip(retry_idx, again):
-            results[i] = {"sid": r.target, "outcome": r.outcome, "rows": r.rows}
+              f"failed={st.failed} dead={int(st.dead)} late={int(st.joined_late)}", flush=True)
+    if stop is not None and stop.is_set():
+        print("branch crawl: stopped (SIGTERM), skipping the retry pass", flush=True)
+    else:
+        retry_idx = [i for i, r in enumerate(results) if r["outcome"] == "failed"]
+        if retry_idx:
+            retry_hosts = live_hosts(stats)
+            print(f"branch trades retry pass: {len(retry_idx)} target(s) on {retry_hosts}",
+                  flush=True)
+            again, _ = crawl_in_order([targets[i] for i in retry_idx], fetch, retry_hosts,
+                                      per_host, on_failure=on_failure,
+                                      on_result=lambda j, r: _record(retry_idx[j], r), stop=stop)
     report["mirrors"] = {h: {"done": s.done, "empty": s.empty, "failed": s.failed,
-                             "dead": s.dead} for h, s in stats.items()}
+                             "dead": s.dead, "late": s.joined_late} for h, s in stats.items()}
+    report["resumed"] = len(resumed)
     return results, report
 
 
@@ -1658,8 +1716,19 @@ def _commit_branch_results(engine, results: list[dict]) -> tuple[int, int, int, 
         elif r["outcome"] == "empty":
             empty += 1
         else:
-            failed += 1
+            failed += 1          # failed 與 pending(被中止沒抓到)都算失敗:覆蓋率閘門照常
     return done, empty, failed, written
+
+
+def _load_branch_stage(path: Path, iso_d: str) -> dict | None:
+    """同一天的暫存檔(續抓用);不存在、壞掉、或不是這一天 → None。"""
+    try:
+        stage = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if stage.get("date") != iso_d or not isinstance(stage.get("results"), list):
+        return None
+    return stage
 
 
 def write_branch_stage(path: Path, payload: dict) -> None:
@@ -1797,24 +1866,61 @@ def import_branch_trades(date: str | None = None, top: int = 80,
     print(f"branch trades pool: {len(targets)} targets "
           f"(top={top}, {warrant_pool if not ids else 'warrants=0 (ids override)'})", flush=True)
     t0 = time.monotonic()
-    results, report = _fetch_branch_targets(targets, date, sleep_s, workers)
+    prior: dict[str, dict] = {}
+    checkpoint = None
+    stop: threading.Event | None = None
+    old_handler = None
+    if stage_to is not None:
+        existing = _load_branch_stage(Path(stage_to), iso_d)
+        if existing is not None:
+            prior = {r["sid"]: r for r in existing["results"] if isinstance(r, dict)}
+
+        def _payload(results: list[dict], complete: bool) -> dict:
+            n_done = sum(1 for r in results if r["outcome"] == "done")
+            n_empty = sum(1 for r in results if r["outcome"] == "empty")
+            return {
+                "date": iso_d, "complete": complete,
+                "fetched_at": datetime.now(ZoneInfo(config.TZ)).isoformat(timespec="seconds"),
+                "targets": list(targets), "expected": expected,
+                "results": list(results),
+                "counts": {"done": n_done, "empty": n_empty,
+                           "failed": len(results) - n_done - n_empty},
+            }
+
+        def checkpoint(results: list[dict]) -> None:  # noqa: F811 - the staged variant
+            write_branch_stage(Path(stage_to), _payload(results, False))
+
+        # SIGTERM(timeout / docker stop 經 --init 轉送)→ 不再領新工作、寫 checkpoint、
+        # 以 143 離開。只在主執行緒裝(signal 只准主執行緒裝 handler;測試從別處呼叫時略過)。
+        stop = threading.Event()
+        if threading.current_thread() is threading.main_thread():
+            old_handler = signal.signal(signal.SIGTERM, lambda *_: stop.set())
+    try:
+        results, report = _fetch_branch_targets(targets, date, sleep_s, workers, prior=prior,
+                                                checkpoint=checkpoint, stop=stop)
+    finally:
+        if old_handler is not None:
+            signal.signal(signal.SIGTERM, old_handler)
     n_done = sum(1 for r in results if r["outcome"] == "done")
     n_empty = sum(1 for r in results if r["outcome"] == "empty")
-    n_failed = len(results) - n_done - n_empty
+    n_pending = sum(1 for r in results if r["outcome"] == "pending")
+    n_failed = len(results) - n_done - n_empty - n_pending
     print(f"branch fetch {iso_d}: {n_done} ok, {n_empty} empty, {n_failed} failed, "
-          f"{time.monotonic() - t0:.0f}s, workers={report['workers']}", flush=True)
+          f"{n_pending} pending, {time.monotonic() - t0:.0f}s, workers={report['workers']}",
+          flush=True)
     if stage_to is not None:
-        payload = {
-            "date": iso_d,
-            "fetched_at": datetime.now(ZoneInfo(config.TZ)).isoformat(timespec="seconds"),
-            "targets": list(targets), "expected": expected,
-            "results": results, "report": report,
-            "counts": {"done": n_done, "empty": n_empty, "failed": n_failed},
-        }
+        stopped = stop is not None and stop.is_set()
+        payload = _payload(results, not stopped)
+        payload["report"] = report
         write_branch_stage(Path(stage_to), payload)
-        print(f"branch stage written: {stage_to}", flush=True)
+        print(f"branch stage written: {stage_to} (complete={int(not stopped)})", flush=True)
+        if stopped:
+            print("branch fetch: stopped by SIGTERM; stage keeps what was fetched, "
+                  "rerun --stage-to to resume", file=sys.stderr, flush=True)
+            raise SystemExit(BRANCH_FETCH_STOPPED_EXIT)
         return {"staged": True, "path": str(stage_to), "done": n_done, "empty": n_empty,
-                "failed": n_failed, "targets": len(targets), "expected": expected}
+                "failed": n_failed, "targets": len(targets), "expected": expected,
+                "resumed": report.get("resumed", 0)}
     return _finish_branch_import(engine, date, iso_d, targets, expected, results,
                                  min_market_fraction)
 

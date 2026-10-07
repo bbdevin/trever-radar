@@ -243,7 +243,7 @@ class TestDailyBranchesExitCodes(unittest.TestCase):
         refresh_exit = self._refresh_exit()
         self.assertGreater(stats, refresh_exit, "分點統計在刷新輪離開之後(第二段)")
         first_publish = self._index("\npublish_site\n")
-        for step in ("radar compute-scores", "radar compute-performance"):
+        for step in ("radar compute-scores", "radar compute-performance", "radar prune"):
             with self.subTest(step=step):
                 idx = self._index(step)
                 self.assertGreater(idx, guard)

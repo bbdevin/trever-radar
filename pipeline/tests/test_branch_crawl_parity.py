@@ -194,6 +194,105 @@ class BranchCrawlParity(unittest.TestCase):
         self.assertIn("mirror_check", payload["report"])
         # 成交金額大的先(代號小的金額大):目標順序是倒著的代號。
         self.assertEqual(payload["targets"], sorted(STOCKS))
+        self.assertTrue(payload["complete"])
+
+    def test_resume_refetches_only_what_the_previous_stage_did_not_get(self):
+        """HIGH 1(c):同一天已有暫存檔 → done 的不重抓;pending/failed/empty 重抓;
+        最後寫進資料庫的列與一口氣抓完的循序爬位元級相同。"""
+        seq = _run(1, False, [])
+        calls = []
+        with _Runner() as r, mock.patch.object(fubon, "get_text", side_effect=_http_stub(calls)):
+            stage = r.dir / "stage.json"
+            targets = sorted(STOCKS)
+            prior = []
+            for sid in targets:
+                if sid in targets[:10] and sid not in EMPTY and sid != TRANSIENT:
+                    prior.append({"sid": sid, "outcome": "done", "rows": _rows_via_parser(sid)})
+                elif sid in targets[10:14]:
+                    prior.append({"sid": sid, "outcome": "failed", "rows": None})
+                else:
+                    prior.append({"sid": sid, "outcome": "pending", "rows": None})
+            from radar.importer import write_branch_stage
+            write_branch_stage(stage, {"date": DATE, "complete": False, "targets": targets,
+                                       "expected": len(STOCKS), "results": prior})
+            info = import_branch_trades(DATE_COMPACT, top=0, warrants=0, sleep_s=0, workers=5,
+                                        stage_to=stage)
+            self.assertEqual(info["resumed"], len([p for p in prior if p["outcome"] == "done"]))
+            fetched = {c[0] for c in calls}
+            for p in prior:
+                with self.subTest(sid=p["sid"]):
+                    self.assertEqual(p["sid"] in fetched, p["outcome"] != "done")
+            final = import_branch_trades(from_stage=stage, top=0, warrants=0, sleep_s=0)
+            snap = r.snapshot()
+        self.assertEqual(final["status"], "ok")
+        self.assertEqual(snap["raw"], seq["raw"])
+        self.assertEqual(snap["dim"], seq["dim"])
+
+    def test_stage_checkpoints_during_the_crawl_and_sigterm_keeps_partial_progress(self):
+        """HIGH 1(c)/HIGH 2:每 N 檔寫一次暫存檔;SIGTERM handler 被叫到 → 不再領工作、
+        暫存檔 complete=false 保留已抓到的、以 143 離開。模擬送訊號:直接呼叫裝好的 handler。"""
+        import signal
+
+        from radar import importer
+
+        writes = []
+        real_write = importer.write_branch_stage
+
+        def spy_write(path, payload):
+            writes.append(dict(payload))
+            real_write(path, payload)
+
+        calls = []
+        fired = {"done": False}
+        real_fetch = importer._fetch_branch_targets
+
+        def fetch_then_fire(*a, **kw):
+            # 抓到第一個 checkpoint 之後「收到」SIGTERM:handler 必須已裝在 SIGTERM 上。
+            handler = signal.getsignal(signal.SIGTERM)
+            self.assertTrue(callable(handler) and handler not in (signal.SIG_DFL, signal.SIG_IGN))
+            orig_checkpoint = kw["checkpoint"]
+
+            def checkpoint(results):
+                orig_checkpoint(results)
+                if not fired["done"]:
+                    fired["done"] = True
+                    handler(signal.SIGTERM, None)
+            kw["checkpoint"] = checkpoint
+            return real_fetch(*a, **kw)
+
+        with _Runner() as r, mock.patch.object(fubon, "get_text", side_effect=_http_stub(calls)), \
+             mock.patch.object(importer, "write_branch_stage", side_effect=spy_write), \
+             mock.patch.object(importer, "_fetch_branch_targets", side_effect=fetch_then_fire), \
+             mock.patch.object(importer, "BRANCH_STAGE_CHECKPOINT_EVERY", 8):
+            stage = r.dir / "stage.json"
+            with self.assertRaises(SystemExit) as cm:
+                import_branch_trades(DATE_COMPACT, top=0, warrants=0, sleep_s=0, workers=5,
+                                     stage_to=stage)
+            self.assertEqual(cm.exception.code, 143)
+            self.assertEqual(signal.getsignal(signal.SIGTERM), signal.SIG_DFL, "handler 還原")
+            payload = json.loads(stage.read_text(encoding="utf-8"))
+            self.assertFalse(payload["complete"])
+            n_done = sum(1 for x in payload["results"] if x["outcome"] == "done")
+            n_pending = sum(1 for x in payload["results"] if x["outcome"] == "pending")
+            self.assertGreaterEqual(n_done, 8, "第一個 checkpoint 之前抓到的都在")
+            self.assertGreater(n_pending, 0, "沒抓完的標成 pending")
+            self.assertEqual(r.snapshot()["raw"], [], "一列都沒進資料庫")
+            self.assertGreaterEqual(len(writes), 2, "途中至少一次 checkpoint + 收尾一次")
+            self.assertFalse(writes[0]["complete"])
+            # 第二次 --stage-to:只補沒抓到的,然後完整。
+            calls.clear()
+            with mock.patch.object(importer, "_fetch_branch_targets", side_effect=real_fetch):
+                info = import_branch_trades(DATE_COMPACT, top=0, warrants=0, sleep_s=0, workers=5,
+                                            stage_to=stage)
+            self.assertEqual(info["resumed"], n_done)
+            self.assertTrue(json.loads(stage.read_text(encoding="utf-8"))["complete"])
+            self.assertEqual(info["done"], 37)
+
+
+def _rows_via_parser(sid: str) -> list[dict]:
+    """用真的解析器產生某檔的列(給「上一輪已抓到」的暫存檔用)。"""
+    with mock.patch.object(fubon, "get_text", return_value=_page_for(sid)):
+        return fubon.fetch_branch_trades(sid, DATE_COMPACT)
 
 
 if __name__ == "__main__":

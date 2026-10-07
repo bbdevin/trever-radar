@@ -90,6 +90,23 @@ acquire_branch_source_lock() {
   fi
 }
 
+# 等分點來源鎖最多 $1 秒(docs/47 §8.5):22:30 第二輪撞上還在抓的第一輪時要**等**,不能
+# 靜默略過——略過的結果可能是「今天沒有任何一輪上線」。等滿仍拿不到 = 第一輪卡住
+# (它的抓取有 7200 秒硬上限,正常不會發生),high 通知、exit 0。
+# 鎖序不變:呼叫端先拿 DB 鎖再呼叫這個;握著來源鎖等 DB 鎖的人(warrant-backfill.sh)拿的是
+# 非阻塞 DB 鎖,所以兩邊仍不可能互相等待。等的期間**不握 DB 鎖**(呼叫端要先放)。
+acquire_branch_source_lock_wait() {
+  local secs="$1" t0
+  t0="$(date +%s)"
+  exec 8>/tmp/radar-branch-source.lock
+  if flock -w "$secs" 8; then
+    echo "branch source lock acquired waited=$(( $(date +%s) - t0 ))s"
+    return 0
+  fi
+  notify "分點來源鎖等滿 ${secs} 秒仍未釋放（前一輪分點抓取疑似卡住），本輪未執行" high "失敗"
+  exit 0
+}
+
 # 開輪先拉 code(策略邏輯在程式碼裡,舊碼算出舊 reasons——既有教訓);
 # 映像重 build 靠 docker layer cache,requirements.txt 沒變時近零成本。
 # core.filemode=false:VPS 上 chmod +x script 不會被 git 當成「本地修改」擋 pull
@@ -180,10 +197,15 @@ radar_secret_env_new() {
 
 # 跑管線一個指令。容器內 /app = repo 根;第三個 -v 必掛,export-json 產物才會落地主機。
 # 只傳 RADAR_FINMIND_TOKEN / FUGLE_API_KEY 進容器(deploy 憑證留在主機,權限分離)。
+# --init(docs/47 §8.7):容器內 python 是 PID 1,沒有 init 時 SIGTERM 會被核心忽略——
+# `timeout --signal=TERM` 只殺得掉 docker CLI,容器裡的爬蟲變孤兒、沒人握來源鎖還在打
+# 鏡像站(2026-10-07 驗證者抓到)。--init 讓 tini 當 PID 1 轉送 SIGTERM;docker run 前景
+# 模式預設 --sig-proxy 會把 CLI 收到的 TERM 送進容器。分點抓取的 CLI 另裝 handler,
+# 收到 TERM 寫 checkpoint 後以 143 離開;其他指令照 python 預設直接結束。
 radar() {
   local rc=0
   radar_secret_env_new
-  docker run --rm \
+  docker run --rm --init \
     --env-file "$RADAR_SECRET_ENV_FILE" \
     -v "$REPO/pipeline":/app/pipeline \
     -v "$REPO/data":/app/data \
@@ -206,7 +228,7 @@ radar_timeout() {
   local rc=0
   radar_secret_env_new
   timeout --signal=TERM --kill-after=30s "${hard_timeout_seconds}s" \
-    docker run --rm \
+    docker run --rm --init \
       --env-file "$RADAR_SECRET_ENV_FILE" \
       -v "$REPO/pipeline":/app/pipeline \
       -v "$REPO/data":/app/data \

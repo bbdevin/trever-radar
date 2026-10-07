@@ -82,8 +82,10 @@ class CrawlInOrder(unittest.TestCase):
         results, stats = crawl_in_order([f"t{i}" for i in range(20)], fetch, HOSTS, 0,
                                         dead_after=2)
         self.assertEqual(len(results), 20)
-        self.assertTrue(all(r.outcome == "failed" for r in results))
-        self.assertEqual(sum(1 for r in results if r.error == "no live mirror"), 20 - 6)
+        self.assertEqual(sum(1 for r in results if r.outcome == "failed"), 6)
+        self.assertEqual(sum(1 for r in results if r.outcome == "pending"
+                             and r.error == "no live mirror"), 20 - 6,
+                         "沒人抓的標成 pending(重試輪 / 續抓 / 覆蓋率閘門照常處理)")
         self.assertEqual(live_hosts(stats), HOSTS, "全死時退回全部,讓重試輪至少試一次")
 
     def test_consecutive_counter_resets_on_success(self):
@@ -97,6 +99,61 @@ class CrawlInOrder(unittest.TestCase):
 
         _, stats = crawl_in_order([f"t{i}" for i in range(20)], fetch, HOSTS[:1], 0, dead_after=3)
         self.assertFalse(stats[HOSTS[0]].dead, "交錯失敗不算連續失敗")
+
+    def test_standby_host_joins_once_its_check_passes(self):
+        """HIGH 1(b):開爬時只有 a 就緒;b 待命,第二次檢查才過,之後要真的分到工作。"""
+        checks = {"b": 0}
+        lock = threading.Lock()
+
+        def check(host):
+            with lock:
+                checks[host] = checks.get(host, 0) + 1
+                return checks[host] >= 2
+
+        def fetch(t, host, interval):
+            time.sleep(0.01)
+            return [{"t": t}]
+
+        results, stats = crawl_in_order(
+            [f"t{i}" for i in range(80)], fetch, ["a"], 0,
+            standby_hosts=["b"], standby_check=check, standby_every=0.02)
+        self.assertEqual(sum(1 for r in results if r.outcome == "done"), 80)
+        self.assertIn("b", stats)
+        self.assertTrue(stats["b"].joined_late)
+        self.assertGreater(stats["b"].done, 0, "待命站加入後要分到工作")
+        self.assertGreaterEqual(checks["b"], 2)
+
+    def test_standby_check_stops_when_the_queue_is_drained(self):
+        calls = {"n": 0}
+
+        def check(host):
+            calls["n"] += 1
+            return False
+
+        results, _ = crawl_in_order(["t0", "t1"], lambda t, h, i: [], ["a"], 0,
+                                    standby_hosts=["b"], standby_check=check, standby_every=0.01)
+        self.assertEqual(len(results), 2)
+        self.assertLessEqual(calls["n"], 3, "佇列空了就不再問")
+
+    def test_stop_event_leaves_the_rest_pending_and_calls_on_result_for_the_done_ones(self):
+        """SIGTERM 路徑:set 之後 worker 不再領新工作;沒抓的回 pending/stopped。"""
+        stop = threading.Event()
+        seen = []
+
+        def fetch(t, host, interval):
+            if t == "t5":
+                stop.set()
+            time.sleep(0.005)
+            return [{"t": t}]
+
+        results, _ = crawl_in_order([f"t{i}" for i in range(50)], fetch, ["a"], 0,
+                                    stop=stop, on_result=lambda i, r: seen.append(i))
+        done = [r for r in results if r.outcome == "done"]
+        pending = [r for r in results if r.outcome == "pending"]
+        self.assertEqual(len(done), 6)
+        self.assertEqual(len(pending), 44)
+        self.assertTrue(all(r.error == "stopped" for r in pending))
+        self.assertEqual(sorted(seen), list(range(6)), "on_result 只為抓到的呼叫,帶原索引")
 
     def test_live_hosts_prefers_hosts_that_actually_delivered(self):
         stats = {"a": HostStats(done=0, empty=5), "b": HostStats(done=3), "c": HostStats(dead=True)}

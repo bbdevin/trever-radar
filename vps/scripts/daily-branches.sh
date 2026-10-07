@@ -60,8 +60,18 @@ ROUND_DATE="$(taipei_date +%F)"
 
 # 分點暫存檔(docs/47 §8):抓到的原始列先落在這裡,**不握 DB 鎖**;拿到鎖之後才照順序
 # 寫進資料庫。容器內路徑(radar() 把 $REPO/data 掛成 /app/data),主機端刪檔用 HOST 那個。
+# 每 50 檔寫一次 checkpoint:抓到一半被硬上限/SIGTERM 砍掉,已抓到的留著,同一天下一次
+# --stage-to(第二輪、或人工重跑)從它續抓,只重抓沒抓到的。所以**不在每個離開路徑都刪它**:
+# 寫進資料庫之後刪;不合格那一支留著給第二輪續抓;別天的在開輪時清掉。.tmp 一律清。
 STAGE_FILE="/app/data/branch-stage-${ROUND_DATE}.json"
 STAGE_FILE_HOST="$REPO/data/branch-stage-${ROUND_DATE}.json"
+branch_stage_cleanup() {
+  rm -f "${STAGE_FILE_HOST}.tmp" 2>/dev/null || true
+}
+# 裝在第一次呼叫 radar 之前(lib.sh 的金鑰暫存檔清理會把既有 EXIT trap 串在前面)。
+trap 'branch_stage_cleanup' EXIT
+find "$REPO/data" -maxdepth 1 -name 'branch-stage-*.json*' ! -name "branch-stage-${ROUND_DATE}.json" \
+  -delete 2>/dev/null || true
 
 # 第二輪且今天已有完成標記:失敗後果的那一句**從第一步起**就要換掉。預設那句
 # 「00:05 夜間作業會重算」在這裡不成立——safe-branch-stats.sh 看到標記就整夜略過
@@ -89,10 +99,13 @@ publish_site() {
 echo "=== daily-branches start $(taipei_date -Is) ==="
 
 # 等鎖不略過(docs/47):第一輪前面可能還有法人輪在輪詢、第二輪前面可能是資券輪。
-# 鎖的順序永遠是 DB 鎖 → 分點來源鎖;來源鎖是 flock -n(搶不到就收工),所以不可能
-# 與握著來源鎖等 DB 鎖的人(warrant-backfill.sh)互相等待(docs/47 §8.5 鎖表)。
+# 鎖的順序是**分點來源鎖 → DB 鎖**(docs/47 §8.5):22:30 第二輪撞上還在抓的第一輪時,要在
+# **不握 DB 鎖**的情況下等來源鎖(最多 3600 秒)——反過來先拿 DB 鎖再等來源鎖,第一輪
+# 抓完要寫入時就拿不到 DB 鎖,兩輪互相等到逾時。其他拿這把來源鎖的腳本
+# (warrant-backfill.sh、daily-warrant-branches-poc.sh)都是 flock -n,搶不到就收工,
+# 所以沒有人會握著 DB 鎖**等**來源鎖。
+acquire_branch_source_lock_wait 3600
 acquire_db_lock_wait 3600
-acquire_branch_source_lock
 sync_code
 
 # ── 前置步驟(docs/47 §8.3):哪些失敗可以續跑、哪些必須中止 ──────────────
@@ -154,16 +167,18 @@ run_step_or_warn "seed-branches" radar seed-branches
 # ── 分點來源探測 + 平行抓取:這一段**不握 DB 鎖**(docs/47 §8)─────────────
 # 探測(docs/47 原則 3;只在第一輪,BRANCH_PROBE=0 = 舊行為直接爬):每 10 分鐘
 # **每一站各**抽 12 檔問一次(probe-branch-day,唯讀、不寫 DB;逐站一行 log,明天就量得出
-# 各站幾點先有資料),任一站 ≥11 檔有資料或到 20:30 才全量爬。等待期間放掉 DB 鎖,
-# 只握著分點來源鎖;探測出錯 = 照舊直接爬。
+# 各站幾點先有資料),**至少 3 站**各 ≥11 檔有資料、或到 20:30 才全量爬(只有一站就緒時
+# 單站 5 秒間隔抓 2,000 檔要 10,000 秒,超過硬上限;其餘站在爬的途中待命、公布了就加入)。
+# 等待期間放掉 DB 鎖,只握著分點來源鎖;探測出錯 = 照舊直接爬。
 # 抓取(fetch-branch-trades):五站平行、每站一個 worker、單站間隔 = 1.0 × 5 = 5 秒
-# (單站節奏與循序輪替相同,來源負載不變),只抓不寫、結果落暫存檔。2,000 檔約 33 分鐘,
-# 不隨來源變慢而變長(2026-10-05 循序爬 102 分鐘的根因就是一站拖住全部)。
+# (單站節奏與循序輪替相同,來源負載不變),只抓不寫、結果落暫存檔(每 50 檔 checkpoint)。
+# 2,000 檔約 33 分鐘,不隨來源變慢而變長(2026-10-05 循序爬 102 分鐘的根因就是一站拖住全部)。
 # 這 30–100 分鐘不握 DB 鎖:20:45 資券輪、00:05 夜間作業、mid-backfill-publish 都不必等。
-# 硬上限 2 小時(radar_timeout):超時 = 本步失敗 → 中止(暫存檔沒寫出來,什麼都沒進庫)。
+# 硬上限 2 小時(radar_timeout;容器 --init 轉送 SIGTERM,CLI 收到就寫 checkpoint 以 143 離開):
+# 超時 = 本步失敗 → 中止,暫存檔留著已抓到的,第二輪從它續抓(成交金額大的先,留在外面的是冷門股)。
 release_db_lock
 if [ "$BRANCH_ROUND_MODE" != "import" ] && [ "${BRANCH_PROBE:-1}" != "0" ]; then
-  if POLL_HOLD_DB_LOCK=0 poll_until "branch-probe" 2030 600 radar_timeout 1200 probe-branch-day --sample 12 --threshold 11 --sleep 1.0; then
+  if POLL_HOLD_DB_LOCK=0 poll_until "branch-probe" 2030 600 radar_timeout 1200 probe-branch-day --sample 12 --threshold 11 --min-ready-hosts 3 --sleep 1.0; then
     :
   else
     probe_rc=$?
@@ -239,7 +254,7 @@ case "$branch_rc" in
              "$unfit_pri" "$unfit_kind"
       exit "$branch_rc" ;;
 esac
-# 寫進去了,暫存檔就功成身退(不合格那一支留著給人查;容器以 root 寫,目錄是使用者的,刪得掉)。
+# 寫進去了,暫存檔就功成身退(不合格那一支留著給第二輪續抓;容器以 root 寫,目錄是使用者的,刪得掉)。
 rm -f "$STAGE_FILE_HOST" 2>/dev/null || true
 
 # 以上(匯入 + 上面那個 case)是兩個模式共用的**同一份**實作:離開碼 0/75/76/其他
@@ -306,7 +321,15 @@ fi
 # 還是前一版,成功通知裡講明。
 run_step_or_fail "compute-scores" radar compute-scores
 run_step_or_fail "compute-performance" radar compute-performance
+# prune 與其他步驟同一個待遇(high + 中止),理由是**順序**:它排在第一段的 publish_site
+# **之前**(兩個模式、兩條路徑都走到;改動前它也在 deploy 之前),所以 prune 失敗的那一輪
+# 根本還沒上線——代價與 compute 失敗完全一樣。若哪天把 prune 移到上線之後,這個判斷
+# 就要跟著重新做一次。
+run_step_or_fail "prune" radar prune
 publish_site
+# 第一段上線之後,失敗的後果變了:分點明細與評分**已經在網站上**,缺的只有排行統計。
+# 通知要講這句實話,不能再說「網站仍是前一輪的內容」。
+set_round_consequence "分點明細與當日評分已於第一段上線；本輪不寫完成標記，00:05 夜間作業會重算排行統計並上線"
 # 期貨量異常摘要(docs/38 §7.19):上線之後才送;永不失敗;16:10 送過的期貨行情日
 # 不重送,只有期貨日往前推進(16:10 時當日期貨還沒齊)才會在這一輪送出。
 futures_digest
@@ -319,13 +342,8 @@ fi
 COVERAGE_RATIO="$(branch_round_coverage_ratio "$ROUND_DATE")"
 notify_ok "分點籌碼已更新並上線（覆蓋率 ${COVERAGE_RATIO:-unknown}，含法人補抓）；分點排行統計約 25 分鐘後更新"
 
-# ── 第二段:分點排行統計 → prune → 再上線 → 完成標記 ───────────────────────
+# ── 第二段:分點排行統計 → 再上線 → 完成標記 ───────────────────────────────
 run_step_or_fail "compute-branch-stats" radar compute-branch-stats
-# prune 與其他步驟同一個待遇(high + 中止),理由是**順序**:它排在第二段的
-# publish_site **之前**,所以 prune 失敗的那一輪排行統計還沒上線——代價與 compute 失敗
-# 一樣是「今天的排行統計沒上線、不寫完成標記」(00:05 會補)。若哪天把 prune 移到
-# 第二段上線之後,這個判斷就要跟著重新做一次。
-run_step_or_fail "prune" radar prune
 publish_site
 # 只有走到這裡才算「整輪跑完」。夜間備援作業讀這個標記決定今晚要不要重算,
 # 所以它必須在第二段 deploy 之後——在之前寫就等於承諾了一件還沒發生的事。

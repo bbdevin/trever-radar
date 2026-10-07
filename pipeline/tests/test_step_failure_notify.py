@@ -298,13 +298,12 @@ class TestStepFailureNotify(unittest.TestCase):
         失敗,提醒重做一次這個判斷。
         """
         # docs/47 §8.2 兩段式上線:deploy 在 publish_site() 函式裡、被呼叫兩次。prune 在
-        # 第一段上線之後、第二段(排行統計)上線**之前**:prune 失敗 = 排行統計沒上線、不寫
-        # 完成標記(00:05 補),仍是 high + 中止的理由。
+        # **第一段**上線之前(兩個模式、刷新路徑都走到;改動前它也在 deploy 之前)。
         prune = self.code.index("radar prune")
-        self.assertLess(self.code.rfind("publish_site", 0, prune), prune,
-                        "prune 在第一段上線之後")
-        self.assertGreater(self.code.rfind("publish_site"), prune,
-                           "prune 若搬到第二段上線之後,它的通知等級要重新決定")
+        first_publish = self.code.index("\npublish_site\n")
+        self.assertLess(prune, first_publish,
+                        "prune 若搬到上線之後,它的通知等級要重新決定")
+        self.assertGreater(prune, self.code.index("radar compute-performance"))
 
 
 if __name__ == "__main__":

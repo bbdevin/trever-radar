@@ -202,9 +202,8 @@ wait $holder
         waited = int(re.search(r"waited=(\d+)", r.stdout).group(1))
         self.assertLessEqual(waited, 3)
 
-    def test_source_lock_is_non_blocking_so_no_lock_order_inversion(self):
-        """來源鎖是 flock -n:握著來源鎖等 DB 鎖的人(warrant-backfill.sh)與握著 DB 鎖
-        要來源鎖的人(daily-branches.sh)不可能互相等待——後者搶不到就 exit 0。"""
+    def test_non_blocking_source_lock_still_skips(self):
+        """其他腳本(warrant-backfill、poc)的來源鎖仍是 flock -n:搶不到就 exit 0,不等。"""
         r = _run_harness("""
 ( exec 8>/tmp/radar-branch-source.lock; flock 8; sleep 3 ) &
 holder=$!
@@ -215,6 +214,34 @@ wait $holder
 """)
         self.assertIn("SKIP: 分點來源鎖占用", r.stdout, r.stdout + r.stderr)
         self.assertNotIn("got source lock", r.stdout)
+        self.assertIn("rc=0", r.stdout)
+
+    def test_second_round_waits_for_the_source_lock_then_gets_it(self):
+        """MED 3(2026-10-07 驗證者):22:30 撞上還在抓的第一輪要**等**,不能略過。
+        holder 握 2 秒就放;等鎖版在上限內拿到、印出等了幾秒。"""
+        r = _run_harness("""
+( exec 8>/tmp/radar-branch-source.lock; flock 8; sleep 2 ) &
+holder=$!
+sleep 0.3
+acquire_branch_source_lock_wait 10; echo "rc=$?"
+( exec 7>/tmp/radar-branch-source.lock; flock -n 7 ) && echo "other:FREE" || echo "other:HELD"
+wait $holder
+""")
+        self.assertRegex(r.stdout, r"branch source lock acquired waited=[1-4]s", r.stdout + r.stderr)
+        self.assertIn("rc=0", r.stdout)
+        self.assertIn("other:HELD", r.stdout, "拿到之後就是獨占")
+        self.assertNotIn("NOTIFY", r.stdout)
+
+    def test_source_lock_wait_times_out_loudly_and_exits_zero(self):
+        r = _run_harness("""
+( exec 8>/tmp/radar-branch-source.lock; flock 8; sleep 4 ) &
+holder=$!
+sleep 0.3
+( acquire_branch_source_lock_wait 1; echo "got it" ); echo "rc=$?"
+wait $holder
+""")
+        self.assertNotIn("got it", r.stdout, r.stdout + r.stderr)
+        self.assertRegex(r.stdout, r"NOTIFY pri=high kind=失敗 msg=分點來源鎖等滿 1 秒")
         self.assertIn("rc=0", r.stdout)
 
 
@@ -231,9 +258,56 @@ class LockPhasesInTheScript(unittest.TestCase):
         self.assertNotEqual(i, -1, f"找不到 {needle!r}")
         return i
 
-    def test_lock_order_is_db_then_source_and_source_is_taken_once(self):
-        self.assertLess(self._idx("acquire_db_lock_wait 3600"), self._idx("acquire_branch_source_lock"))
+    def test_lock_order_is_source_then_db_and_both_waits_are_bounded(self):
+        """來源鎖(等)→ DB 鎖(等)。反過來先握 DB 鎖再等來源鎖,第一輪要寫入時拿不到
+        DB 鎖、第二輪拿不到來源鎖,兩輪互等到逾時。其他拿來源鎖的腳本都是 flock -n。"""
+        src = self._idx("acquire_branch_source_lock_wait 3600")
+        self.assertLess(src, self._idx("acquire_db_lock_wait 3600"))
         self.assertEqual(self.code.count("acquire_branch_source_lock"), 1)
+        self.assertNotIn("\nacquire_branch_source_lock\n", self.code, "第二輪不可以用會略過的那版")
+        for name in ("warrant-backfill.sh", "daily-warrant-branches-poc.sh"):
+            code = "\n".join(_code_lines(SCRIPTS_DIR / name))
+            with self.subTest(script=name):
+                self.assertNotIn("acquire_branch_source_lock_wait", code,
+                                 "握著 DB 鎖的腳本只准非阻塞地拿來源鎖")
+
+    def test_containers_run_with_init_so_sigterm_reaches_python(self):
+        """HIGH 2(2026-10-07 驗證者):python 是容器 PID 1,沒有 init 時 SIGTERM 被忽略,
+        `timeout` 只殺得掉 docker CLI。radar() 與 radar_timeout() 都要 --init。"""
+        lib = LIB.read_text(encoding="utf-8")
+        # `docker run … \` 接下一行的 --env-file:看整個續行區塊(每行以 `\` 收尾)。
+        blocks = re.findall(r"docker run --rm[^\n]*?\\\n(?:[^\n]*?\\\n)*[^\n]*", lib)
+        wrapped = [b for b in blocks if "--env-file" in b]
+        self.assertEqual(len(wrapped), 2, f"radar() 與 radar_timeout() 各一:{blocks}")
+        for b in wrapped:
+            self.assertRegex(b.splitlines()[0], r"docker run --rm --init", b)
+
+    def test_stage_tmp_is_cleaned_on_every_exit_and_old_stages_are_purged(self):
+        self.assertIn("trap 'branch_stage_cleanup' EXIT", self.code)
+        self.assertLess(self._idx("trap 'branch_stage_cleanup' EXIT"), self._idx("sync_code"),
+                        "要裝在第一次呼叫 radar 之前")
+        m = re.search(r"branch_stage_cleanup\(\)\s*\{(.*?)\n\}", self.code, re.S)
+        self.assertIsNotNone(m)
+        self.assertIn('"${STAGE_FILE_HOST}.tmp"', m.group(1))
+        self.assertNotIn('rm -f "$STAGE_FILE_HOST"', m.group(1),
+                         "暫存檔本體不在 EXIT 時刪:被砍掉時要留給第二輪續抓")
+        self.assertRegex(self.code, r"find \"\$REPO/data\" -maxdepth 1 -name 'branch-stage-\*\.json\*' ! -name")
+        gitignore = (REPO_ROOT / ".gitignore").read_text(encoding="utf-8")
+        self.assertIn("data/branch-stage-*.json*", gitignore)
+
+    def test_probe_requires_three_ready_mirrors(self):
+        """HIGH 1:一站就緒就開爬 = 單站 5 秒 × 2,000 檔 = 10,000 秒 > 7200 硬上限。"""
+        line = next(ln for ln in self.lines if "probe-branch-day" in ln)
+        self.assertIn("--min-ready-hosts 3", line)
+
+    def test_consequence_is_rewritten_after_the_first_publish(self):
+        """LOW-MED 4:第一段上線之後失敗,通知不能再說「網站仍是前一輪的內容」。"""
+        first = self._idx("\npublish_site\n")
+        after = self.code.index("set_round_consequence", first)
+        self.assertLess(after, self._idx("radar compute-branch-stats"))
+        line = self.code[self.code.rfind("\n", 0, after) + 1:self.code.index("\n", after)]
+        self.assertIn("已於第一段上線", line)
+        self.assertIn("00:05", line)
 
     def test_fetch_runs_between_release_and_reacquire_and_commit_after_reacquire(self):
         release = self._idx("release_db_lock")

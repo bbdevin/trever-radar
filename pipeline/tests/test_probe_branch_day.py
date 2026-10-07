@@ -147,6 +147,27 @@ class ProbeBranchDay(_TempDb):
         self.assertEqual(info["mirrors"][early], 24)
         self.assertEqual(sum(info["mirrors"].values()), 24, "其他四站都是 0")
 
+    def test_min_ready_hosts_gates_the_start_of_the_crawl(self):
+        """HIGH 1(2026-10-07 驗證者):只有一站就緒時不能開爬(單站 5 秒 × 2,000 檔 =
+        10,000 秒 > 7200 硬上限)。daily-branches.sh 要求 3 站;站數上限夾在站總數。"""
+        from radar.providers import fubon
+
+        two = set(fubon.MIRROR_HOSTS[:2])
+        with mock.patch("radar.providers.fubon.fetch_branch_trades",
+                        side_effect=_fetch_ok_for(set(IDS), [], ok_hosts=two)):
+            info3 = importer.probe_branch_day(sample=24, threshold=22, sleep_s=0, min_ready_hosts=3)
+            info2 = importer.probe_branch_day(sample=24, threshold=22, sleep_s=0, min_ready_hosts=2)
+            info9 = importer.probe_branch_day(sample=24, threshold=22, sleep_s=0, min_ready_hosts=9)
+        self.assertEqual(sorted(info3["ready_hosts"]), sorted(two))
+        self.assertFalse(info3["ready"], "兩站就緒、要求三站 → 還不能爬(75)")
+        self.assertTrue(info2["ready"])
+        self.assertEqual(info9["min_ready_hosts"], len(fubon.MIRROR_HOSTS), "夾在站總數")
+        self.assertFalse(info9["ready"])
+        with mock.patch("radar.providers.fubon.fetch_branch_trades",
+                        side_effect=_fetch_ok_for(set(IDS), [])):
+            self.assertTrue(importer.probe_branch_day(sample=24, threshold=22, sleep_s=0,
+                                                      min_ready_hosts=9)["ready"], "五站全到")
+
     def test_threshold(self):
         picks = importer._evenly_spaced(IDS, 24)
         for n_ok, ready in ((22, True), (21, False), (24, True), (0, False)):
@@ -167,7 +188,7 @@ class ProbeBranchDay(_TempDb):
                      contextlib.redirect_stdout(out):
                     try:
                         cli.cmd_probe_branch_day(SimpleNamespace(
-                            date=None, sample=24, threshold=22, sleep=0))
+                            date=None, sample=24, threshold=22, sleep=0, min_ready_hosts=1))
                         got = None
                     except SystemExit as e:
                         got = e.code

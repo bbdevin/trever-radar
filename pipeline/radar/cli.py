@@ -252,6 +252,7 @@ def cmd_import_branch_trades(args):
     )
     if info.get("staged"):
         # 只抓不寫:沒有覆蓋率可分級,暫存檔寫出來就是 0;分級留給 --from-stage 那一步。
+        # (被 SIGTERM 中止時 import_branch_trades 自己以 143 離開,暫存檔保留已抓到的。)
         return
     if not info["fit"]:
         print(f"import-branch-trades: {info['status']}", file=sys.stderr)
@@ -407,11 +408,13 @@ def cmd_probe_branch_day(args):
     """唯讀探測分點來源公布進度(不寫 DB、不記 import_logs)。一行輸出給 cron log。"""
     from .importer import probe_branch_day
 
-    info = probe_branch_day(args.date, args.sample, args.threshold, args.sleep)
+    info = probe_branch_day(args.date, args.sample, args.threshold, args.sleep,
+                            min_ready_hosts=args.min_ready_hosts)
     print(
         f"branch-probe at={info['at']} date={info['date']} "
         f"ok={info['ok']}/{info['sample']} threshold={info['threshold']} pool={info['pool']} "
-        f"ready_mirrors={len(info['ready_hosts'])}/{len(info['mirrors'])}"
+        f"ready_mirrors={len(info['ready_hosts'])}/{len(info['mirrors'])} "
+        f"need_mirrors={info['min_ready_hosts']}"
     )
     # 逐站一行(docs/47 §8):哪一站幾點先有今天的資料,明天的 log 就量得出各站的公布時刻。
     for host, ok in info["mirrors"].items():
@@ -1092,6 +1095,9 @@ def main(argv=None):
     pbd.add_argument("--sample", type=int, default=24)
     pbd.add_argument("--threshold", type=int, default=22)
     pbd.add_argument("--sleep", type=float, default=1.0, help="request interval")
+    pbd.add_argument("--min-ready-hosts", type=int, default=1,
+                     help="exit 0 only when at least N mirrors passed the threshold "
+                          "(one mirror alone cannot crawl 2,000 targets inside the hard limit)")
     pbd.set_defaults(fn=cmd_probe_branch_day)
 
     bff = sub.add_parser(
