@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""`import-futures-day` / `probe-futures-day` / 21:20 修訂偵測 / last_seen 不倒退。
+"""`import-futures-day` / 21:20 修訂偵測 / last_seen 不倒退。
 
 docs/38 §7.18:futDataDown 當天就有當天(t)的完整一般時段,OpenAPI 日報要到 t+1
 才有。這裡鎖住的是當日匯入的四條安全性質(不是今天 → 75 不寫、閘門沒過 → 75 不寫、
@@ -292,71 +292,6 @@ class RevisionDetector(_TempDb):
         vol = self._q("SELECT volume FROM futures_daily WHERE contract_code='ABF' "
                       "AND session=:s", s=SESSION_REGULAR)[0][0]
         self.assertEqual(vol, 77)   # 官方日報為準
-
-
-class ProbeTouchesNoDatabase(unittest.TestCase):
-    def setUp(self):
-        self._tmp = TemporaryDirectory()
-        self.db_path = Path(self._tmp.name) / "sub" / "never.db"
-        self._old = config.DB_URL, config.DATA_DIR, db._engine
-        config.DATA_DIR = self.db_path.parent
-        config.DB_URL = "sqlite:///" + self.db_path.as_posix()
-        db._engine = None
-
-    def tearDown(self):
-        config.DB_URL, config.DATA_DIR, db._engine = self._old
-        self._tmp.cleanup()
-
-    def _probe(self, **patches):
-        boom = AssertionError("probe-futures-day must not touch the database")
-        out = io.StringIO()
-        code = 0
-        with mock.patch.object(db, "get_engine", side_effect=boom), \
-                mock.patch.object(db, "init_db", side_effect=boom), \
-                mock.patch.object(importer, "get_engine", side_effect=boom), \
-                mock.patch.object(importer, "init_db", side_effect=boom), \
-                mock.patch("radar.providers.taifex.fetch_stock_list",
-                           return_value=[_contract(c) for c in CODES]), \
-                mock.patch("radar.providers.taifex.fetch_history", **patches), \
-                contextlib.redirect_stdout(out):
-            try:
-                cli.main(["probe-futures-day", "--date", TODAY])
-            except SystemExit as e:
-                code = e.code
-        return code, out.getvalue()
-
-    def test_probe_prints_one_line_and_writes_nothing(self):
-        code, out = self._probe(return_value=_feed(TODAY) + [_row("AAF", PREV)])
-        self.assertEqual(code, 0)
-        lines = out.strip().splitlines()
-        self.assertEqual(len(lines), 1)
-        self.assertRegex(
-            lines[0],
-            rf"^futures-probe at=\d\d:\d\d date={TODAY} regular_rows=12 "
-            r"afterhours_rows=6 stock_codes=6 sha=[0-9a-f]{12}$")
-        self.assertFalse(self.db_path.exists())
-        self.assertFalse(self.db_path.parent.exists())
-
-    def test_sha_is_order_independent_and_content_sensitive(self):
-        _, a = self._probe(return_value=_feed(TODAY))
-        _, b = self._probe(return_value=list(reversed(_feed(TODAY))))
-        changed = _feed(TODAY)
-        changed[0] = _row(changed[0].contract_code, TODAY, volume=11)
-        _, c = self._probe(return_value=changed)
-        sha = lambda s: s.split("sha=")[1].strip()  # noqa: E731
-        self.assertEqual(sha(a), sha(b))
-        self.assertNotEqual(sha(a), sha(c))
-
-    def test_not_published_is_a_measurement_not_an_error(self):
-        code, out = self._probe(side_effect=NoDataError("empty"))
-        self.assertEqual(code, 0)
-        self.assertIn("regular_rows=0 afterhours_rows=0 stock_codes=0 sha=none", out)
-
-    def test_failure_still_prints_the_grep_prefix(self):
-        code, out = self._probe(side_effect=RuntimeError("boom"))
-        self.assertEqual(code, 1)
-        self.assertRegex(out, r"^futures-probe at=\d\d:\d\d date=2026-10-02 error=RuntimeError: boom")
-        self.assertFalse(self.db_path.exists())
 
 
 if __name__ == "__main__":

@@ -1,5 +1,10 @@
 # Handoff — 2026-09-24（期貨切片從未真的渲染過的結構性 bug 已修、四輪日更補上失敗語音（過程自己又生一個更嚴重的）、期貨補到每契約每天、兩道守門缺口補上、一個記成已出貨卻沒上畫面的按鈕、一次自己的效能預測被實測打臉 2.5 倍、「隔天大漲」事前登記落地）
 
+## 2026-10-07 補記
+
+- 期貨 `probe-futures-day` 已整段移除(腳本、lib.sh、CLI、importer);`import-futures-day` 不動。
+- `export-json` 預設不再寫舊單一檔 `stocks/{id}.json`(`--legacy-stocks` 逃生口)。合併後 VPS 要跑一次 `pipeline/tools/purge_legacy_stocks.py`(先 dry-run 再 `--write`,指令見 `docs/STATUS.md` 同日條目),約釋放 1.1 GB。docs/44 §3.2 清理步驟 ④(Worker hist 長快取)仍待資安審查。
+
 ## 2026-10-04 補記(多空 v2)
 
 - 多空分頁 v2 程式完成、未上線(未 push):三段分析 × 左右對開 × 全列 × 日/週/月 × 大戶比,事實產生器在 `web/lib/facts/*`,目錄與實作偏差見 `docs/46` §6。`web/tsconfig.json` 新增 `allowImportingTsExtensions`(lib 模組間 `.ts` 執行期 import)。上線後第一件事:正式 JSON(有 `price_levels`/`branch_tags`/`raw_risks`)抽 6488、一檔弱勢股看空方欄是否合理。

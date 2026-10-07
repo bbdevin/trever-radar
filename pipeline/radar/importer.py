@@ -2335,7 +2335,7 @@ def _is_spread(row) -> bool:
 
 
 def _regular_codes(rows) -> set[str]:
-    """有非價差一般時段列的契約代碼 —— 完整性閘門與 probe 共用的同一個定義。"""
+    """有非價差一般時段列的契約代碼 —— 完整性閘門用的定義。"""
     from .providers.taifex import SESSION_REGULAR
 
     return {r.contract_code for r in rows if r.session == SESSION_REGULAR and not _is_spread(r)}
@@ -2459,32 +2459,6 @@ def import_futures_day(d: str | None = None) -> dict:
         "baseline_codes": len(baseline_codes),
         "baseline_date": baseline_date,
         "leftover_codes": len(snap["leftover"]),
-        "sha": snap["sha"],
-    }
-
-
-def probe_futures_day(d: str | None = None) -> dict:
-    """唯讀量測:futDataDown 此刻對 d(預設台北今天)給了什麼。**不碰資料庫**。
-
-    docs/38 §7.18 的發布時間量測用:各輪開頭跑一次,記下幾點鐘時有幾列、
-    內容指紋是什麼;指紋在後續各輪不再變,就是「已經定稿」的時間點。
-    """
-    from .providers.taifex import fetch_history, fetch_stock_list
-
-    d = d or _taipei_today()
-    at = datetime.now(ZoneInfo(config.TZ)).strftime("%H:%M")
-    try:
-        rows = fetch_history(d, d)
-    except NoDataError:
-        return {"at": at, "date": d, "regular_rows": 0, "after_hours_rows": 0,
-                "stock_codes": 0, "sha": "none"}
-    snap = _futures_day_snapshot(rows, fetch_stock_list(), d)
-    return {
-        "at": at,
-        "date": d,
-        "regular_rows": snap["regular_rows"],
-        "after_hours_rows": snap["after_hours_rows"],
-        "stock_codes": len(snap["codes"]),
         "sha": snap["sha"],
     }
 

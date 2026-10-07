@@ -15,6 +15,7 @@ from unittest.mock import patch
 
 import radar.config as config
 import radar.db as db
+from radar.export.stock_parts import read_merged_stock
 from radar import schema
 from radar.compute.futures_volume_anomaly import (
     REASON_CODE,
@@ -101,7 +102,7 @@ class FuturesExportTests(unittest.TestCase):
 
     def _stock(self, sid):
         export_json(self.out)
-        return json.loads((self.out / "stocks" / f"{sid}.json").read_text(encoding="utf-8"))
+        return read_merged_stock(self.out / "stocks", sid)
 
     # ── 事實本身 ────────────────────────────────────────────────
     def test_single_contract(self):
@@ -176,7 +177,7 @@ class FuturesExportTests(unittest.TestCase):
         self._seed_futures([_contract("CCF", "2303")])
         futures = self._stock("2303")["futures"]
         self.assertNotIn("daily_as_of", futures)
-        raw = (self.out / "stocks" / "2303.json").read_text(encoding="utf-8")
+        raw = json.dumps(read_merged_stock(self.out / "stocks", "2303"), ensure_ascii=False)
         self.assertNotIn("daily_as_of", raw)
 
     def test_daily_as_of_is_not_the_list_refresh_date(self):
@@ -344,7 +345,7 @@ class FuturesExportTests(unittest.TestCase):
                     walk(value, f"{path}[{i}]")
 
         for sid in ("2303", "1565", "9999"):
-            stock = json.loads((self.out / "stocks" / f"{sid}.json").read_text(encoding="utf-8"))
+            stock = read_merged_stock(self.out / "stocks", sid)
             walk(stock["futures"], f"{sid}.futures")
         self.assertEqual(offenders, [])
 
@@ -505,8 +506,7 @@ class _AnomalyFixture(unittest.TestCase):
 
     def contracts(self, sid):
         export_json(self.out)
-        payload = json.loads(
-            (self.out / "stocks" / f"{sid}.json").read_text(encoding="utf-8"))
+        payload = read_merged_stock(self.out / "stocks", sid)
         return {c["code"]: c for c in payload["futures"]["contracts"]}
 
     def radar(self):
@@ -646,8 +646,7 @@ class AnomalyDateAnchorTests(_AnomalyFixture):
     def test_daily_as_of_is_present_and_equals_the_daily_date(self):
         self.seed([_spec("CCF", "2303")])
         export_json(self.out)
-        futures = json.loads(
-            (self.out / "stocks" / "2303.json").read_text(encoding="utf-8"))["futures"]
+        futures = read_merged_stock(self.out / "stocks", "2303")["futures"]
         self.assertEqual(futures["daily_as_of"], AD)
         self.assertEqual(futures["contracts"][0]["daily"]["date"],
                          futures["daily_as_of"])
@@ -656,8 +655,7 @@ class AnomalyDateAnchorTests(_AnomalyFixture):
         """日期是**明講的**,不是從 daily 推出來的:沒有 daily 的股票也答得出來。"""
         self.seed([_spec("CCF", "2303"), _spec("MYF", "1565", lots={AD: None})])
         export_json(self.out)
-        futures = json.loads(
-            (self.out / "stocks" / "1565.json").read_text(encoding="utf-8"))["futures"]
+        futures = read_merged_stock(self.out / "stocks", "1565")["futures"]
         self.assertNotIn("daily", futures["contracts"][0])
         self.assertEqual(futures["daily_as_of"], AD)
 
@@ -757,7 +755,7 @@ class AnomalyOpenInterestTests(_AnomalyFixture):
     def test_an_omitted_oi_change_is_never_written_as_zero_or_null(self):
         self.seed([_spec("CCF", "2303", oi={AD: None})])
         self.contracts("2303")
-        raw = (self.out / "stocks" / "2303.json").read_text(encoding="utf-8")
+        raw = json.dumps(read_merged_stock(self.out / "stocks", "2303"), ensure_ascii=False)
         self.assertNotIn('"oi_change"', raw)
 
 
@@ -799,7 +797,7 @@ class DailyOpenInterestChangeTests(_AnomalyFixture):
         """缺值與 0 在畫面上長得一樣,只靠「那一列在不在」分辨(§7.1)。"""
         self.seed([_spec("CCF", "2303", oi={AD: None}, today=BASE_LOTS)])
         self.contracts("2303")
-        raw = (self.out / "stocks" / "2303.json").read_text(encoding="utf-8")
+        raw = json.dumps(read_merged_stock(self.out / "stocks", "2303"), ensure_ascii=False)
         self.assertNotIn('"oi_change"', raw)
 
     def test_a_real_zero_is_written_as_zero(self):
@@ -807,7 +805,7 @@ class DailyOpenInterestChangeTests(_AnomalyFixture):
         self.seed([_spec("CCF", "2303", oi={AD: BASE_OI}, today=BASE_LOTS)])
         daily = self.contracts("2303")["CCF"]["daily"]
         self.assertEqual(daily["oi_change"], 0)
-        raw = (self.out / "stocks" / "2303.json").read_text(encoding="utf-8")
+        raw = json.dumps(read_merged_stock(self.out / "stocks", "2303"), ensure_ascii=False)
         self.assertIn('"oi_change": 0', raw)
 
     def test_the_previous_day_comes_from_the_shared_oi_change_function(self):
@@ -1106,8 +1104,7 @@ class AnomalyMarketIndexTests(_AnomalyFixture):
         radar = json.loads((self.out / "radar.json").read_text(encoding="utf-8"))
         by_code = {}
         for sid in ("2303", "1565"):
-            payload = json.loads(
-                (self.out / "stocks" / f"{sid}.json").read_text(encoding="utf-8"))
+            payload = read_merged_stock(self.out / "stocks", sid)
             by_code.update({c["code"]: c for c in payload["futures"]["contracts"]})
         for entry in radar[INDEX_KEY]:
             self.assertEqual(entry["anomaly"], by_code[entry["code"]]["anomaly"])
@@ -1377,7 +1374,7 @@ def _futures_surface(out: Path) -> dict[str, object]:
     """走完整個 export 產物,回傳「每一個名字帶 futures 的鍵」→ 它底下那棵樹。
 
     這就是「自己發現表面」的全部內容:不是一份已知路徑清單,而是一條命名規則。
-    今天它找到的是 ``stocks/*.json`` 的 ``futures``(以及契約裡的 ``is_futures``)、
+    今天它找到的是 ``stocks/core/*.json`` 的 ``futures``(以及契約裡的 ``is_futures``)、
     ``radar.json`` 的 ``futures_volume_anomalies`` / ``…_meta`` /
     ``futures_open_interest_direction`` / ``freshness.futures``;明天多一個
     ``futures_*`` 鍵,它會自己被找到,沒有人要改這個函式。
@@ -1499,7 +1496,7 @@ class FuturesSurfaceRateGateTests(_AnomalyFixture):
         radar["futures_volume_zscore"] = 3.2                    # 明天新增的頂層鍵
         radar_path.write_text(json.dumps(radar), encoding="utf-8")
 
-        stock_path = self.out / "stocks" / "2303.json"
+        stock_path = self.out / "stocks" / "core" / "2303.json"   # 期貨鍵在核心檔
         stock = json.loads(stock_path.read_text(encoding="utf-8"))
         stock["futures"]["contracts"][0]["anomaly"]["volume_rank"] = 1   # 深處
         stock_path.write_text(json.dumps(stock), encoding="utf-8")
@@ -1507,7 +1504,7 @@ class FuturesSurfaceRateGateTests(_AnomalyFixture):
         self.assertEqual(_offenders(_futures_surface(self.out)), [
             f"radar.json.{DIRECTION_KEY}.increase_ratio",
             "radar.json.futures_volume_zscore",
-            "stocks/2303.json.futures.contracts[0].anomaly.volume_rank",
+            "stocks/core/2303.json.futures.contracts[0].anomaly.volume_rank",
         ])
 
     def test_a_rate_outside_the_futures_surface_is_none_of_this_gates_business(self):

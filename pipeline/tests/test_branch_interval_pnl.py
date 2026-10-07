@@ -10,6 +10,7 @@ from tempfile import TemporaryDirectory
 
 import radar.config as config
 import radar.db as db
+from radar.export.stock_parts import read_merged_stock
 from radar import schema
 from radar.compute.branch_interval_pnl import (
     DEFINITIONS_VERSION,
@@ -278,7 +279,7 @@ class ExportKeyTests(unittest.TestCase):
         out = Path(self._tmp.name) / "out"
         out.mkdir(parents=True, exist_ok=True)
         export_json(out)
-        return {sid: json.loads((out / "stocks" / f"{sid}.json").read_text(encoding="utf-8"))
+        return {sid: read_merged_stock(out / "stocks", sid)
                 for sid in ("2330", "2317")}
 
     def test_key_present_with_untrimmed_rows_and_omitted_without_branches(self):

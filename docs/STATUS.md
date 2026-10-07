@@ -2,6 +2,16 @@
 
 > 單一進度真相。每完成一個里程碑就更新本檔。規格細節看各編號文件,別寫在這裡。
 
+## 2026-10-07 移除期貨發布時間量測;個股舊單一檔停寫(`docs/38` §7.18、`docs/44` §3.2;程式完成於分支、未合 main)
+
+- **期貨 probe 移除**:14:05/14:45/16:00(舊 14:10/15:00/16:10)三輪取鎖前的 `futures_probe`、`lib.sh` 的函式與 `FUTURES_PROBE_LOG`、CLI `probe-futures-day`、`importer.probe_futures_day`、`disk-cleanup.sh` 的 log 修剪全部刪除;`import-futures-day` 與 `import-futures` 未動。測試改鎖「沒有腳本或 CLI 再提到 probe」。VPS 上 `~/futures-probe.log` 不再增長,可手動 `rm`。
+- **舊單一檔 `stocks/{id}.json` 停寫**:`export-json` 預設只寫 `stocks/core|chips|hist`(選「翻預設」而非 12 支腳本加旗標;`--legacy-stocks` 為逃生口,`--no-legacy-stocks` 保留為無作用相容旗標)。export 不刪也不更新殘留舊檔;多方榜建置器 hist 不在時改為警告並略過,不再退回(可能過期的)舊檔。讀取端盤點與理由見 `docs/44` §3.2「清理進度」。網站 changelog 3.3 加一行。
+- **待人類(合併後,VPS 一次性)**:確認合併後至少一輪 export 已跑完(`export parts: … legacy=off`),然後
+  - dry-run:`cd ~/trever-radar && python3 pipeline/tools/purge_legacy_stocks.py web/public/data`
+  - 刪除:`cd ~/trever-radar && flock -w 1800 /tmp/radar-db.lock python3 pipeline/tools/purge_legacy_stocks.py web/public/data --write`(持 DB 鎖,避免與某輪 `wrangler deploy` 同時進行)
+  - 預估釋放約 1.1 GB(2,418 檔);下一輪 `deploy_data` 起 Workers 不再有這些檔。`stocks/core/` 檔數少於舊檔數時工具會拒絕(exit 2)。
+- **驗證**:pytest 全套、新增 `test_purge_legacy_stocks.py`、`test_stock_parts.py` 預設不寫舊檔／CLI 旗標／不碰殘留舊檔;node `bullBoardBuild.test.ts`;tsc、next build。
+
 ## 2026-10-07 docs/20 Phase 2 結案:決議不重算歷史綜合分(只改文件)
 
 - **決議**:Fable 決定(使用者已授權 Fable 決定)不做歷史綜合分正式重算,Phase 2 標 ✅ 完成(決議不重算)。

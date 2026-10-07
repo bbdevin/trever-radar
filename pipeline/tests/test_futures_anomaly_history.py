@@ -16,6 +16,7 @@ import unittest
 from unittest.mock import patch
 
 import radar.db as db
+from radar.export.stock_parts import read_merged_stock
 from radar import schema
 from radar.compute import futures_volume_anomaly as fva
 from radar.compute.futures_volume_anomaly import (
@@ -353,8 +354,7 @@ class StockHistoryExportTests(_HistoryFixture):
     這一檔,不重算;每一天的三態原樣保留;沒有算過就整個鍵不輸出。"""
 
     def stock(self, sid):
-        return json.loads(
-            (self.out / "stocks" / f"{sid}.json").read_text(encoding="utf-8"))
+        return read_merged_stock(self.out / "stocks", sid)
 
     def test_shape_and_identity_with_radar_json(self):
         self.seed([_history_flag_spec(), _history_flag_spec("BBB", "1565")])

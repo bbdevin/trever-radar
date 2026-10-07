@@ -14,10 +14,6 @@ source "$(dirname "$0")/lib.sh"
 # 本輪在 deploy 之後補跑,死在那之前就要等那支或下週一。
 set_round_consequence "網站仍是前一交易日的內容；同樣這幾步 14:45（舊排程 15:00）上櫃日K輪會整套再跑一次並補上"
 
-# docs/38 §7.18 期貨發布時間量測(唯讀、≤70 秒、永不失敗,見 lib.sh futures_probe)。
-# 放在拿鎖之前:等鎖的日子也要量到。
-futures_probe
-
 acquire_db_lock_wait 1800
 sync_code
 

@@ -1,10 +1,8 @@
 # -*- coding: utf-8 -*-
 """docs/38 §7.18 的接線狀態,由腳本原始碼直接解析(同 test_daily_rounds_step_notify.py 手法)。
 
-兩件事要同時成立:
-1. 唯讀的 `probe-futures-day` 已掛進 14:10 / 15:00 / 16:10 三輪,而且**絕不影響本輪**:
-   走 lib.sh 的 `futures_probe`(有逾時、不掛 data/、所有失敗都被 `||` 接住、永遠 return 0),
-   位置在拿鎖之前(鎖被占略過、或 16:10 的 exit 75 提早收場的日子也量得到)。
+1. 唯讀的發布時間量測 `probe-futures-day`(14:10/15:00/16:10 三輪取鎖前、寫
+   ~/futures-probe.log)已量完,2026-10-07 依計畫整段移除:腳本、lib.sh 與 CLI 都不再有。
 2. 會寫資料庫的 `import-futures-day` 自 2026-10-02 起接進 daily-insti.sh(16:10)與
    daily-branches.sh(17:40／22:00),裸呼叫、75 只記 log、其他非 0 只 warn、不擋本輪。
 """
@@ -14,8 +12,6 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS_DIR = REPO_ROOT / "vps" / "scripts"
-LIB = SCRIPTS_DIR / "lib.sh"
-PROBED_ROUNDS = ("daily-market.sh", "daily-tpex-quotes.sh", "daily-insti.sh")
 
 FULL_LINE_COMMENT = re.compile(r"^\s*#")
 TRAILING_COMMENT = re.compile(r"(?<=\s)#.*$")
@@ -31,64 +27,17 @@ def _code_lines(path: Path) -> list[str]:
     return out
 
 
-def _probe_body() -> str:
-    lib = "\n".join(_code_lines(LIB))
-    m = re.search(r"^futures_probe\(\)\s*\{(.*?)\n\}", lib, re.S | re.M)
-    assert m, "lib.sh 裡找不到 futures_probe"
-    return m.group(1)
+class ProbeIsGone(unittest.TestCase):
+    def test_no_script_calls_the_probe(self):
+        for p in sorted(SCRIPTS_DIR.glob("*.sh")):
+            code = "\n".join(_code_lines(p))
+            with self.subTest(script=p.name):
+                self.assertNotIn("futures_probe", code)
+                self.assertNotIn("probe-futures-day", code)
 
-
-class ProbeIsWiredAndHarmless(unittest.TestCase):
-    def test_each_round_calls_the_probe_before_taking_the_lock(self):
-        for name in PROBED_ROUNDS:
-            with self.subTest(script=name):
-                lines = [ln.strip() for ln in _code_lines(SCRIPTS_DIR / name)]
-                self.assertIn("futures_probe", lines, f"{name} 沒有呼叫 futures_probe")
-                probe = lines.index("futures_probe")
-                # docs/47:搶不到鎖改成等(`acquire_db_lock_wait N`),仍在 probe 之後。
-                lock = next(i for i, ln in enumerate(lines)
-                            if re.fullmatch(r"acquire_db_lock(_wait \d+)?", ln))
-                self.assertLess(probe, lock, "probe 要在拿鎖之前,鎖被占的日子也要量到")
-                first_exit = next((i for i, ln in enumerate(lines)
-                                   if re.search(r"\bexit\b|run_step_or_fail", ln)), len(lines))
-                self.assertLess(probe, first_exit, "probe 要在任何提早收場之前")
-
-    def test_probe_is_not_wrapped_in_a_failing_helper(self):
-        for name in PROBED_ROUNDS:
-            for ln in _code_lines(SCRIPTS_DIR / name):
-                if "futures_probe" in ln or "probe-futures-day" in ln:
-                    with self.subTest(script=name, line=ln.strip()):
-                        self.assertEqual(ln.strip(), "futures_probe",
-                                         "probe 只能裸呼叫 lib.sh 的 futures_probe")
-
-    def test_probe_helper_has_a_hard_timeout(self):
-        body = _probe_body()
-        m = re.search(r"timeout\s+.*?\s(\d+)s\s", body, re.S)
-        self.assertIsNotNone(m, "futures_probe 要有 timeout")
-        self.assertLessEqual(int(m.group(1)), 60)
-
-    def test_probe_helper_never_fails_the_round(self):
-        body = _probe_body()
-        self.assertRegex(body, r"\|\|\s*rc=\$\?", "docker 的離開碼要被 || 接住")
-        self.assertRegex(body.strip().splitlines()[-1].strip(), r"^return 0$",
-                         "最後一行必須是 return 0")
-        self.assertNotIn("exit", body)
-        self.assertNotRegex(body, r"\bnotify", "probe 失敗不通知")
-        self.assertNotIn("set -e", body)
-
-    def test_probe_container_cannot_reach_the_database(self):
-        body = _probe_body()
-        self.assertIn("probe-futures-day", body)
-        self.assertNotIn("/app/data", body, "probe 的容器不掛 data/,物理上碰不到 radar.db")
-        self.assertNotRegex(body, r"(?m)(^|\$\(|;)\s*radar(_timeout)?\s",
-                            "不走 radar()/radar_timeout(會掛 data/)")
-        self.assertNotIn("acquire_db_lock", body)
-
-    def test_probe_logs_to_its_own_file(self):
-        body = _probe_body()
-        self.assertIn('tee -a "$FUTURES_PROBE_LOG"', body)
-        lib = LIB.read_text(encoding="utf-8")
-        self.assertRegex(lib, r'FUTURES_PROBE_LOG="\$\{FUTURES_PROBE_LOG:-\$\{HOME:-/tmp\}/futures-probe\.log\}"')
+    def test_cli_has_no_probe_subcommand(self):
+        cli = (REPO_ROOT / "pipeline" / "radar" / "cli.py").read_text(encoding="utf-8")
+        self.assertNotIn("probe-futures-day", cli)
 
 
 class ImportFuturesDayIsWired(unittest.TestCase):

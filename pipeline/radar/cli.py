@@ -393,25 +393,6 @@ def cmd_import_futures_day(args):
     )
 
 
-def cmd_probe_futures_day(args):
-    """一行量測,不碰資料庫。失敗也印同一個前綴,讓呼叫端的 grep 照樣抓得到。"""
-    from .importer import probe_futures_day
-
-    d = _iso_arg(args.date)
-    try:
-        info = probe_futures_day(d)
-    except Exception as e:  # noqa: BLE001 - a probe reports, it never raises past here
-        at = datetime.now(ZoneInfo(config.TZ)).strftime("%H:%M")
-        msg = " ".join(str(e).split())[:160]
-        print(f"futures-probe at={at} date={d or '-'} error={type(e).__name__}: {msg}")
-        raise SystemExit(1)
-    print(
-        f"futures-probe at={info['at']} date={info['date']} "
-        f"regular_rows={info['regular_rows']} afterhours_rows={info['after_hours_rows']} "
-        f"stock_codes={info['stock_codes']} sha={info['sha']}"
-    )
-
-
 # `probe-branch-day`:0 = 抽樣達門檻,可以開始全量爬;75 = 還沒公布夠多,等一下再問。
 BRANCH_PROBE_PENDING_EXIT = 75
 
@@ -840,7 +821,7 @@ def cmd_export_json(args):
     from .export.json_export import export_json
     info = export_json(
         args.out,
-        legacy_stocks=not args.no_legacy_stocks,
+        legacy_stocks=args.legacy_stocks,
         verify_split=args.verify_split,
         size_report=args.size_report,
     )
@@ -1080,14 +1061,6 @@ def main(argv=None):
                      help="YYYY-MM-DD; default max(daily_prices.date), which must be "
                           "today (Asia/Taipei) or the command exits 75")
     ifd.set_defaults(fn=cmd_import_futures_day)
-
-    pfd = sub.add_parser(
-        "probe-futures-day",
-        help="read-only: one line of what futDataDown serves for today right now "
-             "(row counts + content sha); never opens the database",
-    )
-    pfd.add_argument("--date", default=None, help="YYYY-MM-DD; default today (Asia/Taipei)")
-    pfd.set_defaults(fn=cmd_probe_futures_day)
 
     pbd = sub.add_parser(
         "probe-branch-day",
@@ -1356,10 +1329,15 @@ def main(argv=None):
 
     exp = sub.add_parser("export-json", help="write web/public/data/*.json for the frontend")
     exp.add_argument("--out", default=None, help="output dir (default web/public/data)")
-    # docs/44 P1(§3.2)個股拆檔。舊單一檔 stocks/{id}.json 過渡期預設照寫;清理步驟才加
-    # --no-legacy-stocks。--verify-split 每檔在記憶體內把三份接回與原 payload 比對。
+    # docs/44 P1(§3.2)個股拆檔。舊單一檔 stocks/{id}.json 自 2026-10-07 起預設不寫;
+    # --legacy-stocks 是逃生口(回滾到只認舊檔的前端時用)。--no-legacy-stocks 保留為無作用的
+    # 相容旗標,手上還帶著它的指令不會因為未知參數而失敗。
+    # --verify-split 每檔在記憶體內把三份接回與原 payload 比對。
+    exp.add_argument("--legacy-stocks", action="store_true",
+                     help="also write the legacy single-file stocks/{id}.json (escape hatch; "
+                          "off by default since the docs/44 §3.2 cleanup)")
     exp.add_argument("--no-legacy-stocks", action="store_true",
-                     help="do not write the legacy single-file stocks/{id}.json (cleanup step)")
+                     help="no-op, kept for compatibility (legacy files are off by default)")
     exp.add_argument("--verify-split", action="store_true",
                      help="assert core+hist+chips merge back to the single payload for every stock")
     exp.add_argument("--size-report", default=None, metavar="PATH",

@@ -6,6 +6,7 @@ from tempfile import TemporaryDirectory
 
 import radar.config as config
 import radar.db as db
+from radar.export.stock_parts import read_merged_stock
 from radar import schema
 from radar.export.json_export import export_json
 from radar.importer import BUYBACK_MAX_DAYS, _validate_buyback_range, import_buybacks
@@ -206,7 +207,7 @@ class BuybackDbTests(unittest.TestCase):
             ])
         out = Path(self.tmp.name) / "out"
         export_json(out)
-        payload = json.loads((out / "stocks" / "2330.json").read_text(encoding="utf-8"))
+        payload = read_merged_stock(out / "stocks", "2330")
         self.assertEqual(payload["buyback"]["plan_id"], "known")
         self.assertEqual(payload["buyback"]["status"], "in_progress")
 

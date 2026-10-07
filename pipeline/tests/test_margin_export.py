@@ -6,6 +6,7 @@ from tempfile import TemporaryDirectory
 
 import radar.config as config
 import radar.db as db
+from radar.export.stock_parts import read_merged_stock
 from radar import schema
 from radar.export.json_export import export_json
 
@@ -63,7 +64,7 @@ class MarginExportTests(unittest.TestCase):
 
     def test_margin_history_and_ranking_export(self):
         export_json(self.out)
-        stock = json.loads((self.out / "stocks" / "2330.json").read_text(encoding="utf-8"))
+        stock = read_merged_stock(self.out / "stocks", "2330")
         self.assertIn("margin_history", stock)
         hist = stock["margin_history"]
         self.assertEqual(len(hist), 2)

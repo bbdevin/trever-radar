@@ -1352,7 +1352,7 @@ def _export_margin_usage(out: Path, conn, d: str, m_date: str | None) -> None:
 def export_json(
     out_dir: Path | None = None,
     *,
-    legacy_stocks: bool = True,
+    legacy_stocks: bool = False,
     verify_split: bool = False,
     size_report: Path | None = None,
 ) -> dict:
@@ -1360,7 +1360,9 @@ def export_json(
 
     個股檔(docs/44 P1,§3.2)每檔寫三份:``stocks/core/{id}.json``、
     ``stocks/chips/{id}.json``、(聯集股)``stocks/hist/{id}.{hash}.json``;
-    ``legacy_stocks=True``(預設,過渡期)時舊單一檔 ``stocks/{id}.json`` 照寫、逐位元不變。
+    舊單一檔 ``stocks/{id}.json`` 自 2026-10-07 起預設不寫(docs/44 §3.2 清理);``legacy_stocks=True``
+    是保留的逃生口(``export-json --legacy-stocks``),寫出來與過渡期逐位元相同。export 本身
+    不刪舊單一檔——磁碟上殘留的由 ``pipeline/tools/purge_legacy_stocks.py`` 一次性清掉。
     ``verify_split`` 對每一檔在記憶體內把三份接回,與單一 payload 深度比對,不相等就擲例外。
     ``size_report`` 給路徑時寫每鍵大小分布(聯集/其餘兩組)。
     """

@@ -13,6 +13,7 @@ from sqlalchemy import text
 
 import radar.config as config
 import radar.db as db
+from radar.export.stock_parts import read_merged_stock
 from radar import schema
 from radar.cli import main
 from radar.compute.branch_point_in_time_report import _price_observation
@@ -868,7 +869,7 @@ class BranchPctileExportTests(unittest.TestCase):
         out = self.tmp_path / "out"
         out.mkdir(parents=True, exist_ok=True)
         export_json(out)
-        return json.loads((out / "stocks" / f"{sid}.json").read_text(encoding="utf-8"))
+        return read_merged_stock(out / "stocks", sid)
 
     _STOCK_SHORT = {
         "stock_buy_pctile_known": 1000, "stock_low_buy_count": 572,
@@ -1032,9 +1033,7 @@ class BranchPctileExportTests(unittest.TestCase):
         out.mkdir(parents=True, exist_ok=True)
         # export_json 會 init_db 重建空表;內容仍是誠實的空。
         export_json(out)
-        payload = json.loads(
-            (out / "stocks" / "1111.json").read_text(encoding="utf-8")
-        )["branch_pctile_counts"]
+        payload = read_merged_stock(out / "stocks", "1111")["branch_pctile_counts"]
         self.assertEqual(payload["short"]["branches"], [])
         self.assertEqual(payload["long"]["branches"], [])
         self.assertEqual(payload["lookup"], [])

@@ -35,7 +35,7 @@
 | 新時刻(舊) | 腳本 | 行為 |
 |---|---|---|
 | 週一 11:00(新增) | `weekly-refdata.sh` | `acquire_db_lock_wait 1800` → sync → 題材/地緣/產業別(warn-and-continue)→ 寫 `/tmp/radar-refdata-<ISO 週>.done`;不 export(14:05 那輪一起上線)。過渡:crontab 還沒加這行時,週一 `daily-market.sh` 看不到標記就在 **deploy 之後**補跑 |
-| 14:05(14:10) | `daily-market.sh` | futures_probe → 等鎖 → 每 3 分輪詢 `import-daily --datasets quotes --require twse:quotes` 至 14:40 → 彙總 → 指標 → 分數 → export → deploy |
+| 14:05(14:10) | `daily-market.sh` | 等鎖(2026-10-07 起不再先跑 futures_probe,見 docs/38 §7.18)→ 每 3 分輪詢 `import-daily --datasets quotes --require twse:quotes` 至 14:40 → 彙總 → 指標 → 分數 → export → deploy |
 | 14:45(15:00) | `daily-tpex-quotes.sh` | `acquire_db_lock_wait 2700` → 每 3 分輪詢 `--require tpex:quotes:0.8` 至 15:30 → 彙總 → 指標 → 分數 → export → deploy。今天上市日K不在庫(休市)→ 只試一次 |
 | 16:00(16:10) | `daily-insti.sh` | 日K保底(TPEx 520 → 75 分支保留)→ 每 5 分輪詢 `--datasets insti --require twse:insti,tpex:insti` 至 17:10,每次嘗試順手 `import-futures-day`(75 下次再試、0 不再試)→ 權證主檔、庫藏股(warn-and-continue)→ 彙總 → 指標 → 分數 → export → deploy → futures_digest。**截止仍缺**:有其他變動(上櫃法人/期貨等)→ warn 並先上線已到的部分(舊 16:10 也是先上線上櫃法人;不讓它陪等到 20:30);沒有 → `publish skipped` |
 | 17:30(17:40) | `daily-branches.sh` | 非交易日收工 → 等鎖 → 日K+法人(保底)→ 期貨當日(法人輪已拿到就略過)→ 指標 → seed → **探測迴圈**(放 DB 鎖)→ 重新等鎖 → 全量爬 → 分級 → 分點統計 → 已過 21:00 順手匯入資券 → 分數 → 績效 → export → prune → deploy → 完成標記(含 `coverage_ratio=`) |

@@ -263,7 +263,6 @@ guard_locked() { [ "$LOCKED" = 1 ] || record "UNLOCKED:$1"; }
 price_date_is_today() { return 0; }
 round_has_changes() { return 0; }
 sync_code() { record sync; }
-futures_probe() { :; }
 futures_digest() { record futures-digest; }
 notify() { record \"notify:$1:$2:$3\"; }
 notify_warn() { record \"warn:$1\"; }

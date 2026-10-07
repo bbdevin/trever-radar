@@ -6,7 +6,7 @@
  *   node --experimental-strip-types web/scripts/build-bull-board.mjs [--data <dir>] [--log <dir>]
  * 預設 --data = web/public/data、--log = <repo>/data/bull_board_log。
  *
- * 讀 radar.json → 逐檔讀 stocks/*.json(一次一檔,不同時持有原始 JSON)→ summaryFromStockJson
+ * 讀 radar.json → 逐檔讀 stocks/core/*.json 並接回 chips/hist(一次一檔,不同時持有原始 JSON)→ summaryFromStockJson
  * (與個股頁同一次呼叫)→ selectBoard → 原子寫 bull_board.json(.tmp → rename)→ 追加一行到
  * <log>/YYYY-MM.jsonl(同一 data_date 最後一行內容相同、只差時間戳 → 不追加,見 lib/bullBoardLog.ts),
  * 並把當月檔複製到 <data>/bull_board_log/YYYY-MM.jsonl。
@@ -70,18 +70,18 @@ const radar = readJson(path.join(DATA, "radar.json"));
 const radarById = new Map((radar.stocks ?? []).map((s) => [s.id, s]));
 const stockDir = path.join(DATA, "stocks");
 // 拆檔佈局(docs/44 P1 §3.2):有 stocks/core/ 就讀核心並把 chips/hist 接回(與個股頁同一個
-// mergeStockParts);沒有就讀舊單一檔 stocks/*.json。兩種佈局算出來的 bull_board.json 相同。
+// mergeStockParts)。2026-10-07 起 export 預設不寫舊單一檔 stocks/*.json;沒有 core/ 的舊資料目錄
+// 才退回讀舊單一檔(兩種佈局算出來的 bull_board.json 相同)。
 const coreDir = path.join(stockDir, "core");
 const splitLayout = fs.existsSync(coreDir) && fs.statSync(coreDir).isDirectory();
 const readDir = splitLayout ? coreDir : stockDir;
 const files = fs.readdirSync(readDir).filter((f) => f.endsWith(".json")).sort();
-// 拆檔佈局下 hist/chips 接回;hist 檔不在(並行 export 剛換雜湊)→ 有舊單一檔就讀舊檔,沒有就丟出讓外層略過。
-const mergeParts = (f, core) =>
+// 拆檔佈局下 hist/chips 接回;部件不在(例:並行 export 剛換 hist 雜湊)→ 丟出讓外層警告並略過該檔。
+// 刻意**不**退回舊單一檔 stocks/{id}.json:export 已不再更新它,殘留的是過期內容,讀了會算錯。
+const mergeParts = (core) =>
   mergeIfSplit(core, (rel) => {
     const p = path.join(stockDir, rel);
     if (fs.existsSync(p)) return readJson(p);
-    const legacy = path.join(stockDir, f);
-    if (rel.startsWith("hist/") && fs.existsSync(legacy)) throw Object.assign(new Error("hist missing"), { legacy });
     throw new Error(`part missing: ${rel}`);
   });
 
@@ -104,21 +104,11 @@ for (const f of files) {
   if (!scored || lastT !== radar.data_date) continue;
   if (splitLayout) {
     try {
-      data = mergeParts(f, data);
+      data = mergeParts(data);
     } catch (e) {
-      if (e?.legacy) {
-        try {
-          data = readJson(e.legacy);
-        } catch (e2) {
-          failed += 1;
-          console.warn(`bull-board: skip ${f}: ${e2?.message ?? e2}`);
-          continue;
-        }
-      } else {
-        failed += 1;
-        console.warn(`bull-board: skip ${f}: ${e?.message ?? e}`);
-        continue;
-      }
+      failed += 1;
+      console.warn(`bull-board: skip ${f}: ${e?.message ?? e}`);
+      continue;
     }
   }
   const r = radarById.get(data.id);

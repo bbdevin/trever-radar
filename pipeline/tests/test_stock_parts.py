@@ -3,8 +3,10 @@
 
 純函式:split/merge 互為反函式、cut 邊界、沒有 chips 鍵、沒有早於 cut 的 K 線。
 種子 DB 匯出:舊單一檔逐位元不變、三份接回 == 舊檔、聯集股才有 hist、hist 內容不變
-就不重寫、退出聯集就刪檔、--no-legacy-stocks、--size-report、--verify-split。
+就不重寫、退出聯集就刪檔、預設不寫舊單一檔(--legacy-stocks 逃生口)、--size-report、--verify-split。
 """
+import contextlib
+import io
 import json
 import os
 import unittest
@@ -288,7 +290,8 @@ class ExportSplitTests(unittest.TestCase):
     def test_export_writes_three_layouts_that_merge_back(self):
         out = Path(self._tmp.name) / "out"
         report = Path(self._tmp.name) / "sizes.json"
-        info = export_json(out, verify_split=True, size_report=report)
+        # 逃生口 --legacy-stocks:舊單一檔照寫,用來證明三份接回與它逐鍵相等。
+        info = export_json(out, legacy_stocks=True, verify_split=True, size_report=report)
         radar = self._read(out, "radar.json")
         union_ids = {s["id"] for s in radar["stocks"]}
         self.assertIn("2330", union_ids)
@@ -339,17 +342,40 @@ class ExportSplitTests(unittest.TestCase):
         self.assertEqual((info2["hist_written"], info2["hist_reused"]), (0, 1))
         self.assertEqual(sorted(p.name for p in (out / "stocks/hist").glob("2330.*.json")), before_names)
 
-    def test_no_legacy_stocks_flag(self):
+    def test_default_export_writes_no_legacy_files(self):
+        """docs/44 §3.2 清理:預設只寫拆檔,stocks/ 頂層一個 {id}.json 都沒有。"""
         out = Path(self._tmp.name) / "out"
-        export_json(out, legacy_stocks=False)
-        self.assertFalse((out / "stocks/2330.json").exists())
+        export_json(out)
+        self.assertEqual(sorted(p.name for p in (out / "stocks").glob("*.json")), [])
         self.assertTrue((out / "stocks/core/2330.json").exists())
         self.assertTrue((out / "stocks/chips/2330.json").exists())
+        self.assertTrue((out / "stocks/core/2317.json").exists())
         merged = read_merged_stock(out / "stocks", "2330")
         self.assertEqual(merged["id"], "2330")
         self.assertNotIn("parts", merged)
         self.assertIn("branch_history", merged)
 
+    def test_cli_default_and_flags(self):
+        """CLI 預設不寫舊檔;--no-legacy-stocks 仍被接受(無作用);--legacy-stocks 才寫。"""
+        from radar import cli
+        out = Path(self._tmp.name) / "out"
+        with contextlib.redirect_stdout(io.StringIO()):
+            cli.main(["export-json", "--out", str(out), "--no-legacy-stocks"])
+        self.assertFalse((out / "stocks/2330.json").exists())
+        with contextlib.redirect_stdout(io.StringIO()):
+            cli.main(["export-json", "--out", str(out), "--legacy-stocks"])
+        self.assertTrue((out / "stocks/2330.json").exists())
+
+    def test_export_leaves_existing_legacy_files_alone(self):
+        """export 不刪也不更新殘留的舊單一檔:清理交給 tools/purge_legacy_stocks.py 一次做完。"""
+        out = Path(self._tmp.name) / "out"
+        (out / "stocks").mkdir(parents=True)
+        stale = out / "stocks" / "2330.json"
+        stale.write_text('{"id": "2330", "stale": true}', encoding="utf-8")
+        export_json(out)
+        self.assertEqual(json.loads(stale.read_text(encoding="utf-8")), {"id": "2330", "stale": True})
+        # 有 core 時讀取一律走拆檔,殘留舊檔不會被讀到。
+        self.assertNotIn("stale", read_merged_stock(out / "stocks", "2330"))
 
 if __name__ == "__main__":
     unittest.main()

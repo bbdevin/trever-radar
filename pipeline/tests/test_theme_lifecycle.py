@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 import radar.config as config
 import radar.db as db
+from radar.export.stock_parts import read_merged_stock
 from radar import schema
 from radar.export.json_export import export_json
 from radar.importer import import_themes
@@ -230,7 +231,7 @@ class ThemeLifecycleTests(unittest.TestCase):
             ])
         out = Path(self._tmp.name) / "out"
         export_json(out)
-        stock = json.loads((out / "stocks" / "1001.json").read_text(encoding="utf-8"))
+        stock = read_merged_stock(out / "stocks", "1001")
         radar = json.loads((out / "radar.json").read_text(encoding="utf-8"))
         # New stock fields are optional: a pre-C snapshot has no lifecycle keys,
         # but retains every pre-existing payload field for the TypeScript fallback.

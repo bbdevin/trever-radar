@@ -572,6 +572,7 @@ latest("futures_daily")`),只是沒有把它交給切片。
 - 不需要改 crontab、secret、schema。
 - 2026-10-02 晚:使用者決定不等 3 天量測,直接接上 16:10(17:40、22:00 重試);probe 保留量到 10-07 後移除;21:20 OpenAPI 改為官方覆核;export 期貨 stale 規則收回 (d, prev)。Z = 接上後第一個正式 16:10 輪(預計 2026-10-05)。
 - 2026-10-04(`docs/47` 排程優化,只改時程):法人輪改為 16:00 起每 5 分輪詢至 17:10,**每次嘗試都順手試 `import-futures-day`**(75 下次再試、0 之後不再試);分點輪(17:30,舊 17:40)只在今天的 `futures-day` 還沒有 ok 紀錄時才重試;第二輪 22:30(舊 22:00)照舊重試。資券輪(20:45,舊 21:20)的 OpenAPI 官方覆核不變。規則、閘門、R3 一律未動;正式 crontab 待核准套用前,舊時刻下行為相同。
+- 2026-10-07:唯讀量測 `probe-futures-day` 依計畫**整段移除**——`daily-market.sh`/`daily-tpex-quotes.sh`/`daily-insti.sh` 取鎖前的 `futures_probe` 呼叫、`lib.sh` 的 `futures_probe`/`FUTURES_PROBE_LOG`、CLI 子指令與 `importer.probe_futures_day`、`disk-cleanup.sh` 對 `~/futures-probe.log` 的修剪都已刪;測試改成鎖「沒有任何腳本或 CLI 再提到它」(`test_futures_day_wiring.py::ProbeIsGone`)。`import-futures-day` 與 21:20(新 20:45)`import-futures` 官方覆核**未動**。VPS 上既有的 `~/futures-probe.log` 不再增長,可手動刪除。
 
 ### 7.19 近 10 日舉旗紀錄、白話契約名稱、每日推播(2026-10-03,post-data,只動呈現)
 

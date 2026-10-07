@@ -24,6 +24,7 @@ from sqlalchemy import text
 
 import radar.config as config
 import radar.db as db
+from radar.export.stock_parts import read_merged_stock
 from radar import schema
 from radar import seed_branches as sb
 
@@ -370,7 +371,7 @@ class ConsumersExcludeMutedTests(_DB):
         with contextlib.redirect_stdout(io.StringIO()):
             export_json(out)
 
-        stock = json.loads((out / "stocks" / "2330.json").read_text(encoding="utf-8"))
+        stock = read_merged_stock(out / "stocks", "2330")
         self.assertEqual(stock["branch_tags"]["tracked"], ["追蹤甲"])
 
         rankings = json.loads((out / "branches" / "rankings.json").read_text(encoding="utf-8"))

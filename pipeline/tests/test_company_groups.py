@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 import radar.config as config
 import radar.db as db
+from radar.export.stock_parts import read_merged_stock
 from radar import schema
 from radar.company_groups import load_company_groups, validate_company_groups
 from radar.export.json_export import export_json
@@ -98,7 +99,7 @@ class CompanyGroupExportTests(unittest.TestCase):
         # No daily score exists, so no member can have arrived via the radar pool.
         radar = json.loads((out / "radar.json").read_text(encoding="utf-8"))
         self.assertEqual(radar["lists"]["score"], [])
-        stock = json.loads((out / "stocks" / "1605.json").read_text(encoding="utf-8"))
+        stock = read_merged_stock(out / "stocks", "1605")
         self.assertEqual(stock["industry"], "測試業")
         self.assertEqual(stock["company_profile"]["transfer_agent"], "測試股務")
         self.assertEqual(stock["company_groups"][0]["id"], "walsin")
@@ -124,7 +125,7 @@ class CompanyGroupExportTests(unittest.TestCase):
             export_json(out)
         groups = json.loads((out / "groups.json").read_text(encoding="utf-8"))
         self.assertEqual([member["id"] for member in groups["groups"][0]["members"]], list(self.IDS[:-1]))
-        stock = json.loads((out / "stocks" / "6116.json").read_text(encoding="utf-8"))
+        stock = read_merged_stock(out / "stocks", "6116")
         self.assertEqual(stock["company_groups"], [])
 
     def test_partial_stock_master_omits_whole_group(self):
@@ -134,7 +135,7 @@ class CompanyGroupExportTests(unittest.TestCase):
         export_json(out)
         groups = json.loads((out / "groups.json").read_text(encoding="utf-8"))
         self.assertEqual(groups["groups"], [])
-        stock = json.loads((out / "stocks" / "1605.json").read_text(encoding="utf-8"))
+        stock = read_merged_stock(out / "stocks", "1605")
         self.assertEqual(stock["company_groups"], [])
 
 

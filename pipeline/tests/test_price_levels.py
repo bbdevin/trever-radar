@@ -8,6 +8,7 @@ from tempfile import TemporaryDirectory
 
 import radar.config as config
 import radar.db as db
+from radar.export.stock_parts import read_merged_stock
 from radar import schema
 from radar.compute.price_levels import compute_price_levels
 from radar.export.json_export import export_json
@@ -338,7 +339,7 @@ class ExportKey(unittest.TestCase):
         out = Path(self._tmp.name) / "out"
         out.mkdir()
         export_json(out)
-        p = json.loads((out / "stocks" / "2330.json").read_text(encoding="utf-8"))
+        p = read_merged_stock(out / "stocks", "2330")
         lv = p["price_levels"]
         self.assertEqual(lv["status"], "ok")
         self.assertEqual(lv["close"], 129.0)
@@ -349,7 +350,7 @@ class ExportKey(unittest.TestCase):
         radar = json.loads((out / "radar.json").read_text(encoding="utf-8"))
         self.assertNotIn("raw_risks", json.dumps(radar, ensure_ascii=False))
         self.assertNotIn("price_levels", json.dumps(radar, ensure_ascii=False))
-        short = json.loads((out / "stocks" / "2317.json").read_text(encoding="utf-8"))
+        short = read_merged_stock(out / "stocks", "2317")
         self.assertEqual(short["price_levels"]["status"], "insufficient")
 
 

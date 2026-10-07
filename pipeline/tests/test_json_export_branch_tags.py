@@ -14,6 +14,7 @@ from tempfile import TemporaryDirectory
 
 import radar.config as config
 import radar.db as db
+from radar.export.stock_parts import read_merged_stock
 from radar import schema
 from radar.compute.compute_branch_stats import DAYTRADE_MIN_OBS, DAYTRADE_RATE
 from radar.export import json_export as je
@@ -107,7 +108,7 @@ class BranchTagsExportTests(unittest.TestCase):
         out = Path(self._tmp.name) / "out"
         out.mkdir(parents=True, exist_ok=True)
         export_json(out)
-        return json.loads((out / "stocks" / f"{sid}.json").read_text(encoding="utf-8"))
+        return read_merged_stock(out / "stocks", sid)
 
     def _names(self, payload):
         names = {b["n"] for day in payload["branch_history"] for b in day["branches"]}
