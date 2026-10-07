@@ -1,0 +1,291 @@
+# -*- coding: utf-8 -*-
+"""docs/47 §8:分點輪的鎖相位與前置步驟的寬鬆分級——對**真的 lib.sh** 用 stub 量測。
+
+兩類測試:
+
+1. **stub harness**(需要 bash + flock + fuser;沒有就 skip):source 真的 lib.sh,
+   把 `radar` / `notify` / `radar_ro_sql` 換成 stub,實際執行 helper 與鎖函式,斷言
+   離開碼、通知、以及鎖在各相位的狀態(別的程序 `flock -n` 搶不搶得到、`fuser` 看不看得到)。
+2. **原始碼解析**(同 test_daily_branches_exit_codes.py 手法):鎖的順序與相位寫在
+   daily-branches.sh 的文字裡——DB 鎖 → 來源鎖;探測與抓取之間不重新拿鎖;寫入前拿鎖。
+"""
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+SCRIPTS_DIR = REPO_ROOT / "vps" / "scripts"
+SCRIPT = SCRIPTS_DIR / "daily-branches.sh"
+LIB = SCRIPTS_DIR / "lib.sh"
+
+FULL_LINE_COMMENT = re.compile(r"^\s*#")
+TRAILING_COMMENT = re.compile(r"(?<=\s)#.*$")
+
+
+def _code_lines(path: Path) -> list[str]:
+    out = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if FULL_LINE_COMMENT.match(line):
+            out.append("")
+        else:
+            out.append(TRAILING_COMMENT.sub("", line))
+    return out
+
+
+def _bash_path(p: Path) -> str:
+    """Windows 上的 bash 是 WSL:D:\\x → /mnt/d/x。Linux 原樣。"""
+    s = str(p)
+    if sys.platform == "win32" and re.match(r"^[A-Za-z]:\\", s):
+        return "/mnt/" + s[0].lower() + s[2:].replace("\\", "/")
+    return s
+
+
+def _bash_available() -> bool:
+    if shutil.which("bash") is None:
+        return False
+    try:
+        r = subprocess.run(["bash", "-c", "command -v flock && command -v fuser"],
+                           capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return r.returncode == 0
+
+
+HARNESS_PRELUDE = r"""
+set -u
+export HOME=/tmp
+export NTFY=""
+export RADAR_DB_LOCK_FILE="$(mktemp /tmp/radar-test-lock.XXXXXX)"
+source "__LIB__"
+trap - ERR
+# stubs(定義在 source 之後,蓋掉 lib.sh 的版本)
+notify() { echo "NOTIFY pri=${2:-high} kind=${3:-} msg=$1"; }
+radar() { echo "radar $*"; return "${RADAR_RC:-0}"; }
+radar_ro_sql() { echo "${RO_SQL_OUT:-}"; }
+set_round_consequence "測試用後果句"
+"""
+
+
+def _run_harness(body: str, env: dict | None = None) -> subprocess.CompletedProcess:
+    """腳本寫成 UTF-8 暫存檔再 `bash <檔>`:Windows 上的 bash 是 WSL,argv 與環境變數
+    都不會原樣傳進去(非 ASCII 會被吃掉、env 不傳遞),所以 env 也寫進腳本開頭。"""
+    exports = "".join(f"export {k}={v!r}\n".replace("'", '"') for k, v in (env or {}).items())
+    script = exports + HARNESS_PRELUDE.replace("__LIB__", _bash_path(LIB)) + "\n" + body
+    with tempfile.NamedTemporaryFile("w", suffix=".sh", delete=False, encoding="utf-8",
+                                     newline="\n") as fh:
+        fh.write(script)
+        path = Path(fh.name)
+    try:
+        return subprocess.run(["bash", _bash_path(path)], capture_output=True, text=True,
+                              encoding="utf-8", errors="replace", timeout=120)
+    finally:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+
+
+@unittest.skipUnless(_bash_available(), "需要 bash + flock + fuser")
+class LenientPrestepHarness(unittest.TestCase):
+    """run_step_or_fail_unless / run_step_or_warn 對真的 lib.sh 實測。"""
+
+    def test_failed_prestep_with_data_already_in_db_warns_and_continues(self):
+        """2026-10-06 的事故形狀:補抓回 1、今天的日K已在庫 → warn 一則、續跑、離開碼 0。"""
+        r = _run_harness("""
+pred_true() { return 0; }
+run_step_or_fail_unless "import-daily" pred_true radar import-daily --datasets quotes,insti
+echo CONTINUED
+""", {"RADAR_RC": "1"})
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("CONTINUED", r.stdout)
+        self.assertRegex(r.stdout, r"NOTIFY pri=default kind=注意 msg=import-daily 失敗（碼 1）")
+        self.assertNotIn("pri=high", r.stdout)
+        self.assertIn("step import-daily done rc=1", r.stdout, "計時行照常")
+
+    def test_failed_prestep_without_todays_data_aborts_with_the_original_code(self):
+        r = _run_harness("""
+pred_false() { return 1; }
+run_step_or_fail_unless "import-daily" pred_false radar import-daily --datasets quotes,insti
+echo CONTINUED
+""", {"RADAR_RC": "7"})
+        self.assertEqual(r.returncode, 7, "帶原碼中止,不壓成 1")
+        self.assertNotIn("CONTINUED", r.stdout)
+        self.assertRegex(r.stdout, r"NOTIFY pri=high kind=失敗 msg=import-daily 失敗（碼 7）.*測試用後果句")
+
+    def test_successful_prestep_is_silent(self):
+        r = _run_harness("""
+pred_false() { return 1; }
+run_step_or_fail_unless "import-daily" pred_false radar import-daily
+echo CONTINUED
+""", {"RADAR_RC": "0"})
+        self.assertEqual(r.returncode, 0)
+        self.assertIn("CONTINUED", r.stdout)
+        self.assertNotIn("NOTIFY", r.stdout)
+
+    def test_prestep_without_declared_consequence_refuses_like_run_step_or_fail(self):
+        r = _run_harness("""
+ROUND_FAIL_CONSEQUENCE=""
+pred_true() { return 0; }
+run_step_or_fail_unless "import-daily" pred_true radar import-daily
+echo CONTINUED
+""")
+        self.assertEqual(r.returncode, 78)
+        self.assertNotIn("CONTINUED", r.stdout)
+
+    def test_run_step_or_warn_never_aborts(self):
+        r = _run_harness("""
+run_step_or_warn "seed-branches" radar seed-branches
+echo CONTINUED
+""", {"RADAR_RC": "9"})
+        self.assertEqual(r.returncode, 0)
+        self.assertIn("CONTINUED", r.stdout)
+        self.assertRegex(r.stdout, r"NOTIFY pri=default kind=注意 msg=seed-branches 失敗（碼 9）")
+
+    def test_the_real_predicates_read_the_db_through_the_ro_query(self):
+        """price_date_is_today / indicators_date_is_today:MAX(date) == 今天 → 0;否則 1;
+        查不到 → 0(視為照常跑/已算過)。"""
+        r = _run_harness("""
+today="$(taipei_date +%F)"
+RO_SQL_OUT="$today" price_date_is_today && echo P1
+RO_SQL_OUT="2000-01-01" price_date_is_today || echo P2
+RO_SQL_OUT="" price_date_is_today && echo P3
+RO_SQL_OUT="$today" indicators_date_is_today && echo I1
+RO_SQL_OUT="2000-01-01" indicators_date_is_today || echo I2
+RO_SQL_OUT="" indicators_date_is_today && echo I3
+""")
+        for tag in ("P1", "P2", "P3", "I1", "I2", "I3"):
+            self.assertIn(tag, r.stdout, r.stdout + r.stderr)
+
+
+@unittest.skipUnless(_bash_available(), "需要 bash + flock + fuser")
+class LockPhaseHarness(unittest.TestCase):
+    """抓取相位真的不握鎖:別的程序 flock -n 搶得到;寫入前 db_lock_take 又拿得回來。"""
+
+    def test_lock_is_free_while_released_and_retaken_before_commit(self):
+        r = _run_harness("""
+other_can_lock() { ( exec 7>"$RADAR_DB_LOCK_FILE"; flock -n 7 ) && echo "other:FREE" || echo "other:HELD"; }
+db_lock_take 5 && echo "phase1 taken"
+other_can_lock                      # 匯入/指標階段:別人搶不到
+release_db_lock
+other_can_lock                      # 探測 + 抓取階段:別人搶得到(資券輪、夜間作業都能進)
+if fuser "$RADAR_DB_LOCK_FILE" >/dev/null 2>&1; then echo "fuser:SEEN"; else echo "fuser:UNSEEN"; fi
+db_lock_take 5 && echo "phase3 retaken"
+other_can_lock                      # 寫入 + 上線:別人又搶不到
+""")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        lines = [ln for ln in r.stdout.splitlines() if ln.startswith(("other:", "fuser:", "phase"))]
+        self.assertEqual(lines, [
+            "phase1 taken", "other:HELD",
+            "other:FREE",
+            # fd 9 整輪開著:fuser 仍看得到 → mid-backfill-publish 在抓取相位會略過(文件化的保守行為)。
+            "fuser:SEEN",
+            "phase3 retaken", "other:HELD",
+        ])
+
+    def test_lock_wait_times_out_instead_of_waiting_forever(self):
+        """每一次等鎖都有上限:別人握著時 db_lock_take 1 在 ~1 秒後回非 0,不會永遠等。"""
+        r = _run_harness("""
+( exec 7>"$RADAR_DB_LOCK_FILE"; flock 7; sleep 4 ) &
+holder=$!
+sleep 0.5
+t0=$(date +%s)
+if db_lock_take 1; then echo "took"; else echo "timeout rc=$?"; fi
+echo "waited=$(( $(date +%s) - t0 ))"
+wait $holder
+""")
+        self.assertIn("timeout rc=1", r.stdout, r.stdout + r.stderr)
+        waited = int(re.search(r"waited=(\d+)", r.stdout).group(1))
+        self.assertLessEqual(waited, 3)
+
+    def test_source_lock_is_non_blocking_so_no_lock_order_inversion(self):
+        """來源鎖是 flock -n:握著來源鎖等 DB 鎖的人(warrant-backfill.sh)與握著 DB 鎖
+        要來源鎖的人(daily-branches.sh)不可能互相等待——後者搶不到就 exit 0。"""
+        r = _run_harness("""
+( exec 8>/tmp/radar-branch-source.lock; flock 8; sleep 3 ) &
+holder=$!
+sleep 0.5
+notify_skip() { echo "SKIP: $1"; }
+( acquire_branch_source_lock; echo "got source lock" ); echo "rc=$?"
+wait $holder
+""")
+        self.assertIn("SKIP: 分點來源鎖占用", r.stdout, r.stdout + r.stderr)
+        self.assertNotIn("got source lock", r.stdout)
+        self.assertIn("rc=0", r.stdout)
+
+
+class LockPhasesInTheScript(unittest.TestCase):
+    """daily-branches.sh 的鎖相位,由原始碼直接解析。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.lines = _code_lines(SCRIPT)
+        cls.code = "\n".join(cls.lines)
+
+    def _idx(self, needle: str) -> int:
+        i = self.code.find(needle)
+        self.assertNotEqual(i, -1, f"找不到 {needle!r}")
+        return i
+
+    def test_lock_order_is_db_then_source_and_source_is_taken_once(self):
+        self.assertLess(self._idx("acquire_db_lock_wait 3600"), self._idx("acquire_branch_source_lock"))
+        self.assertEqual(self.code.count("acquire_branch_source_lock"), 1)
+
+    def test_fetch_runs_between_release_and_reacquire_and_commit_after_reacquire(self):
+        release = self._idx("release_db_lock")
+        fetch = self._idx('run_step_or_fail "fetch-branch-trades"')
+        reacquire = self.code.index("acquire_db_lock_wait", release)
+        commit = self._idx('if run_step "import-branch-trades" radar import-branch-trades --from-stage')
+        self.assertLess(release, fetch, "抓取前先放 DB 鎖")
+        self.assertLess(fetch, reacquire, "抓取期間不拿鎖")
+        self.assertLess(reacquire, commit, "寫入前重新拿鎖")
+        self.assertEqual(self.code.count("release_db_lock"), 1, "整輪只放一次鎖")
+        self.assertEqual(self.code.count("acquire_db_lock_wait"), 2, "開輪一次、寫入前一次")
+
+    def test_fetch_is_bounded_and_writes_nothing(self):
+        line = next(ln for ln in self.lines if 'run_step_or_fail "fetch-branch-trades"' in ln)
+        self.assertIn("radar_timeout 7200", line, "抓取要有硬上限")
+        self.assertIn("--workers 5", line)
+        self.assertIn('--stage-to "$STAGE_FILE"', line, "只抓不寫:結果落暫存檔")
+        self.assertIn("--sleep 1.0", line, "全域間隔不變(單站 = 1.0 × 5 秒)")
+        commit = next(ln for ln in self.lines if "import-branch-trades --from-stage" in ln)
+        self.assertNotIn("--workers", commit)
+        self.assertNotIn("--sleep", commit, "寫入步驟不碰網路")
+
+    def test_every_lock_wait_has_a_timeout(self):
+        for ln in self.lines:
+            s = ln.strip()
+            if s.startswith("acquire_db_lock_wait"):
+                self.assertRegex(s, r"^acquire_db_lock_wait \d+$", f"等鎖要有秒數:{s}")
+            self.assertFalse(s.startswith("acquire_db_lock\n"), "不用會略過整輪的 acquire_db_lock")
+        self.assertNotIn("\nacquire_db_lock\n", self.code)
+
+    def test_probe_releases_db_lock_but_keeps_the_source_lock(self):
+        probe = self._idx("probe-branch-day")
+        self.assertIn("POLL_HOLD_DB_LOCK=0", self.code[self.code.rfind("\n", 0, probe):probe])
+        self.assertLess(self._idx("release_db_lock"), probe)
+        self.assertNotIn("flock -u 8", self.code, "來源鎖整輪不放")
+
+    def test_two_phase_publish_both_run_under_the_db_lock(self):
+        reacquire = self.code.index("acquire_db_lock_wait", self._idx("release_db_lock"))
+        for needle in ("\npublish_site\n", "radar compute-branch-stats", "radar compute-scores"):
+            with self.subTest(step=needle.strip()):
+                self.assertGreater(self._idx(needle), reacquire)
+        self.assertEqual(self.code.count("\npublish_site\n"), 2)
+
+    def test_bf_guard_pauses_backfill_while_the_source_lock_is_held(self):
+        """bf 容器打同五個鏡像站:分點輪握著來源鎖(含不握 DB 鎖的抓取相位)時 bf 要停。"""
+        guard = "\n".join(_code_lines(SCRIPTS_DIR / "bf-cron-guard.sh"))
+        self.assertIn("fuser /tmp/radar-branch-source.lock", guard)
+        m = re.search(r"should_pause\(\)\s*\{(.*?)\}", guard)
+        self.assertIsNotNone(m)
+        self.assertIn("source_held", m.group(1))
+        self.assertIn("lock_held", m.group(1))
+
+
+if __name__ == "__main__":
+    unittest.main()

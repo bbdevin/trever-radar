@@ -83,11 +83,12 @@ class ImportFuturesDayIsWired(unittest.TestCase):
 
     def test_branches_calls_it_after_import_daily(self):
         lines = _code_lines(SCRIPTS_DIR / "daily-branches.sh")
-        imp = next(i for i, ln in enumerate(lines) if 'run_step_or_fail "import-daily"' in ln)
+        imp = next(i for i, ln in enumerate(lines)
+                   if re.search(r'run_step_or_fail(_unless)? "import-daily"', ln))
         call = next(i for i, ln in enumerate(lines) if "radar import-futures-day" in ln)
         self.assertGreater(call, imp)
         compute = next(i for i, ln in enumerate(lines)
-                       if 'run_step_or_fail "compute-indicators"' in ln)
+                       if re.search(r'run_step_or_fail(_unless)? "compute-indicators"', ln))
         self.assertLess(call, compute)
 
     def test_the_gated_script_is_gone(self):

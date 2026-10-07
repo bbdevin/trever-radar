@@ -592,6 +592,66 @@ run_step_or_fail() {
   exit "$rc"
 }
 
+# ── 前置步驟的兩種寬鬆版(docs/47 §8.3)─────────────────────────────────
+#
+# 2026-10-06 的事故:17:30 分點輪第一步 `import-daily quotes,insti` 只是**補抓**
+# (日K與法人早在 14:05/16:00 就進庫了),TPEx 一個瞬時的 ChunkedEncodingError 讓它回 1,
+# run_step_or_fail 於是把整輪中止——當天的分點要等 22:30 第二輪,約 00:00 才上線,
+# 晚了 5 小時。補抓失敗而資料早就在庫,代價只是「少補到晚到的幾列」,不該賠上整輪。
+#
+# run_step_or_fail_unless LABEL PREDICATE CMD…:失敗時先問 PREDICATE(一個 shell
+# 函式,例如 price_date_is_today);成立 → warn 一則、續跑(return 0);不成立 →
+# 與 run_step_or_fail 逐字相同的契約(指名步驟與碼的 high 通知 + 原碼 exit)。
+# 取碼形狀與 run_step_or_fail 相同(if 取碼、else 第一行接 $?、exit 原碼),理由見該函式。
+run_step_or_fail_unless() {
+  local label="$1" pred="$2"
+  local rc=0
+  shift 2
+  if [ -z "${ROUND_FAIL_CONSEQUENCE:-}" ]; then
+    echo "run_step_or_fail_unless: ${SCRIPT_NAME} 未宣告本輪失敗後果（缺 set_round_consequence），拒絕執行 ${label}" >&2
+    notify "${SCRIPT_NAME} 未呼叫 set_round_consequence，拒絕執行步驟 ${label}（這是腳本本身的錯,不是資料問題）" high "失敗"
+    exit 78
+  fi
+  if run_step "$label" "$@"; then
+    return 0
+  else
+    rc=$?
+  fi
+  if "$pred"; then
+    notify_warn "${label} 失敗（碼 ${rc}），但今天的資料已在庫，本輪續跑"
+    return 0
+  fi
+  notify "${label} 失敗（碼 ${rc}）且今天的資料不在庫，本輪中止、未上線；${ROUND_FAIL_CONSEQUENCE}" high "失敗"
+  exit "$rc"
+}
+
+# run_step_or_warn LABEL CMD…:失敗只 warn 一則、永遠續跑(return 0)。給「沿用既有
+# 資料就好」的步驟(seed-branches 的追蹤名單同步)。
+run_step_or_warn() {
+  local label="$1"
+  local rc=0
+  if run_step "$@"; then
+    return 0
+  else
+    rc=$?
+  fi
+  notify_warn "${label} 失敗（碼 ${rc}），本輪續跑，沿用既有資料"
+  return 0
+}
+
+# MAX(date) FROM indicators_daily 是否等於 $1(預設台北今天):與 price_date_is_today
+# 同形,給分點輪的 compute-indicators 當「今天的指標早在 14:05/14:45/16:00 算過了」的述詞。
+indicators_date_is_today() {
+  local want="${1:-$(taipei_date +%F)}" got=""
+  got="$(radar_ro_sql "SELECT MAX(date) FROM indicators_daily" 2>/dev/null)" || got=""
+  if [ -z "$got" ]; then
+    echo "indicators_date_is_today: 查不到 MAX(date)，視為已算過"
+    return 0
+  fi
+  echo "indicators date: max=${got} want=${want}"
+  [ "$got" = "$want" ]
+}
+
 # 「那一輪 daily-branches 真的整條跑完(含 deploy_data)」的完成標記。
 #
 # 為什麼夜間作業不能只看 import_logs 的 status:那一列只講「匯入」這一段。

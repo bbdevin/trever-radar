@@ -208,7 +208,7 @@ test("停在上一版:資料日不同,或比 radar 舊 1 小時以上", () => {
 
 test("資料未到齊:法人、分點(時刻讀更新時間表)", () => {
   const both = board({ inputs: { ...board().inputs, insti: { date: "2026-10-01", stale: true }, branch: { date: "2026-10-01", stale: true } } });
-  assert.equal(incompleteText(both), "法人、分點尚未到齊:目前只有技術面與價格事實;法人 16:00 起、分點 17:30 起到齊後重算。");
+  assert.equal(incompleteText(both), "法人、分點尚未到齊:目前只有技術面與價格事實;法人 16:00 起、分點 16:30 起到齊後重算。");
   assert.match(incompleteText(board({ inputs: { ...board().inputs, branch: { date: "2026-10-01", stale: true } } }))!, /^分點尚未到齊/);
   assert.match(incompleteText(board({ inputs: { ...board().inputs, insti: { date: "2026-10-01", stale: true } } }))!, /^法人尚未到齊/);
   assert.equal(incompleteText(board()), null);

@@ -246,7 +246,13 @@ def cmd_import_branch_trades(args):
         warrants=args.warrants,
         sleep_s=args.sleep,
         warrant_turnover_min=args.warrant_turnover_min,
+        workers=args.workers,
+        stage_to=args.stage_to,
+        from_stage=args.from_stage,
     )
+    if info.get("staged"):
+        # 只抓不寫:沒有覆蓋率可分級,暫存檔寫出來就是 0;分級留給 --from-stage 那一步。
+        return
     if not info["fit"]:
         print(f"import-branch-trades: {info['status']}", file=sys.stderr)
         raise SystemExit(1)
@@ -404,8 +410,13 @@ def cmd_probe_branch_day(args):
     info = probe_branch_day(args.date, args.sample, args.threshold, args.sleep)
     print(
         f"branch-probe at={info['at']} date={info['date']} "
-        f"ok={info['ok']}/{info['sample']} threshold={info['threshold']} pool={info['pool']}"
+        f"ok={info['ok']}/{info['sample']} threshold={info['threshold']} pool={info['pool']} "
+        f"ready_mirrors={len(info['ready_hosts'])}/{len(info['mirrors'])}"
     )
+    # 逐站一行(docs/47 §8):哪一站幾點先有今天的資料,明天的 log 就量得出各站的公布時刻。
+    for host, ok in info["mirrors"].items():
+        print(f"branch-probe mirror={host} at={info['at']} date={info['date']} "
+              f"ok={ok}/{info['sample']} ready={int(host in info['ready_hosts'])}")
     if not info["ready"]:
         raise SystemExit(BRANCH_PROBE_PENDING_EXIT)
 
@@ -997,6 +1008,16 @@ def main(argv=None):
     bt.add_argument("--warrant-turnover-min", type=int, default=None,
                     help="active-stock TWSE call/put pool: same-day turnover >= N (N >= 0); overrides --warrants")
     bt.add_argument("--sleep", type=float, default=1.2, help="overall request interval")
+    bt.add_argument("--workers", type=int, default=1,
+                    help="mirrors crawled in parallel, one worker per mirror pinned to it; "
+                         "each mirror keeps interval = --sleep x number of mirrors "
+                         "(1 = the sequential rotating crawl)")
+    bt.add_argument("--stage-to", default=None,
+                    help="fetch only: write the rows to this JSON file (no DB writes, "
+                         "no import_logs, exit 0); commit later with --from-stage")
+    bt.add_argument("--from-stage", default=None,
+                    help="commit only: write rows from this JSON file in target order, "
+                         "log coverage and grade the exit code (no network)")
     bt.set_defaults(fn=cmd_import_branch_trades)
 
     wbt = sub.add_parser(

@@ -1462,14 +1462,50 @@ def _evenly_spaced(pool: list[str], n: int) -> list[str]:
     return [pool[(i * len(pool)) // n] for i in range(n)]
 
 
+def probe_mirrors(picks: list[str], date: str, hosts: list[str],
+                  per_host_interval: float) -> dict[str, int]:
+    """每一站各抓一次 ``picks``(釘站、各自節流、平行),回傳 {host: 抓得到列的檔數}。
+
+    唯讀:不寫資料庫、不記 import_logs。NoDataError(那一站還沒公布)與任何其他失敗
+    都算沒到。探測與全量爬共用這一份,所以「哪一站已經公布」量到的就是正式那一輪
+    真的會用的站。
+    """
+    from .mirror_crawl import crawl_in_order
+    from .providers import fubon
+
+    def fetch(sid: str, host: str, interval: float) -> list[dict]:
+        return fubon.fetch_branch_trades(sid, date, throttle=interval, host=host)
+
+    def on_failure(sid: str, host: str, exc: Exception) -> None:
+        print(f"branch-probe {sid} @{host}: {type(exc).__name__}: {str(exc)[:100]}", flush=True)
+
+    counts: dict[str, int] = {}
+    # 每站各跑一條單站 crawl(同一個 worker 形狀),互不等待。
+    import threading
+
+    def one_host(host: str) -> None:
+        results, _ = crawl_in_order(picks, fetch, [host], per_host_interval,
+                                    dead_after=len(picks) + 1, on_failure=on_failure)
+        counts[host] = sum(1 for r in results if r.outcome == "done" and r.rows)
+
+    threads = [threading.Thread(target=one_host, args=(h,), daemon=True) for h in hosts]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    return {h: counts.get(h, 0) for h in hosts}
+
+
 def probe_branch_day(date: str | None = None, sample: int = 24, threshold: int = 22,
-                     sleep_s: float = 1.0) -> dict:
+                     sleep_s: float = 1.0, hosts: list[str] | None = None) -> dict:
     """唯讀探測:分點來源此刻對 date 公布到什麼程度。**不寫資料庫、不記 import_logs**。
 
-    從 ``--top 0`` 目標池等距抽 ``sample`` 檔,逐檔抓一次富邦分點頁;抓得到列的算 ok,
-    NoDataError(還沒公布)與任何其他失敗都算沒到。ok 檔數 ≥ ``threshold`` 就是
-    「可以開始全量爬了」。17:30 起每 15 分鐘問一次,取代「17:40 一到就全量爬
-    2,672 檔、結果覆蓋率 33–56% 被扣留」的那 41–62 分鐘白工(docs/47)。
+    從 ``--top 0`` 目標池等距抽 ``sample`` 檔,**每一站各抓一次**(釘站、平行、單站間隔
+    = ``sleep_s`` × 站數,單站節奏與循序爬相同);抓得到列的算 ok,NoDataError(還沒公布)
+    與任何其他失敗都算沒到。**任一站** ok ≥ ``threshold`` 就是「可以開始全量爬了」
+    (``ready_hosts`` 列出已達門檻的站;全量爬只用這些站,見 import_branch_trades)。
+    逐站探測是因為五站各自更新時間可能不同(2026-10-07 使用者觀察):一站 17:00 就有、
+    另一站 18:30 才有的話,循序輪替的探測要等到多數站都有才過門檻。
 
     池子不足 ``sample`` 檔時門檻按比例縮(向上取整),免得小池子永遠過不了。
     """
@@ -1490,25 +1526,20 @@ def probe_branch_day(date: str | None = None, sample: int = 24, threshold: int =
     need = threshold
     if picks and len(picks) < sample:
         need = math.ceil(threshold * len(picks) / sample)
-    ok = 0
-    for sid in picks:
-        try:
-            rows = fubon.fetch_branch_trades(sid, date, throttle=sleep_s)
-        except NoDataError:
-            continue
-        except Exception as e:  # noqa: BLE001 - a probe counts, it never raises per stock
-            print(f"branch-probe {sid}: {type(e).__name__}: {str(e)[:100]}", flush=True)
-            continue
-        if rows:
-            ok += 1
+    hosts = list(hosts) if hosts else list(fubon.MIRROR_HOSTS)
+    per_host = sleep_s * len(fubon.MIRROR_HOSTS)
+    counts = probe_mirrors(picks, date, hosts, per_host) if picks else {h: 0 for h in hosts}
+    ready_hosts = [h for h in hosts if picks and counts[h] >= need]
     return {
         "at": datetime.now(ZoneInfo(config.TZ)).strftime("%H:%M"),
         "date": iso_d,
-        "ok": ok,
+        "ok": max(counts.values()) if counts else 0,
         "sample": len(picks),
         "pool": len(pool),
         "threshold": need,
-        "ready": bool(picks) and ok >= need,
+        "ready": bool(ready_hosts),
+        "mirrors": counts,
+        "ready_hosts": ready_hosts,
     }
 
 
@@ -1534,12 +1565,131 @@ def previous_ok_rows(source: str, dataset: str, date: str) -> int | None:
         ), {"s": source, "ds": dataset, "p": prev}).scalar() or 0)
 
 
+# 平行爬開跑前每站各抓幾檔確認「那一站今天公布了沒」;ok ≥ 抽樣數 − 1 算已公布
+# (合法的「沒有分點」約 2%,六檔裡容許一檔)。一站都沒到時用全部的站(20:30 截止
+# 照常全量爬的情況),行為與平行化之前一樣由覆蓋率閘門把關。
+BRANCH_MIRROR_CHECK_SAMPLE = 6
+
+
+def _fetch_branch_targets(targets: list[str], date: str, sleep_s: float,
+                          workers: int) -> tuple[list[dict], dict]:
+    """抓完 ``targets``(含恰好一次的重試輪),回傳**照 targets 順序**的結果與鏡像站報告。
+
+    每個結果:``{"sid", "outcome": done|empty|failed, "rows": list|None}``。
+    ``workers <= 1`` = 改動前的循序爬,逐字相同(鏡像輪替 + 全域節流);
+    ``workers > 1`` = 每站一個 worker(mirror_crawl),單站間隔 = sleep_s × 站數。
+    **這裡不寫資料庫**:寫入在 _commit_branch_results,照順序。
+    """
+    from .mirror_crawl import crawl_in_order, live_hosts
+    from .providers import fubon
+
+    report: dict = {"workers": max(1, workers)}
+
+    def _fetch_one_seq(sid: str) -> dict:
+        try:
+            rows = fubon.fetch_branch_trades(sid, date, throttle=sleep_s)
+        except NoDataError:
+            return {"sid": sid, "outcome": "empty", "rows": None}
+        except Exception as e:  # noqa: BLE001
+            print(f"branch {sid} FAILED: {str(e)[:100]}", flush=True)
+            return {"sid": sid, "outcome": "failed", "rows": None}
+        return {"sid": sid, "outcome": "done", "rows": rows}
+
+    if workers <= 1:
+        results = [_fetch_one_seq(sid) for sid in targets]
+        # 剛好一次的重試,不是重試框架。1,988 檔裡的單一次失誤,第二次請求成功的
+        # 機率遠高於它是真的壞掉;而同一個標的連兩次都失敗,才值得寫進狀態欄。
+        retry_idx = [i for i, r in enumerate(results) if r["outcome"] == "failed"]
+        if retry_idx:
+            print(f"branch trades retry pass: {len(retry_idx)} target(s)", flush=True)
+            for i in retry_idx:
+                results[i] = _fetch_one_seq(targets[i])
+        return results, report
+
+    all_hosts = list(fubon.MIRROR_HOSTS)
+    per_host = sleep_s * len(all_hosts)
+    hosts = all_hosts[:workers]
+    # 哪些站今天已經公布:抽 6 檔每站各問一次(釘站、平行,約 30 秒)。
+    picks = _evenly_spaced(targets, BRANCH_MIRROR_CHECK_SAMPLE)
+    counts = probe_mirrors(picks, date, hosts, per_host) if picks else {}
+    need = max(1, len(picks) - 1)
+    ready = [h for h in hosts if counts.get(h, 0) >= need]
+    report["mirror_check"] = counts
+    if not ready:
+        print(f"branch crawl: no mirror passed the readiness check "
+              f"({counts}); using all {len(hosts)} mirrors", flush=True)
+        ready = hosts
+    print(f"branch crawl: {len(ready)}/{len(hosts)} mirror(s) ready, "
+          f"per-host interval {per_host:.1f}s: {ready}", flush=True)
+
+    def fetch(sid: str, host: str, interval: float) -> list[dict]:
+        return fubon.fetch_branch_trades(sid, date, throttle=interval, host=host)
+
+    def on_failure(sid: str, host: str, exc: Exception) -> None:
+        print(f"branch {sid} FAILED @{host}: {str(exc)[:100]}", flush=True)
+
+    ordered, stats = crawl_in_order(targets, fetch, ready, per_host, on_failure=on_failure)
+    results = [{"sid": r.target, "outcome": r.outcome, "rows": r.rows} for r in ordered]
+    for h, st in stats.items():
+        print(f"branch crawl mirror={h} done={st.done} empty={st.empty} "
+              f"failed={st.failed} dead={int(st.dead)}", flush=True)
+    retry_idx = [i for i, r in enumerate(results) if r["outcome"] == "failed"]
+    if retry_idx:
+        retry_hosts = live_hosts(stats)
+        print(f"branch trades retry pass: {len(retry_idx)} target(s) on {retry_hosts}",
+              flush=True)
+        again, _ = crawl_in_order([targets[i] for i in retry_idx], fetch, retry_hosts,
+                                  per_host, on_failure=on_failure)
+        for i, r in zip(retry_idx, again):
+            results[i] = {"sid": r.target, "outcome": r.outcome, "rows": r.rows}
+    report["mirrors"] = {h: {"done": s.done, "empty": s.empty, "failed": s.failed,
+                             "dead": s.dead} for h, s in stats.items()}
+    return results, report
+
+
+def _commit_branch_results(engine, results: list[dict]) -> tuple[int, int, int, int]:
+    """照順序寫入(單一寫者;每檔各自 commit,與改動前相同)。回傳 (done, empty, failed, rows)。"""
+    done = empty = failed = written = 0
+    for r in results:
+        if r["outcome"] == "done":
+            done += 1
+            with engine.begin() as conn:
+                written += upsert_branch_trades(conn, r["rows"])
+        elif r["outcome"] == "empty":
+            empty += 1
+        else:
+            failed += 1
+    return done, empty, failed, written
+
+
+def write_branch_stage(path: Path, payload: dict) -> None:
+    """暫存檔原子寫(tmp + rename);內容是抓到的原始列,不是資料庫。"""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+                   encoding="utf-8")
+    os.replace(tmp, path)
+
+
 def import_branch_trades(date: str | None = None, top: int = 80,
                          ids: list[str] | None = None, warrants: int = 200,
                          sleep_s: float = 1.2,
                          warrant_turnover_min: int | None = None,
-                         min_market_fraction: float = 0.5) -> dict:
+                         min_market_fraction: float = 0.5,
+                         workers: int = 1,
+                         stage_to: str | os.PathLike | None = None,
+                         from_stage: str | os.PathLike | None = None) -> dict:
     """富邦公開頁抓分點進出(每筆一請求,節流)。
+
+    三種跑法(docs/47 §8):
+    - 預設:抓完就寫(改動前的行為;``workers > 1`` 時抓的部分改成每站一個 worker)。
+    - ``stage_to``:**只抓不寫**——結果照目標順序存成 JSON 暫存檔,不碰資料庫、不記
+      import_logs、離開碼 0。給 daily-branches.sh 在**不握 DB 鎖**時跑那 30–100 分鐘的
+      網路抓取用。
+    - ``from_stage``:**只寫不抓**——讀暫存檔照順序寫入、記 import_logs、量覆蓋率,
+      回傳與預設跑法相同的 dict(離開碼分級因此逐字不變)。握著 DB 鎖跑,只要一兩分鐘。
+    三條路寫進資料庫的列與順序完全相同(test_branch_crawl_parity.py)。
 
     池選擇:
     - ``ids`` 指定清單時只用該清單
@@ -1566,13 +1716,28 @@ def import_branch_trades(date: str | None = None, top: int = 80,
     """
     from sqlalchemy import text
 
-    from .providers import fubon
-
     if warrant_turnover_min is not None and warrant_turnover_min < 0:
         raise ValueError("warrant_turnover_min must be >= 0")
+    if stage_to is not None and from_stage is not None:
+        raise ValueError("stage_to and from_stage are exclusive")
 
     init_db()
     engine = get_engine()
+
+    if from_stage is not None:
+        # 只寫不抓:目標清單、分母、結果全部來自暫存檔(與抓的那一步同一份)。
+        stage = json.loads(Path(from_stage).read_text(encoding="utf-8"))
+        date = stage["date"].replace("-", "")
+        iso_d = iso(date)
+        targets = list(stage["targets"])
+        expected = int(stage["expected"])
+        results = stage["results"]
+        print(f"branch trades from stage {from_stage}: {len(targets)} targets, "
+              f"fetched at {stage.get('fetched_at')}, mirrors={stage.get('report', {}).get('mirrors')}",
+              flush=True)
+        return _finish_branch_import(engine, date, iso_d, targets, expected, results,
+                                     min_market_fraction)
+
     if date is None:
         with engine.connect() as conn:
             date = conn.execute(text(
@@ -1583,7 +1748,13 @@ def import_branch_trades(date: str | None = None, top: int = 80,
         if ids:
             targets = ids
         elif top <= 0:
-            targets = _branch_stock_pool(conn, iso_d)
+            # 成交金額大的先抓(docs/47 §8):抓到一半被硬上限砍掉時,留在暫存檔外的是
+            # 冷門股;分母與覆蓋率不因順序而變,探測的等距抽樣仍用依代號排序的那份池子。
+            pool = set(_branch_stock_pool(conn, iso_d))
+            targets = [r[0] for r in conn.execute(text(
+                "SELECT p.stock_id FROM daily_prices p WHERE p.date = :d "
+                "ORDER BY COALESCE(p.turnover, 0) DESC, p.stock_id"), {"d": iso_d})
+                if r[0] in pool]
         else:
             targets = [r[0] for r in conn.execute(text(
                 "SELECT ds.stock_id FROM daily_scores ds "
@@ -1625,43 +1796,33 @@ def import_branch_trades(date: str | None = None, top: int = 80,
     )
     print(f"branch trades pool: {len(targets)} targets "
           f"(top={top}, {warrant_pool if not ids else 'warrants=0 (ids override)'})", flush=True)
-    done = empty = written = 0
-    failed_ids: list[str] = []
+    t0 = time.monotonic()
+    results, report = _fetch_branch_targets(targets, date, sleep_s, workers)
+    n_done = sum(1 for r in results if r["outcome"] == "done")
+    n_empty = sum(1 for r in results if r["outcome"] == "empty")
+    n_failed = len(results) - n_done - n_empty
+    print(f"branch fetch {iso_d}: {n_done} ok, {n_empty} empty, {n_failed} failed, "
+          f"{time.monotonic() - t0:.0f}s, workers={report['workers']}", flush=True)
+    if stage_to is not None:
+        payload = {
+            "date": iso_d,
+            "fetched_at": datetime.now(ZoneInfo(config.TZ)).isoformat(timespec="seconds"),
+            "targets": list(targets), "expected": expected,
+            "results": results, "report": report,
+            "counts": {"done": n_done, "empty": n_empty, "failed": n_failed},
+        }
+        write_branch_stage(Path(stage_to), payload)
+        print(f"branch stage written: {stage_to}", flush=True)
+        return {"staged": True, "path": str(stage_to), "done": n_done, "empty": n_empty,
+                "failed": n_failed, "targets": len(targets), "expected": expected}
+    return _finish_branch_import(engine, date, iso_d, targets, expected, results,
+                                 min_market_fraction)
 
-    def _fetch_one(sid: str) -> str:
-        nonlocal written
-        try:
-            rows = fubon.fetch_branch_trades(sid, date, throttle=sleep_s)
-        except NoDataError:
-            return "empty"
-        except Exception as e:  # noqa: BLE001
-            print(f"branch {sid} FAILED: {str(e)[:100]}", flush=True)
-            return "failed"
-        with engine.begin() as conn:
-            written += upsert_branch_trades(conn, rows)
-        return "done"
 
-    def _tally(sid: str, sink: list[str]) -> None:
-        nonlocal done, empty
-        outcome = _fetch_one(sid)
-        if outcome == "done":
-            done += 1
-        elif outcome == "empty":
-            empty += 1
-        else:
-            sink.append(sid)
-
-    for sid in targets:
-        _tally(sid, failed_ids)
-
-    # 剛好一次的重試,不是重試框架。1,988 檔裡的單一次失誤,第二次請求成功的
-    # 機率遠高於它是真的壞掉;而同一個標的連兩次都失敗,才值得寫進狀態欄。
-    if failed_ids:
-        print(f"branch trades retry pass: {len(failed_ids)} target(s)", flush=True)
-        retry, failed_ids = failed_ids, []
-        for sid in retry:
-            _tally(sid, failed_ids)
-    failed = len(failed_ids)
+def _finish_branch_import(engine, date: str, iso_d: str, targets: list[str], expected: int,
+                          results: list[dict], min_market_fraction: float) -> dict:
+    """照順序寫入 + 記 import_logs + 量覆蓋率。三種跑法共用的唯一一份收尾。"""
+    done, empty, failed, written = _commit_branch_results(engine, results)
 
     # 合格與否在這一輪的寫入都 commit 之後才量(每檔各自 commit,上面已完成)。
     with engine.connect() as conn:

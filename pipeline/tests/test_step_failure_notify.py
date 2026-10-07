@@ -218,14 +218,44 @@ class TestStepFailureNotify(unittest.TestCase):
                          f"set_round_consequence 只能定義在 lib.sh,實際:{definers}")
 
     # ── 呼叫端 ────────────────────────────────────────────────────────
+    # docs/47 §8.3(2026-10-07):三個**前置**步驟改成寬鬆版——今天的資料早已在庫時只 warn
+    # 續跑(run_step_or_fail_unless / run_step_or_warn,都在 lib.sh、都仍會「講話」)。
+    # 2026-10-06 的事故:補抓日K的瞬時錯誤讓整輪中止,當天分點晚了 5 小時。
+    LENIENT_PRESTEPS = {
+        "import-daily": 'run_step_or_fail_unless "import-daily" price_date_is_today ',
+        "compute-indicators": 'run_step_or_fail_unless "compute-indicators" indicators_date_is_today ',
+        "seed-branches": 'run_step_or_warn "seed-branches" ',
+    }
+
     def test_every_step_but_the_branch_import_uses_the_helper(self):
         for label in NOTIFYING_STEPS:
             with self.subTest(step=label):
+                want = self.LENIENT_PRESTEPS.get(label, f'run_step_or_fail "{label}" ')
                 line = next((ln for ln in self.lines
-                             if ln.strip().startswith(f'run_step_or_fail "{label}" ')), None)
+                             if ln.strip().startswith(want)), None)
                 self.assertIsNotNone(
                     line,
                     f"{label} 失敗時沒有任何通知——正是這次要修的靜默失敗")
+
+    def test_lenient_presteps_still_notify_and_the_rest_still_abort(self):
+        """寬鬆版只給前置步驟;寫入之後的每一步(評分、匯出、prune、deploy、統計)
+        仍是 run_step_or_fail(high + 中止)。lib.sh 的兩個寬鬆 helper 都要有 warn。"""
+        for label in NOTIFYING_STEPS:
+            if label in self.LENIENT_PRESTEPS:
+                continue
+            with self.subTest(step=label):
+                self.assertTrue(any(ln.strip().startswith(f'run_step_or_fail "{label}" ')
+                                    for ln in self.lines))
+        for fn in ("run_step_or_fail_unless", "run_step_or_warn"):
+            with self.subTest(helper=fn):
+                m = re.search(fn + r"\(\)\s*\{(.*?)\n\}", self.lib, re.S)
+                self.assertIsNotNone(m, f"lib.sh 裡找不到 {fn}")
+                self.assertIn("notify_warn", m.group(1), "續跑也要講一聲")
+                self.assertRegex(m.group(1), r'if\s+run_step\s+"\$', "同樣經過 run_step 計時")
+        unless = re.search(r"run_step_or_fail_unless\(\)\s*\{(.*?)\n\}", self.lib, re.S).group(1)
+        self.assertRegex(unless, r'notify "[^"]*\$\{ROUND_FAIL_CONSEQUENCE\}" high "失敗"',
+                         "述詞不成立時與 run_step_or_fail 同一個契約")
+        self.assertIn('exit "$rc"', unless)
 
     def test_the_old_silent_shape_is_gone(self):
         """`|| exit "$?"` 與裸呼叫都是「靜默帶著碼死掉」,不得殘留。"""
@@ -267,10 +297,14 @@ class TestStepFailureNotify(unittest.TestCase):
         那時再用跟上線失敗同一級的警報叫醒人就不對了——本測試會在那個搬動發生時
         失敗,提醒重做一次這個判斷。
         """
+        # docs/47 §8.2 兩段式上線:deploy 在 publish_site() 函式裡、被呼叫兩次。prune 在
+        # 第一段上線之後、第二段(排行統計)上線**之前**:prune 失敗 = 排行統計沒上線、不寫
+        # 完成標記(00:05 補),仍是 high + 中止的理由。
         prune = self.code.index("radar prune")
-        deploy = self.code.index("deploy_data")
-        self.assertLess(prune, deploy,
-                        "prune 若搬到 deploy_data 之後,它的通知等級要重新決定")
+        self.assertLess(self.code.rfind("publish_site", 0, prune), prune,
+                        "prune 在第一段上線之後")
+        self.assertGreater(self.code.rfind("publish_site"), prune,
+                           "prune 若搬到第二段上線之後,它的通知等級要重新決定")
 
 
 if __name__ == "__main__":

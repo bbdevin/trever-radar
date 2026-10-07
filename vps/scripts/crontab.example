@@ -12,7 +12,9 @@ CRON_TZ=Asia/Taipei
 5  14 * * 1-5  bash /home/huang/trever-radar/vps/scripts/daily-market.sh      >> /home/huang/radar-cron.log 2>&1
 45 14 * * 1-5  bash /home/huang/trever-radar/vps/scripts/daily-tpex-quotes.sh >> /home/huang/radar-cron.log 2>&1
 0  16 * * 1-5  bash /home/huang/trever-radar/vps/scripts/daily-insti.sh       >> /home/huang/radar-cron.log 2>&1
-30 17 * * 1-5  bash /home/huang/trever-radar/vps/scripts/daily-branches.sh    >> /home/huang/radar-cron.log 2>&1
+# 分點第一輪 16:30 起(docs/47 §8;舊 17:30):探測每 10 分鐘每站各抽 12 檔、不握 DB 鎖;
+# 來源最早 ~16:00 就可能有(其他網站 17:00 已更新),探測便宜(每站 12 請求/10 分鐘),早起沒成本。
+30 16 * * 1-5  bash /home/huang/trever-radar/vps/scripts/daily-branches.sh    >> /home/huang/radar-cron.log 2>&1
 # 融資主輪 20:45 起輪詢(TWSE ~21:00 產製)。分點第二輪 22:30(import 模式:第一輪覆蓋率 100% 即收工)。
 45 20 * * 1-5  bash /home/huang/trever-radar/vps/scripts/daily-margin.sh      >> /home/huang/radar-cron.log 2>&1
 30 22 * * 1-5  BRANCH_ROUND_MODE=import bash /home/huang/trever-radar/vps/scripts/daily-branches.sh >> /home/huang/radar-cron.log 2>&1

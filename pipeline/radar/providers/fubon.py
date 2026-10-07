@@ -63,11 +63,20 @@ def _num(s: str) -> int:
     return int(s.replace(",", "") or 0)
 
 
-def fetch_branch_trades(stock_id: str, date: str, throttle: float | None = None) -> list[dict]:
-    """date: YYYYMMDD → 該日前 15 大買/賣超分點(合計最多 30 列)。鏡像站輪替。"""
+def fetch_branch_trades(stock_id: str, date: str, throttle: float | None = None,
+                        host: str | None = None) -> list[dict]:
+    """date: YYYYMMDD → 該日前 15 大買/賣超分點(合計最多 30 列)。
+
+    ``host`` 未給 = 鏡像站輪替 + 全域節流(逐檔循序爬、探測、回補都是這條)。
+    ``host`` 給定 = 釘在那一站,而且用**該站自己的**節流(平行爬每站一個 worker:
+    `throttle` 這時是單站間隔,呼叫端負責把它設成「循序爬的全域間隔 × 站數」,
+    單站節奏才不會比循序爬更快)。五站回傳的頁面實測位元級相同,釘站不改資料。
+    """
     dj = f"{int(date[:4])}-{int(date[4:6])}-{int(date[6:8])}"   # 頁面用 2026-7-6 格式
-    url = f"{_next_host()}/z/zc/zco/zco.djhtm"
-    html = get_text(url, {"a": stock_id, "e": dj, "f": dj}, throttle=throttle)
+    base = host if host is not None else _next_host()
+    url = f"{base}/z/zc/zco/zco.djhtm"
+    html = get_text(url, {"a": stock_id, "e": dj, "f": dj}, throttle=throttle,
+                    throttle_key=host)
     matches = _ROW.findall(html)
     if not matches:
         raise NoDataError(f"fubon zco {stock_id} {date}: no branch rows")

@@ -2,6 +2,16 @@
 
 > 單一進度真相。每完成一個里程碑就更新本檔。規格細節看各編號文件,別寫在這裡。
 
+## 2026-10-07 分點輪提速:五站平行、逐站探測、抓寫分離、兩段式上線;修補抓失敗整輪中止(`docs/47` §8;程式完成於分支,crontab 待人類改)
+
+- **問題**:公布→上線 83 分(10-07:18:49 就緒、爬 54 分、stats 10、export 14、deploy 3 → 20:12);10-05 爬 102 分(一站 ReadTimeout 拖住循序爬);10-06 17:30 第一步補抓日K瞬時錯誤 → `run_step_or_fail` 整輪中止,分點拖到 ~00:00。免費無驗證碼來源只有 MoneyDJ 五鏡像(證交所/櫃買 16:00 有但要驗證碼;OpenAPI 無分點)。
+- **改動**:`import-branch-trades --workers 5`(每站一個 worker 釘站、單站 5 秒間隔 = 循序輪替的上限,總吞吐 1 req/s,2,000 檔 ~33 分、不隨來源變慢而變長;死站退出、重試輪只用活站;`radar/mirror_crawl.py`、`http.py` per-key 節流);`--stage-to/--from-stage` 抓寫分離(抓的 30–100 分**不握 DB 鎖**,寫入 1–2 分握鎖;0/75/76/1 分級不變);`probe-branch-day` 逐站探測、逐站 log,全量爬只用已公布的站;16:30 起每 10 分鐘每站 12 檔;兩段式上線(先分點明細+評分,再 stats+prune 第二次上線,`publish_site()` 一份呼叫兩次);前置步驟分級(`run_step_or_fail_unless`/`run_step_or_warn`:今天資料已在庫只 warn 續跑);`--top 0` 池依成交金額排序;bf-cron-guard 多看來源鎖;freshness 16:30;changelog v3.4。
+- **一致性證據**:`test_branch_crawl_parity.py` 只 mock HTTP、走真的解析器,循序/平行/暫存三條路的 `branch_trades_raw`、`branch_dim`(含新分點 id)、import_logs 位元級相同。鎖:`test_daily_branches_lock_phases.py` 對真的 lib.sh 用 stub 量(放鎖期間別的程序拿得到、逾時、來源鎖非阻塞)+ 原始碼相位;鎖表見 `docs/47` §8.5。
+- **預期**:公布→分點明細可見 ~60 分(偵測 5 + 爬 34 + 寫 2 + 分數 2 + 匯出 14 + 榜 0.5 + 佈署 3),排行統計再 +28 分;就緒 18:30 → ~19:30(舊 ~20:00);就緒 17:00 → ~18:00(舊 ~18:55)。DB 鎖握持 ~90–140 分 → ~35 分。
+- **驗證**:pytest 全套 1510 passed(新增 `test_mirror_crawl.py`、`test_branch_crawl_parity.py`、`test_daily_branches_lock_phases.py`);node changelog/freshness/bullBoard 40 pass。
+- **待人類**:合併後 **同一次**改正式 crontab `30 17 → 30 16 * * 1-5 daily-branches.sh`(`crontab.example` 已改;舊時刻也正確,只是首頁時間表會差 60 分);明天核對 `branch-probe mirror=` 各站幾點先有、`step fetch-branch-trades done` 耗時(`docs/47` §8.6)。各站是否同時更新今天量不到,明天 log 才有答案。
+- **下一步(未做)**:export 只匯出本輪變動的 chips 檔(`docs/44` P1)可再省 ~10 分;compute-branch-stats 增量化;更早的部分上線(聯集先抓)要等 subset export 並在資料/UI 標「更新中 n/N」。
+
 ## 2026-10-07 移除期貨發布時間量測;個股舊單一檔停寫(`docs/38` §7.18、`docs/44` §3.2;已上線)
 
 - **期貨 probe 移除**:14:05/14:45/16:00(舊 14:10/15:00/16:10)三輪取鎖前的 `futures_probe`、`lib.sh` 的函式與 `FUTURES_PROBE_LOG`、CLI `probe-futures-day`、`importer.probe_futures_day`、`disk-cleanup.sh` 的 log 修剪全部刪除;`import-futures-day` 與 `import-futures` 未動。測試改鎖「沒有腳本或 CLI 再提到 probe」。VPS 上 `~/futures-probe.log` 不再增長,可手動 `rm`。
