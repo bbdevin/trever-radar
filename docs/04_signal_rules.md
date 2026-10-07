@@ -261,8 +261,7 @@ final = clamp(raw + 風險扣分總和, 0, 100)
 > 本節保留 S1-S13 的條件與歷史 code,但後續實作必須把它們改為**不影響任何分項分數或綜合分的策略 tag**。
 > 在完成解耦與績效報告前全部視為 Shadow;不得新增第 14 個策略。**程式已於 2026-07-10 解耦**
 > (`indicators.score_technical` 的 `add_strategy` 只寫 reason、不加分;`scores.py` 的 S11–S13 同樣只 append reason):
-> 現行每日新算的 `tech_score`／`final` 不含策略 bonus。尚未做的是解耦前歷史 `daily_scores` 列的正式重算,
-> 依 `docs/20` Phase 2 待使用者批准(2026-10-05 更正;原文寫「現行程式仍有 S1-S10 重複加進 tech_score」已過時)。
+> 現行每日新算的 `tech_score`／`final` 不含策略 bonus。解耦前歷史 `daily_scores` 列**不重算**:2026-10-07 Fable 決議(使用者已授權)Phase 2 以「重算不必要」結案——原動機已不存在(解耦前唯一有分數日為 2026-07-06,0/77 檔受影響),全範圍差異皆為 look-ahead,寫回違反 §12 前瞻記錄法;詳見 `docs/20` Phase 2 註記與 `docs/evidence/score_recompute_diff_20261007.md`。
 
 除總分評級外，系統另外實作了 13 項特定條件的選股策略（分別給予 `S1_` ~ `S13_` 的 reason code，並輸出至 `radar.strategies` 榜單供前端篩選）：
 
