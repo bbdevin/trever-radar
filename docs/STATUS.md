@@ -2,6 +2,14 @@
 
 > 單一進度真相。每完成一個里程碑就更新本檔。規格細節看各編號文件,別寫在這裡。
 
+## 2026-10-09 期貨異常名單加現貨股價與漲跌(`docs/38` §7.21;程式完成於分支、未合 main、未上線;v3.6)
+
+- **需求**:使用者「期貨異常那邊可以顯示股價漲跌跟股價嗎」。
+- **做了什麼**:export 在 `futures_volume_anomalies[]` 每條目加選填 `spot_quote = {date, close, chg_pct?}`(`_futures_spot_quotes`,只讀舉旗的幾檔);首頁卡片標頭下一行「股價 1,245.0 ▲2.47%」,紅漲綠跌、0 中性;股價日(現貨資料日)與期貨行情日不同天時後面標 `(MM-DD)`。舊 payload 無此鍵 → 不畫。radar.json / home/head.json 只多這個鍵;個股 futures 區塊、舉旗紀錄、多方榜不變;不多抓任何檔。
+- **日期定案**:用現貨資料日(= data_date,與多方榜同一天、同一個 close/chg_pct 公式),期貨落後時標日期;理由見 docs/38 §7.21。
+- **驗證**:pytest 全套 1576 passed(新 `AnomalySpotQuoteTests` 6 項:值等於 daily_prices 該日 close/chg 且等於 radar.stocks、同日/落後一日、缺前日只缺 chg_pct、缺當日整鍵不出、ETF 標的、head.json 帶鍵而個股區塊不帶);web node 測試 346 passed(含 §7.21 四項);`tsc`、`next build` 通過;以種子 DB 跑真 export,390px 深/淺色截圖(Playwright 攔截 Supabase auth/rest、假 session,未動 AuthGate)無水平溢出。
+- **待人類**:合 main 後 VPS 下一輪 export 自動帶上,不改 crontab/Worker/腳本。
+
 ## 2026-10-09 法人族群加「個股」模式:法人買賣超個股排行(`docs/49` §9;程式完成於分支、未合 main、未上線;v3.6)
 
 - **需求**:使用者「可以再增加 法人買賣超的股票嗎」。站上沒有全市場逐檔法人排行(卡片值只在候選股、MoneyFlow 是成交金額),新做。

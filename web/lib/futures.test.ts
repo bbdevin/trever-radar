@@ -43,6 +43,7 @@ import {
   stockAnomalyHistoryState,
   stockAnomalyHistorySummaryText,
   stockAnomalyHistoryNoteText,
+  spotQuoteView,
 } from "./futures.ts";
 import { readFileSync } from "node:fs";
 
@@ -245,7 +246,8 @@ test("§5 名單列不得帶 rank / position / score / ratio 之類的鍵", () =
   for (const row of state.rows) {
     // spot(2026-10-02,§7.17)是刻意加的:現貨有沒有跟上,不是名次。
     // label(2026-10-03,§7.19)是契約的白話名稱,不是名次。
-    assert.deepEqual(Object.keys(row).sort(), ["code", "facts", "label", "name", "reasons", "risks", "spot", "stockId"]);
+    // quote(2026-10-09,§7.21)是現貨股價與漲跌的顯示字串,不參與排序。
+    assert.deepEqual(Object.keys(row).sort(), ["code", "facts", "label", "name", "quote", "reasons", "risks", "spot", "stockId"]);
   }
 });
 
@@ -980,4 +982,45 @@ test("§7.19 % 只出現在 priceAfterText 與鎖住的回測句(而且回測句
       assert.ok(!line.includes("%"), `${file}: ${line.trim()}`);
     }
   }
+});
+
+// ---- docs/38 §7.21:名單每一列的現貨股價與漲跌(2026-10-09) ----
+
+test("§7.21 spot_quote -> 股價與漲跌字串;漲紅跌綠由 signed 決定,不在這裡算 %", () => {
+  const up = spotQuoteView({ date: "2026-09-18", close: 1234.5, chg_pct: 1.2 }, "2026-09-18");
+  assert.deepEqual(up, { price: "1,234.5", chg: "▲1.20%", signed: 1.2, dateNote: null });
+  const down = spotQuoteView({ date: "2026-09-18", close: 51, chg_pct: -2.35 }, "2026-09-18");
+  assert.deepEqual(down, { price: "51.0", chg: "▼2.35%", signed: -2.35, dateNote: null });
+  const flat = spotQuoteView({ date: "2026-09-18", close: 88.25, chg_pct: 0 }, "2026-09-18");
+  assert.deepEqual(flat, { price: "88.25", chg: "0.00%", signed: 0, dateNote: null });
+});
+
+test("§7.21 股價日與期貨行情日不同天 -> 標出股價日期(MM-DD);期貨日未知也標", () => {
+  const lag = spotQuoteView({ date: "2026-09-18", close: 50, chg_pct: 1 }, "2026-09-17");
+  assert.equal(lag?.dateNote, "09-18");
+  const unknownFutures = spotQuoteView({ date: "2026-09-18", close: 50, chg_pct: 1 }, null);
+  assert.equal(unknownFutures?.dateNote, "09-18");
+});
+
+test("§7.21 舊 payload / 缺 chg_pct:沒有就不顯示,不補 0", () => {
+  assert.equal(spotQuoteView(undefined, "2026-09-18"), null);
+  assert.equal(spotQuoteView(null, "2026-09-18"), null);
+  const noChg = spotQuoteView({ date: "2026-09-18", close: 50 }, "2026-09-18");
+  assert.deepEqual(noChg, { price: "50.0", chg: null, signed: null, dateNote: null });
+});
+
+test("§7.21 名單列帶 quote;舊 payload(無 spot_quote)的列 quote 為 null,順序不變", () => {
+  const withQuote = {
+    ...entry("2330", "CDF", ANOMALY_MYF),
+    spot_quote: { date: "2026-09-18", close: 1000, chg_pct: -0.5 },
+  };
+  const state = futuresAnomalyMarketState(
+    [withQuote, entry("1565", "MYF", ANOMALY_MYF)], "2026-09-18", undefined, META,
+  );
+  assert.equal(state.kind, "listed");
+  if (state.kind !== "listed") return;
+  assert.deepEqual(state.rows.map((r) => r.stockId), ["2330", "1565"]);
+  // META.as_of 是 09-17(期貨),股價是 09-18(現貨)→ 標出股價日期。
+  assert.deepEqual(state.rows[0].quote, { price: "1,000.0", chg: "▼0.50%", signed: -0.5, dateNote: "09-18" });
+  assert.equal(state.rows[1].quote, null);
 });

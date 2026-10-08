@@ -500,6 +500,21 @@ export interface FuturesVolumeAnomalyEntry {
   risks: ReasonItem[];
   /** 現貨當日有沒有同步創高(docs/38 §7.17)。可選:舊 payload 沒有 → 無法判定。 */
   spot_new_high?: boolean | null;
+  /**
+   * 現貨股價與漲跌(docs/38 §7.21)。只出現在今日名單(radar.json / home/head.json);
+   * 舊 payload、或現貨資料日沒有收盤 → 缺鍵,畫面不顯示股價。
+   */
+  spot_quote?: FuturesSpotQuote;
+}
+
+/**
+ * 現貨資料日(= `data_date`,不是期貨行情日)的未還原收盤與漲跌%,與 `radar.stocks`
+ * 的 close / chg_pct 同一個公式。前一日沒有收盤時 `chg_pct` 缺鍵。
+ */
+export interface FuturesSpotQuote {
+  date: string;
+  close: number;
+  chg_pct?: number;
 }
 
 /**

@@ -613,6 +613,44 @@ def _active_buybacks_by_stock(conn, as_of: str) -> dict[str, dict]:
     return active
 
 
+def _futures_spot_quotes(
+    conn, stock_ids: list[str], *, d: str, prev: str | None,
+) -> dict[str, dict]:
+    """期貨異常名單用的現貨報價:``{stock_id: {"date", "close", "chg_pct"?}}``(docs/38 §7.21)。
+
+    **日期是現貨資料日 ``d``(= ``radar.data_date``),不是期貨行情日。** 使用者要看的是
+    這檔股票現在的股價,而首頁其他每一個股價(多方榜卡片)都是 ``d`` 那一天;兩者在
+    名單上並排,用同一天才不會一頁兩種「今天」。期貨行情日落後一天時,前端把 ``date``
+    標出來(它與名單的 ``as_of`` 不同)。
+
+    ``close``/``chg_pct`` 與 ``radar.stocks`` 同一個定義、同一個公式:``d`` 的未還原收盤,
+    對**全市場**前一個交易日 ``prev`` 的收盤,兩位小數——逐值相同,不是第二種漲跌。
+    直接讀 ``daily_prices`` 而不是 ``all_stocks``,因為後者只有 ``type='stock'``,
+    指數基金期貨的標的(00xx)不在裡面。
+
+    這是**呈現用的報價**,不是旗標的事實:不進規則、不參與排序(名單順序照舊)。
+    ``d`` 沒有收盤 → 該檔不出現(呼叫端整個鍵不輸出);前一日沒有收盤 → 只有 ``chg_pct``
+    缺鍵,不寫 null、不寫 0。
+    """
+    if not stock_ids:
+        return {}
+    rows = conn.execute(text("""
+        SELECT p.stock_id, p.close, pp.close AS prev_close
+        FROM daily_prices p
+        LEFT JOIN daily_prices pp ON pp.stock_id = p.stock_id AND pp.date = :prev
+        WHERE p.date = :d AND p.close IS NOT NULL AND p.stock_id IN :ids
+    """).bindparams(bindparam("ids", expanding=True)),
+        {"d": d, "prev": prev, "ids": sorted(set(stock_ids))}).mappings()
+    out: dict[str, dict] = {}
+    for row in rows:
+        close, prev_close = row["close"], row["prev_close"]
+        quote: dict = {"date": d, "close": close}
+        if prev_close:
+            quote["chg_pct"] = round((close - prev_close) / prev_close * 100, 2)
+        out[row["stock_id"]] = quote
+    return out
+
+
 def _futures_by_stock(
     conn, as_of: str | None, *, spot_date: str | None = None,
 ) -> tuple[dict[str, dict], str, list | None, dict | None] | None:
@@ -2038,6 +2076,15 @@ def export_json(
         # 期貨側的每一個日期都錨在 f_date(期貨行情日,見 _futures_by_stock)。
         # 這裡以前傳的是 d,於是整個切片只有在現貨匯入失敗的那一天才顯示得出來。
         futures_result = _futures_by_stock(conn, f_date, spot_date=d)
+        # 期貨異常名單每一列的現貨股價與漲跌(2026-10-09 使用者:「期貨異常那邊可以
+        # 顯示股價漲跌跟股價嗎」)。只讀舉旗的那幾檔。
+        futures_spot_quotes = (
+            _futures_spot_quotes(
+                conn, [e["stock_id"] for e in futures_result[2]], d=d, prev=prev,
+            )
+            if futures_result is not None and futures_result[2]
+            else {}
+        )
         # 近 10 個期貨交易日的舉旗紀錄(docs/38 §7.19)。只在今日名單**有主張**時才算:
         # 今天的名單都答不出來的那一版,不該冒出一份歷史。每一天都是規則本人重算
         # (以今天的日曆),不是「那一天頁面上顯示的東西」。
@@ -2152,6 +2199,13 @@ def export_json(
     # 兩個都不輸出,所以不會出現一個沒有名單的孤兒 window_days。
     futures_anomaly_index = futures_result[2] if futures_result is not None else None
     if futures_anomaly_index is not None:
+        # 每一列加一個選填的 spot_quote(現貨資料日的收盤與漲跌,見 _futures_spot_quotes)。
+        # 新的 dict,不動 futures_result 裡被個股區塊/紀錄共用的那一份;順序原封不動。
+        futures_anomaly_index = [
+            {**e, "spot_quote": futures_spot_quotes[e["stock_id"]]}
+            if e["stock_id"] in futures_spot_quotes else e
+            for e in futures_anomaly_index
+        ]
         radar["futures_volume_anomalies"] = futures_anomaly_index
         # meta 的 as_of 是期貨行情日,與 freshness.futures.date 同一個變數(§7.12)。
         radar["futures_volume_anomalies_meta"] = anomaly_index_meta(

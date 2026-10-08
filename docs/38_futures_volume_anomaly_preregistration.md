@@ -598,6 +598,17 @@ latest("futures_daily")`),只是沒有把它交給切片。
 - **空狀態**(`stockAnomalyHistorySummaryText`,天數讀 payload):全部算過且沒舉旗 →「近 N 個期貨交易日這檔沒有舉旗。」;有幾天沒算出 →「近 N 個期貨交易日中,算出結果的 M 天這檔都沒有舉旗;另 U 天沒有算出結果。」;全部沒算出 →「…都沒有算出結果。這不代表沒有舉旗。」;鍵缺 → 整塊不畫。
 - 契約名稱用這一檔**全部契約**的名稱表,與同頁其他區塊同名。
 
+### 7.21 首頁期貨異常名單:每一列加現貨股價與漲跌(2026-10-09,post-data,只動呈現)
+
+**地位同 §7 全節。** 不動任何規則、門檻、旗標或名單順序;刪掉這一節重跑 battery,一個數字都不會變。
+
+- **使用者原話**:「期貨異常那邊可以顯示股價漲跌跟股價嗎」。
+- **payload**:`radar.json`(與它的投影 `home/head.json`)的 `futures_volume_anomalies[]` 每一條目加選填 `spot_quote = {date, close, chg_pct?}`。首頁預設分頁本來就讀 head.json,**不多抓任何檔**。新增是純加鍵:radar.json / head.json 位元組因此改變(只多這個鍵);個股 `futures` 區塊、`futures_volume_anomaly_history` 與多方榜不變。
+- **日期對齊(定案)**:報價是**現貨資料日**(= `radar.data_date`),不是期貨行情日。理由:使用者要看的是這檔股票現在的股價,首頁其他股價(多方榜卡片)也都是這一天,同一頁不出現兩種「今天」。期貨行情日落後一天時(§7.12 常態),前端在報價後面標出股價日期 `(MM-DD)`;兩者同一天就不標。舉旗日當天的收盤仍由 §7.19 紀錄的 `spot_after.flag_close` 提供。
+- **數值**:`close` / `chg_pct` 與 `radar.stocks` 同一定義、同一公式(`d` 的未還原收盤對全市場前一交易日收盤,兩位小數),逐值相同,不是第二種漲跌;直接讀 `daily_prices`,所以指數基金期貨的標的(00xx,不在 `radar.stocks`)也有。`d` 沒有收盤 → 整個 `spot_quote` 缺鍵;前一日沒有收盤 → 只缺 `chg_pct`(不寫 0/null)。
+- **與 §7.19「% 只走 priceAfterText」的關係**:這裡的 % 是 payload 帶來的當日漲跌(與多方榜同一個數字),前端 `spotQuoteView` 只排版(`fmtPct`,▲紅/▼綠/0 中性),不在期貨表面算任何 %;它是報價,不是對旗標的主張,也不參與排序。
+- **版面(390px)**:卡片標頭下方獨立一行「股價 1,245.0 ▲2.47% (06-22)」,`whitespace-nowrap`,不擠標頭那一行;舊 payload 沒有 `spot_quote` → 整行不畫。測試:`test_futures_export.py::AnomalySpotQuoteTests`、`futures.test.ts` §7.21。
+
 ### 7.13 R4 在日曆邊緣:算不出結算日 ⇒ 不主張(這一條是正確性,不是呈現)
 
 **地位同 §7 全節,但要說清楚它與其他條的差別**:它**確實會改變**某些 `(c, t)` 的輸出——

@@ -5,6 +5,7 @@ import type {
   FuturesAnomalyHistoryMeta,
   FuturesContract,
   FuturesSpotAfter,
+  FuturesSpotQuote,
   FuturesDaily,
   FuturesInfo,
   FuturesOpenInterestDirection,
@@ -13,6 +14,7 @@ import type {
   ReasonItem,
   StockFuturesAnomalyHistory,
 } from "@/lib/types";
+import { fmtPct } from "./format.ts";
 
 /**
  * 個股期貨存在狀態的三態判定(這個功能的重點)。
@@ -187,6 +189,43 @@ export interface FuturesAnomalyRow {
   risks: ReasonItem[];
   /** 現貨當日有沒有同步創高(§7.17)。舊 payload 沒有這個鍵 → unknown。 */
   spot: SpotFollow;
+  /** 現貨股價與漲跌(§7.21);舊 payload 或沒有收盤 → null,畫面不顯示。 */
+  quote: SpotQuoteView | null;
+}
+
+/** 名單一列的股價元素。`chg`/`signed` 只在 payload 有 `chg_pct` 時不是 null。 */
+export interface SpotQuoteView {
+  /** 「股價 123.5」的數字部分。 */
+  price: string;
+  /** 「▲1.20%」;前一日沒有收盤 → null(不顯示,不補 0)。 */
+  chg: string | null;
+  /** 漲跌原數字,畫面用來上紅漲綠跌(0 不上色)。 */
+  signed: number | null;
+  /**
+   * 股價日期(MM-DD)——只在它與期貨行情日不同天時給,否則 null。報價是現貨資料日,
+   * 期貨行情日常態可能落後一天(§7.12);同一張卡片上兩個日子不可以默默混成一天。
+   */
+  dateNote: string | null;
+}
+
+/**
+ * payload 的 `spot_quote` → 畫面用的字串。**不算任何 %**:漲跌是 payload 帶來的
+ * `chg_pct`(與多方榜同一個數字),這裡只排版。格式沿用 `lib/format` 的
+ * `fmtPct`(▲/▼ + 兩位小數),與首頁股票卡片一致。
+ */
+export function spotQuoteView(
+  quote: FuturesSpotQuote | null | undefined,
+  futuresAsOf: string | null,
+): SpotQuoteView | null {
+  if (!quote || typeof quote.close !== "number") return null;
+  const pct = typeof quote.chg_pct === "number" ? quote.chg_pct : null;
+  return {
+    price: fmtPrice(quote.close),
+    chg: pct === null ? null : fmtPct(pct),
+    signed: pct,
+    // 期貨行情日未知(舊 meta)時也標:不知道是不是同一天,就講出來。
+    dateNote: futuresAsOf !== null && quote.date === futuresAsOf ? null : quote.date.slice(5),
+  };
 }
 
 /**
@@ -231,6 +270,7 @@ export function futuresAnomalyMarketState(
     reasons: e.reasons,
     risks: e.risks,
     spot: spotFollow(e.spot_new_high),
+    quote: spotQuoteView(e.spot_quote, asOf),
   }));
   return { kind: "listed", dataDate, asOf, rows };
 }
@@ -707,6 +747,8 @@ export function futuresAnomalyHistoryState(
           reasons: e.reasons,
           risks: e.risks,
           spot: spotFollow(e.spot_new_high),
+          // 紀錄的價格是 spot_after(舉旗日之後),不是今日報價;spot_quote 只在今日名單。
+          quote: null,
           follow,
           followLabel: followStatusLabel(follow, meta.forward_days),
           priceAfter: priceAfterText(e.spot_after),

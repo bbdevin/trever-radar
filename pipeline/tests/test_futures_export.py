@@ -928,9 +928,10 @@ META_KEY = "futures_volume_anomalies_meta"
 # 這樣的鍵出現在條目裡,都等於偷偷把一份短名單變成一張排行榜。
 RANK_ISH = ("rank", "position", "order", "seq", "index", "score", "top", "place")
 
-# 今日名單條目的完整鍵集合(排序後)。
+# 今日名單條目的完整鍵集合(排序後)。spot_quote 是 2026-10-09 刻意加的(§7.21):
+# 現貨股價與漲跌,選填(現貨資料日沒有收盤就缺鍵);這個 fixture 天天有價格。
 MARKET_ENTRY_KEYS = ["anomaly", "code", "multiplier", "reasons", "risks",
-                     "spot_new_high", "stock_id"]
+                     "spot_new_high", "spot_quote", "stock_id"]
 
 
 class AnomalyMarketIndexTests(_AnomalyFixture):
@@ -1069,8 +1070,9 @@ class AnomalyMarketIndexTests(_AnomalyFixture):
             for key in entry:
                 if any(bad in key.lower() for bad in RANK_ISH):
                     offenders.append(key)
-            # 而且鍵就是那七個,一個不多:第八個鍵要加,得自己動手並過 review。
-            # (spot_new_high 2026-10-02 §7.17、multiplier 2026-10-03 §7.19 刻意加的。)
+            # 而且鍵就是那八個,一個不多:第九個鍵要加,得自己動手並過 review。
+            # (spot_new_high 2026-10-02 §7.17、multiplier 2026-10-03 §7.19、
+            #  spot_quote 2026-10-09 §7.21 刻意加的。)
             self.assertEqual(sorted(entry), MARKET_ENTRY_KEYS)
         self.assertEqual(offenders, [])
 
@@ -1110,6 +1112,80 @@ class AnomalyMarketIndexTests(_AnomalyFixture):
             self.assertEqual(entry["anomaly"], by_code[entry["code"]]["anomaly"])
             self.assertEqual(entry["reasons"], by_code[entry["code"]]["reasons"])
             self.assertEqual(entry["risks"], by_code[entry["code"]]["risks"])
+
+
+class AnomalySpotQuoteTests(_AnomalyFixture):
+    """名單每一列的現貨股價與漲跌 ``spot_quote``(docs/38 §7.21,2026-10-09)。
+
+    日期是**現貨資料日**(radar.data_date),與首頁其他股價同一天;值與
+    ``radar.stocks`` 的 close / chg_pct 同一個公式。"""
+
+    def set_close(self, sid, day, close):
+        with db.get_engine().begin() as conn:
+            conn.execute(schema.daily_prices.update().where(
+                (schema.daily_prices.c.stock_id == sid)
+                & (schema.daily_prices.c.date == day)
+            ).values(close=close))
+
+    def test_the_quote_is_the_spot_close_and_change_on_the_spot_date(self):
+        """production 的形狀:現貨比期貨多一天 → 報價是現貨那一天,不是期貨行情日。"""
+        self.seed([_spec("CCF", "2303")])
+        self.set_close("2303", AD, 50.0)            # 前一個交易日(= 期貨行情日)
+        self.set_close("2303", SPOT_AHEAD, 51.3)    # 現貨資料日
+        radar = self.radar()
+        self.assertEqual(radar["data_date"], SPOT_AHEAD)
+        self.assertEqual(radar[META_KEY]["as_of"], AD)
+        entry = radar[INDEX_KEY][0]
+        self.assertEqual(entry["spot_quote"],
+                         {"date": SPOT_AHEAD, "close": 51.3, "chg_pct": 2.6})
+        # 與 radar.stocks 那一檔逐值相同(同一天、同一個公式)。
+        stock = next(s for s in radar["stocks"] if s["id"] == "2303")
+        self.assertEqual(entry["spot_quote"]["close"], stock["close"])
+        self.assertEqual(entry["spot_quote"]["chg_pct"], stock["chg_pct"])
+
+    def test_when_spot_and_futures_share_a_day_the_quote_is_that_day(self):
+        self.seed([_spec("CCF", "2303")], spot_ahead=False)
+        prev_day = _DAYS[-2]
+        self.set_close("2303", prev_day, 40.0)
+        self.set_close("2303", AD, 39.0)
+        quote = self.radar()[INDEX_KEY][0]["spot_quote"]
+        self.assertEqual(quote, {"date": AD, "close": 39.0, "chg_pct": -2.5})
+
+    def test_a_missing_previous_close_drops_only_chg_pct(self):
+        """前一日沒有收盤:漲跌不知道 → 缺鍵,不寫 0、不寫 null。"""
+        self.seed([_spec("CCF", "2303")])
+        self.set_close("2303", AD, None)
+        self.set_close("2303", SPOT_AHEAD, 52.0)
+        quote = self.radar()[INDEX_KEY][0]["spot_quote"]
+        self.assertEqual(quote, {"date": SPOT_AHEAD, "close": 52.0})
+
+    def test_no_close_on_the_spot_date_means_no_quote_key(self):
+        """另一檔有現貨日的價格(所以 data_date 不變),這一檔沒有 → 整個鍵不輸出。"""
+        self.seed([_spec("CCF", "2303"), _spec("MYF", "1565")],
+                  spot_missing={("2303", SPOT_AHEAD)})
+        entries = {e["code"]: e for e in self.radar()[INDEX_KEY]}
+        self.assertNotIn("spot_quote", entries["CCF"])
+        self.assertEqual(entries["MYF"]["spot_quote"]["date"], SPOT_AHEAD)
+
+    def test_an_etf_underlying_gets_a_quote_too(self):
+        """指數基金期貨的標的(00xx)不在 radar.stocks(只收 type='stock'),仍要有報價。"""
+        self.seed([_spec("NYF", "0050")])
+        with db.get_engine().begin() as conn:
+            conn.execute(schema.stocks.update().where(schema.stocks.c.id == "0050")
+                         .values(type="etf"))
+        self.set_close("0050", SPOT_AHEAD, 55.0)
+        quote = self.radar()[INDEX_KEY][0]["spot_quote"]
+        self.assertEqual(quote, {"date": SPOT_AHEAD, "close": 55.0, "chg_pct": 10.0})
+
+    def test_the_quote_rides_in_home_head_and_not_in_the_per_stock_blocks(self):
+        """首頁預設分頁讀 home/head.json,不必多抓 stocks.json;個股區塊與紀錄不變。"""
+        self.seed([_spec("CCF", "2303")])
+        radar = self.radar()
+        head = json.loads((self.out / "home" / "head.json").read_text(encoding="utf-8"))
+        self.assertEqual(head[INDEX_KEY], radar[INDEX_KEY])
+        self.assertIn("spot_quote", head[INDEX_KEY][0])
+        contract = read_merged_stock(self.out / "stocks", "2303")["futures"]["contracts"][0]
+        self.assertNotIn("spot_quote", contract)
 
 
 class AnomalyIndexMetaTests(_AnomalyFixture):

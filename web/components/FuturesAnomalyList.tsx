@@ -141,6 +141,24 @@ export default function FuturesAnomalyList({
                   <WatchlistButton stockId={row.stockId} size={15} />
                 </span>
               </div>
+              {/* 現貨股價與漲跌(docs/38 §7.21)。獨立一行、不換行:標頭那一行在 390px
+                  已經放了股名、契約名稱、現貨標籤與星號。舊 payload 沒有 → 整行不畫。 */}
+              {row.quote && (
+                <p className="num mt-1 flex items-baseline gap-1.5 whitespace-nowrap text-[12.5px] text-muted-foreground">
+                  <span>股價</span>
+                  <span className="font-bold text-foreground">{row.quote.price}</span>
+                  {row.quote.chg && (
+                    <span className={cn("font-bold", toneClass(row.quote.signed) || "text-foreground")}>
+                      {row.quote.chg}
+                    </span>
+                  )}
+                  {row.quote.dateNote && (
+                    <span className="text-[11px]" title="股價為現貨資料日,與期貨行情日不同天">
+                      ({row.quote.dateNote})
+                    </span>
+                  )}
+                </p>
+              )}
               {/* 單位一律是口,寫在第一格就好,不每格重複 */}
               <dl className="mt-2 grid grid-cols-4 gap-x-2">
                 {row.facts.map((f, i) => (
