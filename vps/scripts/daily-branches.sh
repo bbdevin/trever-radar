@@ -126,7 +126,12 @@ sync_code
 # 現在:失敗而今天的日K已在庫 → warn 續跑;失敗而今天的日K**不在庫** → 這一步就是當天
 # 唯一的補救,照舊 high 通知 + 中止(lib.sh run_step_or_fail_unless)。
 # 上櫃日K 若 14:45/16:00 仍 empty,此輪再抓,否則 --top 0 會漏掉無當日報價的上櫃。
-run_step_or_fail_unless "import-daily" price_date_is_today radar import-daily --datasets quotes,insti
+# ⚠️ 跨午夜(docs/47 §8.8 第五次驗證):第二輪可能等來源鎖到 00:00、再等 DB 鎖到 01:00,之後
+# 台北「今天」已是 D+1。所有「哪一天」的判斷與匯入一律帶 $ROUND_DATE(開跑日 = 資料日),
+# 不准用預設的台北今天——否則會匯入 D+1、判定「休市」、整輪靜默收工。
+round_prices_present() { price_date_is_today "$ROUND_DATE"; }
+round_indicators_present() { indicators_date_is_today "$ROUND_DATE"; }
+run_step_or_fail_unless "import-daily" round_prices_present radar import-daily --date "${ROUND_DATE//-/}" --datasets quotes,insti
 
 # 非交易日(docs/47):**先匯入、再判斷**。今天的日K在自己匯入之後仍不在庫裡 →
 # 休市(或交易所整天沒出表),不爬 2,672 檔、不匯出(09-25、09-28 實測每輪照樣
@@ -134,8 +139,8 @@ run_step_or_fail_unless "import-daily" price_date_is_today radar import-daily --
 # 不能在匯入之前就判斷:前面幾輪若壞掉(sync_code/docker/來源),本輪自己的日K
 # 匯入就是當天唯一的補救,先判斷會把整天靜默丟掉(2026-10-04 驗證者抓到)。
 # 用 warn 而不是只寫 log:休市日一則提醒,遠好過真的出事卻沒人知道。
-if ! price_date_is_today; then
-  notify_warn "匯入後仍沒有今天的日K（休市或交易所未出表），分點輪不爬、不上線"
+if ! price_date_is_today "$ROUND_DATE"; then
+  notify_warn "匯入後仍沒有 ${ROUND_DATE} 的日K（休市或交易所未出表），分點輪不爬、不上線"
   echo "=== daily-branches done $(taipei_date -Is) ==="
   exit 0
 fi
@@ -151,7 +156,7 @@ if futures_day_done; then
   echo "個股期貨當日已匯入(法人輪),本輪不重抓"
 else
   fd_rc=0
-  if radar import-futures-day; then :; else fd_rc=$?; fi
+  if radar import-futures-day --date "$ROUND_DATE"; then :; else fd_rc=$?; fi
   if [ "$fd_rc" -eq 75 ]; then
     echo "個股期貨當日尚未公布齊全(exit 75),第二輪重試;仍未齊則資券輪的官方日報會在下個交易日補上"
   elif [ "$fd_rc" -ne 0 ]; then
@@ -172,7 +177,7 @@ if awk -v r="${FIRST_ROUND_RATIO:-0}" 'BEGIN { exit !(r + 0 >= 1) }' && [ "$BRAN
 fi
 # 指標:今天的早在 14:05/14:45/16:00 三輪算過(indicators_daily 有今天)→ 這裡失敗只 warn 續跑;
 # 今天的指標不在庫才中止(評分會缺技術分)。
-run_step_or_fail_unless "compute-indicators" indicators_date_is_today radar compute-indicators --all --days 5
+run_step_or_fail_unless "compute-indicators" round_indicators_present radar compute-indicators --all --days 5
 # 追蹤名單同步(Supabase):失敗沿用既有名單,永遠不擋本輪(CLI 本身也設計成永不失敗)。
 run_step_or_warn "seed-branches" radar seed-branches
 
@@ -190,7 +195,7 @@ branch_probe_attempt() {
   if [ "$(taipei_date +%H%M)" -ge "$BRANCH_PROBE_THREE_HOSTS_UNTIL" ]; then
     need=2
   fi
-  radar_timeout 1200 probe-branch-day --sample 12 --threshold 11 --min-ready-hosts "$need" --min-consecutive 2 --sleep 1.0
+  radar_timeout 1200 probe-branch-day --date "${ROUND_DATE//-/}" --sample 12 --threshold 11 --min-ready-hosts "$need" --min-consecutive 2 --sleep 1.0
 }
 # 等待期間放掉 DB 鎖,只握著分點來源鎖;探測出錯 = 照舊直接爬。
 # 抓取(fetch-branch-trades):五站平行、每站一個 worker、單站間隔 = 1.0 × 5 = 5 秒
@@ -216,7 +221,7 @@ fi
 # top=0: 當日有報價的全部 type=stock(不含 ETF),成交金額大的先抓。
 # 全市場權證輪尚未通過容量/時間 PoC;過渡池只含標的是 active 普通股的
 # 上市認購/認售、當日成交金額至少 100 萬的權證。此模式取代 legacy --warrants Top-N,不能疊加。
-run_step_or_fail "fetch-branch-trades" radar_timeout 9000 import-branch-trades --top 0 --warrant-turnover-min 1000000 --sleep 1.0 --workers 5 --stage-to "$STAGE_FILE"
+run_step_or_fail "fetch-branch-trades" radar_timeout 9000 import-branch-trades --date "${ROUND_DATE//-/}" --top 0 --warrant-turnover-min 1000000 --sleep 1.0 --workers 5 --stage-to "$STAGE_FILE"
 acquire_db_lock_wait 3600
 
 # ── 寫入 + 分級:握著 DB 鎖,只要一兩分鐘 ─────────────────────────────────
@@ -358,7 +363,10 @@ fi
 # 讀的是原始列與評分,排行/分位統計是第二段才更新的東西。先把使用者等的那份送上站。
 # 這一段上線的資料是**完整的**(覆蓋率閘門已在上面放行),不是部分日;只有排行統計
 # 還是前一版,成功通知裡講明。
-run_step_or_fail "compute-scores" radar compute-scores
+# compute-scores 帶 $ROUND_DATE(跨午夜仍算資料日);compute-performance 不帶:它的預設模式是
+# 「補所有還缺 20 日報酬的列」,與日曆日無關,帶日期反而會縮成只補一天。
+# compute-indicators / compute-branch-stats / export-json / prune 都不看日曆日。
+run_step_or_fail "compute-scores" radar compute-scores --date "${ROUND_DATE//-/}"
 run_step_or_fail "compute-performance" radar compute-performance
 # prune 與其他步驟同一個待遇(high + 中止),理由是**順序**:它排在第一段的 publish_site
 # **之前**(兩個模式、兩條路徑都走到;改動前它也在 deploy 之前),所以 prune 失敗的那一輪

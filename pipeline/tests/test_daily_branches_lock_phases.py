@@ -410,6 +410,7 @@ class LockPhasesInTheScript(unittest.TestCase):
         fn = re.search(r"(branch_probe_attempt\(\)\s*\{.*?\n\})", self.code, re.S).group(1)
         r = _run_harness(f"""
 radar_timeout() {{ echo "ARGS $*"; }}
+ROUND_DATE="2026-10-08"
 BRANCH_PROBE_THREE_HOSTS_UNTIL=1900
 {fn}
 taipei_date() {{ echo 1859; }}; branch_probe_attempt
@@ -420,6 +421,59 @@ taipei_date() {{ echo 2029; }}; branch_probe_attempt
 """)
         needs = re.findall(r"--min-ready-hosts (\d)", r.stdout)
         self.assertEqual(needs, ["3", "2", "2", "3"], r.stdout + r.stderr)
+
+    def test_every_date_sensitive_call_uses_round_date_not_the_clock(self):
+        """第五次驗證(2026-10-08):第二輪可能等鎖到 00:00 之後,台北「今天」= D+1。
+        所有看日曆日的匯入/述詞/探測/抓取/評分一律帶 $ROUND_DATE。"""
+        self.assertIn('radar import-daily --date "${ROUND_DATE//-/}" --datasets quotes,insti', self.code)
+        self.assertIn('round_prices_present() { price_date_is_today "$ROUND_DATE"; }', self.code)
+        self.assertIn('round_indicators_present() { indicators_date_is_today "$ROUND_DATE"; }', self.code)
+        self.assertIn('if ! price_date_is_today "$ROUND_DATE"; then', self.code)
+        self.assertIn('radar import-futures-day --date "$ROUND_DATE"', self.code)
+        self.assertIn('probe-branch-day --date "${ROUND_DATE//-/}"', self.code)
+        self.assertIn('import-branch-trades --date "${ROUND_DATE//-/}" --top 0', self.code)
+        self.assertIn('radar compute-scores --date "${ROUND_DATE//-/}"', self.code)
+        self.assertIn('--date "${ROUND_DATE//-/}" --require twse:margin,tpex:margin', self.code)
+        # 不准再有不帶日期的「今天」判斷:預設版 price_date_is_today / indicators_date_is_today
+        # 只能出現在帶 $ROUND_DATE 的那幾處。
+        for fn in ("price_date_is_today", "indicators_date_is_today"):
+            for m in re.finditer(fn + r"\b(?!\(\))", self.code):
+                tail = self.code[m.end():m.end() + 16]
+                self.assertTrue(tail.startswith(' "$ROUND_DATE"'),
+                                f"{fn} 必須帶 $ROUND_DATE:…{self.code[m.start()-20:m.end()+16]!r}")
+        # taipei_date 只准用在:定 ROUND_DATE、log 時戳、探測站數的時刻門檻、資券的 21:00 判斷。
+        for ln in self.lines:
+            if "taipei_date" not in ln:
+                continue
+            s = ln.strip()
+            ok = (s.startswith("ROUND_DATE=") or "daily-branches start" in s or "daily-branches done" in s
+                  or "BRANCH_PROBE_THREE_HOSTS_UNTIL" in s or "-ge 21" in s or "printf" in s)
+            self.assertTrue(ok, f"taipei_date 出現在不該看時鐘的地方:{s}")
+
+    @unittest.skipUnless(_bash_available(), "需要 bash + flock + fuser")
+    def test_midnight_crossing_harness(self):
+        """stub harness:開跑 10-08、拿到鎖時時鐘已是 10-09。述詞與休市判斷(腳本裡的原句)
+        都要以 ROUND_DATE 問資料庫 → 不會誤判休市;預設版(問時鐘)才會誤判——這就是修掉的 bug。"""
+        defs = "\n".join(ln for ln in self.lines
+                         if ln.startswith(("round_prices_present()", "round_indicators_present()")))
+        holiday = next(ln for ln in self.lines if ln.startswith("if ! price_date_is_today"))
+        r = _run_harness(f"""
+ROUND_DATE="2026-10-08"
+taipei_date() {{ if [ "${{1:-}}" = "+%F" ]; then echo 2026-10-09; else TZ=Asia/Taipei date "$@"; fi; }}
+RO_SQL_OUT="2026-10-08"
+{defs}
+round_prices_present && echo "PRED_PRICES_OK"
+round_indicators_present && echo "PRED_IND_OK"
+{holiday}
+  echo "HOLIDAY_MISJUDGED"
+fi
+price_date_is_today || echo "CLOCK_DEFAULT_WOULD_MISJUDGE"
+""")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("PRED_PRICES_OK", r.stdout)
+        self.assertIn("PRED_IND_OK", r.stdout)
+        self.assertNotIn("HOLIDAY_MISJUDGED", r.stdout, "跨午夜不可以誤判休市")
+        self.assertIn("CLOCK_DEFAULT_WOULD_MISJUDGE", r.stdout, "對照:預設版問時鐘才會誤判")
 
     def test_futures_digest_lives_inside_publish_site_once(self):
         body = self.code[self._idx("publish_site() {"):self.code.index("\n}\n", self._idx("publish_site() {"))]

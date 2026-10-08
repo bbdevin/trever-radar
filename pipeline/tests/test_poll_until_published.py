@@ -105,7 +105,7 @@ class RoundsUseTheWaitingLock(unittest.TestCase):
         self.assertGreater(code.rfind("release_db_lock", 0, probe), -1,
                            "探測前要先放 DB 鎖")
         # docs/47 §8:全量**抓取**(--stage-to)也不握 DB 鎖;重新拿鎖是在**寫入**(--from-stage)之前。
-        fetch = code.index("import-branch-trades --top 0")
+        fetch = code.index('import-branch-trades --date "${ROUND_DATE//-/}" --top 0')
         self.assertNotIn("acquire_db_lock_wait", code[probe:fetch], "抓取前不可以重新拿鎖")
         after = code[fetch:code.index("radar import-branch-trades --from-stage")]
         self.assertRegex(after, r"acquire_db_lock_wait \d+", "寫入之前要重新拿鎖")
@@ -121,7 +121,7 @@ class RoundsUseTheWaitingLock(unittest.TestCase):
         匯入之前就判斷會把整天靜默丟掉(2026-10-04 驗證者)。判斷成立要 warn。"""
         # daily-branches 多一次:補抓失敗時的述詞(run_step_or_fail_unless … price_date_is_today,
         # docs/47 §8.3),那不是第二個休市判斷。
-        for name, imp, n in (("daily-branches.sh", 'run_step_or_fail_unless "import-daily" price_date_is_today radar import-daily --datasets quotes,insti', 2),
+        for name, imp, n in (("daily-branches.sh", 'run_step_or_fail_unless "import-daily" round_prices_present radar import-daily --date "${ROUND_DATE//-/}" --datasets quotes,insti', 2),
                              ("daily-margin.sh", "if radar import-daily --datasets quotes; then", 1)):
             with self.subTest(script=name):
                 code = _code(SCRIPTS / name)
@@ -129,6 +129,9 @@ class RoundsUseTheWaitingLock(unittest.TestCase):
                 self.assertLess(code.index(imp), guard)
                 self.assertEqual(code.count("price_date_is_today"), n)
                 self.assertEqual(code.count("if ! price_date_is_today"), 1, "休市判斷只有一處")
+                if name == "daily-branches.sh":
+                    # 跨午夜:休市判斷要問開跑日,不是台北「今天」(docs/47 §8.8 第五次驗證)。
+                    self.assertIn('if ! price_date_is_today "$ROUND_DATE"', code)
                 self.assertIn("notify_warn", code[guard:guard + 300])
         nightly = _code(SCRIPTS / "safe-branch-stats.sh")
         guard = nightly.index("price_date_is_today")

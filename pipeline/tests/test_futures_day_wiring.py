@@ -63,7 +63,8 @@ class ImportFuturesDayIsWired(unittest.TestCase):
                 lines = [ln for ln in _code_lines(SCRIPTS_DIR / name)
                          if "import-futures-day" in ln]
                 self.assertEqual(len(lines), 1)
-                self.assertIn("if radar import-futures-day; then", lines[0])
+                # 分點輪帶 --date "$ROUND_DATE"(跨午夜仍是資料日,docs/47 §8.8);法人輪不會跨午夜。
+                self.assertRegex(lines[0], r'if radar import-futures-day( --date "\$ROUND_DATE")?; then')
                 self.assertNotIn("run_step_or_fail", lines[0])
 
     def test_75_is_quiet_and_other_failures_only_warn(self):

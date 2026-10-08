@@ -222,8 +222,9 @@ class TestStepFailureNotify(unittest.TestCase):
     # 續跑(run_step_or_fail_unless / run_step_or_warn,都在 lib.sh、都仍會「講話」)。
     # 2026-10-06 的事故:補抓日K的瞬時錯誤讓整輪中止,當天分點晚了 5 小時。
     LENIENT_PRESTEPS = {
-        "import-daily": 'run_step_or_fail_unless "import-daily" price_date_is_today ',
-        "compute-indicators": 'run_step_or_fail_unless "compute-indicators" indicators_date_is_today ',
+        # 述詞包成帶 $ROUND_DATE 的函式(跨午夜不准問台北「今天」)。
+        "import-daily": 'run_step_or_fail_unless "import-daily" round_prices_present ',
+        "compute-indicators": 'run_step_or_fail_unless "compute-indicators" round_indicators_present ',
         "seed-branches": 'run_step_or_warn "seed-branches" ',
     }
 

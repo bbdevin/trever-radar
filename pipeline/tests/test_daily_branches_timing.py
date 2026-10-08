@@ -38,7 +38,7 @@ STEPS = (
     ("compute-indicators", "radar compute-indicators"),
     ("seed-branches", "radar seed-branches"),
     # docs/47 §8:抓(不握 DB 鎖、暫存檔)與寫(握鎖、--from-stage)分成兩步,各自計時。
-    ("fetch-branch-trades", "import-branch-trades --top 0"),
+    ("fetch-branch-trades", "import-branch-trades --date \"${ROUND_DATE//-/}\" --top 0"),
     ("import-branch-trades", "radar import-branch-trades --from-stage"),
     ("compute-branch-stats", "radar compute-branch-stats"),
     ("compute-scores", "radar compute-scores"),

@@ -272,7 +272,7 @@ class TestDailyBranchesExitCodes(unittest.TestCase):
         補齊的分點與法人資料寫進 DB。"""
         guard = self._mode_guard()
         for step in (
-            "radar import-daily --datasets quotes,insti",
+            "radar import-daily --date \"${ROUND_DATE//-/}\" --datasets quotes,insti",
             "radar compute-indicators",
             "radar seed-branches",
             "radar import-branch-trades",
