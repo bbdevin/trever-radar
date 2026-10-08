@@ -248,5 +248,5 @@ web/public/data/rankings/insti_flow_20d.json     (P1)
 
 - pytest `tests/test_insti_stocks.py`(10):排名與同分、零股不算、前 30 與缺收盤排最後、streak(缺列/零股/反向)、partial/stale、種子 DB 匯出值與獨立重算(不經模組)逐檔相同、ETF 排除、失敗刪舊檔且其他檔照寫、族群檔失敗不擋個股檔、其他輸出逐位元相同。
 - node `web/lib/instiGroupFlow.test.ts`:個股句子、連續日數文案、金額「—」、禁詞。`tsc`、`next build` 通過。
-- 390px 深/淺色截圖:**未做**。本機 dev 有 Google 登入門禁,沒有開發用旁路;為截圖暫時繞過門禁的做法被權限檢查擋下,已還原,未改門禁。待人類登入後在 `?tab=insti` → 個股 目視,或核准一個截圖用的做法。
+- 390px 深/淺色截圖:**已做(2026-10-09 驗證者)**。未改門禁:Playwright 以路由攔截回應 Supabase `/auth/v1/*`、`/rest/v1/*`(app_profiles=approved)後對靜態 build 截圖;收合/展開、缺收盤「—」、載入中、缺檔、離線各狀態皆無橫向溢出(scrollWidth=390)。
 - 正式資料抽 3 檔與 T86/TPEx 核對(同 §7.1),合 main 上線後做。
