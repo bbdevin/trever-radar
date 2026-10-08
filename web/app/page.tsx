@@ -68,6 +68,14 @@ const TABS: { key: TabKey; label: string; hint: string; icon: any }[] = [
     icon: Layers,
   },
   {
+    // 法人族群(docs/49):全市場籌碼排行、自己的 JSON(切到才抓),與資券同一種嵌入模式。
+    // 使用者 2026-10-08 指定放在「期貨異常」右邊。
+    key: "insti",
+    label: INSTI_TAB_LABEL,
+    hint: INSTI_TAB_HINT,
+    icon: Landmark,
+  },
+  {
     key: "armed",
     label: "未發動",
     hint: "分點或權證籌碼已異常進駐，但股價尚未明顯表態。適合盤中盯「何時發動」，不是已經大漲的名單。",
@@ -84,13 +92,6 @@ const TABS: { key: TabKey; label: string; hint: string; icon: any }[] = [
     label: "資券",
     hint: "全市場融資使用率（餘額÷限額）排行。越高＝融資額度越緊；≥60% 視為過熱風險觀察，不進綜合分。",
     icon: Percent,
-  },
-  {
-    // 法人族群(docs/49):全市場籌碼排行、自己的 JSON(切到才抓),與資券同一種嵌入模式。
-    key: "insti",
-    label: INSTI_TAB_LABEL,
-    hint: INSTI_TAB_HINT,
-    icon: Landmark,
   },
   {
     key: "scan",
