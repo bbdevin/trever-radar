@@ -1630,40 +1630,102 @@ class MirrorReadinessGate:
 def _confirm_empties(results: list[dict], targets: list[str], stats: dict, fetch, per_host: float,
                      on_failure, stop) -> dict[str, int]:
     """「空」不信單一站(2026-10-08):一站回 NoDataError 可能只是**它**還沒公布那一檔,
-    不是那一檔當天沒有分點。每個 empty 都到**另一站**再抓一次:
-    有列 → done(用那一份);仍空 → 確認 empty;失敗/被中止 → failed(交給覆蓋率閘門,
-    次日冪等重抓)。只剩一個活站時只好在同一站再抓一次(仍比不抓好)。
-    依「回空的那一站」分組,每組用其他活站平行抓。回傳統計。"""
+    不是那一檔當天沒有分點。每個 empty 都要別站再抓才算數:
+
+    * 確認用的站必須是**乾淨站**:這一輪一個 empty 都沒回過的活站(2026-10-08 第四次
+      驗證:只排除回空的那一站不夠——半公布的 D 回的空會被抖動的 E 的空「確認」)。
+      有多個乾淨站時用 done 最多的那一站。
+    * 有列 → done(用那一份);仍空 → 確認 empty;失敗 → 到**另一個**乾淨站再試一次
+      (瞬時失敗不該把真空變成 failed),仍失敗 → failed。
+    * 沒有乾淨站 → 要**兩個不同的**其他站都說空才算確認;任一站有列 → done;湊不到兩站
+      或結果對不上 → failed(交給覆蓋率閘門、次日冪等重抓)。
+    * 全場只剩一個活站 → 只好在同一站再抓一次(文件化的限制,印一行 `self-confirm`)。
+    回傳統計。"""
     from .mirror_crawl import crawl_in_order, live_hosts
 
     groups: dict[str | None, list[int]] = {}
     for i, r in enumerate(results):
         if r["outcome"] == "empty":
             groups.setdefault(r.get("host"), []).append(i)
-    tally = {"checked": 0, "recovered": 0, "confirmed": 0, "failed": 0}
+    tally = {"checked": 0, "recovered": 0, "confirmed": 0, "failed": 0, "self_confirmed": 0}
     if not groups:
         return tally
     alive = live_hosts(stats)
-    for src, idxs in groups.items():
-        hosts = [h for h in alive if h != src] or alive
-        print(f"branch crawl: confirming {len(idxs)} empty result(s) from {src} on {hosts}",
-              flush=True)
-        again, _ = crawl_in_order([targets[i] for i in idxs], fetch, hosts, per_host,
+    empties_by_host = {h: len(idxs) for h, idxs in groups.items()}
+    clean = sorted((h for h in alive if empties_by_host.get(h, 0) == 0),
+                   key=lambda h: -stats[h].done)
+    print(f"branch crawl: confirming empties; live={alive} clean={clean} "
+          f"empties_by_host={empties_by_host}", flush=True)
+
+    def _fetch_on(idxs: list[int], host: str):
+        again, _ = crawl_in_order([targets[i] for i in idxs], fetch, [host], per_host,
                                   on_failure=on_failure, stop=stop)
-        for i, r in zip(idxs, again):
-            tally["checked"] += 1
+        return dict(zip(idxs, again))
+
+    def _set(i: int, outcome: str, r, confirmed_by: list | None = None) -> None:
+        results[i] = {"sid": targets[i], "outcome": outcome,
+                      "rows": r.rows if outcome == "done" else None,
+                      "host": r.host if r is not None else None}
+        if confirmed_by:
+            results[i]["confirmed_by"] = confirmed_by
+        tally["checked"] += 1
+        tally[{"done": "recovered", "empty": "confirmed", "failed": "failed"}[outcome]] += 1
+
+    for src, idxs in groups.items():
+        if clean:
+            first = clean[0]
+            got = _fetch_on(idxs, first)
+            retry_idx = [i for i in idxs if got[i].outcome not in ("done", "empty")]
+            second = next((h for h in clean if h != first), None)
+            if retry_idx and second is not None:
+                got.update(_fetch_on(retry_idx, second))     # 瞬時失敗:換另一個乾淨站再一次
+            for i in idxs:
+                r = got[i]
+                if r.outcome == "done":
+                    _set(i, "done", r)
+                elif r.outcome == "empty":
+                    _set(i, "empty", r, [src, r.host])
+                else:
+                    _set(i, "failed", r)
+            continue
+        others = [h for h in alive if h != src]
+        if len(others) >= 2:
+            # 沒有乾淨站:兩個不同的站都說空才算。
+            a, b = sorted(others, key=lambda h: -stats[h].done)[:2]
+            got_a, got_b = _fetch_on(idxs, a), _fetch_on(idxs, b)
+            for i in idxs:
+                ra, rb = got_a[i], got_b[i]
+                if ra.outcome == "done" or rb.outcome == "done":
+                    _set(i, "done", ra if ra.outcome == "done" else rb)
+                elif ra.outcome == "empty" and rb.outcome == "empty":
+                    _set(i, "empty", ra, [src, a, b])
+                else:
+                    _set(i, "failed", ra if ra.outcome not in ("done", "empty") else rb)
+            continue
+        if others:
+            # 只有一個其他站而且它自己也回過空:單站說法不足,一律 failed。
+            print(f"branch crawl: no clean mirror and only one other mirror ({others[0]}) "
+                  f"for {len(idxs)} empty result(s) from {src}; marking failed", flush=True)
+            for i in idxs:
+                _set(i, "failed", None)
+            continue
+        # 全場只剩一站(就是回空的那一站):只能在同一站再抓一次。文件化的限制。
+        print(f"branch crawl: self-confirm — only one live mirror ({src}), re-fetching "
+              f"{len(idxs)} empty result(s) on the same mirror (limitation, docs/47 §8.8)",
+              flush=True)
+        got = _fetch_on(idxs, src)
+        for i in idxs:
+            r = got[i]
             if r.outcome == "done":
-                tally["recovered"] += 1
-                results[i] = {"sid": r.target, "outcome": "done", "rows": r.rows, "host": r.host}
+                _set(i, "done", r)
             elif r.outcome == "empty":
-                tally["confirmed"] += 1
-                results[i] = {"sid": r.target, "outcome": "empty", "rows": None, "host": r.host,
-                              "confirmed_by": [src, r.host]}
+                _set(i, "empty", r, [src, src])
+                tally["self_confirmed"] += 1
             else:
-                tally["failed"] += 1
-                results[i] = {"sid": r.target, "outcome": "failed", "rows": None, "host": r.host}
+                _set(i, "failed", r)
     print(f"branch crawl: empties checked={tally['checked']} recovered={tally['recovered']} "
-          f"confirmed={tally['confirmed']} failed={tally['failed']}", flush=True)
+          f"confirmed={tally['confirmed']} failed={tally['failed']} "
+          f"self_confirmed={tally['self_confirmed']}", flush=True)
     return tally
 
 

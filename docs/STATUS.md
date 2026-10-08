@@ -20,7 +20,8 @@
 
 - **實測**:16:34 起探測、18:24 開爬(4 站 + cathay 待命加入)、抓 2,788 s、第一段 19:28、第二段 19:53。`branch_coverage` ratio=0.9464 empty=109(10-07 為 1.0/0):cathay 對它還沒公布的 98 檔回 NoDataError,被當成「沒有分點」上線約 3 小時(22:30 全爬自癒)。
 - **修正**:每個 empty 到**另一站**再抓一次才算(有列 → 用它;仍空 → 確認;失敗 → failed 交閘門);就緒要**連續兩次**通過(探測 `--min-consecutive 2` 存連勝數檔;待命站改 12 檔 ≥11 且連續兩次);第一段只在覆蓋率 ≥0.98 時先上線,否則算完排行統計一併上線並 warn;開爬門檻改 **2 站**(2,700 檔 2 站 ~112 分 < 硬上限,待命站途中加入,等第 3 站只會更晚);TPEx `dailyQuotes` 傳輸失敗改 5 次嘗試。`futures_digest` 併入 `publish_site`。
-- **驗證**:pytest 全套(含 `FalseEmptiesFromAPartialMirror` 三案、探測連勝數、FAST_PUBLISH 門檻文字測試);harness 綠。
+- **第四次驗證修正(同日)**:確認空只用**乾淨站**(本輪沒回過空的活站,done 最多優先),確認時瞬時失敗換另一個乾淨站再試一次;沒有乾淨站要兩個不同站都說空,湊不到 → failed;單活站自確認印 `self-confirm` 並分開計數。開爬門檻改 **19:00 前 3 站、之後 2 站**(`branch_probe_attempt`,`BRANCH_PROBE_THREE_HOSTS_UNTIL`),抓取硬上限 7200 → 9000 s(2 站最壞 6,750 s + 25% 餘裕),22:30 等來源鎖 3600 → 5400 s(「當天一定有人上線」重算:最晚 20:30 開爬 → ~23:50 收工 < 00:00)。驗證者重播(400 檔、半公布 + 30% 抖動站)8 種子 0 假空存活,已納入測試。
+- **驗證**:pytest 全套(含 `FalseEmptiesFromAPartialMirror` 七案、探測連勝數、FAST_PUBLISH 門檻與時刻門檻的文字/harness 測試);harness 綠。
 - **待人類**:合併;明天看 `branch crawl: empties checked= recovered=` 與 `branch-probe mirror=… streak=` 行;若正常日 recovered 持續為 0 可考慮把確認改成只對「該站 empty 比例異常」才做(現在成本已很低,先不做)。
 
 ## 2026-10-07 分點輪提速:五站平行、逐站探測、抓寫分離、兩段式上線;修補抓失敗整輪中止(`docs/47` §8;程式完成於分支,crontab 待人類改)

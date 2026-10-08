@@ -341,8 +341,9 @@ class FalseEmptiesFromAPartialMirror(unittest.TestCase):
         self.assertEqual(snap["raw"], seq["raw"], "救回的列與循序爬位元級相同")
         self.assertEqual(snap["dim"], seq["dim"])
         log = out.getvalue()
-        self.assertRegex(log, r"confirming \d+ empty result\(s\) from " + re.escape(lagging))
-        self.assertRegex(log, r"empties checked=\d+ recovered=\d+ confirmed=3 failed=0")
+        self.assertRegex(log, r"confirming empties; live=.* clean=.* empties_by_host=.*"
+                         + re.escape(lagging))
+        self.assertRegex(log, r"empties checked=\d+ recovered=\d+ confirmed=3 failed=0 self_confirmed=0")
         # 每個 empty 都被第二站問過(真空的也要確認),確認用的站不是回空的那一站。
         for sid in EMPTY:
             hosts_asked = [c[1] for c in calls if c[0] == sid]
@@ -350,7 +351,7 @@ class FalseEmptiesFromAPartialMirror(unittest.TestCase):
             self.assertGreaterEqual(len(set(hosts_asked)), 2, f"{sid} 要由不同的站確認")
 
     def test_empty_then_failure_is_failed_not_empty(self):
-        """兩站說法對不上(一站空、一站失敗)→ failed,交給覆蓋率閘門與次日重抓。"""
+        """兩站說法對不上(一站空、一站失敗、只有一個乾淨站)→ failed,交給覆蓋率閘門與次日重抓。"""
         from radar.importer import _confirm_empties
         from radar.mirror_crawl import HostStats
 
@@ -360,31 +361,160 @@ class FalseEmptiesFromAPartialMirror(unittest.TestCase):
         stats = {"h1": HostStats(done=5), "h2": HostStats(done=5)}
 
         def fetch(sid, host, interval):
-            self.assertEqual(host, "h2", "確認要到另一站")
+            self.assertEqual(host, "h2", "確認要到乾淨站")
             if sid == "A":
                 raise RuntimeError("HTTP 500")
             from radar.providers import NoDataError
             raise NoDataError("still empty")
 
         tally = _confirm_empties(results, ["A", "B", "C"], stats, fetch, 0, None, None)
-        self.assertEqual(tally, {"checked": 2, "recovered": 0, "confirmed": 1, "failed": 1})
+        self.assertEqual(tally, {"checked": 2, "recovered": 0, "confirmed": 1, "failed": 1,
+                                 "self_confirmed": 0})
         self.assertEqual(results[0]["outcome"], "failed")
         self.assertEqual(results[1]["outcome"], "empty")
         self.assertEqual(results[1]["confirmed_by"], ["h1", "h2"])
         self.assertEqual(results[2]["outcome"], "done")
 
+    def test_transient_failure_during_confirmation_is_retried_on_another_clean_host(self):
+        """第四次驗證第 3 點:確認時的瞬時失敗不該把真空變成 failed——換另一個乾淨站再一次。"""
+        from radar.importer import _confirm_empties
+        from radar.mirror_crawl import HostStats
+        from radar.providers import NoDataError
+
+        results = [{"sid": "A", "outcome": "empty", "rows": None, "host": "h1"}]
+        stats = {"h1": HostStats(done=5), "h2": HostStats(done=9), "h3": HostStats(done=7)}
+        asked = []
+
+        def fetch(sid, host, interval):
+            asked.append(host)
+            if host == "h2":
+                raise RuntimeError("reset")
+            raise NoDataError("empty")
+
+        tally = _confirm_empties(results, ["A"], stats, fetch, 0, None, None)
+        self.assertEqual(asked, ["h2", "h3"], "先 done 最多的乾淨站,失敗後換另一個乾淨站")
+        self.assertEqual(results[0]["outcome"], "empty")
+        self.assertEqual(results[0]["confirmed_by"], ["h1", "h3"])
+        self.assertEqual(tally["failed"], 0)
+
+    def test_without_a_clean_host_two_distinct_hosts_must_agree(self):
+        """第四次驗證第 1 點:只排除回空的站不夠——D 的假空會被抖動的 E 的空「確認」。
+        沒有乾淨站時要兩個不同的站都說空;任一站有列 → done;湊不到兩站 → failed。"""
+        from radar.importer import _confirm_empties
+        from radar.mirror_crawl import HostStats
+        from radar.providers import NoDataError
+
+        # 三站都回過空(沒有乾淨站)。
+        results = [{"sid": "A", "outcome": "empty", "rows": None, "host": "D"},
+                   {"sid": "B", "outcome": "empty", "rows": None, "host": "D"},
+                   {"sid": "x", "outcome": "empty", "rows": None, "host": "E"},
+                   {"sid": "y", "outcome": "empty", "rows": None, "host": "F"}]
+        stats = {"D": HostStats(done=3, empty=2), "E": HostStats(done=9, empty=1),
+                 "F": HostStats(done=8, empty=1)}
+
+        def fetch(sid, host, interval):
+            if sid == "A":
+                if host == "E":
+                    raise NoDataError("E flickers")      # E 的抖動
+                return [{"rows": "from F"}]              # F 有列 → 真相是 done
+            if sid == "B":
+                raise NoDataError("really empty")        # 兩站都空 → 確認
+            if sid in ("x", "y"):
+                raise NoDataError("")
+            raise AssertionError(sid)
+
+        _confirm_empties(results, ["A", "B", "x", "y"], stats, fetch, 0, None, None)
+        self.assertEqual(results[0]["outcome"], "done", "一站有列就是 done,不被另一站的空蓋掉")
+        self.assertEqual(results[1]["outcome"], "empty")
+        self.assertEqual(sorted(results[1]["confirmed_by"]), ["D", "E", "F"])
+        # E 回的空由 D、F 確認;F 回的空由 D、E 確認。
+        self.assertEqual(results[2]["outcome"], "empty")
+        self.assertEqual(results[3]["outcome"], "empty")
+
+        # 只有一個其他站而且它也回過空 → failed(湊不到兩站)。
+        results2 = [{"sid": "A", "outcome": "empty", "rows": None, "host": "D"},
+                    {"sid": "x", "outcome": "empty", "rows": None, "host": "E"}]
+        stats2 = {"D": HostStats(done=3), "E": HostStats(done=9)}
+        tally = _confirm_empties(results2, ["A", "x"], stats2, fetch, 0, None, None)
+        self.assertEqual([r["outcome"] for r in results2], ["failed", "failed"])
+        self.assertEqual(tally["failed"], 2)
+
+    def test_verifier_replay_partial_plus_flickering_mirror_seeds(self):
+        """驗證者的重播(replay1008b):400 檔、D 半公布(20 個假空)、E 30% 機率回空、三個好站。
+        八個種子全部:沒有一個假空存活、沒有一個真空被標成 done、列與循序爬相同。"""
+        import random
+        import threading
+
+        from radar.providers import NoDataError
+
+        n = 400
+        stocks = [f"{3000 + i}" for i in range(n)]
+        true_empty = set(stocks[::50])                     # 8 檔真的沒有分點
+        hosts = fubon.MIRROR_HOSTS
+        D, E = hosts[3], hosts[4]
+        d_unpublished = set(random.Random(1008).sample([s for s in stocks if s not in true_empty], 20))
+        for seed in range(8):
+            with self.subTest(seed=seed):
+                rng = random.Random(seed)
+                lock = threading.Lock()
+
+                def fetch(sid, host, interval):
+                    with lock:
+                        flicker = rng.random() < 0.30
+                    if sid in true_empty:
+                        raise NoDataError("true empty")
+                    if host == D and sid in d_unpublished:
+                        raise NoDataError("D not published")
+                    if host == E and flicker:
+                        raise NoDataError("E flicker")
+                    import time
+                    time.sleep(0.0005)
+                    return [{"stock_id": sid, "host": "any"}]
+
+                from radar.importer import _confirm_empties
+                from radar.mirror_crawl import crawl_in_order
+
+                ordered, stats = crawl_in_order(stocks, fetch, list(hosts), 0)
+                results = [{"sid": r.target, "outcome": r.outcome, "rows": r.rows, "host": r.host}
+                           for r in ordered]
+                _confirm_empties(results, stocks, stats, fetch, 0, None, None)
+                false_empties = [r["sid"] for r in results
+                                 if r["outcome"] == "empty" and r["sid"] not in true_empty]
+                self.assertEqual(false_empties, [], f"seed={seed} 假空存活")
+                wrong_done = [r["sid"] for r in results
+                              if r["outcome"] == "done" and r["sid"] in true_empty]
+                self.assertEqual(wrong_done, [])
+                self.assertEqual(sum(1 for r in results if r["outcome"] == "done"),
+                                 n - len(true_empty))
+
     def test_single_live_host_confirms_on_itself_rather_than_not_at_all(self):
         from radar.importer import _confirm_empties
         from radar.mirror_crawl import HostStats
 
-        results = [{"sid": "A", "outcome": "empty", "rows": None, "host": "h1"}]
+        results = [{"sid": "A", "outcome": "empty", "rows": None, "host": "h1"},
+                   {"sid": "B", "outcome": "empty", "rows": None, "host": "h1"}]
         stats = {"h1": HostStats(done=5), "h2": HostStats(dead=True)}
         asked = []
-        tally = _confirm_empties(results, ["A"], stats, lambda s, h, i: asked.append(h) or [{"x": 1}],
-                                 0, None, None)
-        self.assertEqual(asked, ["h1"])
+        import contextlib
+        import io
+        out = io.StringIO()
+
+        def fetch(s, h, i):
+            asked.append(h)
+            if s == "A":
+                return [{"x": 1}]
+            from radar.providers import NoDataError
+            raise NoDataError("")
+
+        with contextlib.redirect_stdout(out):
+            tally = _confirm_empties(results, ["A", "B"], stats, fetch, 0, None, None)
+        self.assertEqual(asked, ["h1", "h1"])
         self.assertEqual(tally["recovered"], 1)
+        self.assertEqual(tally["self_confirmed"], 1, "同站再抓一次確認的要分開計數")
         self.assertEqual(results[0]["outcome"], "done")
+        self.assertEqual(results[1]["outcome"], "empty")
+        self.assertIn("self-confirm", out.getvalue(), "文件化的限制要在 log 裡講出來")
+        self.assertRegex(out.getvalue(), r"self_confirmed=1")
 
 
 class StageResumeRules(unittest.TestCase):

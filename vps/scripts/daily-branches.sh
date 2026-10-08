@@ -105,7 +105,10 @@ echo "=== daily-branches start $(taipei_date -Is) ==="
 # 抓完要寫入時就拿不到 DB 鎖,兩輪互相等到逾時。其他拿這把來源鎖的腳本
 # (warrant-backfill.sh、daily-warrant-branches-poc.sh)都是 flock -n,搶不到就收工,
 # 所以沒有人會握著 DB 鎖**等**來源鎖。
-acquire_branch_source_lock_wait 3600
+# 等 5400 秒(docs/47 §8.5 的「當天一定有人上線」證明):第一輪最晚 20:30 開爬、9000 秒上限
+# → 最晚 23:00 抓完、寫入與第一段 ~20 分、統計與第二段 ~30 分 → 最晚 ~23:50 放鎖;
+# 22:30 的第二輪等到 00:00 剛好涵蓋。
+acquire_branch_source_lock_wait 5400
 # 來源鎖在手:今天的暫存檔沒有別人會寫。現在才清 .tmp(EXIT trap;裝在第一次呼叫 radar
 # 之前,lib.sh 的金鑰暫存檔清理會把既有 EXIT trap 串在前面)與別天的暫存檔。
 trap 'branch_stage_cleanup' EXIT
@@ -176,19 +179,30 @@ run_step_or_warn "seed-branches" radar seed-branches
 # ── 分點來源探測 + 平行抓取:這一段**不握 DB 鎖**(docs/47 §8)─────────────
 # 探測(docs/47 原則 3;只在第一輪,BRANCH_PROBE=0 = 舊行為直接爬):每 10 分鐘
 # **每一站各**抽 12 檔問一次(probe-branch-day,唯讀、不寫 DB;逐站一行 log),一站要**連續兩次**
-# ≥11 檔才算就緒(10-08 kgieworld 11/12 → 1/12 → 0 → 10/12 的抖動),**至少 2 站**就緒或到
-# 20:30 才全量爬(2 站 0.4 req/s 抓 2,700 檔約 112 分鐘 < 7200 秒硬上限;其餘站在爬的途中
-# 待命、連續兩次通過就加入;等第 3 站只會更晚,不會更快——docs/47 §8.8)。
+# ≥11 檔才算就緒(10-08 kgieworld 11/12 → 1/12 → 0 → 10/12 的抖動)。開爬門檻看時間
+# (docs/47 §8.8):19:00 前要 **3 站**(3 站 ~75 分;來源 18:00–18:50 才逐站公布,第 3 站通常
+# 只晚第 2 站十來分鐘,等它比用 2 站爬快),19:00 起 **2 站**即可(2 站 ~112 分,硬上限 9000 秒
+# 留 25% 餘裕;其餘站在爬的途中待命、連續兩次通過就加入——站數也會**減**:連續 5 次失敗的站
+# 會退出,所以餘裕不是可有可無),20:30 截止照常全量爬。
+BRANCH_PROBE_THREE_HOSTS_UNTIL="${BRANCH_PROBE_THREE_HOSTS_UNTIL:-1900}"
+branch_probe_attempt() {
+  local need=3
+  if [ "$(taipei_date +%H%M)" -ge "$BRANCH_PROBE_THREE_HOSTS_UNTIL" ]; then
+    need=2
+  fi
+  radar_timeout 1200 probe-branch-day --sample 12 --threshold 11 --min-ready-hosts "$need" --min-consecutive 2 --sleep 1.0
+}
 # 等待期間放掉 DB 鎖,只握著分點來源鎖;探測出錯 = 照舊直接爬。
 # 抓取(fetch-branch-trades):五站平行、每站一個 worker、單站間隔 = 1.0 × 5 = 5 秒
 # (單站節奏與循序輪替相同,來源負載不變),只抓不寫、結果落暫存檔(每 50 檔 checkpoint)。
 # 2,000 檔約 33 分鐘,不隨來源變慢而變長(2026-10-05 循序爬 102 分鐘的根因就是一站拖住全部)。
 # 這 30–100 分鐘不握 DB 鎖:20:45 資券輪、00:05 夜間作業、mid-backfill-publish 都不必等。
-# 硬上限 2 小時(radar_timeout;容器 --init 轉送 SIGTERM,CLI 收到就寫 checkpoint 以 143 離開):
+# 硬上限 9000 秒 = 2.5 小時(2 站最壞 ~6,750 秒 + 開跑前檢查/重試/確認,留 25% 餘裕;radar_timeout;
+# 容器 --init 轉送 SIGTERM,CLI 收到就寫 checkpoint 以 143 離開):
 # 超時 = 本步失敗 → 中止,暫存檔留著已抓到的,第二輪從它續抓(成交金額大的先,留在外面的是冷門股)。
 release_db_lock
 if [ "$BRANCH_ROUND_MODE" != "import" ] && [ "${BRANCH_PROBE:-1}" != "0" ]; then
-  if POLL_HOLD_DB_LOCK=0 poll_until "branch-probe" 2030 600 radar_timeout 1200 probe-branch-day --sample 12 --threshold 11 --min-ready-hosts 2 --min-consecutive 2 --sleep 1.0; then
+  if POLL_HOLD_DB_LOCK=0 poll_until "branch-probe" 2030 600 branch_probe_attempt; then
     :
   else
     probe_rc=$?
@@ -202,7 +216,7 @@ fi
 # top=0: 當日有報價的全部 type=stock(不含 ETF),成交金額大的先抓。
 # 全市場權證輪尚未通過容量/時間 PoC;過渡池只含標的是 active 普通股的
 # 上市認購/認售、當日成交金額至少 100 萬的權證。此模式取代 legacy --warrants Top-N,不能疊加。
-run_step_or_fail "fetch-branch-trades" radar_timeout 7200 import-branch-trades --top 0 --warrant-turnover-min 1000000 --sleep 1.0 --workers 5 --stage-to "$STAGE_FILE"
+run_step_or_fail "fetch-branch-trades" radar_timeout 9000 import-branch-trades --top 0 --warrant-turnover-min 1000000 --sleep 1.0 --workers 5 --stage-to "$STAGE_FILE"
 acquire_db_lock_wait 3600
 
 # ── 寫入 + 分級:握著 DB 鎖,只要一兩分鐘 ─────────────────────────────────

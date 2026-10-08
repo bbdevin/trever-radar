@@ -95,9 +95,11 @@ class RoundsUseTheWaitingLock(unittest.TestCase):
 
     def test_branch_probe_runs_without_the_db_lock(self):
         code = _code(SCRIPTS / "daily-branches.sh")
-        probe = code.index("probe-branch-day")
+        probe = code.index('poll_until "branch-probe"')
         line = code[code.rfind("\n", 0, probe) + 1:code.index("\n", probe)]
         self.assertIn("POLL_HOLD_DB_LOCK=0 poll_until", line)
+        self.assertIn("branch_probe_attempt", line, "探測指令包在函式裡(依時刻選站數門檻)")
+        self.assertIn("probe-branch-day", code[:probe], "函式要定義在呼叫之前")
         self.assertIn(" 2030 600 ", line, "16:30 起每 10 分鐘,最晚 20:30(docs/47 §8)")
         self.assertLess(code.rfind("release_db_lock", 0, probe), probe)
         self.assertGreater(code.rfind("release_db_lock", 0, probe), -1,

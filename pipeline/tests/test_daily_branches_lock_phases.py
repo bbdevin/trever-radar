@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """docs/47 §8:分點輪的鎖相位與前置步驟的寬鬆分級——對**真的 lib.sh** 用 stub 量測。
 
 兩類測試:
@@ -261,7 +261,7 @@ class LockPhasesInTheScript(unittest.TestCase):
     def test_lock_order_is_source_then_db_and_both_waits_are_bounded(self):
         """來源鎖(等)→ DB 鎖(等)。反過來先握 DB 鎖再等來源鎖,第一輪要寫入時拿不到
         DB 鎖、第二輪拿不到來源鎖,兩輪互等到逾時。其他拿來源鎖的腳本都是 flock -n。"""
-        src = self._idx("acquire_branch_source_lock_wait 3600")
+        src = self._idx("acquire_branch_source_lock_wait 5400")
         self.assertLess(src, self._idx("acquire_db_lock_wait 3600"))
         self.assertEqual(self.code.count("acquire_branch_source_lock"), 1)
         self.assertNotIn("\nacquire_branch_source_lock\n", self.code, "第二輪不可以用會略過的那版")
@@ -288,7 +288,7 @@ class LockPhasesInTheScript(unittest.TestCase):
         self.assertLess(trap, self._idx("sync_code"), "要裝在第一次呼叫 radar 之前")
         # 第二次驗證的競賽:清理在拿到來源鎖**之後**——鎖拿到之前,今天的 .tmp 可能是還在抓的
         # 第一輪正在寫的檔。trap、立即清理、find 三者都要在來源鎖之後、DB 鎖之前。
-        src = self._idx("acquire_branch_source_lock_wait 3600")
+        src = self._idx("acquire_branch_source_lock_wait 5400")
         find = self._idx("find \"$REPO/data\" -maxdepth 1 -name 'branch-stage-*.json*'")
         self.assertLess(src, trap)
         self.assertLess(src, find)
@@ -306,12 +306,11 @@ class LockPhasesInTheScript(unittest.TestCase):
         self.assertIn("data/branch-stage-*.json*", gitignore)
 
     def test_probe_never_starts_on_a_single_mirror(self):
-        """HIGH 1:一站就緒就開爬 = 單站 5 秒 × 2,700 檔 = 13,500 秒 > 7200 硬上限。
+        """HIGH 1:一站就緒就開爬 = 單站 5 秒 × 2,700 檔 = 13,500 秒 > 9000 硬上限。
         10-08 起要 2 站(0.4 req/s,~112 分 < 上限;其餘站待命加入,docs/47 §8.8)。"""
-        line = next(ln for ln in self.lines if "probe-branch-day" in ln)
-        m = re.search(r"--min-ready-hosts (\d+)", line)
-        self.assertIsNotNone(m)
-        self.assertGreaterEqual(int(m.group(1)), 2)
+        fn = re.search(r"branch_probe_attempt\(\)\s*\{(.*?)\n\}", self.code, re.S).group(1)
+        for n in re.findall(r"need=(\d+)", fn):
+            self.assertGreaterEqual(int(n), 2, "任何時刻都不准 1 站開爬")
 
     def test_consequence_is_rewritten_after_the_first_publish(self):
         """LOW-MED 4:第一段上線之後失敗,通知不能再說「網站仍是前一輪的內容」。"""
@@ -335,7 +334,7 @@ class LockPhasesInTheScript(unittest.TestCase):
 
     def test_fetch_is_bounded_and_writes_nothing(self):
         line = next(ln for ln in self.lines if 'run_step_or_fail "fetch-branch-trades"' in ln)
-        self.assertIn("radar_timeout 7200", line, "抓取要有硬上限")
+        self.assertIn("radar_timeout 9000", line, "抓取要有硬上限")
         self.assertIn("--workers 5", line)
         self.assertIn('--stage-to "$STAGE_FILE"', line, "只抓不寫:結果落暫存檔")
         self.assertIn("--sleep 1.0", line, "全域間隔不變(單站 = 1.0 × 5 秒)")
@@ -352,7 +351,7 @@ class LockPhasesInTheScript(unittest.TestCase):
         self.assertNotIn("\nacquire_db_lock\n", self.code)
 
     def test_probe_releases_db_lock_but_keeps_the_source_lock(self):
-        probe = self._idx("probe-branch-day")
+        probe = self._idx('poll_until "branch-probe"')
         self.assertIn("POLL_HOLD_DB_LOCK=0", self.code[self.code.rfind("\n", 0, probe):probe])
         self.assertLess(self._idx("release_db_lock"), probe)
         self.assertNotIn("flock -u 8", self.code, "來源鎖整輪不放")
@@ -387,10 +386,40 @@ class LockPhasesInTheScript(unittest.TestCase):
         self.assertIn("fast publish skipped", skipped)
         self.assertIn("notify_warn", skipped)
 
-    def test_probe_requires_two_consecutive_passes_and_two_hosts(self):
+    def test_probe_requires_two_consecutive_passes_and_three_hosts_until_1900_then_two(self):
+        """§8.8 第四次驗證:2 站只剩 ~5% 餘裕 → 19:00 前要 3 站,之後 2 站;抓取上限 9000 秒。"""
         line = next(ln for ln in self.lines if "probe-branch-day" in ln)
-        self.assertIn("--min-ready-hosts 2", line)
+        self.assertIn('--min-ready-hosts "$need"', line)
         self.assertIn("--min-consecutive 2", line)
+        m = re.search(r"branch_probe_attempt\(\)\s*\{(.*?)\n\}", self.code, re.S)
+        self.assertIsNotNone(m)
+        body = m.group(1)
+        self.assertIn("local need=3", body)
+        self.assertRegex(body, r'-ge "\$BRANCH_PROBE_THREE_HOSTS_UNTIL" \]; then\n\s*need=2')
+        self.assertIn('BRANCH_PROBE_THREE_HOSTS_UNTIL="${BRANCH_PROBE_THREE_HOSTS_UNTIL:-1900}"', self.code)
+        self.assertIn('poll_until "branch-probe" 2030 600 branch_probe_attempt', self.code)
+        fetch = next(ln for ln in self.lines if 'run_step_or_fail "fetch-branch-trades"' in ln)
+        self.assertIn("radar_timeout 9000", fetch)
+        # 「當天一定有人上線」:第二輪等來源鎖的上限要蓋過第一輪最壞收工(20:30 + 9000 s + ~50 分 ≈ 23:50)。
+        self.assertIn("acquire_branch_source_lock_wait 5400", self.code)
+
+    def test_probe_attempt_picks_three_hosts_before_the_cutoff_and_two_after(self):
+        """stub harness:branch_probe_attempt 依台北時刻決定 --min-ready-hosts。"""
+        if not _bash_available():
+            self.skipTest("需要 bash")
+        fn = re.search(r"(branch_probe_attempt\(\)\s*\{.*?\n\})", self.code, re.S).group(1)
+        r = _run_harness(f"""
+radar_timeout() {{ echo "ARGS $*"; }}
+BRANCH_PROBE_THREE_HOSTS_UNTIL=1900
+{fn}
+taipei_date() {{ echo 1859; }}; branch_probe_attempt
+taipei_date() {{ echo 1900; }}; branch_probe_attempt
+taipei_date() {{ echo 2029; }}; branch_probe_attempt
+BRANCH_PROBE_THREE_HOSTS_UNTIL=2100
+taipei_date() {{ echo 2029; }}; branch_probe_attempt
+""")
+        needs = re.findall(r"--min-ready-hosts (\d)", r.stdout)
+        self.assertEqual(needs, ["3", "2", "2", "3"], r.stdout + r.stderr)
 
     def test_futures_digest_lives_inside_publish_site_once(self):
         body = self.code[self._idx("publish_site() {"):self.code.index("\n}\n", self._idx("publish_site() {"))]
