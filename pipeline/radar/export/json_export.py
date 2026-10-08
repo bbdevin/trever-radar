@@ -616,7 +616,7 @@ def _active_buybacks_by_stock(conn, as_of: str) -> dict[str, dict]:
 def _futures_spot_quotes(
     conn, stock_ids: list[str], *, d: str, prev: str | None,
 ) -> dict[str, dict]:
-    """期貨異常名單用的現貨報價:``{stock_id: {"date", "close", "chg_pct"?}}``(docs/38 §7.21)。
+    """期貨異常名單用的現貨報價:``{stock_id: {"date", "close", "chg_pct"?, "exdiv"?}}``(docs/38 §7.21)。
 
     **日期是現貨資料日 ``d``(= ``radar.data_date``),不是期貨行情日。** 使用者要看的是
     這檔股票現在的股價,而首頁其他每一個股價(多方榜卡片)都是 ``d`` 那一天;兩者在
@@ -631,11 +631,18 @@ def _futures_spot_quotes(
     這是**呈現用的報價**,不是旗標的事實:不進規則、不參與排序(名單順序照舊)。
     ``d`` 沒有收盤 → 該檔不出現(呼叫端整個鍵不輸出);前一日沒有收盤 → 只有 ``chg_pct``
     缺鍵,不寫 null、不寫 0。
+
+    ``exdiv: true``(只在成立時出現):``prev`` 與 ``d`` 的 ``adj_factor`` 不同 = 兩天之間
+    有除權息,``chg_pct`` 是未還原的收盤對收盤,會把除權息缺口算成漲跌(§7.19 要求期貨
+    表面的價格 % 講明未扣除權息)。判斷法與 ``spot_after.ex_rights`` 相同。**偵測不到
+    不代表沒有**:``adj_factor`` 只在手動跑 compute-adjustments 時更新(不在排程裡),
+    新列一律 1.0,所以多數除權息當天這裡不會舉起來;缺鍵只是「沒偵測到」。
     """
     if not stock_ids:
         return {}
     rows = conn.execute(text("""
-        SELECT p.stock_id, p.close, pp.close AS prev_close
+        SELECT p.stock_id, p.close, pp.close AS prev_close,
+               p.adj_factor, pp.adj_factor AS prev_adj_factor
         FROM daily_prices p
         LEFT JOIN daily_prices pp ON pp.stock_id = p.stock_id AND pp.date = :prev
         WHERE p.date = :d AND p.close IS NOT NULL AND p.stock_id IN :ids
@@ -647,6 +654,9 @@ def _futures_spot_quotes(
         quote: dict = {"date": d, "close": close}
         if prev_close:
             quote["chg_pct"] = round((close - prev_close) / prev_close * 100, 2)
+            if (row["adj_factor"] is not None and row["prev_adj_factor"] is not None
+                    and row["adj_factor"] != row["prev_adj_factor"]):
+                quote["exdiv"] = True
         out[row["stock_id"]] = quote
     return out
 

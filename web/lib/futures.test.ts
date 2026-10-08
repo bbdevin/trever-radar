@@ -988,11 +988,11 @@ test("§7.19 % 只出現在 priceAfterText 與鎖住的回測句(而且回測句
 
 test("§7.21 spot_quote -> 股價與漲跌字串;漲紅跌綠由 signed 決定,不在這裡算 %", () => {
   const up = spotQuoteView({ date: "2026-09-18", close: 1234.5, chg_pct: 1.2 }, "2026-09-18");
-  assert.deepEqual(up, { price: "1,234.5", chg: "▲1.20%", signed: 1.2, dateNote: null });
+  assert.deepEqual(up, { price: "1,234.5", chg: "▲1.20%", signed: 1.2, exdiv: false, dateNote: null });
   const down = spotQuoteView({ date: "2026-09-18", close: 51, chg_pct: -2.35 }, "2026-09-18");
-  assert.deepEqual(down, { price: "51.0", chg: "▼2.35%", signed: -2.35, dateNote: null });
+  assert.deepEqual(down, { price: "51.0", chg: "▼2.35%", signed: -2.35, exdiv: false, dateNote: null });
   const flat = spotQuoteView({ date: "2026-09-18", close: 88.25, chg_pct: 0 }, "2026-09-18");
-  assert.deepEqual(flat, { price: "88.25", chg: "0.00%", signed: 0, dateNote: null });
+  assert.deepEqual(flat, { price: "88.25", chg: "0.00%", signed: 0, exdiv: false, dateNote: null });
 });
 
 test("§7.21 股價日與期貨行情日不同天 -> 標出股價日期(MM-DD);期貨日未知也標", () => {
@@ -1006,7 +1006,7 @@ test("§7.21 舊 payload / 缺 chg_pct:沒有就不顯示,不補 0", () => {
   assert.equal(spotQuoteView(undefined, "2026-09-18"), null);
   assert.equal(spotQuoteView(null, "2026-09-18"), null);
   const noChg = spotQuoteView({ date: "2026-09-18", close: 50 }, "2026-09-18");
-  assert.deepEqual(noChg, { price: "50.0", chg: null, signed: null, dateNote: null });
+  assert.deepEqual(noChg, { price: "50.0", chg: null, signed: null, exdiv: false, dateNote: null });
 });
 
 test("§7.21 名單列帶 quote;舊 payload(無 spot_quote)的列 quote 為 null,順序不變", () => {
@@ -1021,6 +1021,19 @@ test("§7.21 名單列帶 quote;舊 payload(無 spot_quote)的列 quote 為 null
   if (state.kind !== "listed") return;
   assert.deepEqual(state.rows.map((r) => r.stockId), ["2330", "1565"]);
   // META.as_of 是 09-17(期貨),股價是 09-18(現貨)→ 標出股價日期。
-  assert.deepEqual(state.rows[0].quote, { price: "1,000.0", chg: "▼0.50%", signed: -0.5, dateNote: "09-18" });
+  assert.deepEqual(state.rows[0].quote, { price: "1,000.0", chg: "▼0.50%", signed: -0.5, exdiv: false, dateNote: "09-18" });
   assert.equal(state.rows[1].quote, null);
+});
+
+test("§7.21 除權息:payload exdiv -> 小字「除權息」(中性);沒有漲跌就不標;缺鍵不標", () => {
+  const ex = spotQuoteView({ date: "2026-09-18", close: 47.5, chg_pct: -5, exdiv: true }, "2026-09-18");
+  assert.deepEqual(ex, { price: "47.5", chg: "▼5.00%", signed: -5, exdiv: true, dateNote: null });
+  const noChg = spotQuoteView({ date: "2026-09-18", close: 47.5, exdiv: true }, "2026-09-18");
+  assert.equal(noChg?.exdiv, false);
+  assert.equal(spotQuoteView({ date: "2026-09-18", close: 47.5, chg_pct: -5 }, "2026-09-18")?.exdiv, false);
+  // 元件:標籤字是「除權息」,中性色(不走紅漲綠跌)。
+  const src = readFileSync(new URL("../components/FuturesAnomalyList.tsx", import.meta.url), "utf8");
+  const tag = src.slice(src.indexOf("row.quote.exdiv &&"), src.indexOf("row.quote.dateNote &&"));
+  assert.ok(/>\s*除權息\s*</.test(tag), "畫面上的字是「除權息」");
+  assert.ok(tag.includes("text-muted-foreground") && !/text-(up|down)/.test(tag), "標籤是中性色");
 });

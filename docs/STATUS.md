@@ -9,6 +9,7 @@
 - **日期定案**:用現貨資料日(= data_date,與多方榜同一天、同一個 close/chg_pct 公式),期貨落後時標日期;理由見 docs/38 §7.21。
 - **驗證**:pytest 全套 1576 passed(新 `AnomalySpotQuoteTests` 6 項:值等於 daily_prices 該日 close/chg 且等於 radar.stocks、同日/落後一日、缺前日只缺 chg_pct、缺當日整鍵不出、ETF 標的、head.json 帶鍵而個股區塊不帶);web node 測試 346 passed(含 §7.21 四項);`tsc`、`next build` 通過;以種子 DB 跑真 export,390px 深/淺色截圖(Playwright 攔截 Supabase auth/rest、假 session,未動 AuthGate)無水平溢出。
 - **待人類**:合 main 後 VPS 下一輪 export 自動帶上,不改 crontab/Worker/腳本。
+- **驗證後補(同日)**:`spot_quote.exdiv: true`(前一日→當日 `adj_factor` 變動)時 % 後面加中性小字「除權息」;期貨表面閘門補認 `pct`/`percent`/`chg`,以完整路徑只放行 `spot_quote.chg_pct`(§7.21 例外)。**限制**:正式 `adj_factor` 只在手動 compute-adjustments 時更新,多數除權息當天偵測不到(例 1101 會照樣顯示 −5.00% 而不標);要可靠需排程 compute-adjustments 或除權息日表——待人類決定。
 
 ## 2026-10-09 法人族群加「個股」模式:法人買賣超個股排行(`docs/49` §9;程式完成於分支、未合 main、未上線;v3.6)
 

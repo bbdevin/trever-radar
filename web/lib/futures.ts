@@ -202,6 +202,11 @@ export interface SpotQuoteView {
   /** 漲跌原數字,畫面用來上紅漲綠跌(0 不上色)。 */
   signed: number | null;
   /**
+   * 漲跌含除權息缺口(payload `exdiv: true`,且有 `chg`)。畫面在 % 後面加中性小字
+   * 「除權息」(§7.19:期貨表面的價格 % 要講明未扣除權息;只在偵測到時標,不每列都標)。
+   */
+  exdiv: boolean;
+  /**
    * 股價日期(MM-DD)——只在它與期貨行情日不同天時給,否則 null。報價是現貨資料日,
    * 期貨行情日常態可能落後一天(§7.12);同一張卡片上兩個日子不可以默默混成一天。
    */
@@ -223,6 +228,7 @@ export function spotQuoteView(
     price: fmtPrice(quote.close),
     chg: pct === null ? null : fmtPct(pct),
     signed: pct,
+    exdiv: pct !== null && quote.exdiv === true,
     // 期貨行情日未知(舊 meta)時也標:不知道是不是同一天,就講出來。
     dateNote: futuresAsOf !== null && quote.date === futuresAsOf ? null : quote.date.slice(5),
   };

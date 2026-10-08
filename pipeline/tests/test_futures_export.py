@@ -7,6 +7,7 @@
 用即拋 SQLite,風格同 test_backfill_gaps.py / test_margin_export.py,不連網路。
 """
 import json
+import re
 import unittest
 from datetime import date, timedelta
 from pathlib import Path
@@ -1177,6 +1178,33 @@ class AnomalySpotQuoteTests(_AnomalyFixture):
         quote = self.radar()[INDEX_KEY][0]["spot_quote"]
         self.assertEqual(quote, {"date": SPOT_AHEAD, "close": 55.0, "chg_pct": 10.0})
 
+    def set_adj(self, sid, day, factor):
+        with db.get_engine().begin() as conn:
+            conn.execute(schema.daily_prices.update().where(
+                (schema.daily_prices.c.stock_id == sid)
+                & (schema.daily_prices.c.date == day)
+            ).values(adj_factor=factor))
+
+    def test_exdiv_is_true_when_adj_factor_changes_between_prev_and_the_spot_date(self):
+        """除權息當天:未還原的收盤對收盤把缺口算成跌幅,要標出來(§7.19 / §7.21)。"""
+        self.seed([_spec("CCF", "2303")])
+        self.set_close("2303", AD, 50.0)
+        self.set_close("2303", SPOT_AHEAD, 47.5)
+        self.set_adj("2303", AD, 0.95)            # 回溯調整:除權息日之前的列乘上因子
+        quote = self.radar()[INDEX_KEY][0]["spot_quote"]
+        self.assertEqual(quote, {"date": SPOT_AHEAD, "close": 47.5,
+                                 "chg_pct": -5.0, "exdiv": True})
+
+    def test_exdiv_is_absent_on_an_ordinary_day(self):
+        """沒有偵測到就不寫鍵(不寫 false):缺鍵只是「沒偵測到」。"""
+        self.seed([_spec("CCF", "2303")])
+        self.set_close("2303", SPOT_AHEAD, 51.0)
+        quote = self.radar()[INDEX_KEY][0]["spot_quote"]
+        self.assertNotIn("exdiv", quote)
+        # 因子變動發生在更早的日子(不在 prev → d 之間)也不算。
+        self.set_adj("2303", _DAYS[-3], 0.9)
+        self.assertNotIn("exdiv", self.radar()[INDEX_KEY][0]["spot_quote"])
+
     def test_the_quote_rides_in_home_head_and_not_in_the_per_stock_blocks(self):
         """首頁預設分頁讀 home/head.json,不必多抓 stocks.json;個股區塊與紀錄不變。"""
         self.seed([_spec("CCF", "2303")])
@@ -1443,7 +1471,19 @@ class MarketOpenInterestDirectionTests(_AnomalyFixture):
 # 分開的那兩個常數仍然留著:`test_the_entries_carry_no_rank_or_position_key` 與
 # `test_the_meta_key_is_exactly_one_date_and_one_integer` 講的是比「不得有比率」
 # 更窄的主張,那裡分開命名讀起來才對得上它們各自引的條文。
-SURFACE_BANNED = RATIO_ISH + RANK_ISH
+#
+# 2026-10-09 加上百分比的寫法(pct / percent / chg):`spot_quote.chg_pct` 上線之前,
+# 這把閘門其實認不出「漲跌%」這種比率——它過得了只是因為詞彙表裡沒有 pct。
+SURFACE_BANNED = RATIO_ISH + RANK_ISH + ("pct", "percent", "chg")
+
+# 明文的例外,一條一條列、以**完整路徑**比對(不是鍵名):docs/38 §7.21 的
+# `spot_quote.chg_pct` 是現貨的當日漲跌%,與 radar.stocks.chg_pct 同一個數字——
+# 一個報價,不是對旗標的衍生判斷,不參與排序。只放行今日名單條目底下的那一個鍵;
+# 同名的鍵出現在別處、或 spot_quote 底下多一個比率,照樣紅。
+SURFACE_ALLOWED = (
+    re.compile(r"^(radar\.json|home/head\.json)\.futures_volume_anomalies\[\d+\]"
+               r"\.spot_quote\.chg_pct$"),
+)
 
 
 def _futures_surface(out: Path) -> dict[str, object]:
@@ -1495,7 +1535,8 @@ def _surface_keys(surface: dict[str, object]) -> list[str]:
 
 def _offenders(surface: dict[str, object]) -> list[str]:
     return [key for key in _surface_keys(surface)
-            if any(bad in key.rsplit(".", 1)[-1].lower() for bad in SURFACE_BANNED)]
+            if any(bad in key.rsplit(".", 1)[-1].lower() for bad in SURFACE_BANNED)
+            and not any(allowed.match(key) for allowed in SURFACE_ALLOWED)]
 
 
 class FuturesSurfaceRateGateTests(_AnomalyFixture):
@@ -1581,6 +1622,27 @@ class FuturesSurfaceRateGateTests(_AnomalyFixture):
             f"radar.json.{DIRECTION_KEY}.increase_ratio",
             "radar.json.futures_volume_zscore",
             "stocks/core/2303.json.futures.contracts[0].anomaly.volume_rank",
+        ])
+
+    def test_the_spot_quote_exception_is_exactly_one_path(self):
+        """§7.21 的例外只放行今日名單的 spot_quote.chg_pct;它真的在表面上(不是空放行),
+        而旁邊多一個比率、或同名鍵長在別處,都照樣被抓到。"""
+        self._export_a_rich_day()
+        keys = _surface_keys(_futures_surface(self.out))
+        allowed = [k for k in keys if any(a.match(k) for a in SURFACE_ALLOWED)]
+        self.assertTrue(any(k.startswith("radar.json.") for k in allowed), allowed)
+        self.assertTrue(any(k.startswith("home/head.json.") for k in allowed), allowed)
+
+        radar_path = self.out / "radar.json"
+        radar = json.loads(radar_path.read_text(encoding="utf-8"))
+        radar[INDEX_KEY][0]["spot_quote"]["chg5_pct"] = 1.0       # 例外旁邊的新比率
+        radar[INDEX_KEY][0]["anomaly"]["chg_pct"] = 1.0           # 同名鍵長在別處
+        radar[INDEX_KEY][0]["volume_pct"] = 1.0                   # 條目上的新百分比
+        radar_path.write_text(json.dumps(radar), encoding="utf-8")
+        self.assertEqual(_offenders(_futures_surface(self.out)), [
+            f"radar.json.{INDEX_KEY}[0].anomaly.chg_pct",
+            f"radar.json.{INDEX_KEY}[0].spot_quote.chg5_pct",
+            f"radar.json.{INDEX_KEY}[0].volume_pct",
         ])
 
     def test_a_rate_outside_the_futures_surface_is_none_of_this_gates_business(self):

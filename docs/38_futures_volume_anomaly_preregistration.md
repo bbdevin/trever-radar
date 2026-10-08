@@ -606,7 +606,8 @@ latest("futures_daily")`),只是沒有把它交給切片。
 - **payload**:`radar.json`(與它的投影 `home/head.json`)的 `futures_volume_anomalies[]` 每一條目加選填 `spot_quote = {date, close, chg_pct?}`。首頁預設分頁本來就讀 head.json,**不多抓任何檔**。新增是純加鍵:radar.json / head.json 位元組因此改變(只多這個鍵);個股 `futures` 區塊、`futures_volume_anomaly_history` 與多方榜不變。
 - **日期對齊(定案)**:報價是**現貨資料日**(= `radar.data_date`),不是期貨行情日。理由:使用者要看的是這檔股票現在的股價,首頁其他股價(多方榜卡片)也都是這一天,同一頁不出現兩種「今天」。期貨行情日落後一天時(§7.12 常態),前端在報價後面標出股價日期 `(MM-DD)`;兩者同一天就不標。舉旗日當天的收盤仍由 §7.19 紀錄的 `spot_after.flag_close` 提供。
 - **數值**:`close` / `chg_pct` 與 `radar.stocks` 同一定義、同一公式(`d` 的未還原收盤對全市場前一交易日收盤,兩位小數),逐值相同,不是第二種漲跌;直接讀 `daily_prices`,所以指數基金期貨的標的(00xx,不在 `radar.stocks`)也有。`d` 沒有收盤 → 整個 `spot_quote` 缺鍵;前一日沒有收盤 → 只缺 `chg_pct`(不寫 0/null)。
-- **與 §7.19「% 只走 priceAfterText」的關係**:這裡的 % 是 payload 帶來的當日漲跌(與多方榜同一個數字),前端 `spotQuoteView` 只排版(`fmtPct`,▲紅/▼綠/0 中性),不在期貨表面算任何 %;它是報價,不是對旗標的主張,也不參與排序。
+- **與 §7.19「% 只走 priceAfterText」的關係**:這裡的 % 是 payload 帶來的當日漲跌(與多方榜同一個數字),前端 `spotQuoteView` 只排版(`fmtPct`,▲紅/▼綠/0 中性),不在期貨表面算任何 %;它是報價,不是對旗標的主張,也不參與排序。表面閘門 `FuturesSurfaceRateGateTests` 的詞彙表同日補上 `pct`/`percent`/`chg`(之前它認不出百分比),並以**完整路徑**明列唯一例外 `SURFACE_ALLOWED`:`(radar.json|home/head.json).futures_volume_anomalies[i].spot_quote.chg_pct`;旁邊多一個比率、或同名鍵長在別處,照樣紅(有測試)。
+- **除權息(`exdiv`)**:§7.19 要求期貨表面的價格 % 講明未扣除權息。每列都標太擠,所以只在偵測到時標:`prev` 與 `d` 的 `adj_factor` 不同 → `spot_quote.exdiv: true`(與 `spot_after.ex_rights` 同一判斷法),畫面在 % 後面加中性小字「除權息」(例:「股價 47.5 ▼5.00% 除權息」)。**偵測不到不代表沒有**:`adj_factor` 只在手動跑 compute-adjustments 時更新(不在排程裡),新列一律 1.0,所以正式資料上多數除權息當天不會標出來;要可靠,得把 compute-adjustments 排進 export 之前或另取除權息日表(未做,待人類決定)。多方榜卡片目前沒有任何除權息標示可重用。
 - **版面(390px)**:卡片標頭下方獨立一行「股價 1,245.0 ▲2.47% (06-22)」,`whitespace-nowrap`,不擠標頭那一行;舊 payload 沒有 `spot_quote` → 整行不畫。測試:`test_futures_export.py::AnomalySpotQuoteTests`、`futures.test.ts` §7.21。
 
 ### 7.13 R4 在日曆邊緣:算不出結算日 ⇒ 不主張(這一條是正確性,不是呈現)

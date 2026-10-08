@@ -11,8 +11,9 @@ import { contractLabelTitle, spotFollowLabel, type SpotFollow } from "@/lib/futu
  *   - 現貨尚未跟上(檢定成立的那一種)= 原本的 accent-2 外框、左色條、實心標籤;
  *   - 現貨已同步爆量 = 同樣醒目,用 `--up` 紅色外框、左色條、實心紅標籤;
  *   - 不知道 = 不貼標籤、一般外框。
- * 這是**量的訊號狀態**的分類色,不是漲跌色;價格那一行一律中性色。標籤文字保留,
- * 顏色不是唯一的訊號。
+ * 這是**量的訊號狀態**的分類色,不是漲跌色:外框紅不代表漲。真正的漲跌色只在
+ * 價格本身——首頁名單的「股價」一行(§7.21)與近 N 日紀錄的價格句,依數字紅漲綠跌、
+ * 0 中性。標籤文字保留,顏色不是唯一的訊號。
  */
 export function flagCardClass(spot: SpotFollow): string {
   return cn(

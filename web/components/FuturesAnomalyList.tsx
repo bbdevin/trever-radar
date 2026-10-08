@@ -152,6 +152,14 @@ export default function FuturesAnomalyList({
                       {row.quote.chg}
                     </span>
                   )}
+                  {row.quote.exdiv && (
+                    <span
+                      className="rounded border border-border px-1 text-[10.5px] leading-tight text-muted-foreground"
+                      title="前一日與當日之間除權息:漲跌為未扣除權息的收盤對收盤,含除權息缺口"
+                    >
+                      除權息
+                    </span>
+                  )}
                   {row.quote.dateNote && (
                     <span className="text-[11px]" title="股價為現貨資料日,與期貨行情日不同天">
                       ({row.quote.dateNote})

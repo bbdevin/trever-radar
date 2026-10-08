@@ -515,6 +515,11 @@ export interface FuturesSpotQuote {
   date: string;
   close: number;
   chg_pct?: number;
+  /**
+   * 只在前一日與當日之間偵測到除權息(`adj_factor` 變動)時出現,值恆為 true:
+   * `chg_pct` 未扣除權息,含除權息缺口。缺鍵 = 沒偵測到,不代表沒有。
+   */
+  exdiv?: true;
 }
 
 /**
