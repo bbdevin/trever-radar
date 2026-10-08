@@ -19,6 +19,7 @@ from .. import config
 from ..db import get_engine, init_db
 from ..branch_source import date_window_from
 from .home_split import write_home
+from .insti_group_flow import write_insti_flow
 from .spark_day import attach_spark_day
 from .stock_parts import (
     StockPartsWriter,
@@ -2180,6 +2181,9 @@ def export_json(
 
     with engine.connect() as conn:
         _export_margin_usage(out, conn, d, m_date)
+        # 法人族群(docs/49 MVP):自己一檔,切到首頁「法人族群」分頁才抓;不進 radar/home。
+        write_insti_flow(out, conn, data_date=d, i_date=i_date,
+                         memberships=company_themes_by_stock, generated_at=now)
 
     # 全市場搜尋索引(id/名稱/市場/產業/描述;compact 陣列省體積)
     with engine.connect() as conn:

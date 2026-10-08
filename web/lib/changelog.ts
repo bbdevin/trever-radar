@@ -39,6 +39,14 @@ export const KIND_LABEL: Record<ChangeKind, string> = {
 
 export const CHANGELOG: Release[] = [
   {
+    version: "3.5",
+    date: "2026-10-08",
+    title: "首頁新增法人族群",
+    items: [
+      { kind: "new", text: "首頁新增「法人族群」分頁(在資券之後):外資、投信、自營、合計四種身分,依產業或題材列出今天法人買超、賣超最多的族群,顯示張數、買超/賣超檔數與估算金額;點族群看買超前 5、賣超前 3 檔,點個股直接開三大法人分頁" },
+    ],
+  },
+  {
     version: "3.4",
     date: "2026-10-07",
     title: "分點資料更早上線",

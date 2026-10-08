@@ -767,6 +767,54 @@ export interface MarginUsageJson {
   items: MarginUsageItem[];
 }
 
+/** 法人族群(docs/49):rankings/insti_flow_1d.json */
+export type InstiIdentity = "foreign" | "trust" | "dealer" | "total";
+
+export interface InstiFlowMember {
+  id: string;
+  name: string;
+  market: string;
+  net_lots: number;
+  /** 淨股數 × 當日收盤(估) */
+  amt_est: number;
+  chg_pct: number | null;
+}
+
+export interface InstiFlowGroup {
+  name: string;
+  /** 該日有法人列的成分數 */
+  n: number;
+  buy_n: number;
+  sell_n: number;
+  net_lots: number;
+  amt_est: number;
+  buy_top: InstiFlowMember[];
+  sell_top: InstiFlowMember[];
+  /** 無收盤、金額未計的成分數(> 0 才有) */
+  amt_missing_n?: number;
+  /** 題材分類已過期時的分類日(只有 stale 題材帶) */
+  cls_date?: string;
+}
+
+export interface InstiFlowJson {
+  version: number;
+  window: number;
+  days_actual: number;
+  as_of: string;
+  data_date: string;
+  generated_at: string;
+  stale: boolean;
+  coverage: { twse: number; tpex: number; partial: boolean };
+  amt_missing_n: number;
+  market: Record<InstiIdentity, { net_lots: number; amt_est: number }>;
+  groups: {
+    industry: Record<InstiIdentity, InstiFlowGroup[]>;
+    theme: Record<InstiIdentity, InstiFlowGroup[]>;
+    /** 產業「其他」(空白/字面其他/不足 3 檔),不排名 */
+    other?: Record<InstiIdentity, InstiFlowGroup>;
+  };
+}
+
 /** 產業下鑽子題材(僅 sectors 帶;口徑同題材聚合但限定產業內成分) */
 export interface SectorSubFlow {
   name: string;

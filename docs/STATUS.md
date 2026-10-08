@@ -2,6 +2,13 @@
 
 > 單一進度真相。每完成一個里程碑就更新本檔。規格細節看各編號文件,別寫在這裡。
 
+## 2026-10-08 法人族群 MVP(`docs/49` §6 MVP;程式完成於分支、未合 main、未上線;v3.5)
+
+- **做了什麼**:export 尾段(與 `_export_margin_usage` 同一個 `conn`)寫 `rankings/insti_flow_1d.json`(`pipeline/radar/export/insti_group_flow.py`,純函式 `aggregate` + `write_insti_flow`,緊湊序列化、tmp+rename、`i_date` 為 None 不寫);首頁新分頁「法人族群」(key `insti`,緊接資券,`?tab=insti`),元件 `web/components/InstiGroupFlow.tsx`、句子 `web/lib/instiGroupFlow.ts`;成員列連 `/stock?id=…#insti`,個股頁新增 `#insti` 直開三大法人分頁。
+- **口徑**:依 `docs/49` §2/§3 —— ETF 排除、逐檔 `淨股數//1000` 再相加(恆等式:族群 = Σ 成員、產業各組 + 其他 = 全市場)、停牌回退最近收盤、題材 (name, stock_id) 去重且排除未來 membership、最小族群 3 檔、題材 |金額| ≥ 1,000 萬且買賣各前 20、同分 金額→張數→名稱;`stale`/`coverage.partial`/`amt_missing_n`/題材 `cls_date`。另加預算保險:序列化 > 250 KB 時自動降為成員 3+2、再降題材前 10(§3.2 的砍法,前端讀長度、不必改)。
+- **驗證**:`pytest tests/test_insti_group_flow.py`(15)＋相關 export/label 測試;`node --test web/lib/instiGroupFlow.test.ts`(句子、70% 集中門檻、禁詞);`tsc`、`next build` 通過;同一份種子 DB 以 main(aed6552)與本分支各匯出一次(固定時鐘),`radar.json`/`home/head.json`/`home/stocks.json` SHA-256 相同。全市場規模種子(1,771 檔、31 產業、40 題材):檔案 239,690 B raw / 25.6 KB br。390px 深/淺色截圖無水平溢出。
+- **待人類**:合 main 後 VPS 下一輪 `daily-insti.sh` 的 export 自動產生檔案,不改 crontab/Worker/腳本;§7.1「抽 3 檔與 T86/TPEx 人工核對」需在正式資料上做(本機無正式 DB)。
+
 ## 2026-10-08 法人族群買賣超規劃落檔(`docs/49`;只改文件,程式未動)
 
 - **需求**:使用者要「投信、外資當日買超或賣超的族群」。規劃定案:外資/投信/自營/合計 × 產業(一檔一組,不重複計算)/題材(全成員計入、不跨組相加),族群淨額以張為原始資料、金額為「張數×當日收盤」估算並標「估」,排序鍵為估算金額;點族群看買超前 5／賣超前 3 成分股並連個股頁。

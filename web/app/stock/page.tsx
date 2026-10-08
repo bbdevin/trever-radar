@@ -162,6 +162,10 @@ function StockView() {
       setView("chips");
       setChipsSection("flow");
     }
+    // #insti:首頁「法人族群」成員列點進來,直接開三大法人分頁(docs/49 §4.2)。
+    if (window.location.hash === "#insti") {
+      setView("insti");
+    }
     if (tabParam === "margin") {
       setView("margin");
     }

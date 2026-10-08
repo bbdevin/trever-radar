@@ -2,7 +2,7 @@
 
 import { Fragment, useEffect, useState, useMemo, useRef, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
-import { Clock, ShieldCheck, Zap, ChevronDown, Briefcase, AlertTriangle, Ban, Percent, Layers } from "lucide-react";
+import { Clock, ShieldCheck, Zap, ChevronDown, Briefcase, AlertTriangle, Ban, Percent, Layers, Landmark } from "lucide-react";
 import { IconFlame, IconTrend, IconZap, IconRadar, IconPulse, IconStar, IconTrendDown } from "@/components/Icons";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -11,6 +11,8 @@ import { ScrollHint } from "@/components/ScrollHint";
 import StockCard from "@/components/StockCard";
 import ThemeGroupedList from "@/components/ThemeGroupedList";
 import MarginUsageRank from "@/components/MarginUsageRank";
+import InstiGroupFlow from "@/components/InstiGroupFlow";
+import { INSTI_TAB_HINT, INSTI_TAB_LABEL } from "@/lib/instiGroupFlow";
 import FuturesAnomalyList from "@/components/FuturesAnomalyList";
 import FuturesOpenInterestDirection from "@/components/FuturesOpenInterestDirection";
 import FuturesAnomalyHistory from "@/components/FuturesAnomalyHistory";
@@ -37,6 +39,7 @@ type TabKey =
   | "faded"
   | "pocket"
   | "margin"
+  | "insti"
   | "scan"
   | "mark"
   | "futures"
@@ -81,6 +84,13 @@ const TABS: { key: TabKey; label: string; hint: string; icon: any }[] = [
     label: "資券",
     hint: "全市場融資使用率（餘額÷限額）排行。越高＝融資額度越緊；≥60% 視為過熱風險觀察，不進綜合分。",
     icon: Percent,
+  },
+  {
+    // 法人族群(docs/49):全市場籌碼排行、自己的 JSON(切到才抓),與資券同一種嵌入模式。
+    key: "insti",
+    label: INSTI_TAB_LABEL,
+    hint: INSTI_TAB_HINT,
+    icon: Landmark,
   },
   {
     key: "scan",
@@ -311,7 +321,7 @@ function RadarView() {
 
   const shown = useMemo(() => {
     // margin 與 futures 有自己的資料來源(不是 radar.lists 的股票清單),不走這裡。
-    if (!radar || !stocks || tab === "margin" || tab === "futures" || tab === "board") return [];
+    if (!radar || !stocks || tab === "margin" || tab === "insti" || tab === "futures" || tab === "board") return [];
     const byId = new Map(stocks.map((s) => [s.id, s]));
     if (tab === "mark") {
       return (radar.strategies?.[strategy] ?? []).map((id) => byId.get(id)!).filter(Boolean);
@@ -474,7 +484,7 @@ function RadarView() {
                   : t.key === "futures"
                   // 缺鍵 = 沒有算過 → 不顯示數字。顯示 0 會把「沒算」講成「今天沒有異常」。
                   ? radar.futures_volume_anomalies?.length ?? null
-                  : t.key === "mark" || t.key === "margin"
+                  : t.key === "mark" || t.key === "margin" || t.key === "insti"
                   ? null
                   : radar.lists?.[t.key as ListKey]?.length ?? 0;
             return (
@@ -499,7 +509,7 @@ function RadarView() {
             );
           })}
         </ScrollHint>
-        {tab !== "margin" && tab !== "board" && (
+        {tab !== "margin" && tab !== "insti" && tab !== "board" && (
           <p
             className="mt-2.5 rounded-[var(--r-md)] border border-border/80 bg-muted/25 px-3 py-2 text-[12.5px] leading-relaxed text-foreground/90"
             role="note"
@@ -724,6 +734,10 @@ function RadarView() {
       ) : tab === "margin" ? (
         <div className="mb-4 animate-[fadeUp_0.35s_ease_backwards]">
           <MarginUsageRank embedded />
+        </div>
+      ) : tab === "insti" ? (
+        <div className="mb-4 animate-[fadeUp_0.35s_ease_backwards]">
+          <InstiGroupFlow />
         </div>
       ) : stocksPending ? (
         // 第一次切到要畫股票的分頁:home/stocks.json 還在路上(表頭與分頁檔數已經畫好了)
