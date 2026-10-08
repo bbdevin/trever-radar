@@ -90,6 +90,9 @@ publish_site() {
   run_step_or_fail "export-json" radar export-json
   build_bull_board
   run_step_or_fail "deploy" deploy_data
+  # 期貨量異常摘要(docs/38 §7.19):上線之後才送;永不失敗;同一個期貨行情日只送一次
+  # (標記檔),所以一輪上線兩次也只會送一則。
+  futures_digest
 }
 
 # 起訖標記 + 每步計時(run_step 在 lib.sh,與 00:05 的 safe-branch-stats.sh 同一份)。
@@ -109,6 +112,8 @@ trap 'branch_stage_cleanup' EXIT
 branch_stage_cleanup
 find "$REPO/data" -maxdepth 1 -name 'branch-stage-*.json*' ! -name "branch-stage-${ROUND_DATE}.json" \
   -delete 2>/dev/null || true
+# 探測的連勝數檔(內容帶日期,別天的會被程式自己作廢;這裡只清 .tmp)。
+rm -f "$REPO/data/branch-probe-state-latest.json.tmp" 2>/dev/null || true
 acquire_db_lock_wait 3600
 sync_code
 
@@ -170,9 +175,10 @@ run_step_or_warn "seed-branches" radar seed-branches
 
 # ── 分點來源探測 + 平行抓取:這一段**不握 DB 鎖**(docs/47 §8)─────────────
 # 探測(docs/47 原則 3;只在第一輪,BRANCH_PROBE=0 = 舊行為直接爬):每 10 分鐘
-# **每一站各**抽 12 檔問一次(probe-branch-day,唯讀、不寫 DB;逐站一行 log,明天就量得出
-# 各站幾點先有資料),**至少 3 站**各 ≥11 檔有資料、或到 20:30 才全量爬(只有一站就緒時
-# 單站 5 秒間隔抓 2,000 檔要 10,000 秒,超過硬上限;其餘站在爬的途中待命、公布了就加入)。
+# **每一站各**抽 12 檔問一次(probe-branch-day,唯讀、不寫 DB;逐站一行 log),一站要**連續兩次**
+# ≥11 檔才算就緒(10-08 kgieworld 11/12 → 1/12 → 0 → 10/12 的抖動),**至少 2 站**就緒或到
+# 20:30 才全量爬(2 站 0.4 req/s 抓 2,700 檔約 112 分鐘 < 7200 秒硬上限;其餘站在爬的途中
+# 待命、連續兩次通過就加入;等第 3 站只會更晚,不會更快——docs/47 §8.8)。
 # 等待期間放掉 DB 鎖,只握著分點來源鎖;探測出錯 = 照舊直接爬。
 # 抓取(fetch-branch-trades):五站平行、每站一個 worker、單站間隔 = 1.0 × 5 = 5 秒
 # (單站節奏與循序輪替相同,來源負載不變),只抓不寫、結果落暫存檔(每 50 檔 checkpoint)。
@@ -182,7 +188,7 @@ run_step_or_warn "seed-branches" radar seed-branches
 # 超時 = 本步失敗 → 中止,暫存檔留著已抓到的,第二輪從它續抓(成交金額大的先,留在外面的是冷門股)。
 release_db_lock
 if [ "$BRANCH_ROUND_MODE" != "import" ] && [ "${BRANCH_PROBE:-1}" != "0" ]; then
-  if POLL_HOLD_DB_LOCK=0 poll_until "branch-probe" 2030 600 radar_timeout 1200 probe-branch-day --sample 12 --threshold 11 --min-ready-hosts 3 --sleep 1.0; then
+  if POLL_HOLD_DB_LOCK=0 poll_until "branch-probe" 2030 600 radar_timeout 1200 probe-branch-day --sample 12 --threshold 11 --min-ready-hosts 2 --min-consecutive 2 --sleep 1.0; then
     :
   else
     probe_rc=$?
@@ -287,10 +293,25 @@ rm -f "$STAGE_FILE_HOST" 2>/dev/null || true
 # 仍然跳過 compute-branch-stats(0.011% 的差異不值那一步),但重算當日評分並重新上線。
 # compute-scores 只讀原始表(branch_trades 等),不依賴 compute-branch-stats 的產出。
 # **不重寫完成標記**:標記的內容是「第一次上線的時刻」,夜間作業只看它存不存在。
+# ── 第一段上線的門檻(docs/47 §8.8):只有**真的抓齊**的一天才先上線 ──────────
+# 10-08 第一段以覆蓋率 0.946 上線,其中約 100 檔是只公布了一半的鏡像站回的假「空」。
+# 假空由另一站確認已在程式裡修掉;這裡再加一道:第一段(先於排行統計的快速上線)只在
+# 覆蓋率 ≥ 0.98 時做,否則略過第一段、照舊算完排行統計一併上線(與改動前一次上線相同),
+# 通知講明覆蓋率。0.5 的扣留地板不動(那是「這一天合不合格」,共用參數)。
+# 10-07 循序爬全市場 empty=0,所以 0.98 給的是「幾檔抓失敗」的餘裕,不是給「還沒公布」的。
+# 只刷新評分的第二輪(今天已上線)一律上線,不看這個門檻——它的工作就是重新上線。
+BRANCH_FAST_PUBLISH_MIN_RATIO="${BRANCH_FAST_PUBLISH_MIN_RATIO:-0.98}"
+COVERAGE_RATIO="$(branch_round_coverage_ratio "$ROUND_DATE")"
+FAST_PUBLISH=0
+if awk -v r="${COVERAGE_RATIO:-0}" -v m="$BRANCH_FAST_PUBLISH_MIN_RATIO" 'BEGIN { exit !(r + 0 >= m + 0) }'; then
+  FAST_PUBLISH=1
+fi
+
 SCORES_REFRESH=0
 if [ "$BRANCH_ROUND_MODE" = "import" ]; then
   if [ -s "$(branch_round_marker "$ROUND_DATE")" ]; then
     SCORES_REFRESH=1
+    FAST_PUBLISH=1
     set_round_consequence "$REFRESH_CONSEQUENCE"
     # 只寫 log,不發成功通知:此刻什麼都還沒重算,成功通知在 deploy 之後才發。
     echo "本輪不重算分點統計（BRANCH_ROUND_MODE=import，今天第一輪已上線）：只以補齊的分點重算當日評分並重新上線"
@@ -330,23 +351,24 @@ run_step_or_fail "compute-performance" radar compute-performance
 # 根本還沒上線——代價與 compute 失敗完全一樣。若哪天把 prune 移到上線之後,這個判斷
 # 就要跟著重新做一次。
 run_step_or_fail "prune" radar prune
-publish_site
-# 第一段上線之後,失敗的後果變了:分點明細與評分**已經在網站上**,缺的只有排行統計。
-# 通知要講這句實話,不能再說「網站仍是前一輪的內容」。
-set_round_consequence "分點明細與當日評分已於第一段上線；本輪不寫完成標記，00:05 夜間作業會重算排行統計並上線"
-# 期貨量異常摘要(docs/38 §7.19):上線之後才送;永不失敗;16:10 送過的期貨行情日
-# 不重送,只有期貨日往前推進(16:10 時當日期貨還沒齊)才會在這一輪送出。
-futures_digest
-# 只刷新評分的那一輪到此為止:標記早已由第一輪寫下,內容是第一次上線的時刻,不重寫。
-if [ "$SCORES_REFRESH" = 1 ]; then
-  notify_ok "當日評分已用補齊的分點重算並上線（分點統計仍是第一輪版本）"
-  echo "=== daily-branches done $(taipei_date -Is) ==="
-  exit 0
+if [ "$FAST_PUBLISH" = 1 ]; then
+  publish_site
+  # 第一段上線之後,失敗的後果變了:分點明細與評分**已經在網站上**,缺的只有排行統計。
+  # 通知要講這句實話,不能再說「網站仍是前一輪的內容」。
+  set_round_consequence "分點明細與當日評分已於第一段上線；本輪不寫完成標記，00:05 夜間作業會重算排行統計並上線"
+  # 只刷新評分的那一輪到此為止:標記早已由第一輪寫下,內容是第一次上線的時刻,不重寫。
+  if [ "$SCORES_REFRESH" = 1 ]; then
+    notify_ok "當日評分已用補齊的分點重算並上線（分點統計仍是第一輪版本）"
+    echo "=== daily-branches done $(taipei_date -Is) ==="
+    exit 0
+  fi
+  notify_ok "分點籌碼已更新並上線（覆蓋率 ${COVERAGE_RATIO:-unknown}，含法人補抓）；分點排行統計約 25 分鐘後更新"
+else
+  echo "fast publish skipped: coverage_ratio=${COVERAGE_RATIO:-unknown} < ${BRANCH_FAST_PUBLISH_MIN_RATIO}"
+  notify_warn "分點覆蓋率 ${COVERAGE_RATIO:-unknown} 未達 ${BRANCH_FAST_PUBLISH_MIN_RATIO}，不先上線；算完分點排行統計後一併上線（第二輪會再補抓）"
 fi
-COVERAGE_RATIO="$(branch_round_coverage_ratio "$ROUND_DATE")"
-notify_ok "分點籌碼已更新並上線（覆蓋率 ${COVERAGE_RATIO:-unknown}，含法人補抓）；分點排行統計約 25 分鐘後更新"
 
-# ── 第二段:分點排行統計 → 再上線 → 完成標記 ───────────────────────────────
+# ── 第二段:分點排行統計 → 上線 → 完成標記(第一段略過時這是本輪唯一一次上線)────
 run_step_or_fail "compute-branch-stats" radar compute-branch-stats
 publish_site
 # 只有走到這裡才算「整輪跑完」。夜間備援作業讀這個標記決定今晚要不要重算,

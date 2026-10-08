@@ -12,6 +12,7 @@
 第一次失敗第二次成功的標的(重試輪)。
 """
 import json
+import re
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -91,19 +92,31 @@ class _Runner:
                 "logs": [tuple(r) for r in logs]}
 
 
-def _http_stub(calls: list):
-    """只 mock HTTP:解析仍走 fubon._ROW。TRANSIENT 那一檔第一次拋錯。"""
+def _http_stub(calls: list, partial: dict[str, set] | None = None, latency: float = 0.0):
+    """只 mock HTTP:解析仍走 fubon._ROW。TRANSIENT 那一檔第一次拋錯。
+    ``partial`` = {站: 它**已經公布**的代號集合}:那一站對其他代號回空頁(假「空」)。
+    ``latency`` 讓五條 worker 都分得到工作(零延遲時第一條執行緒會把佇列抓光)。"""
+    import threading
+    import time
+
     seen: dict[str, int] = {}
+    lock = threading.Lock()
 
     def get_text(url, params=None, encoding="big5", throttle=None, throttle_key=None):
         sid = params["a"]
         host = url.split("/z/")[0]
-        calls.append((sid, host, throttle, throttle_key))
-        seen[sid] = seen.get(sid, 0) + 1
-        if sid == TRANSIENT and seen[sid] == 1:
+        with lock:
+            calls.append((sid, host, throttle, throttle_key))
+            seen[sid] = seen.get(sid, 0) + 1
+            n = seen[sid]
+        if latency:
+            time.sleep(latency)
+        if sid == TRANSIENT and n == 1:
             raise RuntimeError("transient reset")
         if sid in EMPTY:
             return "<html>no rows today</html>"
+        if partial and host in partial and sid not in partial[host]:
+            return "<html>not published here yet</html>"
         return _page_for(sid)
     return get_text
 
@@ -161,13 +174,21 @@ class BranchCrawlParity(unittest.TestCase):
             with self.subTest(sid=sid, host=host):
                 self.assertEqual(key, host, "節流 key = 那一站,不碰全域節流")
                 self.assertEqual(throttle, 0 * len(fubon.MIRROR_HOSTS))
-        # 每檔的請求數與循序爬相同:1 次,TRANSIENT 2 次(重試),加上開跑前每站 6 檔的公布檢查。
-        from radar.importer import BRANCH_MIRROR_CHECK_SAMPLE
+        # 每檔的請求數:1 次,TRANSIENT 2 次(重試),每個 empty 多 1 次(另一站確認,docs/47
+        # §8.8),加上開跑前每站 12 檔的公布檢查。
+        from radar.importer import BRANCH_MIRROR_CHECK_SAMPLE, _evenly_spaced
         per_sid = {}
         for sid, *_ in calls:
             per_sid[sid] = per_sid.get(sid, 0) + 1
-        check = BRANCH_MIRROR_CHECK_SAMPLE * len(fubon.MIRROR_HOSTS)
-        self.assertEqual(sum(per_sid.values()), len(STOCKS) + 1 + check)
+        picks = set(_evenly_spaced(sorted(STOCKS), BRANCH_MIRROR_CHECK_SAMPLE))
+        n_hosts = len(fubon.MIRROR_HOSTS)
+        check = BRANCH_MIRROR_CHECK_SAMPLE * n_hosts
+        # 開跑前檢查若剛好抽到 TRANSIENT,它的那一次瞬時失敗就被檢查吸收,主爬不再重試。
+        retry = 0 if TRANSIENT in picks else 1
+        self.assertEqual(sum(per_sid.values()), len(STOCKS) + retry + len(EMPTY) + check)
+        for sid in EMPTY:
+            own = per_sid[sid] - (n_hosts if sid in picks else 0)
+            self.assertEqual(own, 2, f"{sid} 空的要被第二站問一次")
 
     def test_sequential_path_is_byte_for_byte_the_old_shape(self):
         """workers=1 不得碰新機制:輪替站、全域節流(throttle_key=None)、每檔一請求。"""
@@ -288,6 +309,82 @@ class BranchCrawlParity(unittest.TestCase):
             self.assertEqual(info["resumed"], n_done)
             self.assertTrue(json.loads(stage.read_text(encoding="utf-8"))["complete"])
             self.assertEqual(info["done"], 37)
+
+
+class FalseEmptiesFromAPartialMirror(unittest.TestCase):
+    """2026-10-08 的事故:只公布了一半的鏡像站(cathay 待命加入)回了 98 個假「空」,被當成
+    「當天沒有分點」上線。空不信單一站:每個 empty 到另一站再抓一次。"""
+
+    def test_false_empties_are_recovered_from_another_mirror_and_rows_match_sequential(self):
+        seq = _run(1, False, [])
+        lagging = fubon.MIRROR_HOSTS[4]
+        published = set(sorted(STOCKS)[:12])           # 它只公布了 12 檔
+        calls = []
+        import contextlib
+        import io
+        out = io.StringIO()
+        with _Runner() as r, mock.patch.object(fubon, "get_text",
+                                               side_effect=_http_stub(calls, {lagging: published},
+                                                                      latency=0.003)), \
+             contextlib.redirect_stdout(out):
+            # 開跑前的 12 檔檢查本來會把它擋在待命;這裡 patch 檢查讓五站都「就緒」,逼它
+            # 參與——模擬 10-08 cathay 通過了(太弱的)檢查卻只公布一半的情況。
+            with mock.patch("radar.importer.probe_mirrors",
+                            side_effect=lambda picks, date, hosts, per_host: {h: len(picks) for h in hosts}):
+                info = import_branch_trades(DATE_COMPACT, top=0, warrants=0, sleep_s=0, workers=5)
+            snap = r.snapshot()
+        false_empties = [c for c in calls if c[1] == lagging and c[0] not in published and c[0] not in EMPTY]
+        self.assertGreater(len(false_empties), 0, "那一站真的回了假空(測試前提)")
+        self.assertEqual(info["empty"], len(EMPTY), "只剩真的空;假空全部被另一站救回")
+        self.assertEqual(info["done"], 37)
+        self.assertEqual(info["status"], "ok")
+        self.assertEqual(snap["raw"], seq["raw"], "救回的列與循序爬位元級相同")
+        self.assertEqual(snap["dim"], seq["dim"])
+        log = out.getvalue()
+        self.assertRegex(log, r"confirming \d+ empty result\(s\) from " + re.escape(lagging))
+        self.assertRegex(log, r"empties checked=\d+ recovered=\d+ confirmed=3 failed=0")
+        # 每個 empty 都被第二站問過(真空的也要確認),確認用的站不是回空的那一站。
+        for sid in EMPTY:
+            hosts_asked = [c[1] for c in calls if c[0] == sid]
+            self.assertGreaterEqual(len(hosts_asked), 2, sid)
+            self.assertGreaterEqual(len(set(hosts_asked)), 2, f"{sid} 要由不同的站確認")
+
+    def test_empty_then_failure_is_failed_not_empty(self):
+        """兩站說法對不上(一站空、一站失敗)→ failed,交給覆蓋率閘門與次日重抓。"""
+        from radar.importer import _confirm_empties
+        from radar.mirror_crawl import HostStats
+
+        results = [{"sid": "A", "outcome": "empty", "rows": None, "host": "h1"},
+                   {"sid": "B", "outcome": "empty", "rows": None, "host": "h1"},
+                   {"sid": "C", "outcome": "done", "rows": [{"x": 1}], "host": "h2"}]
+        stats = {"h1": HostStats(done=5), "h2": HostStats(done=5)}
+
+        def fetch(sid, host, interval):
+            self.assertEqual(host, "h2", "確認要到另一站")
+            if sid == "A":
+                raise RuntimeError("HTTP 500")
+            from radar.providers import NoDataError
+            raise NoDataError("still empty")
+
+        tally = _confirm_empties(results, ["A", "B", "C"], stats, fetch, 0, None, None)
+        self.assertEqual(tally, {"checked": 2, "recovered": 0, "confirmed": 1, "failed": 1})
+        self.assertEqual(results[0]["outcome"], "failed")
+        self.assertEqual(results[1]["outcome"], "empty")
+        self.assertEqual(results[1]["confirmed_by"], ["h1", "h2"])
+        self.assertEqual(results[2]["outcome"], "done")
+
+    def test_single_live_host_confirms_on_itself_rather_than_not_at_all(self):
+        from radar.importer import _confirm_empties
+        from radar.mirror_crawl import HostStats
+
+        results = [{"sid": "A", "outcome": "empty", "rows": None, "host": "h1"}]
+        stats = {"h1": HostStats(done=5), "h2": HostStats(dead=True)}
+        asked = []
+        tally = _confirm_empties(results, ["A"], stats, lambda s, h, i: asked.append(h) or [{"x": 1}],
+                                 0, None, None)
+        self.assertEqual(asked, ["h1"])
+        self.assertEqual(tally["recovered"], 1)
+        self.assertEqual(results[0]["outcome"], "done")
 
 
 class StageResumeRules(unittest.TestCase):

@@ -305,14 +305,17 @@ class LockPhasesInTheScript(unittest.TestCase):
         gitignore = (REPO_ROOT / ".gitignore").read_text(encoding="utf-8")
         self.assertIn("data/branch-stage-*.json*", gitignore)
 
-    def test_probe_requires_three_ready_mirrors(self):
-        """HIGH 1:一站就緒就開爬 = 單站 5 秒 × 2,000 檔 = 10,000 秒 > 7200 硬上限。"""
+    def test_probe_never_starts_on_a_single_mirror(self):
+        """HIGH 1:一站就緒就開爬 = 單站 5 秒 × 2,700 檔 = 13,500 秒 > 7200 硬上限。
+        10-08 起要 2 站(0.4 req/s,~112 分 < 上限;其餘站待命加入,docs/47 §8.8)。"""
         line = next(ln for ln in self.lines if "probe-branch-day" in ln)
-        self.assertIn("--min-ready-hosts 3", line)
+        m = re.search(r"--min-ready-hosts (\d+)", line)
+        self.assertIsNotNone(m)
+        self.assertGreaterEqual(int(m.group(1)), 2)
 
     def test_consequence_is_rewritten_after_the_first_publish(self):
         """LOW-MED 4:第一段上線之後失敗,通知不能再說「網站仍是前一輪的內容」。"""
-        first = self._idx("\npublish_site\n")
+        first = self._publish_calls()[0]
         after = self.code.index("set_round_consequence", first)
         self.assertLess(after, self._idx("radar compute-branch-stats"))
         line = self.code[self.code.rfind("\n", 0, after) + 1:self.code.index("\n", after)]
@@ -356,10 +359,44 @@ class LockPhasesInTheScript(unittest.TestCase):
 
     def test_two_phase_publish_both_run_under_the_db_lock(self):
         reacquire = self.code.index("acquire_db_lock_wait", self._idx("release_db_lock"))
-        for needle in ("\npublish_site\n", "radar compute-branch-stats", "radar compute-scores"):
+        for needle in ("radar compute-branch-stats", "radar compute-scores"):
             with self.subTest(step=needle.strip()):
                 self.assertGreater(self._idx(needle), reacquire)
-        self.assertEqual(self.code.count("\npublish_site\n"), 2)
+        calls = self._publish_calls()
+        self.assertEqual(len(calls), 2)
+        self.assertGreater(calls[0], reacquire)
+
+    def _publish_calls(self) -> list[int]:
+        """`publish_site` 被呼叫的位置(整行只有它,允許縮排;函式定義不算)。"""
+        return [m.start() for m in re.finditer(r"(?m)^\s*publish_site$", self.code)]
+
+    def test_fast_publish_is_gated_on_coverage_and_the_refresh_round_always_publishes(self):
+        """docs/47 §8.8(10-08):第一段只在覆蓋率 ≥ 0.98 時先上線;只刷新評分的第二輪一律上線。"""
+        self.assertIn('BRANCH_FAST_PUBLISH_MIN_RATIO="${BRANCH_FAST_PUBLISH_MIN_RATIO:-0.98}"', self.code)
+        gate = self._idx('if [ "$FAST_PUBLISH" = 1 ]; then')
+        calls = self._publish_calls()
+        self.assertLess(gate, calls[0], "第一次上線在門檻之內")
+        self.assertLess(calls[0], self.code.index("\nelse\n", gate))
+        self.assertGreater(calls[1], self.code.index("\nfi\n", calls[0]), "第二次上線在門檻之外")
+        guard = self._idx('if [ -s "$(branch_round_marker "$ROUND_DATE")" ]; then\n    SCORES_REFRESH=1')
+        self.assertIn("FAST_PUBLISH=1", self.code[guard:self.code.index("else", guard)],
+                      "刷新輪不看覆蓋率門檻")
+        self.assertLess(self._idx("FAST_PUBLISH=0"), guard)
+        self.assertLess(self._idx('COVERAGE_RATIO="$(branch_round_coverage_ratio'), self._idx("FAST_PUBLISH=0"))
+        skipped = self.code[self.code.index("\nelse\n", gate):self.code.index("\nfi\n", calls[0])]
+        self.assertIn("fast publish skipped", skipped)
+        self.assertIn("notify_warn", skipped)
+
+    def test_probe_requires_two_consecutive_passes_and_two_hosts(self):
+        line = next(ln for ln in self.lines if "probe-branch-day" in ln)
+        self.assertIn("--min-ready-hosts 2", line)
+        self.assertIn("--min-consecutive 2", line)
+
+    def test_futures_digest_lives_inside_publish_site_once(self):
+        body = self.code[self._idx("publish_site() {"):self.code.index("\n}\n", self._idx("publish_site() {"))]
+        self.assertIn("futures_digest", body)
+        self.assertLess(body.index("deploy_data"), body.index("futures_digest"))
+        self.assertEqual(sum(1 for ln in self.lines if ln.strip() == "futures_digest"), 1)
 
     def test_bf_guard_pauses_backfill_while_the_source_lock_is_held(self):
         """bf 容器打同五個鏡像站:分點輪握著來源鎖(含不握 DB 鎖的抓取相位)時 bf 要停。"""

@@ -176,6 +176,30 @@ cat /tmp/radar-branch-round-$(date +%F).done                            # 第二
 3. 明天核對:`grep -E '^branch-probe (at|mirror)=' ~/radar-cron.log`(各站幾點先有)、`grep -E 'step (fetch-branch-trades|import-branch-trades|compute-branch-stats|export-json|deploy) done' ~/radar-cron.log`(各段耗時)、`grep -E '^branch crawl' ~/radar-cron.log`(哪些站用上、死站)。
 4. 回滾:`git revert`;`--workers 1` 即舊循序爬;`BRANCH_PROBE=0` 不探測。
 
+### 8.8 第一次正式跑(2026-10-08)與修正
+
+**時間線**(cron log):16:34 起探測;17:51 第一站達門檻(kgieworld 11/12,fubon 10/12);kgieworld 隨後**抖動**(18:02 1/12、18:13 0/12、18:24 10/12);fubon 18:13 就緒;masterlink、sinotrade 18:24 就緒 → 滿足 3 站門檻,**18:24 開爬**(4 站 + cathay 待命,cathay 之後通過 1 檔檢查加入)。抓取 2,788 s(46 分;估 34)、寫入 14 s、**第一段 19:28 上線**(前一天 20:12)、第二段 19:53。
+
+| 站 | done | empty |
+|---|---|---|
+| fubon | 530 | 4 |
+| masterlink | 548 | 4 |
+| sinotrade | 538 | 0 |
+| kgieworld | 534 | 3 |
+| cathay(待命加入) | 453 | **98** |
+
+**問題**:`branch_coverage` 10-08 = `expected=1958 ratio=0.9464 done=2603 empty=109`(10-07 是 1.0000 / empty=0)。cathay(可能還有抖動的 kgieworld)對**它還沒公布**的股票回 NoDataError,被當成「當天沒有分點」在第一段上線——約 100 檔分點缺了 ~3 小時(22:30 第二輪因 ratio<1 全部重爬而自癒)。一個只公布一部分的站,1 檔(待命)或 12 檔的檢查都擋不住;10-07 全市場 empty=0 也說明「合法的空」幾乎不存在,**空幾乎永遠代表「還沒公布」**。
+
+**修正**(commit 見 STATUS):
+
+1. **空不信單一站**(`_confirm_empties`):每個 empty 都到**另一站**再抓一次(依回空的站分組、用其他活站平行抓;只剩一站時在同一站再抓)。有列 → done;仍空 → 確認 empty(記 `confirmed_by`);失敗/中止 → failed(交給覆蓋率閘門、次日冪等重抓)。成本 = empty 數(正常日 0–10 個請求;10-08 的情況 109 個 ≈ 2 分鐘)。測試:只公布一半的站回假空 → 全部救回、列與循序爬位元級相同。
+2. **就緒要連續兩次**:探測 `--min-consecutive 2`(連勝數存 `data/branch-probe-state-latest.json`,內容帶日期;kgieworld 那種 11→1→0→10 不會過);待命站的檢查改用同一條規則(12 檔 ≥11)且連續兩次(每 5 分鐘一次 → 最快 10 分鐘加入);開跑前檢查抽樣 6 → 12。
+3. **第一段門檻**:覆蓋率 ≥ `BRANCH_FAST_PUBLISH_MIN_RATIO`(0.98)才先上線,否則略過第一段、照舊算完排行統計一併上線(= 改動前一次上線)並 warn 講明覆蓋率。0.5 扣留地板不動。只刷新評分的第二輪一律上線。`futures_digest` 併入 `publish_site`(同一期貨日只送一次,兩次上線不會重複)。
+4. **吞吐**:目標不是 2,000 而是 **~2,700**(1,958 普通股 + ~740 權證),極限 = 0.2 req/s × 活站數:5 站 ~45 分、4 站 ~56 分、3 站 ~75 分、2 站 ~112 分(< 7200 s)。10-08 的 46 分 = 4 站 + 晚到的第 5 站,符合。既然有待命加入與續抓,**2 站就緒就開爬**(`--min-ready-hosts 2`):等第 3 站只會更晚不會更快(站數在爬的途中只增不減)。10-08 若用這條規則:fubon+kgieworld 要連續兩次 → 約 18:13–18:24 開爬,差不多;但 kgieworld 抖動會被擋、cathay 不會以半公布狀態加入。
+5. TPEx `dailyQuotes` 的 ChunkedEncodingError(10-06、10-08 各三連發):該端點傳輸失敗改 5 次嘗試(線性 5/10/15/20 s 退避,最壞 +50 s);其他端點不變。沒有替代端點:OpenAPI 的上櫃日成交是另一份較窄的表,`dailyQuotes` 仍是唯一含權證的整表。
+
+**預期**(來源就緒 → 分點明細可見):偵測 ≤10 分(連續兩次 → 第二次探測才算,最多 +10 分)+ 爬 45–56 分(4–5 站)+ 確認空 ~0–2 分 + 寫入 0.5 + 分數 2 + 匯出 14 + 榜 0.5 + 佈署 3 ≈ **75–90 分**;18:24 開爬的日子 → ~19:30(10-08 實測 19:28)。
+
 ### 8.7 SIGTERM 真的到得了容器:人工核對
 
 **已於 2026-10-07 在正式機核對**(人類執行):Docker 27.1.2,`docker info` 的 InitBinary = docker-init;`docker run --rm --init radar-pipeline python -c 'import sys; sys.exit(75)'` 回傳 rc=75(`--init` 可用、離開碼經 docker-init 逐位元轉回)。本機測試只鎖 lib.sh 的文字。要再驗「TERM 真的進到 python」可跑(不碰正式 DB、不寫任何東西):

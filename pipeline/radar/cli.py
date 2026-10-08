@@ -408,18 +408,28 @@ def cmd_probe_branch_day(args):
     """唯讀探測分點來源公布進度(不寫 DB、不記 import_logs)。一行輸出給 cron log。"""
     from .importer import probe_branch_day
 
+    from pathlib import Path
+
+    from . import config as _config
+
+    state_path = args.state_file
+    if state_path is None and args.min_consecutive > 1:
+        # 預設放 data/(容器內 /app/data,主機 $REPO/data);內容帶日期,別天的自動作廢。
+        state_path = str(Path(_config.DATA_DIR) / "branch-probe-state-latest.json")
     info = probe_branch_day(args.date, args.sample, args.threshold, args.sleep,
-                            min_ready_hosts=args.min_ready_hosts)
+                            min_ready_hosts=args.min_ready_hosts,
+                            min_consecutive=args.min_consecutive, state_path=state_path)
     print(
         f"branch-probe at={info['at']} date={info['date']} "
         f"ok={info['ok']}/{info['sample']} threshold={info['threshold']} pool={info['pool']} "
         f"ready_mirrors={len(info['ready_hosts'])}/{len(info['mirrors'])} "
-        f"need_mirrors={info['min_ready_hosts']}"
+        f"need_mirrors={info['min_ready_hosts']} need_consecutive={info['min_consecutive']}"
     )
     # 逐站一行(docs/47 §8):哪一站幾點先有今天的資料,明天的 log 就量得出各站的公布時刻。
     for host, ok in info["mirrors"].items():
         print(f"branch-probe mirror={host} at={info['at']} date={info['date']} "
-              f"ok={ok}/{info['sample']} ready={int(host in info['ready_hosts'])}")
+              f"ok={ok}/{info['sample']} streak={info['streaks'].get(host, 0)} "
+              f"ready={int(host in info['ready_hosts'])}")
     if not info["ready"]:
         raise SystemExit(BRANCH_PROBE_PENDING_EXIT)
 
@@ -1098,6 +1108,12 @@ def main(argv=None):
     pbd.add_argument("--min-ready-hosts", type=int, default=1,
                      help="exit 0 only when at least N mirrors passed the threshold "
                           "(one mirror alone cannot crawl 2,000 targets inside the hard limit)")
+    pbd.add_argument("--min-consecutive", type=int, default=1,
+                     help="a mirror counts as ready only after N consecutive probes passed "
+                          "(flicker guard; streaks are kept in --state-file)")
+    pbd.add_argument("--state-file", default=None,
+                     help="where the per-mirror streaks live between probes "
+                          "(default data/branch-probe-state-latest.json)")
     pbd.set_defaults(fn=cmd_probe_branch_day)
 
     bff = sub.add_parser(

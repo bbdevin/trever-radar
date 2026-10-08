@@ -1501,7 +1501,8 @@ def probe_mirrors(picks: list[str], date: str, hosts: list[str],
 
 def probe_branch_day(date: str | None = None, sample: int = 24, threshold: int = 22,
                      sleep_s: float = 1.0, hosts: list[str] | None = None,
-                     min_ready_hosts: int = 1) -> dict:
+                     min_ready_hosts: int = 1, min_consecutive: int = 1,
+                     state_path: str | os.PathLike | None = None) -> dict:
     """唯讀探測:分點來源此刻對 date 公布到什麼程度。**不寫資料庫、不記 import_logs**。
 
     從 ``--top 0`` 目標池等距抽 ``sample`` 檔,**每一站各抓一次**(釘站、平行、單站間隔
@@ -1535,7 +1536,31 @@ def probe_branch_day(date: str | None = None, sample: int = 24, threshold: int =
     hosts = list(hosts) if hosts else list(fubon.MIRROR_HOSTS)
     per_host = sleep_s * len(fubon.MIRROR_HOSTS)
     counts = probe_mirrors(picks, date, hosts, per_host) if picks else {h: 0 for h in hosts}
-    ready_hosts = [h for h in hosts if picks and counts[h] >= need]
+    # 連續 min_consecutive 次通過才算就緒(抗抖動;連勝數存在 state_path,每次探測是獨立的
+    # CLI 呼叫)。state 不是這一天的就丟掉。
+    streaks: dict[str, int] = {}
+    if state_path is not None and min_consecutive > 1:
+        try:
+            saved = json.loads(Path(state_path).read_text(encoding="utf-8"))
+            if isinstance(saved, dict) and saved.get("date") == iso_d \
+                    and isinstance(saved.get("streaks"), dict):
+                streaks = {h: int(v) for h, v in saved["streaks"].items() if h in hosts}
+        except (OSError, ValueError, TypeError):
+            streaks = {}
+    gate = MirrorReadinessGate(min_consecutive, streaks)
+    passed_now = [h for h in hosts if picks and counts[h] >= need]
+    for h in hosts:
+        gate.record(h, h in passed_now)
+    ready_hosts = [h for h in hosts if gate.ready(h)]
+    if state_path is not None and min_consecutive > 1:
+        try:
+            p = Path(state_path)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            tmp = p.with_suffix(p.suffix + ".tmp")
+            tmp.write_text(json.dumps({"date": iso_d, "streaks": gate.streaks}), encoding="utf-8")
+            os.replace(tmp, p)
+        except OSError as e:
+            print(f"branch-probe: state not saved ({e}); streaks restart next probe", flush=True)
     return {
         "at": datetime.now(ZoneInfo(config.TZ)).strftime("%H:%M"),
         "date": iso_d,
@@ -1545,8 +1570,11 @@ def probe_branch_day(date: str | None = None, sample: int = 24, threshold: int =
         "threshold": need,
         "ready": len(ready_hosts) >= max(1, min(min_ready_hosts, len(hosts))),
         "mirrors": counts,
+        "passed_now": passed_now,
+        "streaks": dict(gate.streaks),
         "ready_hosts": ready_hosts,
         "min_ready_hosts": max(1, min(min_ready_hosts, len(hosts))),
+        "min_consecutive": gate.need,
     }
 
 
@@ -1572,10 +1600,71 @@ def previous_ok_rows(source: str, dataset: str, date: str) -> int | None:
         ), {"s": source, "ds": dataset, "p": prev}).scalar() or 0)
 
 
-# 平行爬開跑前每站各抓幾檔確認「那一站今天公布了沒」;ok ≥ 抽樣數 − 1 算已公布
-# (合法的「沒有分點」約 2%,六檔裡容許一檔)。一站都沒到時用全部的站(20:30 截止
-# 照常全量爬的情況),行為與平行化之前一樣由覆蓋率閘門把關。
-BRANCH_MIRROR_CHECK_SAMPLE = 6
+# 平行爬開跑前每站各抓幾檔確認「那一站今天公布了沒」;ok ≥ 抽樣數 − 1 算已公布。
+# 2026-10-08 實測:6 檔抽樣與待命站的 1 檔檢查都讓**只公布了一部分**的站進來(cathay 待命
+# 加入後 453 done / 98 empty,那 98 檔是它還沒公布、不是沒有分點),所以抽樣加大到 12,
+# 待命站用同一條規則而且要**連續兩次**通過(mirror_readiness_gate)。一站都沒到時用全部
+# 的站(20:30 截止照常全量爬的情況),行為與平行化之前一樣由覆蓋率閘門把關。
+BRANCH_MIRROR_CHECK_SAMPLE = 12
+BRANCH_STANDBY_CONSECUTIVE = 2
+
+
+class MirrorReadinessGate:
+    """一站要**連續** ``need`` 次通過檢查才算就緒(抗抖動:2026-10-08 kgieworld 11/12 →
+    1/12 → 0/12 → 10/12)。``record(host, passed)`` 回傳這一次之後是否就緒。
+    探測 CLI 用檔案保存跨次呼叫的連勝數(probe_branch_day 的 state_path);
+    待命站的檢查在同一個程序裡,直接用這個物件。"""
+
+    def __init__(self, need: int, streaks: dict[str, int] | None = None):
+        self.need = max(1, need)
+        self.streaks: dict[str, int] = dict(streaks or {})
+
+    def record(self, host: str, passed: bool) -> bool:
+        self.streaks[host] = self.streaks.get(host, 0) + 1 if passed else 0
+        return self.streaks[host] >= self.need
+
+    def ready(self, host: str) -> bool:
+        return self.streaks.get(host, 0) >= self.need
+
+
+def _confirm_empties(results: list[dict], targets: list[str], stats: dict, fetch, per_host: float,
+                     on_failure, stop) -> dict[str, int]:
+    """「空」不信單一站(2026-10-08):一站回 NoDataError 可能只是**它**還沒公布那一檔,
+    不是那一檔當天沒有分點。每個 empty 都到**另一站**再抓一次:
+    有列 → done(用那一份);仍空 → 確認 empty;失敗/被中止 → failed(交給覆蓋率閘門,
+    次日冪等重抓)。只剩一個活站時只好在同一站再抓一次(仍比不抓好)。
+    依「回空的那一站」分組,每組用其他活站平行抓。回傳統計。"""
+    from .mirror_crawl import crawl_in_order, live_hosts
+
+    groups: dict[str | None, list[int]] = {}
+    for i, r in enumerate(results):
+        if r["outcome"] == "empty":
+            groups.setdefault(r.get("host"), []).append(i)
+    tally = {"checked": 0, "recovered": 0, "confirmed": 0, "failed": 0}
+    if not groups:
+        return tally
+    alive = live_hosts(stats)
+    for src, idxs in groups.items():
+        hosts = [h for h in alive if h != src] or alive
+        print(f"branch crawl: confirming {len(idxs)} empty result(s) from {src} on {hosts}",
+              flush=True)
+        again, _ = crawl_in_order([targets[i] for i in idxs], fetch, hosts, per_host,
+                                  on_failure=on_failure, stop=stop)
+        for i, r in zip(idxs, again):
+            tally["checked"] += 1
+            if r.outcome == "done":
+                tally["recovered"] += 1
+                results[i] = {"sid": r.target, "outcome": "done", "rows": r.rows, "host": r.host}
+            elif r.outcome == "empty":
+                tally["confirmed"] += 1
+                results[i] = {"sid": r.target, "outcome": "empty", "rows": None, "host": r.host,
+                              "confirmed_by": [src, r.host]}
+            else:
+                tally["failed"] += 1
+                results[i] = {"sid": r.target, "outcome": "failed", "rows": None, "host": r.host}
+    print(f"branch crawl: empties checked={tally['checked']} recovered={tally['recovered']} "
+          f"confirmed={tally['confirmed']} failed={tally['failed']}", flush=True)
+    return tally
 
 
 # 暫存檔每抓幾檔寫一次 checkpoint(tmp + rename)。被硬上限砍掉或收到 SIGTERM 時,
@@ -1615,7 +1704,7 @@ def _fetch_branch_targets(targets: list[str], date: str, sleep_s: float,
     n_fresh = {"n": 0}
 
     def _record(i: int, r) -> None:
-        results[i] = {"sid": r.target, "outcome": r.outcome, "rows": r.rows}
+        results[i] = {"sid": r.target, "outcome": r.outcome, "rows": r.rows, "host": r.host}
         if checkpoint is not None and r.outcome != "pending":
             n_fresh["n"] += 1
             if n_fresh["n"] % BRANCH_STAGE_CHECKPOINT_EVERY == 0:
@@ -1666,18 +1755,18 @@ def _fetch_branch_targets(targets: list[str], date: str, sleep_s: float,
     def on_failure(sid: str, host: str, exc: Exception) -> None:
         print(f"branch {sid} FAILED @{host}: {str(exc)[:100]}", flush=True)
 
-    # 待命站的檢查:抽樣裡第一檔再問一次(一個請求,釘站、照單站間隔)。
-    check_sid = picks[0] if picks else None
+    # 待命站的檢查:與開跑前同一條規則(12 檔 ≥ 11),而且要連續兩次通過才加入
+    # (2026-10-08 一檔檢查放進了只公布一半的 cathay)。每站 12 請求/5 分鐘,仍遠低於 0.2 req/s。
+    gate = MirrorReadinessGate(BRANCH_STANDBY_CONSECUTIVE)
 
     def standby_check(host: str) -> bool:
-        if check_sid is None:
+        if not picks:
             return False
-        try:
-            ok = bool(fubon.fetch_branch_trades(check_sid, date, throttle=per_host, host=host))
-        except NoDataError:
-            ok = False
-        print(f"branch crawl standby mirror={host} ready={int(ok)}", flush=True)
-        return ok
+        ok_n = probe_mirrors(picks, date, [host], per_host).get(host, 0)
+        ready_now = gate.record(host, ok_n >= need)
+        print(f"branch crawl standby mirror={host} ok={ok_n}/{len(picks)} "
+              f"streak={gate.streaks[host]}/{gate.need} ready={int(ready_now)}", flush=True)
+        return ready_now
 
     def on_result(j: int, r) -> None:
         _record(todo_idx[j], r)
@@ -1689,7 +1778,7 @@ def _fetch_branch_targets(targets: list[str], date: str, sleep_s: float,
         print(f"branch crawl mirror={h} done={st.done} empty={st.empty} "
               f"failed={st.failed} dead={int(st.dead)} late={int(st.joined_late)}", flush=True)
     if stop is not None and stop.is_set():
-        print("branch crawl: stopped (SIGTERM), skipping the retry pass", flush=True)
+        print("branch crawl: stopped (SIGTERM), skipping the retry and confirm passes", flush=True)
     else:
         retry_idx = [i for i, r in enumerate(results) if r["outcome"] == "failed"]
         if retry_idx:
@@ -1699,6 +1788,11 @@ def _fetch_branch_targets(targets: list[str], date: str, sleep_s: float,
             again, _ = crawl_in_order([targets[i] for i in retry_idx], fetch, retry_hosts,
                                       per_host, on_failure=on_failure,
                                       on_result=lambda j, r: _record(retry_idx[j], r), stop=stop)
+        # 空的要另一站確認(含重試輪抓到的 empty),再寫一次 checkpoint 把確認結果留住。
+        report["empties"] = _confirm_empties(results, targets, stats, fetch, per_host,
+                                             on_failure, stop)
+        if checkpoint is not None and report["empties"]["checked"]:
+            checkpoint(results)
     report["mirrors"] = {h: {"done": s.done, "empty": s.empty, "failed": s.failed,
                              "dead": s.dead, "late": s.joined_late} for h, s in stats.items()}
     report["resumed"] = len(resumed)

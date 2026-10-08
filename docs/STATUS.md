@@ -16,6 +16,13 @@
 - **落點**:獨立 `rankings/insti_flow_1d.json`(P1 加 5d/20d),切到分頁才抓,首頁 `home/head.json` 零增量;首頁新分頁「法人族群」緊接「資券」,沿用 `MarginUsageRank` 嵌入模式與 MoneyFlow 對向條列版型,零新色票。不進任何分數;多方榜(`docs/48`)不動;個股頁脈絡一行列 P2 且只顯示、不是事實 code。
 - **待人類**:確認分頁名稱(預設「法人族群」)後即可交 Executor 做 MVP(估 1.5–2 天);其餘預設值已在 `docs/49` §8 定案。
 
+## 2026-10-08 分點輪第一次正式跑:19:28 上線(前日 20:12),但半公布的鏡像站回假「空」→ 修正(`docs/47` §8.8;程式完成於分支)
+
+- **實測**:16:34 起探測、18:24 開爬(4 站 + cathay 待命加入)、抓 2,788 s、第一段 19:28、第二段 19:53。`branch_coverage` ratio=0.9464 empty=109(10-07 為 1.0/0):cathay 對它還沒公布的 98 檔回 NoDataError,被當成「沒有分點」上線約 3 小時(22:30 全爬自癒)。
+- **修正**:每個 empty 到**另一站**再抓一次才算(有列 → 用它;仍空 → 確認;失敗 → failed 交閘門);就緒要**連續兩次**通過(探測 `--min-consecutive 2` 存連勝數檔;待命站改 12 檔 ≥11 且連續兩次);第一段只在覆蓋率 ≥0.98 時先上線,否則算完排行統計一併上線並 warn;開爬門檻改 **2 站**(2,700 檔 2 站 ~112 分 < 硬上限,待命站途中加入,等第 3 站只會更晚);TPEx `dailyQuotes` 傳輸失敗改 5 次嘗試。`futures_digest` 併入 `publish_site`。
+- **驗證**:pytest 全套(含 `FalseEmptiesFromAPartialMirror` 三案、探測連勝數、FAST_PUBLISH 門檻文字測試);harness 綠。
+- **待人類**:合併;明天看 `branch crawl: empties checked= recovered=` 與 `branch-probe mirror=… streak=` 行;若正常日 recovered 持續為 0 可考慮把確認改成只對「該站 empty 比例異常」才做(現在成本已很低,先不做)。
+
 ## 2026-10-07 分點輪提速:五站平行、逐站探測、抓寫分離、兩段式上線;修補抓失敗整輪中止(`docs/47` §8;程式完成於分支,crontab 待人類改)
 
 - **問題**:公布→上線 83 分(10-07:18:49 就緒、爬 54 分、stats 10、export 14、deploy 3 → 20:12);10-05 爬 102 分(一站 ReadTimeout 拖住循序爬);10-06 17:30 第一步補抓日K瞬時錯誤 → `run_step_or_fail` 整輪中止,分點拖到 ~00:00。免費無驗證碼來源只有 MoneyDJ 五鏡像(證交所/櫃買 16:00 有但要驗證碼;OpenAPI 無分點)。

@@ -204,9 +204,13 @@ class TestDailyBranchesExitCodes(unittest.TestCase):
                       "守衛要是『等於 import 才縮短』,不能是『不等於 full 就縮短』")
 
     # 「只刷新評分」那條早退:`if [ "$SCORES_REFRESH" = 1 ]` 裡帶 exit 0 的那一段。
+    def _refresh_guard(self) -> int:
+        m = re.search(r'if \[ "\$SCORES_REFRESH" = 1 \]; then\n\s+notify_ok', self.code)
+        self.assertIsNotNone(m, "找不到只刷新評分的早退")
+        return m.start()
+
     def _refresh_exit(self) -> int:
-        start = self._index('if [ "$SCORES_REFRESH" = 1 ]; then\n  notify_ok')
-        return self.code.index("exit 0", start)
+        return self.code.index("exit 0", self._refresh_guard())
 
     def test_scores_refresh_round_does_not_rewrite_the_completion_marker(self):
         """標記的內容是**第一次**上線的時刻,由 17:40 寫下。
@@ -242,7 +246,8 @@ class TestDailyBranchesExitCodes(unittest.TestCase):
         stats = self._index("radar compute-branch-stats")
         refresh_exit = self._refresh_exit()
         self.assertGreater(stats, refresh_exit, "分點統計在刷新輪離開之後(第二段)")
-        first_publish = self._index("\npublish_site\n")
+        publish_calls = [m.start() for m in re.finditer(r"(?m)^\s*publish_site$", self.code)]
+        first_publish = publish_calls[0]
         for step in ("radar compute-scores", "radar compute-performance", "radar prune"):
             with self.subTest(step=step):
                 idx = self._index(step)
@@ -260,7 +265,7 @@ class TestDailyBranchesExitCodes(unittest.TestCase):
         self.assertIn('run_step_or_fail "deploy" deploy_data', body)
         self.assertLess(body.index("export-json"), body.index("build_bull_board"))
         self.assertLess(body.index("build_bull_board"), body.index("deploy_data"))
-        self.assertEqual(self.code.count("\npublish_site\n"), 2, "兩段式:上線恰好兩次")
+        self.assertEqual(len(publish_calls), 2, "兩段式:上線恰好兩次")
 
     def test_import_only_mode_still_runs_the_imports(self):
         """只匯入不等於什麼都不做:22:00 這一輪存在的理由就是把當晚較晚才
@@ -308,8 +313,7 @@ class TestDailyBranchesExitCodes(unittest.TestCase):
         self.assertNotIn("notify_ok", refresh_arm)
         self.assertIn("不重算分點統計", refresh_arm)
         self.assertIn("當日評分", refresh_arm)
-        tail = self.code[self._index('if [ "$SCORES_REFRESH" = 1 ]; then\n  notify_ok'):
-                         self._refresh_exit()]
+        tail = self.code[self._refresh_guard():self._refresh_exit()]
         self.assertIn("分點統計仍是第一輪版本", tail)
 
     def test_scores_refresh_declares_its_own_failure_consequence(self):
@@ -342,7 +346,7 @@ class TestDailyBranchesExitCodes(unittest.TestCase):
         """
         reads = [m.start() for m in re.finditer(r'"\$SCORES_REFRESH"', self.code)]
         self.assertEqual(len(reads), 1, "旗標只能被讀一次")
-        self.assertGreater(reads[0], self._index("\npublish_site\n"),
+        self.assertGreater(reads[0], re.search(r"(?m)^\s*publish_site$", self.code).start(),
                            "讀取(離開)必須在第一段上線之後")
         self.assertLess(reads[0], self._index("radar compute-branch-stats"),
                         "……而且在分點統計之前(刷新輪不算統計)")

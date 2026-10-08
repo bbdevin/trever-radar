@@ -10,6 +10,7 @@
 """
 import contextlib
 import io
+import json
 import re
 import unittest
 from pathlib import Path
@@ -147,6 +148,48 @@ class ProbeBranchDay(_TempDb):
         self.assertEqual(info["mirrors"][early], 24)
         self.assertEqual(sum(info["mirrors"].values()), 24, "其他四站都是 0")
 
+    def test_consecutive_passes_resist_flicker_via_the_state_file(self):
+        """10-08:kgieworld 11/12 → 1/12 → 0/12 → 10/12。--min-consecutive 2:連續兩次通過
+        才就緒;中間失敗一次連勝歸零;state 檔跨呼叫;別天的 state 作廢。"""
+        from radar.providers import fubon
+
+        host = fubon.MIRROR_HOSTS[4]
+        state = Path(self._tmp.name) / "probe-state.json"
+
+        def probe(ok_hosts):
+            with mock.patch("radar.providers.fubon.fetch_branch_trades",
+                            side_effect=_fetch_ok_for(set(IDS), [], ok_hosts=ok_hosts)):
+                return importer.probe_branch_day(sample=12, threshold=11, sleep_s=0,
+                                                 min_ready_hosts=1, min_consecutive=2,
+                                                 state_path=state)
+
+        i1 = probe({host})
+        self.assertEqual(i1["passed_now"], [host])
+        self.assertFalse(i1["ready"], "第一次通過還不算")
+        self.assertEqual(i1["streaks"][host], 1)
+        i2 = probe(set())                       # 抖掉
+        self.assertEqual(i2["streaks"][host], 0)
+        self.assertFalse(i2["ready"])
+        i3 = probe({host})
+        self.assertFalse(i3["ready"], "歸零後要重新累積")
+        i4 = probe({host})
+        self.assertTrue(i4["ready"])
+        self.assertEqual(i4["ready_hosts"], [host])
+        self.assertEqual(i4["streaks"][host], 2)
+        # state 不是這一天的 → 丟掉重來。
+        state.write_text(json.dumps({"date": "2026-09-30", "streaks": {host: 9}}), encoding="utf-8")
+        i5 = probe({host})
+        self.assertFalse(i5["ready"])
+        self.assertEqual(i5["streaks"][host], 1)
+
+    def test_readiness_gate_unit(self):
+        g = importer.MirrorReadinessGate(2)
+        self.assertFalse(g.record("a", True))
+        self.assertTrue(g.record("a", True))
+        self.assertFalse(g.record("a", False))
+        self.assertFalse(g.ready("a"))
+        self.assertTrue(importer.MirrorReadinessGate(1).record("b", True), "need=1 = 舊行為")
+
     def test_min_ready_hosts_gates_the_start_of_the_crawl(self):
         """HIGH 1(2026-10-07 驗證者):只有一站就緒時不能開爬(單站 5 秒 × 2,000 檔 =
         10,000 秒 > 7200 硬上限)。daily-branches.sh 要求 3 站;站數上限夾在站總數。"""
@@ -188,7 +231,8 @@ class ProbeBranchDay(_TempDb):
                      contextlib.redirect_stdout(out):
                     try:
                         cli.cmd_probe_branch_day(SimpleNamespace(
-                            date=None, sample=24, threshold=22, sleep=0, min_ready_hosts=1))
+                            date=None, sample=24, threshold=22, sleep=0, min_ready_hosts=1,
+                            min_consecutive=1, state_file=None))
                         got = None
                     except SystemExit as e:
                         got = e.code
@@ -199,7 +243,7 @@ class ProbeBranchDay(_TempDb):
                 # 逐站各一行:明天的 cron log 才量得出每一站幾點先有今天的資料。
                 self.assertRegex(out.getvalue(),
                                  rf"(?m)^branch-probe mirror=https://\S+ at=\d\d:\d\d "
-                                 rf"date={DAY} ok={n_ok}/24 ready=[01]$")
+                                 rf"date={DAY} ok={n_ok}/24 streak=\d+ ready=[01]$")
                 self.assertEqual(
                     len(re.findall(r"(?m)^branch-probe mirror=", out.getvalue())), 5)
 

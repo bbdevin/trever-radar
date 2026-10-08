@@ -12,6 +12,7 @@ data/*.gz
 data/spark_day.json
 # 分點抓取暫存檔(docs/47 §8;VPS 每輪產生、寫入資料庫後刪)
 data/branch-stage-*.json*
+data/branch-probe-state-*.json*
 data/warrant-branch-state-*.json
 # 多方榜紀錄(docs/48 §2 事前登記的唯一資料來源;VPS 追加,不進 git)
 data/bull_board_log/

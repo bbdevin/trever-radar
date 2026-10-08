@@ -31,8 +31,12 @@ def fetch_daily_quotes(date: str) -> list[Quote]:
         f"{BASE}/afterTrading/dailyQuotes",
         {"date": roc_date(date), "type": "AL", "response": "json"},
         # 520 is a known intermittent TPEx edge/origin response.  It alone
-        # gets five total attempts; all other transport failures stay at 3.
-        status_retries={520: 5}, backoff_base=5.0,
+        # gets five total attempts.  2026-10-06 and 10-08: the ~10k-row body is
+        # also cut short mid-stream (ChunkedEncodingError) three times in a
+        # row at 16:30; that transport failure gets five attempts here too
+        # (linear 5/10/15/20 s backoff, +50 s worst case).  Other endpoints
+        # keep the ordinary three.
+        retries=5, status_retries={520: 5}, backoff_base=5.0,
         exponential_backoff=True, jitter_max=2.0,
     )
     table = _table(j, "dailyQuotes", date, "代號")

@@ -300,7 +300,7 @@ class TestStepFailureNotify(unittest.TestCase):
         # docs/47 §8.2 兩段式上線:deploy 在 publish_site() 函式裡、被呼叫兩次。prune 在
         # **第一段**上線之前(兩個模式、刷新路徑都走到;改動前它也在 deploy 之前)。
         prune = self.code.index("radar prune")
-        first_publish = self.code.index("\npublish_site\n")
+        first_publish = re.search(r"(?m)^\s*publish_site$", self.code).start()
         self.assertLess(prune, first_publish,
                         "prune 若搬到上線之後,它的通知等級要重新決定")
         self.assertGreater(prune, self.code.index("radar compute-performance"))
