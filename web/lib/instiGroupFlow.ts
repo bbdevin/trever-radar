@@ -4,11 +4,11 @@
  * 純函式,不 import 任何執行期的 "@/" 模組,node --test 直接跑;禁用詞由 instiGroupFlow.test.ts 把關。
  * 資料是 rankings/insti_flow_1d.json:族群內成分股的法人淨張數相加,金額是張數 × 當日收盤的估算。
  */
-import type { InstiFlowGroup, InstiFlowJson, InstiIdentity } from "./types.ts";
+import type { InstiFlowGroup, InstiFlowJson, InstiIdentity, InstiStockRow, InstiStockSide } from "./types.ts";
 
 export const INSTI_TAB_LABEL = "法人族群";
 export const INSTI_TAB_HINT =
-  "外資、投信、自營商今天在哪些產業或題材買超、賣超最多;點族群看是哪幾檔。只整理交易所公布的買賣超,不下判斷。";
+  "外資、投信、自營商今天在哪些產業或題材買超、賣超最多;點族群看是哪幾檔,切到「個股」看單檔買賣超排行。只整理交易所公布的買賣超,不下判斷。";
 export const INSTI_FLOW_URL = "/data/rankings/insti_flow_1d.json";
 export const INSTI_EMPTY = "尚無法人族群資料(下一輪法人更新後出現)";
 export const INSTI_NO_GROUPS = "今日沒有可排名的族群";
@@ -168,4 +168,52 @@ export function barRatio(amt: number, maxAbs: number): number {
 /** 個股連結:開三大法人分頁 */
 export function memberHref(id: string): string {
   return `/stock?id=${encodeURIComponent(id)}#insti`;
+}
+
+// ── 「個股」模式(docs/49 §9):rankings/insti_stocks_1d.json,切到才抓 ──
+
+export const INSTI_STOCKS_URL = "/data/rankings/insti_stocks_1d.json";
+export const INSTI_STOCKS_EMPTY = "尚無法人個股資料(下一輪法人更新後出現)";
+export const INSTI_NO_STOCKS = "今日沒有買賣超個股";
+
+/** 產業/題材/個股 三個檢視;個股讀另一份檔 */
+export type InstiView = InstiMode | "stock";
+export const VIEWS: readonly InstiView[] = ["industry", "theme", "stock"];
+export const VIEW_LABEL: Record<InstiView, string> = { ...MODE_LABEL, stock: "個股" };
+
+/** 每邊先列幾檔,其餘按「顯示全部」展開 */
+export const STOCK_INITIAL = 10;
+
+export function stockDefinitionText(ident: InstiIdentity): string {
+  const who = ident === "total" ? "三大法人合計" : IDENTITY_LABEL[ident];
+  const parts = [`全市場個股(不含 ETF)依${who}買賣超金額排名;金額＝張數×當日收盤(估)。`];
+  if (ident === "dealer") parts.push("自營＝自行買賣＋避險合計。");
+  parts.push("只整理資料,不下判斷。");
+  return parts.join("");
+}
+
+/** 「外資 買超 412 檔 · 賣超 380 檔」(零股不算任一邊) */
+export function stockCountLine(ident: InstiIdentity, s: Pick<InstiStockSide, "buy_n" | "sell_n">): string {
+  return `${IDENTITY_LABEL[ident]} 買超 ${s.buy_n.toLocaleString("zh-TW")} 檔 · 賣超 ${s.sell_n.toLocaleString("zh-TW")} 檔`;
+}
+
+/** 欄頭:「買超前 30 檔 · 張數/金額(估)/漲跌」 */
+export function stockSideTitle(side: "buy" | "sell", n: number): string {
+  return `${side === "buy" ? "買超" : "賣超"}前 ${n} 檔 · 張數/金額(估)/漲跌`;
+}
+
+/** 連續同方向日數;< 2 日不顯示;到回看上限時寫「以上」 */
+export function streakText(streak: number, side: "buy" | "sell", lookback: number): string | null {
+  if (streak < 2) return null;
+  const word = side === "buy" ? "買超" : "賣超";
+  return lookback > 0 && streak >= lookback ? `連 ${lookback} 日以上${word}` : `連 ${streak} 日${word}`;
+}
+
+/** 列上的金額:無收盤 → 「—」 */
+export function fmtStockAmt(r: Pick<InstiStockRow, "amt_est" | "amt_missing">): string {
+  return r.amt_missing ? "—" : fmtAmt(r.amt_est);
+}
+
+export function showAllText(total: number): string {
+  return `顯示全部 ${total} 檔`;
 }

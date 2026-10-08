@@ -23,6 +23,7 @@ _log = logging.getLogger(__name__)
 from ..branch_source import date_window_from
 from .home_split import write_home
 from .insti_group_flow import FILE_1D as INSTI_FILE_1D, write_insti_flow
+from .insti_stocks import FILE_1D as INSTI_STOCKS_FILE_1D, write_insti_stocks
 from .spark_day import attach_spark_day
 from .stock_parts import (
     StockPartsWriter,
@@ -2182,7 +2183,7 @@ def export_json(
     home_sizes = write_home(out, radar)
     (out / "meta.json").write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
 
-    # 兩份排行各自一檔、各自的分頁才讀:任一份失敗只記警告,不可中斷 export
+    # 各份排行各自一檔、各自的分頁才讀:任一份失敗只記警告,不可中斷 export
     # (否則 stocks_index/個股檔整輪不寫、整輪不上線)。
     with engine.connect() as conn:
         try:
@@ -2199,6 +2200,12 @@ def export_json(
             # 分頁改顯示「尚無法人族群資料」,下一輪成功即恢復(docs/49 MVP 備註)。
             _log.warning("insti_flow export failed; previous file removed", exc_info=True)
             (out / "rankings" / INSTI_FILE_1D).unlink(missing_ok=True)
+        try:
+            # 法人買賣超個股(docs/49 §9):另一檔,切到「個股」模式才抓;失敗同上刪舊檔。
+            write_insti_stocks(out, conn, data_date=d, i_date=i_date, generated_at=now)
+        except Exception:
+            _log.warning("insti_stocks export failed; previous file removed", exc_info=True)
+            (out / "rankings" / INSTI_STOCKS_FILE_1D).unlink(missing_ok=True)
 
     # 全市場搜尋索引(id/名稱/市場/產業/描述;compact 陣列省體積)
     with engine.connect() as conn:

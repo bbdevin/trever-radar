@@ -35,6 +35,18 @@ import {
   partialText,
   splitSides,
   staleText,
+  INSTI_NO_STOCKS,
+  INSTI_STOCKS_EMPTY,
+  INSTI_STOCKS_URL,
+  STOCK_INITIAL,
+  VIEWS,
+  VIEW_LABEL,
+  fmtStockAmt,
+  showAllText,
+  stockCountLine,
+  stockDefinitionText,
+  stockSideTitle,
+  streakText,
 } from "./instiGroupFlow.ts";
 import type { InstiFlowGroup, InstiFlowJson, InstiFlowMember } from "./types.ts";
 
@@ -144,6 +156,33 @@ test("條長與連結", () => {
   assert.equal(memberHref("2330"), "/stock?id=2330#insti");
 });
 
+test("個股模式:檢視標籤、定義句、計數、欄頭", () => {
+  assert.deepEqual(VIEWS.map((v) => VIEW_LABEL[v]), ["產業", "題材", "個股"]);
+  assert.equal(INSTI_STOCKS_URL, "/data/rankings/insti_stocks_1d.json");
+  assert.equal(stockDefinitionText("foreign"), "全市場個股(不含 ETF)依外資買賣超金額排名;金額＝張數×當日收盤(估)。只整理資料,不下判斷。");
+  assert.match(stockDefinitionText("total"), /三大法人合計/);
+  assert.match(stockDefinitionText("dealer"), /自營＝自行買賣＋避險合計/);
+  assert.equal(stockCountLine("trust", { buy_n: 1412, sell_n: 380 }), "投信 買超 1,412 檔 · 賣超 380 檔");
+  assert.equal(stockSideTitle("buy", 30), "買超前 30 檔 · 張數/金額(估)/漲跌");
+  assert.equal(stockSideTitle("sell", 7), "賣超前 7 檔 · 張數/金額(估)/漲跌");
+  assert.equal(showAllText(30), "顯示全部 30 檔");
+  assert.equal(STOCK_INITIAL, 10);
+});
+
+test("個股模式:連續日數與金額", () => {
+  assert.equal(streakText(0, "buy", 20), null);
+  assert.equal(streakText(1, "buy", 20), null);
+  assert.equal(streakText(3, "buy", 20), "連 3 日買超");
+  assert.equal(streakText(5, "sell", 20), "連 5 日賣超");
+  assert.equal(streakText(20, "buy", 20), "連 20 日以上買超");
+  // 庫裡只有 2 個法人日:2 日就是上限
+  assert.equal(streakText(2, "sell", 2), "連 2 日以上賣超");
+  assert.equal(streakText(4, "buy", 0), "連 4 日買超");
+  assert.equal(fmtStockAmt({ amt_est: 3_100_000_000 }), "+31.0億");
+  assert.equal(fmtStockAmt({ amt_est: -90_000_000 }), "-9,000萬");
+  assert.equal(fmtStockAmt({ amt_est: 0, amt_missing: true }), "—");
+});
+
 test("禁詞:分頁名、說明、定義句、狀態句", () => {
   // 用字碼組字,避免本測試檔自己被 test_label_honesty 掃到。
   const word = (...codes: number[]) => String.fromCharCode(...codes);
@@ -178,6 +217,13 @@ test("禁詞:分頁名、說明、定義句、狀態句", () => {
     dateLine(p), staleText(p)!, partialText(p)!, countShort(g), countFull(g), concentrationText(g)!,
     clsStaleText(g.cls_date)!, missingText(3)!, moreText(20, 10)!, LOTS_AMT_MISMATCH,
   ];
+  texts.push(
+    ...IDENTITIES.flatMap((k) => [stockDefinitionText(k), stockCountLine(k, { buy_n: 412, sell_n: 380 })]),
+    ...VIEWS.map((v) => VIEW_LABEL[v]),
+    INSTI_STOCKS_EMPTY, INSTI_NO_STOCKS, showAllText(30),
+    stockSideTitle("buy", 30), stockSideTitle("sell", 30),
+    streakText(3, "buy", 20)!, streakText(20, "sell", 20)!,
+  );
   for (const t of texts) assert.ok(!banned.test(t), t);
   assert.ok(banned.test(word(0x505a, 0x591a)), "regex 本身有效");
   // 買超/賣超 是允許的

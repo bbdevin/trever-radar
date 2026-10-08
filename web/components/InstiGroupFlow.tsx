@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { AlertTriangle, ChevronRight, Info, X } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -8,16 +8,35 @@ import { dataFetch } from "@/lib/dataFetch";
 import { OFFLINE_DATA_COPY, isBrowserOffline } from "@/lib/pwa";
 import { MARKET_LABEL, toneClass } from "@/lib/format";
 import { cn, pillTabClass, softSelectClass } from "@/lib/utils";
-import type { InstiFlowGroup, InstiFlowJson, InstiFlowMember, InstiIdentity } from "@/lib/types";
+import type {
+  InstiFlowGroup,
+  InstiFlowJson,
+  InstiFlowMember,
+  InstiIdentity,
+  InstiStockRow,
+  InstiStocksJson,
+} from "@/lib/types";
 import {
   IDENTITIES,
   IDENTITY_LABEL,
   INSTI_EMPTY,
   INSTI_FLOW_URL,
   INSTI_NO_GROUPS,
+  INSTI_NO_STOCKS,
   INSTI_OTHER_LABEL,
-  MODE_LABEL,
+  INSTI_STOCKS_EMPTY,
+  INSTI_STOCKS_URL,
   SIDE_LIMIT,
+  STOCK_INITIAL,
+  VIEWS,
+  VIEW_LABEL,
+  fmtStockAmt,
+  showAllText,
+  stockCountLine,
+  stockDefinitionText,
+  stockSideTitle,
+  streakText,
+  type InstiView,
   barRatio,
   clsStaleText,
   concentrationText,
@@ -168,22 +187,107 @@ function GroupRow({
   );
 }
 
-export default function InstiGroupFlow() {
-  const [data, setData] = useState<InstiFlowJson | null>(null);
-  const [error, setError] = useState(false);
-  const [ident, setIdent] = useState<InstiIdentity>("foreign");
-  const [mode, setMode] = useState<InstiMode>("industry");
-  const [openName, setOpenName] = useState<string | null>(null);
+function StockRow({ r, side, lookback }: { r: InstiStockRow; side: "buy" | "sell"; lookback: number }) {
+  const streak = streakText(r.streak, side, lookback);
+  return (
+    <Link
+      href={memberHref(r.id)}
+      className="grid min-h-11 grid-cols-[minmax(0,1fr)_auto_auto_auto_12px] items-center gap-x-1.5 gap-y-0 rounded-[10px] px-2 py-1 text-[12.5px] transition-colors hover:bg-secondary"
+    >
+      <span className="min-w-0 truncate font-semibold leading-tight text-foreground" title={r.name}>{r.name}</span>
+      <span className={cn("num min-w-[4.25rem] text-right font-semibold", toneClass(r.net_lots))}>{fmtNetLots(r.net_lots)}</span>
+      <span className="num min-w-[3.25rem] text-right text-[color:var(--ink-2)]">{fmtStockAmt(r)}</span>
+      <span className={cn("num w-12 text-right text-[11.5px]", toneClass(r.chg_pct))}>{fmtChg(r.chg_pct)}</span>
+      <ChevronRight size={14} strokeWidth={1.8} className="row-span-2 text-muted-foreground" aria-hidden />
+      {/* 第二行橫跨數字欄:390px 下名稱欄只剩約 6 個字,代號/市場/產業/連續日數放這裡才放得下 */}
+      <span className="col-span-4 flex min-w-0 items-center gap-1 text-[10.5px] leading-[15px] text-muted-foreground">
+        <span className="num shrink-0">{r.id}</span>
+        <span className="shrink-0 rounded border border-border px-1 text-[10px] leading-[14px]">
+          {MARKET_LABEL[r.market] ?? r.market}
+        </span>
+        {r.ind && <span className="min-w-0 truncate" title={r.ind}>{r.ind}</span>}
+        {streak && (
+          <span className={cn("shrink-0 font-semibold", side === "buy" ? "text-up" : "text-down")}>{` · ${streak}`}</span>
+        )}
+      </span>
+    </Link>
+  );
+}
 
+function StockColumn({
+  side,
+  rows,
+  lookback,
+}: {
+  side: "buy" | "sell";
+  rows: InstiStockRow[];
+  lookback: number;
+}) {
+  const [all, setAll] = useState(false);
+  const shown = all ? rows : rows.slice(0, STOCK_INITIAL);
+  return (
+    <div className="flex min-w-0 flex-col gap-0.5">
+      <div
+        className={cn(
+          "mb-0.5 border-b border-[color:var(--line)] pb-1 text-xs font-bold tracking-[0.5px]",
+          side === "buy" ? "text-up" : "text-down",
+        )}
+      >
+        {`${side === "buy" ? "↑" : "↓"} ${stockSideTitle(side, rows.length)}`}
+      </div>
+      {shown.length ? (
+        shown.map((r) => <StockRow key={r.id} r={r} side={side} lookback={lookback} />)
+      ) : (
+        <div className="p-2 text-xs text-muted-foreground">{INSTI_NO_STOCKS}</div>
+      )}
+      {rows.length > shown.length && (
+        <button
+          type="button"
+          className="min-h-11 cursor-pointer rounded-[10px] text-[12px] font-semibold text-primary transition-colors hover:bg-secondary"
+          onClick={() => setAll(true)}
+        >
+          {showAllText(rows.length)}
+        </button>
+      )}
+    </div>
+  );
+}
+
+function StockBody({ data, ident }: { data: InstiStocksJson; ident: InstiIdentity }) {
+  const r = data.ranks[ident];
+  const missing = missingText(data.amt_missing_n);
+  return (
+    <>
+      <p className="num mt-2 text-[12.5px] font-semibold text-foreground">{stockCountLine(ident, r)}</p>
+      {missing && <p className="mt-0.5 text-[11px] text-muted-foreground">{missing}</p>}
+      {/* key=ident:換身分時「顯示全部」收回 */}
+      <div key={ident} className="mt-2.5 grid grid-cols-1 gap-x-6 gap-y-3 md:grid-cols-2">
+        <StockColumn side="buy" rows={r.buy} lookback={data.streak_days} />
+        <StockColumn side="sell" rows={r.sell} lookback={data.streak_days} />
+      </div>
+    </>
+  );
+}
+
+function useLazyJson<T>(url: string, enabled: boolean): { data: T | null; error: boolean } {
+  const [data, setData] = useState<T | null>(null);
+  const [error, setError] = useState(false);
+  const requested = useRef(false);
   useEffect(() => {
-    dataFetch(INSTI_FLOW_URL)
+    if (!enabled || requested.current) return;
+    requested.current = true;
+    dataFetch(url)
       .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
       .then(setData)
       .catch(() => setError(true));
-  }, []);
+  }, [url, enabled]);
+  return { data, error };
+}
+
+function GroupBody({ data, ident, mode }: { data: InstiFlowJson; ident: InstiIdentity; mode: InstiMode }) {
+  const [openName, setOpenName] = useState<string | null>(null);
 
   const sides = useMemo(() => {
-    if (!data) return null;
     const { buy, sell } = splitSides(data.groups[mode]?.[ident] ?? []);
     const shownBuy = buy.slice(0, SIDE_LIMIT);
     const shownSell = sell.slice(0, SIDE_LIMIT);
@@ -191,27 +295,6 @@ export default function InstiGroupFlow() {
     return { buy, sell, shownBuy, shownSell, maxAbs };
   }, [data, mode, ident]);
 
-  if (error) {
-    return (
-      <div className="py-12 text-center text-sm text-muted-foreground">
-        {isBrowserOffline() ? OFFLINE_DATA_COPY : INSTI_EMPTY}
-      </div>
-    );
-  }
-
-  if (!data || !sides) {
-    return (
-      <div className="space-y-2 py-2">
-        <Skeleton className="h-24 w-full rounded-[var(--r-md)]" />
-        {[0, 1, 2, 3, 4].map((i) => (
-          <Skeleton key={i} className="h-12 w-full rounded-[var(--r-md)]" />
-        ))}
-      </div>
-    );
-  }
-
-  const partial = partialText(data);
-  const stale = staleText(data);
   const missing = missingText(data.amt_missing_n);
   const other = mode === "industry" ? data.groups.other?.[ident] : undefined;
   const toggle = (name: string) => setOpenName((cur) => (cur === name ? null : name));
@@ -250,63 +333,7 @@ export default function InstiGroupFlow() {
   };
 
   return (
-    <section className="min-w-0 rounded-[var(--r-lg)] border border-border bg-card p-3.5 shadow-[var(--shadow-card)]">
-      <div className="mb-2.5 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
-        <h2 className="text-[15px] font-bold">法人族群</h2>
-        <span className="num text-[11.5px] text-muted-foreground">{dateLine(data)}</span>
-      </div>
-
-      <div role="tablist" aria-label="法人身分" className="mb-2.5 grid grid-cols-4 gap-1 rounded-[var(--r-md)] bg-secondary p-1">
-        {IDENTITIES.map((k) => (
-          <button
-            key={k}
-            type="button"
-            role="tab"
-            aria-selected={ident === k}
-            onClick={() => {
-              setIdent(k);
-              setOpenName(null);
-            }}
-            className={cn(
-              "min-h-11 rounded-[var(--r-sm)] px-1.5 py-1.5 text-[13px] font-semibold leading-tight transition-colors touch-manipulation",
-              ident === k ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground",
-            )}
-          >
-            {IDENTITY_LABEL[k]}
-          </button>
-        ))}
-      </div>
-
-      <div role="tablist" aria-label="族群分類" className="mb-2.5 inline-flex gap-0.5 rounded-full border border-border bg-card p-[3px]">
-        {(["industry", "theme"] as const).map((k) => (
-          <button
-            key={k}
-            type="button"
-            role="tab"
-            aria-selected={mode === k}
-            className={cn(pillTabClass(mode === k, "accent"), "min-h-9")}
-            onClick={() => {
-              setMode(k);
-              setOpenName(null);
-            }}
-          >
-            {MODE_LABEL[k]}
-          </button>
-        ))}
-      </div>
-
-      <p className="flex items-start gap-2 text-[12px] leading-relaxed text-muted-foreground">
-        <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" aria-hidden />
-        <span>{definitionText(ident, mode)}</span>
-      </p>
-
-      {(partial || stale) && (
-        <div className="mt-2 flex items-start gap-2 rounded-[var(--r-md)] border border-[color:var(--warn)]/30 bg-[color:var(--warn)]/10 px-3 py-2 text-[12px] text-foreground/90">
-          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-[color:var(--warn)]" aria-hidden />
-          <span>{[partial, stale].filter(Boolean).join(" ")}</span>
-        </div>
-      )}
-
+    <>
       <p className="num mt-2 text-[12.5px] font-semibold text-foreground">{marketLine(data, ident)}</p>
       {missing && <p className="mt-0.5 text-[11px] text-muted-foreground">{missing}</p>}
 
@@ -320,6 +347,91 @@ export default function InstiGroupFlow() {
           {`${INSTI_OTHER_LABEL} `}
           <span className="num">{`${fmtNetLots(other.net_lots)} · ${fmtAmtEst(other.amt_est)} · ${countFull(other)}`}</span>
         </p>
+      )}
+    </>
+  );
+}
+
+export default function InstiGroupFlow() {
+  const [ident, setIdent] = useState<InstiIdentity>("foreign");
+  const [view, setView] = useState<InstiView>("industry");
+  const isStock = view === "stock";
+  // 族群檔進分頁就抓;個股檔第一次切到「個股」才抓,之後切回來不重抓。
+  const flow = useLazyJson<InstiFlowJson>(INSTI_FLOW_URL, true);
+  const stocks = useLazyJson<InstiStocksJson>(INSTI_STOCKS_URL, isStock);
+  const active = isStock ? stocks : flow;
+  const data = active.data;
+
+  const partial = data ? partialText(data) : null;
+  const stale = data ? staleText(data) : null;
+
+  return (
+    <section className="min-w-0 rounded-[var(--r-lg)] border border-border bg-card p-3.5 shadow-[var(--shadow-card)]">
+      <div className="mb-2.5 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
+        <h2 className="text-[15px] font-bold">法人族群</h2>
+        {data && <span className="num text-[11.5px] text-muted-foreground">{dateLine(data)}</span>}
+      </div>
+
+      <div role="tablist" aria-label="法人身分" className="mb-2.5 grid grid-cols-4 gap-1 rounded-[var(--r-md)] bg-secondary p-1">
+        {IDENTITIES.map((k) => (
+          <button
+            key={k}
+            type="button"
+            role="tab"
+            aria-selected={ident === k}
+            onClick={() => setIdent(k)}
+            className={cn(
+              "min-h-11 rounded-[var(--r-sm)] px-1.5 py-1.5 text-[13px] font-semibold leading-tight transition-colors touch-manipulation",
+              ident === k ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground",
+            )}
+          >
+            {IDENTITY_LABEL[k]}
+          </button>
+        ))}
+      </div>
+
+      <div role="tablist" aria-label="檢視" className="mb-2.5 inline-flex gap-0.5 rounded-full border border-border bg-card p-[3px]">
+        {VIEWS.map((k) => (
+          <button
+            key={k}
+            type="button"
+            role="tab"
+            aria-selected={view === k}
+            className={cn(pillTabClass(view === k, "accent"), "min-h-9")}
+            onClick={() => setView(k)}
+          >
+            {VIEW_LABEL[k]}
+          </button>
+        ))}
+      </div>
+
+      <p className="flex items-start gap-2 text-[12px] leading-relaxed text-muted-foreground">
+        <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" aria-hidden />
+        <span>{isStock ? stockDefinitionText(ident) : definitionText(ident, view)}</span>
+      </p>
+
+      {(partial || stale) && (
+        <div className="mt-2 flex items-start gap-2 rounded-[var(--r-md)] border border-[color:var(--warn)]/30 bg-[color:var(--warn)]/10 px-3 py-2 text-[12px] text-foreground/90">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-[color:var(--warn)]" aria-hidden />
+          <span>{[partial, stale].filter(Boolean).join(" ")}</span>
+        </div>
+      )}
+
+      {active.error ? (
+        <div className="py-12 text-center text-sm text-muted-foreground">
+          {isBrowserOffline() ? OFFLINE_DATA_COPY : isStock ? INSTI_STOCKS_EMPTY : INSTI_EMPTY}
+        </div>
+      ) : !data ? (
+        <div className="space-y-2 py-2">
+          {[0, 1, 2, 3, 4].map((i) => (
+            <Skeleton key={i} className="h-12 w-full rounded-[var(--r-md)]" />
+          ))}
+        </div>
+      ) : isStock ? (
+        <StockBody data={stocks.data!} ident={ident} />
+      ) : (
+        // key:換身分或模式時收合展開中的族群(與 MVP 行為一致)
+        <GroupBody key={`${view}-${ident}`} data={flow.data!} ident={ident} mode={view} />
       )}
     </section>
   );

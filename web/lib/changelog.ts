@@ -39,6 +39,14 @@ export const KIND_LABEL: Record<ChangeKind, string> = {
 
 export const CHANGELOG: Release[] = [
   {
+    version: "3.6",
+    date: "2026-10-09",
+    title: "法人買賣超個股排行",
+    items: [
+      { kind: "new", text: "「法人族群」分頁新增「個股」檢視(在產業、題材旁邊):外資、投信、自營、合計各列今天買超、賣超金額(估)最多的前 30 檔,顯示張數、估算金額、漲跌、產業與連續買超或賣超日數;點個股直接開三大法人分頁" },
+    ],
+  },
+  {
     version: "3.5",
     date: "2026-10-08",
     title: "首頁新增法人族群",

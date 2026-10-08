@@ -815,6 +815,43 @@ export interface InstiFlowJson {
   };
 }
 
+/** 法人買賣超個股(docs/49 §9):rankings/insti_stocks_1d.json */
+export interface InstiStockRow {
+  id: string;
+  name: string;
+  market: string;
+  /** 官方產業別(空字串 = 無) */
+  ind: string;
+  net_lots: number;
+  /** 淨股數 × 當日收盤(估);無收盤時為 0 並帶 amt_missing */
+  amt_est: number;
+  chg_pct: number | null;
+  /** 截至法人日連續同方向的法人日數(只看最近 streak_days 日) */
+  streak: number;
+  amt_missing?: true;
+}
+
+export interface InstiStockSide {
+  buy_n: number;
+  sell_n: number;
+  buy: InstiStockRow[];
+  sell: InstiStockRow[];
+}
+
+export interface InstiStocksJson {
+  version: number;
+  window: number;
+  as_of: string;
+  data_date: string;
+  generated_at: string;
+  stale: boolean;
+  coverage: { twse: number; tpex: number; partial: boolean };
+  amt_missing_n: number;
+  streak_days: number;
+  top_n: number;
+  ranks: Record<InstiIdentity, InstiStockSide>;
+}
+
 /** 產業下鑽子題材(僅 sectors 帶;口徑同題材聚合但限定產業內成分) */
 export interface SectorSubFlow {
   name: string;
