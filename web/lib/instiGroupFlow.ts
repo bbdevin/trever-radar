@@ -130,6 +130,16 @@ export function concentrationText(g: InstiFlowGroup): string | null {
   return name ? `集中於 ${name}` : null;
 }
 
+export const LOTS_AMT_MISMATCH = "張數方向與金額不同";
+
+/**
+ * 排名看金額(估),張數與金額可能反向(低價股大量買超、高價股少量賣超):賣超欄出現
+ * 「+N張」時加一句小字,免得讀成資料錯誤。
+ */
+export function lotsAmtMismatchText(g: Pick<InstiFlowGroup, "net_lots" | "amt_est">): string | null {
+  return Math.sign(g.net_lots) * Math.sign(g.amt_est) < 0 ? LOTS_AMT_MISMATCH : null;
+}
+
 function bySellOrder(a: InstiFlowGroup, b: InstiFlowGroup): number {
   if (a.amt_est !== b.amt_est) return a.amt_est - b.amt_est;
   if (a.net_lots !== b.net_lots) return a.net_lots - b.net_lots;

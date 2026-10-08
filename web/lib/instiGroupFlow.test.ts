@@ -13,6 +13,7 @@ import {
   INSTI_OTHER_LABEL,
   INSTI_TAB_HINT,
   INSTI_TAB_LABEL,
+  LOTS_AMT_MISMATCH,
   MODE_LABEL,
   barRatio,
   clsStaleText,
@@ -25,6 +26,7 @@ import {
   fmtAmt,
   fmtAmtEst,
   fmtNetLots,
+  lotsAmtMismatchText,
   marketLine,
   memberHref,
   missingText,
@@ -128,6 +130,13 @@ test("拆兩邊:買超照檔內順序,賣超最負在前,同分看張數再看�
   assert.deepEqual(sell.map((g) => g.name), ["己", "庚", "戊", "丁"]);
 });
 
+test("張數方向與金額不同", () => {
+  assert.equal(lotsAmtMismatchText({ net_lots: 120, amt_est: -5e8 }), LOTS_AMT_MISMATCH);
+  assert.equal(lotsAmtMismatchText({ net_lots: -120, amt_est: 5e8 }), LOTS_AMT_MISMATCH);
+  assert.equal(lotsAmtMismatchText({ net_lots: 120, amt_est: 5e8 }), null);
+  assert.equal(lotsAmtMismatchText({ net_lots: 0, amt_est: -5e8 }), null);
+});
+
 test("條長與連結", () => {
   assert.equal(barRatio(50, 100), 0.5);
   assert.equal(barRatio(-1, 100), 0.06);
@@ -167,7 +176,7 @@ test("禁詞:分頁名、說明、定義句、狀態句", () => {
     INSTI_TAB_LABEL, INSTI_TAB_HINT, INSTI_EMPTY, INSTI_NO_GROUPS, INSTI_OTHER_LABEL,
     ...IDENTITIES.flatMap((k) => [IDENTITY_LABEL[k], definitionText(k, "industry"), definitionText(k, "theme"), marketLine(p, k)]),
     dateLine(p), staleText(p)!, partialText(p)!, countShort(g), countFull(g), concentrationText(g)!,
-    clsStaleText(g.cls_date)!, missingText(3)!, moreText(20, 10)!,
+    clsStaleText(g.cls_date)!, missingText(3)!, moreText(20, 10)!, LOTS_AMT_MISMATCH,
   ];
   for (const t of texts) assert.ok(!banned.test(t), t);
   assert.ok(banned.test(word(0x505a, 0x591a)), "regex 本身有效");

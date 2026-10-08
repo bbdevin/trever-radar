@@ -5,8 +5,9 @@
 
 口徑(docs/49 §2):
 - 母體 = ``stocks.type = 'stock' AND is_active = 1``,ETF 不算。
-- 張數 = 逐檔 ``淨股數 // 1000``(同首頁卡片 ``foreign_net_lots`` 的轉法),族群張數 =
-  成分逐檔張數相加,所以「族群 = Σ 成員」「產業各組 + 其他 = 全市場」兩條恆等式都成立。
+- 張數 = 逐檔 ``淨股數 / 1000`` 向零截斷(``trunc_lots``;與卡片 ``foreign_net_lots`` 的 ``//``
+  不同,理由見該函式),族群張數 = 成分逐檔張數相加,所以「族群 = Σ 成員」
+  「產業各組 + 其他 = 全市場」兩條恆等式都成立。買超/賣超檔數只數截斷後 ≠ 0 張的檔。
 - 金額(估) = Σ 淨股數 × 當日收盤;停牌取 ≤ 當日最近一筆收盤;仍無 → 金額計 0、張數照算,
   記 ``amt_missing_n``。
 - 產業:官方產業別;空白或字面「其他」、以及有法人列的成分 < 3 檔的產業,併入「其他」
@@ -18,11 +19,14 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from datetime import date
 from pathlib import Path
 
 from sqlalchemy import text
+
+_log = logging.getLogger(__name__)
 
 IDENTITIES = ("foreign", "trust", "dealer", "total")
 OTHER_GROUP = "其他"
@@ -73,11 +77,22 @@ def load_rows(conn, i_date: str) -> list[dict]:
     return out
 
 
+def trunc_lots(shares: int) -> int:
+    """股 → 張,**向零截斷**(不是 ``//`` 的向下取整)。
+
+    ``//`` 會把 −500 股變成 −1 張、+500 股變成 0 張:零股賣超被算成「賣超 1 檔」,
+    買賣檔數系統性偏向賣方(核對時看到「−1張 · 0萬」的假賣超)。本功能的張數、
+    買賣超檔數、族群與全市場合計都用這同一個逐檔值,所以恆等式照樣逐張成立。
+    個股卡片的 ``foreign_net_lots`` 仍是舊的 ``//``,兩者在零股/負數尾數會差 1 張。
+    """
+    return -(-shares // 1000) if shares < 0 else shares // 1000
+
+
 def _stock_values(row: dict) -> dict:
     lots, amt = {}, {}
     for ident in IDENTITIES:
         shares = row["net"].get(ident) or 0
-        lots[ident] = shares // 1000
+        lots[ident] = trunc_lots(shares)
         amt[ident] = shares * row["close"] if row["close"] is not None else 0
     return {**row, "lots": lots, "amt": amt, "amt_missing": row["close"] is None}
 
@@ -229,8 +244,11 @@ def fit_budget(rows: list[dict], memberships: dict[str, list[dict]], **kw) -> st
     body = ""
     for caps in BUDGET_STEPS:
         body = serialize(aggregate(rows, memberships, **kw, **caps))
-        if len(body.encode("utf-8")) <= MAX_RAW_BYTES:
+        size = len(body.encode("utf-8"))
+        if size <= MAX_RAW_BYTES:
             return body
+    _log.warning("insti_flow still %d bytes after last budget step (limit %d); written as is",
+                 size, MAX_RAW_BYTES)
     return body
 
 

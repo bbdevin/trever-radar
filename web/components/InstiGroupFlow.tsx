@@ -28,6 +28,7 @@ import {
   fmtAmt,
   fmtAmtEst,
   fmtNetLots,
+  lotsAmtMismatchText,
   marketLine,
   memberHref,
   missingText,
@@ -117,7 +118,7 @@ function GroupRow({
   open: boolean;
   onToggle: () => void;
 }) {
-  const tags = [concentrationText(g), clsStaleText(g.cls_date)].filter(Boolean) as string[];
+  const tags = [concentrationText(g), clsStaleText(g.cls_date), lotsAmtMismatchText(g)].filter(Boolean) as string[];
   return (
     <div className="min-w-0">
       <button

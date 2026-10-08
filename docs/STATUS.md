@@ -4,9 +4,10 @@
 
 ## 2026-10-08 法人族群 MVP(`docs/49` §6 MVP;程式完成於分支、未合 main、未上線;v3.5)
 
-- **做了什麼**:export 尾段(與 `_export_margin_usage` 同一個 `conn`)寫 `rankings/insti_flow_1d.json`(`pipeline/radar/export/insti_group_flow.py`,純函式 `aggregate` + `write_insti_flow`,緊湊序列化、tmp+rename、`i_date` 為 None 不寫);首頁新分頁「法人族群」(key `insti`,緊接資券,`?tab=insti`),元件 `web/components/InstiGroupFlow.tsx`、句子 `web/lib/instiGroupFlow.ts`;成員列連 `/stock?id=…#insti`,個股頁新增 `#insti` 直開三大法人分頁。
+- **做了什麼**:export 尾段(與 `_export_margin_usage` 同一個 `conn`)寫 `rankings/insti_flow_1d.json`(`pipeline/radar/export/insti_group_flow.py`,純函式 `aggregate` + `write_insti_flow`,緊湊序列化、tmp+rename、`i_date` 為 None 不寫);首頁新分頁「法人族群」(key `insti`,在「期貨異常」右邊,`?tab=insti`),元件 `web/components/InstiGroupFlow.tsx`、句子 `web/lib/instiGroupFlow.ts`;成員列連 `/stock?id=…#insti`,個股頁新增 `#insti` 直開三大法人分頁。
 - **口徑**:依 `docs/49` §2/§3 —— ETF 排除、逐檔 `淨股數//1000` 再相加(恆等式:族群 = Σ 成員、產業各組 + 其他 = 全市場)、停牌回退最近收盤、題材 (name, stock_id) 去重且排除未來 membership、最小族群 3 檔、題材 |金額| ≥ 1,000 萬且買賣各前 20、同分 金額→張數→名稱;`stale`/`coverage.partial`/`amt_missing_n`/題材 `cls_date`。另加預算保險:序列化 > 250 KB 時自動降為成員 3+2、再降題材前 10(§3.2 的砍法,前端讀長度、不必改)。
 - **驗證**:`pytest tests/test_insti_group_flow.py`(15)＋相關 export/label 測試;`node --test web/lib/instiGroupFlow.test.ts`(句子、70% 集中門檻、禁詞);`tsc`、`next build` 通過;同一份種子 DB 以 main(aed6552)與本分支各匯出一次(固定時鐘),`radar.json`/`home/head.json`/`home/stocks.json` SHA-256 相同。全市場規模種子(1,771 檔、31 產業、40 題材):檔案 239,690 B raw / 25.6 KB br。390px 深/淺色截圖無水平溢出。
+- **驗證後修正(同日)**:張數改逐檔**向零截斷**(`trunc_lots`;原 `//` 會把 −500 股算成 −1 張、假賣超),買賣超檔數只數 ≠ 0 張的檔,恆等式不變;export 內 `_export_margin_usage` 與 `write_insti_flow` 各自 try/except,失敗只記 warning 不中斷整輪(資券保留舊檔、法人族群刪舊檔);預算最後一階仍超標時記 warning;賣超欄族群張數為正(或反之)時小字「張數方向與金額不同」。
 - **待人類**:合 main 後 VPS 下一輪 `daily-insti.sh` 的 export 自動產生檔案,不改 crontab/Worker/腳本;§7.1「抽 3 檔與 T86/TPEx 人工核對」需在正式資料上做(本機無正式 DB)。
 
 ## 2026-10-08 法人族群買賣超規劃落檔(`docs/49`;只改文件,程式未動)

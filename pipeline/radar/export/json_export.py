@@ -6,6 +6,7 @@ money-flow panel built from industry sums vs their 20-day averages.
 """
 import hashlib
 import json
+import logging
 import re
 import time
 from datetime import date, datetime
@@ -17,9 +18,11 @@ from sqlalchemy import bindparam, text
 
 from .. import config
 from ..db import get_engine, init_db
+
+_log = logging.getLogger(__name__)
 from ..branch_source import date_window_from
 from .home_split import write_home
-from .insti_group_flow import write_insti_flow
+from .insti_group_flow import FILE_1D as INSTI_FILE_1D, write_insti_flow
 from .spark_day import attach_spark_day
 from .stock_parts import (
     StockPartsWriter,
@@ -2179,11 +2182,23 @@ def export_json(
     home_sizes = write_home(out, radar)
     (out / "meta.json").write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
 
+    # 兩份排行各自一檔、各自的分頁才讀:任一份失敗只記警告,不可中斷 export
+    # (否則 stocks_index/個股檔整輪不寫、整輪不上線)。
     with engine.connect() as conn:
-        _export_margin_usage(out, conn, d, m_date)
-        # 法人族群(docs/49 MVP):自己一檔,切到首頁「法人族群」分頁才抓;不進 radar/home。
-        write_insti_flow(out, conn, data_date=d, i_date=i_date,
-                         memberships=company_themes_by_stock, generated_at=now)
+        try:
+            # 失敗時保留上一份:檔內帶 as_of,畫面標「資料日」,舊檔不會被當成今天。
+            _export_margin_usage(out, conn, d, m_date)
+        except Exception:
+            _log.warning("margin_usage export failed; previous file kept", exc_info=True)
+        try:
+            # 法人族群(docs/49 MVP):自己一檔,切到首頁「法人族群」分頁才抓;不進 radar/home。
+            write_insti_flow(out, conn, data_date=d, i_date=i_date,
+                             memberships=company_themes_by_stock, generated_at=now)
+        except Exception:
+            # 失敗時刪掉上一份:舊檔的 stale 是當時算的,留著會把舊法人日講成今天;
+            # 分頁改顯示「尚無法人族群資料」,下一輪成功即恢復(docs/49 MVP 備註)。
+            _log.warning("insti_flow export failed; previous file removed", exc_info=True)
+            (out / "rankings" / INSTI_FILE_1D).unlink(missing_ok=True)
 
     # 全市場搜尋索引(id/名稱/市場/產業/描述;compact 陣列省體積)
     with engine.connect() as conn:

@@ -11,7 +11,7 @@ import radar.db as db
 from radar import schema
 from radar.export import json_export
 from radar.export.insti_group_flow import (
-    IDENTITIES, OTHER_GROUP, THEME_TOP, aggregate, load_rows, serialize,
+    IDENTITIES, OTHER_GROUP, THEME_TOP, aggregate, load_rows, serialize, trunc_lots,
 )
 from radar.export.json_export import export_json
 
@@ -67,14 +67,25 @@ class AggregateTests(unittest.TestCase):
             self.assertAlmostEqual(sum(g["amt_est"] for g in groups) + other["amt_est"],
                                    p["market"][ident]["amt_est"], delta=len(groups) + 1)
         semi = next(g for g in p["groups"]["industry"]["foreign"] if g["name"] == "半導體")
-        # 族群 net_lots == Σ 成員 daily_institutional ÷1000(逐檔取整,同 foreign_net_lots)
-        self.assertEqual(semi["net_lots"], 8_210_400 // 1000 + 1_120_000 // 1000 + (-2_050_999) // 1000)
+        # 族群 net_lots == Σ 成員 daily_institutional ÷1000(逐檔向零截斷)
+        self.assertEqual(semi["net_lots"], 8_210 + 1_120 - 2_050)
         self.assertEqual(semi["net_lots"],
                          sum(m["net_lots"] for m in semi["buy_top"] + semi["sell_top"]))
         self.assertEqual(semi["amt_est"], round(8_210_400 * 600 + 1_120_000 * 1300 - 2_050_999 * 45))
         self.assertEqual((semi["n"], semi["buy_n"], semi["sell_n"]), (3, 2, 1))
         self.assertEqual(p["market"]["foreign"]["net_lots"],
-                         sum(r["net"]["foreign"] // 1000 for r in rows))
+                         sum(trunc_lots(r["net"]["foreign"]) for r in rows))
+
+    def test_lots_truncate_toward_zero_and_odd_lots_are_neither_side(self):
+        self.assertEqual([trunc_lots(v) for v in (-500, 500, -999, -1000, -1500, 1999, 0)],
+                         [0, 0, 0, -1, -1, 1, 0])
+        rows = [row("5001", foreign=-500, close=100.0), row("5002", foreign=-999, close=100.0),
+                row("5003", foreign=2_000, close=100.0), row("5004", foreign=-1_500, close=100.0)]
+        g = agg(rows)["groups"]["industry"]["foreign"][0]
+        self.assertEqual((g["buy_n"], g["sell_n"]), (1, 1))
+        self.assertEqual(g["net_lots"], 2 - 1)
+        self.assertEqual([m["id"] for m in g["sell_top"]], ["5004"])
+        self.assertEqual([m["id"] for m in g["buy_top"]], ["5003"])
 
     def test_minimum_group_size_merges_into_other(self):
         p = agg(self._market_rows())
@@ -187,6 +198,11 @@ class AggregateTests(unittest.TestCase):
             cut = json.loads(mod.fit_budget(rows, {}, **kw))
         g = cut["groups"]["industry"]["foreign"][0]
         self.assertEqual((len(g["buy_top"]), len(g["sell_top"])), (3, 2))
+        with mock.patch.object(mod, "MAX_RAW_BYTES", 10), \
+                self.assertLogs("radar.export.insti_group_flow", level="WARNING") as logs:
+            last = json.loads(mod.fit_budget(rows, {}, **kw))
+        self.assertIn("after last budget step", logs.output[0])
+        self.assertEqual(len(last["groups"]["industry"]["foreign"][0]["buy_top"]), 3)
         # 恆等式不受成員裁切影響
         self.assertEqual(g["net_lots"], cut["market"]["foreign"]["net_lots"] - cut["groups"].get(
             "other", {}).get("foreign", {}).get("net_lots", 0))
@@ -294,6 +310,30 @@ class InstiFlowExportTests(unittest.TestCase):
             conn.execute(schema.daily_institutional.delete())
         export_json(self.tmp / "out")
         self.assertFalse((self.tmp / "out" / "rankings" / "insti_flow_1d.json").exists())
+
+    def test_insti_failure_does_not_abort_export(self):
+        out = self.tmp / "out"
+        export_json(out)  # 先有一份舊檔
+        self.assertTrue((out / "rankings" / "insti_flow_1d.json").exists())
+        from radar.export import insti_group_flow as mod
+        with mock.patch.object(mod, "load_rows", side_effect=RuntimeError("boom")), \
+                self.assertLogs("radar.export.json_export", level="WARNING") as logs:
+            export_json(out)
+        self.assertIn("insti_flow export failed", "\n".join(logs.output))
+        # 舊檔刪掉(舊的 stale 是當時算的),其餘檔照常寫完
+        self.assertFalse((out / "rankings" / "insti_flow_1d.json").exists())
+        for rel in ("radar.json", "meta.json", "stocks_index.json", "home/head.json",
+                    "home/stocks.json"):
+            self.assertTrue((out / rel).exists(), rel)
+        self.assertTrue(any((out / "stocks" / "core").glob("*.json")))
+
+    def test_margin_usage_failure_does_not_abort_export(self):
+        out = self.tmp / "out"
+        with mock.patch.object(json_export, "_export_margin_usage", side_effect=RuntimeError("boom")), \
+                self.assertLogs("radar.export.json_export", level="WARNING"):
+            export_json(out)
+        self.assertTrue((out / "rankings" / "insti_flow_1d.json").exists())
+        self.assertTrue((out / "stocks_index.json").exists())
 
     def test_radar_and_home_bytes_unchanged(self):
         """有沒有寫法人族群檔,radar.json 與 home/*.json 逐位元相同。"""
