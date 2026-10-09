@@ -89,8 +89,103 @@ export function instiBriefItems(m: InstiMarket | undefined): { key: string; labe
   }));
 }
 
-/** 指數格固定順序 twse → tpex;payload 順序本來就是,這裡只是防呆 */
+/** 卡片第一列固定三格(A 版):沒有該序列資料時顯示中性「—」格 */
+export const TILE_SLOTS: { market: string; label: string }[] = [
+  { market: "twse", label: "加權" },
+  { market: "tpex", label: "櫃買" },
+  { market: "tx", label: "台指期 近月" },
+];
+
+/** 指數格固定順序 twse → tpex → tx;payload 順序本來就是,這裡只是防呆 */
 export function orderedIndices(indices: MarketIndex[] | undefined): MarketIndex[] {
-  const order: Record<string, number> = { twse: 0, tpex: 1 };
+  const order: Record<string, number> = { twse: 0, tpex: 1, tx: 2 };
   return [...(indices ?? [])].sort((a, b) => (order[a.market] ?? 9) - (order[b.market] ?? 9));
+}
+
+// ── 走勢(docs/49 §12):迷你走勢圖 + 點開的走勢圖 bottom sheet ──
+
+export const INDEX_HIST_URL = "/data/market/indices_hist.json";
+export const TREND_AFFORDANCE = "走勢";
+export const TREND_SHEET_TITLE = "大盤走勢";
+export const TREND_EMPTY = "尚無走勢資料(指數回補後出現)";
+export const TREND_HINT = "點圖上任一點看那天的收盤與漲跌;只整理交易所公布的收盤,不下判斷。";
+
+/** 台指期副標:「近月 2026/10 · 結算 49,240」(沒有月份 → null) */
+export function txSubtitle(ix: Pick<MarketIndex, "contract_month" | "settlement">): string | null {
+  const m = ix.contract_month;
+  if (!m || !/^\d{6}$/.test(m)) return null;
+  const parts = [`近月 ${m.slice(0, 4)}/${m.slice(4)}`];
+  if (ix.settlement != null) parts.push(`結算 ${fmtIndex(ix.settlement)}`);
+  return parts.join(" · ");
+}
+
+/**
+ * 迷你走勢圖的 SVG path(polyline):values 舊→新,畫在 w×h 內、上下留 1px。
+ * 少於 2 點 → null(不畫)。所有點同值 → 水平線在中間。
+ */
+export function sparkPath(values: number[] | undefined, w: number, h: number): string | null {
+  if (!values || values.length < 2) return null;
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const span = max - min;
+  const pad = 1;
+  const stepX = w / (values.length - 1);
+  return values
+    .map((v, i) => {
+      const x = i * stepX;
+      const y = span === 0 ? h / 2 : pad + (1 - (v - min) / span) * (h - pad * 2);
+      return `${i === 0 ? "M" : "L"}${x.toFixed(1)} ${y.toFixed(1)}`;
+    })
+    .join(" ");
+}
+
+/** 迷你走勢的顏色依「最後一個收盤 vs 第一個」:紅漲綠跌,持平用中性 */
+export function sparkTone(values: number[] | undefined): "up" | "down" | "flat" {
+  if (!values || values.length < 2) return "flat";
+  const d = values[values.length - 1] - values[0];
+  return d > 0 ? "up" : d < 0 ? "down" : "flat";
+}
+
+export type TrendRange = "1m" | "3m" | "6m" | "1y";
+/** 以交易日數切範圍(來源每個序列最多 260 列,1 年取 250) */
+export const TREND_RANGES: { key: TrendRange; label: string; days: number }[] = [
+  { key: "1m", label: "1月", days: 21 },
+  { key: "3m", label: "3月", days: 63 },
+  { key: "6m", label: "6月", days: 126 },
+  { key: "1y", label: "1年", days: 250 },
+];
+export const TREND_RANGE_DEFAULT: TrendRange = "3m";
+
+export type TrendPoint = [string, number, number | null, number | null];
+
+export function sliceRange(points: TrendPoint[] | undefined, key: TrendRange): TrendPoint[] {
+  const days = TREND_RANGES.find((r) => r.key === key)?.days ?? 63;
+  const src = points ?? [];
+  return src.slice(Math.max(0, src.length - days));
+}
+
+/** 區間統計:高、低、區間漲跌(點與 %,首尾收盤相比);少於 1 點 → null */
+export function rangeStats(points: TrendPoint[]): { high: number; low: number; change: number; chgPct: number | null; from: string; to: string } | null {
+  if (!points.length) return null;
+  let high = -Infinity;
+  let low = Infinity;
+  for (const p of points) {
+    if (p[1] > high) high = p[1];
+    if (p[1] < low) low = p[1];
+  }
+  const first = points[0][1];
+  const last = points[points.length - 1][1];
+  const change = Math.round((last - first) * 100) / 100;
+  return {
+    high, low, change,
+    chgPct: first ? Math.round((change / first) * 10000) / 100 : null,
+    from: points[0][0], to: points[points.length - 1][0],
+  };
+}
+
+/** 走勢線顏色:區間首尾相比紅漲綠跌(與迷你圖同一規則) */
+export function rangeTone(points: TrendPoint[]): "up" | "down" | "flat" {
+  if (points.length < 2) return "flat";
+  const d = points[points.length - 1][1] - points[0][1];
+  return d > 0 ? "up" : d < 0 ? "down" : "flat";
 }

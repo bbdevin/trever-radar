@@ -2,6 +2,14 @@
 
 > 單一進度真相。每完成一個里程碑就更新本檔。規格細節看各編號文件,別寫在這裡。
 
+## 2026-10-09 市場概況 A 版:台指期近月、迷你走勢、走勢圖 bottom sheet(`docs/49` §12;程式完成於分支、未合 main、未上線;v3.6)
+
+- **需求**:使用者「上市上櫃 希望增加台指 然後可以可以看到走勢圖 點擊的時候放大展開跳出一個類似modal 要以手機優化為主 然後要表示可以點擊」+「上方還是要有緊湊感喔」,三個版面中選 A。
+- **做了什麼**:①台指期近月新序列 `market_indices(market='tx')`(表加 `contract_month`/`settlement`):來源 TAIFEX futDataDown(與 `import-futures-day` 同一支解析),近月＝當日一般時段、非價差、有收盤的 TX 列中到期月最小者(最後交易日當天仍是近月,次日來源不再列即換月);`import-index` 第三個來源,`--days N` 改走 `backfill_market_index`(TWSE 每日一請求 3 秒間隔、TPEx 每月一請求、TAIFEX 每 28 天一請求)。②export:`indices[]` 加 `spark`(40 個收盤)與 tx 的月份/結算;新檔 `market/indices_hist.json`(≤260 列/序列,27.7 KB,點開才抓)。③UI:`MarketBrief.tsx` 改 A 版(三格可點＋迷你走勢＋一行成交/法人;缺資料的格顯示「—」),`IndexTrendSheet.tsx` bottom sheet(base-ui Dialog:focus trap/ESC/背景關閉/鎖捲動;指數切換、1月/3月/6月/1年、lightweight-charts 十字游標讀值、區間高低漲跌)。④驗證者回報的 bug:上市盤中 MI_INDEX `stat=OK` 但 `data=[]` 原本當 error(exit 1)→ 改為 pending(75);`--days` 只有今天 pending 時回 0。
+- **高度**:390px 卡高 ≈360px(§11.2 四格版)→ **144px**;舊 payload 125px。head.json 兩個新鍵 1,621 B。
+- **驗證**:pytest `test_market_index.py` 18 項(含 futDataDown 原始 CSV fixture 逐值、實抓 pending 回應 fixture)+ 全套;web node 362 passed;`tsc`、`next build`;390px 深／淺色 Playwright(攔截 Supabase、假 session):卡、sheet(台指期/加權 1 年)、游標讀值、ESC/背景關閉、缺台指期與舊 payload。
+- **待人類／維運**:排程接線同 §11.3(同一行 `radar import-index`,現在連台指期一起);上線前 VPS 跑 `radar import-index --days 370` 回補(約 20 分鐘,三個來源都回得到 250 個交易日)。
+
 ## 2026-10-09 首頁「市場概況」卡＋大盤指數匯入;法人族群「個股」排序與手機版面(`docs/49` §11、`docs/25` §18;程式完成於分支、未合 main、未上線;v3.6)
 
 - **需求**:使用者「法人連續買賣超顯示功能很棒 但這邊ui是否能以手機畫面為優化 並且增加排序 / 還有首頁上方的 資料日 上櫃成交 上市成交 這些資訊 跟ui是否可以優化好看點 … 或是可以增加指數之類的 或是對使用者有用的資訊」。

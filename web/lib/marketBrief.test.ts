@@ -18,6 +18,18 @@ import {
   instiBriefItems,
   orderedIndices,
   turnoverCell,
+  TREND_AFFORDANCE,
+  TREND_EMPTY,
+  TREND_HINT,
+  TREND_RANGES,
+  TREND_SHEET_TITLE,
+  rangeStats,
+  rangeTone,
+  sliceRange,
+  sparkPath,
+  sparkTone,
+  txSubtitle,
+  type TrendPoint,
 } from "./marketBrief.ts";
 
 test("指數:千分位兩位小數,與來源同字", () => {
@@ -68,11 +80,47 @@ test("法人三格:外資/投信/自營,金額帶正負;缺鍵 → 空", () => {
   assert.deepEqual(instiBriefItems(undefined), []);
 });
 
-test("指數順序固定 上市 → 上櫃", () => {
+test("指數順序固定 上市 → 上櫃 → 台指期", () => {
   const tpex = { market: "tpex", name: "櫃買指數", date: "2026-10-07", close: 430.46, change: -0.4, chg_pct: -0.09 };
   const twse = { market: "twse", name: "加權指數", date: "2026-10-07", close: 49806.37, change: -16.18, chg_pct: -0.03 };
-  assert.deepEqual(orderedIndices([tpex, twse]).map((i) => i.market), ["twse", "tpex"]);
+  const tx = { market: "tx", name: "台指期", date: "2026-10-07", close: 49700, change: -20, chg_pct: -0.04 };
+  assert.deepEqual(orderedIndices([tx, tpex, twse]).map((i) => i.market), ["twse", "tpex", "tx"]);
   assert.deepEqual(orderedIndices(undefined), []);
+});
+
+test("台指期副標:近月月份與結算;沒有月份 → null", () => {
+  assert.equal(txSubtitle({ contract_month: "202610", settlement: 49240 }), "近月 2026/10 · 結算 49,240.00");
+  assert.equal(txSubtitle({ contract_month: "202610", settlement: null }), "近月 2026/10");
+  assert.equal(txSubtitle({ contract_month: null, settlement: 1 }), null);
+  assert.equal(txSubtitle({}), null);
+});
+
+test("迷你走勢:path 落在 w×h 內、舊→新、顏色看首尾;不足 2 點不畫", () => {
+  const p = sparkPath([1, 3, 2], 40, 16)!;
+  assert.match(p, /^M0\.0 15\.0 L20\.0 1\.0 L40\.0 8\.0$/);
+  assert.equal(sparkPath([5, 5, 5], 40, 16), "M0.0 8.0 L20.0 8.0 L40.0 8.0");
+  assert.equal(sparkPath([1], 40, 16), null);
+  assert.equal(sparkPath(undefined, 40, 16), null);
+  assert.equal(sparkTone([1, 2]), "up");
+  assert.equal(sparkTone([2, 1]), "down");
+  assert.equal(sparkTone([2, 2]), "flat");
+  assert.equal(sparkTone(undefined), "flat");
+});
+
+test("走勢範圍:依交易日數取尾段;區間統計高低與首尾漲跌", () => {
+  const pts: TrendPoint[] = Array.from({ length: 300 }, (_, i) => [`d${i}`, 100 + (i % 7), 0, 0]);
+  assert.equal(sliceRange(pts, "1m").length, 21);
+  assert.equal(sliceRange(pts, "3m").length, 63);
+  assert.equal(sliceRange(pts, "6m").length, 126);
+  assert.equal(sliceRange(pts, "1y").length, 250);
+  assert.equal(sliceRange(pts.slice(0, 10), "1y").length, 10);
+  assert.deepEqual(sliceRange(undefined, "1m"), []);
+  assert.deepEqual(TREND_RANGES.map((r) => r.label), ["1月", "3月", "6月", "1年"]);
+  const s = rangeStats([["a", 100, null, null], ["b", 110, null, null], ["c", 95, null, null], ["d", 105, null, null]])!;
+  assert.deepEqual([s.high, s.low, s.change, s.chgPct, s.from, s.to], [110, 95, 5, 5, "a", "d"]);
+  assert.equal(rangeStats([]), null);
+  assert.equal(rangeTone([["a", 100, null, null], ["b", 90, null, null]]), "down");
+  assert.equal(rangeTone([["a", 100, null, null]]), "flat");
 });
 
 test("禁詞:標題、標籤、提示", () => {
@@ -84,7 +132,8 @@ test("禁詞:標題、標籤、提示", () => {
     word(0x6709, 0x6548, 0x652f, 0x6490), word(0x58d3, 0x529b, 0x6c89, 0x91cd), word(0x505a, 0x591a), word(0x505a, 0x7a7a),
     word(0x5efa, 0x8b70), word(0x558a, 0x55ae),
   ].join("|"));
-  for (const t of [BRIEF_TITLE, BRIEF_STALE_BADGE, BRIEF_TURNOVER_LABEL, BRIEF_INSTI_LABEL, BRIEF_INSTI_HINT, BRIEF_UPDOWN_HINT]) {
+  for (const t of [BRIEF_TITLE, BRIEF_STALE_BADGE, BRIEF_TURNOVER_LABEL, BRIEF_INSTI_LABEL, BRIEF_INSTI_HINT, BRIEF_UPDOWN_HINT,
+    TREND_AFFORDANCE, TREND_SHEET_TITLE, TREND_EMPTY, TREND_HINT, ...TREND_RANGES.map((r) => r.label)]) {
     assert.ok(!banned.test(t), t);
   }
   assert.ok(banned.test(word(0x505a, 0x591a)), "regex 本身有效");

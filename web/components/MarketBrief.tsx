@@ -1,21 +1,25 @@
 "use client";
 
-import { MARKET_LABEL } from "@/lib/format";
+import { useState } from "react";
+import { ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { RadarJson } from "@/lib/types";
+import type { MarketIndex, RadarJson } from "@/lib/types";
+import IndexTrendSheet from "@/components/IndexTrendSheet";
 import {
   BRIEF_INSTI_HINT,
-  BRIEF_INSTI_LABEL,
   BRIEF_STALE_BADGE,
   BRIEF_TITLE,
-  BRIEF_TURNOVER_LABEL,
   BRIEF_UPDOWN_HINT,
+  TILE_SLOTS,
   dateTag,
   fmtE8,
   fmtIndex,
   indexChangeText,
   instiBriefItems,
+  mmdd,
   orderedIndices,
+  sparkPath,
+  sparkTone,
   turnoverCell,
 } from "@/lib/marketBrief";
 
@@ -24,10 +28,76 @@ function tone(n: number | null | undefined): string {
   return n > 0 ? "text-up" : "text-down";
 }
 
+const SPARK_H = 16;
+const SPARK_STROKE = { up: "var(--up)", down: "var(--down)", flat: "var(--ink-2)" } as const;
+
+/** 迷你走勢圖:inline SVG、滿格寬、16px 高(40 個收盤,不另載圖表庫);少於 2 點不畫 */
+export function Sparkline({ values }: { values: number[] | undefined }) {
+  const w = 100;
+  const d = sparkPath(values, w, SPARK_H);
+  if (!d) return <span className="block h-4" aria-hidden />;
+  return (
+    <svg
+      viewBox={`0 0 ${w} ${SPARK_H}`}
+      className="block h-4 w-full overflow-visible"
+      preserveAspectRatio="none"
+      aria-hidden
+    >
+      <path d={d} fill="none" stroke={SPARK_STROKE[sparkTone(values)]} strokeWidth={1.5} strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
+    </svg>
+  );
+}
+
+const TILE_BASE =
+  "flex min-h-11 min-w-0 flex-col gap-0.5 rounded-[10px] bg-[color:color-mix(in_srgb,var(--foreground)_5%,var(--card))] px-2 py-1.5 text-left";
+
+/** 指數格:整格是按鈕(開走勢圖),右上「›」提示可點,按下有壓感 */
+function IndexTile({ ix, label, dataDate, onOpen }: { ix: MarketIndex; label: string; dataDate: string; onOpen: (m: string) => void }) {
+  const tag = dateTag(ix.date, dataDate);
+  const t = tone(ix.change ?? ix.chg_pct);
+  return (
+    <button
+      type="button"
+      data-testid={`brief-index-${ix.market}`}
+      onClick={() => onOpen(ix.market)}
+      aria-label={`${ix.name} 走勢`}
+      title={`${ix.name} ${fmtIndex(ix.close)} ${indexChangeText(ix.change, ix.chg_pct)};點開走勢圖`}
+      className={cn(
+        TILE_BASE,
+        "cursor-pointer transition-[background-color,transform] duration-150 hover:bg-secondary active:scale-[0.97] active:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+      )}
+    >
+      <span className="flex w-full items-center text-[11px] leading-none text-muted-foreground">
+        <span className="truncate">
+          {label}
+          {tag && <span className="num ml-1">{`(${mmdd(ix.date)})`}</span>}
+        </span>
+        <ChevronRight size={12} strokeWidth={2.2} className="ml-auto shrink-0 text-[color:var(--ink-2)]" aria-hidden />
+      </span>
+      <span className={cn("num text-[15px] font-semibold leading-none tracking-tight", t)}>{fmtIndex(ix.close)}</span>
+      <span className={cn("num truncate text-[11px] font-semibold leading-none", t)}>{indexChangeText(ix.change, ix.chg_pct)}</span>
+      <Sparkline values={ix.spark} />
+    </button>
+  );
+}
+
+/** 沒有這個序列的資料(舊 payload / 還沒回補):中性「—」格,不可點 */
+function EmptyTile({ label }: { label: string }) {
+  return (
+    <div className={cn(TILE_BASE, "opacity-70")} data-testid="brief-index-empty" aria-label={`${label} 尚無資料`}>
+      <span className="truncate text-[11px] leading-none text-muted-foreground">{label}</span>
+      <span className="num text-[15px] font-semibold leading-none text-muted-foreground">—</span>
+      <span className="text-[11px] leading-none text-muted-foreground">{"尚無資料"}</span>
+      <span className="block h-4" aria-hidden />
+    </div>
+  );
+}
+
 /**
- * 首頁「市場概況」(docs/49 §11):一張卡、最多四格(加權指數／櫃買指數／成交額＋漲跌家數／
- * 三大法人全市場淨額)。手機 2 欄,md 以上 4 欄。舊 payload 缺 `indices`/`insti_market`
- * 時對應的格不畫。底色用主色 9% 混 card(零新色票);數字 .num。
+ * 首頁「市場概況」(docs/49 §11–12,2026-10-09 使用者選 A 版):一張緊湊卡。
+ * 第一列三格可點(加權 / 櫃買 / 台指期 近月):收盤、漲跌、16px 迷你走勢,點開 bottom sheet 看走勢圖;
+ * 第二列一行:成交額 ↑↓家數 · 外資 · 投信 · 自營。資料日與「部分待更新」在最上面一行小字。
+ * 舊 payload 缺 `indices`/`insti_market`:三格維持、顯示「—」;第二列只剩成交。
  */
 export default function MarketBrief({
   radar,
@@ -37,86 +107,74 @@ export default function MarketBrief({
   stale: boolean;
 }) {
   const indices = orderedIndices(radar.indices);
+  const byMarket = new Map(indices.map((i) => [i.market, i]));
   const turnover = turnoverCell(radar.summary);
   const insti = instiBriefItems(radar.insti_market);
   const instiDate = dateTag(radar.insti_market?.date, radar.data_date);
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const [sheetMarket, setSheetMarket] = useState<string>("twse");
+  const openSheet = (m: string) => {
+    setSheetMarket(m);
+    setSheetOpen(true);
+  };
 
   return (
-    <section
-      aria-label={BRIEF_TITLE}
-      className="my-3.5 rounded-[var(--r-lg)] border border-border bg-[linear-gradient(135deg,color-mix(in_srgb,var(--primary)_9%,var(--card)),var(--card)_70%)] px-3 pb-2.5 pt-2 shadow-[var(--shadow-card)]"
-    >
-      <div className="mb-1.5 flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-        <h2 className="text-[13px] font-bold text-foreground">{BRIEF_TITLE}</h2>
-        <span className="num text-[11.5px] text-muted-foreground">
-          {"資料日 "}
-          <span className="text-[color:var(--ink-2)]">{radar.data_date}</span>
-        </span>
-        {stale && (
-          <span className="rounded-md bg-warn/15 px-1.5 py-px text-[10.5px] font-bold text-warn">{BRIEF_STALE_BADGE}</span>
-        )}
-      </div>
+    <>
+      {indices.length > 0 && (
+        <IndexTrendSheet
+          open={sheetOpen}
+          onOpenChange={setSheetOpen}
+          market={sheetMarket}
+          onMarketChange={setSheetMarket}
+          indices={indices}
+          dataDate={radar.data_date}
+        />
+      )}
+      <section
+        aria-label={BRIEF_TITLE}
+        data-testid="market-brief"
+        className="my-2.5 rounded-[var(--r-lg)] border border-border bg-[linear-gradient(135deg,color-mix(in_srgb,var(--primary)_9%,var(--card)),var(--card)_70%)] px-2.5 pb-2 pt-1.5 shadow-[var(--shadow-card)]"
+      >
+        <div className="mb-1 flex items-center gap-x-2 text-[11px] leading-none">
+          <span className="font-bold text-foreground">{BRIEF_TITLE}</span>
+          <span className="num text-muted-foreground">{`資料日 ${mmdd(radar.data_date)}`}</span>
+          {stale && (
+            <span className="rounded bg-warn/15 px-1 py-px text-[10px] font-bold text-warn">{BRIEF_STALE_BADGE}</span>
+          )}
+        </div>
 
-      <div className="grid grid-cols-2 gap-x-3 gap-y-2 md:grid-cols-4">
-        {indices.map((ix) => {
-          const tag = dateTag(ix.date, radar.data_date);
-          return (
-            <div key={ix.market} className="flex min-w-0 flex-col gap-0.5" data-testid={`brief-index-${ix.market}`}>
-              <span className="truncate text-[10.5px] text-muted-foreground">
-                {ix.name}
-                {tag && <span className="num ml-1">{`(${tag})`}</span>}
-              </span>
-              <span className={cn("num text-[19px] font-bold leading-none tracking-tight", tone(ix.change ?? ix.chg_pct))}>
-                {fmtIndex(ix.close)}
-              </span>
-              <span className={cn("num text-[11.5px] font-semibold", tone(ix.change ?? ix.chg_pct))}>
-                {indexChangeText(ix.change, ix.chg_pct)}
-              </span>
-            </div>
-          );
-        })}
+        <div className="grid grid-cols-3 gap-1.5">
+          {TILE_SLOTS.map((slot) => {
+            const ix = byMarket.get(slot.market);
+            return ix
+              ? <IndexTile key={slot.market} ix={ix} label={slot.label} dataDate={radar.data_date} onOpen={openSheet} />
+              : <EmptyTile key={slot.market} label={slot.label} />;
+          })}
+        </div>
 
-        {turnover && (
-          <div className="flex min-w-0 flex-col gap-0.5" data-testid="brief-turnover" title={BRIEF_UPDOWN_HINT}>
-            <span className="text-[10.5px] text-muted-foreground">{BRIEF_TURNOVER_LABEL}</span>
-            <span className="num text-[19px] font-bold leading-none tracking-tight text-foreground">{fmtE8(turnover.total)}</span>
-            <span className="num flex flex-wrap gap-x-1.5 text-[11px] leading-snug text-[color:var(--ink-2)]">
-              {turnover.byMarket.map((m) => (
-                <span key={m.market} className="whitespace-nowrap">
-                  {(MARKET_LABEL[m.market] ?? m.market) + " "}
-                  {fmtE8(m.turnover)}
-                </span>
-              ))}
-              <span className="whitespace-nowrap">
+        {(turnover || insti.length > 0) && (
+          <p className="num mt-1.5 flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5 text-[12px] leading-snug text-[color:var(--ink-2)]" data-testid="brief-line">
+            {turnover && (
+              <span className="whitespace-nowrap" title={BRIEF_UPDOWN_HINT}>
+                <span className="text-muted-foreground">{"成交 "}</span>
+                <span className="font-semibold text-foreground">{fmtE8(turnover.total)}</span>
+                {" "}
                 <span className="text-up">{"↑"}{turnover.up}</span>
-                {"/"}
+                {" "}
                 <span className="text-down">{"↓"}{turnover.down}</span>
               </span>
-            </span>
-          </div>
+            )}
+            {insti.map((i, k) => (
+              <span key={i.key} className="whitespace-nowrap" title={BRIEF_INSTI_HINT}>
+                {(turnover || k > 0) && <span className="text-muted-foreground">{"· "}</span>}
+                <span className="text-muted-foreground">{i.label + " "}</span>
+                <span className={cn("font-semibold", tone(i.value))}>{i.text}</span>
+                {k === insti.length - 1 && instiDate && <span className="text-muted-foreground">{` (法人 ${instiDate})`}</span>}
+              </span>
+            ))}
+          </p>
         )}
-
-        {insti.length > 0 && (
-          <div className="flex min-w-0 flex-col gap-0.5" data-testid="brief-insti" title={BRIEF_INSTI_HINT}>
-            <span className="truncate text-[10.5px] text-muted-foreground">
-              {BRIEF_INSTI_LABEL}
-              {instiDate && <span className="num ml-1">{`(法人 ${instiDate})`}</span>}
-            </span>
-            <span className={cn("num text-[19px] font-bold leading-none tracking-tight", tone(insti[0].value))}>
-              <span className="mr-1 text-[11px] font-semibold text-muted-foreground">{insti[0].label}</span>
-              {insti[0].text}
-            </span>
-            <span className="num flex flex-wrap gap-x-2 text-[11px] leading-snug">
-              {insti.slice(1).map((i) => (
-                <span key={i.key} className="whitespace-nowrap">
-                  <span className="text-muted-foreground">{i.label + " "}</span>
-                  <span className={cn("font-semibold", tone(i.value))}>{i.text}</span>
-                </span>
-              ))}
-            </span>
-          </div>
-        )}
-      </div>
-    </section>
+      </section>
+    </>
   );
 }

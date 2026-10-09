@@ -23,7 +23,7 @@ _log = logging.getLogger(__name__)
 from ..branch_source import date_window_from
 from .home_split import write_home
 from .insti_group_flow import FILE_1D as INSTI_FILE_1D, aggregate as insti_aggregate, load_rows as insti_load_rows, write_insti_flow
-from ..market_index import latest_indices
+from ..market_index import latest_indices, write_indices_hist
 from .insti_stocks import FILE_1D as INSTI_STOCKS_FILE_1D, write_insti_stocks
 from .spark_day import attach_spark_day
 from .stock_parts import (
@@ -2291,6 +2291,11 @@ def export_json(
         except Exception:
             _log.warning("insti_stocks export failed; previous file removed", exc_info=True)
             (out / "rankings" / INSTI_STOCKS_FILE_1D).unlink(missing_ok=True)
+        try:
+            # 大盤指數完整歷史(docs/49 §12):首頁市場概況卡點開走勢圖才抓;head.json 只帶 40 個收盤。
+            write_indices_hist(out, conn, d, now)
+        except Exception:
+            _log.warning("indices_hist export failed; previous file kept", exc_info=True)
 
     # 全市場搜尋索引(id/名稱/市場/產業/描述;compact 陣列省體積)
     with engine.connect() as conn:

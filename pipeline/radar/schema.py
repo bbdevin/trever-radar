@@ -598,5 +598,8 @@ market_indices = Table(
     Column("date", Text, primary_key=True),       # YYYY-MM-DD
     Column("close", Float, nullable=False),
     Column("change", Float),                      # 漲跌點數(含正負)
-    Column("chg_pct", Float),                     # 漲跌百分比;TPEx 來源未提供 → NULL
+    Column("chg_pct", Float),                     # 漲跌百分比;TPEx/TAIFEX 來源未提供 → NULL
+    # 台指期近月(market='tx',docs/49 §12):一般時段;到期月份與結算價照來源,指數列為 NULL。
+    Column("contract_month", Text),
+    Column("settlement", Float),
 )

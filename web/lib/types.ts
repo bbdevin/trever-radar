@@ -1046,14 +1046,27 @@ export interface RadarJson {
 }
 
 export interface MarketIndex {
-  market: "twse" | "tpex" | string;
+  market: "twse" | "tpex" | "tx" | string;
   name: string;
   date: string;
   close: number;
   /** 漲跌點數(含正負);來源缺 → null */
   change: number | null;
-  /** 漲跌百分比;TPEx 由 close/change 推 */
+  /** 漲跌百分比;TPEx / 台指期由 close/change 推 */
   chg_pct: number | null;
+  /** 最近 ≤40 個收盤(舊→新),迷你走勢圖用;舊 payload 沒有 */
+  spark?: number[];
+  /** 只有台指期(market=tx):近月契約月份 YYYYMM 與當日結算價 */
+  contract_month?: string | null;
+  settlement?: number | null;
+}
+
+/** `market/indices_hist.json`(docs/49 §12):點開走勢圖才抓;points = [date, close, change, chg_pct](舊→新) */
+export interface IndicesHistJson {
+  version: number;
+  as_of: string;
+  generated_at: string;
+  series: Record<string, { name: string; points: [string, number, number | null, number | null][]; contract_month?: string | null }>;
 }
 
 export interface InstiMarket {

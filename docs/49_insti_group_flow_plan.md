@@ -1,6 +1,6 @@
 # 49 法人族群買賣超(外資／投信／自營 × 產業／題材)規劃
 
-> **狀態**:✅ **MVP 程式完成(2026-10-08,分支、未合 main、未上線;v3.5)**;✅ **「個股」模式(§9,2026-10-09,分支;v3.6)**;✅ **首頁「市場資金流向」面板併入本分頁(§10,2026-10-09,分支;v3.6)**;✅ **「個股」排序＋首頁「市場概況」卡＋大盤指數匯入(§11,2026-10-09,分支;v3.6;排程接線待做)**;P1/P2 📝 未做。原規劃 2026-10-08 Fable Planner;使用者已核准,分頁名稱沿用「法人族群」。
+> **狀態**:✅ **MVP 程式完成(2026-10-08,分支、未合 main、未上線;v3.5)**;✅ **「個股」模式(§9,2026-10-09,分支;v3.6)**;✅ **首頁「市場資金流向」面板併入本分頁(§10,2026-10-09,分支;v3.6)**;✅ **「個股」排序＋首頁「市場概況」卡＋大盤指數匯入(§11,2026-10-09,分支;v3.6;排程接線待做)**;✅ **市場概況 A 版:台指期近月＋迷你走勢＋走勢圖 bottom sheet(§12,2026-10-09,分支;v3.6)**;P1/P2 📝 未做。原規劃 2026-10-08 Fable Planner;使用者已核准,分頁名稱沿用「法人族群」。
 >
 > **MVP 實作備註**(與本檔的差異或補充):
 > - 張數取「逐檔 `淨股數 ÷ 1000` **向零截斷**再相加」(`trunc_lots`),兩條恆等式(族群 = Σ 成員、產業各組 + 其他 = 全市場)因此逐張成立;`buy_n`/`sell_n` 與成員前 5/前 3 只計截斷後 ≠ 0 張的檔(零股不算買也不算賣)。**與個股卡片 `foreign_net_lots` 的 `//`(向下取整)刻意不同**:`//` 把 −500 股算成 −1 張、+500 股算成 0 張,買賣超檔數會系統性偏向賣方,並出現「−1張 · 0萬」的假賣超;卡片值逐檔顯示、不計檔數,所以不動(兩者在負數有零股尾數時差 1 張)。
@@ -317,9 +317,45 @@ web/public/data/rankings/insti_flow_20d.json     (P1)
 | Export | `radar.json` / `home/head.json` 新鍵 `indices`(每市 ≤ data_date 的最新一列,固定 twse、tpex;一列都沒有 → 鍵不出)與 `insti_market`(`{date: i_date, foreign/trust/dealer/total: {net_lots, amt_est}}`,呼叫 `insti_group_flow.aggregate` 的 `market`,與分頁同函式;i_date 為 None 或算失敗 → 鍵不出、記 warning)。其餘鍵與順序不變。 |
 | 測試 | `pipeline/tests/test_market_index.py`(12):fixture `tests/fixtures/twse_mi_index_ind_20261008.json`、`tpex_trading_index_20261008.json` 是 2026-10-09 抓回來的**原始回應**,解析值逐字對來源(49,313.44 / −492.93 / −0.99;426.71 / −3.75);方向欄為 + 時正號;stat 不是 OK / 當日列不在 → NoDataError;版面變 → RuntimeError;匯入兩市與 import_logs、upsert 不重複;CLI 0/75/1 與 `--days`;export 的 `indices`(含 TPEx 推算百分比)與 `insti_market` == `insti_flow_1d.json` 的 `market`;無資料時兩鍵不出;head.json 帶鍵。 |
 
-**排程接線(待做,留給人類/維運分支;本次不動 `vps/scripts`,另一個 agent 正在改)**:在 `daily-market.sh`(14:05 上市日K輪)`import-daily` 成功之後、`export-json` 之前加一行 `run_step_or_warn "import-index" radar import-index`(上市指數與 MI_INDEX 同一刻公布;上櫃 tradingIndex 通常 14:45 前後才有,這一步回 75 只 warn 不擋);`daily-tpex-quotes.sh`(14:45)與 `daily-insti.sh`(16:00)各加同一行當保底(冪等 upsert)。第一次上線前在 VPS 跑一次 `radar import-index --days 10` 把近期補齊(休市日 empty 無害)。不加也不會壞:缺鍵時首頁兩個指數格不畫。
+**排程接線(待做,留給人類/維運分支;本次不動 `vps/scripts`,另一個 agent 正在改;2026-10-09 §12 後 `import-index` 同一支指令連台指期一起抓,接線行不變)**:在 `daily-market.sh`(14:05 上市日K輪)`import-daily` 成功之後、`export-json` 之前加一行 `run_step_or_warn "import-index" radar import-index`(上市指數與 MI_INDEX 同一刻公布;上櫃 tradingIndex 通常 14:45 前後才有、台指期 futDataDown 約 15:00 後有一般時段;這一步回 75 只 warn 不擋);`daily-tpex-quotes.sh`(14:45)與 `daily-insti.sh`(16:00)各加同一行當保底(冪等 upsert;16:00 那輪通常三個都到齊)。**第一次上線前在 VPS 跑一次回補**:`radar import-index --days 370`(≈250 個交易日;TWSE 每天一請求、間隔 3 秒 ≈ 19 分鐘,TPEx 每月一請求 ≈ 13 次,TAIFEX 每 28 天一請求 ≈ 14 次;休市日 empty 無害,只有 error 回 1)。三個來源都回得到 250 個交易日以上(TWSE MI_INDEX 逐日可回多年;TPEx tradingIndex 逐月可回多年;TAIFEX futDataDown 的 `backfill-futures` 已實測可回數年)。不加也不會壞:缺鍵時首頁三格顯示「—」。
 
 ### 11.4 驗證
 
 - pytest `tests/test_market_index.py` + `test_insti_group_flow.py` + `test_insti_stocks.py` + `test_home_split.py` + `test_json_export.py`;node `marketBrief.test.ts`(新)、`instiGroupFlow.test.ts`(排序三項);`tsc`、`next build`。
 - 390px 深／淺色截圖(同 §10.4 方法):首頁市場概況卡、法人族群「個股」預設與「連續日數」排序(重新整理後排序仍在)、舊 payload(拿掉兩鍵)只畫成交額格。
+
+> §11.2 的四格版面已於同日被 §12 的 A 版(三格可點＋一行)取代;§11.3 的匯入與 export 仍適用,§12 只加台指期、走勢與歷史檔。
+
+## 12. 市場概況 A 版:台指期近月、迷你走勢、走勢圖 bottom sheet(2026-10-09,程式完成於分支;v3.6)
+
+使用者:「上市上櫃 希望增加台指 然後可以可以看到走勢圖 點擊的時候放大展開跳出一個類似modal 要以手機優化為主 然後要表示可以點擊」+「上方還是要有緊湊感喔」;三個版面選項中選 **A**。
+
+### 12.1 台指期近月(新序列 `market='tx'`)
+
+| 項目 | 內容 |
+|---|---|
+| 來源 | TAIFEX `futDataDown`(與 `import-futures-day` 同一支、同一個 `providers/taifex.parse_history_csv`),契約代碼 `TX`。既有流程把 TX 當「對不到個股對照表的其他商品」丟掉,這裡另外取。 |
+| 近月定義 | 當日**一般時段**、非價差(月份不含 `/`)、有收盤價的 TX 列中,**到期月份最小**的那一個(`pick_tx_near_month`)。到期月契約在最後交易日(第三個週三,遇假日由期交所順延)當天仍有一般時段列 → 當天仍是近月;次一交易日來源不再列它 → 自然換成下一月。不自己算第三個週三,假日順延也對。換月那天的 `change` 是新近月自己對前一日結算的漲跌(來源值),不跨契約相減。 |
+| 時段 | 只取一般時段(08:45–13:45),與加權/櫃買 13:30 收盤同一個時間框;盤後(前一晚 15:00–05:00)不混。 |
+| 存法 | `market_indices` 加兩欄 `contract_month`、`settlement`(指數列 NULL);`close`=收盤價、`change`=漲跌價(來源值)、`chg_pct` NULL(`FuturesDailyRow` 不帶漲跌%,export 以 change/(close−change) 推;fixture 2026/09/10 推得 −0.65% 與來源「漲跌%」相同)。 |
+| 匯入 | `import-index` 第三個 `_run`(source=`taifex`, dataset=`index`);還沒產製 → empty/75。`--days N` 走 `backfill_market_index`:TWSE 每天一請求(自帶 3 秒間隔)、TPEx 同月一請求、TAIFEX 每 28 天一請求(塊間睡 3 秒)。 |
+| 驗證 | `test_market_index.py`:fixture `taifex_fut_history.csv`(原始 Big5 CSV)2026/09/10 TX 202609 一般 → 46870 / −308 / 結算 46869,盤後列 46984 不取;近月規則(價差、盤後、小台、別天不算;最後交易日仍是近月;次日換月;近月無收盤退下一月);回補的請求次數(TPEx 1 次、TAIFEX 一塊涵蓋三天);今天 pending 時 `--days` 回 0。**2026-10-09 驗證者發現**:上市盤中 MI_INDEX 回 `stat=OK`、表頭齊、`data=[]`,原本當 RuntimeError(exit 1)→ 改為 NoDataError(75),fixture `twse_mi_index_ind_pending_20261009.json` 是實抓回應。 |
+
+### 12.2 資料檔
+
+- `home/head.json` `indices[]` 多 `spark`(每序列最近 40 個收盤,舊→新)與 tx 的 `contract_month`/`settlement`;三序列合計兩個鍵 **1,621 B raw**(種子實測;§11.2 時是 452 B)。
+- 新檔 `market/indices_hist.json`(`write_indices_hist`,export 尾段 try/except、失敗保留舊檔、沒有任何序列時刪舊檔):`{version, as_of, generated_at, series: {twse|tpex|tx: {name, points: [[date, close, change, chg_pct]…≤260], contract_month?}}}`;種子 260×3 列 **27.7 KB raw**,只在點開走勢圖時抓、一個 session 抓一次。
+- `radar.json` 其餘鍵不變;多方榜不動。
+
+### 12.3 UI(A 版,`web/components/MarketBrief.tsx` + `IndexTrendSheet.tsx`,句子/純函式 `web/lib/marketBrief.ts`)
+
+- **卡**:第一行小字「市場概況 · 資料日 MM/DD [部分待更新]」;第二列 `grid-cols-3`、6px 間距三格可點(加權／櫃買／台指期 近月):標籤＋右上 ›(11px)、收盤 15px、漲跌 ▲▼ 點數 · %(11px,紅漲綠跌)、16px 滿寬迷你走勢(inline SVG,40 點,顏色看首尾);格底 `color-mix(foreground 5%, card)`、圓角 10、min-h 44、按下 `scale 0.97`;整格 `<button aria-label="<名稱> 走勢">`。第三行一行 12px:`成交 1,180.5億 ↑891 ↓875 · 外資 −9.9億 · 投信 −3,280萬 · 自營 +6,909萬`(金額依正負上色;法人日不同時尾端標 `(法人 MM/DD)`)。
+- **高度(390px 實測,Playwright `boundingBox`)**:§11.2 四格版 **≈360px → A 版 144px**;舊 payload(三格「—」+ 成交一行)125px。
+- **缺資料**:某序列沒有 → 該格中性「—／尚無資料」、不可點;三格永遠在。舊 payload 無 `indices` → 三格都是「—」,無 `insti_market` → 第三行只剩成交。
+- **Bottom sheet**(base-ui Dialog:focus trap、ESC、點背景關閉;另明寫 `body.overflow=hidden` 鎖頁面捲動):把手、44px X;標題「大盤走勢 · YYYY-MM-DD 收盤」;指數切換 pill(加權指數／櫃買指數／台指期);名稱＋台指期副標「近月 2026/10 · 結算 49,695.00」;收盤 30px、漲跌點數 · %;300px `lightweight-charts` AreaSeries(線色＝區間首尾紅漲綠跌;加權/台指期價格軸整數、櫃買兩位;關掉縮放/平移,十字游標點或拖讀值,**標頭數字跟著游標變成那天的收盤與當日漲跌**);範圍 chip 1月/3月/6月/1年(21/63/126/250 個交易日,預設 3月);區間高／區間低／區間漲跌(首尾相比)。歷史檔抓不到 → 「尚無走勢資料」;離線 → 既有離線文案。
+- **不做**:台指期盤後、小台/選擇權、下滑手勢關閉(X/ESC/背景三種已夠)、任何預測字眼。
+
+### 12.4 驗證
+
+- pytest `test_market_index.py`(18)+ 相關 export 測試;node `marketBrief.test.ts`(迷你走勢 path、範圍切片、區間統計、台指期副標、禁詞)、全套;`tsc`、`next build`。
+- 390px 深／淺色 Playwright(攔截 Supabase、假 session):卡 144px、無水平溢出、開卡前**沒有**抓歷史檔;點台指期開 sheet(646px,焦點在 sheet 內,只抓一次歷史檔)、游標移動標頭數字跟著變、切 1年＋加權統計更新、ESC 與點背景都能關;缺台指期一格「—」、舊 payload 三格「—」。

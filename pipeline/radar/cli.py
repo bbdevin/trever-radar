@@ -1424,19 +1424,18 @@ def main(argv=None):
 def cmd_import_index(args):
     """`import-index`:單日 → 0 兩市都到、75 任一市還沒公布(已到的照樣留著)、1 任一市錯誤。
     `--days N` 回補時休市日的 empty 是常態,只有 error 才回 1。"""
-    from .market_index import import_market_index
+    from .market_index import backfill_market_index, import_market_index
 
     start = _iso_arg(args.date) or datetime.now(ZoneInfo(config.TZ)).date().isoformat()
     days = max(1, int(args.days or 1))
-    d0 = datetime.strptime(start, "%Y-%m-%d").date()
+    day0 = start.replace("-", "")
+    results = import_market_index(day0) if days == 1 else backfill_market_index(day0, days)
     any_error = any_empty = False
-    for k in range(days):
-        day = (d0 - timedelta(days=k)).strftime("%Y%m%d")
-        for r in import_market_index(day):
-            print(f"index {day} {r['source']}: {r['status']} rows={r['rows']}"
-                  + (f" ({r.get('error')})" if r.get("error") else ""))
-            any_error |= r["status"] == "error"
-            any_empty |= r["status"] == "empty"
+    for r in results:
+        print(f"index {r.get('date', '')} {r['source']}: {r['status']} rows={r['rows']}"
+              + (f" ({r.get('error')})" if r.get("error") else ""))
+        any_error |= r["status"] == "error"
+        any_empty |= r["status"] == "empty"
     if any_error:
         raise SystemExit(1)
     if any_empty and days == 1:
