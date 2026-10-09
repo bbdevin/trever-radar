@@ -24,7 +24,7 @@ TAIEX_NAME = "發行量加權股價指數"
 
 @dataclass(slots=True)
 class IndexRow:
-    market: str            # twse | tpex | tx
+    market: str            # twse | tpex | tx | tx_night
     date: str              # YYYY-MM-DD
     close: float
     change: float | None   # 漲跌點數(含正負)
@@ -134,37 +134,75 @@ def fetch_tpex_index(date: str) -> IndexRow:
     return parse_tpex_index(fetch_tpex_month(date), date)
 
 
-# ── 台指期近月(docs/49 §12) ──
+# ── 台指期近月(docs/49 §12、§12.6) ──
 # 來源:TAIFEX futDataDown(與 import-futures-day 同一支,providers/taifex.parse_history_csv)。
-# 「近月」= 當日**一般時段**、非價差(月份不含 "/")、有收盤價的 TX 列中,到期月份最小的那一個。
+# 「近月」= 當日該時段、非價差(月份不含 "/")、有收盤價的 TX 列中,到期月份最小的那一個。
 # 到期月契約在最後交易日(第三個週三,遇假日由期交所順延)當天仍有一般時段列,所以當天仍是
 # 近月;次一交易日來源不再列出它,自然換成下一月——不用自己算第三個週三,假日順延也對。
-# 只取一般時段:與加權/櫃買的 13:30 收盤同一個時間框;盤後(前一晚 15:00–05:00)不混進來。
+# 兩個序列(同一次請求、同一份 CSV):
+# * ``tx``       一般時段(08:45–13:45),與加權/櫃買的 13:30 收盤同一個時間框。
+# * ``tx_night`` 盤後時段(夜盤)。**futDataDown 標 D 的盤後列 = 前一交易日 15:00 → D 05:00 那一夜**
+#   (TAIFEX「盤後時段屬次一營業日」慣例;2026-10-09 實抓 10/08:盤後 202610 收盤 49593 = 逐筆成交檔
+#   10/08 04:59:57 最後一筆;fixture 09/11 盤後 46072、漲跌 −797 → 基準 46869 = 09/10 一般時段結算價)。
+#   所以盤後列的「漲跌價」與同日一般時段列**同一個基準**:前一交易日結算價。結算價欄為 ``-`` → None。
+#   最後交易日(第三個週三)那一夜起到期月已不交易,盤後列自然只剩下一月 → 近月自動換月。
 # chg_pct 來源有(漲跌%)但 FuturesDailyRow 不帶,存 None 由 export 以 change/(close−change) 推。
 TX_CODE = "TX"
 TX_NAME = "台指期"
+TX_NIGHT = "tx_night"
+TX_NIGHT_NAME = "台指期夜盤"
 
 
-def pick_tx_near_month(rows, date: str) -> IndexRow | None:
-    """``rows``: ``FuturesDailyRow`` 序列;回 ``date``(YYYYMMDD)當日近月一列,沒有 → None。"""
-    from .taifex import SESSION_REGULAR
-
+def _pick_tx(rows, date: str, session: str, market: str) -> IndexRow | None:
     iso = _iso(date)
     cands = [
         r for r in rows
-        if r.contract_code == TX_CODE and r.date == iso and r.session == SESSION_REGULAR
+        if r.contract_code == TX_CODE and r.date == iso and r.session == session
         and "/" not in r.contract_month and r.last is not None
     ]
     if not cands:
         return None
     near = min(cands, key=lambda r: r.contract_month)
     # 最後交易日當天來源把到期月的結算價寫成 0(2026 年 05/20、06/17、07/15、08/19、09/16 都是):
-    # 那不是價格,存 NULL;前端把 NULL 當「沒有結算價」。
+    # 那不是價格,存 NULL;前端把 NULL 當「沒有結算價」。盤後列的結算價欄是 ``-`` → 本來就是 None。
     settle = near.settlement_price if near.settlement_price else None
     return IndexRow(
-        market="tx", date=iso, close=near.last, change=near.change, chg_pct=None,
+        market=market, date=iso, close=near.last, change=near.change, chg_pct=None,
         contract_month=near.contract_month.strip(), settlement=settle,
     )
+
+
+def pick_tx_near_month(rows, date: str) -> IndexRow | None:
+    """``rows``: ``FuturesDailyRow`` 序列;回 ``date``(YYYYMMDD)當日**一般時段**近月一列,沒有 → None。"""
+    from .taifex import SESSION_REGULAR
+
+    return _pick_tx(rows, date, SESSION_REGULAR, "tx")
+
+
+def pick_tx_night(rows, date: str) -> IndexRow | None:
+    """``date``(YYYYMMDD)標示的**盤後時段**(= 前一交易日 15:00 → date 05:00 那一夜)近月一列,沒有 → None。"""
+    from .taifex import SESSION_AFTER_HOURS
+
+    return _pick_tx(rows, date, SESSION_AFTER_HOURS, TX_NIGHT)
+
+
+def tx_sessions(rows, date: str) -> list[IndexRow]:
+    """當日的 ``tx``(一般)與 ``tx_night``(盤後)兩列,缺哪個就少哪個(順序固定 tx → tx_night)。"""
+    return [r for r in (pick_tx_near_month(rows, date), pick_tx_night(rows, date)) if r is not None]
+
+
+def fetch_tx_sessions(date: str) -> list[IndexRow]:
+    """date: YYYYMMDD。一次請求回當日 ``tx`` 與 ``tx_night``;兩個都沒有(未產製/休市)→ NoDataError。
+
+    一般時段列還沒有、只有盤後列時(若期交所早上就先公布前一夜)也算有資料:先存夜盤,下一輪再補一般時段。
+    """
+    from .taifex import fetch_history
+
+    iso = _iso(date)
+    rows = tx_sessions(fetch_history(iso, iso), date)
+    if not rows:
+        raise NoDataError(f"taifex futDataDown {iso}: no TX regular/after-hours row")
+    return rows
 
 
 def fetch_tx_index(date: str) -> IndexRow:

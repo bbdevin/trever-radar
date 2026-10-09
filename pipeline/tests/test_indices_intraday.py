@@ -1,4 +1,5 @@
-"""docs/49 §12.5:大盤當日 1 分線(indices_intraday.json)——解析、聚合、閘門、隔離、檔案格式(不發網路)。"""
+"""docs/49 §12.5/§12.6:大盤當日 1 分線(indices_intraday.json,含台指期前一夜盤後)——解析、聚合、閘門、隔離、
+檔案格式(不發網路)。"""
 import io
 import json
 import os
@@ -111,17 +112,28 @@ class UpdateTests(unittest.TestCase):
 
     def test_once_per_day_and_only_missing_refetched(self):
         ii.update_indices_intraday(self.out, DAY, today=DAY, fetchers=self.fetchers(twse=self.S, tpex=self.S))
-        self.assertEqual(self.calls, ["twse", "tpex", "tx"])
+        self.assertEqual(self.calls, ["twse", "tpex", "tx", "tx_night"])
         self.calls.clear()
-        # 第二輪:只補 tx
-        ii.update_indices_intraday(self.out, DAY, today=DAY, fetchers=self.fetchers(twse=[], tx=self.S))
-        self.assertEqual(self.calls, ["tx"])
-        self.assertEqual(list(json.loads(self.target.read_text("utf-8"))["series"]), ["twse", "tpex", "tx"])
+        # 第二輪:只補 tx 與 tx_night(同一個 zip)
+        ii.update_indices_intraday(self.out, DAY, today=DAY,
+                                   fetchers=self.fetchers(twse=[], tx=self.S, tx_night=self.S))
+        self.assertEqual(self.calls, ["tx", "tx_night"])
+        self.assertEqual(list(json.loads(self.target.read_text("utf-8"))["series"]), ["twse", "tpex", "tx", "tx_night"])
         self.calls.clear()
-        # 第三輪:三個都齊 → 不打
+        # 第三輪:四個都齊 → 不打
         st = ii.update_indices_intraday(self.out, DAY, today=DAY, fetchers=self.fetchers())
         self.assertEqual(self.calls, [])
         self.assertEqual(st["skip"], "complete")
+
+    def test_old_file_without_night_only_refetches_night(self):
+        # 舊版寫的檔(沒有 tx_night):下一輪只補夜盤,已有的三個不重抓
+        self.target.parent.mkdir(parents=True)
+        self.target.write_text(json.dumps({"date": DAY, "series": {"twse": self.S, "tpex": self.S, "tx": self.S}}),
+                               encoding="utf-8")
+        st = ii.update_indices_intraday(self.out, DAY, today=DAY, fetchers=self.fetchers(tx_night=self.S))
+        self.assertEqual(self.calls, ["tx_night"])
+        self.assertEqual(st["fetched"], ["tx_night"])
+        self.assertEqual(list(json.loads(self.target.read_text("utf-8"))["series"]), ["twse", "tpex", "tx", "tx_night"])
 
     def test_keeps_only_latest_day_and_keeps_old_file_when_nothing_fetched(self):
         ii.update_indices_intraday(self.out, "2026-10-07", today="2026-10-07",
@@ -156,7 +168,7 @@ class UpdateTests(unittest.TestCase):
         f["tpex"] = boom
         with self.assertLogs("radar.export.indices_intraday", level="WARNING"):
             st = ii.update_indices_intraday(self.out, DAY, today=DAY, fetchers=f)
-        self.assertEqual(self.calls, ["twse", "tpex", "tx"])  # 例外之後照樣抓 tx
+        self.assertEqual(self.calls, ["twse", "tpex", "tx", "tx_night"])  # 例外之後照樣抓 tx
         self.assertEqual(json.loads(self.target.read_text("utf-8"))["series"], {"twse": self.S, "tx": self.S})
         self.assertEqual(st["failed"], ["tpex"])
         self.assertTrue(st["written"])
@@ -172,7 +184,7 @@ class UpdateTests(unittest.TestCase):
         f["twse"] = twse
         st = ii.update_indices_intraday(self.out, DAY, today=DAY, fetchers=f, budget_s=45, clock=lambda: now[0])
         self.assertEqual(self.calls, ["twse"])
-        self.assertEqual(st["timed_out"], ["tpex", "tx"])
+        self.assertEqual(st["timed_out"], ["tpex", "tx", "tx_night"])
         self.assertEqual(list(json.loads(self.target.read_text("utf-8"))["series"]), ["twse"])
 
     def test_request_timeouts_are_short_and_capped_by_the_deadline(self):
@@ -186,7 +198,7 @@ class UpdateTests(unittest.TestCase):
         # 時限到了:fetcher 一個請求都不發
         with mock.patch("requests.Session.get") as g:
             f = ii.default_fetchers("k", "202610", dl)
-            self.assertEqual([f[m](DAY) for m in ii.MARKETS], [[], [], []])
+            self.assertEqual([f[m](DAY) for m in ii.MARKETS], [[], [], [], []])
         g.assert_not_called()
 
     def test_fugle_is_one_short_request_no_retry_backoff(self):
@@ -223,15 +235,24 @@ class UpdateTests(unittest.TestCase):
         resp = mock.Mock(status_code=200, content=zip_of(FIXTURE.read_bytes()),
                          headers={"Content-Type": "application/zip"})
         with mock.patch("requests.Session.get", return_value=resp) as g:
-            s = ii.default_fetchers("k", "202610")["tx"](DAY)
+            f = ii.default_fetchers("k", "202610", tx_night_month="202610")
+            s = f["tx"](DAY)
+            n = f["tx_night"](DAY)
+        self.assertEqual(g.call_count, 1)  # tx 與 tx_night 同一個 zip,只下載一次
         self.assertEqual(g.call_args.args[0],
                          "https://www.taifex.com.tw/file/taifex/Dailydownload/DailydownloadCSV/Daily_2026_10_08.zip")
         self.assertLessEqual(g.call_args.kwargs["timeout"], ii.TAIFEX_TIMEOUT_S)
         self.assertEqual(s[-1], [ep("13:44"), 49349])
+        self.assertEqual(n[-1], [ep("04:59"), 49593])
+        # 只缺夜盤的那一輪(舊檔已有 tx):還是得下載一次
+        with mock.patch("requests.Session.get", return_value=resp) as g:
+            self.assertEqual(ii.default_fetchers("k", "202610")["tx_night"](DAY)[-1], [ep("04:59"), 49593])
+        self.assertEqual(g.call_count, 1)
         # 還沒公布:站方回 200 + HTML 錯誤頁 → 安靜地當沒有
         html = mock.Mock(status_code=200, content=b"<!DOCTYPE html><html>...", headers={"Content-Type": "text/html"})
         with mock.patch("requests.Session.get", return_value=html):
-            self.assertEqual(ii.default_fetchers("k", "202610")["tx"](DAY), [])
+            f = ii.default_fetchers("k", "202610")
+            self.assertEqual((f["tx"](DAY), f["tx_night"](DAY)), ([], []))
         # 「PK」開頭但壞掉的 zip → 當作沒有台指期,不丟例外
         bad = mock.Mock(status_code=200, content=b"PK\x03\x04broken", headers={"Content-Type": "application/zip"})
         with mock.patch("requests.Session.get", return_value=bad):
@@ -250,11 +271,13 @@ class UpdateTests(unittest.TestCase):
 
 
 FIXTURE = Path(__file__).parent / "fixtures" / "taifex_daily_tx_20261008_trim.csv"
+PREV = "2026-10-07"
 
 
 class TaifexDailyTests(unittest.TestCase):
-    """TAIFEX Daily_2026_10_08.zip 的裁切版(原始 Big5 位元組;322 列:一般時段 220 列含開盤集合競價與收盤前
-    最後 25 筆,另有前一晚夜盤、凌晨夜盤、價差、遠月、小台/微台與其他商品各十幾列)。"""
+    """TAIFEX Daily_2026_10_08.zip 的裁切版(原始 Big5 位元組;354 列:一般時段 220 列含開盤集合競價與收盤前
+    最後 25 筆,前一晚夜盤 15:00 開盤 12 筆、凌晨 00:00–00:01 12 筆、**夜盤收盤前 04:59 的 30 筆**(最後一筆
+    04:59:57 49593 = futDataDown 10/08 盤後近月收盤)、202611 夜盤尾 3 筆,另有價差、遠月、小台/微台與其他商品各十幾列)。"""
 
     @classmethod
     def setUpClass(cls):
@@ -289,6 +312,55 @@ class TaifexDailyTests(unittest.TestCase):
         self.assertTrue(any(r[1].strip() == "TX" and r[0] == "20261008" and r[3].strip().zfill(6) < "084500"
                             for r in day_rows))
         self.assertTrue(any(r[1].strip() == "TX" and "/" in r[2] for r in day_rows))
+
+    def test_night_parity_last_trade_equals_futdatadown_after_hours_close(self):
+        # docs/49 §12.6:futDataDown 10/08 盤後 TX 202610 收盤 49593(2026-10-09 實抓)= 逐筆成交 04:59:57 最後一筆
+        both = ii.parse_taifex_daily_sessions(self.lines, DAY, "202610", "202610")
+        night = both["tx_night"]
+        self.assertEqual(night[-1], [ep("04:59"), 49593])
+        # 15:00 那一分鐘 = 前一交易日 10/07 15:00(開盤集合競價 49946 被同分鐘後面的成交蓋掉)
+        self.assertEqual(night[0], [ep("15:00", PREV), 49907])
+        # 跨午夜:10/07 15:00 … 10/08 00:00、00:01 … 04:59,epoch 嚴格遞增、都是真實時間
+        ts = [t for t, _ in night]
+        self.assertEqual(ts, sorted(set(ts)))
+        self.assertIn(ep("00:00"), ts)   # fixture 的 000000/000001 都落在 00:00 那一分鐘
+        self.assertTrue(all(ep("15:00", PREV) <= t <= ep("05:00") for t in ts))
+        self.assertEqual(len(ts), 3)      # 裁切 fixture:15:00、00:00、04:59 三分鐘
+        self.assertTrue(all(isinstance(v, int) for _, v in night))
+        # 一般時段那一半與舊函式逐點相同;夜盤不混進一般時段
+        self.assertEqual(both["tx"], ii.parse_taifex_daily_tx(self.lines, DAY, "202610"))
+        self.assertTrue(all(ep("08:45") <= t <= ep("13:45") for t, _ in both["tx"]))
+        # 每分鐘 = 該分鐘最後一筆(逐列對照 fixture)
+        last_by_min: dict[tuple[str, str], int] = {}
+        for r in (r.split(",") for r in self.lines[1:]):
+            if r[1].strip() != "TX" or r[2].strip() != "202610":
+                continue
+            t = r[3].strip().zfill(6)
+            if (r[0] == "20261007" and t >= "150000") or (r[0] == "20261008" and t <= "050000"):
+                last_by_min[(r[0], t[:4])] = int(r[4])
+        self.assertEqual([v for _, v in night], [last_by_min[k] for k in sorted(last_by_min)])
+
+    def test_night_month_default_and_other_month(self):
+        auto = ii.parse_taifex_daily_sessions(self.lines, DAY, None, None)
+        self.assertEqual(auto["tx_night"], ii.parse_taifex_daily_sessions(self.lines, DAY, "202610", "202610")["tx_night"])
+        far = ii.parse_taifex_daily_sessions(self.lines, DAY, None, "202611")["tx_night"]
+        self.assertEqual(far[-1], [ep("04:55"), 49809])   # futDataDown 10/08 盤後 202611 收盤 49809
+        # 夜盤月份與一般時段月份各自獨立(最後交易日那一夜到期月已不交易時會不同)
+        mixed = ii.parse_taifex_daily_sessions(self.lines, DAY, "202610", "202611")
+        self.assertEqual(mixed["tx"][-1], [ep("13:44"), 49349])
+        self.assertEqual(mixed["tx_night"][-1], [ep("04:55"), 49809])
+        # 要別天:一般時段空;夜盤只會拿到「檔內最晚的 < D 日期」那個傍晚,不會把 10/08 凌晨混進來
+        other = ii.parse_taifex_daily_sessions(self.lines, "2026-10-09", None, None)
+        self.assertEqual(other["tx"], [])
+        self.assertEqual([t for t, _ in other["tx_night"]], [ep("15:00", PREV)])
+        self.assertEqual(ii.parse_taifex_daily_sessions(self.lines, "2026-10-07", None, None), {"tx": [], "tx_night": []})
+
+    def test_zip_sessions_streamed_equals_in_memory(self):
+        blob = zip_of(FIXTURE.read_bytes())
+        both = ii.parse_taifex_daily_zip_sessions(blob, DAY, "202610", "202610")
+        self.assertEqual(both, ii.parse_taifex_daily_sessions(self.lines, DAY, "202610", "202610"))
+        self.assertEqual(both["tx_night"][-1], [ep("04:59"), 49593])
+        self.assertIsNone(ii.parse_taifex_daily_zip_sessions(b"<html>", DAY))
 
     def test_opening_auction_row_counts_as_the_0845_trade(self):
         auction = [r.split(",") for r in self.lines[1:] if r.split(",")[1].strip() == "TX"

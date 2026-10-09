@@ -2,6 +2,14 @@
 
 > 單一進度真相。每完成一個里程碑就更新本檔。規格細節看各編號文件,別寫在這裡。
 
+## 2026-10-09 台指期夜盤:卡第二行＋走勢圖 1日 日盤/夜盤(`docs/49` §12.6;程式完成於分支、未合 main、未上線;v3.6)
+
+- **需求**:使用者「還有夜盤」。
+- **事實(2026-10-09 實測)**:futDataDown 標 D 的「盤後」列 = **前一交易日 15:00 → D 05:00 那一夜**(10/08 盤後近月 49593 = 逐筆成交檔 10/08 04:59:57 最後一筆);漲跌基準與同日一般時段相同(前一交易日結算價)。夜盤**沒有免費分線來源**,逐筆成交檔 16:40 才公布且只含前一夜,所以站上的夜盤永遠是「上一夜」。10/09 為國慶補假休市,**期交所是否在早上就先公布前一夜的盤後列尚未量測**。
+- **做了什麼**:①`market_indices` 新序列 `tx_night`(無 schema 變更):`import-index` 的 TAIFEX 一筆同一份 CSV 寫 `tx`＋`tx_night`,回補亦然,零新請求。②export:`indices[].tx` 多 `night` 鍵(`{date, from, to, close, change, chg_pct, contract_month}`;from = 前一個 tx 日、to = 其次日);`indices_intraday.json` 多 `tx_night`(同一個 zip 一次掃兩個時段,跨午夜真實 epoch;10/08 真檔 809 分鐘 ≈ 15 KB,峰值 0.7 MiB);歷史檔與 1月以上**只畫一般時段**。③UI:台指期格第二行「夜 49,593 ▼0.75%」(不加第四格;卡 144 → 157,壓 padding 後 **150px**);sheet 台指期＋1日 多「日盤/夜盤」,夜盤圖換日刻度標 MM/DD、游標與標頭帶日期、虛線 = 那一夜開盤那天的一般時段收盤、夜高/夜低/夜漲跌;檔內沒夜盤時標頭顯示 head.json 的夜盤收盤。④probe 工具加 `--night`。
+- **驗證**:pytest `test_market_index.py`/`test_indices_intraday.py` 52 passed(含 fixture 補夜盤收盤前 30 筆、49593 平價)+ 全套;web node `marketBrief.test.ts` 19、`changelog.test.ts`;`tsc`、`next build`;390px 深/淺色截圖 `docs/evidence/49_index_intraday/night-*`。
+- **待人類**:①合 main(上線後第一輪 `indices_intraday:` 會多一次 zip 下載補 `tx_night`;`import-index` 自然多寫一列)。②下一個交易日早上 08:00–13:00 在 VPS 跑 `python tools/probe_index_intraday.py --night --date YYYY-MM-DD`:若 D 早上已有 D 的盤後列,再提案加一次早上 `import-index`＋export(目前早上沒有可靠掛點,本次不改 crontab/腳本);若沒有,維持下午上線。
+
 ## 2026-10-09 大盤走勢圖「1日」當日 1 分線(`docs/49` §12.5;程式完成於分支、未合 main、未上線;v3.6)
 
 - **需求**:使用者「我想增加一日的走勢」。

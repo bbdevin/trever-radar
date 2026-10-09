@@ -2,6 +2,7 @@
 
     cd pipeline
     FUGLE_API_KEY=… python tools/probe_index_intraday.py [--date YYYY-MM-DD] [--tx-month YYYYMM] [--taifex]
+    python tools/probe_index_intraday.py --night [--date YYYY-MM-DD]   # 只問 futDataDown 的 TX 一般/盤後列(§12.6)
 
 VPS(金鑰只在容器 env 裡;見 vps/scripts/lib.sh `radar()`):
 
@@ -75,13 +76,40 @@ def show_tickers(label: str, status: int, body, needles: tuple[str, ...], prefix
         print("   ", json.dumps(r, ensure_ascii=False))
 
 
+def probe_night(day: str) -> int:
+    """一次 futDataDown POST(commodity_id=TX、單日):印出 TX 各時段列的近月收盤/漲跌,與 ``tx_sessions`` 會存成什麼。
+    標 D 的盤後列 = 前一交易日 15:00 → D 05:00 那一夜(2026-10-09 實抓 10/08 核對過);這支要回答的是
+    「D 的盤後列在 D 早上就有了嗎,還是要等 D 一般時段收盤後」——決定夜盤收盤能不能在早上上線。"""
+    from radar.providers import market_index as mi
+    from radar.providers.taifex import HISTORY_URL, SESSION_AFTER_HOURS, SESSION_REGULAR, parse_history_csv
+
+    form = {"down_type": "1", "commodity_id": "TX",
+            "queryStartDate": day.replace("-", "/"), "queryEndDate": day.replace("-", "/")}
+    r = requests.post(HISTORY_URL, data=form, headers={"User-Agent": "Mozilla/5.0"}, timeout=60)
+    print(f"[futDataDown TX {day}] HTTP {r.status_code} {len(r.content)} B Date={r.headers.get('Date')}")
+    rows = [x for x in parse_history_csv(r.content) if x.contract_code == "TX" and x.date == day]
+    for sess in (SESSION_REGULAR, SESSION_AFTER_HOURS):
+        got = [x for x in rows if x.session == sess and "/" not in x.contract_month]
+        print(f"  {sess}: {len(got)} 列 " + ", ".join(f"{x.contract_month}={x.last}({x.change})" for x in got[:4]))
+    for row in mi.tx_sessions(rows, day.replace("-", "")):
+        print(f"  → {row.market} date={row.date} close={row.close} change={row.change} month={row.contract_month}")
+    if not rows:
+        print("  (這一天還沒有任何 TX 列)")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--date", default=ii.taipei_today())
     ap.add_argument("--tx-month", default=None, help="YYYYMM;預設取一般時段有成交的最小月份")
-    ap.add_argument("--taifex", action="store_true", help="下載 TAIFEX 逐筆成交 zip(~1.6 MB)並解析台指期")
+    ap.add_argument("--taifex", action="store_true", help="下載 TAIFEX 逐筆成交 zip(~1.6 MB)並解析台指期(含前一夜盤後)")
+    ap.add_argument("--night", action="store_true",
+                    help="只問 futDataDown 這一天 TX 有哪些時段列(一般/盤後);早上 05:00–13:45 之間跑,"
+                         "看期交所是否在一般時段收盤前就先公布前一夜的盤後列(docs/49 §12.6 待核對)")
     a = ap.parse_args()
     day = a.date
+    if a.night:
+        return probe_night(day)
     print(f"date={day} tx_month={a.tx_month or '(auto)'}")
     print(f"configured: twse={ii.FUGLE_TWSE_INDEX} tpex={ii.FUGLE_TPEX_INDEX}")
 
@@ -115,12 +143,13 @@ def main() -> int:
         if a.taifex:
             time.sleep(GAP)
             g = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=120)
-            s = ii.parse_taifex_daily_zip(g.content, day, a.tx_month)
-            if s is None:
+            both = ii.parse_taifex_daily_zip_sessions(g.content, day, a.tx_month)
+            if both is None:
                 print(f"  download: not a readable zip ({len(g.content)} B)")
             else:
-                print(f"  download: {len(g.content)} B zip, {len(s)} tx minutes")
-                series["tx"] = s
+                print(f"  download: {len(g.content)} B zip, {len(both['tx'])} tx minutes, "
+                      f"{len(both['tx_night'])} tx_night minutes (前一夜 15:00 → {day} 05:00)")
+                series.update(both)
     except Exception as e:  # noqa: BLE001
         print(f"\n[TAIFEX daily] {e}")
 

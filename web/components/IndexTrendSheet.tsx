@@ -18,9 +18,14 @@ import {
   intradayStats,
   intradayTone,
   missingAwareLoader,
+  nightHeadTime,
+  nightSpan,
+  nightSubtitle,
   prevCloseBefore,
+  SESSION_TABS,
   trendHintText,
   type IntradayPoint,
+  type TxSession,
   TREND_EMPTY,
   TREND_HINT,
   TREND_RANGES,
@@ -162,9 +167,12 @@ function TrendChart({ points, decimals, onHover }: { points: TrendPoint[]; decim
 /**
  * 「1日」:當日 1 分線(§12.5)。時間用「台北牆上時間當 UTC」(chartTimeOf(twWallKey(epoch)),
  * 與個股分K同一招),軸與游標一律 HH:MM;虛線 = 前一交易日收盤,價格軸範圍一定含它。
+ * `crossesMidnight`(台指期夜盤,§12.6):軸刻度在換日那根給 MM/DD(lightweight-charts 自己把換日的刻度
+ * 標成 DayOfMonth,`tickMarkLabel` 照型別給 10/08),其餘仍 HH:MM;游標標籤帶日期「10/07 23:12」。
  */
-function IntradayChart({ points, prev, decimals, onHover }: {
+function IntradayChart({ points, prev, decimals, onHover, crossesMidnight = false }: {
   points: IntradayPoint[]; prev: number | null; decimals: number; onHover: (p: IntradayPoint | null) => void;
+  crossesMidnight?: boolean;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const isDark = useIsDark();
@@ -184,15 +192,18 @@ function IntradayChart({ points, prev, decimals, onHover }: {
       const { createChart, AreaSeries, ColorType, CrosshairMode, LineStyle } = lw;
       const colors = chartColors(isDark);
       const hhmm = (t: unknown) => tickMarkLabel(t, 3); // 數字 time → 「HH:MM」
+      // 跨午夜:換日那根刻度(型別 2)→ MM/DD,其餘 HH:MM;游標「MM/DD HH:MM」
+      const tick = crossesMidnight ? (t: unknown, type: number) => tickMarkLabel(t, type <= 2 ? 2 : 3) : hhmm;
+      const cross = crossesMidnight ? (t: unknown) => crosshairTimeLabel(t) : hhmm;
       chart = createChart(ref.current, {
         autoSize: true,
         layout: { background: { type: ColorType.Solid, color: "transparent" }, textColor: colors.text, fontSize: 12 },
         grid: { vertLines: { color: colors.grid }, horzLines: { color: colors.grid } },
         rightPriceScale: { borderColor: colors.border },
-        localization: { timeFormatter: hhmm },
+        localization: { timeFormatter: cross },
         timeScale: {
           borderColor: colors.border, timeVisible: true, secondsVisible: false, fixLeftEdge: true, fixRightEdge: true,
-          tickMarkFormatter: hhmm,
+          tickMarkFormatter: tick,
         },
         crosshair: { mode: CrosshairMode.Magnet },
         handleScroll: { vertTouchDrag: false, mouseWheel: false, pressedMouseMove: false, horzTouchDrag: false },
@@ -240,7 +251,7 @@ function IntradayChart({ points, prev, decimals, onHover }: {
       chart?.remove();
       onHoverRef.current(null);
     };
-  }, [points, prev, isDark, decimals]);
+  }, [points, prev, isDark, decimals, crossesMidnight]);
 
   return <div ref={ref} className="h-[300px] w-full" data-testid="index-intraday-chart" />;
 }
@@ -273,6 +284,8 @@ export default function IndexTrendSheet({
   const [intra, setIntra] = useState<IndicesIntradayJson | null | undefined>(undefined);
   const [intraError, setIntraError] = useState(false);
   const [iHover, setIHover] = useState<IntradayPoint | null>(null);
+  // 台指期 1日 的 日盤/夜盤(§12.6);只對台指期有意義,切到別的指數時忽略(不重設,切回台指期還在)
+  const [session, setSession] = useState<TxSession>("day");
   const isDay = range === "1d";
 
   // 鎖頁面捲動(與 BranchDrillView 同一招;base-ui 的鎖法在 overflow 上看不出來,這裡明寫一次)
@@ -336,36 +349,57 @@ export default function IndexTrendSheet({
     : null;
 
   // ── 1日 ──
+  const isTx = head?.market === "tx";
+  const night = isTx && session === "night";
   const dayPoints = useMemo<IntradayPoint[]>(
-    () => (intra?.series?.[(head?.market ?? "") as "twse" | "tpex" | "tx"] ?? []),
-    [intra, head?.market],
+    () => (intra?.series?.[night ? "tx_night" : ((head?.market ?? "") as "twse" | "tpex" | "tx")] ?? []),
+    [intra, head?.market, night],
   );
-  const dayPrev = intra ? prevCloseBefore(series?.points, intra.date) : null;
+  // 基準:日盤 = 早於日內檔日期的最後一列收盤;夜盤 = 那一夜開始那天(15:00 開盤那個交易日)的一般時段收盤
+  // (= 早於 from 次日 的最後一列,夜盤跨午夜所以用 from+1)
+  const span = night ? nightSpan(dayPoints) : null;
+  const dayPrev = intra ? prevCloseBefore(series?.points, night ? (span?.to ?? intra.date) : intra.date) : null;
   const dayStats = useMemo(() => intradayStats(dayPoints, dayPrev), [dayPoints, dayPrev]);
   const dayShown = iHover ?? (dayPoints.length ? dayPoints[dayPoints.length - 1] : null);
   const dayChg = dayShown ? changeVsPrev(dayShown[1], dayPrev) : { change: null, chgPct: null };
   const dayTone = (dayChg.change ?? 0) > 0 ? "up" : (dayChg.change ?? 0) < 0 ? "down" : "flat";
   const dayReady = isDay && intra && dayPoints.length >= 2;
-  const dayEmpty = intradayEmptyText(head?.market, !!intra);
-  const hint = trendHintText({ isDay, dayReady: !!dayReady && !intraError, market: head?.market });
+  const dayEmpty = intradayEmptyText(head?.market, !!intra, night ? "night" : "day");
+  const hint = trendHintText({ isDay, dayReady: !!dayReady && !intraError, market: head?.market, session: night ? "night" : "day" });
 
-  // 標頭:1日且有資料時顯示那一分鐘;其餘(含 1日 尚無資料)照日收盤
+  // 夜盤還沒有 1 分線(檔還沒公布/缺)但 head.json 已有那一夜的收盤(futDataDown):標頭就顯示它,不退回日盤數字
+  const nightOnly = night && !dayReady && head?.night ? head.night : null;
+  // 標頭:1日且有資料時顯示那一分鐘(夜盤跨午夜,帶那一點自己的日期);其餘(含 1日 尚無資料)照日收盤
   const headTime = dayReady && dayShown
-    ? `${mmdd(intra!.date)} ${hhmmOf(dayShown[0])}`
-    : `${mmdd(shown ? shown[0] : head?.date)} 收盤`;
-  const headValue = dayReady && dayShown ? dayShown[1] : shown ? shown[1] : head?.close ?? 0;
+    ? night ? nightHeadTime(dayShown[0]) : `${mmdd(intra!.date)} ${hhmmOf(dayShown[0])}`
+    : nightOnly
+      ? `${mmdd(nightOnly.to ?? nightOnly.date)} 05:00 夜盤收盤`
+      : `${mmdd(shown ? shown[0] : head?.date)} 收盤`;
+  const headValue = dayReady && dayShown ? dayShown[1] : nightOnly ? nightOnly.close : shown ? shown[1] : head?.close ?? 0;
   const headChange = dayReady
     ? indexChangeText(dayChg.change, dayChg.chgPct, dec)
-    : shown ? indexChangeText(shown[2], shown[3], dec) : indexChangeText(head?.change ?? null, head?.chg_pct ?? null, dec);
-  const headTone = dayReady ? dayTone : shownTone;
-  const daySub = head?.market === "tx" && isDay
-    ? txSubtitle({ contract_month: series?.contract_month ?? head.contract_month, settlement: null })
+    : nightOnly
+      ? indexChangeText(nightOnly.change, nightOnly.chg_pct, dec)
+      : shown ? indexChangeText(shown[2], shown[3], dec) : indexChangeText(head?.change ?? null, head?.chg_pct ?? null, dec);
+  const nightOnlyTone = (nightOnly?.change ?? nightOnly?.chg_pct ?? 0) > 0 ? "up" : (nightOnly?.change ?? nightOnly?.chg_pct ?? 0) < 0 ? "down" : "flat";
+  const headTone = dayReady ? dayTone : nightOnly ? nightOnlyTone : shownTone;
+  // 台指期 1日 副標:日盤「近月 2026/10」;夜盤「夜盤 10/07 15:00 – 10/08 05:00 · 近月 2026/10」(範圍以 1 分線
+  // 自己的日期為準,沒有線時退回 head.json 的 night)
+  const daySub = isTx && isDay
+    ? night
+      ? nightSubtitle({
+          date: head.night?.date ?? intra?.date ?? head.date,
+          from: span?.from ?? head.night?.from ?? null,
+          to: span?.to ?? head.night?.to ?? null,
+          contract_month: head.night?.contract_month ?? series?.contract_month ?? head.contract_month,
+        })
+      : txSubtitle({ contract_month: series?.contract_month ?? head.contract_month, settlement: null })
     : null;
 
   const statsView = isDay
     ? dayReady && dayStats
-      ? { labels: ["日高", "日低", "日漲跌"], high: dayStats.high, low: dayStats.low, change: dayStats.change,
-          chgPct: dayStats.chgPct, tone: intradayTone(dayPoints, dayPrev), from: dayStats.from, to: dayStats.to }
+      ? { labels: night ? ["夜高", "夜低", "夜漲跌"] : ["日高", "日低", "日漲跌"], high: dayStats.high, low: dayStats.low,
+          change: dayStats.change, chgPct: dayStats.chgPct, tone: intradayTone(dayPoints, dayPrev), from: dayStats.from, to: dayStats.to }
       : null
     : stats
       ? { labels: ["區間高", "區間低", "區間漲跌"], high: stats.high, low: stats.low, change: stats.change as number | null,
@@ -402,20 +436,39 @@ export default function IndexTrendSheet({
           </div>
 
           <div className="overflow-y-auto px-4">
-            {/* 指數切換 */}
-            <div role="tablist" aria-label="指數" className="mt-1 inline-flex gap-0.5 rounded-full border border-border bg-card p-[3px]">
-              {ordered.map((ix) => (
-                <button
-                  key={ix.market}
-                  type="button"
-                  role="tab"
-                  aria-selected={ix.market === head?.market}
-                  className={cn(pillTabClass(ix.market === head?.market), "min-h-9")}
-                  onClick={() => { onMarketChange(ix.market); setHover(null); setIHover(null); }}
-                >
-                  {ix.name}
-                </button>
-              ))}
+            {/* 指數切換;台指期 1日 另有 日盤/夜盤(§12.6) */}
+            <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
+              <div role="tablist" aria-label="指數" className="inline-flex gap-0.5 rounded-full border border-border bg-card p-[3px]">
+                {ordered.map((ix) => (
+                  <button
+                    key={ix.market}
+                    type="button"
+                    role="tab"
+                    aria-selected={ix.market === head?.market}
+                    className={cn(pillTabClass(ix.market === head?.market), "min-h-9")}
+                    onClick={() => { onMarketChange(ix.market); setHover(null); setIHover(null); }}
+                  >
+                    {ix.name}
+                  </button>
+                ))}
+              </div>
+              {isTx && isDay && (
+                <div role="tablist" aria-label="時段" className="inline-flex gap-0.5 rounded-full border border-border bg-card p-[3px]" data-testid="index-trend-session">
+                  {SESSION_TABS.map((s) => (
+                    <button
+                      key={s.key}
+                      type="button"
+                      role="tab"
+                      aria-selected={session === s.key}
+                      data-testid={`index-trend-session-${s.key}`}
+                      className={cn(filterChipClass(session === s.key), "min-h-9")}
+                      onClick={() => { setSession(s.key); setIHover(null); }}
+                    >
+                      {s.label}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* 標頭:名稱、收盤、漲跌(游標停在哪天就顯示那天) */}
@@ -450,7 +503,7 @@ export default function IndexTrendSheet({
                 ) : !dayReady ? (
                   <p className="py-16 text-center text-sm text-muted-foreground" data-testid="index-intraday-empty">{dayEmpty}</p>
                 ) : (
-                  <IntradayChart points={dayPoints} prev={dayPrev} decimals={dec} onHover={setIHover} />
+                  <IntradayChart points={dayPoints} prev={dayPrev} decimals={dec} onHover={setIHover} crossesMidnight={night} />
                 )
               ) : error ? (
                 <p className="py-16 text-center text-sm text-muted-foreground">{isBrowserOffline() ? OFFLINE_DATA_COPY : TREND_EMPTY}</p>
@@ -482,7 +535,7 @@ export default function IndexTrendSheet({
               )}
             </div>
 
-            {/* 區間統計(1日:日高/日低/日漲跌,漲跌相對前一交易日收盤) */}
+            {/* 區間統計(1日:日高/日低/日漲跌,夜盤為夜高/夜低/夜漲跌;漲跌相對前一交易日收盤) */}
             {statsView && (
               <dl className="mt-2.5 grid grid-cols-3 gap-2 rounded-[var(--r-md)] bg-secondary/60 px-3 py-2 text-center" data-testid="index-trend-stats">
                 <div>

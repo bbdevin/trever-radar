@@ -594,12 +594,15 @@ director_holdings = Table(
 market_indices = Table(
     "market_indices",
     metadata,
-    Column("market", Text, primary_key=True),     # twse | tpex
+    # twse | tpex | tx(台指期近月一般時段)| tx_night(台指期近月盤後時段,docs/49 §12.6:
+    # date = futDataDown 標示的交易日,即「前一交易日 15:00 → date 05:00」那一夜;change 與同日 tx 列
+    # 同一個基準 = 前一交易日結算價;settlement 一律 NULL)
+    Column("market", Text, primary_key=True),
     Column("date", Text, primary_key=True),       # YYYY-MM-DD
     Column("close", Float, nullable=False),
     Column("change", Float),                      # 漲跌點數(含正負)
     Column("chg_pct", Float),                     # 漲跌百分比;TPEx/TAIFEX 來源未提供 → NULL
-    # 台指期近月(market='tx',docs/49 §12):一般時段;到期月份與結算價照來源,指數列為 NULL。
+    # 台指期近月(market='tx' / 'tx_night',docs/49 §12):到期月份與結算價照來源,指數列為 NULL。
     Column("contract_month", Text),
     Column("settlement", Float),
 )

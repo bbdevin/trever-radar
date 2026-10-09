@@ -2,10 +2,13 @@
 
 首頁市場概況走勢圖 sheet 的「1日」才抓這檔。內容只有最新一個交易日:
 
-    {"date": "YYYY-MM-DD", "series": {"twse": [[epoch_s, close], …], "tpex": […], "tx": […]}}
+    {"date": "YYYY-MM-DD", "series": {"twse": [[epoch_s, close], …], "tpex": […], "tx": […], "tx_night": […]}}
 
 * ``epoch_s`` 是真正的 Unix 秒(該分鐘的**開始時間**,與分K ``stocks/intraday`` 同一個慣例);
   前端照 ``chartTimeOf(twWallKey(epoch))`` 換成「台北牆上時間當 UTC」給圖表,09:00 就顯示 09:00。
+* ``tx_night``(docs/49 §12.6)= 同一個 TAIFEX 檔裡的**前一夜**盤後時段(前一交易日 15:00 → date 05:00,
+  跨午夜;epoch 是真實時間,前端自己換日期標籤)。它不是「今晚」:逐筆成交檔 ~16:40 才公布,今晚的夜盤
+  要到下一個交易日的檔才有。
 * 每根 = 那一分鐘的最後一個值(1 分 K 的收盤)。缺分鐘不補。
 * 某序列抓不到就不出那個鍵(前端顯示「暫無日內走勢」);三個都沒有 → 不寫檔、舊檔留著。
 
@@ -43,7 +46,8 @@ from .stock_parts import dumps_compact, write_atomic
 _log = logging.getLogger(__name__)
 
 OUT_FILE = "indices_intraday.json"
-MARKETS = ("twse", "tpex", "tx")
+# tx_night(docs/49 §12.6)= D 日逐筆成交檔裡的**前一夜**(前一交易日 15:00 → D 05:00),與 tx 同一個 zip 一次掃出
+MARKETS = ("twse", "tpex", "tx", "tx_night")
 
 # ── 來源代號(VPS probe 後可直接改這幾個常數) ──
 FUGLE_TWSE_INDEX = "IX0001"   # 發行量加權股價指數(VPS probe 2026-10-09 確認)
@@ -59,6 +63,8 @@ TWSE_5S_FIELD = "發行量加權股價指數"
 # 交易時段(台北牆上時間,分鐘);時段外的列丟掉
 SESSION = {"twse": (9 * 60, 13 * 60 + 30), "tpex": (9 * 60, 13 * 60 + 30),
            "tx": (8 * 60 + 45, 13 * 60 + 45)}
+# 台指期盤後時段:前一交易日 15:00 起 → 次一日曆日 05:00 止(跨午夜,所以不是一個 (lo, hi) 分鐘窗)
+NIGHT_SESSION = (15 * 60, 5 * 60)
 
 _TPE = ZoneInfo(config.TZ)
 
@@ -149,32 +155,43 @@ def parse_twse_5s(payload: dict | None, day: str) -> Series:
 #
 # 欄位:成交日期,商品代號,到期月份(週別),成交時間,成交價格,成交數量(B+S),近月價格,遠月價格,開盤集合競價
 # 各欄右側補空白。D 日的檔含「前一晚夜盤」(成交日期 = D-1 的 15:00 起,以及 D 的 00:00–05:00)與
-# D 的一般時段;只取成交日期 == D 且 08:45:00–13:45:00 的列。價差(到期月份含 "/")不算。
+# D 的一般時段;``tx`` 取成交日期 == D 且 08:45:00–13:45:00 的列,``tx_night`` 取前一晚那兩段。價差(到期月份含 "/")不算。
 # 「開盤集合競價」欄標 "*" 的是開盤集合競價撮合那一筆(08:45:00 的開盤價,夜盤 15:00 也有一筆),
 # 是真的成交價,照常計入(它落在 08:45 那一分鐘,同分鐘之後的成交會蓋掉它)。
 
-def parse_taifex_daily_tx(lines, day: str, contract_month: str | None = None) -> Series:
-    """逐筆成交 CSV 的文字列(已解碼、含表頭;可以是串流的檔案物件)→ 台指期近月一般時段 1 分線(每分鐘最後一筆)。
+def _to_epoch(d8: str, m: int) -> int:
+    return int(datetime(int(d8[:4]), int(d8[4:6]), int(d8[6:]), m // 60, m % 60, tzinfo=_TPE).timestamp())
 
-    ``contract_month``(YYYYMM)= 當天 ``market_indices`` tx 列的近月;缺 → 取一般時段有成交的非價差月份中
-    最小者(與 ``providers.market_index.pick_tx_near_month`` 同一個定義)。同一秒多筆以檔案順序最後一筆為準。
 
-    記憶體:逐列處理、先用字首(成交日期,商品代號)粗篩再交給 csv,每個月份只留「每分鐘最後一筆」
-    (≤ 301 筆),不囤整天逐筆。整檔 ~34 MB 解壓,峰值見 docs/49 §12.5。
+def parse_taifex_daily_sessions(lines, day: str, contract_month: str | None = None,
+                                night_month: str | None = None) -> dict[str, Series]:
+    """逐筆成交 CSV 的文字列(已解碼、含表頭;可以是串流的檔案物件)→ 台指期近月 1 分線(每分鐘最後一筆),
+    一次掃出兩個時段:``{"tx": 一般時段, "tx_night": 盤後時段}``(抓不到的時段為空 list)。
+
+    * ``tx``:成交日期 == D 且 08:45:00–13:45:00。``contract_month``(YYYYMM)= 當天 ``market_indices`` tx 列的
+      近月;缺 → 取一般時段有成交的非價差月份中最小者(與 ``providers.market_index.pick_tx_near_month`` 同定義)。
+    * ``tx_night``:D 日檔內的**前一夜**(docs/49 §12.6)= 成交日期 < D 且 ≥ 15:00:00 的列,加上成交日期 == D 且
+      ≤ 05:00:00 的列(跨午夜;epoch 是真實時間,前端自己換日期)。``night_month`` = 當天 ``market_indices``
+      tx_night 列的近月;缺 → 夜盤有成交的非價差月份中最小者(到期月在最後交易日那一夜已不交易,自然換月)。
+    同一秒多筆以檔案順序最後一筆為準。
+
+    記憶體:逐列處理、先用「第 9–11 個字元是 ,TX」粗篩再交給 csv,每個月份只留「每分鐘最後一筆」
+    (一般 ≤ 301、夜盤 ≤ 841 筆),不囤整天逐筆。整檔 ~34 MB 解壓,峰值見 docs/49 §12.5。
     """
     import csv
 
     d8 = day.replace("-", "")
-    prefix = f"{d8},{TAIFEX_TX_CODE}"
-    y, mo, d = (int(x) for x in day.split("-"))
     lo, hi = SESSION["tx"]
-    # {month: {minute: (second, price)}}——同分鐘時間較晚(或同秒、檔案較後)者蓋掉,與 minute_series 同語意
-    by_month: dict[str, dict[int, tuple[int, float]]] = {}
-    for row in csv.reader(ln for ln in lines if ln.lstrip().startswith(prefix)):
-        if len(row) < 5 or row[1].strip() != TAIFEX_TX_CODE or row[0].strip() != d8:
+    night_lo, night_hi = NIGHT_SESSION
+    # {month: {(date8, minute): (second, price)}}——同分鐘時間較晚(或同秒、檔案較後)者蓋掉,與 minute_series 同語意
+    day_by_month: dict[str, dict[tuple[str, int], tuple[int, float]]] = {}
+    night_by_month: dict[str, dict[tuple[str, int], tuple[int, float]]] = {}
+    for row in csv.reader(ln for ln in lines if ln[8:11] == ",TX"):
+        if len(row) < 5 or row[1].strip() != TAIFEX_TX_CODE:
             continue
+        rd = row[0].strip()
         month = row[2].strip()
-        if "/" in month:
+        if "/" in month or len(rd) != 8 or rd > d8:
             continue
         t = row[3].strip().zfill(6)
         try:
@@ -183,23 +200,46 @@ def parse_taifex_daily_tx(lines, day: str, contract_month: str | None = None) ->
         except ValueError:
             continue
         m = hh * 60 + mm
-        if not lo <= m <= hi or (m == hi and ss > 0):
+        if rd == d8 and lo <= m <= hi and not (m == hi and ss > 0):
+            table = day_by_month
+        elif (rd < d8 and m >= night_lo) or (rd == d8 and (m < night_hi or (m == night_hi and ss == 0))):
+            table = night_by_month
+        else:
             continue
-        mins = by_month.setdefault(month, {})
-        cur = mins.get(m)
+        mins = table.setdefault(month, {})
+        key = (rd, m)
+        cur = mins.get(key)
         if cur is None or ss >= cur[0]:
-            mins[m] = (ss, px)
-    if not by_month:
-        return []
-    month = (contract_month or "").strip() or min(by_month)
-    pts = ((datetime(y, mo, d, m // 60, m % 60, ss, tzinfo=_TPE), px)
-           for m, (ss, px) in by_month.get(month, {}).items())
-    return minute_series(pts, day, "tx")
+            mins[key] = (ss, px)
+
+    def finish(table, want: str | None, evening_date: str | None = None) -> Series:
+        if not table:
+            return []
+        month = (want or "").strip() or min(table)
+        out: Series = []
+        for (rd, m) in sorted(table.get(month, {})):
+            if rd != d8 and rd != evening_date:
+                continue
+            px = table[month][(rd, m)][1]
+            if px <= 0:
+                continue
+            out.append([_to_epoch(rd, m), _num(px)])
+        return out
+
+    # 夜盤的「傍晚那一半」只認檔內最晚的那個 < D 日期(真實的 D 日檔只會有前一交易日;防呆而已)
+    evening = max((rd for mins in night_by_month.values() for (rd, _m) in mins if rd != d8), default=None)
+    return {"tx": finish(day_by_month, contract_month), "tx_night": finish(night_by_month, night_month, evening)}
 
 
-def parse_taifex_daily_zip(blob: bytes, day: str, contract_month: str | None = None) -> Series | None:
-    """zip 位元組 → 台指期 1 分線,CSV **串流**解碼(``zf.open`` + ``TextIOWrapper``),不把 34 MB 文字整份
-    讀進記憶體。不是 zip(檔案還沒公布時站方回 HTML 錯誤頁)、zip 壞掉(``PK`` 開頭但截斷/CRC 錯)、
+def parse_taifex_daily_tx(lines, day: str, contract_month: str | None = None) -> Series:
+    """一般時段那一半(見 ``parse_taifex_daily_sessions``)。"""
+    return parse_taifex_daily_sessions(lines, day, contract_month)["tx"]
+
+
+def parse_taifex_daily_zip_sessions(blob: bytes, day: str, contract_month: str | None = None,
+                                    night_month: str | None = None) -> dict[str, Series] | None:
+    """zip 位元組 → ``{"tx", "tx_night"}`` 1 分線,CSV **串流**解碼(``zf.open`` + ``TextIOWrapper``),不把 34 MB
+    文字整份讀進記憶體。不是 zip(檔案還沒公布時站方回 HTML 錯誤頁)、zip 壞掉(``PK`` 開頭但截斷/CRC 錯)、
     沒有 CSV → None(= 這輪沒有台指期,較晚的一輪再補)。"""
     import io
     import zipfile
@@ -214,19 +254,25 @@ def parse_taifex_daily_zip(blob: bytes, day: str, contract_month: str | None = N
                 return None
             with zf.open(names[0]) as raw, \
                     io.TextIOWrapper(raw, encoding="cp950", errors="replace") as fh:
-                return parse_taifex_daily_tx(fh, day, contract_month)
+                return parse_taifex_daily_sessions(fh, day, contract_month, night_month)
     except (zipfile.BadZipFile, zlib.error, EOFError) as e:
         print(f"indices_intraday: taifex daily zip unreadable ({type(e).__name__}: {e}) — treated as missing")
         return None
 
 
-def tx_month_from_db(conn, day: str) -> str | None:
-    """``market_indices`` 當天的 tx 近月(import-index 已跑過才有)。"""
+def parse_taifex_daily_zip(blob: bytes, day: str, contract_month: str | None = None) -> Series | None:
+    """一般時段那一半(見 ``parse_taifex_daily_zip_sessions``);讀不了 → None。"""
+    both = parse_taifex_daily_zip_sessions(blob, day, contract_month)
+    return None if both is None else both["tx"]
+
+
+def tx_month_from_db(conn, day: str, market: str = "tx") -> str | None:
+    """``market_indices`` 當天的 tx(或 ``tx_night``)近月(import-index 已跑過才有)。"""
     from sqlalchemy import text
 
     row = conn.execute(text(
-        "SELECT contract_month FROM market_indices WHERE market='tx' AND date=:d"),
-        {"d": day}).fetchone()
+        "SELECT contract_month FROM market_indices WHERE market=:m AND date=:d"),
+        {"m": market, "d": day}).fetchone()
     return row[0] if row and row[0] else None
 
 
@@ -276,13 +322,16 @@ def _fugle_get(url: str, api_key: str, session, deadline: _Deadline) -> dict | N
 
 
 def default_fetchers(api_key: str | None, tx_month: str | None,
-                     deadline: _Deadline | None = None) -> dict[str, Callable[[str], Series]]:
+                     deadline: _Deadline | None = None,
+                     tx_night_month: str | None = None) -> dict[str, Callable[[str], Series]]:
     """{market: fetch(day) -> Series}。加權在 Fugle 失敗時退回 TWSE 官方 5 秒表。
-    每個請求的逾時都受 ``deadline`` 限制(缺 → 自己開一個 ``BUDGET_S``)。"""
+    每個請求的逾時都受 ``deadline`` 限制(缺 → 自己開一個 ``BUDGET_S``)。
+    ``tx`` 與 ``tx_night`` 來自同一個 TAIFEX zip:同一次 ``default_fetchers`` 內只下載、解析一次。"""
     import requests
 
     sess = requests.Session()
     dl = deadline or _Deadline(BUDGET_S)
+    taifex_memo: dict[str, dict[str, Series]] = {}
 
     def twse(day: str) -> Series:
         if api_key:
@@ -311,25 +360,35 @@ def default_fetchers(api_key: str | None, tx_month: str | None,
             _fugle_get(FUGLE_STOCK_CANDLES_URL.format(symbol=FUGLE_TPEX_INDEX), api_key, sess, dl),
             day, "tpex")
 
-    def tx(day: str) -> Series:
+    def taifex(day: str) -> dict[str, Series]:
+        if day in taifex_memo:
+            return taifex_memo[day]
         y, m, d = day.split("-")
         url = TAIFEX_DAILY_URL.format(y=y, m=m, d=d)
         timeout = dl.timeout(TAIFEX_TIMEOUT_S)
         if timeout is None:
-            return []
+            return {}
         try:
             r = sess.get(url, headers={"User-Agent": config.USER_AGENT}, timeout=timeout)
         except Exception as e:  # noqa: BLE001 — 來源掛了 = 這輪沒有台指期
             print(f"indices_intraday: taifex daily fetch failed: {e}")
-            return []
-        s = parse_taifex_daily_zip(r.content, day, tx_month) if r.status_code == 200 else None
-        if s is None:
+            return {}
+        both = (parse_taifex_daily_zip_sessions(r.content, day, tx_month, tx_night_month)
+                if r.status_code == 200 else None)
+        if both is None:
             print(f"indices_intraday: taifex daily {day} not published yet "
                   f"(HTTP {r.status_code}, {r.headers.get('Content-Type', '')})")
-            return []
-        return s
+            return {}
+        taifex_memo[day] = both
+        return both
 
-    return {"twse": twse, "tpex": tpex, "tx": tx}
+    def tx(day: str) -> Series:
+        return taifex(day).get("tx", [])
+
+    def tx_night(day: str) -> Series:
+        return taifex(day).get("tx_night", [])
+
+    return {"twse": twse, "tpex": tpex, "tx": tx, "tx_night": tx_night}
 
 
 # ── 檔案 ──
@@ -358,6 +417,7 @@ def update_indices_intraday(
     fetchers: dict[str, Callable[[str], Series]] | None = None,
     api_key: str | None = None,
     tx_month: str | None = None,
+    tx_night_month: str | None = None,
     budget_s: float = BUDGET_S,
     clock: Callable[[], float] = time.monotonic,
 ) -> dict:
@@ -388,7 +448,7 @@ def update_indices_intraday(
     if not stats["skip"]:
         deadline = _Deadline(budget_s, clock)
         if fetchers is None:
-            fetchers = default_fetchers(key, tx_month, deadline)
+            fetchers = default_fetchers(key, tx_month, deadline, tx_night_month)
         for m in missing:
             if deadline.left() < _MIN_LEFT_S:
                 stats["timed_out"].append(m)
@@ -420,13 +480,16 @@ def update_indices_intraday(
 
 
 def export_indices_intraday_safe(out: Path, price_date: str, *, conn=None, **kw) -> dict | None:
-    """json_export 用的入口;``conn`` 有給就從 DB 讀當天台指期近月。任何例外只記 warning。"""
+    """json_export 用的入口;``conn`` 有給就從 DB 讀當天台指期近月(一般與盤後各自)。任何例外只記 warning。"""
     try:
-        if conn is not None and "tx_month" not in kw:
-            try:
-                kw["tx_month"] = tx_month_from_db(conn, price_date)
-            except Exception:  # noqa: BLE001 — 表不存在等:退回規則推算
-                kw["tx_month"] = None
+        if conn is not None:
+            for kw_name, market in (("tx_month", "tx"), ("tx_night_month", "tx_night")):
+                if kw_name in kw:
+                    continue
+                try:
+                    kw[kw_name] = tx_month_from_db(conn, price_date, market)
+                except Exception:  # noqa: BLE001 — 表不存在等:退回規則推算
+                    kw[kw_name] = None
         return update_indices_intraday(out, price_date, **kw)
     except Exception:  # noqa: BLE001 — 附加檔,壞了不能拖垮 export
         _log.warning("indices_intraday export failed; previous file kept", exc_info=True)

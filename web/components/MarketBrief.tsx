@@ -18,7 +18,10 @@ import {
   indexDecimals,
   indexPctText,
   instiBriefItems,
+  isNightNewer,
   mmdd,
+  nightTileText,
+  nightTileTitle,
   orderedIndices,
   sparkPath,
   turnoverCell,
@@ -53,20 +56,26 @@ export function Sparkline({ values }: { values: number[] | undefined }) {
 }
 
 const TILE_BASE =
-  "flex min-h-11 min-w-0 flex-col gap-0.5 rounded-[10px] bg-[color:color-mix(in_srgb,var(--foreground)_5%,var(--card))] px-2 py-1.5 text-left";
+  "flex min-h-11 min-w-0 flex-col gap-0.5 rounded-[10px] bg-[color:color-mix(in_srgb,var(--foreground)_5%,var(--card))] px-2 py-1 text-left";
 
-/** 指數格:整格是按鈕(開走勢圖),右上「›」提示可點,按下有壓感;格內只放 %(點數在 sheet) */
+/**
+ * 指數格:整格是按鈕(開走勢圖),右上「›」提示可點,按下有壓感;格內只放 %(點數在 sheet)。
+ * 台指期格多一行夜盤(docs/49 §12.6)「夜 49,593 ▼0.75%」:最新一夜的盤後收盤,與格內其他數字同寬;
+ * 時間範圍在 title 與 sheet(夜盤跨午夜、連假前一夜標在假後,格裡放不下日期)。
+ */
 function IndexTile({ ix, label, dataDate, onOpen }: { ix: MarketIndex; label: string; dataDate: string; onOpen: (m: string) => void }) {
   const tag = dateTag(ix.date, dataDate);
   const t = tone(ix.change ?? ix.chg_pct);
   const dec = indexDecimals(ix.market);
+  const night = ix.market === "tx" ? ix.night : undefined;
+  const nightNewer = isNightNewer(night, ix.date);
   return (
     <button
       type="button"
       data-testid={`brief-index-${ix.market}`}
       onClick={() => onOpen(ix.market)}
       aria-label={`${ix.name} 走勢`}
-      title={`${ix.name} ${fmtIndex(ix.close, dec)} ${indexChangeText(ix.change, ix.chg_pct, dec)};點開走勢圖`}
+      title={`${ix.name} ${fmtIndex(ix.close, dec)} ${indexChangeText(ix.change, ix.chg_pct, dec)}${night ? `;${nightTileTitle(night)}` : ""};點開走勢圖`}
       className={cn(
         TILE_BASE,
         "cursor-pointer transition-[background-color,transform] duration-150 hover:bg-secondary active:scale-[0.97] active:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
@@ -81,6 +90,14 @@ function IndexTile({ ix, label, dataDate, onOpen }: { ix: MarketIndex; label: st
       </span>
       <span className={cn("num text-[15px] font-semibold leading-none tracking-tight", t)}>{fmtIndex(ix.close, dec)}</span>
       <span className={cn("num truncate text-[11px] font-semibold leading-none", t)}>{indexPctText(ix.change, ix.chg_pct, dec)}</span>
+      {night && (
+        <span
+          className={cn("num truncate text-[10px] leading-none", nightNewer ? "font-semibold" : "font-medium", tone(night.change ?? night.chg_pct))}
+          data-testid="brief-tx-night"
+        >
+          {nightTileText(night)}
+        </span>
+      )}
       <Sparkline values={ix.spark} />
     </button>
   );
@@ -97,6 +114,9 @@ function EmptyTile({ label }: { label: string }) {
     </div>
   );
 }
+
+/* 夜盤那一行讓台指期格多 ~12px;grid 列高取最高的格,三格一樣高,另外兩格多出的空間落在迷你走勢上方(flex 預設)。
+   為了把卡壓回 ~150px(§12.6):格的上下 padding 6→4、標題列下緣 4→2(390px 實測 144 → 150)。 */
 
 /**
  * 首頁「市場概況」(docs/49 §11–12,2026-10-09 使用者選 A 版):一張緊湊卡。
@@ -140,7 +160,7 @@ export default function MarketBrief({
         data-testid="market-brief"
         className="my-2.5 rounded-[var(--r-lg)] border border-border bg-[linear-gradient(135deg,color-mix(in_srgb,var(--primary)_9%,var(--card)),var(--card)_70%)] px-2.5 pb-2 pt-1.5 shadow-[var(--shadow-card)]"
       >
-        <div className="mb-1 flex items-center gap-x-2 text-[11px] leading-none">
+        <div className="mb-0.5 flex items-center gap-x-2 text-[11px] leading-none">
           <span className="font-bold text-foreground">{BRIEF_TITLE}</span>
           <span className="num text-muted-foreground">{`資料日 ${mmdd(radar.data_date)}`}</span>
           {stale && (

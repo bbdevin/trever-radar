@@ -52,7 +52,23 @@ import {
   prevCloseBefore,
   trendHintText,
   type IntradayPoint,
+  SESSION_TABS,
+  TX_NIGHT_CHANGE_BASIS,
+  TX_NIGHT_INTRADAY_EMPTY,
+  TX_NIGHT_INTRADAY_NOTE,
+  TX_NIGHT_LABEL,
+  TX_NIGHT_TILE_LABEL,
+  isNightNewer,
+  nextDay,
+  nightHeadTime,
+  nightRangeText,
+  nightSpan,
+  nightSubtitle,
+  nightTileText,
+  nightTileTitle,
+  taipeiDateOf,
 } from "./marketBrief.ts";
+import { crosshairTimeLabel } from "./chartTime.ts";
 import { tickMarkLabel } from "./chartTime.ts";
 import { chartTimeOf, twWallKey } from "./resample.ts";
 
@@ -283,6 +299,62 @@ test("1日 404 快取:60 秒內不重抓、過了再選 1日 重抓、重開 she
   assert.equal(calls, 6);
 });
 
+// ── 台指期夜盤(docs/49 §12.6) ──
+const NIGHT = { date: "2026-10-08", from: "2026-10-07", to: "2026-10-08", close: 49593, change: -375, chg_pct: -0.75, contract_month: "202610" };
+
+test("夜盤:卡片第二行「夜 49,593 ▼0.75%」、title 帶時間範圍與基準;from/to 缺時只標期交所交易日", () => {
+  assert.equal(nightTileText(NIGHT), "夜 49,593 ▼0.75%");
+  assert.equal(nightTileText({ close: 49420, change: 70, chg_pct: 0.14 }), "夜 49,420 ▲0.14%");
+  assert.equal(nightRangeText("2026-10-07", "2026-10-08"), "10/07 15:00 – 10/08 05:00");
+  assert.equal(nightRangeText(null, "2026-10-08"), null);
+  assert.equal(nightSubtitle(NIGHT), "夜盤 10/07 15:00 – 10/08 05:00 · 近月 2026/10");
+  assert.equal(nightSubtitle({ ...NIGHT, from: null, to: null }), "夜盤 (10/08) · 近月 2026/10");
+  assert.equal(nightSubtitle({ ...NIGHT, contract_month: null }), "夜盤 10/07 15:00 – 10/08 05:00");
+  const title = nightTileTitle(NIGHT);
+  assert.ok(title.startsWith("夜盤 10/07 15:00 – 10/08 05:00 收 49,593 ▼375 · -0.75%"), title);
+  assert.ok(title.includes(TX_NIGHT_CHANGE_BASIS));
+  assert.equal(nightTileTitle({ ...NIGHT, from: null, to: null }).slice(0, 10), "夜盤 (10/08)");
+  // 週五夜 → 週六 05:00,期交所標週一:from/to 由管線給,這裡照畫
+  assert.equal(nightRangeText("2026-10-02", "2026-10-03"), "10/02 15:00 – 10/03 05:00");
+  // 夜盤比一般時段新:期交所交易日晚於最新一般時段列
+  assert.equal(isNightNewer({ date: "2026-10-08" }, "2026-10-08"), false);
+  assert.equal(isNightNewer({ date: "2026-10-12" }, "2026-10-08"), true);
+  assert.equal(isNightNewer(undefined, "2026-10-08"), false);
+  assert.deepEqual(SESSION_TABS.map((s) => s.label), ["日盤", "夜盤"]);
+});
+
+test("夜盤 1 分線:跨午夜的日期與標頭時間都用台北時間;基準日 = 開盤那天的次日", () => {
+  const e = (s: string) => Date.parse(`${s}+08:00`) / 1000;
+  assert.equal(taipeiDateOf(e("2026-10-07T15:00:00")), "2026-10-07");
+  assert.equal(taipeiDateOf(e("2026-10-07T23:59:00")), "2026-10-07");
+  assert.equal(taipeiDateOf(e("2026-10-08T00:00:00")), "2026-10-08");
+  assert.equal(taipeiDateOf(e("2026-10-08T04:59:00")), "2026-10-08");
+  assert.equal(nextDay("2026-10-31"), "2026-11-01");
+  assert.equal(nextDay("2026-12-31"), "2027-01-01");
+  const pts: IntradayPoint[] = [[e("2026-10-07T15:00:00"), 49907], [e("2026-10-07T23:12:00"), 49600], [e("2026-10-08T04:59:00"), 49593]];
+  assert.deepEqual(nightSpan(pts), { from: "2026-10-07", to: "2026-10-08" });
+  assert.equal(nightSpan([]), null);
+  assert.equal(nightHeadTime(pts[1][0]), "10/07 23:12");
+  assert.equal(nightHeadTime(pts[2][0]), "10/08 04:59");
+  // 基準 = 10/07 一般時段收盤(prevCloseBefore 以 to 當界)
+  const hist: TrendPoint[] = [["2026-10-06", 49000, null, null], ["2026-10-07", 49968, null, null], ["2026-10-08", 49349, null, null]];
+  assert.equal(prevCloseBefore(hist, nightSpan(pts)!.to), 49968);
+  // 游標標籤帶日期(圖表 time = 台北牆上時間當 UTC)
+  assert.equal(crosshairTimeLabel(chartTimeOf(twWallKey(pts[1][0]))), "10/07 23:12");
+  assert.equal(tickMarkLabel(chartTimeOf(twWallKey(pts[2][0])), 2), "10/08");
+  assert.equal(tickMarkLabel(chartTimeOf(twWallKey(pts[2][0])), 3), "04:59");
+  // 統計:夜高/夜低與相對基準的漲跌
+  const s = intradayStats(pts, 49968)!;
+  assert.deepEqual([s.high, s.low, s.last, s.change, s.chgPct, s.from, s.to], [49907, 49593, 49593, -375, -0.75, "15:00", "04:59"]);
+  // 說明行與缺資料句子
+  assert.equal(trendHintText({ isDay: true, dayReady: true, market: "tx", session: "night" }), `${INTRADAY_HINT} ${TX_NIGHT_INTRADAY_NOTE}`);
+  assert.equal(trendHintText({ isDay: true, dayReady: true, market: "tx", session: "day" }), `${INTRADAY_HINT} ${TX_INTRADAY_NOTE}`);
+  assert.equal(intradayEmptyText("tx", true, "night"), TX_NIGHT_INTRADAY_EMPTY);
+  assert.equal(intradayEmptyText("tx", true, "day"), TX_INTRADAY_EMPTY);
+  assert.equal(intradayEmptyText("tx", false, "night"), INTRADAY_EMPTY);
+  assert.ok(TX_STITCH_NOTE.includes("夜盤見 1日"));
+});
+
 test("禁詞:標題、標籤、提示", () => {
   const word = (...codes: number[]) => String.fromCharCode(...codes);
   const banned = new RegExp([
@@ -294,7 +366,9 @@ test("禁詞:標題、標籤、提示", () => {
   ].join("|"));
   for (const t of [BRIEF_TITLE, BRIEF_STALE_BADGE, BRIEF_TURNOVER_LABEL, BRIEF_INSTI_LABEL, BRIEF_INSTI_HINT, BRIEF_UPDOWN_HINT,
     TREND_AFFORDANCE, TREND_SHEET_TITLE, TREND_EMPTY, TREND_HINT, TX_STITCH_NOTE, ...TREND_RANGES.map((r) => r.label),
-    INTRADAY_EMPTY, TX_INTRADAY_EMPTY, INTRADAY_HINT, TX_INTRADAY_NOTE, PREV_CLOSE_LABEL, "日高", "日低", "日漲跌"]) {
+    INTRADAY_EMPTY, TX_INTRADAY_EMPTY, INTRADAY_HINT, TX_INTRADAY_NOTE, PREV_CLOSE_LABEL, "日高", "日低", "日漲跌",
+    TX_NIGHT_LABEL, TX_NIGHT_TILE_LABEL, TX_NIGHT_INTRADAY_EMPTY, TX_NIGHT_INTRADAY_NOTE, TX_NIGHT_CHANGE_BASIS,
+    ...SESSION_TABS.map((s) => s.label), nightSubtitle(NIGHT), nightTileTitle(NIGHT), "夜高", "夜低", "夜漲跌"]) {
     assert.ok(!banned.test(t), t);
   }
   assert.ok(banned.test(word(0x505a, 0x591a)), "regex 本身有效");

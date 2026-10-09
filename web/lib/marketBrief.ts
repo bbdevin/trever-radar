@@ -5,7 +5,7 @@
  * 全市場成交額＋漲跌家數、三大法人全市場淨額(估)。只整理交易所公布的數字,不下判斷。
  * 舊 payload 沒有 `indices` / `insti_market` 時,對應的格不畫,其餘照常。
  */
-import type { InstiMarket, MarketIndex, RadarJson } from "./types.ts";
+import type { InstiMarket, MarketIndex, RadarJson, TxNight } from "./types.ts";
 import { fmtAmt } from "./instiGroupFlow.ts";
 import { tickMarkLabel } from "./chartTime.ts";
 
@@ -132,8 +132,80 @@ export function txSubtitle(ix: Pick<MarketIndex, "contract_month" | "settlement"
   return parts.join(" · ");
 }
 
-/** 台指期歷史是近月連續、不回溯調整換月價差;sheet 的提示行在台指期時加這句 */
-export const TX_STITCH_NOTE = "台指期為近月連續、未調整換月價差。";
+/** 台指期歷史是近月連續、不回溯調整換月價差;sheet 的提示行在台指期時加這句(1月以上只畫一般時段收盤) */
+export const TX_STITCH_NOTE = "台指期為近月連續、未調整換月價差;僅一般時段收盤,夜盤見 1日。";
+
+// ── 台指期夜盤(docs/49 §12.6):掛在 tx 格與 1日 的 日盤/夜盤 切換,不是第四格 ──
+
+export const TX_NIGHT_TILE_LABEL = "夜";
+export const TX_NIGHT_LABEL = "夜盤";
+export type TxSession = "day" | "night";
+export const SESSION_TABS: { key: TxSession; label: string }[] = [
+  { key: "day", label: "日盤" },
+  { key: "night", label: "夜盤" },
+];
+export const TX_NIGHT_INTRADAY_EMPTY = "台指期暫無夜盤走勢";
+export const TX_NIGHT_INTRADAY_NOTE =
+  "台指期夜盤為近月盤後時段(前一交易日 15:00 至當日 05:00),虛線為前一交易日一般時段收盤價(非結算價);今晚的夜盤要等下一個交易日收盤後才有。";
+export const TX_NIGHT_CHANGE_BASIS = "漲跌相對前一交易日結算價,與同日一般時段同一基準";
+
+/** "2026-10-07" → "2026-10-08"(日曆日,不看交易日) */
+export function nextDay(iso: string): string {
+  const d = new Date(`${iso}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + 1);
+  return d.toISOString().slice(0, 10);
+}
+
+/** 「10/07 15:00 – 10/08 05:00」;from/to 缺 → null(只能標期交所交易日) */
+export function nightRangeText(from: string | null | undefined, to: string | null | undefined): string | null {
+  if (!from || !to) return null;
+  return `${mmdd(from)} 15:00 – ${mmdd(to)} 05:00`;
+}
+
+/** 夜盤副標:「夜盤 10/07 15:00 – 10/08 05:00 · 近月 2026/10」;沒有時間範圍時用期交所交易日「夜盤 (10/08)」 */
+export function nightSubtitle(n: Pick<TxNight, "date" | "from" | "to" | "contract_month">): string {
+  const range = nightRangeText(n.from, n.to);
+  const parts = [range ? `${TX_NIGHT_LABEL} ${range}` : `${TX_NIGHT_LABEL} (${mmdd(n.date)})`];
+  const m = n.contract_month;
+  if (m && /^\d{6}$/.test(m)) parts.push(`近月 ${m.slice(0, 4)}/${m.slice(4)}`);
+  return parts.join(" · ");
+}
+
+/** 卡片台指期格第二行:「夜 49,593 ▼0.75%」(整數、只放 %) */
+export function nightTileText(n: Pick<TxNight, "close" | "change" | "chg_pct">): string {
+  return `${TX_NIGHT_TILE_LABEL} ${fmtIndex(n.close, 0)} ${indexPctText(n.change, n.chg_pct, 0)}`;
+}
+
+/** 卡片台指期格的 title 多這一句:「夜盤 10/07 15:00 – 10/08 05:00 收 49,593 ▼375 · -0.75%(漲跌相對…)」 */
+export function nightTileTitle(n: TxNight): string {
+  const range = nightRangeText(n.from, n.to) ?? `(${mmdd(n.date)})`;
+  return `${TX_NIGHT_LABEL} ${range} 收 ${fmtIndex(n.close, 0)} ${indexChangeText(n.change, n.chg_pct, 0)}(${TX_NIGHT_CHANGE_BASIS})`;
+}
+
+/**
+ * 夜盤比一般時段新 = 期交所交易日晚於最新的一般時段列(例:早上期交所已公布前一夜、當天一般時段還沒收盤;
+ * 或連假前一夜標在假後第一個交易日)。卡片用它決定第二行是「最新」還是「上一夜」的語氣(只影響字重)。
+ */
+export function isNightNewer(n: Pick<TxNight, "date"> | undefined, txDate: string | undefined): boolean {
+  return !!n && !!txDate && n.date > txDate;
+}
+
+/** epoch 秒 → 台北日曆日 "YYYY-MM-DD"(不經瀏覽器時區) */
+export function taipeiDateOf(epochS: number): string {
+  return new Date((epochS + TW_OFFSET_S) * 1000).toISOString().slice(0, 10);
+}
+
+/** 夜盤 1 分線的日期範圍:from = 第一點的台北日期(15:00 開盤那天)、to = from 次日(05:00 收盤);沒有點 → null */
+export function nightSpan(points: IntradayPoint[] | undefined): { from: string; to: string } | null {
+  if (!points?.length) return null;
+  const from = taipeiDateOf(points[0][0]);
+  return { from, to: nextDay(from) };
+}
+
+/** 夜盤標頭時間「10/07 23:12」(跨午夜所以要帶日期);日盤仍只「HH:MM」 */
+export function nightHeadTime(epochS: number): string {
+  return `${mmdd(taipeiDateOf(epochS))} ${hhmmOf(epochS)}`;
+}
 
 /** 時間軸刻度:lightweight-charts TickMarkType 0=年 1=月 2=日;與個股 K 線共用 lib/chartTime */
 export function axisTickLabel(time: string, tickType: number): string {
@@ -232,16 +304,18 @@ export type IntradayPoint = [number, number];
  * 走勢 sheet 底下那行說明。1日有圖才說「點圖上任一點…;虛線為前一交易日收盤」(與台指期近月註記);
  * 1日沒圖(載入中、404、抓取失敗、台指期缺)→ null:畫面上只留圖區那句缺資料訊息,不講不存在的線。
  */
-export function trendHintText(o: { isDay: boolean; dayReady: boolean; market: string | undefined }): string | null {
+export function trendHintText(o: { isDay: boolean; dayReady: boolean; market: string | undefined; session?: TxSession }): string | null {
   const tx = o.market === "tx";
   if (!o.isDay) return tx ? `${TREND_HINT} ${TX_STITCH_NOTE}` : TREND_HINT;
   if (!o.dayReady) return null;
+  if (tx && o.session === "night") return `${INTRADAY_HINT} ${TX_NIGHT_INTRADAY_NOTE}`;
   return tx ? `${INTRADAY_HINT} ${TX_INTRADAY_NOTE}` : INTRADAY_HINT;
 }
 
-/** 1日沒圖時圖區顯示的那一句:有檔但沒台指期 → 台指期專屬;其餘(404、檔內沒這個市場)→ 通用 */
-export function intradayEmptyText(market: string | undefined, hasFile: boolean): string {
-  return market === "tx" && hasFile ? TX_INTRADAY_EMPTY : INTRADAY_EMPTY;
+/** 1日沒圖時圖區顯示的那一句:有檔但沒台指期 → 台指期專屬(日盤/夜盤各一句);其餘(404、檔內沒這個市場)→ 通用 */
+export function intradayEmptyText(market: string | undefined, hasFile: boolean, session: TxSession = "day"): string {
+  if (market !== "tx" || !hasFile) return INTRADAY_EMPTY;
+  return session === "night" ? TX_NIGHT_INTRADAY_EMPTY : TX_INTRADAY_EMPTY;
 }
 
 /** 404(還沒有檔)的快取壽命:超過就讓「再選一次 1日」重抓;重開 sheet 一律重抓 */

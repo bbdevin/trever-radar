@@ -2306,12 +2306,13 @@ def export_json(
             _log.warning("indices_hist export failed; previous file kept", exc_info=True)
         try:
             tx_month_today = tx_month_from_db(conn, d)
+            tx_night_month_today = tx_month_from_db(conn, d, "tx_night")
         except Exception:
-            tx_month_today = None  # 表還沒建等:indices_intraday 退回規則推算近月
+            tx_month_today = tx_night_month_today = None  # 表還沒建等:indices_intraday 退回規則推算近月
 
-    # 大盤當日 1 分線(docs/49 §12.5):與 spark_day 同一閘門(台北今天 = 價格日),同日已齊就不再抓;
-    # 走網路,所以放在 DB 連線外。任何例外只記 warning、舊檔保留。
-    export_indices_intraday_safe(out, d, tx_month=tx_month_today)
+    # 大盤當日 1 分線(docs/49 §12.5;台指期含前一夜盤後 §12.6):與 spark_day 同一閘門(台北今天 = 價格日),
+    # 同日已齊就不再抓;走網路,所以放在 DB 連線外。任何例外只記 warning、舊檔保留。
+    export_indices_intraday_safe(out, d, tx_month=tx_month_today, tx_night_month=tx_night_month_today)
 
     # 全市場搜尋索引(id/名稱/市場/產業/描述;compact 陣列省體積)
     with engine.connect() as conn:

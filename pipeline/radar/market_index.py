@@ -4,7 +4,9 @@
 不混進去);共用它的 ``_run``:一市一筆交易、寫 ``import_logs``(source=twse|tpex|taifex,
 dataset=index)、任何例外都不往外丟。回傳每市的結果 dict,離開碼由 cli 決定。
 
-三個序列:``twse`` 加權指數、``tpex`` 櫃買指數、``tx`` 台指期近月(一般時段)。
+四個序列:``twse`` 加權指數、``tpex`` 櫃買指數、``tx`` 台指期近月(一般時段)、``tx_night`` 台指期近月
+盤後時段(夜盤;與 ``tx`` 同一次 futDataDown 請求,docs/49 §12.6)。首頁與歷史檔只列前三個序列,夜盤掛在
+``tx`` 底下(``night`` 鍵),不是第四格。
 """
 from __future__ import annotations
 
@@ -27,21 +29,26 @@ HIST_FILE = "indices_hist.json"
 TX_CHUNK_DAYS = 28
 
 
-def _upsert_row(conn, row: src.IndexRow) -> int:
+def _upsert_rows(conn, rows) -> int:
     return upsert(conn, schema.market_indices, [{
         "market": row.market, "date": row.date, "close": row.close,
         "change": row.change, "chg_pct": row.chg_pct,
         "contract_month": row.contract_month, "settlement": row.settlement,
-    }])
+    } for row in rows])
+
+
+def _upsert_row(conn, row: src.IndexRow) -> int:
+    return _upsert_rows(conn, [row])
 
 
 def import_market_index(date: str) -> list[dict]:
-    """date: YYYYMMDD。三個來源各自 ``_run``;還沒公布 → status ``empty``(與 import-daily 同義)。"""
+    """date: YYYYMMDD。三個來源各自 ``_run``;還沒公布 → status ``empty``(與 import-daily 同義)。
+    TAIFEX 那一筆一次寫 ``tx`` 與 ``tx_night``(同一份 CSV),rows 可為 1 或 2。"""
     init_db()
     return [
         {"date": date, **_run("twse", "index", date, lambda c: _upsert_row(c, src.fetch_twse_index(date)))},
         {"date": date, **_run("tpex", "index", date, lambda c: _upsert_row(c, src.fetch_tpex_index(date)))},
-        {"date": date, **_run("taifex", "index", date, lambda c: _upsert_row(c, src.fetch_tx_index(date)))},
+        {"date": date, **_run("taifex", "index", date, lambda c: _upsert_rows(c, src.fetch_tx_sessions(date)))},
     ]
 
 
@@ -70,10 +77,10 @@ def backfill_market_index(start: str, days: int) -> list[dict]:
             tpex_months[key] = src.fetch_tpex_month(day)
         return src.parse_tpex_index(tpex_months[key], day)
 
-    tx_rows: dict[str, src.IndexRow | None] = {}
+    tx_rows: dict[str, list[src.IndexRow]] = {}
     tx_chunks_done: set[str] = set()
 
-    def tx_for(day: str) -> src.IndexRow:
+    def tx_for(day: str) -> list[src.IndexRow]:
         if day not in tx_rows:
             # 以 day 為終點往回抓一塊,塊內每一天都填進快取(沒有列的填 None)
             end = date_cls.fromisoformat(_iso(day))
@@ -90,19 +97,19 @@ def backfill_market_index(start: str, days: int) -> list[dict]:
                 cur = begin
                 while cur <= end:
                     d8 = cur.strftime("%Y%m%d")
-                    tx_rows[d8] = src.pick_tx_near_month(rows, d8)
+                    tx_rows[d8] = src.tx_sessions(rows, d8)
                     cur += timedelta(days=1)
-        row = tx_rows.get(day)
-        if row is None:
-            raise NoDataError(f"taifex futDataDown {_iso(day)}: no TX regular-session row")
-        return row
+        rows_for_day = tx_rows.get(day) or []
+        if not rows_for_day:
+            raise NoDataError(f"taifex futDataDown {_iso(day)}: no TX regular/after-hours row")
+        return rows_for_day
 
     out = []
     for day in day_list:
         for source, fn in (
             ("twse", lambda c, d=day: _upsert_row(c, src.fetch_twse_index(d))),
             ("tpex", lambda c, d=day: _upsert_row(c, tpex_for(d))),
-            ("taifex", lambda c, d=day: _upsert_row(c, tx_for(d))),
+            ("taifex", lambda c, d=day: _upsert_rows(c, tx_for(d))),
         ):
             out.append({"date": day, **_run(source, "index", day, fn)})
     return out
@@ -128,9 +135,31 @@ def _series(conn, market: str, d: str, n: int) -> list[tuple]:
     return [tuple(r) for r in reversed(rows)]
 
 
+def latest_tx_night(conn, d: str) -> dict | None:
+    """``tx`` 項目的 ``night`` 鍵(docs/49 §12.6):≤ ``d`` 最新一列 ``tx_night``。
+
+    ``date`` 是 futDataDown 標示的交易日(那一夜**結束**的那一天 05:00);``from`` 是那一夜開始的交易日
+    (= 早於 date 的最後一個 ``tx`` 列日期,15:00 開盤),``to`` = from 的次一個日曆日(05:00 收盤;週五夜
+    → 週六 05:00,TAIFEX 卻標週一)。沒有更早的 tx 列 → from/to 都 None(前端只標日期)。
+    ``change`` 是來源值,基準 = 前一交易日結算價(與同日一般時段列相同);``chg_pct`` 由此推。
+    """
+    rows = _series(conn, src.TX_NIGHT, d, 1)
+    if not rows:
+        return None
+    date, close, change, pct, cm, _settle = rows[-1]
+    from sqlalchemy import text
+
+    prev = conn.execute(text(
+        "SELECT MAX(date) FROM market_indices WHERE market = 'tx' AND date < :d"), {"d": date}).scalar()
+    to = (date_cls.fromisoformat(prev) + timedelta(days=1)).isoformat() if prev else None
+    return {"date": date, "from": prev, "to": to, "close": close, "change": change,
+            "chg_pct": _pct(close, change, pct), "contract_month": cm}
+
+
 def latest_indices(conn, d: str) -> list[dict]:
     """export 用:每個序列 ≤ ``d`` 的最新一列 + 最近 ``SPARK_N`` 個收盤(舊→新),固定順序
-    twse、tpex、tx;沒有列的序列不出。``tx`` 多帶 contract_month / settlement。
+    twse、tpex、tx;沒有列的序列不出。``tx`` 多帶 contract_month / settlement,以及最新一夜的 ``night``
+    (``latest_tx_night``;沒有夜盤列 → 鍵不出)。
     """
     out = []
     for market in MARKETS:
@@ -144,6 +173,9 @@ def latest_indices(conn, d: str) -> list[dict]:
         if market == "tx":
             item["contract_month"] = cm
             item["settlement"] = settle
+            night = latest_tx_night(conn, d)
+            if night is not None:
+                item["night"] = night
         out.append(item)
     return out
 

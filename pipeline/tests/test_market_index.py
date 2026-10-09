@@ -95,6 +95,40 @@ class ParseFixtures(unittest.TestCase):
         self.assertEqual(round(-308 / (46870 + 308) * 100, 2), -0.65)
         self.assertIsNone(src.pick_tx_near_month(TAIFEX_FX, "20260912"))
 
+    def test_tx_night_matches_the_futdatadown_fixture_exactly(self):
+        # docs/49 §12.6:標 D 的盤後列 = 前一交易日 15:00 → D 05:00 那一夜。fixture 2026/09/10 TX 202609 盤後:
+        # 收盤 46984、漲跌 -194;09/11 盤後 46072、漲跌 -797 → 基準 46869 = 09/10 一般時段**結算價**(非收盤 46870)
+        n = src.pick_tx_night(TAIFEX_FX, "20260910")
+        self.assertEqual((n.market, n.date, n.contract_month), ("tx_night", "2026-09-10", "202609"))
+        self.assertEqual((n.close, n.change, n.chg_pct, n.settlement), (46984.0, -194.0, None, None))
+        n11 = src.pick_tx_night(TAIFEX_FX, "20260911")
+        self.assertEqual((n11.close, n11.change), (46072.0, -797.0))
+        self.assertEqual(n11.close - n11.change, src.pick_tx_near_month(TAIFEX_FX, "20260910").settlement)
+        self.assertEqual(round(-797 / (46072 + 797) * 100, 2), -1.70)   # 來源「漲跌%」-1.70%
+        self.assertIsNone(src.pick_tx_night(TAIFEX_FX, "20260912"))
+        # 兩個時段一次取:順序固定 tx → tx_night;缺哪個就少哪個
+        self.assertEqual([r.market for r in src.tx_sessions(TAIFEX_FX, "20260910")], ["tx", "tx_night"])
+        self.assertEqual(src.tx_sessions(TAIFEX_FX, "20260912"), [])
+        d = "2026-09-16"
+        only_night = [_fut("TX", d, "202610", session=SESSION_AFTER_HOURS, last=46000.0)]
+        self.assertEqual([r.market for r in src.tx_sessions(only_night, "20260916")], ["tx_night"])
+
+    def test_tx_night_near_month_rule(self):
+        d = "2026-09-17"   # 最後交易日 09/16 那一夜:202609 已不交易,盤後列只剩 202610 起 → 近月自動換月
+        rows = [
+            _fut("TX", d, "202610/202611", session=SESSION_AFTER_HOURS, last=10.0),   # 價差不算
+            _fut("TX", d, "202611", session=SESSION_AFTER_HOURS, last=46600.0),
+            _fut("TX", d, "202610", session=SESSION_AFTER_HOURS, last=46500.0, change=20.0, settle=None),
+            _fut("TX", d, "202610", last=46400.0),                                   # 一般時段不算進夜盤
+            _fut("MTX", d, "202610", session=SESSION_AFTER_HOURS, last=1.0),         # 小台不算
+            _fut("TX", "2026-09-18", "202610", session=SESSION_AFTER_HOURS, last=1.0),  # 別天不算
+        ]
+        n = src.pick_tx_night(rows, "20260917")
+        self.assertEqual((n.contract_month, n.close, n.change, n.settlement), ("202610", 46500.0, 20.0, None))
+        # 盤後列的結算價欄若來源給 0 也存 NULL
+        self.assertIsNone(src.pick_tx_night([_fut("TX", d, "202610", session=SESSION_AFTER_HOURS, settle=0.0)],
+                                            "20260917").settlement)
+
     def test_tx_near_month_rule(self):
         d = "2026-09-16"
         rows = [
@@ -155,7 +189,7 @@ class _TempDb(unittest.TestCase):
         tx = tx if tx is not None else (lambda d: _fut_or_none(d))
         return (mock.patch.object(src, "fetch_twse_index", side_effect=twse),
                 mock.patch.object(src, "fetch_tpex_index", side_effect=tpex),
-                mock.patch.object(src, "fetch_tx_index", side_effect=tx))
+                mock.patch.object(src, "fetch_tx_sessions", side_effect=tx))
 
     def _cli(self, *argv):
         out, err = io.StringIO(), io.StringIO()
@@ -169,23 +203,25 @@ class _TempDb(unittest.TestCase):
 
 
 def _fut_or_none(d8):
-    r = src.pick_tx_near_month(TAIFEX_FX, d8)
-    if r is None:
+    rows = src.tx_sessions(TAIFEX_FX, d8)
+    if not rows:
         raise NoDataError("no tx")
-    return r
+    return rows
 
 
 class ImportIndex(_TempDb):
     def test_writes_three_series_and_logs_dataset_index(self):
-        a, b, c = self._patch(tx=lambda d: src.pick_tx_near_month(TAIFEX_FX, "20260910"))
+        a, b, c = self._patch(tx=lambda d: src.tx_sessions(TAIFEX_FX, "20260910"))
         with a, b, c:
             res = import_market_index("20261008")
+        # TAIFEX 那一筆同一份 CSV 寫 tx + tx_night 兩列(docs/49 §12.6)
         self.assertEqual([(r["source"], r["status"], r["rows"]) for r in res],
-                         [("twse", "ok", 1), ("tpex", "ok", 1), ("taifex", "ok", 1)])
+                         [("twse", "ok", 1), ("tpex", "ok", 1), ("taifex", "ok", 2)])
         self.assertEqual(self._rows(), [
             ("tpex", "2026-10-08", 426.71, -3.75, None, None, None),
             ("twse", "2026-10-08", 49313.44, -492.93, -0.99, None, None),
             ("tx", "2026-09-10", 46870.0, -308.0, None, "202609", 46869.0),
+            ("tx_night", "2026-09-10", 46984.0, -194.0, None, "202609", None),
         ])
         from sqlalchemy import text
         with db.get_engine().connect() as conn:
@@ -195,10 +231,10 @@ class ImportIndex(_TempDb):
                          [("taifex", "index", "ok"), ("tpex", "index", "ok"), ("twse", "index", "ok")])
         with a, b, c:
             import_market_index("20261008")
-        self.assertEqual(len(self._rows()), 3)
+        self.assertEqual(len(self._rows()), 4)
 
     def test_cli_exit_codes(self):
-        a, b, c = self._patch(tx=lambda d: src.pick_tx_near_month(TAIFEX_FX, "20260910"))
+        a, b, c = self._patch(tx=lambda d: src.tx_sessions(TAIFEX_FX, "20260910"))
         with a, b, c:
             self.assertEqual(self._cli("--date", "20261008")[0], 0)
         # 台指期還沒產製 → 75,其他兩市那一列照樣留著
@@ -207,7 +243,7 @@ class ImportIndex(_TempDb):
             code, out = self._cli("--date", "20261008")
         self.assertEqual(code, 75)
         self.assertIn("taifex: empty", out)
-        self.assertEqual([r[0] for r in self._rows()], ["tpex", "twse", "tx"])
+        self.assertEqual([r[0] for r in self._rows()], ["tpex", "twse", "tx", "tx_night"])
         # 任一來源錯誤 → 1
         a, b, c = self._patch(twse=lambda d: (_ for _ in ()).throw(RuntimeError("layout")))
         with a, b, c:
@@ -215,7 +251,7 @@ class ImportIndex(_TempDb):
         # 上市盤中「表頭有、沒有列」是 pending:單日 75、不是 1
         pending = json.loads((FX / "twse_mi_index_ind_pending_20261009.json").read_text(encoding="utf-8"))
         a, b, c = self._patch(twse=lambda d: src.parse_twse_index(pending, d),
-                              tx=lambda d: src.pick_tx_near_month(TAIFEX_FX, "20260910"))
+                              tx=lambda d: src.tx_sessions(TAIFEX_FX, "20260910"))
         with a, b, c:
             code, out = self._cli("--date", "20261009")
         self.assertEqual(code, 75)
@@ -244,6 +280,17 @@ class ImportIndex(_TempDb):
         self.assertEqual(by[("20261007", "tpex")], "ok")
         self.assertEqual(by[("20261006", "tpex")], "ok")
         self.assertEqual(by[("20261008", "taifex")], "empty")   # fixture 只有 9/10、9/11
+        # 回補時 TAIFEX 塊內的每一天也是 tx + tx_night 一起寫
+        with mock.patch.object(src, "fetch_twse_index", side_effect=lambda d: src.parse_twse_index(TWSE_FX, d)), \
+                mock.patch.object(src, "fetch_tpex_month", side_effect=tpex_month), \
+                mock.patch("radar.providers.taifex.fetch_history", side_effect=fetch_history), \
+                mock.patch("radar.market_index.time.sleep"):
+            res = backfill_market_index("20260911", 2)
+        by = {(r["date"], r["source"]): (r["status"], r["rows"]) for r in res}
+        self.assertEqual(by[("20260911", "taifex")], ("ok", 2))
+        self.assertEqual(by[("20260910", "taifex")], ("ok", 2))
+        self.assertEqual([r[:3] for r in self._rows() if r[0] == "tx_night"],
+                         [("tx_night", "2026-09-10", 46984.0), ("tx_night", "2026-09-11", 46072.0)])
         # 回補:休市/沒列的 empty 不算失敗
         with mock.patch.object(src, "fetch_twse_index", side_effect=lambda d: src.parse_twse_index(TWSE_FX, d)), \
                 mock.patch.object(src, "fetch_tpex_month", side_effect=tpex_month), \
@@ -274,7 +321,7 @@ P = "2026-10-07"
 
 
 class ExportMarketBrief(_TempDb):
-    def _seed(self, with_index=True, with_insti=True, long=False):
+    def _seed(self, with_index=True, with_insti=True, long=False, night=False, tx_prev=False):
         with db.get_engine().begin() as conn:
             conn.execute(schema.stocks.insert(), [
                 {"id": "2330", "name": "台積電", "market": "twse", "type": "stock", "industry": "半導體業", "is_active": 1},
@@ -303,6 +350,11 @@ class ExportMarketBrief(_TempDb):
                     ix("tpex", D, 426.71, -3.75, None),
                     ix("tx", D, 49250.0, -500.0, None, "202610", 49240.0),
                 ]
+                if tx_prev:
+                    rows.append(ix("tx", P, 49750.0, 100.0, None, "202610", 49750.0))
+                if night:
+                    # 標 D 的盤後 = P 15:00 → D 05:00 那一夜;change 基準 = P 結算價
+                    rows.append(ix("tx_night", D, 49420.0, -330.0, None, "202610", None))
                 if long:
                     from datetime import date as dc, timedelta
                     base = dc(2026, 10, 6)
@@ -329,6 +381,54 @@ class ExportMarketBrief(_TempDb):
         head = json.loads((self.tmp / "out" / "home" / "head.json").read_text(encoding="utf-8"))
         self.assertEqual(head["indices"], r["indices"])
         self.assertEqual(head["insti_market"], r["insti_market"])
+
+    def test_tx_night_rides_on_the_tx_item_not_a_fourth_series(self):
+        """docs/49 §12.6:夜盤掛在 tx 的 ``night`` 鍵;from = 早於它的最後一個 tx 日、to = from 次日;歷史檔不含夜盤。"""
+        self._seed(night=True, tx_prev=True)
+        export_json(self.tmp / "out")
+        r = self._radar()
+        self.assertEqual([i["market"] for i in r["indices"]], ["twse", "tpex", "tx"])
+        tx = r["indices"][2]
+        self.assertEqual(tx["close"], 49250.0)
+        self.assertEqual(tx["spark"], [49750.0, 49250.0])
+        self.assertEqual(tx["night"], {
+            "date": D, "from": P, "to": D, "close": 49420.0, "change": -330.0,
+            "chg_pct": round(-330 / (49420 + 330) * 100, 2), "contract_month": "202610",
+        })
+        hist = json.loads((self.tmp / "out" / "market" / "indices_hist.json").read_text(encoding="utf-8"))
+        self.assertEqual(sorted(hist["series"]), ["tpex", "twse", "tx"])
+        self.assertEqual(len(hist["series"]["tx"]["points"]), 2)
+        # 沒有更早的 tx 列:from/to 為 None(前端只標日期);沒有夜盤列:沒有 night 鍵
+        with db.get_engine().begin() as conn:
+            conn.exec_driver_sql("DELETE FROM market_indices WHERE market='tx' AND date=:p", {"p": P})
+        with db.get_engine().connect() as conn:
+            night = next(i for i in latest_indices(conn, D) if i["market"] == "tx")["night"]
+            self.assertEqual((night["from"], night["to"], night["close"]), (None, None, 49420.0))
+            self.assertNotIn("night", next(i for i in latest_indices(conn, P) if i["market"] == "tx")
+                             if any(i["market"] == "tx" for i in latest_indices(conn, P)) else {})
+        with db.get_engine().begin() as conn:
+            conn.exec_driver_sql("DELETE FROM market_indices WHERE market='tx_night'")
+        with db.get_engine().connect() as conn:
+            self.assertNotIn("night", next(i for i in latest_indices(conn, D) if i["market"] == "tx"))
+
+    def test_tx_night_only_up_to_d_and_weekend_dating(self):
+        """週五夜 → 週六 05:00,TAIFEX 標週一:from = 週五(最後一個 tx 日)、to = 週六。"""
+        self._seed(with_index=False, with_insti=False)
+        with db.get_engine().begin() as conn:
+            conn.execute(schema.market_indices.insert(), [
+                {"market": "tx", "date": "2026-10-02", "close": 50000.0, "change": 10.0, "chg_pct": None,
+                 "contract_month": "202610", "settlement": 50000.0},
+                {"market": "tx", "date": "2026-10-05", "close": 50100.0, "change": 100.0, "chg_pct": None,
+                 "contract_month": "202610", "settlement": 50100.0},
+                {"market": "tx_night", "date": "2026-10-05", "close": 50050.0, "change": 50.0, "chg_pct": None,
+                 "contract_month": "202610", "settlement": None},
+            ])
+        with db.get_engine().connect() as conn:
+            tx = next(i for i in latest_indices(conn, "2026-10-05") if i["market"] == "tx")
+            self.assertEqual((tx["night"]["date"], tx["night"]["from"], tx["night"]["to"]),
+                             ("2026-10-05", "2026-10-02", "2026-10-03"))
+            # ≤ d:查週五時還沒有這一夜
+            self.assertNotIn("night", next(i for i in latest_indices(conn, "2026-10-02") if i["market"] == "tx"))
 
     def test_hist_file_and_spark_caps(self):
         self._seed(long=True)

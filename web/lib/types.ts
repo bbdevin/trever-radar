@@ -1059,6 +1059,23 @@ export interface MarketIndex {
   /** 只有台指期(market=tx):近月契約月份 YYYYMM 與當日結算價 */
   contract_month?: string | null;
   settlement?: number | null;
+  /** 只有台指期:最新一夜的盤後時段收盤(docs/49 §12.6);沒有夜盤資料時沒有這個鍵 */
+  night?: TxNight;
+}
+
+/**
+ * 台指期近月盤後時段(夜盤)一夜的收盤。`date` 是期交所標示的交易日(那一夜**結束**的 05:00 那天);
+ * `from` 是那一夜開始的交易日(15:00 開盤)、`to` 是 from 的次一日曆日(05:00 收盤);管線找不到更早的
+ * 一般時段列時 from/to 為 null。`change` 的基準與同日一般時段相同:前一交易日結算價。
+ */
+export interface TxNight {
+  date: string;
+  from: string | null;
+  to: string | null;
+  close: number;
+  change: number | null;
+  chg_pct: number | null;
+  contract_month?: string | null;
 }
 
 /** `market/indices_hist.json`(docs/49 §12):點開走勢圖才抓;points = [date, close, change, chg_pct](舊→新) */
@@ -1071,10 +1088,11 @@ export interface IndicesHistJson {
 }
 
 /** `market/indices_intraday.json`(docs/49 §12.5):只有最新一個交易日;走勢 sheet 選「1日」才抓。
- *  series[市場] = [epoch 秒(該分鐘開始時間), 值][](1 分線,舊→新);抓不到的市場沒有鍵 */
+ *  series[市場] = [epoch 秒(該分鐘開始時間), 值][](1 分線,舊→新);抓不到的市場沒有鍵。
+ *  `tx_night`(§12.6)= 同一個檔裡台指期的**前一夜**盤後時段(前一交易日 15:00 → date 05:00,跨午夜)。 */
 export interface IndicesIntradayJson {
   date: string;
-  series: Partial<Record<"twse" | "tpex" | "tx", [number, number][]>>;
+  series: Partial<Record<"twse" | "tpex" | "tx" | "tx_night", [number, number][]>>;
 }
 
 export interface InstiMarket {
