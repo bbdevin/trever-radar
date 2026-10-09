@@ -130,6 +130,13 @@ def _migrate_sqlite(conn):
         if name not in profile_cols:
             conn.exec_driver_sql(f"ALTER TABLE company_profiles ADD COLUMN {name} {sql_type}")
 
+    # 大盤指數(docs/49 §12):§11 時建的表沒有台指期的兩欄;舊形狀的表 export 會直接擲例外。
+    idx_cols = {r[1] for r in conn.exec_driver_sql("PRAGMA table_info(market_indices)").fetchall()}
+    if idx_cols:
+        for name, sql_type in {"contract_month": "TEXT", "settlement": "REAL"}.items():
+            if name not in idx_cols:
+                conn.exec_driver_sql(f"ALTER TABLE market_indices ADD COLUMN {name} {sql_type}")
+
     margin_cols = {r[1] for r in conn.exec_driver_sql("PRAGMA table_info(daily_margins)").fetchall()}
     margin_additions = {
         "margin_buy": "INTEGER",

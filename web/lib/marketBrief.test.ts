@@ -23,6 +23,11 @@ import {
   TREND_HINT,
   TREND_RANGES,
   TREND_SHEET_TITLE,
+  TX_STITCH_NOTE,
+  axisTickLabel,
+  indexDecimals,
+  indexPctText,
+  mmdd,
   rangeStats,
   rangeTone,
   sliceRange,
@@ -32,19 +37,41 @@ import {
   type TrendPoint,
 } from "./marketBrief.ts";
 
-test("指數:千分位兩位小數,與來源同字", () => {
+test("指數:千分位兩位小數,與來源同字;台指期整數", () => {
   assert.equal(fmtIndex(49313.44), "49,313.44");
   assert.equal(fmtIndex(426.71), "426.71");
   assert.equal(fmtIndex(426.7), "426.70");
+  assert.equal(indexDecimals("tx"), 0);
+  assert.equal(indexDecimals("twse"), 2);
+  assert.equal(fmtIndex(49700, indexDecimals("tx")), "49,700");
+  assert.equal(fmtIndex(49700.4, 0), "49,700");
 });
 
-test("漲跌字串:箭頭＋點數＋百分比,正負都在字裡;缺值退化", () => {
+test("漲跌字串:箭頭＋點數＋百分比,正負都在字裡;缺值退化;台指期點數整數", () => {
   assert.equal(indexChangeText(-492.93, -0.99), "▼492.93 · -0.99%");
   assert.equal(indexChangeText(244.27, 0.65), "▲244.27 · +0.65%");
   assert.equal(indexChangeText(0, 0), "0.00 · 0.00%");
   assert.equal(indexChangeText(-3.75, null), "▼3.75");
   assert.equal(indexChangeText(null, -0.87), "-0.87%");
   assert.equal(indexChangeText(null, null), "—");
+  assert.equal(indexChangeText(-30, -0.06, 0), "▼30 · -0.06%");
+});
+
+test("卡片格只放 %:「▼0.99%」;缺 % 退回點數", () => {
+  assert.equal(indexPctText(-492.93, -0.99), "▼0.99%");
+  assert.equal(indexPctText(244.27, 0.65), "▲0.65%");
+  assert.equal(indexPctText(0, 0), "0.00%");
+  assert.equal(indexPctText(-30, null, 0), "▼30");
+  assert.equal(indexPctText(null, null), "—");
+});
+
+test("時間軸刻度與游標日期:年 → 2026年、月 → 9月、日 → 10/07", () => {
+  assert.equal(axisTickLabel("2026-10-07", 0), "2026年");
+  assert.equal(axisTickLabel("2026-09-01", 1), "9月");
+  assert.equal(axisTickLabel("2026-10-07", 2), "10/07");
+  assert.equal(axisTickLabel("odd", 2), "odd");
+  assert.equal(mmdd("2026-10-07"), "10/07");
+  assert.ok(TX_STITCH_NOTE.includes("未調整換月價差"));
 });
 
 test("資料日標記:與頁面資料日不同才標", () => {
@@ -88,9 +115,10 @@ test("指數順序固定 上市 → 上櫃 → 台指期", () => {
   assert.deepEqual(orderedIndices(undefined), []);
 });
 
-test("台指期副標:近月月份與結算;沒有月份 → null", () => {
-  assert.equal(txSubtitle({ contract_month: "202610", settlement: 49240 }), "近月 2026/10 · 結算 49,240.00");
+test("台指期副標:近月月份與整數結算;結算 0(最後交易日)或缺 → 不顯示;沒有月份 → null", () => {
+  assert.equal(txSubtitle({ contract_month: "202610", settlement: 49240 }), "近月 2026/10 · 結算 49,240");
   assert.equal(txSubtitle({ contract_month: "202610", settlement: null }), "近月 2026/10");
+  assert.equal(txSubtitle({ contract_month: "202609", settlement: 0 }), "近月 2026/09");
   assert.equal(txSubtitle({ contract_month: null, settlement: 1 }), null);
   assert.equal(txSubtitle({}), null);
 });
@@ -133,7 +161,7 @@ test("禁詞:標題、標籤、提示", () => {
     word(0x5efa, 0x8b70), word(0x558a, 0x55ae),
   ].join("|"));
   for (const t of [BRIEF_TITLE, BRIEF_STALE_BADGE, BRIEF_TURNOVER_LABEL, BRIEF_INSTI_LABEL, BRIEF_INSTI_HINT, BRIEF_UPDOWN_HINT,
-    TREND_AFFORDANCE, TREND_SHEET_TITLE, TREND_EMPTY, TREND_HINT, ...TREND_RANGES.map((r) => r.label)]) {
+    TREND_AFFORDANCE, TREND_SHEET_TITLE, TREND_EMPTY, TREND_HINT, TX_STITCH_NOTE, ...TREND_RANGES.map((r) => r.label)]) {
     assert.ok(!banned.test(t), t);
   }
   assert.ok(banned.test(word(0x505a, 0x591a)), "regex 本身有效");

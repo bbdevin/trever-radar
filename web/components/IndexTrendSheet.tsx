@@ -14,9 +14,12 @@ import {
   TREND_RANGES,
   TREND_RANGE_DEFAULT,
   TREND_SHEET_TITLE,
+  TX_STITCH_NOTE,
+  axisTickLabel,
   dateTag,
   fmtIndex,
   indexChangeText,
+  indexDecimals,
   mmdd,
   orderedIndices,
   rangeStats,
@@ -67,7 +70,7 @@ function useIsDark() {
   return isDark;
 }
 
-function TrendChart({ points, onHover }: { points: TrendPoint[]; onHover: (p: TrendPoint | null) => void }) {
+function TrendChart({ points, decimals, onHover }: { points: TrendPoint[]; decimals: number; onHover: (p: TrendPoint | null) => void }) {
   const ref = useRef<HTMLDivElement>(null);
   const isDark = useIsDark();
   const onHoverRef = useRef(onHover);
@@ -79,23 +82,29 @@ function TrendChart({ points, onHover }: { points: TrendPoint[]; onHover: (p: Tr
     let chart: import("lightweight-charts").IChartApi | undefined;
     const byTime = new Map(points.map((p) => [p[0], p]));
     const color = TONE_COLOR[rangeTone(points)];
+    const host = ref.current;
     import("lightweight-charts").then((lw) => {
       if (disposed || !ref.current) return;
-      const { createChart, AreaSeries, ColorType } = lw;
+      const { createChart, AreaSeries, ColorType, CrosshairMode } = lw;
       const colors = chartColors(isDark);
       chart = createChart(ref.current, {
         autoSize: true,
         layout: { background: { type: ColorType.Solid, color: "transparent" }, textColor: colors.text, fontSize: 12 },
         grid: { vertLines: { color: colors.grid }, horzLines: { color: colors.grid } },
         rightPriceScale: { borderColor: colors.border },
-        timeScale: { borderColor: colors.border, timeVisible: false, fixLeftEdge: true, fixRightEdge: true },
-        // 十字游標:點/拖曳讀值;手機垂直拖曳還給 sheet 捲動
-        crosshair: { mode: 0 },
+        // 時間軸與游標日期一律 MM/DD(月刻度 M月、年刻度 YYYY年),與全站日期寫法一致
+        localization: { timeFormatter: (t: unknown) => (typeof t === "string" ? mmdd(t) : String(t)) },
+        timeScale: {
+          borderColor: colors.border, timeVisible: false, fixLeftEdge: true, fixRightEdge: true,
+          tickMarkFormatter: (t: unknown, type: number) => (typeof t === "string" ? axisTickLabel(t, type) : String(t)),
+        },
+        // 十字游標吸附到序列值(價格標籤顯示那天的收盤);手機垂直拖曳還給 sheet 捲動
+        crosshair: { mode: CrosshairMode.Magnet },
         handleScroll: { vertTouchDrag: false, mouseWheel: false, pressedMouseMove: false, horzTouchDrag: false },
         handleScale: { mouseWheel: false, pinch: false, axisPressedMouseMove: false, axisDoubleClickReset: false },
       });
       // 價格軸位數:加權/台指期(萬點)整數就夠,櫃買(幾百點)兩位;手機價格軸要讓出寬度
-      const prec = points[points.length - 1][1] >= 10000 ? 0 : 2;
+      const prec = decimals === 0 || points[points.length - 1][1] >= 10000 ? 0 : 2;
       const series = chart.addSeries(AreaSeries, {
         lineColor: color,
         lineWidth: 2,
@@ -112,15 +121,23 @@ function TrendChart({ points, onHover }: { points: TrendPoint[]; onHover: (p: Tr
         const t = typeof param.time === "string" ? param.time : null;
         onHoverRef.current(t ? byTime.get(t) ?? null : null);
       });
+      // TradingView 署名(授權要求保留,與 KChart 一致):補可讀名稱;位置與大小不動。
+      requestAnimationFrame(() => {
+        const logo = host.querySelector<HTMLAnchorElement>('a[href*="tradingview"]');
+        if (logo) {
+          logo.setAttribute("aria-label", "TradingView Lightweight Charts(圖表元件)");
+          logo.setAttribute("title", "TradingView Lightweight Charts");
+        }
+      });
     });
     return () => {
       disposed = true;
       chart?.remove();
       onHoverRef.current(null);
     };
-  }, [points, isDark]);
+  }, [points, isDark, decimals]);
 
-  return <div ref={ref} className="h-[300px] w-full" aria-hidden />;
+  return <div ref={ref} className="h-[300px] w-full" />;
 }
 
 /**
@@ -182,7 +199,14 @@ export default function IndexTrendSheet({
   const stats = useMemo(() => rangeStats(points), [points]);
   const shown = hover ?? (points.length ? points[points.length - 1] : null);
   const shownTone = shown ? ((shown[2] ?? shown[3] ?? 0) > 0 ? "up" : (shown[2] ?? shown[3] ?? 0) < 0 ? "down" : "flat") : "flat";
-  const sub = head?.market === "tx" ? txSubtitle({ contract_month: series?.contract_month ?? head.contract_month, settlement: head.settlement }) : null;
+  const dec = indexDecimals(head?.market);
+  // 台指期副標跟著游標:歷史列第 5 個元素是那天的近月月份;結算價只有最新一天有,游標停在過去日就不顯示
+  const sub = head?.market === "tx"
+    ? txSubtitle({
+        contract_month: hover ? (hover[4] ?? null) : (series?.contract_month ?? head.contract_month),
+        settlement: hover ? null : head.settlement,
+      })
+    : null;
 
   return (
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
@@ -201,7 +225,7 @@ export default function IndexTrendSheet({
             <div className="min-w-0 flex-1">
               <DialogPrimitive.Title className="text-[12px] font-semibold text-muted-foreground">
                 {TREND_SHEET_TITLE}
-                {head && <span className="num ml-2 text-[11.5px] font-normal">{`${shown ? shown[0] : head.date} 收盤`}</span>}
+                {head && <span className="num ml-2 text-[11.5px] font-normal">{`${mmdd(shown ? shown[0] : head.date)} 收盤`}</span>}
               </DialogPrimitive.Title>
               <DialogPrimitive.Description className="sr-only">{TREND_HINT}</DialogPrimitive.Description>
             </div>
@@ -242,10 +266,10 @@ export default function IndexTrendSheet({
                 </div>
                 <div className="mt-0.5 flex flex-wrap items-baseline gap-x-3">
                   <span className={cn("num text-[30px] font-bold leading-none tracking-tight", TONE_CLASS[shownTone])}>
-                    {fmtIndex(shown ? shown[1] : head.close)}
+                    {fmtIndex(shown ? shown[1] : head.close, dec)}
                   </span>
                   <span className={cn("num text-[13px] font-semibold", TONE_CLASS[shownTone])}>
-                    {shown ? indexChangeText(shown[2], shown[3]) : indexChangeText(head.change, head.chg_pct)}
+                    {shown ? indexChangeText(shown[2], shown[3], dec) : indexChangeText(head.change, head.chg_pct, dec)}
                   </span>
                 </div>
               </div>
@@ -260,7 +284,7 @@ export default function IndexTrendSheet({
               ) : points.length < 2 ? (
                 <p className="py-16 text-center text-sm text-muted-foreground">{TREND_EMPTY}</p>
               ) : (
-                <TrendChart points={points} onHover={setHover} />
+                <TrendChart points={points} decimals={dec} onHover={setHover} />
               )}
             </div>
 
@@ -288,21 +312,25 @@ export default function IndexTrendSheet({
               <dl className="mt-2.5 grid grid-cols-3 gap-2 rounded-[var(--r-md)] bg-secondary/60 px-3 py-2 text-center" data-testid="index-trend-stats">
                 <div>
                   <dt className="text-[10.5px] text-muted-foreground">區間高</dt>
-                  <dd className="num text-[13px] font-semibold">{fmtIndex(stats.high)}</dd>
+                  <dd className="num text-[13px] font-semibold">{fmtIndex(stats.high, dec)}</dd>
                 </div>
                 <div>
                   <dt className="text-[10.5px] text-muted-foreground">區間低</dt>
-                  <dd className="num text-[13px] font-semibold">{fmtIndex(stats.low)}</dd>
+                  <dd className="num text-[13px] font-semibold">{fmtIndex(stats.low, dec)}</dd>
                 </div>
-                <div>
+                <div title={`區間漲跌 ${indexChangeText(stats.change, stats.chgPct, dec)}`}>
                   <dt className="text-[10.5px] text-muted-foreground">區間漲跌</dt>
-                  <dd className={cn("num text-[13px] font-semibold", TONE_CLASS[rangeTone(points)])}>
-                    {indexChangeText(stats.change, stats.chgPct)}
+                  {/* 只放 %(點數在 title),390px 三格並排才不換行 */}
+                  <dd className={cn("num whitespace-nowrap text-[13px] font-semibold", TONE_CLASS[rangeTone(points)])}>
+                    {indexChangeText(null, stats.chgPct, dec)}
                   </dd>
                 </div>
               </dl>
             )}
-            <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">{TREND_HINT}</p>
+            <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
+              {TREND_HINT}
+              {head?.market === "tx" && ` ${TX_STITCH_NOTE}`}
+            </p>
           </div>
         </DialogPrimitive.Popup>
       </DialogPrimitive.Portal>

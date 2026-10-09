@@ -150,16 +150,18 @@ def latest_indices(conn, d: str) -> list[dict]:
 
 def indices_hist(conn, d: str, generated_at: str) -> dict | None:
     """``market/indices_hist.json`` 的內容:每個序列 ≤ d 最近 ``HIST_N`` 列,
-    ``points`` = [date, close, change, chg_pct](舊→新)。一個序列都沒有 → None(不寫檔)。"""
+    ``points`` = [date, close, change, chg_pct](舊→新);台指期每列多第 5 個元素 contract_month
+    (近月連續、不回溯調整換月價差,前端游標停在哪天就顯示那天的近月)。一個序列都沒有 → None。"""
     series = {}
     for market in MARKETS:
         rows = _series(conn, market, d, HIST_N)
         if not rows:
             continue
-        series[market] = {
-            "name": NAMES[market],
-            "points": [[r[0], r[1], r[2], _pct(r[1], r[2], r[3])] for r in rows],
-        }
+        if market == "tx":
+            pts = [[r[0], r[1], r[2], _pct(r[1], r[2], r[3]), r[4]] for r in rows]
+        else:
+            pts = [[r[0], r[1], r[2], _pct(r[1], r[2], r[3])] for r in rows]
+        series[market] = {"name": NAMES[market], "points": pts}
         if market == "tx":
             series[market]["contract_month"] = rows[-1][4]
     if not series:

@@ -22,20 +22,32 @@ export function mmdd(d: string | null | undefined): string {
   return m ? `${m[1]}/${m[2]}` : d;
 }
 
-/** 指數收盤:千分位、兩位小數(來源就是兩位) */
-export function fmtIndex(close: number): string {
-  return close.toLocaleString("zh-TW", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+/** 位數:加權/櫃買照來源兩位;台指期整數(期貨報價本來就是整數點) */
+export function indexDecimals(market: string | undefined): number {
+  return market === "tx" ? 0 : 2;
 }
 
-/** 「▼492.93 · -0.99%」;顏色不是唯一訊號,箭頭與正負號都在字裡。缺值 → "—" */
-export function indexChangeText(change: number | null, chgPct: number | null): string {
+/** 指數收盤:千分位;位數依 `indexDecimals`(預設兩位) */
+export function fmtIndex(close: number, decimals = 2): string {
+  return close.toLocaleString("zh-TW", { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+}
+
+/** 「▼492.93 · -0.99%」(sheet 用,點數＋%);顏色不是唯一訊號,箭頭與正負號都在字裡。缺值 → "—" */
+export function indexChangeText(change: number | null, chgPct: number | null, decimals = 2): string {
   if (change == null && chgPct == null) return "—";
   const ref = change ?? chgPct ?? 0;
   const arrow = ref > 0 ? "▲" : ref < 0 ? "▼" : "";
   const parts: string[] = [];
-  if (change != null) parts.push(`${arrow}${Math.abs(change).toLocaleString("zh-TW", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
+  if (change != null) parts.push(`${arrow}${fmtIndex(Math.abs(change), decimals)}`);
   if (chgPct != null) parts.push(`${chgPct > 0 ? "+" : chgPct < 0 ? "-" : ""}${Math.abs(chgPct).toFixed(2)}%`);
   return parts.join(" · ");
+}
+
+/** 卡片格只放得下 %:「▼0.99%」;缺 % 時退回點數;都缺 → "—" */
+export function indexPctText(change: number | null, chgPct: number | null, decimals = 2): string {
+  if (chgPct == null) return change == null ? "—" : indexChangeText(change, null, decimals);
+  const arrow = chgPct > 0 ? "▲" : chgPct < 0 ? "▼" : "";
+  return `${arrow}${Math.abs(chgPct).toFixed(2)}%`;
 }
 
 /** 該格的資料日與頁面資料日不同時,回 "10/06" 標在旁邊;相同 → null */
@@ -110,13 +122,25 @@ export const TREND_SHEET_TITLE = "大盤走勢";
 export const TREND_EMPTY = "尚無走勢資料(指數回補後出現)";
 export const TREND_HINT = "點圖上任一點看那天的收盤與漲跌;只整理交易所公布的收盤,不下判斷。";
 
-/** 台指期副標:「近月 2026/10 · 結算 49,240」(沒有月份 → null) */
+/** 台指期副標:「近月 2026/10 · 結算 49,240」;結算 0/缺 = 沒有(最後交易日來源給 0);沒有月份 → null */
 export function txSubtitle(ix: Pick<MarketIndex, "contract_month" | "settlement">): string | null {
   const m = ix.contract_month;
   if (!m || !/^\d{6}$/.test(m)) return null;
   const parts = [`近月 ${m.slice(0, 4)}/${m.slice(4)}`];
-  if (ix.settlement != null) parts.push(`結算 ${fmtIndex(ix.settlement)}`);
+  if (ix.settlement) parts.push(`結算 ${fmtIndex(ix.settlement, 0)}`);
   return parts.join(" · ");
+}
+
+/** 台指期歷史是近月連續、不回溯調整換月價差;sheet 的提示行在台指期時加這句 */
+export const TX_STITCH_NOTE = "台指期為近月連續、未調整換月價差。";
+
+/** 時間軸刻度:lightweight-charts TickMarkType 0=年 1=月 2=日(3/4 時刻不會出現,日線) */
+export function axisTickLabel(time: string, tickType: number): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(time);
+  if (!m) return time;
+  if (tickType === 0) return `${m[1]}年`;
+  if (tickType === 1) return `${Number(m[2])}月`;
+  return `${m[2]}/${m[3]}`;
 }
 
 /**
@@ -139,7 +163,10 @@ export function sparkPath(values: number[] | undefined, w: number, h: number): s
     .join(" ");
 }
 
-/** 迷你走勢的顏色依「最後一個收盤 vs 第一個」:紅漲綠跌,持平用中性 */
+/**
+ * 40 日走勢的方向(首尾相比)。**卡片上的迷你圖不用它上色**:圖旁的數字是「今日」漲跌,
+ * 40 日方向常與今日相反,兩個紅綠擺一起會互相打架,所以迷你圖一律中性描邊(docs/49 §12.3)。
+ */
 export function sparkTone(values: number[] | undefined): "up" | "down" | "flat" {
   if (!values || values.length < 2) return "flat";
   const d = values[values.length - 1] - values[0];
@@ -156,7 +183,8 @@ export const TREND_RANGES: { key: TrendRange; label: string; days: number }[] = 
 ];
 export const TREND_RANGE_DEFAULT: TrendRange = "3m";
 
-export type TrendPoint = [string, number, number | null, number | null];
+/** [date, close, change, chg_pct, contract_month?](第 5 個只有台指期) */
+export type TrendPoint = [string, number, number | null, number | null, string?];
 
 export function sliceRange(points: TrendPoint[] | undefined, key: TrendRange): TrendPoint[] {
   const days = TREND_RANGES.find((r) => r.key === key)?.days ?? 63;

@@ -355,6 +355,16 @@ web/public/data/rankings/insti_flow_20d.json     (P1)
 - **Bottom sheet**(base-ui Dialog:focus trap、ESC、點背景關閉;另明寫 `body.overflow=hidden` 鎖頁面捲動):把手、44px X;標題「大盤走勢 · YYYY-MM-DD 收盤」;指數切換 pill(加權指數／櫃買指數／台指期);名稱＋台指期副標「近月 2026/10 · 結算 49,695.00」;收盤 30px、漲跌點數 · %;300px `lightweight-charts` AreaSeries(線色＝區間首尾紅漲綠跌;加權/台指期價格軸整數、櫃買兩位;關掉縮放/平移,十字游標點或拖讀值,**標頭數字跟著游標變成那天的收盤與當日漲跌**);範圍 chip 1月/3月/6月/1年(21/63/126/250 個交易日,預設 3月);區間高／區間低／區間漲跌(首尾相比)。歷史檔抓不到 → 「尚無走勢資料」;離線 → 既有離線文案。
 - **不做**:台指期盤後、小台/選擇權、下滑手勢關閉(X/ESC/背景三種已夠)、任何預測字眼。
 
+### 12.3b 驗證者回報後的修正(2026-10-09 同日)
+
+- **最後交易日結算 0**:futDataDown 在到期月最後交易日(2026 年 05/20、06/17、07/15、08/19、09/16 實測)把結算價寫成 `0`;`pick_tx_near_month` 改存 NULL,前端 `txSubtitle` 把 0/缺都當「沒有結算價」只寫「近月 YYYY/MM」。
+- **舊形狀表**:`db._migrate_sqlite` 補 `market_indices` 的 `contract_month`/`settlement`(§11 時建的表沒有這兩欄,export 會直接擲例外);`latest_indices` 也包進 try/except,壞了只少 `indices` 鍵。正式機從未跑過 `import-index`,表還不存在,`create_all` 會直接建新形狀。
+- **格式**:卡片格只放 %(「▼0.99%」,點數在 sheet 與 title);台指期整數到底(格、sheet 標頭、結算、區間統計、游標、價格軸);sheet 標題與游標日期 `MM/DD`、時間軸刻度 日 `MM/DD`／月 `M月`／年 `YYYY年`(`localization.timeFormatter` + `tickMarkFormatter`);區間漲跌只放 %(點數在 title),390px 不換行。
+- **迷你走勢描邊改中性**(`--ink-2`):旁邊的數字是「今日」漲跌,40 日方向常與今日相反,兩個紅綠擺一起會互相打架;顏色留給數字、走勢只給形狀。sheet 的大圖仍以區間首尾上色(那裡的數字就是區間漲跌)。
+- **游標吸附**(`CrosshairMode.Magnet`):價格標籤顯示那天的收盤。台指期副標跟著游標:歷史列第 5 個元素帶那天的近月月份(近月連續、未調整換月價差,提示行加這句);結算價只有最新一天,游標停在過去日不顯示。
+- **TradingView 署名**:授權要求保留、與 KChart 一致(都顯示),補 `aria-label`/`title`;位置是圖表庫固定的左下角,不動。
+- **缺資料**:完全沒有 `indices`(舊 payload / 還沒回補)→ 整列三格不畫,只剩成交/法人一行(125px → 約 60px);只缺一個序列才顯示那一格「—」。
+
 ### 12.4 驗證
 
 - pytest `test_market_index.py`(18)+ 相關 export 測試;node `marketBrief.test.ts`(迷你走勢 path、範圍切片、區間統計、台指期副標、禁詞)、全套;`tsc`、`next build`。

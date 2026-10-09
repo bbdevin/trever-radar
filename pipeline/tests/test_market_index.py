@@ -114,6 +114,15 @@ class ParseFixtures(unittest.TestCase):
         rows_nolast = [_fut("TX", d, "202609", last=None), _fut("TX", d, "202610", last=5.0)]
         self.assertEqual(src.pick_tx_near_month(rows_nolast, "20260916").contract_month, "202610")
 
+    def test_tx_last_trading_day_settlement_zero_is_null(self):
+        # 最後交易日來源把到期月結算價寫成 0(2026-05-20 … 09-16 皆然):不是價格,存 NULL
+        rows = [_fut("TX", "2026-09-16", "202609", last=46400.0, change=-50.0, settle=0.0)]
+        r = src.pick_tx_near_month(rows, "20260916")
+        self.assertEqual((r.close, r.change), (46400.0, -50.0))
+        self.assertIsNone(r.settlement)
+        rows_none = [_fut("TX", "2026-09-16", "202609", last=46400.0, settle=None)]
+        self.assertIsNone(src.pick_tx_near_month(rows_none, "20260916").settlement)
+
 
 class _TempDb(unittest.TestCase):
     def setUp(self):
@@ -334,6 +343,8 @@ class ExportMarketBrief(_TempDb):
         self.assertEqual(hist["series"]["twse"]["points"][-1], [D, 49313.44, -492.93, -0.99])
         self.assertEqual(hist["series"]["tpex"]["points"], [[D, 426.71, -3.75, round(-3.75 / 430.46 * 100, 2)]])
         self.assertEqual(hist["series"]["tx"]["contract_month"], "202610")
+        # 台指期每列帶當天的近月月份(近月連續、不調整價差;游標停在哪天就顯示那天的月份)
+        self.assertEqual(hist["series"]["tx"]["points"], [[D, 49250.0, -500.0, round(-500 / 49750 * 100, 2), "202610"]])
         raw = (self.tmp / "out" / "market" / "indices_hist.json").read_text(encoding="utf-8")
         self.assertNotIn(": ", raw)
 
@@ -359,6 +370,32 @@ class ExportMarketBrief(_TempDb):
         self.assertFalse((out / "market" / "indices_hist.json").exists())
         with db.get_engine().connect() as conn:
             self.assertIsNone(indices_hist(conn, D, "x"))
+
+    def test_old_shape_table_is_migrated_and_export_isolated(self):
+        """§11 形狀的 market_indices(沒有 contract_month/settlement)→ init_db 補欄;指數摘要壞掉只少鍵。"""
+        from sqlalchemy import text
+        with db.get_engine().begin() as conn:
+            conn.exec_driver_sql("DROP TABLE market_indices")
+            conn.exec_driver_sql(
+                "CREATE TABLE market_indices (market TEXT, date TEXT, close REAL NOT NULL, change REAL, chg_pct REAL, "
+                "PRIMARY KEY (market, date))")
+            conn.exec_driver_sql(
+                "INSERT INTO market_indices VALUES ('twse', '2026-10-08', 49313.44, -492.93, -0.99)")
+        db.init_db()
+        with db.get_engine().connect() as conn:
+            cols = {r[1] for r in conn.exec_driver_sql("PRAGMA table_info(market_indices)").fetchall()}
+            self.assertTrue({"contract_month", "settlement"} <= cols)
+            self.assertEqual(latest_indices(conn, D)[0]["close"], 49313.44)
+            conn.execute(text("SELECT 1"))
+        self._seed(with_index=False)
+        with mock.patch("radar.export.json_export.latest_indices", side_effect=RuntimeError("boom")), \
+                self.assertLogs("radar.export.json_export", level="WARNING") as logs:
+            export_json(self.tmp / "out")
+        self.assertIn("market indices summary failed", "\n".join(logs.output))
+        r = self._radar()
+        self.assertNotIn("indices", r)
+        self.assertIn("insti_market", r)
+        self.assertTrue((self.tmp / "out" / "stocks_index.json").exists())
 
     def test_latest_indices_only_up_to_d(self):
         self._seed()

@@ -9,6 +9,7 @@
 - **高度**:390px 卡高 ≈360px(§11.2 四格版)→ **144px**;舊 payload 125px。head.json 兩個新鍵 1,621 B。
 - **驗證**:pytest `test_market_index.py` 18 項(含 futDataDown 原始 CSV fixture 逐值、實抓 pending 回應 fixture)+ 全套;web node 362 passed;`tsc`、`next build`;390px 深／淺色 Playwright(攔截 Supabase、假 session):卡、sheet(台指期/加權 1 年)、游標讀值、ESC/背景關閉、缺台指期與舊 payload。
 - **待人類／維運**:排程接線同 §11.3(同一行 `radar import-index`,現在連台指期一起);上線前 VPS 跑 `radar import-index --days 370` 回補(約 20 分鐘,三個來源都回得到 250 個交易日)。
+- **驗證後修正(同日,`docs/49` §12.3b)**:最後交易日來源結算價 0 → 存 NULL、副標不顯示結算;`db._migrate_sqlite` 補 `market_indices` 兩欄,`latest_indices` 失敗只少鍵;卡片格只放 %、台指期整數到底、sheet 日期與軸刻度 MM/DD(月 M月)、游標吸附、台指期副標跟游標(歷史列帶當天近月)、提示加「近月連續、未調整換月價差」、區間漲跌只放 %、迷你走勢改中性描邊、TradingView 署名補 aria-label、完全沒有指數時不畫三格。
 
 ## 2026-10-09 首頁「市場概況」卡＋大盤指數匯入;法人族群「個股」排序與手機版面(`docs/49` §11、`docs/25` §18;程式完成於分支、未合 main、未上線;v3.6)
 

@@ -2112,7 +2112,12 @@ def export_json(
         # 首頁「市場概況」(docs/49 §11):大盤指數(每市 ≤ d 的最新一列;沒有列 → 鍵不出)與
         # 三大法人全市場淨額(與法人族群分頁 marketLine 同一個函式、同一組數字;i_date 為 None
         # → 鍵不出)。兩個都只是既有資料的小摘要,舊前端不讀這兩個鍵也不受影響。
-        market_indices = latest_indices(conn, d)
+        market_indices = []
+        try:
+            market_indices = latest_indices(conn, d)
+        except Exception:
+            # 與其他獨立寫入者同一個原則:這一塊壞了只少兩個鍵,不中斷整輪 export。
+            _log.warning("market indices summary failed; key omitted", exc_info=True)
         insti_market = None
         if i_date is not None:
             try:

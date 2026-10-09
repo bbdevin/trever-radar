@@ -1066,7 +1066,8 @@ export interface IndicesHistJson {
   version: number;
   as_of: string;
   generated_at: string;
-  series: Record<string, { name: string; points: [string, number, number | null, number | null][]; contract_month?: string | null }>;
+  /** 台指期的 points 每列多第 5 個元素:當天的近月月份(近月連續、未調整換月價差) */
+  series: Record<string, { name: string; points: [string, number, number | null, number | null, string?][]; contract_month?: string | null }>;
 }
 
 export interface InstiMarket {

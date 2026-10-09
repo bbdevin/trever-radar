@@ -158,9 +158,12 @@ def pick_tx_near_month(rows, date: str) -> IndexRow | None:
     if not cands:
         return None
     near = min(cands, key=lambda r: r.contract_month)
+    # 最後交易日當天來源把到期月的結算價寫成 0(2026 年 05/20、06/17、07/15、08/19、09/16 都是):
+    # 那不是價格,存 NULL;前端把 NULL 當「沒有結算價」。
+    settle = near.settlement_price if near.settlement_price else None
     return IndexRow(
         market="tx", date=iso, close=near.last, change=near.change, chg_pct=None,
-        contract_month=near.contract_month.strip(), settlement=near.settlement_price,
+        contract_month=near.contract_month.strip(), settlement=settle,
     )
 
 
