@@ -46,6 +46,8 @@ function fmtYMD(isoDate: string): string {
  */
 /** 圖表疊加勾選上限:超過視覺與效能都失焦 */
 export const MAX_SELECTED_BRANCHES = 10;
+/** 每側最多列幾家 = 來源每日每側公布的上限(前 15 大買超、前 15 大賣超)。 */
+export const SIDE_MAX = 15;
 
 const BranchFlowSection = forwardRef<
   HTMLElement,
@@ -166,52 +168,43 @@ const BranchFlowSection = forwardRef<
     ((branchStale === true) || (!!quoteDate && branchAsOf !== quoteDate));
 
   const agg = useMemo(() => {
-    if (!branchHistory?.length) {
-      const buyers = branches.filter((b) => b.net > 0).sort((a, b) => b.net - a.net);
-      const sellers = branches.filter((b) => b.net < 0).sort((a, b) => a.net - b.net);
-      return {
-        buyers, sellers,
-        top13Buy: buyers.slice(0, 13).map((b) => ({ name: b.name, buy: b.buy, sell: b.sell, net: b.net, history: [] })),
-        top13Sell: sellers.slice(0, 13).map((b) => ({ name: b.name, buy: b.buy, sell: b.sell, net: b.net, history: [] })),
-      };
-    }
-
-    const sliced = branchHistory.slice(0, activeDays);
+    // 1日 且當日 `branches` 有列:直接用它(來源當日完整的買超/賣超各前 15 大;舊 chips 的
+    // branch_history 每天只有 |淨額| 前 12 列,一邊可能整個不見——2026-10-10 使用者指出盟立買超空白)。
+    // branches 非空就代表 raw 當日有列,所以它與 branchHistory[0] 必是同一天。
+    const latestFull = activeDays === 1 && branches.length > 0;
+    // 同名同日多列(多個 branch_key)加總,每個名字一列。
     const map: Record<string, { buy: number; sell: number; net: number }> = {};
-    const allDates = sliced.map((s) => s.t).reverse();
-
-    for (const day of sliced) {
-      for (const b of day.branches) {
-        if (!map[b.n]) map[b.n] = { buy: 0, sell: 0, net: 0 };
-        map[b.n].buy += b.b;
-        map[b.n].sell += b.s;
-        map[b.n].net += b.net;
-      }
+    const add = (n: string, b: number, s: number, net: number) => {
+      if (!map[n]) map[n] = { buy: 0, sell: 0, net: 0 };
+      map[n].buy += b;
+      map[n].sell += s;
+      map[n].net += net;
+    };
+    const sliced = !branchHistory?.length || latestFull ? [] : branchHistory.slice(0, activeDays);
+    if (sliced.length) {
+      for (const day of sliced) for (const b of day.branches) add(b.n, b.b, b.s, b.net);
+    } else {
+      for (const b of branches) add(b.name, b.buy, b.sell, b.net);
     }
+    const allDates = sliced.length ? sliced.map((s) => s.t).reverse() : branchHistory?.[0]?.t ? [branchHistory[0].t] : [];
 
     const arr = Object.keys(map).map((name) => ({ name, ...map[name] }));
     const buyers = arr.filter((x) => x.net > 0).sort((a, b) => b.net - a.net);
     const sellers = arr.filter((x) => x.net < 0).sort((a, b) => a.net - b.net);
 
-    const top13Buy = buyers.slice(0, 13).map((b) => {
-      const history = allDates.map((dt) => {
+    // 同名同日多列(多個 branch_key)加總,與上面的聚合一致。
+    const withHistory = (b: (typeof arr)[number]) => ({
+      ...b,
+      history: allDates.map((dt) => {
+        if (!sliced.length) return { t: dt, net: b.net }; // 1日:整列就是當天
         const dObj = sliced.find((s) => s.t === dt);
-        const bObj = dObj?.branches.find((x) => x.n === b.name);
-        return { t: dt, net: bObj ? bObj.net : 0 };
-      });
-      return { ...b, history };
+        return { t: dt, net: dObj ? dObj.branches.reduce((s, x) => s + (x.n === b.name ? x.net : 0), 0) : 0 };
+      }),
     });
+    const topBuy = buyers.slice(0, SIDE_MAX).map(withHistory);
+    const topSell = sellers.slice(0, SIDE_MAX).map(withHistory);
 
-    const top13Sell = sellers.slice(0, 13).map((b) => {
-      const history = allDates.map((dt) => {
-        const dObj = sliced.find((s) => s.t === dt);
-        const bObj = dObj?.branches.find((x) => x.n === b.name);
-        return { t: dt, net: bObj ? bObj.net : 0 };
-      });
-      return { ...b, history };
-    });
-
-    return { buyers, sellers, top13Buy, top13Sell };
+    return { buyers, sellers, topBuy, topSell };
   }, [branchHistory, branches, activeDays]);
 
   // 無 branch_history 且無當日 branches:整節收合為教育性空狀態(一行,不佔版面)。
@@ -232,9 +225,9 @@ const BranchFlowSection = forwardRef<
   const selectable = onToggleSelect != null && !!branchHistory?.length;
   const atLimit = (selected?.size ?? 0) >= MAX_SELECTED_BRANCHES;
   const selectedCount = selected?.size ?? 0;
-  // 買賣方 Top13 一律全列顯示(不再手機先收成 8 列再「展開」)
-  const buyRows = agg.top13Buy;
-  const sellRows = agg.top13Sell;
+  // 買賣方各前 15 一律全列顯示(不再手機先收成 8 列再「展開」)
+  const buyRows = agg.topBuy;
+  const sellRows = agg.topSell;
   const listRows = sideTab === "buy" ? buyRows : sellRows;
   const listMaxAbs = Math.max(1, ...listRows.map((x) => Math.abs(x.net)));
 
@@ -457,16 +450,16 @@ const BranchFlowSection = forwardRef<
       <BuySellSplit
         value={sideTab}
         onChange={setSideTab}
-        buyLabel={`買方 Top${agg.top13Buy.length || 13}`}
-        sellLabel={`賣方 Top${agg.top13Sell.length || 13}`}
+        buyLabel={`買方 Top${agg.topBuy.length || SIDE_MAX}`}
+        sellLabel={`賣方 Top${agg.topSell.length || SIDE_MAX}`}
       />
 
       <div className="flex flex-col gap-2.5 rounded-[var(--r-md)] border border-border bg-secondary p-3">
         <h3 className={cn("mb-1 border-b border-[color:var(--line)] pb-2 text-center text-[14.5px] font-bold", sideTab === "buy" ? "text-up" : "text-down")}>
-          {/* 名單不足 13 家時照實講(與上方「買方 TopN」同一個數字) */}
+          {/* 名單不足 15 家時照實講(與上方「買方 TopN」同一個數字) */}
           {sideTab === "buy"
-            ? `前 ${agg.top13Buy.length || 13} 大買超分點`
-            : `前 ${agg.top13Sell.length || 13} 大賣超分點`}
+            ? `前 ${agg.topBuy.length || SIDE_MAX} 大買超分點`
+            : `前 ${agg.topSell.length || SIDE_MAX} 大賣超分點`}
         </h3>
         {showTagLegend && <BranchTagLegend ctx={tagCtx} />}
         <div className="flex flex-col gap-1.5">
@@ -489,10 +482,10 @@ const BranchFlowSection = forwardRef<
               selectDisabled={atLimit}
             />
           ))}
-          {sideTab === "buy" && agg.top13Buy.length === 0 && (
+          {sideTab === "buy" && agg.topBuy.length === 0 && (
             <div className="py-[46px] text-center text-sm text-muted-foreground">無買超紀錄</div>
           )}
-          {sideTab === "sell" && agg.top13Sell.length === 0 && (
+          {sideTab === "sell" && agg.topSell.length === 0 && (
             <div className="py-[46px] text-center text-sm text-muted-foreground">無賣超紀錄</div>
           )}
         </div>
