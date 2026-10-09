@@ -44,9 +44,13 @@ import {
   TX_INTRADAY_NOTE,
   changeVsPrev,
   hhmmOf,
+  INTRADAY_MISSING_RETRY_MS,
+  intradayEmptyText,
   intradayStats,
   intradayTone,
+  missingAwareLoader,
   prevCloseBefore,
+  trendHintText,
   type IntradayPoint,
 } from "./marketBrief.ts";
 import { tickMarkLabel } from "./chartTime.ts";
@@ -209,6 +213,74 @@ test("1日:相對前收漲跌、日高日低、線色跟當日漲跌", () => {
   assert.equal(intradayTone(pts, null), "down"); // 沒有前收:首尾相比
   assert.equal(intradayTone([], 1), "flat");
   assert.equal(INDEX_INTRADAY_URL, "/data/market/indices_intraday.json");
+});
+
+test("說明行:1日沒圖(載入中/404/失敗/台指期缺)不提點圖與虛線,只留圖區缺資料訊息", () => {
+  assert.equal(trendHintText({ isDay: true, dayReady: true, market: "twse" }), INTRADAY_HINT);
+  assert.equal(trendHintText({ isDay: true, dayReady: true, market: "tx" }), `${INTRADAY_HINT} ${TX_INTRADAY_NOTE}`);
+  for (const market of ["twse", "tpex", "tx", undefined]) {
+    assert.equal(trendHintText({ isDay: true, dayReady: false, market }), null);
+  }
+  assert.equal(trendHintText({ isDay: false, dayReady: false, market: "twse" }), TREND_HINT);
+  assert.equal(trendHintText({ isDay: false, dayReady: true, market: "tx" }), `${TREND_HINT} ${TX_STITCH_NOTE}`);
+  // 缺資料訊息:有檔但沒台指期 → 台指期專屬;404 → 通用
+  assert.equal(intradayEmptyText("tx", true), TX_INTRADAY_EMPTY);
+  assert.equal(intradayEmptyText("tx", false), INTRADAY_EMPTY);
+  assert.equal(intradayEmptyText("twse", true), INTRADAY_EMPTY);
+  for (const t of [INTRADAY_EMPTY, TX_INTRADAY_EMPTY]) assert.ok(!/虛線|點圖/.test(t), t);
+});
+
+test("1日 404 快取:60 秒內不重抓、過了再選 1日 重抓、重開 sheet 立刻重抓;有內容整個 session 一次;失敗不快取", async () => {
+  let clock = 0;
+  const replies: Array<() => Promise<{ v: number } | null>> = [];
+  let calls = 0;
+  const loader = missingAwareLoader<{ v: number }>(() => {
+    calls++;
+    return replies.shift()!();
+  }, INTRADAY_MISSING_RETRY_MS, () => clock);
+
+  replies.push(async () => null);
+  assert.equal(await loader.load(), null);
+  assert.equal(calls, 1);
+  clock = 59_999;
+  assert.equal(await loader.load(), null); // 60 秒內:沿用 404
+  assert.equal(calls, 1);
+  clock = 60_000;
+  replies.push(async () => null);
+  assert.equal(await loader.load(), null); // 過 60 秒再選 1日:重抓
+  assert.equal(calls, 2);
+
+  loader.forgetMissing(); // 重開 sheet
+  replies.push(async () => ({ v: 1 }));
+  assert.deepEqual(await loader.load(), { v: 1 });
+  assert.equal(calls, 3);
+  clock += 10 * 60_000;
+  loader.forgetMissing(); // 有內容:重開也不重抓
+  assert.deepEqual(await loader.load(), { v: 1 });
+  assert.equal(calls, 3);
+
+  // 失敗不快取
+  const l2 = missingAwareLoader<{ v: number }>(() => {
+    calls++;
+    return replies.shift()!();
+  }, INTRADAY_MISSING_RETRY_MS, () => clock);
+  replies.push(async () => Promise.reject(503));
+  await assert.rejects(l2.load());
+  replies.push(async () => ({ v: 2 }));
+  assert.deepEqual(await l2.load(), { v: 2 });
+  assert.equal(calls, 5);
+
+  // 抓取中重開 sheet:同一個請求,不重發
+  const l3 = missingAwareLoader<{ v: number }>(() => {
+    calls++;
+    return replies.shift()!();
+  }, INTRADAY_MISSING_RETRY_MS, () => clock);
+  replies.push(async () => null);
+  const p = l3.load();
+  l3.forgetMissing();
+  assert.equal(l3.load(), p);
+  assert.equal(await p, null);
+  assert.equal(calls, 6);
 });
 
 test("禁詞:標題、標籤、提示", () => {

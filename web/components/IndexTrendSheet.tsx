@@ -11,22 +11,21 @@ import {
   INDEX_HIST_URL,
   INDEX_INTRADAY_URL,
   INTRADAY_EMPTY,
-  INTRADAY_HINT,
   PREV_CLOSE_LABEL,
-  TX_INTRADAY_EMPTY,
-  TX_INTRADAY_NOTE,
   changeVsPrev,
   hhmmOf,
+  intradayEmptyText,
   intradayStats,
   intradayTone,
+  missingAwareLoader,
   prevCloseBefore,
+  trendHintText,
   type IntradayPoint,
   TREND_EMPTY,
   TREND_HINT,
   TREND_RANGES,
   TREND_RANGE_DEFAULT,
   TREND_SHEET_TITLE,
-  TX_STITCH_NOTE,
   dateTag,
   fmtIndex,
   indexChangeText,
@@ -70,19 +69,11 @@ function loadHist(): Promise<IndicesHistJson> {
   return histCache;
 }
 
-// 當日 1 分線(§12.5):選「1日」才抓、一個 session 一次;404/空檔 = 還沒有(null,不重試),其他失敗不快取。
-let intradayCache: Promise<IndicesIntradayJson | null> | null = null;
-function loadIntraday(): Promise<IndicesIntradayJson | null> {
-  if (!intradayCache) {
-    intradayCache = dataFetch(INDEX_INTRADAY_URL)
-      .then((r) => (r.status === 404 ? null : r.ok ? r.json() : Promise.reject(r.status)))
-      .catch((e) => {
-        intradayCache = null;
-        throw e;
-      });
-  }
-  return intradayCache;
-}
+// 當日 1 分線(§12.5):選「1日」才抓、有內容就一個 session 一次;404 = 還沒有(null),
+// 60 秒後再選「1日」或重開 sheet 會重抓;其他失敗不快取。
+const intradayLoader = missingAwareLoader<IndicesIntradayJson>(() =>
+  dataFetch(INDEX_INTRADAY_URL).then((r) => (r.status === 404 ? null : r.ok ? r.json() : Promise.reject(r.status))),
+);
 
 function useIsDark() {
   const [isDark, setIsDark] = useState(
@@ -308,10 +299,14 @@ export default function IndexTrendSheet({
 
   // 當日 1 分線只在選了「1日」才抓(預設 3月 不抓)
   useEffect(() => {
+    if (open) intradayLoader.forgetMissing(); // 重開 sheet:上次的 404 不算數
+  }, [open]);
+
+  useEffect(() => {
     if (!open || !isDay) return;
     let alive = true;
     setIntraError(false);
-    loadIntraday()
+    intradayLoader.load()
       .then((j) => alive && setIntra(j))
       .catch(() => alive && setIntraError(true));
     return () => {
@@ -351,7 +346,8 @@ export default function IndexTrendSheet({
   const dayChg = dayShown ? changeVsPrev(dayShown[1], dayPrev) : { change: null, chgPct: null };
   const dayTone = (dayChg.change ?? 0) > 0 ? "up" : (dayChg.change ?? 0) < 0 ? "down" : "flat";
   const dayReady = isDay && intra && dayPoints.length >= 2;
-  const dayEmpty = head?.market === "tx" && intra ? TX_INTRADAY_EMPTY : INTRADAY_EMPTY;
+  const dayEmpty = intradayEmptyText(head?.market, !!intra);
+  const hint = trendHintText({ isDay, dayReady: !!dayReady && !intraError, market: head?.market });
 
   // 標頭:1日且有資料時顯示那一分鐘;其餘(含 1日 尚無資料)照日收盤
   const headTime = dayReady && dayShown
@@ -506,10 +502,9 @@ export default function IndexTrendSheet({
                 </div>
               </dl>
             )}
-            <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
-              {isDay ? INTRADAY_HINT : TREND_HINT}
-              {head?.market === "tx" && ` ${isDay ? TX_INTRADAY_NOTE : TX_STITCH_NOTE}`}
-            </p>
+            {hint && (
+              <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground" data-testid="index-trend-hint">{hint}</p>
+            )}
           </div>
         </DialogPrimitive.Popup>
       </DialogPrimitive.Portal>

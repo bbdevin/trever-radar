@@ -115,12 +115,12 @@ def main() -> int:
         if a.taifex:
             time.sleep(GAP)
             g = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=120)
-            lines = ii.read_taifex_daily_zip(g.content)
-            if lines is None:
-                print(f"  download: not a zip ({len(g.content)} B)")
+            s = ii.parse_taifex_daily_zip(g.content, day, a.tx_month)
+            if s is None:
+                print(f"  download: not a readable zip ({len(g.content)} B)")
             else:
-                print(f"  download: {len(g.content)} B zip, {len(lines)} lines; header={lines[0]!r}")
-                series["tx"] = ii.parse_taifex_daily_tx(lines, day, a.tx_month)
+                print(f"  download: {len(g.content)} B zip, {len(s)} tx minutes")
+                series["tx"] = s
     except Exception as e:  # noqa: BLE001
         print(f"\n[TAIFEX daily] {e}")
 

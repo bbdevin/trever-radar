@@ -19,8 +19,11 @@
   2026-10-07 16:38、10-08 16:37);還沒公布時站方回 200 + HTML 錯誤頁 → 當「還沒有」,較晚的一輪再補。
 
 閘門與 spark_day 相同:有 ``FUGLE_API_KEY`` 且台北今天 == 價格日才打來源(盤後各輪;台指期要等
-16:40 之後那幾輪,例 20:00 mid-backfill-publish、20:45 資券)。
-同一天已經三個都有 → 不再打(一天一次);缺哪個下一輪只補哪個。整步在 export 裡**隔離**:
+16:40 之後那幾輪,例 20:00 mid-backfill-publish、20:45 資券)。台指期本身不需要金鑰,但仍走同一個閘門
+(2026-10-09 決定):這把金鑰在專案裡就是「這台機器可以打盤中來源」的開關——VPS 一定有,本機與
+``tools/export_parity.py`` 拿掉它就保證整個 export 不發網路;另開一個旗標要多改正式 VPS 環境,不值得。
+同一天已經三個都有 → 不再打(一天一次);缺哪個下一輪只補哪個。整步在 export 裡**隔離**:每個市場各自
+try(一個掛掉,已抓到的照寫)、整步總時限 ``BUDGET_S``(來源掛掉時 export 最多多等這麼久)、
 ``export_indices_intraday_safe`` 任何例外只記 warning。寫檔 tmp+rename,內容沒變不重寫。
 """
 from __future__ import annotations
@@ -28,6 +31,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Callable
@@ -150,18 +154,23 @@ def parse_twse_5s(payload: dict | None, day: str) -> Series:
 # 是真的成交價,照常計入(它落在 08:45 那一分鐘,同分鐘之後的成交會蓋掉它)。
 
 def parse_taifex_daily_tx(lines, day: str, contract_month: str | None = None) -> Series:
-    """逐筆成交 CSV 的文字列(已解碼、含表頭)→ 台指期近月一般時段 1 分線(每分鐘最後一筆)。
+    """逐筆成交 CSV 的文字列(已解碼、含表頭;可以是串流的檔案物件)→ 台指期近月一般時段 1 分線(每分鐘最後一筆)。
 
     ``contract_month``(YYYYMM)= 當天 ``market_indices`` tx 列的近月;缺 → 取一般時段有成交的非價差月份中
     最小者(與 ``providers.market_index.pick_tx_near_month`` 同一個定義)。同一秒多筆以檔案順序最後一筆為準。
+
+    記憶體:逐列處理、先用字首(成交日期,商品代號)粗篩再交給 csv,每個月份只留「每分鐘最後一筆」
+    (≤ 301 筆),不囤整天逐筆。整檔 ~34 MB 解壓,峰值見 docs/49 §12.5。
     """
     import csv
 
     d8 = day.replace("-", "")
+    prefix = f"{d8},{TAIFEX_TX_CODE}"
     y, mo, d = (int(x) for x in day.split("-"))
     lo, hi = SESSION["tx"]
-    by_month: dict[str, list] = {}
-    for row in csv.reader(lines):
+    # {month: {minute: (second, price)}}——同分鐘時間較晚(或同秒、檔案較後)者蓋掉,與 minute_series 同語意
+    by_month: dict[str, dict[int, tuple[int, float]]] = {}
+    for row in csv.reader(ln for ln in lines if ln.lstrip().startswith(prefix)):
         if len(row) < 5 or row[1].strip() != TAIFEX_TX_CODE or row[0].strip() != d8:
             continue
         month = row[2].strip()
@@ -173,27 +182,42 @@ def parse_taifex_daily_tx(lines, day: str, contract_month: str | None = None) ->
             px = float(row[4])
         except ValueError:
             continue
-        if not lo <= hh * 60 + mm <= hi or (hh * 60 + mm == hi and ss > 0):
+        m = hh * 60 + mm
+        if not lo <= m <= hi or (m == hi and ss > 0):
             continue
-        by_month.setdefault(month, []).append((datetime(y, mo, d, hh, mm, ss, tzinfo=_TPE), px))
+        mins = by_month.setdefault(month, {})
+        cur = mins.get(m)
+        if cur is None or ss >= cur[0]:
+            mins[m] = (ss, px)
     if not by_month:
         return []
     month = (contract_month or "").strip() or min(by_month)
-    return minute_series(by_month.get(month, []), day, "tx")
+    pts = ((datetime(y, mo, d, m // 60, m % 60, ss, tzinfo=_TPE), px)
+           for m, (ss, px) in by_month.get(month, {}).items())
+    return minute_series(pts, day, "tx")
 
 
-def read_taifex_daily_zip(blob: bytes) -> list[str] | None:
-    """zip 位元組 → CSV 文字列;不是 zip(檔案還沒公布時站方回 HTML 錯誤頁)→ None。"""
+def parse_taifex_daily_zip(blob: bytes, day: str, contract_month: str | None = None) -> Series | None:
+    """zip 位元組 → 台指期 1 分線,CSV **串流**解碼(``zf.open`` + ``TextIOWrapper``),不把 34 MB 文字整份
+    讀進記憶體。不是 zip(檔案還沒公布時站方回 HTML 錯誤頁)、zip 壞掉(``PK`` 開頭但截斷/CRC 錯)、
+    沒有 CSV → None(= 這輪沒有台指期,較晚的一輪再補)。"""
     import io
     import zipfile
+    import zlib
 
     if not blob.startswith(b"PK"):
         return None
-    with zipfile.ZipFile(io.BytesIO(blob)) as zf:
-        names = [n for n in zf.namelist() if n.lower().endswith(".csv")]
-        if not names:
-            return None
-        return zf.read(names[0]).decode("cp950", errors="replace").splitlines()
+    try:
+        with zipfile.ZipFile(io.BytesIO(blob)) as zf:
+            names = [n for n in zf.namelist() if n.lower().endswith(".csv")]
+            if not names:
+                return None
+            with zf.open(names[0]) as raw, \
+                    io.TextIOWrapper(raw, encoding="cp950", errors="replace") as fh:
+                return parse_taifex_daily_tx(fh, day, contract_month)
+    except (zipfile.BadZipFile, zlib.error, EOFError) as e:
+        print(f"indices_intraday: taifex daily zip unreadable ({type(e).__name__}: {e}) — treated as missing")
+        return None
 
 
 def tx_month_from_db(conn, day: str) -> str | None:
@@ -208,29 +232,73 @@ def tx_month_from_db(conn, day: str) -> str | None:
 
 # ── 抓取 ──
 
-def _fugle_get(url: str, api_key: str, session) -> dict | None:
-    from ..providers.fugle import _get_json
+# 這步是附加功能:整步有總時限(``BUDGET_S``),每個請求只打一次、逾時短(``REQ_TIMEOUT_S``,且不超過剩餘時限),
+# 不走 providers.fugle._get_json / http.get_json 的多次重試與 429 長退避(Fugle 掛掉時那條路要 60–90 s)。
+# 沒抓到的市場下一輪(同一天盤後還有好幾輪)再補。
+BUDGET_S = 45.0
+REQ_TIMEOUT_S = 10.0
+TAIFEX_TIMEOUT_S = 20.0   # ~1.6 MB zip
+_MIN_LEFT_S = 1.0         # 剩不到這麼多就不發請求
 
-    return _get_json(url, {"timeframe": FUGLE_TIMEFRAME}, api_key, session, url.rsplit("/", 1)[-1])
+
+class _Deadline:
+    def __init__(self, budget_s: float, clock: Callable[[], float] = time.monotonic):
+        self.clock = clock
+        self.at = clock() + budget_s
+
+    def left(self) -> float:
+        return self.at - self.clock()
+
+    def timeout(self, cap: float) -> float | None:
+        """這次請求可用的逾時秒數;時限已到 → None(不發)。"""
+        left = self.left()
+        return None if left < _MIN_LEFT_S else min(cap, left)
 
 
-def default_fetchers(api_key: str | None, tx_month: str | None) -> dict[str, Callable[[str], Series]]:
-    """{market: fetch(day) -> Series}。加權在 Fugle 失敗時退回 TWSE 官方 5 秒表。"""
+def _fugle_get(url: str, api_key: str, session, deadline: _Deadline) -> dict | None:
+    """單次 Fugle GET(共用 providers.fugle 的 1.05 s 節流);429/4xx/5xx/逾時 → None,不退避重試。"""
+    from ..providers.fugle import _throttle
+
+    timeout = deadline.timeout(REQ_TIMEOUT_S)
+    if timeout is None:
+        return None
+    _throttle()
+    try:
+        r = session.get(url, params={"timeframe": FUGLE_TIMEFRAME},
+                        headers={"X-API-KEY": api_key, "User-Agent": config.USER_AGENT}, timeout=timeout)
+        if r.status_code >= 400:
+            print(f"indices_intraday: fugle {url.rsplit('/', 1)[-1]} HTTP {r.status_code}")
+            return None
+        return r.json()
+    except Exception as e:  # noqa: BLE001 — 來源掛了 = 這輪沒有這個序列
+        print(f"indices_intraday: fugle {url.rsplit('/', 1)[-1]} failed: {e}")
+        return None
+
+
+def default_fetchers(api_key: str | None, tx_month: str | None,
+                     deadline: _Deadline | None = None) -> dict[str, Callable[[str], Series]]:
+    """{market: fetch(day) -> Series}。加權在 Fugle 失敗時退回 TWSE 官方 5 秒表。
+    每個請求的逾時都受 ``deadline`` 限制(缺 → 自己開一個 ``BUDGET_S``)。"""
     import requests
 
     sess = requests.Session()
+    dl = deadline or _Deadline(BUDGET_S)
 
     def twse(day: str) -> Series:
         if api_key:
             s = parse_fugle_candles(
-                _fugle_get(FUGLE_STOCK_CANDLES_URL.format(symbol=FUGLE_TWSE_INDEX), api_key, sess),
+                _fugle_get(FUGLE_STOCK_CANDLES_URL.format(symbol=FUGLE_TWSE_INDEX), api_key, sess, dl),
                 day, "twse")
             if len(s) >= 2:
                 return s
-        from ..http import get_json
-
+        timeout = dl.timeout(REQ_TIMEOUT_S)
+        if timeout is None:
+            return []
         try:
-            j = get_json(TWSE_5S_URL, {"date": day.replace("-", ""), "response": "json"})
+            r = sess.get(TWSE_5S_URL, params={"date": day.replace("-", ""), "response": "json"},
+                         headers={"User-Agent": config.USER_AGENT}, timeout=timeout)
+            r.raise_for_status()
+            j = r.json()
         except Exception as e:  # noqa: BLE001 — 備援失敗 = 沒有這個序列
             print(f"indices_intraday: twse 5s fallback failed: {e}")
             return []
@@ -240,23 +308,26 @@ def default_fetchers(api_key: str | None, tx_month: str | None) -> dict[str, Cal
         if not api_key:
             return []
         return parse_fugle_candles(
-            _fugle_get(FUGLE_STOCK_CANDLES_URL.format(symbol=FUGLE_TPEX_INDEX), api_key, sess),
+            _fugle_get(FUGLE_STOCK_CANDLES_URL.format(symbol=FUGLE_TPEX_INDEX), api_key, sess, dl),
             day, "tpex")
 
     def tx(day: str) -> Series:
         y, m, d = day.split("-")
         url = TAIFEX_DAILY_URL.format(y=y, m=m, d=d)
+        timeout = dl.timeout(TAIFEX_TIMEOUT_S)
+        if timeout is None:
+            return []
         try:
-            r = sess.get(url, headers={"User-Agent": config.USER_AGENT}, timeout=max(config.HTTP_TIMEOUT, 60))
+            r = sess.get(url, headers={"User-Agent": config.USER_AGENT}, timeout=timeout)
         except Exception as e:  # noqa: BLE001 — 來源掛了 = 這輪沒有台指期
             print(f"indices_intraday: taifex daily fetch failed: {e}")
             return []
-        lines = read_taifex_daily_zip(r.content) if r.status_code == 200 else None
-        if lines is None:
+        s = parse_taifex_daily_zip(r.content, day, tx_month) if r.status_code == 200 else None
+        if s is None:
             print(f"indices_intraday: taifex daily {day} not published yet "
                   f"(HTTP {r.status_code}, {r.headers.get('Content-Type', '')})")
             return []
-        return parse_taifex_daily_tx(lines, day, tx_month)
+        return s
 
     return {"twse": twse, "tpex": tpex, "tx": tx}
 
@@ -287,11 +358,18 @@ def update_indices_intraday(
     fetchers: dict[str, Callable[[str], Series]] | None = None,
     api_key: str | None = None,
     tx_month: str | None = None,
+    budget_s: float = BUDGET_S,
+    clock: Callable[[], float] = time.monotonic,
 ) -> dict:
-    """寫 ``out/market/indices_intraday.json``。回傳統計(也印一行 log)。"""
+    """寫 ``out/market/indices_intraday.json``。回傳統計(也印一行 log)。
+
+    每個市場各自隔離:某個 fetcher 丟例外只算那個市場這輪沒有,已抓到的照寫。整步共用一個
+    ``budget_s`` 時限,到了就略過剩下的市場(``stats["timed_out"]``),下一輪再補。
+    """
     today = today if today is not None else taipei_today()
     target = Path(out) / "market" / OUT_FILE
-    stats = {"date": price_date, "fetched": [], "kept": [], "written": False, "skip": ""}
+    stats = {"date": price_date, "fetched": [], "kept": [], "failed": [], "timed_out": [],
+             "written": False, "skip": ""}
 
     if today != price_date:
         stats["skip"] = f"today={today}"
@@ -308,11 +386,20 @@ def update_indices_intraday(
         stats["skip"] = "no FUGLE_API_KEY"   # 與 spark_day 同一閘門(本機/parity 不打網路)
 
     if not stats["skip"]:
+        deadline = _Deadline(budget_s, clock)
         if fetchers is None:
-            fetchers = default_fetchers(key, tx_month)
+            fetchers = default_fetchers(key, tx_month, deadline)
         for m in missing:
+            if deadline.left() < _MIN_LEFT_S:
+                stats["timed_out"].append(m)
+                continue
             fn = fetchers.get(m)
-            got = fn(price_date) if fn else []
+            try:
+                got = fn(price_date) if fn else []
+            except Exception:  # noqa: BLE001 — 一個市場壞掉不拖累其他市場
+                _log.warning("indices_intraday: %s fetch failed", m, exc_info=True)
+                stats["failed"].append(m)
+                continue
             if len(got or []) >= 2:
                 have[m] = got
                 stats["fetched"].append(m)

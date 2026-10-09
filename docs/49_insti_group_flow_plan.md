@@ -404,10 +404,18 @@ web/public/data/rankings/insti_flow_20d.json     (P1)
 - 輸出 `market/indices_intraday.json` = `{date, series: {twse|tpex|tx: [[epoch_s, close], …]}}`:1 分鐘、epoch 為真實 UTC 秒(該分鐘**開始時間**,與 `stocks/intraday` 同慣例)、整數價寫 int、固定順序、緊湊、tmp+rename、內容沒變不重寫。時段外列丟掉(指數 09:00–13:30、台指期一般時段 08:45–13:45);值 ≤0 丟掉;<2 點的序列不出鍵;三個都沒有 → 不寫檔、舊檔留著。**只留最新一天**(新的一天抓到任何一個序列就整檔換掉)。實測三序列 271+271+300 點 ≈ **17 KB raw**。
 - 任何例外只記 warning、不中斷 export、舊檔保留。
 
+**驗證後補強(2026-10-09,verifier follow-up)**
+
+- **記憶體**:TAIFEX zip 改串流解析(`parse_taifex_daily_zip`:`zf.open` + `io.TextIOWrapper(cp950, errors="replace")`,逐列先以字首 `YYYYMMDD,TX` 粗篩再交給 csv,每月份只留每分鐘最後一筆)。10/08 實檔 tracemalloc 峰值 **134.4 MiB → 0.3 MiB**(1.7 GB VPS),解析 4.2 s → 1.1 s;202610/202611/自動近月三種輸出與舊版逐點相同、最後一點 49349。
+- **每市場隔離**:某市場 fetcher 丟例外只記 warning(`stats.failed`),已抓到的照寫;`PK` 開頭但壞掉的 zip(`BadZipFile`/`zlib.error`/CRC)= 這輪沒有台指期。
+- **時限**:整步總時限 `BUDGET_S = 45` 秒,到了就略過剩下的市場(`stats.timed_out`,下一輪補);每個請求只打一次、不重試、不做 429 長退避,逾時 `REQ_TIMEOUT_S = 10`(TAIFEX zip `20`)且不超過剩餘時限。Fugle 掛掉時這步最多多花 ~45 秒(原本 60–90 秒退避＋逾時)。Fugle 請求仍共用 `providers.fugle` 的 1.05 秒節流。
+- **台指期閘門(決定:維持現狀)**:TAIFEX 不需要金鑰,但仍走「有 `FUGLE_API_KEY` 且今天 = 價格日」。這把金鑰在專案裡就是「此機器可打盤中來源」的開關:VPS 一定有;本機與 `tools/export_parity.py`(會拿掉金鑰)因此保證整個 export 不發網路。另開旗標要改正式 VPS 環境,換來的只是「沒金鑰的機器也能抓台指期」,沒有實際使用情境。
+- **UI**:1日沒圖(載入中、404、失敗、缺台指期)時說明行不再顯示「點圖上任一點…;虛線為前一交易日收盤」與台指期虛線註記,只留圖區那句缺資料訊息(`trendHintText` / `intradayEmptyText`)。404 不再整個 session 快取:60 秒後再選 1日、或重開 sheet 就重抓(`missingAwareLoader`;有內容仍一個 session 一次,失敗不快取)。
+
 **UI**(`IndexTrendSheet.tsx`、純函式 `lib/marketBrief.ts`)
 
 - **預設仍是 3月**:1日檔只有盤後才有、休市日是前一天的;卡片格本身就是「今日」收盤漲跌,打開 sheet 想看的通常是更長的形狀。另外「有資料才預設 1日」得在開 sheet 時先抓日內檔才知道,違反「選 1日 才抓」。選擇不記憶(與其他範圍一致)。
-- 選 1日 才抓 `market/indices_intraday.json`(一個 session 一次;404 → 「尚無日內走勢」不重試;其他失敗不快取、離線顯示既有離線文案)。
+- 選 1日 才抓 `market/indices_intraday.json`(有內容一個 session 一次;404 → 「尚無日內走勢」,60 秒後再選 1日或重開 sheet 重抓;其他失敗不快取、離線顯示既有離線文案)。
 - AreaSeries,time = `chartTimeOf(twWallKey(epoch))`(台北牆上時間當 UTC,與個股分K同一招),時間軸與游標標籤一律 `HH:MM`(`tickMarkLabel(t, 3)`),與瀏覽器時區無關(截圖以 `America/Los_Angeles` 時區跑)。
 - 基準 = 指數歷史檔裡**日期早於日內檔日期**的最後一列收盤(`prevCloseBefore`;歷史檔已含今天時跳過今天)。虛線價格線「昨收」,價格軸範圍一定含它。線色跟當日漲跌(最新 vs 昨收)紅漲綠跌;沒有前收時首尾相比。
 - 標頭:標題「MM/DD HH:MM」、大字為那一分鐘的值、漲跌為相對昨收(游標移動跟著變);日內檔日期與頁面資料日不同時標「日內 MM/DD」。統計列 **日高／日低／日漲跌**(%;點數在 title),右側為資料首尾時間「09:00 – 13:30」(台指期「08:45 – 13:44」)。時間軸由 `fitContent` 依資料首尾決定,台指期較長的時段(08:45 起)不必另外處理;游標在台指期最左邊讀到 08:4x(截圖驗證)。

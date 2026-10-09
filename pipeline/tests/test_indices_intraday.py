@@ -140,39 +140,113 @@ class UpdateTests(unittest.TestCase):
         self.target.write_text('{"date":"2026-10-07","series":{}}', encoding="utf-8")
         with self.assertLogs("radar.export.indices_intraday", level="WARNING"):
             r = ii.export_indices_intraday_safe(self.out, DAY, today=DAY, fetchers={"twse": boom})
-        self.assertIsNone(r)
+        self.assertEqual(r["failed"], ["twse"])  # 每市場隔離:記 warning、不寫檔
         self.assertEqual(self.target.read_text("utf-8"), '{"date":"2026-10-07","series":{}}')
+        # 外層保險:整步任何例外 → None、舊檔留著
+        with mock.patch.object(ii, "update_indices_intraday", side_effect=RuntimeError("bug")), \
+                self.assertLogs("radar.export.indices_intraday", level="WARNING"):
+            self.assertIsNone(ii.export_indices_intraday_safe(self.out, DAY, today=DAY))
+        self.assertEqual(self.target.read_text("utf-8"), '{"date":"2026-10-07","series":{}}')
+
+    def test_one_market_exception_does_not_drop_the_others(self):
+        def boom(day):
+            self.calls.append("tpex")
+            raise RuntimeError("source down")
+        f = self.fetchers(twse=self.S, tx=self.S)
+        f["tpex"] = boom
+        with self.assertLogs("radar.export.indices_intraday", level="WARNING"):
+            st = ii.update_indices_intraday(self.out, DAY, today=DAY, fetchers=f)
+        self.assertEqual(self.calls, ["twse", "tpex", "tx"])  # 例外之後照樣抓 tx
+        self.assertEqual(json.loads(self.target.read_text("utf-8"))["series"], {"twse": self.S, "tx": self.S})
+        self.assertEqual(st["failed"], ["tpex"])
+        self.assertTrue(st["written"])
+
+    def test_deadline_skips_remaining_markets_and_writes_what_it_has(self):
+        now = [1000.0]
+        f = self.fetchers(twse=self.S, tpex=self.S, tx=self.S)
+        slow_twse = f["twse"]
+
+        def twse(day):
+            now[0] += 50  # 來源卡住吃光時限
+            return slow_twse(day)
+        f["twse"] = twse
+        st = ii.update_indices_intraday(self.out, DAY, today=DAY, fetchers=f, budget_s=45, clock=lambda: now[0])
+        self.assertEqual(self.calls, ["twse"])
+        self.assertEqual(st["timed_out"], ["tpex", "tx"])
+        self.assertEqual(list(json.loads(self.target.read_text("utf-8"))["series"]), ["twse"])
+
+    def test_request_timeouts_are_short_and_capped_by_the_deadline(self):
+        now = [0.0]
+        dl = ii._Deadline(45, clock=lambda: now[0])
+        self.assertEqual(dl.timeout(ii.REQ_TIMEOUT_S), ii.REQ_TIMEOUT_S)
+        now[0] = 40
+        self.assertEqual(dl.timeout(ii.TAIFEX_TIMEOUT_S), 5)
+        now[0] = 44.5
+        self.assertIsNone(dl.timeout(ii.REQ_TIMEOUT_S))
+        # 時限到了:fetcher 一個請求都不發
+        with mock.patch("requests.Session.get") as g:
+            f = ii.default_fetchers("k", "202610", dl)
+            self.assertEqual([f[m](DAY) for m in ii.MARKETS], [[], [], []])
+        g.assert_not_called()
+
+    def test_fugle_is_one_short_request_no_retry_backoff(self):
+        resp = mock.Mock(status_code=429, headers={"Retry-After": "60"})
+        with mock.patch("requests.Session.get", return_value=resp) as g, \
+                mock.patch("time.sleep") as sl:
+            self.assertEqual(ii.default_fetchers("k", "202610")["tpex"](DAY), [])
+        self.assertEqual(g.call_count, 1)
+        self.assertLessEqual(g.call_args.kwargs["timeout"], ii.REQ_TIMEOUT_S)
+        from radar.providers.fugle import MIN_INTERVAL
+        self.assertTrue(all(c.args[0] <= MIN_INTERVAL for c in sl.call_args_list))  # 只有節流,沒有 429 長退避
 
     def test_default_fetchers_twse_falls_back_to_official_5s_table(self):
         five_s = {"stat": "OK", "fields": ["時間", "發行量加權股價指數"],
                   "data": [["09:00:00", "100.00"], ["09:01:00", "101.00"]]}
-        with mock.patch("radar.providers.fugle._get_json", return_value=None) as fg, \
-                mock.patch("radar.http.get_json", return_value=five_s) as tw:
+
+        def get(url, **kw):
+            if "fugle" in url:
+                return mock.Mock(status_code=503)
+            return mock.Mock(status_code=200, json=lambda: five_s, raise_for_status=lambda: None)
+        with mock.patch("requests.Session.get", side_effect=get) as g:
             f = ii.default_fetchers("k", "202610")
             self.assertEqual(f["twse"](DAY), [[ep("09:00"), 100], [ep("09:01"), 101]])
             self.assertEqual(f["tpex"](DAY), [])
-        urls = [c.args[0] for c in fg.call_args_list]
-        self.assertEqual(len(urls), 2)  # 沒有 futopt 請求(免費方案 403)
+        urls = [c.args[0] for c in g.call_args_list]
+        self.assertEqual(len(urls), 3)  # 沒有 futopt 請求(免費方案 403)
         self.assertTrue(urls[0].endswith("/stock/intraday/candles/" + ii.FUGLE_TWSE_INDEX))
-        self.assertTrue(urls[1].endswith("/stock/intraday/candles/" + ii.FUGLE_TPEX_INDEX))
-        self.assertEqual(tw.call_args.args[1], {"date": "20261008", "response": "json"})
+        self.assertEqual(urls[1], ii.TWSE_5S_URL)
+        self.assertEqual(g.call_args_list[1].kwargs["params"], {"date": "20261008", "response": "json"})
+        self.assertTrue(urls[2].endswith("/stock/intraday/candles/" + ii.FUGLE_TPEX_INDEX))
+        self.assertTrue(all(c.kwargs["timeout"] <= ii.REQ_TIMEOUT_S for c in g.call_args_list))
 
     def test_default_fetchers_tx_from_taifex_zip_and_unpublished_page(self):
-        zblob = io.BytesIO()
-        with zipfile.ZipFile(zblob, "w", zipfile.ZIP_DEFLATED) as zf:
-            zf.writestr("Daily_2026_10_08.csv", FIXTURE.read_bytes())
-        resp = mock.Mock(status_code=200, content=zblob.getvalue(), headers={"Content-Type": "application/zip"})
+        resp = mock.Mock(status_code=200, content=zip_of(FIXTURE.read_bytes()),
+                         headers={"Content-Type": "application/zip"})
         with mock.patch("requests.Session.get", return_value=resp) as g:
             s = ii.default_fetchers("k", "202610")["tx"](DAY)
         self.assertEqual(g.call_args.args[0],
                          "https://www.taifex.com.tw/file/taifex/Dailydownload/DailydownloadCSV/Daily_2026_10_08.zip")
+        self.assertLessEqual(g.call_args.kwargs["timeout"], ii.TAIFEX_TIMEOUT_S)
         self.assertEqual(s[-1], [ep("13:44"), 49349])
         # 還沒公布:站方回 200 + HTML 錯誤頁 → 安靜地當沒有
         html = mock.Mock(status_code=200, content=b"<!DOCTYPE html><html>...", headers={"Content-Type": "text/html"})
         with mock.patch("requests.Session.get", return_value=html):
             self.assertEqual(ii.default_fetchers("k", "202610")["tx"](DAY), [])
+        # 「PK」開頭但壞掉的 zip → 當作沒有台指期,不丟例外
+        bad = mock.Mock(status_code=200, content=b"PK\x03\x04broken", headers={"Content-Type": "application/zip"})
+        with mock.patch("requests.Session.get", return_value=bad):
+            self.assertEqual(ii.default_fetchers("k", "202610")["tx"](DAY), [])
         with mock.patch("requests.Session.get", side_effect=OSError("down")):
             self.assertEqual(ii.default_fetchers("k", "202610")["tx"](DAY), [])
+
+    def test_corrupt_tx_zip_keeps_other_markets(self):
+        bad = mock.Mock(status_code=200, content=b"PK\x03\x04broken", headers={"Content-Type": "application/zip"})
+        f = self.fetchers(twse=self.S, tpex=self.S)
+        with mock.patch("requests.Session.get", return_value=bad):
+            f["tx"] = ii.default_fetchers("k", "202610")["tx"]
+            st = ii.update_indices_intraday(self.out, DAY, today=DAY, fetchers=f)
+        self.assertEqual(list(json.loads(self.target.read_text("utf-8"))["series"]), ["twse", "tpex"])
+        self.assertEqual(st["failed"], [])
 
 
 FIXTURE = Path(__file__).parent / "fixtures" / "taifex_daily_tx_20261008_trim.csv"
@@ -232,12 +306,37 @@ class TaifexDailyTests(unittest.TestCase):
         self.assertTrue(far and far[-1][1] != 49349)
         self.assertEqual(ii.parse_taifex_daily_tx(self.lines, "2026-10-09", "202610"), [])
 
-    def test_zip_reader(self):
-        zblob = io.BytesIO()
-        with zipfile.ZipFile(zblob, "w") as zf:
-            zf.writestr("Daily_2026_10_08.csv", FIXTURE.read_bytes())
-        self.assertEqual(ii.read_taifex_daily_zip(zblob.getvalue()), self.lines)
-        self.assertIsNone(ii.read_taifex_daily_zip(b"<html>not yet</html>"))
+    def test_streamed_zip_parse_equals_in_memory_parse(self):
+        # 串流(zf.open + TextIOWrapper)與「整份 decode + splitlines」結果逐點相同,各月份皆然
+        for method in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED):
+            blob = zip_of(FIXTURE.read_bytes(), method)
+            for cm in ("202610", "202611", None):
+                self.assertEqual(ii.parse_taifex_daily_zip(blob, DAY, cm),
+                                 ii.parse_taifex_daily_tx(self.lines, DAY, cm))
+        self.assertEqual(ii.parse_taifex_daily_zip(zip_of(FIXTURE.read_bytes()), DAY, "202610")[-1],
+                         [ep("13:44"), 49349])
+        # CRLF 換行也一樣
+        crlf = FIXTURE.read_bytes().replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
+        self.assertEqual(ii.parse_taifex_daily_zip(zip_of(crlf), DAY, "202610"),
+                         ii.parse_taifex_daily_tx(self.lines, DAY, "202610"))
+
+    def test_zip_not_published_or_corrupt_is_missing(self):
+        self.assertIsNone(ii.parse_taifex_daily_zip(b"<html>not yet</html>", DAY))
+        good = zip_of(FIXTURE.read_bytes())
+        # 「PK」開頭但截斷 / 中段位元組壞掉(BadZipFile、zlib.error、CRC 錯)→ None,不丟例外
+        self.assertIsNone(ii.parse_taifex_daily_zip(b"PK\x03\x04garbage", DAY))
+        self.assertIsNone(ii.parse_taifex_daily_zip(good[: len(good) // 2], DAY))
+        mid = len(good) // 2
+        self.assertIsNone(ii.parse_taifex_daily_zip(good[:mid] + bytes(64) + good[mid + 64:], DAY))
+        # zip 裡沒有 CSV
+        self.assertIsNone(ii.parse_taifex_daily_zip(zip_of(b"x", name="readme.txt"), DAY))
+
+
+def zip_of(data: bytes, method=zipfile.ZIP_DEFLATED, name="Daily_2026_10_08.csv") -> bytes:
+    zblob = io.BytesIO()
+    with zipfile.ZipFile(zblob, "w", method) as zf:
+        zf.writestr(name, data)
+    return zblob.getvalue()
 
 
 if __name__ == "__main__":

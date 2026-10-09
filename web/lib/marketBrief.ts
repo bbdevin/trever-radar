@@ -228,6 +228,65 @@ export const PREV_CLOSE_LABEL = "昨收";
 /** [epoch 秒(該分鐘開始時間), 值] */
 export type IntradayPoint = [number, number];
 
+/**
+ * 走勢 sheet 底下那行說明。1日有圖才說「點圖上任一點…;虛線為前一交易日收盤」(與台指期近月註記);
+ * 1日沒圖(載入中、404、抓取失敗、台指期缺)→ null:畫面上只留圖區那句缺資料訊息,不講不存在的線。
+ */
+export function trendHintText(o: { isDay: boolean; dayReady: boolean; market: string | undefined }): string | null {
+  const tx = o.market === "tx";
+  if (!o.isDay) return tx ? `${TREND_HINT} ${TX_STITCH_NOTE}` : TREND_HINT;
+  if (!o.dayReady) return null;
+  return tx ? `${INTRADAY_HINT} ${TX_INTRADAY_NOTE}` : INTRADAY_HINT;
+}
+
+/** 1日沒圖時圖區顯示的那一句:有檔但沒台指期 → 台指期專屬;其餘(404、檔內沒這個市場)→ 通用 */
+export function intradayEmptyText(market: string | undefined, hasFile: boolean): string {
+  return market === "tx" && hasFile ? TX_INTRADAY_EMPTY : INTRADAY_EMPTY;
+}
+
+/** 404(還沒有檔)的快取壽命:超過就讓「再選一次 1日」重抓;重開 sheet 一律重抓 */
+export const INTRADAY_MISSING_RETRY_MS = 60_000;
+
+/**
+ * session 內快取一個「可能還沒有」的檔:
+ * - 有內容 → 整個 session 用同一份;
+ * - null(404)→ 快取 `missingTtlMs`,之後再呼叫 `load()` 就重抓;`forgetMissing()`(重開 sheet)立刻作廢;
+ * - 失敗(reject)→ 不快取,下次再試。
+ */
+export function missingAwareLoader<T>(
+  fetchOnce: () => Promise<T | null>,
+  missingTtlMs: number = INTRADAY_MISSING_RETRY_MS,
+  now: () => number = Date.now,
+): { load: () => Promise<T | null>; forgetMissing: () => void } {
+  let cache: Promise<T | null> | null = null;
+  let missingAt: number | null = null; // 最近一次 404 落地的時間
+  const load = () => {
+    if (cache && missingAt != null && now() - missingAt >= missingTtlMs) cache = null;
+    if (!cache) {
+      missingAt = null;
+      const p: Promise<T | null> = fetchOnce().then(
+        (v) => {
+          if (cache === p && v == null) missingAt = now();
+          return v;
+        },
+        (e) => {
+          if (cache === p) cache = null;
+          throw e;
+        },
+      );
+      cache = p;
+    }
+    return cache;
+  };
+  const forgetMissing = () => {
+    if (missingAt != null) {
+      cache = null;
+      missingAt = null;
+    }
+  };
+  return { load, forgetMissing };
+}
+
 const TW_OFFSET_S = 8 * 3600;
 
 /** epoch 秒 → 台北「HH:MM」(不經瀏覽器時區) */
