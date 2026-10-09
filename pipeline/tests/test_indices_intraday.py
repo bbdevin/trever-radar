@@ -349,10 +349,11 @@ class TaifexDailyTests(unittest.TestCase):
         mixed = ii.parse_taifex_daily_sessions(self.lines, DAY, "202610", "202611")
         self.assertEqual(mixed["tx"][-1], [ep("13:44"), 49349])
         self.assertEqual(mixed["tx_night"][-1], [ep("04:55"), 49809])
-        # 要別天:一般時段空;夜盤只會拿到「檔內最晚的 < D 日期」那個傍晚,不會把 10/08 凌晨混進來
+        # 要別天:一般時段空;夜盤由檔案自己決定是哪一夜(傍晚日 10/07 + 次一日曆日 10/08 凌晨),與 D 無關
         other = ii.parse_taifex_daily_sessions(self.lines, "2026-10-09", None, None)
         self.assertEqual(other["tx"], [])
-        self.assertEqual([t for t, _ in other["tx_night"]], [ep("15:00", PREV)])
+        self.assertEqual(other["tx_night"], ii.parse_taifex_daily_sessions(self.lines, DAY, None, None)["tx_night"])
+        # 檔內沒有 < D 的傍晚列 → 沒有這一夜(10/08 凌晨列不會單獨成夜)
         self.assertEqual(ii.parse_taifex_daily_sessions(self.lines, "2026-10-07", None, None), {"tx": [], "tx_night": []})
 
     def test_zip_sessions_streamed_equals_in_memory(self):
@@ -402,6 +403,73 @@ class TaifexDailyTests(unittest.TestCase):
         self.assertIsNone(ii.parse_taifex_daily_zip(good[:mid] + bytes(64) + good[mid + 64:], DAY))
         # zip 裡沒有 CSV
         self.assertIsNone(ii.parse_taifex_daily_zip(zip_of(b"x", name="readme.txt"), DAY))
+
+
+MON_FIXTURE = Path(__file__).parent / "fixtures" / "taifex_daily_tx_20261005_trim.csv"
+MON = "2026-10-05"
+
+
+class TaifexNightAcrossWeekendTests(unittest.TestCase):
+    """2026-10-09 verifier:週一的檔裡,凌晨列標**週六**(不是週一),原本只認「日期 == D 且 ≤ 05:00」會把夜盤
+    切在 23:59。裁切自 `Daily_2026_10_05.zip`(原始 Big5 位元組 98 列:10/02 15:00 開盤 12 筆、23:30 尾 6 筆、
+    10/03 00:00 8 筆、04:59 尾 30 筆(最後 04:59:58 **49346** = futDataDown 10/05 盤後近月收盤)、202611 2 筆、
+    價差 3、小台 2、10/05 一般時段首 10 尾 25 筆)。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.lines = MON_FIXTURE.read_bytes().decode("cp950").splitlines()
+
+    def test_monday_night_runs_friday_evening_to_saturday_morning(self):
+        both = ii.parse_taifex_daily_sessions(self.lines, MON, "202610", "202610")
+        night = both["tx_night"]
+        self.assertEqual(night[-1], [ep("04:59", "2026-10-03"), 49346])     # futDataDown 10/05 盤後 = 49346
+        self.assertEqual(night[0][0], ep("15:00", "2026-10-02"))
+        ts = [t for t, _ in night]
+        self.assertEqual(ts, sorted(set(ts)))
+        self.assertIn(ep("00:00", "2026-10-03"), ts)
+        self.assertTrue(all(ep("15:00", "2026-10-02") <= t <= ep("05:00", "2026-10-03") for t in ts))
+        # 顯示範圍(前端 nightSpan:第一點日期 + 次日)= 10/02 15:00 – 10/03 05:00
+        from datetime import datetime as dt
+        self.assertEqual(dt.fromtimestamp(night[0][0], TPE).strftime("%m/%d %H:%M"), "10/02 15:00")
+        self.assertEqual(dt.fromtimestamp(night[-1][0], TPE).strftime("%m/%d %H:%M"), "10/03 04:59")
+        # 一般時段仍是 10/05 自己的
+        self.assertEqual(both["tx"][-1], [ep("13:44", MON), 49949])
+        self.assertTrue(all(ep("08:45", MON) <= t <= ep("13:45", MON) for t, _ in both["tx"]))
+        # 每分鐘最後一筆逐列對照
+        last_by_min: dict[tuple[str, str], int] = {}
+        for r in (r.split(",") for r in self.lines[1:]):
+            if r[1].strip() != "TX" or r[2].strip() != "202610":
+                continue
+            t = r[3].strip().zfill(6)
+            if (r[0] == "20261002" and t >= "150000") or (r[0] == "20261003" and t <= "050000"):
+                last_by_min[(r[0], t[:4])] = int(r[4])
+        self.assertEqual([v for _, v in night], [last_by_min[k] for k in sorted(last_by_min)])
+        # 串流 zip 相同
+        self.assertEqual(ii.parse_taifex_daily_zip_sessions(zip_of(MON_FIXTURE.read_bytes(), name="Daily_2026_10_05.csv"),
+                                                            MON, "202610", "202610"), both)
+
+    def test_long_holiday_file_reconstructs_the_eve_night(self):
+        # 10/09 補假、10/10 六、10/11 日 → 10/12 的檔應含 10/08 15:00 → 10/09 05:00 那一夜(合成列)
+        hdr = self.lines[0]
+        row = lambda d, t, px, m="202610": f"{d},TX     ,{m}     ,{t},{px},2,-,-,"
+        lines = [hdr,
+                 row("20261008", "150000", 49400), row("20261008", "150001", 49410), row("20261008", "235959", 49500),
+                 row("20261009", "000000", 49510), row("20261009", "045959", 49520), row("20261009", "050000", 49530),
+                 row("20261009", "050001", 1),                 # 05:00:01 不算
+                 row("20261012", "084500", 49600), row("20261012", "134459", 49700),
+                 row("20261012", "001000", 2),                 # D 自己的凌晨列不是這一夜(E+1 = 10/09)
+                 row("20261008", "140000", 3)]                 # 傍晚半 15:00 前不算
+        both = ii.parse_taifex_daily_sessions(lines, "2026-10-12", None, None)
+        self.assertEqual(both["tx_night"], [
+            [ep("15:00", "2026-10-08"), 49410], [ep("23:59", "2026-10-08"), 49500],
+            [ep("00:00", "2026-10-09"), 49510], [ep("04:59", "2026-10-09"), 49520], [ep("05:00", "2026-10-09"), 49530],
+        ])
+        self.assertEqual(both["tx"], [[ep("08:45", "2026-10-12"), 49600], [ep("13:44", "2026-10-12"), 49700]])
+
+    def test_oct08_file_unchanged_by_the_weekend_rule(self):
+        lines = FIXTURE.read_bytes().decode("cp950").splitlines()
+        night = ii.parse_taifex_daily_sessions(lines, DAY, "202610", "202610")["tx_night"]
+        self.assertEqual((night[0], night[-1]), ([ep("15:00", PREV), 49907], [ep("04:59"), 49593]))
 
 
 def zip_of(data: bytes, method=zipfile.ZIP_DEFLATED, name="Daily_2026_10_08.csv") -> bytes:

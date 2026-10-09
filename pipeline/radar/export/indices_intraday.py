@@ -35,7 +35,7 @@ import json
 import logging
 import os
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Callable
 from zoneinfo import ZoneInfo
@@ -170,9 +170,12 @@ def parse_taifex_daily_sessions(lines, day: str, contract_month: str | None = No
 
     * ``tx``:成交日期 == D 且 08:45:00–13:45:00。``contract_month``(YYYYMM)= 當天 ``market_indices`` tx 列的
       近月;缺 → 取一般時段有成交的非價差月份中最小者(與 ``providers.market_index.pick_tx_near_month`` 同定義)。
-    * ``tx_night``:D 日檔內的**前一夜**(docs/49 §12.6)= 成交日期 < D 且 ≥ 15:00:00 的列,加上成交日期 == D 且
-      ≤ 05:00:00 的列(跨午夜;epoch 是真實時間,前端自己換日期)。``night_month`` = 當天 ``market_indices``
-      tx_night 列的近月;缺 → 夜盤有成交的非價差月份中最小者(到期月在最後交易日那一夜已不交易,自然換月)。
+    * ``tx_night``:D 日檔內的**前一夜**(docs/49 §12.6)。那一夜的日期**由檔案自己決定**:傍晚日 E = 檔內
+      成交日期 < D 且時間 ≥ 15:00:00 的列中最早的日期;取日期 == E 且 ≥ 15:00:00 的列,加上日期 == E 的次一
+      **日曆日**且 ≤ 05:00:00 的列(跨午夜;epoch 是真實時間,前端自己換日期)。週一的檔是 週五 15:00 → 週六
+      05:00(凌晨列標週六,不是週一);連假後第一天的檔是 假前一日 15:00 → 假日 05:00。``night_month`` = 當天
+      ``market_indices`` tx_night 列的近月;缺 → 夜盤有成交的非價差月份中最小者(到期月在最後交易日那一夜
+      已不交易,自然換月)。
     同一秒多筆以檔案順序最後一筆為準。
 
     記憶體:逐列處理、先用「第 9–11 個字元是 ,TX」粗篩再交給 csv,每個月份只留「每分鐘最後一筆」
@@ -202,7 +205,8 @@ def parse_taifex_daily_sessions(lines, day: str, contract_month: str | None = No
         m = hh * 60 + mm
         if rd == d8 and lo <= m <= hi and not (m == hi and ss > 0):
             table = day_by_month
-        elif (rd < d8 and m >= night_lo) or (rd == d8 and (m < night_hi or (m == night_hi and ss == 0))):
+        elif (rd < d8 and m >= night_lo) or (rd <= d8 and (m < night_hi or (m == night_hi and ss == 0))):
+            # 夜盤候選:傍晚半(日期 < D、≥ 15:00)與凌晨半(日期 ≤ D、≤ 05:00);哪一天才算這一夜,收完再定
             table = night_by_month
         else:
             continue
@@ -212,13 +216,13 @@ def parse_taifex_daily_sessions(lines, day: str, contract_month: str | None = No
         if cur is None or ss >= cur[0]:
             mins[key] = (ss, px)
 
-    def finish(table, want: str | None, evening_date: str | None = None) -> Series:
+    def finish(table, want: str | None, keep=lambda rd, m: True) -> Series:
         if not table:
             return []
         month = (want or "").strip() or min(table)
         out: Series = []
         for (rd, m) in sorted(table.get(month, {})):
-            if rd != d8 and rd != evening_date:
+            if not keep(rd, m):
                 continue
             px = table[month][(rd, m)][1]
             if px <= 0:
@@ -226,9 +230,17 @@ def parse_taifex_daily_sessions(lines, day: str, contract_month: str | None = No
             out.append([_to_epoch(rd, m), _num(px)])
         return out
 
-    # 夜盤的「傍晚那一半」只認檔內最晚的那個 < D 日期(真實的 D 日檔只會有前一交易日;防呆而已)
-    evening = max((rd for mins in night_by_month.values() for (rd, _m) in mins if rd != d8), default=None)
-    return {"tx": finish(day_by_month, contract_month), "tx_night": finish(night_by_month, night_month, evening)}
+    # 這一夜是哪一天:傍晚日 E = 檔內「日期 < D 且 ≥ 15:00」最早的日期;凌晨半 = E 的次一日曆日 ≤ 05:00
+    # (週一檔:E=週五、凌晨=週六;連假後:E=假前一日、凌晨=假日第一天)。沒有傍晚半 → 沒有這一夜。
+    evening = min((rd for mins in night_by_month.values() for (rd, m) in mins if rd < d8 and m >= night_lo),
+                  default=None)
+    morning = None
+    if evening is not None:
+        y, mo, d = int(evening[:4]), int(evening[4:6]), int(evening[6:])
+        morning = (datetime(y, mo, d) + timedelta(days=1)).strftime("%Y%m%d")
+    keep_night = (lambda rd, m: (rd == evening and m >= night_lo) or (rd == morning and m <= night_hi)) \
+        if evening is not None else (lambda rd, m: False)
+    return {"tx": finish(day_by_month, contract_month), "tx_night": finish(night_by_month, night_month, keep_night)}
 
 
 def parse_taifex_daily_tx(lines, day: str, contract_month: str | None = None) -> Series:

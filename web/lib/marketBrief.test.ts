@@ -66,6 +66,7 @@ import {
   nightSubtitle,
   nightTileText,
   nightTileTitle,
+  nightActive,
   taipeiDateOf,
 } from "./marketBrief.ts";
 import { crosshairTimeLabel } from "./chartTime.ts";
@@ -353,6 +354,21 @@ test("夜盤 1 分線:跨午夜的日期與標頭時間都用台北時間;基準
   assert.equal(intradayEmptyText("tx", true, "day"), TX_INTRADAY_EMPTY);
   assert.equal(intradayEmptyText("tx", false, "night"), INTRADAY_EMPTY);
   assert.ok(TX_STITCH_NOTE.includes("夜盤見 1日"));
+});
+
+test("夜盤模式只在 台指期 × 1日:切 1月以上或換指數就回日盤資料(選擇保留)", () => {
+  assert.equal(nightActive({ market: "tx", range: "1d", session: "night" }), true);
+  for (const range of ["1m", "3m", "6m", "1y"] as const) assert.equal(nightActive({ market: "tx", range, session: "night" }), false);
+  assert.equal(nightActive({ market: "twse", range: "1d", session: "night" }), false);
+  assert.equal(nightActive({ market: "tx", range: "1d", session: "day" }), false);
+  assert.equal(nightActive({ market: undefined, range: "1d", session: "night" }), false);
+  // 週一的夜盤:第一點是週五 15:00 → 範圍 10/02 15:00 – 10/03 05:00,基準 = 週五收盤
+  const e = (s: string) => Date.parse(`${s}+08:00`) / 1000;
+  const mon: IntradayPoint[] = [[e("2026-10-02T15:00:00"), 48671], [e("2026-10-03T04:59:00"), 49346]];
+  assert.deepEqual(nightSpan(mon), { from: "2026-10-02", to: "2026-10-03" });
+  assert.equal(nightRangeText("2026-10-02", "2026-10-03"), "10/02 15:00 – 10/03 05:00");
+  const hist: TrendPoint[] = [["2026-10-01", 49000, null, null], ["2026-10-02", 49200, null, null], ["2026-10-05", 49949, null, null]];
+  assert.equal(prevCloseBefore(hist, "2026-10-03"), 49200);
 });
 
 test("禁詞:標題、標籤、提示", () => {

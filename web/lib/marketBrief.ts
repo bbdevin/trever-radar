@@ -144,6 +144,13 @@ export const SESSION_TABS: { key: TxSession; label: string }[] = [
   { key: "day", label: "日盤" },
   { key: "night", label: "夜盤" },
 ];
+/**
+ * 夜盤模式只在「台指期 × 1日」成立:換到加權/櫃買或 1月以上,一律回到日盤資料(選擇本身保留,切回 1日 還在)。
+ * 2026-10-09 verifier:漏掉 range 條件時,選夜盤後切 3月 標頭會卡在夜盤收盤、游標讀不到日線。
+ */
+export function nightActive(o: { market: string | undefined; range: TrendRange; session: TxSession }): boolean {
+  return o.market === "tx" && o.range === "1d" && o.session === "night";
+}
 export const TX_NIGHT_INTRADAY_EMPTY = "台指期暫無夜盤走勢";
 export const TX_NIGHT_INTRADAY_NOTE =
   "台指期夜盤為近月盤後時段(前一交易日 15:00 至當日 05:00),虛線為前一交易日一般時段收盤價(非結算價);今晚的夜盤要等下一個交易日收盤後才有。";

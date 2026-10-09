@@ -18,6 +18,7 @@ import {
   intradayStats,
   intradayTone,
   missingAwareLoader,
+  nightActive,
   nightHeadTime,
   nightSpan,
   nightSubtitle,
@@ -350,7 +351,8 @@ export default function IndexTrendSheet({
 
   // ── 1日 ──
   const isTx = head?.market === "tx";
-  const night = isTx && session === "night";
+  // 只在 台指期 × 1日 才是夜盤模式;1月以上與其他指數一律日盤資料(nightActive)
+  const night = nightActive({ market: head?.market, range, session });
   const dayPoints = useMemo<IntradayPoint[]>(
     () => (intra?.series?.[night ? "tx_night" : ((head?.market ?? "") as "twse" | "tpex" | "tx")] ?? []),
     [intra, head?.market, night],
