@@ -16,6 +16,17 @@ from ..providers.fugle import fetch_intraday_sparks
 
 CACHE_NAME = "spark_day.json"
 
+# 本程序這一輪抓到的完整 1 分 K 列({stock_id: rows}),連同價格日。分K(docs/50,
+# export/intraday_bars.py)在同一輪 export 緊接著讀它聚成當日 5 分 K,不另發請求。
+# 不進快取檔(spark_day.json 只存降採樣的收盤),也不進任何 JSON。
+_minute_rows: dict[str, list[dict]] = {}
+_minute_rows_date: str | None = None
+
+
+def minute_rows(price_date: str) -> dict[str, list[dict]]:
+    """這一輪 attach_spark_day 抓到、屬於 price_date 的 1 分 K 列;沒有就是 {}。"""
+    return dict(_minute_rows) if _minute_rows_date == price_date else {}
+
 
 def cache_path() -> Path:
     return Path(config.DATA_DIR) / CACHE_NAME
@@ -63,6 +74,7 @@ def attach_spark_day(
     persist: bool = True,
 ) -> int:
     """在 union 各股掛 spark_day / spark_open。回傳成功掛上的檔數。"""
+    global _minute_rows, _minute_rows_date
     if not union:
         return 0
     today = today if today is not None else taipei_today()
@@ -76,10 +88,13 @@ def attach_spark_day(
     if missing and today == price_date and os.environ.get("FUGLE_API_KEY"):
         fn = fetch_fn or fetch_intraday_sparks
         raw = fn(missing) or {}
+        _minute_rows, _minute_rows_date = {}, price_date
         for sid, row in raw.items():
             if row.get("date") != price_date or not _row_ok(row):
                 continue
             stocks[sid] = {"open": row["open"], "closes": row["closes"]}
+            if row.get("rows"):
+                _minute_rows[sid] = row["rows"]
             fetched += 1
         if persist and stocks:
             save_cache(price_date, stocks)

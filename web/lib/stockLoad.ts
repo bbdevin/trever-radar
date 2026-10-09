@@ -15,6 +15,7 @@
  * 純邏輯、不碰 React,`fetcher` 可注入(node 測試)。
  */
 import type { StockJson } from "./types.ts";
+import type { IntradayFile } from "./resample.ts";
 import { isSplitCore, mergeStockParts, type StockChipsFile, type StockCoreJson, type StockHistFile } from "./stockParts.ts";
 
 export type Fetcher = (path: string, init?: RequestInit) => Promise<Response>;
@@ -53,6 +54,18 @@ export async function fetchStockCore(id: string, fetcher: Fetcher): Promise<Stoc
     if (e instanceof StockNotFound && e.status === 404) return getJson<StockJson>(fetcher, STOCK_LEGACY_PATH(id));
     throw e;
   }
+}
+
+export const STOCK_INTRADAY_PATH = (id: string) => `/data/stocks/intraday/${encodeURIComponent(id)}.json`;
+
+/** 分K檔(docs/50,只有榜單聯集股有)。404 = 這檔沒有分K → null;其他失敗丟 StockNotFound。
+ *  形狀不對(沒有 bars 陣列或一根都沒有)也當作沒有。 */
+export async function fetchStockIntraday(id: string, fetcher: Fetcher): Promise<IntradayFile | null> {
+  const res = await fetcher(STOCK_INTRADAY_PATH(id));
+  if (res.status === 404) return null;
+  if (!res.ok) throw new StockNotFound(res.status);
+  const body = (await res.json()) as IntradayFile;
+  return Array.isArray(body?.bars) && body.bars.length > 0 ? body : null;
 }
 
 /** 舊單一檔;抓不到回 null(呼叫端決定要不要當失敗)。 */

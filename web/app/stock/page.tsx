@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, Suspense, useEffect, useMemo, useState } from "react";
+import { Fragment, Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import {
@@ -61,7 +61,8 @@ import { useBranchTrack } from "@/lib/branchTrackList";
 import BullBearPanel, { CountChip } from "@/components/BullBearPanel";
 import { normalizePnl } from "@/lib/branchPnl";
 import { dataFetch } from "@/lib/dataFetch";
-import { loadStock } from "@/lib/stockLoad";
+import { fetchStockIntraday, loadStock } from "@/lib/stockLoad";
+import { isMinuteTf, type Timeframe } from "@/lib/resample";
 import { Skeleton } from "@/components/ui/skeleton";
 import { OFFLINE_DATA_COPY, isBrowserOffline } from "@/lib/pwa";
 import type { Buyback, CompanyTheme, RecentThemeHeat, StockJson } from "@/lib/types";
@@ -186,6 +187,11 @@ function StockView() {
       setView("tech");
     }
   }, [data, tabParam]);
+
+  // 分K(docs/50):KChart 第一次真的要畫分K才呼叫;隨代號換一個函式,KChart 據此不沿用上一檔。
+  const loadIntraday = useCallback(() => (id ? fetchStockIntraday(id, dataFetch) : Promise.resolve(null)), [id]);
+  // K 線實際畫的週期;分K時藏起日K的區間列(1月…全部),分K有自己的預設可視天數。
+  const [chartTf, setChartTf] = useState<Timeframe>("D");
 
   const visibleDays = useMemo(() => {
     const days = RANGES.find((r) => r.key === range)?.days ?? Infinity;
@@ -418,7 +424,7 @@ function StockView() {
             </button>
           ))}
         </ScrollHint>
-        {view === "chart" && (
+        {view === "chart" && !isMinuteTf(chartTf) && (
           <ScrollHint
             role="tablist"
             aria-label="K線區間"
@@ -433,7 +439,16 @@ function StockView() {
           </ScrollHint>
         )}
       </div>
-      {view === "chart" && <KChart candles={cs} visibleDays={visibleDays} mainForce={mainForce} levels={chartLevelLines} />}
+      {view === "chart" && (
+        <KChart
+          candles={cs}
+          visibleDays={visibleDays}
+          mainForce={mainForce}
+          levels={chartLevelLines}
+          loadIntraday={loadIntraday}
+          onTimeframeChange={setChartTf}
+        />
+      )}
       {view === "chips" && (
         <>
           {/* 使用者 2026-10-02(手機優先):三節疊在一起要滑很久,當日買賣超被擠到最下面。

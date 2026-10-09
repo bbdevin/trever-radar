@@ -25,6 +25,7 @@ from .home_split import write_home
 from .insti_group_flow import FILE_1D as INSTI_FILE_1D, write_insti_flow
 from .insti_stocks import FILE_1D as INSTI_STOCKS_FILE_1D, write_insti_stocks
 from .spark_day import attach_spark_day
+from .intraday_bars import export_intraday_safe
 from .stock_parts import (
     StockPartsWriter,
     hist_cut,
@@ -1771,6 +1772,7 @@ def export_json(
                 "WHERE stock_id = :s AND close IS NOT NULL AND date <= :d "
                 "ORDER BY date DESC LIMIT 30) ORDER BY date"), {"s": s["id"], "d": d})]
         attach_spark_day(union, d)
+        export_intraday_safe(out, union, d)  # 分K(docs/50):同一閘門、失敗只記 warning
 
         # ── 族群資金流(官方產業別;題材標籤之後人工維護再加) ──
         sector_today: dict[str, dict] = {}

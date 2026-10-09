@@ -1,15 +1,35 @@
 "use client";
 
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import type { Time } from "lightweight-charts";
 import type { Candle } from "@/lib/types";
 import { fmtLots } from "@/lib/format";
 import { bollinger, kd, macd, rsi, sma } from "@/lib/indicators";
-import { barsForDays, periodKey, resample, type Timeframe } from "@/lib/resample";
+import {
+  barTimeLabel,
+  barsForDays,
+  chartTimeOf,
+  effectiveTf,
+  intradayCandles,
+  isMinuteTf,
+  MINUTE_VISIBLE_DAYS,
+  minuteCaption,
+  minuteNotice,
+  periodKey,
+  resample,
+  type IntradayFile,
+  type IntradayStatus,
+  type Timeframe,
+} from "@/lib/resample";
 import { cn, pillTabClass, segBtnClass } from "@/lib/utils";
 import { ScrollHint } from "@/components/ScrollHint";
 import { PL_LABELS, pricePrecision, type ChartLevel } from "@/lib/priceLevels";
 
+/** 分K三格只在呼叫端給了 loadIntraday(個股 K 線分頁)時出現(docs/50)。 */
 const TF_DEFS: { key: Timeframe; label: string; short: string }[] = [
+  { key: "5", label: "5分", short: "5分" },
+  { key: "30", label: "30分", short: "30分" },
+  { key: "60", label: "60分", short: "60分" },
   { key: "D", label: "日K", short: "日" },
   { key: "W", label: "週K", short: "週" },
   { key: "M", label: "月K", short: "月" },
@@ -24,6 +44,11 @@ const MA_DEFS = [
   { key: "ma240", n: 240, label: "年線", short: "年", color: "#d95926" },
 ] as const;
 type MaKey = (typeof MA_DEFS)[number]["key"];
+/** 均線名:分K一律 MA5/MA20…(「5日」「季線」在分K上是錯的);日/週/月K照舊。 */
+function maText(m: (typeof MA_DEFS)[number], minute: boolean, short: boolean): string {
+  if (minute) return `MA${m.n}`;
+  return short ? m.short : m.label;
+}
 type SubKey = "macd" | "kd" | "rsi";
 /** 手機版子 pane 切換 key(< 768px)：sub=副圖、main=主力買賣超、sel=分點進出 */
 type MobilePaneKey = "sub" | "main" | "sel";
@@ -131,8 +156,15 @@ export default function KChart({
   hideMaRowOnMobile = false,
   mobilePaneFactors,
   levels,
+  loadIntraday,
+  onTimeframeChange,
 }: {
   candles: Candle[];
+  /** 分K檔載入(docs/50)。有傳才出現 5分/30分/60分;第一次選到分K才呼叫,null = 這檔沒有分K。
+   *  請傳 useCallback 過、隨股票代號變的函式(換股時以它的身分判斷要不要重抓)。 */
+  loadIntraday?: () => Promise<IntradayFile | null>;
+  /** 實際畫的週期變了就通知(個股頁在分K時藏起日K的區間列)。 */
+  onTimeframeChange?: (tf: Timeframe) => void;
   /** 壓力/支撐虛線(docs/45 P1,`chartLevels()`);有傳才出現「壓力/支撐」開關,預設關。
    *  目前只有個股 K 線分頁傳。請傳 useMemo 過的陣列(effect 相依)。 */
   levels?: ChartLevel[];
@@ -226,16 +258,41 @@ export default function KChart({
     prevBranchFlowLen.current = len;
   }, [branchFlow, isMobile]);
 
-  // 依週期重取樣(日K→週/月K),指標對重取樣後序列計算 → 週K的MA20=20週線(主流慣例)
-  const bars = useMemo(() => resample(candles, settings.tf), [candles, settings.tf]);
+  // 分K檔(docs/50):第一次真的要畫分K才抓;記著是替哪個 loader(= 哪一檔)抓的,換股不沿用。
+  const [intra, setIntra] = useState<{ loader?: () => Promise<IntradayFile | null>; status: IntradayStatus; file?: IntradayFile }>({ status: "idle" });
+  const intraStatus: IntradayStatus = loadIntraday && intra.loader === loadIntraday ? intra.status : "idle";
+  const wantMinute = isMinuteTf(settings.tf) && !!loadIntraday;
+  useEffect(() => {
+    if (!wantMinute || !loadIntraday || intraStatus !== "idle") return;
+    setIntra({ loader: loadIntraday, status: "loading" });
+    // 回來時若已換股(state 裡的 loader 不是這一個)就丟掉,不把上一檔的分K畫到這一檔。
+    const settle = (status: IntradayStatus, file?: IntradayFile) =>
+      setIntra((prev) => (prev.loader === loadIntraday ? { loader: loadIntraday, status, file } : prev));
+    loadIntraday()
+      .then((file) => settle(file ? "ok" : "none", file ?? undefined))
+      .catch(() => settle("none"));
+  }, [wantMinute, loadIntraday, intraStatus]);
+  // 實際畫的週期:沒有分K檔(或這張圖不提供分K)→ 日K;使用者的選擇照樣記著。
+  const tf = effectiveTf(settings.tf, !!loadIntraday, intraStatus);
+  const minute = isMinuteTf(tf);
+  const notice = minuteNotice(settings.tf, !!loadIntraday, intraStatus);
+  useEffect(() => {
+    onTimeframeChange?.(tf);
+  }, [tf, onTimeframeChange]);
 
-  // 分點淨買賣序列跟著 tf 重取樣(net 按週/月加總,累計線自序列起點照舊)
+  // 依週期重取樣(日K→週/月K;5 分 K 檔→5/30/60 分),指標對重取樣後序列計算 → 週K的MA20=20週線(主流慣例)
+  const bars = useMemo(
+    () => (isMinuteTf(tf) ? (intra.file ? intradayCandles(intra.file, tf) : []) : resample(candles, tf)),
+    [candles, tf, intra.file],
+  );
+
+  // 分點淨買賣序列跟著 tf 重取樣(net 按週/月加總,累計線自序列起點照舊)。分K不畫(日頻資料)。
   const flow = useMemo(
     () => ({
-      main: mainForce ? resampleNet(mainForce, bars, settings.tf) : undefined,
-      sel: branchFlow ? resampleNet(branchFlow, bars, settings.tf) : undefined,
+      main: mainForce && !isMinuteTf(tf) ? resampleNet(mainForce, bars, tf) : undefined,
+      sel: branchFlow && !isMinuteTf(tf) ? resampleNet(branchFlow, bars, tf) : undefined,
     }),
-    [mainForce, branchFlow, bars, settings.tf],
+    [mainForce, branchFlow, bars, tf],
   );
 
   // 指標一律以「全歷史」計算,再切可視區間 → 區間邊緣的均線/布林不失真
@@ -256,11 +313,14 @@ export default function KChart({
     if (!ref.current || bars.length === 0) return;
     let disposed = false;
     let chart: import("lightweight-charts").IChartApi | undefined;
-    const visibleBars = barsForDays(visibleDays, settings.tf);
+    // 分K的可視區間固定(5 分 5 天/30 分 20 天/60 分 60 天),日K以上照頁面的區間列。
+    const visibleBars = barsForDays(minute ? MINUTE_VISIBLE_DAYS[tf as keyof typeof MINUTE_VISIBLE_DAYS] : visibleDays, tf);
     const start = Math.max(0, bars.length - visibleBars);
+    // 日K傳 "YYYY-MM-DD";分K傳台北牆上時間當 UTC 的秒數(圖表軸才會顯示 09:00)。
+    const T = (t: string) => chartTimeOf(t) as Time;
     const idx = (arr: (number | null)[]) =>
-      arr.slice(start).map((v, i) => ({ time: bars[start + i].t, value: v }))
-        .filter((p): p is { time: string; value: number } => p.value != null);
+      arr.slice(start).map((v, i) => ({ time: T(bars[start + i].t), value: v }))
+        .filter((p): p is { time: Time; value: number } => p.value != null);
 
     import("lightweight-charts").then((lw) => {
       if (disposed || !ref.current) return;
@@ -284,7 +344,7 @@ export default function KChart({
         },
         grid: { vertLines: { color: colors.grid }, horzLines: { color: colors.grid } },
         rightPriceScale: { borderColor: colors.border },
-        timeScale: { borderColor: colors.border },
+        timeScale: { borderColor: colors.border, timeVisible: minute, secondsVisible: false },
         crosshair: { mode: 0 },
         // 手機版：垂直拖曳還給頁面捲動；水平 pan/縮放維持
         handleScroll: { vertTouchDrag: !mobile },
@@ -298,8 +358,9 @@ export default function KChart({
         downColor: DOWN, borderDownColor: DOWN, wickDownColor: DOWN,
         priceFormat: { type: "price", precision: prec, minMove: 1 / 10 ** prec },
       }, 0);
-      candleSeries.setData(view.map((c) => ({ time: c.t, open: c.o, high: c.h, low: c.l, close: c.c })));
-      if (settings.levels && levels?.length) {
+      candleSeries.setData(view.map((c) => ({ time: T(c.t), open: c.o, high: c.h, low: c.l, close: c.c })));
+      // 壓力/支撐由日K算出,分K不畫。
+      if (settings.levels && levels?.length && !minute) {
         for (const lv of levels) {
           candleSeries.createPriceLine({
             price: lv.price,
@@ -326,7 +387,7 @@ export default function KChart({
 
       const volSeries = chart.addSeries(HistogramSeries, { priceFormat: { type: "volume" }, priceLineVisible: false, lastValueVisible: false }, 1);
       volSeries.setData(view.map((c, i) => ({
-        time: c.t,
+        time: T(c.t),
         value: c.v,
         color: i > 0 && c.c >= view[i - 1].c ? "rgba(230,103,103,0.45)" : "rgba(12,163,12,0.45)",
       })));
@@ -351,11 +412,11 @@ export default function KChart({
         const vis = pts.filter((p) => p.t >= firstT);
         chart!
           .addSeries(HistogramSeries, { priceFormat: { type: "volume" }, priceLineVisible: false, lastValueVisible: false }, pane)
-          .setData(vis.map((p) => ({ time: p.t, value: p.net, color: p.net >= 0 ? "rgba(230,103,103,0.7)" : "rgba(12,163,12,0.7)" })));
+          .setData(vis.map((p) => ({ time: T(p.t), value: p.net, color: p.net >= 0 ? "rgba(230,103,103,0.7)" : "rgba(12,163,12,0.7)" })));
         // 累計線走獨立 overlay 價格軸,避免累計量把每日柱壓扁
         chart!
           .addSeries(LineSeries, { color: CUM_COLOR, priceScaleId: `cum-${pane}`, priceFormat: { type: "volume" }, ...thin }, pane)
-          .setData(vis.map((p) => ({ time: p.t, value: p.cum })));
+          .setData(vis.map((p) => ({ time: T(p.t), value: p.cum })));
       };
 
       // pane 標題:v5 pane watermark(游標移動時同一位置追加當日/累計數字)。色讀 paneTextRef → 主題切換即時反映
@@ -416,7 +477,7 @@ export default function KChart({
       }
 
       // legend:十字游標顯示 OHLC 與均線值;主力/分點數值直接更新在對應 pane 標題(帶正負號)
-      const byTime = new Map(bars.map((c, i) => [c.t, i]));
+      const byTime = new Map<string | number, number>(bars.map((c, i) => [chartTimeOf(c.t), i]));
       const mainByTime = new Map((flow.main ?? []).map((p) => [p.t, p]));
       const selByTime = new Map((flow.sel ?? []).map((p) => [p.t, p]));
       const updTitle = (
@@ -444,7 +505,7 @@ export default function KChart({
         const mas = MA_DEFS.filter((m) => settings.ma[m.key])
           .map((m) => {
             const v = calc.ma[m.key][i];
-            return v == null ? "" : `<span style="color:${m.color}">${mobile ? m.short : m.label} ${v.toFixed(prec)}</span>`;
+            return v == null ? "" : `<span style="color:${m.color}">${maText(m, minute, mobile)} ${v.toFixed(prec)}</span>`;
           })
           .filter(Boolean)
           .join(" ");
@@ -452,17 +513,19 @@ export default function KChart({
         const tone = prev == null || c.c === prev ? "" : c.c > prev ? "up" : "down";
         const sign = prev != null && c.c > prev ? "+" : "";
         el.innerHTML = mobile
-          ? `<div class="truncate"><b>${c.t.slice(5)}</b> 收<b class="${tone}">${c.c}</b> ` +
+          ? `<div class="truncate"><b>${barTimeLabel(c.t, true)}</b> 收<b class="${tone}">${c.c}</b> ` +
             `<span class="${tone}">${sign}${chg}%</span> ` +
             `開${c.o} 高${c.h} 低${c.l} 量${c.v >= 10000 ? `${(c.v / 10000).toFixed(1)}萬` : c.v.toLocaleString()}</div>` +
             `<div class="truncate">${mas}</div>`
-          : `<b>${c.t}</b> 開${c.o} 高${c.h} 低${c.l} 收<b>${c.c}</b> ` +
+          : `<b>${barTimeLabel(c.t, false)}</b> 開${c.o} 高${c.h} 低${c.l} 收<b>${c.c}</b> ` +
             `<span class="${tone}">${sign}${chg}%</span> ` +
             `量${c.v.toLocaleString()}張 ${mas}`;
       };
       chart.subscribeCrosshairMove((param) => {
-        const t = param.time as string | undefined;
-        const i = t ? byTime.get(t) : undefined;
+        const key = param.time as string | number | undefined;
+        const i = key != null ? byTime.get(key) : undefined;
+        // 主力/分點序列只有日頻(分K時不畫),鍵是 "YYYY-MM-DD" 字串。
+        const t = typeof key === "string" ? key : undefined;
         if (mobile) {
           // 手機:主力/分點 pane 的當日/累計數值更新在上方 compact legend(pane 名 + 買賣超 ±N/累計 ±M)
           const ml = mobileLegendRef.current;
@@ -498,7 +561,7 @@ export default function KChart({
       chartRef.current = undefined;
       titlesRef.current = [];
     };
-  }, [bars, calc, flow, settings, visibleDays, mobilePaneKey, isMobile, selLabel, fmtSel, mobilePaneFactors, levels]);
+  }, [bars, calc, flow, settings, tf, minute, visibleDays, mobilePaneKey, isMobile, selLabel, fmtSel, mobilePaneFactors, levels]);
 
   // 主題切換:就地更新既有 chart 的 grid/軸/水印色(不重建 → 不閃爍)。chart 建立時已用當下主題色,故此處僅處理「建立後」的切換。
   useEffect(() => {
@@ -527,12 +590,46 @@ export default function KChart({
     if (typeof window !== "undefined") localStorage.setItem(LS_MOBILE_PANE, key);
   };
 
+  // 週期鈕:分K三格只在提供分K時出現。亮哪一格 = 實際畫的週期;分K載入中先亮使用者選的那格。
+  const tfDefs = loadIntraday ? TF_DEFS : TF_DEFS.filter((t) => !isMinuteTf(t.key));
+  const shownTf = wantMinute && (intraStatus === "idle" || intraStatus === "loading") ? settings.tf : tf;
+  // 手機 + 分K:六格加副圖鈕放不進 390px 一列,週期自成一列(docs/50)。
+  const tfOwnRow = isMobile && !!loadIntraday;
+  const tfGroup = (
+    <span role="group" aria-label="K線週期" className="inline-flex shrink-0 gap-0.5 rounded-lg border border-border bg-card p-0.5">
+      {tfDefs.map((t) => (
+        <button
+          key={t.key}
+          type="button"
+          data-testid={`kchart-tf-${t.key}`}
+          className={cn(segBtnClass(shownTf === t.key, "accent"), isMobile && "px-2.5")}
+          aria-label={t.label}
+          aria-pressed={shownTf === t.key}
+          onClick={() => setSettings((s) => ({ ...s, tf: t.key }))}
+        >
+          {isMobile ? t.short : t.label}
+        </button>
+      ))}
+    </span>
+  );
+
   return (
     <div id="stock-kchart" className="min-w-0 max-w-full overflow-hidden">
       {/* 工具列：兩層設計
           第一層：時間框架(日/週/月) + 副圖切換(MACD/KD/RSI) + 手機版主力/分點 — 固定可見，不橫滑
           第二層：均線 chip + 布林 + 桌機主力買賣超 — wrap 換行，手機折疊展開
       */}
+      {/* ── Row 0(手機且有分K):週期 5分/30分/60分/日/週/月 自成一列,放不下時橫滑 ── */}
+      {tfOwnRow && (
+        <ScrollHint
+          fade="background"
+          variant="plain"
+          activeKey={settings.tf}
+          className="flex min-w-0 flex-nowrap items-center overflow-x-auto px-0.5 pt-2 scrollbar-hide [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        >
+          {tfGroup}
+        </ScrollHint>
+      )}
       {/* ── Row 1：固定可見選項 ── */}
       {/* 手機:兩組 segment 同一行不換行(放不下時橫滑),副圖/主力/分點本來就擇一顯示,
           所以併成同一組——舊版把主力/分點做成另一種外觀的按鈕,在 390px 上自己掉到第二行。 */}
@@ -545,19 +642,7 @@ export default function KChart({
         )}
       >
         {/* 時間框架 */}
-        <span className="inline-flex shrink-0 gap-0.5 rounded-lg border border-border bg-card p-0.5">
-          {TF_DEFS.map((t) => (
-            <button
-              key={t.key}
-              type="button"
-              className={cn(segBtnClass(settings.tf === t.key, "accent"), isMobile && "px-2.5")}
-              aria-label={t.label}
-              onClick={() => setSettings((s) => ({ ...s, tf: t.key }))}
-            >
-              {isMobile ? t.short : t.label}
-            </button>
-          ))}
-        </span>
+        {!tfOwnRow && tfGroup}
         {!isMobile && <span className="h-[18px] w-px bg-[color:var(--line)]" />}
         {/* 副圖切換 MACD/KD/RSI(手機版再接主力/分點) */}
         <span className="inline-flex shrink-0 gap-0.5 rounded-lg border border-border bg-card p-0.5">
@@ -577,7 +662,7 @@ export default function KChart({
             </button>
             );
           })}
-          {isMobile && !!mainForce?.length && (
+          {isMobile && !minute && !!mainForce?.length && (
             <button
               type="button"
               className={cn(segBtnClass(mobilePaneKey === "main", "warn"), "px-2")}
@@ -586,7 +671,7 @@ export default function KChart({
               主力
             </button>
           )}
-          {isMobile && !!branchFlow?.length && (
+          {isMobile && !minute && !!branchFlow?.length && (
             <button
               type="button"
               className={cn(segBtnClass(mobilePaneKey === "sel", "warn"), "px-2")}
@@ -620,7 +705,7 @@ export default function KChart({
                 setSettings((s) => ({ ...s, ma: { ...s.ma, [m.key]: e.target.checked } }))
               }
             />
-            {m.label}
+            {maText(m, minute, false)}
           </label>
         ))}
         <label className={cn(chipBase, "min-h-9")} style={settings.boll ? { color: "#898781", borderColor: "#898781" } : undefined}>
@@ -631,7 +716,7 @@ export default function KChart({
           />
           布林
         </label>
-        {!!levels?.length && (
+        {!!levels?.length && !minute && (
           <label
             data-testid="kchart-levels-toggle"
             className={cn(chipBase, "min-h-9")}
@@ -647,7 +732,7 @@ export default function KChart({
           </label>
         )}
         {/* 桌機版：主力買賣超 checkbox */}
-        {!isMobile && !!mainForce?.length && (
+        {!isMobile && !minute && !!mainForce?.length && (
           <label className={cn(chipBase, "min-h-9")} style={settings.mainForce ? { color: CUM_COLOR, borderColor: CUM_COLOR } : undefined}>
             <input
               type="checkbox"
@@ -665,6 +750,12 @@ export default function KChart({
         <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5 px-0.5 pb-1.5 text-[12.5px] leading-snug">
           {caption}
         </div>
+      )}
+      {/* 分K說明(docs/50):畫分K時標原始價與更新日;選了分K但這檔沒有 → 一行說明,圖改畫日K。 */}
+      {(minute || notice) && (
+        <p data-testid="kchart-minute-note" role="status" className="px-0.5 pb-1.5 text-[12px] leading-snug text-muted-foreground">
+          {minute && intra.file ? minuteCaption(intra.file) : notice}
+        </p>
       )}
       {/* 手機版:游標數值改此處一行 compact legend(pane 名 + 買賣超 ±N/累計 ±M);桌機用 pane 內 watermark */}
       {isMobile && (

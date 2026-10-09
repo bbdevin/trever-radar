@@ -2,6 +2,15 @@
 
 > 單一進度真相。每完成一個里程碑就更新本檔。規格細節看各編號文件,別寫在這裡。
 
+## 2026-10-09 個股分K 5/30/60 分 MVP(`docs/50`;程式完成於分支、未合 main、未上線;v3.6)
+
+- **需求**:Fable MVP 計畫(使用者已核准):個股頁 K 線加 5/30/60 分。
+- **做了什麼**:`providers/fugle.py` 加 `fetch_historical_candles`(timeframe=5),`fetch_intraday_candles` 多回完整 1 分 K 列;新模組 `export/intraday_bars.py`:榜單聯集(~275 檔)近 60 個交易日 5 分 K,快取 `DATA_DIR/intraday5/`,當日由 spark_day 同一輪的 1 分 K 聚合(零額外請求),缺日以 historical 每檔一次補、每輪上限 120 次;桶以開始時間 09:00…13:25,13:30 收盤併入 13:25;輸出 `stocks/intraday/{id}.json`(緊湊、tmp+rename、內容沒變不重寫);離開聯集滿 10 個交易日才刪。json_export 在 `attach_spark_day` 下一行單一呼叫 `export_intraday_safe`(同一個今天=價格日閘門;失敗只記 warning)。CLI `export-intraday [--backfill]`。前端:週期列 5分/30分/60分/日/週/月(手機自成一列 ScrollHint)、第一次要畫分K才抓、30/60 分由 5 分依交易時段切桶(9/5 根)、UTCTimestamp 以台北牆上時間顯示 09:00、legend MM-DD HH:MM、MA5/MA20 命名、主力/分點 pane 與壓力支撐在分K不畫、說明列「分K · 原始價(未還原) · 盤後更新至 MM-DD」、沒有檔「此股未提供分K,改看日K」退回日K。
+- **前提**:Fugle 免費方案、同一把 `FUGLE_API_KEY`,與既有 spark_day 相同;不新增 secret、不改 crontab/Worker。
+- **體積**:每檔 ~120–128 KB raw / ~27 KB gzip;聯集 ~34 MB raw;Workers 檔數 +~275(~9,400 / 20,000)。
+- **驗證**:`test_intraday_bars.py`(聚合、13:30 併入、缺分鐘、標記平移、快取/補抓上限、確認空日、60 日裁切、刪檔寬限與重入、隔離、閘門、檔案格式、spark_day 轉交)、web `resample.test.ts`(5→30/60、時區標記、退回日K、404→null);pytest 全套 1641 passed、web node 測試 360 passed、`tsc`、`next build` 通過;390px 深/淺色 5分/60分/退回日K 截圖在 `docs/evidence/50_intraday_k/`(種子資料,Playwright 攔截 Supabase auth/rest,未動門禁;無水平溢出;選分K前不抓分K檔)。
+- **待人類**:①合 main;②(可選)VPS 跑一次 `radar export-intraday --backfill`(~275 次 ≈ 5 分鐘;不跑則交易日每輪 export 自動補 120 檔);③看 log `intraday label check` 核對 Fugle 歷史 5 分 K 標記語意、量單位(`docs/50` §4)並回寫。
+
 ## 2026-10-09 除權息還原因子日增量(`docs/47` §3.2;程式完成於分支、未合 main;正式 crontab 待人類套用)
 
 - **問題**:`adj_factor` 只在手動 `compute-adjustments` 時更新,最後一次正式跑 2026-09-04;之後除權息的個股還原序列在除權息日斷開,指標/分數/價格位置跟著錯(`docs/38` §7.21 的 `exdiv` 因此多數偵測不到)。

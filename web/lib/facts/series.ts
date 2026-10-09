@@ -5,7 +5,7 @@
  */
 import type { Candle } from "../types.ts";
 import { kd, macd, rsi, sma } from "../indicators.ts";
-import { resample, type Timeframe } from "../resample.ts";
+import { resample, type DailyTf as Timeframe } from "../resample.ts";
 
 /** 還原到最後一根的基準;收盤缺值的 K 棒略過,高低開缺值以收盤代替。 */
 export function adjustCandles(candles: readonly Candle[] | null | undefined): Candle[] {

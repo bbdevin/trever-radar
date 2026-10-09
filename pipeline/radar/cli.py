@@ -884,6 +884,22 @@ def cmd_export_json(args):
     print(f"exported {info['stocks']} stocks for {info['date']} -> {info['out']}")
 
 
+def cmd_export_intraday(args):
+    """分K(docs/50):對剛匯出的 radar.json 聯集補抓/重寫 stocks/intraday/*.json。
+
+    不重跑整個 export;聯集與資料日讀 ``--out`` 底下的 radar.json。``--backfill`` 不設每輪
+    請求上限(全聯集 ~275 次 ≈ 5 分鐘)。歷史端點任何日子都能抓,所以不套「今天 = 價格日」閘門。
+    """
+    from pathlib import Path
+
+    from .export.intraday_bars import ROUND_CAP, union_from_export, update_intraday
+    from .export.json_export import DEFAULT_OUT
+
+    out = Path(args.out) if args.out else DEFAULT_OUT
+    ids, d = union_from_export(out)
+    update_intraday(out, ids, d, cap=None if args.backfill else ROUND_CAP)
+
+
 def cmd_futures_anomaly_digest(args):
     """印出期貨量異常摘要:第一行標題、其後內文。沒有名單就什麼都不印,exit 0。
 
@@ -1429,6 +1445,13 @@ def main(argv=None):
     exp.add_argument("--size-report", default=None, metavar="PATH",
                      help="write per-key size distribution (union vs other) to PATH")
     exp.set_defaults(fn=cmd_export_json)
+
+    eid = sub.add_parser("export-intraday",
+                         help="5-min K bars for the radar.json union -> stocks/intraday/ (docs/50)")
+    eid.add_argument("--out", default=None, help="export dir holding radar.json (default web/public/data)")
+    eid.add_argument("--backfill", action="store_true",
+                     help="no per-round request cap (full union ~275 requests ~ 5 min)")
+    eid.set_defaults(fn=cmd_export_intraday)
 
     fad = sub.add_parser(
         "futures-anomaly-digest",
