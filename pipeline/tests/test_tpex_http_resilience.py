@@ -240,7 +240,7 @@ class ImportDailyHttpResultTests(unittest.TestCase):
         assert match, f"lib.sh 裡找不到 {name}()"
         return match.group(0)
 
-    def _run_daily_insti_harness(self, quotes_rc=0, insti_rc=0, master_rc=0):
+    def _run_daily_insti_harness(self, quotes_rc=0, insti_rc=0, master_rc=0, index_rc=0):
         """Run a copied script with a sibling fake lib; never touch VPS helpers."""
         source = Path(__file__).parents[2] / "vps" / "scripts" / "daily-insti.sh"
         with TemporaryDirectory() as tmp:
@@ -279,6 +279,9 @@ radar() {
   if [ \"$1\" = import-daily ] && [ \"$2\" = --datasets ] && [ \"$3\" = insti ]; then
     return \"${INSTI_RC:-0}\"
   fi
+  if [ \"$1\" = import-index ]; then
+    return \"${INDEX_RC:-0}\"
+  fi
   if [ \"$1\" = import-warrant-master ]; then
     return \"${MASTER_RC:-0}\"
   fi
@@ -290,6 +293,7 @@ ROUND_FAIL_CONSEQUENCE=""
                 + self._real_lib_function("set_round_consequence") + "\n"
                 + self._real_lib_function("run_step") + "\n"
                 + self._real_lib_function("run_step_or_fail") + "\n"
+                + self._real_lib_function("run_step_or_warn") + "\n"
                 # docs/47:法人那一步改成輪詢;輪詢迴圈本身也取真的那一份。
                 + self._real_lib_function("poll_until") + "\n",
                 encoding="utf-8",
@@ -301,7 +305,7 @@ ROUND_FAIL_CONSEQUENCE=""
                 ["bash", "-c", (
                     "RADAR_TEST_EVENTS=../events.log "
                     f"QUOTES_RC={quotes_rc} INSTI_RC={insti_rc} "
-                    f"MASTER_RC={master_rc} exec bash {script.name}"
+                    f"MASTER_RC={master_rc} INDEX_RC={index_rc} exec bash {script.name}"
                 )],
                 cwd=scripts, env=os.environ, text=True,
                 capture_output=True, timeout=10, check=False,
@@ -389,6 +393,27 @@ ROUND_FAIL_CONSEQUENCE=""
         self.assertTrue(any("radar:import-warrant-master" in e for e in events))
         unlocked = [e for e in events if e.startswith("UNLOCKED:")]
         self.assertEqual(unlocked, [], f"有步驟在沒有 DB 鎖時執行:{unlocked}")
+
+    def test_daily_insti_import_index_runs_before_export_and_75_does_not_abort(self):
+        """docs/49 §11.3:import-index 在 export-json 之前;尚未公布(75)只 warn,照常上線。"""
+        for index_rc in (0, 75):
+            rc, events = self._run_daily_insti_harness(index_rc=index_rc)
+            self.assertEqual(rc, 0, events)
+            idx = events.index("radar:import-index")
+            export = next(i for i, e in enumerate(events) if "export-json" in e)
+            self.assertLess(idx, export)
+            self.assertIn("deploy", events)
+            self.assertFalse(any(e.startswith("err:") for e in events))
+            warned = any(e.startswith("warn:") and "import-index" in e for e in events)
+            self.assertEqual(warned, index_rc == 75)
+
+    def test_all_daily_scripts_run_import_index_before_export_json(self):
+        scripts = Path(__file__).parents[2] / "vps" / "scripts"
+        for name in ("daily-market.sh", "daily-tpex-quotes.sh", "daily-insti.sh"):
+            text = (scripts / name).read_text(encoding="utf-8")
+            warn = text.index('run_step_or_warn "import-index" radar import-index')
+            export = text.index('run_step_or_fail "export-json" radar export-json')
+            self.assertLess(warn, export, name)
 
     def test_daily_insti_success_runs_publish_sequence(self):
         rc, events = self._run_daily_insti_harness()
