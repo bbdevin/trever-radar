@@ -217,3 +217,22 @@ export function fmtStockAmt(r: Pick<InstiStockRow, "amt_est" | "amt_missing">): 
 export function showAllText(total: number): string {
   return `顯示全部 ${total} 檔`;
 }
+
+// ── 量能(docs/49 §10):首頁「市場資金流向」面板 2026-10-09 併入本分頁 ──
+// 族群列的 vs20 來自首頁已載入的 home/head.json `sectors`(產業)/`themes`(題材),不多抓檔;
+// 檔內只有成交金額前 16 個產業 / 前 20 個題材,對不上名稱的族群就不顯示徽章。
+
+/** vs20(今日金額 / 近 20 日均)→ 偏離 %(1.96 → +96);null 透傳 */
+export function vs20Deviation(vs20: number | null | undefined): number | null {
+  return vs20 == null ? null : Math.round((vs20 - 1) * 100);
+}
+
+/** 族群名稱 → vs20;沒給清單或名稱對不上 → 空 Map(呼叫端不畫徽章) */
+export function vs20ByName(flows: readonly { name: string; vs20: number | null }[] | undefined): Map<string, number> {
+  const m = new Map<string, number>();
+  for (const f of flows ?? []) if (f.vs20 != null) m.set(f.name, f.vs20);
+  return m;
+}
+
+/** 定義句後的量能註腳(只在有任何族群對得上 vs20 時出現) */
+export const VS20_LEGEND = "量能＝今日成交金額相對近 20 日平均(+80% 即比平時多八成);只列有資料的族群。";

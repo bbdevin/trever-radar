@@ -13,7 +13,7 @@
 | 項目 | 狀態 |
 |---|---|
 | IA-0 文件化 | ✅ 完成(2026-07-11) |
-| IA-1A 首頁任務流 Pilot | ✅ **完成(2026-07-12, commit `8d4aee5`)** — Compact Brief 壓縮、Primary Queue 前置、MoneyFlow 收合面板、DesktopNav active state、桌機導覽任務導向命名 |
+| IA-1A 首頁任務流 Pilot | ✅ **完成(2026-07-12, commit `8d4aee5`)** — Compact Brief 壓縮、Primary Queue 前置、MoneyFlow 收合面板、DesktopNav active state、桌機導覽任務導向命名。**MoneyFlow 收合面板已於 2026-10-09 移除,量能併入「法人族群」分頁(§17、`docs/49` §10)** |
 | IA-1B 榜單收斂 | ✅ **完成；2026-08-31 現況覆寫** — 首頁一級 tab 為 10 個：綜合、策略、未發動、已發動、資券、市場掃描、追高風險、失效、口袋、權證；市場掃描承接熱門／爆量／強勢／弱勢等掃描維度 |
 | IA-2 個股判讀工作台 | ✅ **完成(2026-07-12, commit `8d4aee5`)** — StockDecisionHeader（reasons≤3/risks≤2/觀察失效+距離%/來源徽章）合入 stock/page.tsx |
 | IA-3 分點研究工作台 | ✅ **完成(2026-07-12；2026-08-31 bounded detail rule 落地)** — rankings 改雙欄 Master-Detail 響應式佈局；detail set 為 tracked + 最新非隔日沖 Top100 排名聯集，三層 hard cap=Top100／200 branches／20k rows-shard（138 分點／599,525 rows／約22.9 MiB 僅為當次 evidence），只有 ready index 命中卡可下鑽，其他明示僅有排行；索引／shard error 不偽裝成空資料 |
@@ -458,3 +458,9 @@ K線
 - 多方榜分頁不顯示分頁下的說明卡,改由頁首卡(`BullBoardList`:標題、資料日、定義句、「檢視 N 檔 → 入榜 Q 檔」、資料日一行、留存說明)承接;狀態提示(停在上一版/未到齊)在頁首卡下方。
 - 卡片 `BullBoardCard` 點整張進個股頁「多空」分頁(`?tab=tech`);事實列與多空分頁共用 `FactLine`。不顯示名次;題材排序(P2)尚未做。
 - 資料來源:`bull_board.json` 由 VPS 每一輪 export-json 之後、deploy_data 之前建置(`lib.sh build_bull_board`,warn-and-continue;詳見 `docs/48` §1.1)。建置失敗時首頁沿用上一版,由頁首「停在上一版」提示承接。
+
+## 17. 首頁「市場資金流向」收合面板移除,量能併入「法人族群」分頁(2026-10-09,docs/49 §10;使用者要求整併或移除)
+
+- IA-1A 留下的「市場脈絡 Context:MoneyFlow 摘要 → 展開完整產業/題材」(§4.2)自本節起退場:首頁結構變成 Compact Brief → Primary Queue(分頁)→ 免責聲明,第三屏不再有收合面板。
+- 原因:「法人族群」分頁(2026-10-08 起)與 MoneyFlow 是同一套族群名稱、同一種對向條列版型、同樣的「點族群看成員」下鑽,只差排序維度(法人淨額 vs 成交量能);使用者看到的是同一張表排兩次。依 docs/20「合併重複」,保留唯一不重複的族群層訊號 `vs20`(量能),以徽章併進法人族群的族群列;其餘(成交金額排序、平均漲跌、子題材下鑽、族群層漲跌家數)不再提供。盤點與取捨見 `docs/49` §10。
+- 不動:多方榜、分頁數與順序、BottomNav、`home/head.json`(量能來自首頁已載入的 `sectors`/`themes`,零額外下載)。

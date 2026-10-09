@@ -2,6 +2,15 @@
 
 > 單一進度真相。每完成一個里程碑就更新本檔。規格細節看各編號文件,別寫在這裡。
 
+## 2026-10-09 首頁「市場資金流向」面板併入「法人族群」分頁(`docs/49` §10、`docs/25` §17;程式完成於分支、未合 main、未上線;v3.6)
+
+- **需求**:使用者「因為做了法人族群 感覺下面市場資金流向重複到了 可以整併或移除」,決定權交給 Planner。
+- **盤點**:兩者同族群名稱(`stocks.industry`／`themes`)、同對向條列版型、同「點族群看成員」下鑽,只差排序維度(成交量能 `vs20` vs 法人淨額);MoneyFlow 獨有的族群層訊號只有 `vs20`(成交金額排序、平均漲跌、子題材下鑽、族群層漲跌家數為次要;`share` 從未顯示;市場層漲跌家數在 Compact Brief 不受影響)。
+- **決定與做了什麼**:移除首頁底部「市場資金流向」收合按鈕與 `web/components/MoneyFlow.tsx`;`Vs20Badge` 搬到 `web/components/Vs20Badge.tsx`(題材分組列照用);「法人族群」產業／題材族群列第二行加 `量能+N%` 徽章,來源是首頁已載入的 `head.json` `sectors`/`themes`(前 16 產業／前 20 題材,對不上名稱就不畫),定義句後補一句量能註腳;`web/lib/instiGroupFlow.ts` 加 `vs20Deviation`/`vs20ByName`/`VS20_LEGEND`。不多抓檔、`radar.json`/`home/*.json` 與 export 不動、多方榜不動、個股檢視不加徽章。
+- **清理候選(另案、需人類核准)**:`sectors[].subs/top/share/avg_chg/up/down/turnover`、`themes[].top/share/avg_chg/up/down/turnover` 已無前端讀者,本次為了 `radar.json` 逐位元穩定不從 export 拿掉(`docs/49` §10.3)。
+- **驗證**:web node 測試 349 passed(含 `lib/facts`;`instiGroupFlow.test.ts` +2、禁詞加 `VS20_LEGEND`);`tsc`、`next build` 通過;390px 深／淺色截圖(靜態 build + 種子資料,Playwright 攔截 Supabase auth/rest、假 session,未動 AuthGate):首頁多方榜、法人族群 產業／題材。
+- **待人類**:合 main;export 清理候選是否動。
+
 ## 2026-10-09 期貨異常名單加現貨股價與漲跌(`docs/38` §7.21;程式完成於分支、未合 main、未上線;v3.6)
 
 - **需求**:使用者「期貨異常那邊可以顯示股價漲跌跟股價嗎」。

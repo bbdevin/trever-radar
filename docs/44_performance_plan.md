@@ -176,7 +176,7 @@ home/stocks.json       {version:1, data_date, generated_at, stocks:[逐檔投影
 
 **清理步驟(另案)**:`radar.json` **不會停產**(分點頁、自選頁、worker、建置器、推播都讀它);可做的是 ① 分點頁改讀自己的小檔(concentration)、自選頁改讀 `home/head.json` 的 `lists.armed`,讓 `radar.json` 只剩機器讀者;② 前端拿掉 `home/head.json` 404 退回(新資料上線 2–3 個交易日後);③ Worker `NO_STORE` 加 `home/head.json`、`home/stocks.json`。沒有磁碟或檔數壓力(兩個檔、合計比 `radar.json` 小),過渡期可以長。
 
-**沒做、留著以後量**:`spark`(30 根收盤)在有 `spark_day` 的檔其實沒畫(卡片畫分時),fixture 裡 `spark` 佔逐檔 raw 14%;要省得把「有 spark_day 就不給 spark」寫進 export,與卡片的判斷耦合,先不做。`themes[].top` / `sectors[].subs`(資金流向面板,預設收合)約 33 KB raw,也可延後抓,但多方榜族群檢視要 `themes`/`sectors` 的 `vs20`,拆了省不多。
+**沒做、留著以後量**:`spark`(30 根收盤)在有 `spark_day` 的檔其實沒畫(卡片畫分時),fixture 裡 `spark` 佔逐檔 raw 14%;要省得把「有 spark_day 就不給 spark」寫進 export,與卡片的判斷耦合,先不做。`themes[].top` / `sectors[].subs`(資金流向面板,預設收合)約 33 KB raw,也可延後抓,但多方榜族群檢視要 `themes`/`sectors` 的 `vs20`,拆了省不多。**2026-10-09 後**:資金流向面板已移除(`docs/49` §10),`subs`/`top`/`share`/`avg_chg`/`up`/`down`/`turnover` 已無前端讀者,可直接從 `head.json` 投影丟掉(`radar.json` 不動);列為清理候選,另案。
 
 ## 4. 明確不做
 

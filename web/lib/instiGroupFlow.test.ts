@@ -41,6 +41,9 @@ import {
   STOCK_INITIAL,
   VIEWS,
   VIEW_LABEL,
+  VS20_LEGEND,
+  vs20ByName,
+  vs20Deviation,
   fmtStockAmt,
   showAllText,
   stockCountLine,
@@ -220,7 +223,7 @@ test("禁詞:分頁名、說明、定義句、狀態句", () => {
   texts.push(
     ...IDENTITIES.flatMap((k) => [stockDefinitionText(k), stockCountLine(k, { buy_n: 412, sell_n: 380 })]),
     ...VIEWS.map((v) => VIEW_LABEL[v]),
-    INSTI_STOCKS_EMPTY, INSTI_NO_STOCKS, showAllText(30),
+    INSTI_STOCKS_EMPTY, INSTI_NO_STOCKS, showAllText(30), VS20_LEGEND,
     stockSideTitle("buy", 30), stockSideTitle("sell", 30),
     streakText(3, "buy", 20)!, streakText(20, "sell", 20)!,
   );
@@ -229,4 +232,26 @@ test("禁詞:分頁名、說明、定義句、狀態句", () => {
   // 買超/賣超 是允許的
   assert.ok(!banned.test(countFull(g)));
   assert.match(countFull(g), /買超/);
+});
+
+// ── 量能(docs/49 §10:首頁資金流向面板併入本分頁) ──
+
+test("量能:vs20 → 偏離 %,null 透傳", () => {
+  assert.equal(vs20Deviation(1.96), 96);
+  assert.equal(vs20Deviation(0.8), -20);
+  assert.equal(vs20Deviation(1), 0);
+  assert.equal(vs20Deviation(null), null);
+  assert.equal(vs20Deviation(undefined), null);
+});
+
+test("量能:族群名稱對照只收有 vs20 的;沒給清單 → 空 Map,不畫徽章", () => {
+  const m = vs20ByName([
+    { name: "半導體業", vs20: 1.45 },
+    { name: "金融保險業", vs20: null },
+  ]);
+  assert.equal(m.get("半導體業"), 1.45);
+  assert.equal(m.has("金融保險業"), false);
+  assert.equal(m.get("不在檔內的族群"), undefined);
+  assert.equal(vs20ByName(undefined).size, 0);
+  assert.equal(vs20ByName([]).size, 0);
 });

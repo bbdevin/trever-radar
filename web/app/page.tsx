@@ -6,7 +6,6 @@ import { Clock, ShieldCheck, Zap, ChevronDown, Briefcase, AlertTriangle, Ban, Pe
 import { IconFlame, IconTrend, IconZap, IconRadar, IconPulse, IconStar, IconTrendDown } from "@/components/Icons";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
-import MoneyFlow from "@/components/MoneyFlow";
 import { ScrollHint } from "@/components/ScrollHint";
 import StockCard from "@/components/StockCard";
 import ThemeGroupedList from "@/components/ThemeGroupedList";
@@ -225,7 +224,6 @@ function RadarView() {
   // F4.2: 已展開的策略組(session 內即可,不持久化);預設只展開籌碼事件。
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(() => new Set(["chips"]));
   const strategyDefaulted = useRef(false);
-  const [moneyFlowOpen, setMoneyFlowOpen] = useState(false);
   const [listSort, setListSort] = useState<ListSort>("score");
   // 期貨分頁「當日｜近 N 日」(docs/38 §7.19)。預設當日;上次的選擇只在瀏覽器端讀。
   const [futuresView, setFuturesView] = useState<FuturesView>("today");
@@ -738,7 +736,8 @@ function RadarView() {
         </div>
       ) : tab === "insti" ? (
         <div className="mb-4 animate-[fadeUp_0.35s_ease_backwards]">
-          <InstiGroupFlow />
+          {/* sectors/themes 已在 head.json 裡(多方榜族群檢視也用),只給族群列加量能徽章,不多抓檔 */}
+          <InstiGroupFlow sectors={radar.sectors} themes={radar.themes} />
         </div>
       ) : stocksPending ? (
         // 第一次切到要畫股票的分頁:home/stocks.json 還在路上(表頭與分頁檔數已經畫好了)
@@ -860,32 +859,7 @@ function RadarView() {
         </>
       )}
 
-      {/* Context: MoneyFlow collapsible */}
-      <div className="mb-4">
-        <button
-          className="flex w-full items-center justify-between rounded-[var(--r-md)] border border-border bg-card px-4 py-2.5 text-left text-[13.5px] font-semibold text-foreground transition-colors hover:border-[color:var(--border-strong)] hover:bg-secondary"
-          onClick={() => setMoneyFlowOpen((v) => !v)}
-          aria-expanded={moneyFlowOpen}
-          aria-controls="moneyflow-panel"
-        >
-          <span>市場資金流向</span>
-          <span
-            className={cn(
-              "text-muted-foreground transition-transform duration-200",
-              moneyFlowOpen && "rotate-180",
-            )}
-            aria-hidden
-          >
-            {"▾"}
-          </span>
-        </button>
-        {moneyFlowOpen && (
-          <div id="moneyflow-panel" className="mt-2">
-            <MoneyFlow sectors={radar.sectors} themes={radar.themes} />
-          </div>
-        )}
-      </div>
-
+      {/* 「市場資金流向」收合面板已於 2026-10-09 併入「法人族群」分頁(族群列量能徽章,docs/49 §10) */}
       <Alert className="mt-1 bg-card">
         <AlertDescription className="flex flex-wrap items-baseline gap-2.5 text-[13px] text-foreground">
           <span className="shrink-0 rounded-md bg-warn/15 px-2 py-0.5 text-[11.5px] font-bold tracking-[0.3px] text-warn">

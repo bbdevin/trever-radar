@@ -1,6 +1,6 @@
 # 49 法人族群買賣超(外資／投信／自營 × 產業／題材)規劃
 
-> **狀態**:✅ **MVP 程式完成(2026-10-08,分支、未合 main、未上線;v3.5)**;✅ **「個股」模式(§9,2026-10-09,分支;v3.6)**;P1/P2 📝 未做。原規劃 2026-10-08 Fable Planner;使用者已核准,分頁名稱沿用「法人族群」。
+> **狀態**:✅ **MVP 程式完成(2026-10-08,分支、未合 main、未上線;v3.5)**;✅ **「個股」模式(§9,2026-10-09,分支;v3.6)**;✅ **首頁「市場資金流向」面板併入本分頁(§10,2026-10-09,分支;v3.6)**;P1/P2 📝 未做。原規劃 2026-10-08 Fable Planner;使用者已核准,分頁名稱沿用「法人族群」。
 >
 > **MVP 實作備註**(與本檔的差異或補充):
 > - 張數取「逐檔 `淨股數 ÷ 1000` **向零截斷**再相加」(`trunc_lots`),兩條恆等式(族群 = Σ 成員、產業各組 + 其他 = 全市場)因此逐張成立;`buy_n`/`sell_n` 與成員前 5/前 3 只計截斷後 ≠ 0 張的檔(零股不算買也不算賣)。**與個股卡片 `foreign_net_lots` 的 `//`(向下取整)刻意不同**:`//` 把 −500 股算成 −1 張、+500 股算成 0 張,買賣超檔數會系統性偏向賣方,並出現「−1張 · 0萬」的假賣超;卡片值逐檔顯示、不計檔數,所以不動(兩者在負數有零股尾數時差 1 張)。
@@ -166,7 +166,7 @@ web/public/data/rankings/insti_flow_20d.json     (P1)
 
 | 既有 | 關係 | 動不動 |
 |---|---|---|
-| MoneyFlow(成交金額 vs20) | 回答「錢多不多」;本功能回答「法人往哪放」。同一套族群名稱與列版型,使用者心智一致。 | 不改。P2 可在 MoneyFlow 族群下鑽多一行「外資 +N 張」(讀同一檔)。 |
+| MoneyFlow(成交金額 vs20) | 回答「錢多不多」;本功能回答「法人往哪放」。同一套族群名稱與列版型,使用者心智一致。 | ~~不改。P2 可在 MoneyFlow 族群下鑽多一行「外資 +N 張」(讀同一檔)。~~ **2026-10-09 作廢:首頁面板移除,`vs20` 量能徽章併入本分頁族群列(§10)。** |
 | 多方榜族群檢視(`groupBoardEntries`) | 顯示用分組,一檔只歸最熱題材;本功能全成員計入。兩者問的問題不同。 | **不改**(`docs/48` 凍結;`theme` 不參與入榜本來就鎖住)。 |
 | 題材分組(`themeGroups.ts`) | 不重用 `hottestListedTheme`(理由 §2.1);重用 `radar.themes` 的 membership 口徑。 | 不改。 |
 | 個股頁「三大法人」分頁 `InstiPanel` | P2 在面板頂加一行「所屬產業 半導體 今日外資合計 +12,480 張,本檔為族群內第 2 大買超」。 | **只顯示,不是事實 code**:`docs/48` §1 寫明「新增事實 code = v2」,所以不進 `facts/*`、不進多空摘要、不碰 rank 表;多方榜 `counts` 也不會動。 |
@@ -179,7 +179,7 @@ web/public/data/rankings/insti_flow_20d.json     (P1)
 |---|---|---|---|
 | **MVP** | 今日視窗;外資/投信/自營/合計;產業＋題材;族群列＋展開成員(5+3);`insti_flow_1d.json`;首頁新分頁;pytest/node 測試;390px 截圖 | `pipeline/radar/export/insti_group_flow.py`(新)、`json_export.py`(呼叫 + 把 `company_themes_by_stock` 傳入)、`pipeline/tests/test_insti_group_flow.py`(新)、`web/lib/instiGroupFlow.ts`(+test,新)、`web/components/InstiGroupFlow.tsx`(新)、`web/app/page.tsx`(TABS + 分支)、`web/lib/types.ts`、`web/lib/changelog.ts`、`docs/49`/`STATUS` | 1.5–2 天 |
 | **P1** | 5 日 / 20 日視窗(兩個檔,切到才抓);「更多」展開全部族群;族群全部成分(第四個檔 `insti_flow_members_1d.json`,只在點「看全部」時抓) | 同上 + `vps/scripts` 不需改(export 內部寫) | 0.5–1 天 |
-| **P2** | 個股頁三大法人分頁的族群脈絡一行(§5);MoneyFlow 下鑽加法人一行;族群連續 N 日同向(`streak`,從 20 日檔算) | `web/components/InstiPanel.tsx`、`MoneyFlow.tsx` | 0.5 天 |
+| **P2** | 個股頁三大法人分頁的族群脈絡一行(§5);~~MoneyFlow 下鑽加法人一行~~(2026-10-09 面板已移除,改為本分頁族群列帶量能徽章,§10,已做);族群連續 N 日同向(`streak`,從 20 日檔算) | `web/components/InstiPanel.tsx` | 0.5 天 |
 
 每個 Phase 完成後:changelog 次版 +1、`docs/49` 狀態表、`STATUS`;MVP 合 `main` 後 VPS 下一輪 `daily-insti.sh` 的 export 自動產生檔案,**不需改 crontab、Worker、腳本**。
 
@@ -250,3 +250,40 @@ web/public/data/rankings/insti_flow_20d.json     (P1)
 - node `web/lib/instiGroupFlow.test.ts`:個股句子、連續日數文案、金額「—」、禁詞。`tsc`、`next build` 通過。
 - 390px 深/淺色截圖:**已做(2026-10-09 驗證者)**。未改門禁:Playwright 以路由攔截回應 Supabase `/auth/v1/*`、`/rest/v1/*`(app_profiles=approved)後對靜態 build 截圖;收合/展開、缺收盤「—」、載入中、缺檔、離線各狀態皆無橫向溢出(scrollWidth=390)。
 - 正式資料抽 3 檔與 T86/TPEx 核對(同 §7.1),合 main 上線後做。
+
+## 10. 首頁「市場資金流向」面板併入本分頁(2026-10-09,程式完成於分支;v3.6)
+
+使用者:「因為做了法人族群 感覺下面市場資金流向重複到了 可以整併或移除」,決定權交給 Planner。本節是盤點、決定與理由;§5 那一列「MoneyFlow 不改」自本節起作廢。
+
+### 10.1 盤點:MoneyFlow 到底顯示什麼
+
+| 項目 | MoneyFlow(`web/components/MoneyFlow.tsx`,首頁最底、預設收合) | 法人族群分頁 | 判定 |
+|---|---|---|---|
+| 族群切換 產業／題材 | 有(`radar.sectors` 前 16／`radar.themes` 前 20,`home/head.json`) | 有(全部產業／題材買賣各前 20) | **重複**(同一套族群名稱、同一種對向條列版型) |
+| 排序鍵 | 資金量能(`vs20`=今日成交金額÷近 20 日均)或 平均漲跌(`avg_chg`) | 法人淨額金額(估) | 不同維度:MoneyFlow 問「錢多不多」,本分頁問「法人往哪放」 |
+| 族群列數字 | 成交金額(億)、vs20 偏離 %、平均漲跌 % | 淨額(估)、淨張數、買／賣檔數 | `vs20` 是**唯一**本分頁沒有的族群層訊號;成交金額絕對值、平均漲跌為次要 |
+| 下鑽 | 產業 → 子題材(`sectors[].subs`,金額/量能/平均漲跌)→ 成分股 chips(漲跌、金額);題材 → 成分股 chips | 族群 → 買超前 5／賣超前 3 成員(張數/金額/漲跌)→ 個股頁 | 重複(都是「點族群看成員」);子題材層是 MoneyFlow 獨有 |
+| 展開標頭 | 金額 · 量能 × · ↑漲家數/↓跌家數(族群層 `up`/`down`) | 買超 N 檔/賣超 N 檔/有資料 N 檔 | 族群層漲跌家數為 MoneyFlow 獨有;**市場層**漲跌家數在首頁 Compact Brief(`summary[].up/down`),不受影響 |
+| `share`(成交金額佔比) | export 有,**畫面從未顯示** | — | 無損失 |
+
+`sectors`/`themes` 的其他讀者(與本節無關、全部不動):多方榜族群檢視(`groupBoardEntries` 用 `vs20` 挑最熱題材)、`build-bull-board.mjs`(`hottestListedTheme`)、市場掃描／口袋的「題材」排序(`ThemeGroupedList` 分組標頭的量能徽章 `Vs20Badge`)。
+
+### 10.2 決定:移除首頁面板,把「量能」併進法人族群的族群列(選項 b 的最小版)
+
+- **移除** 首頁底部「市場資金流向」收合按鈕與 `MoneyFlow.tsx`。理由:docs/20「停止擴張、合併重複」、docs/25 §4「首頁先回答該檢查誰」;面板已經是預設收合、放在免責聲明之上,等於第三屏的隱藏功能;它與本分頁同族群、同版型,使用者看到的就是「同一張表排兩次」。
+- **併入**:本分頁 產業／題材 檢視的族群列第二行加 `量能+N%` 徽章(沿用 `Vs20Badge`,搬到 `web/components/Vs20Badge.tsx`),來源是首頁**已經載入**的 `head.json` `sectors`/`themes`,**不多抓任何檔、head.json 不變**(docs/44 §3.3 預設分頁下載量不變)。定義句後面多一句「量能＝今日成交金額相對近 20 日平均(+80% 即比平時多八成);只列有資料的族群」,只在有族群對得上時出現。一列同時看到「法人往哪放」與「錢多不多」,這正是 §5 原本列為 P2 的「兩個訊號放一起」,只是方向反過來(把量能放進法人表,而不是把法人放進量能表)。
+- **不做** 成交金額／平均漲跌排序、子題材下鑽、族群層漲跌家數、「成交」第五個身分 segmented。理由:再加一種排序鍵或第五格 segmented 會把本分頁變回兩張表;390px 下 segmented 四格已是上限;族群層「平均漲跌」與「漲跌家數」在個股層都有更直接的入口(市場掃描 強勢／弱勢、個股頁)。使用者若日後要「哪個產業今天錢最多」,再評估是否以 `turnover` 當第二排序鍵,不在本次範圍。
+- **不動**:多方榜、`radar.json`/`home/*.json` 逐位元不變、export 不改、`個股` 檢視不加徽章(全市場個股的 vs20 不在 head.json,只有候選股才有)。
+
+### 10.3 Export 清理候選(本次不動;另案、需人類核准)
+
+移除面板後,下列欄位**已無任何前端讀者**,但 `radar.json`/`home/head.json` 逐位元穩定對其他讀者有意義(docs/44 §3.3),本次不從 export 拿掉,只記為清理候選:
+
+- `sectors[].subs`(子題材下鑽,含每 sub 的 `top`)、`sectors[].top`、`themes[].top`(成分股 chips):docs/44 §3.3 估約 33 KB raw。
+- `sectors[].share`、`sectors[].avg_chg`、`sectors[].up`、`sectors[].down`、`themes[].share/avg_chg/up/down`、`sectors[].turnover`、`themes[].turnover`(只剩測試 fixture 與型別引用)。
+- 仍有讀者、**不能動**:`sectors[].name`、`sectors[].vs20`、`themes[].name`、`themes[].vs20`、`themes[]` lifecycle 欄位(`cls_date` 等)。
+
+### 10.4 驗證
+
+- node `web/lib/instiGroupFlow.test.ts` 加 `vs20Deviation`/`vs20ByName`/`VS20_LEGEND` 禁詞;web node 全套、`tsc`、`next build` 通過。
+- 390px 深／淺色截圖(靜態 build + 種子資料;Playwright 攔截 Supabase `/auth/v1/*`、`/rest/v1/*`,假 session,未動 AuthGate):首頁多方榜(面板已不在)、法人族群 產業／題材(族群列帶量能徽章)。

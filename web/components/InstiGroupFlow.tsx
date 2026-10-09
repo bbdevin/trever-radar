@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { AlertTriangle, ChevronRight, Info, X } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Vs20Badge } from "@/components/Vs20Badge";
 import { dataFetch } from "@/lib/dataFetch";
 import { OFFLINE_DATA_COPY, isBrowserOffline } from "@/lib/pwa";
 import { MARKET_LABEL, toneClass } from "@/lib/format";
@@ -15,6 +16,7 @@ import type {
   InstiIdentity,
   InstiStockRow,
   InstiStocksJson,
+  SectorFlow,
 } from "@/lib/types";
 import {
   IDENTITIES,
@@ -30,6 +32,8 @@ import {
   STOCK_INITIAL,
   VIEWS,
   VIEW_LABEL,
+  VS20_LEGEND,
+  vs20ByName,
   fmtStockAmt,
   showAllText,
   stockCountLine,
@@ -130,12 +134,15 @@ function GroupRow({
   maxAbs,
   open,
   onToggle,
+  vs20,
 }: {
   g: InstiFlowGroup;
   side: "buy" | "sell";
   maxAbs: number;
   open: boolean;
   onToggle: () => void;
+  /** 該族群今日成交金額 / 近 20 日均(首頁 head.json 的 sectors/themes);對不上就不畫 */
+  vs20?: number;
 }) {
   const tags = [concentrationText(g), clsStaleText(g.cls_date), lotsAmtMismatchText(g)].filter(Boolean) as string[];
   return (
@@ -171,10 +178,12 @@ function GroupRow({
             {fmtAmtEst(g.amt_est)}
           </b>
         </span>
-        <span className="flex w-full min-w-0 flex-wrap items-baseline justify-end gap-x-2 text-right text-[11px] leading-[1.35] text-muted-foreground">
+        <span className="flex w-full min-w-0 flex-wrap items-center justify-end gap-x-2 text-right text-[11px] leading-[1.35] text-muted-foreground">
           {tags.map((t) => (
             <span key={t} className="text-[color:var(--warn)]">{t}</span>
           ))}
+          {/* 量能徽章(原首頁資金流向面板的唯一族群層訊號,docs/49 §10):只在對得上 vs20 時出現 */}
+          {vs20 != null && <Vs20Badge vs20={vs20} />}
           <span className="num whitespace-nowrap">
             {fmtNetLots(g.net_lots)}
             {" · "}
@@ -284,7 +293,17 @@ function useLazyJson<T>(url: string, enabled: boolean): { data: T | null; error:
   return { data, error };
 }
 
-function GroupBody({ data, ident, mode }: { data: InstiFlowJson; ident: InstiIdentity; mode: InstiMode }) {
+function GroupBody({
+  data,
+  ident,
+  mode,
+  vs20Map,
+}: {
+  data: InstiFlowJson;
+  ident: InstiIdentity;
+  mode: InstiMode;
+  vs20Map: Map<string, number>;
+}) {
   const [openName, setOpenName] = useState<string | null>(null);
 
   const sides = useMemo(() => {
@@ -322,6 +341,7 @@ function GroupBody({ data, ident, mode }: { data: InstiFlowJson; ident: InstiIde
               maxAbs={sides.maxAbs}
               open={openName === g.name}
               onToggle={() => toggle(g.name)}
+              vs20={vs20Map.get(g.name)}
             />
           ))
         ) : (
@@ -352,10 +372,15 @@ function GroupBody({ data, ident, mode }: { data: InstiFlowJson; ident: InstiIde
   );
 }
 
-export default function InstiGroupFlow() {
+/**
+ * 法人族群分頁。`sectors`/`themes` 是首頁已載入的 head.json 族群成交金額(vs20),
+ * 只用來在族群列加「量能」徽章(docs/49 §10 併入原首頁資金流向面板);不給就不畫。
+ */
+export default function InstiGroupFlow({ sectors, themes }: { sectors?: SectorFlow[]; themes?: SectorFlow[] } = {}) {
   const [ident, setIdent] = useState<InstiIdentity>("foreign");
   const [view, setView] = useState<InstiView>("industry");
   const isStock = view === "stock";
+  const vs20Map = useMemo(() => vs20ByName(view === "theme" ? themes : sectors), [view, sectors, themes]);
   // 族群檔進分頁就抓;個股檔第一次切到「個股」才抓,之後切回來不重抓。
   const flow = useLazyJson<InstiFlowJson>(INSTI_FLOW_URL, true);
   const stocks = useLazyJson<InstiStocksJson>(INSTI_STOCKS_URL, isStock);
@@ -407,7 +432,10 @@ export default function InstiGroupFlow() {
 
       <p className="flex items-start gap-2 text-[12px] leading-relaxed text-muted-foreground">
         <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" aria-hidden />
-        <span>{isStock ? stockDefinitionText(ident) : definitionText(ident, view)}</span>
+        <span>
+          {isStock ? stockDefinitionText(ident) : definitionText(ident, view)}
+          {!isStock && vs20Map.size > 0 && <>{" "}{VS20_LEGEND}</>}
+        </span>
       </p>
 
       {(partial || stale) && (
@@ -431,7 +459,7 @@ export default function InstiGroupFlow() {
         <StockBody data={stocks.data!} ident={ident} />
       ) : (
         // key:換身分或模式時收合展開中的族群(與 MVP 行為一致)
-        <GroupBody key={`${view}-${ident}`} data={flow.data!} ident={ident} mode={view} />
+        <GroupBody key={`${view}-${ident}`} data={flow.data!} ident={ident} mode={view} vs20Map={vs20Map} />
       )}
     </section>
   );
