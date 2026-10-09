@@ -217,3 +217,73 @@ export function fmtStockAmt(r: Pick<InstiStockRow, "amt_est" | "amt_missing">): 
 export function showAllText(total: number): string {
   return `顯示全部 ${total} 檔`;
 }
+
+// ── 「個股」排序(docs/49 §9.4,2026-10-09 使用者要求):買超、賣超兩邊各自排 ──
+
+export type StockSort = "amt" | "lots" | "streak" | "chg";
+export const STOCK_SORTS: readonly StockSort[] = ["amt", "lots", "streak", "chg"];
+export const STOCK_SORT_LABEL: Record<StockSort, string> = {
+  amt: "金額(估)",
+  lots: "張數",
+  streak: "連續日數",
+  chg: "漲跌",
+};
+export const STOCK_SORT_DEFAULT: StockSort = "amt";
+/** localStorage 鍵(只是每個瀏覽器自己的偏好,讀寫都要 try/catch) */
+export const LS_STOCK_SORT = "trever.insti.stockSort.v1";
+
+export function parseStockSort(raw: string | null | undefined): StockSort {
+  return (STOCK_SORTS as readonly string[]).includes(raw ?? "") ? (raw as StockSort) : STOCK_SORT_DEFAULT;
+}
+
+function byId(a: InstiStockRow, b: InstiStockRow): number {
+  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+}
+
+/**
+ * 同一邊內排序,**確定性**(同分依序退到下一鍵,最後代號升冪):
+ * - 金額(估):檔內順序(買超金額降冪／賣超金額升冪,無收盤排最後),原樣回傳。
+ * - 張數:買超 張數降冪／賣超 張數升冪 → |金額| 降冪 → 代號。
+ * - 連續日數:streak 降冪 → |金額| 降冪 → 代號(兩邊一樣:連得越久越前面)。
+ * - 漲跌:chg_pct 降冪,缺值最後 → |金額| 降冪 → 代號(兩邊一樣)。
+ */
+export function sortStockRows(rows: InstiStockRow[], side: "buy" | "sell", key: StockSort): InstiStockRow[] {
+  const out = [...rows];
+  if (key === "amt") return out;
+  const absAmt = (r: InstiStockRow) => (r.amt_missing ? -1 : Math.abs(r.amt_est));
+  const dir = side === "buy" ? 1 : -1;
+  if (key === "lots") {
+    out.sort((a, b) => dir * (b.net_lots - a.net_lots) || absAmt(b) - absAmt(a) || byId(a, b));
+  } else if (key === "streak") {
+    out.sort((a, b) => b.streak - a.streak || absAmt(b) - absAmt(a) || byId(a, b));
+  } else {
+    const chg = (r: InstiStockRow) => (r.chg_pct == null ? Number.NEGATIVE_INFINITY : r.chg_pct);
+    out.sort((a, b) => chg(b) - chg(a) || absAmt(b) - absAmt(a) || byId(a, b));
+  }
+  return out;
+}
+
+/** 欄頭依排序鍵換字:「買超前 30 檔 · 依張數」 */
+export function stockSideTitleSorted(side: "buy" | "sell", n: number, key: StockSort): string {
+  const base = `${side === "buy" ? "買超" : "賣超"}前 ${n} 檔`;
+  return key === "amt" ? base : `${base} · 依${STOCK_SORT_LABEL[key]}`;
+}
+
+// ── 量能(docs/49 §10):首頁「市場資金流向」面板 2026-10-09 併入本分頁 ──
+// 族群列的 vs20 來自首頁已載入的 home/head.json `sectors`(產業)/`themes`(題材),不多抓檔;
+// 檔內只有成交金額前 16 個產業 / 前 20 個題材,對不上名稱的族群就不顯示徽章。
+
+/** vs20(今日金額 / 近 20 日均)→ 偏離 %(1.96 → +96);null 透傳 */
+export function vs20Deviation(vs20: number | null | undefined): number | null {
+  return vs20 == null ? null : Math.round((vs20 - 1) * 100);
+}
+
+/** 族群名稱 → vs20;沒給清單或名稱對不上 → 空 Map(呼叫端不畫徽章) */
+export function vs20ByName(flows: readonly { name: string; vs20: number | null }[] | undefined): Map<string, number> {
+  const m = new Map<string, number>();
+  for (const f of flows ?? []) if (f.vs20 != null) m.set(f.name, f.vs20);
+  return m;
+}
+
+/** 定義句後的量能註腳(只在有任何族群對得上 vs20 時出現) */
+export const VS20_LEGEND = "量能＝今日成交金額相對近 20 日平均(+80% 即比平時多八成);只列有資料的族群。";

@@ -4,10 +4,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { AlertTriangle, ChevronRight, Info, X } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Vs20Badge } from "@/components/Vs20Badge";
 import { dataFetch } from "@/lib/dataFetch";
 import { OFFLINE_DATA_COPY, isBrowserOffline } from "@/lib/pwa";
 import { MARKET_LABEL, toneClass } from "@/lib/format";
-import { cn, pillTabClass, softSelectClass } from "@/lib/utils";
+import { cn, filterChipClass, pillTabClass, softSelectClass } from "@/lib/utils";
 import type {
   InstiFlowGroup,
   InstiFlowJson,
@@ -15,6 +16,7 @@ import type {
   InstiIdentity,
   InstiStockRow,
   InstiStocksJson,
+  SectorFlow,
 } from "@/lib/types";
 import {
   IDENTITIES,
@@ -30,11 +32,20 @@ import {
   STOCK_INITIAL,
   VIEWS,
   VIEW_LABEL,
+  VS20_LEGEND,
+  vs20ByName,
+  LS_STOCK_SORT,
+  STOCK_SORTS,
+  STOCK_SORT_LABEL,
+  STOCK_SORT_DEFAULT,
+  parseStockSort,
+  sortStockRows,
+  stockSideTitleSorted,
+  type StockSort,
   fmtStockAmt,
   showAllText,
   stockCountLine,
   stockDefinitionText,
-  stockSideTitle,
   streakText,
   type InstiView,
   barRatio,
@@ -130,12 +141,15 @@ function GroupRow({
   maxAbs,
   open,
   onToggle,
+  vs20,
 }: {
   g: InstiFlowGroup;
   side: "buy" | "sell";
   maxAbs: number;
   open: boolean;
   onToggle: () => void;
+  /** 該族群今日成交金額 / 近 20 日均(首頁 head.json 的 sectors/themes);對不上就不畫 */
+  vs20?: number;
 }) {
   const tags = [concentrationText(g), clsStaleText(g.cls_date), lotsAmtMismatchText(g)].filter(Boolean) as string[];
   return (
@@ -171,10 +185,12 @@ function GroupRow({
             {fmtAmtEst(g.amt_est)}
           </b>
         </span>
-        <span className="flex w-full min-w-0 flex-wrap items-baseline justify-end gap-x-2 text-right text-[11px] leading-[1.35] text-muted-foreground">
+        <span className="flex w-full min-w-0 flex-wrap items-center justify-end gap-x-2 text-right text-[11px] leading-[1.35] text-muted-foreground">
           {tags.map((t) => (
             <span key={t} className="text-[color:var(--warn)]">{t}</span>
           ))}
+          {/* 量能徽章(原首頁資金流向面板的唯一族群層訊號,docs/49 §10):只在對得上 vs20 時出現 */}
+          {vs20 != null && <Vs20Badge vs20={vs20} />}
           <span className="num whitespace-nowrap">
             {fmtNetLots(g.net_lots)}
             {" · "}
@@ -187,28 +203,38 @@ function GroupRow({
   );
 }
 
+/**
+ * 個股列(390px 優化,2026-10-09):第一行 名稱｜張數｜金額(估)｜漲跌;第二行 連續日數膠囊
+ * (使用者最常看的,放最前、側別色淡底)+ 代號 · 市場 · 產業。數字欄固定寬,條列對齊。
+ */
 function StockRow({ r, side, lookback }: { r: InstiStockRow; side: "buy" | "sell"; lookback: number }) {
   const streak = streakText(r.streak, side, lookback);
   return (
     <Link
       href={memberHref(r.id)}
-      className="grid min-h-11 grid-cols-[minmax(0,1fr)_auto_auto_auto_12px] items-center gap-x-1.5 gap-y-0 rounded-[10px] px-2 py-1 text-[12.5px] transition-colors hover:bg-secondary"
+      className="grid min-h-11 grid-cols-[minmax(0,1fr)_auto_auto_auto] items-center gap-x-1.5 gap-y-0.5 rounded-[10px] px-2 py-1.5 text-[13px] transition-colors hover:bg-secondary"
     >
       <span className="min-w-0 truncate font-semibold leading-tight text-foreground" title={r.name}>{r.name}</span>
-      <span className={cn("num min-w-[4.25rem] text-right font-semibold", toneClass(r.net_lots))}>{fmtNetLots(r.net_lots)}</span>
-      <span className="num min-w-[3.25rem] text-right text-[color:var(--ink-2)]">{fmtStockAmt(r)}</span>
-      <span className={cn("num w-12 text-right text-[11.5px]", toneClass(r.chg_pct))}>{fmtChg(r.chg_pct)}</span>
-      <ChevronRight size={14} strokeWidth={1.8} className="row-span-2 text-muted-foreground" aria-hidden />
-      {/* 第二行橫跨數字欄:390px 下名稱欄只剩約 6 個字,代號/市場/產業/連續日數放這裡才放得下 */}
-      <span className="col-span-4 flex min-w-0 items-center gap-1 text-[10.5px] leading-[15px] text-muted-foreground">
+      <span className={cn("num min-w-[4.5rem] text-right font-bold leading-tight", toneClass(r.net_lots))}>{fmtNetLots(r.net_lots)}</span>
+      <span className="num min-w-[3.5rem] text-right text-[12px] leading-tight text-[color:var(--ink-2)]">{fmtStockAmt(r)}</span>
+      <span className={cn("num w-12 text-right text-[12px] font-semibold leading-tight", toneClass(r.chg_pct))}>{fmtChg(r.chg_pct)}</span>
+      {/* 第二行橫跨四欄:390px 下名稱欄只剩約 6 個字,連續日數/代號/市場/產業放這裡才放得下 */}
+      <span className="col-span-4 flex min-w-0 items-center gap-1.5 text-[10.5px] leading-[15px] text-muted-foreground">
+        {streak && (
+          <span
+            className={cn(
+              "num shrink-0 rounded-full px-1.5 py-px text-[10.5px] font-bold leading-[15px]",
+              side === "buy" ? "bg-up/15 text-up" : "bg-down/15 text-down",
+            )}
+          >
+            {streak}
+          </span>
+        )}
         <span className="num shrink-0">{r.id}</span>
         <span className="shrink-0 rounded border border-border px-1 text-[10px] leading-[14px]">
           {MARKET_LABEL[r.market] ?? r.market}
         </span>
         {r.ind && <span className="min-w-0 truncate" title={r.ind}>{r.ind}</span>}
-        {streak && (
-          <span className={cn("shrink-0 font-semibold", side === "buy" ? "text-up" : "text-down")}>{` · ${streak}`}</span>
-        )}
       </span>
     </Link>
   );
@@ -218,22 +244,26 @@ function StockColumn({
   side,
   rows,
   lookback,
+  sort,
 }: {
   side: "buy" | "sell";
   rows: InstiStockRow[];
   lookback: number;
+  sort: StockSort;
 }) {
   const [all, setAll] = useState(false);
-  const shown = all ? rows : rows.slice(0, STOCK_INITIAL);
+  const sorted = useMemo(() => sortStockRows(rows, side, sort), [rows, side, sort]);
+  const shown = all ? sorted : sorted.slice(0, STOCK_INITIAL);
   return (
     <div className="flex min-w-0 flex-col gap-0.5">
       <div
         className={cn(
-          "mb-0.5 border-b border-[color:var(--line)] pb-1 text-xs font-bold tracking-[0.5px]",
+          "mb-0.5 flex items-baseline justify-between gap-2 border-b border-[color:var(--line)] pb-1 text-xs font-bold tracking-[0.5px]",
           side === "buy" ? "text-up" : "text-down",
         )}
       >
-        {`${side === "buy" ? "↑" : "↓"} ${stockSideTitle(side, rows.length)}`}
+        <span>{`${side === "buy" ? "↑" : "↓"} ${stockSideTitleSorted(side, rows.length, sort)}`}</span>
+        <span className="text-[10.5px] font-semibold tracking-normal text-muted-foreground">{"張數 / 金額(估) / 漲跌"}</span>
       </div>
       {shown.length ? (
         shown.map((r) => <StockRow key={r.id} r={r} side={side} lookback={lookback} />)
@@ -256,14 +286,46 @@ function StockColumn({
 function StockBody({ data, ident }: { data: InstiStocksJson; ident: InstiIdentity }) {
   const r = data.ranks[ident];
   const missing = missingText(data.amt_missing_n);
+  // 排序偏好只是每個瀏覽器自己的便利,讀寫都 try/catch;讀不到就是預設「金額(估)」。
+  const [sort, setSort] = useState<StockSort>(STOCK_SORT_DEFAULT);
+  useEffect(() => {
+    try {
+      setSort(parseStockSort(localStorage.getItem(LS_STOCK_SORT)));
+    } catch {
+      /* 私密視窗或封鎖網站資料:維持預設 */
+    }
+  }, []);
+  const chooseSort = (next: StockSort) => {
+    setSort(next);
+    try {
+      localStorage.setItem(LS_STOCK_SORT, next);
+    } catch {
+      /* 寫不進去只是下次回到預設 */
+    }
+  };
   return (
     <>
       <p className="num mt-2 text-[12.5px] font-semibold text-foreground">{stockCountLine(ident, r)}</p>
       {missing && <p className="mt-0.5 text-[11px] text-muted-foreground">{missing}</p>}
+      <div className="mt-2 flex flex-wrap items-center gap-1.5" role="group" aria-label="個股排序">
+        <span className="text-[11.5px] text-muted-foreground">{"排序"}</span>
+        {STOCK_SORTS.map((k) => (
+          <button
+            key={k}
+            type="button"
+            aria-pressed={sort === k}
+            data-testid={`insti-stock-sort-${k}`}
+            className={cn(filterChipClass(sort === k), "min-h-9")}
+            onClick={() => chooseSort(k)}
+          >
+            {STOCK_SORT_LABEL[k]}
+          </button>
+        ))}
+      </div>
       {/* key=ident:換身分時「顯示全部」收回 */}
       <div key={ident} className="mt-2.5 grid grid-cols-1 gap-x-6 gap-y-3 md:grid-cols-2">
-        <StockColumn side="buy" rows={r.buy} lookback={data.streak_days} />
-        <StockColumn side="sell" rows={r.sell} lookback={data.streak_days} />
+        <StockColumn side="buy" rows={r.buy} lookback={data.streak_days} sort={sort} />
+        <StockColumn side="sell" rows={r.sell} lookback={data.streak_days} sort={sort} />
       </div>
     </>
   );
@@ -284,7 +346,17 @@ function useLazyJson<T>(url: string, enabled: boolean): { data: T | null; error:
   return { data, error };
 }
 
-function GroupBody({ data, ident, mode }: { data: InstiFlowJson; ident: InstiIdentity; mode: InstiMode }) {
+function GroupBody({
+  data,
+  ident,
+  mode,
+  vs20Map,
+}: {
+  data: InstiFlowJson;
+  ident: InstiIdentity;
+  mode: InstiMode;
+  vs20Map: Map<string, number>;
+}) {
   const [openName, setOpenName] = useState<string | null>(null);
 
   const sides = useMemo(() => {
@@ -322,6 +394,7 @@ function GroupBody({ data, ident, mode }: { data: InstiFlowJson; ident: InstiIde
               maxAbs={sides.maxAbs}
               open={openName === g.name}
               onToggle={() => toggle(g.name)}
+              vs20={vs20Map.get(g.name)}
             />
           ))
         ) : (
@@ -352,10 +425,15 @@ function GroupBody({ data, ident, mode }: { data: InstiFlowJson; ident: InstiIde
   );
 }
 
-export default function InstiGroupFlow() {
+/**
+ * 法人族群分頁。`sectors`/`themes` 是首頁已載入的 head.json 族群成交金額(vs20),
+ * 只用來在族群列加「量能」徽章(docs/49 §10 併入原首頁資金流向面板);不給就不畫。
+ */
+export default function InstiGroupFlow({ sectors, themes }: { sectors?: SectorFlow[]; themes?: SectorFlow[] } = {}) {
   const [ident, setIdent] = useState<InstiIdentity>("foreign");
   const [view, setView] = useState<InstiView>("industry");
   const isStock = view === "stock";
+  const vs20Map = useMemo(() => vs20ByName(view === "theme" ? themes : sectors), [view, sectors, themes]);
   // 族群檔進分頁就抓;個股檔第一次切到「個股」才抓,之後切回來不重抓。
   const flow = useLazyJson<InstiFlowJson>(INSTI_FLOW_URL, true);
   const stocks = useLazyJson<InstiStocksJson>(INSTI_STOCKS_URL, isStock);
@@ -407,7 +485,10 @@ export default function InstiGroupFlow() {
 
       <p className="flex items-start gap-2 text-[12px] leading-relaxed text-muted-foreground">
         <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" aria-hidden />
-        <span>{isStock ? stockDefinitionText(ident) : definitionText(ident, view)}</span>
+        <span>
+          {isStock ? stockDefinitionText(ident) : definitionText(ident, view)}
+          {!isStock && vs20Map.size > 0 && <>{" "}{VS20_LEGEND}</>}
+        </span>
       </p>
 
       {(partial || stale) && (
@@ -431,7 +512,7 @@ export default function InstiGroupFlow() {
         <StockBody data={stocks.data!} ident={ident} />
       ) : (
         // key:換身分或模式時收合展開中的族群(與 MVP 行為一致)
-        <GroupBody key={`${view}-${ident}`} data={flow.data!} ident={ident} mode={view} />
+        <GroupBody key={`${view}-${ident}`} data={flow.data!} ident={ident} mode={view} vs20Map={vs20Map} />
       )}
     </section>
   );

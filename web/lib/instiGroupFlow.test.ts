@@ -41,6 +41,14 @@ import {
   STOCK_INITIAL,
   VIEWS,
   VIEW_LABEL,
+  VS20_LEGEND,
+  vs20ByName,
+  vs20Deviation,
+  STOCK_SORTS,
+  STOCK_SORT_LABEL,
+  parseStockSort,
+  sortStockRows,
+  stockSideTitleSorted,
   fmtStockAmt,
   showAllText,
   stockCountLine,
@@ -48,7 +56,7 @@ import {
   stockSideTitle,
   streakText,
 } from "./instiGroupFlow.ts";
-import type { InstiFlowGroup, InstiFlowJson, InstiFlowMember } from "./types.ts";
+import type { InstiFlowGroup, InstiFlowJson, InstiFlowMember, InstiStockRow } from "./types.ts";
 
 function member(id: string, net_lots: number, amt_est: number): InstiFlowMember {
   return { id, name: `股${id}`, market: "twse", net_lots, amt_est, chg_pct: 1.2 };
@@ -220,7 +228,8 @@ test("禁詞:分頁名、說明、定義句、狀態句", () => {
   texts.push(
     ...IDENTITIES.flatMap((k) => [stockDefinitionText(k), stockCountLine(k, { buy_n: 412, sell_n: 380 })]),
     ...VIEWS.map((v) => VIEW_LABEL[v]),
-    INSTI_STOCKS_EMPTY, INSTI_NO_STOCKS, showAllText(30),
+    INSTI_STOCKS_EMPTY, INSTI_NO_STOCKS, showAllText(30), VS20_LEGEND,
+    ...STOCK_SORTS.map((k) => STOCK_SORT_LABEL[k]), stockSideTitleSorted("sell", 30, "streak"),
     stockSideTitle("buy", 30), stockSideTitle("sell", 30),
     streakText(3, "buy", 20)!, streakText(20, "sell", 20)!,
   );
@@ -229,4 +238,65 @@ test("禁詞:分頁名、說明、定義句、狀態句", () => {
   // 買超/賣超 是允許的
   assert.ok(!banned.test(countFull(g)));
   assert.match(countFull(g), /買超/);
+});
+
+// ── 量能(docs/49 §10:首頁資金流向面板併入本分頁) ──
+
+test("量能:vs20 → 偏離 %,null 透傳", () => {
+  assert.equal(vs20Deviation(1.96), 96);
+  assert.equal(vs20Deviation(0.8), -20);
+  assert.equal(vs20Deviation(1), 0);
+  assert.equal(vs20Deviation(null), null);
+  assert.equal(vs20Deviation(undefined), null);
+});
+
+// ── 「個股」排序 ──
+
+function srow(id: string, over: Partial<InstiStockRow> = {}): InstiStockRow {
+  return { id, name: `股${id}`, market: "twse", ind: "半導體業", net_lots: 100, amt_est: 1e8, chg_pct: 1, streak: 1, ...over };
+}
+
+test("個股排序:金額 = 檔內順序原樣;張數兩邊方向相反;同分退到金額再代號", () => {
+  const buy = [srow("A", { net_lots: 50, amt_est: 9e8 }), srow("B", { net_lots: 500, amt_est: 5e8 }), srow("C", { net_lots: 500, amt_est: 7e8 })];
+  assert.deepEqual(sortStockRows(buy, "buy", "amt").map((r) => r.id), ["A", "B", "C"]);
+  assert.deepEqual(sortStockRows(buy, "buy", "lots").map((r) => r.id), ["C", "B", "A"]);
+  const sell = [srow("A", { net_lots: -50, amt_est: -9e8 }), srow("B", { net_lots: -500, amt_est: -5e8 }), srow("C", { net_lots: -500, amt_est: -5e8 })];
+  assert.deepEqual(sortStockRows(sell, "sell", "lots").map((r) => r.id), ["B", "C", "A"]);
+  // 不改原陣列
+  assert.deepEqual(buy.map((r) => r.id), ["A", "B", "C"]);
+});
+
+test("個股排序:連續日數降冪,同日數看 |金額| 再代號;漲跌缺值排最後", () => {
+  const rows = [
+    srow("A", { streak: 2, amt_est: 1e8, chg_pct: null }),
+    srow("B", { streak: 5, amt_est: 2e8, chg_pct: -1.5 }),
+    srow("C", { streak: 5, amt_est: 3e8, chg_pct: 4.2 }),
+    srow("D", { streak: 5, amt_est: 3e8, chg_pct: 4.2 }),
+  ];
+  assert.deepEqual(sortStockRows(rows, "buy", "streak").map((r) => r.id), ["C", "D", "B", "A"]);
+  assert.deepEqual(sortStockRows(rows, "sell", "streak").map((r) => r.id), ["C", "D", "B", "A"]);
+  assert.deepEqual(sortStockRows(rows, "buy", "chg").map((r) => r.id), ["C", "D", "B", "A"]);
+  // 無收盤(amt_missing)在同鍵時排在有金額的後面
+  const miss = [srow("X", { streak: 3, amt_est: 0, amt_missing: true }), srow("Y", { streak: 3, amt_est: 1 })];
+  assert.deepEqual(sortStockRows(miss, "buy", "streak").map((r) => r.id), ["Y", "X"]);
+});
+
+test("個股排序:localStorage 值解析與欄頭文字", () => {
+  assert.equal(parseStockSort("streak"), "streak");
+  assert.equal(parseStockSort("bogus"), "amt");
+  assert.equal(parseStockSort(null), "amt");
+  assert.equal(stockSideTitleSorted("buy", 30, "amt"), "買超前 30 檔");
+  assert.equal(stockSideTitleSorted("sell", 30, "streak"), "賣超前 30 檔 · 依連續日數");
+});
+
+test("量能:族群名稱對照只收有 vs20 的;沒給清單 → 空 Map,不畫徽章", () => {
+  const m = vs20ByName([
+    { name: "半導體業", vs20: 1.45 },
+    { name: "金融保險業", vs20: null },
+  ]);
+  assert.equal(m.get("半導體業"), 1.45);
+  assert.equal(m.has("金融保險業"), false);
+  assert.equal(m.get("不在檔內的族群"), undefined);
+  assert.equal(vs20ByName(undefined).size, 0);
+  assert.equal(vs20ByName([]).size, 0);
 });

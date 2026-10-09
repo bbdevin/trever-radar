@@ -1,0 +1,178 @@
+"""大盤指數日收(docs/49 §11):加權指數(TWSE)與櫃買指數(TPEx)。
+
+兩個來源都是公開、無驗證碼的盤後端點;抓回來的值**逐筆照來源**(原始資料一致原則):
+* TWSE ``afterTrading/MI_INDEX?type=IND``:第一張表「價格指數」,列「發行量加權股價指數」。
+  收盤、漲跌點數、漲跌百分比三欄都有;方向在「漲跌(+/-)」欄(來源用 HTML 包著 + / -)。
+* TPEx ``afterTrading/tradingIndex?date=YYYY/MM/DD``:該月逐日「成交量值及櫃買指數」,
+  取「日期」等於要的那天的列;只有櫃買指數與漲/跌點數,**沒有百分比**(chg_pct 留 None)。
+
+解析是純函式(``parse_*``),測試用抓回來的原始回應當 fixture 對值。
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from ..http import get_json
+from . import NoDataError, to_float
+from .tpex import roc_date
+
+TWSE_BASE = "https://www.twse.com.tw/rwd/zh"
+TPEX_BASE = "https://www.tpex.org.tw/www/zh-tw"
+
+TAIEX_NAME = "發行量加權股價指數"
+
+
+@dataclass(slots=True)
+class IndexRow:
+    market: str            # twse | tpex | tx
+    date: str              # YYYY-MM-DD
+    close: float
+    change: float | None   # 漲跌點數(含正負)
+    chg_pct: float | None  # 漲跌百分比;來源沒給 → None
+    contract_month: str | None = None   # 只有 tx:近月契約月份 YYYYMM
+    settlement: float | None = None     # 只有 tx:當日結算價
+
+
+def _iso(date: str) -> str:
+    return f"{date[:4]}-{date[4:6]}-{date[6:8]}"
+
+
+def _sign(cell) -> int:
+    """TWSE「漲跌(+/-)」欄:``<p style ='color:green'>-</p>`` / ``…>+</p>`` / 空白。"""
+    s = str(cell or "")
+    if "+" in s:
+        return 1
+    if "-" in s:
+        return -1
+    return 0
+
+
+def parse_twse_index(j: dict, date: str) -> IndexRow:
+    """MI_INDEX type=IND → 加權指數一列。``stat`` 不是 OK(休市/未公布)→ NoDataError。"""
+    if j.get("stat") != "OK":
+        raise NoDataError(f"twse MI_INDEX IND {date}: {j.get('stat')}")
+    table = None
+    for t in j.get("tables", []):
+        fields = t.get("fields") or []
+        if fields and fields[0] == "指數":
+            table = t
+            break
+    if table is None:
+        raise RuntimeError(f"twse MI_INDEX IND {date}: price-index table not found; "
+                           f"titles={[(t.get('title') or '')[:20] for t in j.get('tables', [])]}")
+    if not table.get("data"):
+        # 當天還沒公布:stat=OK、表頭齊全、data 空(2026-10-09 實測)。是「還沒」不是「壞了」。
+        raise NoDataError(f"twse MI_INDEX IND {date}: price-index table has no rows yet")
+    idx = {name: i for i, name in enumerate(table["fields"])}
+    need = ["指數", "收盤指數", "漲跌(+/-)", "漲跌點數", "漲跌百分比(%)"]
+    missing = [n for n in need if n not in idx]
+    if missing:
+        raise RuntimeError(f"twse MI_INDEX IND {date}: missing fields {missing}; got {table['fields']}")
+    for row in table["data"]:
+        if str(row[idx["指數"]]).strip() != TAIEX_NAME:
+            continue
+        close = to_float(row[idx["收盤指數"]])
+        if close is None:
+            raise NoDataError(f"twse MI_INDEX IND {date}: TAIEX close empty")
+        sign = _sign(row[idx["漲跌(+/-)"]])
+        pts = to_float(row[idx["漲跌點數"]])
+        pct = to_float(row[idx["漲跌百分比(%)"]])
+        return IndexRow(
+            market="twse", date=_iso(date), close=close,
+            change=None if pts is None else sign * abs(pts),
+            # 百分比欄本身帶正負(-0.99);沒有方向欄時以它為準,否則用方向欄統一。
+            chg_pct=None if pct is None else (sign * abs(pct) if sign else pct),
+        )
+    raise RuntimeError(f"twse MI_INDEX IND {date}: row {TAIEX_NAME!r} not found")
+
+
+def parse_tpex_index(j: dict, date: str) -> IndexRow:
+    """tradingIndex(整月)→ 取 ``date`` 那一列;那天不在表裡 = 還沒公布/休市 → NoDataError。"""
+    if str(j.get("stat", "")).lower() != "ok":
+        raise NoDataError(f"tpex tradingIndex {date}: stat={j.get('stat')}")
+    table = None
+    for t in j.get("tables", []):
+        fields = [str(f).strip() for f in t.get("fields", [])]
+        if fields and fields[0] == "日期":
+            table = (t, fields)
+            break
+    if table is None:
+        raise NoDataError(f"tpex tradingIndex {date}: no table")
+    t, fields = table
+    idx = {name: i for i, name in enumerate(fields)}
+    need = ["日期", "櫃買指數", "漲/跌"]
+    missing = [n for n in need if n not in idx]
+    if missing:
+        raise RuntimeError(f"tpex tradingIndex {date}: missing fields {missing}; got {fields}")
+    want = roc_date(date)
+    for row in t.get("data", []):
+        if str(row[idx["日期"]]).strip() != want:
+            continue
+        close = to_float(row[idx["櫃買指數"]])
+        if close is None:
+            raise NoDataError(f"tpex tradingIndex {date}: close empty")
+        return IndexRow(market="tpex", date=_iso(date), close=close,
+                        change=to_float(row[idx["漲/跌"]]), chg_pct=None)
+    raise NoDataError(f"tpex tradingIndex {date}: no row for {want}")
+
+
+def fetch_twse_index(date: str) -> IndexRow:
+    """date: YYYYMMDD。"""
+    j = get_json(f"{TWSE_BASE}/afterTrading/MI_INDEX",
+                 {"date": date, "type": "IND", "response": "json"})
+    return parse_twse_index(j, date)
+
+
+def fetch_tpex_month(date: str) -> dict:
+    """tradingIndex 整月原始 JSON(回補時同一個月只抓一次)。date: YYYYMMDD。"""
+    return get_json(f"{TPEX_BASE}/afterTrading/tradingIndex",
+                    {"date": roc_date(date), "response": "json"})
+
+
+def fetch_tpex_index(date: str) -> IndexRow:
+    """date: YYYYMMDD。端點吃 ROC 月份內任一天,回整月。"""
+    return parse_tpex_index(fetch_tpex_month(date), date)
+
+
+# ── 台指期近月(docs/49 §12) ──
+# 來源:TAIFEX futDataDown(與 import-futures-day 同一支,providers/taifex.parse_history_csv)。
+# 「近月」= 當日**一般時段**、非價差(月份不含 "/")、有收盤價的 TX 列中,到期月份最小的那一個。
+# 到期月契約在最後交易日(第三個週三,遇假日由期交所順延)當天仍有一般時段列,所以當天仍是
+# 近月;次一交易日來源不再列出它,自然換成下一月——不用自己算第三個週三,假日順延也對。
+# 只取一般時段:與加權/櫃買的 13:30 收盤同一個時間框;盤後(前一晚 15:00–05:00)不混進來。
+# chg_pct 來源有(漲跌%)但 FuturesDailyRow 不帶,存 None 由 export 以 change/(close−change) 推。
+TX_CODE = "TX"
+TX_NAME = "台指期"
+
+
+def pick_tx_near_month(rows, date: str) -> IndexRow | None:
+    """``rows``: ``FuturesDailyRow`` 序列;回 ``date``(YYYYMMDD)當日近月一列,沒有 → None。"""
+    from .taifex import SESSION_REGULAR
+
+    iso = _iso(date)
+    cands = [
+        r for r in rows
+        if r.contract_code == TX_CODE and r.date == iso and r.session == SESSION_REGULAR
+        and "/" not in r.contract_month and r.last is not None
+    ]
+    if not cands:
+        return None
+    near = min(cands, key=lambda r: r.contract_month)
+    # 最後交易日當天來源把到期月的結算價寫成 0(2026 年 05/20、06/17、07/15、08/19、09/16 都是):
+    # 那不是價格,存 NULL;前端把 NULL 當「沒有結算價」。
+    settle = near.settlement_price if near.settlement_price else None
+    return IndexRow(
+        market="tx", date=iso, close=near.last, change=near.change, chg_pct=None,
+        contract_month=near.contract_month.strip(), settlement=settle,
+    )
+
+
+def fetch_tx_index(date: str) -> IndexRow:
+    """date: YYYYMMDD。當天沒有 TX 一般時段列(未產製/休市)→ NoDataError。"""
+    from .taifex import fetch_history
+
+    iso = _iso(date)
+    row = pick_tx_near_month(fetch_history(iso, iso), date)
+    if row is None:
+        raise NoDataError(f"taifex futDataDown {iso}: no TX regular-session row")
+    return row

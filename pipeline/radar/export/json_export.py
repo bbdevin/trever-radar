@@ -22,7 +22,8 @@ from ..db import get_engine, init_db
 _log = logging.getLogger(__name__)
 from ..branch_source import date_window_from
 from .home_split import write_home
-from .insti_group_flow import FILE_1D as INSTI_FILE_1D, write_insti_flow
+from .insti_group_flow import FILE_1D as INSTI_FILE_1D, aggregate as insti_aggregate, load_rows as insti_load_rows, write_insti_flow
+from ..market_index import latest_indices, write_indices_hist
 from .insti_stocks import FILE_1D as INSTI_STOCKS_FILE_1D, write_insti_stocks
 from .spark_day import attach_spark_day
 from .intraday_bars import export_intraday_safe
@@ -2110,6 +2111,26 @@ def export_json(
             futures_history, as_of=f_date, observed_through=d,
         )
 
+        # 首頁「市場概況」(docs/49 §11):大盤指數(每市 ≤ d 的最新一列;沒有列 → 鍵不出)與
+        # 三大法人全市場淨額(與法人族群分頁 marketLine 同一個函式、同一組數字;i_date 為 None
+        # → 鍵不出)。兩個都只是既有資料的小摘要,舊前端不讀這兩個鍵也不受影響。
+        market_indices = []
+        try:
+            market_indices = latest_indices(conn, d)
+        except Exception:
+            # 與其他獨立寫入者同一個原則:這一塊壞了只少兩個鍵,不中斷整輪 export。
+            _log.warning("market indices summary failed; key omitted", exc_info=True)
+        insti_market = None
+        if i_date is not None:
+            try:
+                insti_market = {
+                    "date": i_date,
+                    **insti_aggregate(insti_load_rows(conn, i_date), {}, as_of=i_date,
+                                      data_date=d, generated_at="")["market"],
+                }
+            except Exception:
+                _log.warning("insti_market summary failed; key omitted", exc_info=True)
+
     now = datetime.now(ZoneInfo(config.TZ)).isoformat(timespec="seconds")
 
     # F2: auto-generate summary_text (rule-based, ≤3 sentences, no LLM)
@@ -2236,6 +2257,11 @@ def export_json(
     futures_oi_direction = futures_result[3] if futures_result is not None else None
     if futures_oi_direction is not None:
         radar["futures_open_interest_direction"] = futures_oi_direction
+    # 市場概況(docs/49 §11):有資料才出鍵;前端缺鍵就不畫那一格。
+    if market_indices:
+        radar["indices"] = market_indices
+    if insti_market is not None:
+        radar["insti_market"] = insti_market
     meta = {
         "generated_at": now,
         "datasets": [
@@ -2272,6 +2298,11 @@ def export_json(
         except Exception:
             _log.warning("insti_stocks export failed; previous file removed", exc_info=True)
             (out / "rankings" / INSTI_STOCKS_FILE_1D).unlink(missing_ok=True)
+        try:
+            # 大盤指數完整歷史(docs/49 §12):首頁市場概況卡點開走勢圖才抓;head.json 只帶 40 個收盤。
+            write_indices_hist(out, conn, d, now)
+        except Exception:
+            _log.warning("indices_hist export failed; previous file kept", exc_info=True)
 
     # 全市場搜尋索引(id/名稱/市場/產業/描述;compact 陣列省體積)
     with engine.connect() as conn:

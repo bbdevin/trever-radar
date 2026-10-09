@@ -3,7 +3,7 @@
 import { Fragment, useEffect, useState } from "react";
 import { ChevronDown } from "lucide-react";
 import StockCard from "@/components/StockCard";
-import { Vs20Badge } from "@/components/MoneyFlow";
+import { Vs20Badge } from "@/components/Vs20Badge";
 import type { RadarStock, SectorFlow } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { groupStocksByHottestTheme, OTHER_THEME, type ThemeStockGroup } from "@/lib/themeGroups";

@@ -6,12 +6,12 @@ import { Clock, ShieldCheck, Zap, ChevronDown, Briefcase, AlertTriangle, Ban, Pe
 import { IconFlame, IconTrend, IconZap, IconRadar, IconPulse, IconStar, IconTrendDown } from "@/components/Icons";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
-import MoneyFlow from "@/components/MoneyFlow";
 import { ScrollHint } from "@/components/ScrollHint";
 import StockCard from "@/components/StockCard";
 import ThemeGroupedList from "@/components/ThemeGroupedList";
 import MarginUsageRank from "@/components/MarginUsageRank";
 import InstiGroupFlow from "@/components/InstiGroupFlow";
+import MarketBrief from "@/components/MarketBrief";
 import { INSTI_TAB_HINT, INSTI_TAB_LABEL } from "@/lib/instiGroupFlow";
 import FuturesAnomalyList from "@/components/FuturesAnomalyList";
 import FuturesOpenInterestDirection from "@/components/FuturesOpenInterestDirection";
@@ -23,7 +23,6 @@ import { dataFetch } from "@/lib/dataFetch";
 import { loadHomeHead, loadHomeStocks, type HomeData } from "@/lib/homeLoad";
 import { OFFLINE_DATA_COPY, isBrowserOffline } from "@/lib/pwa";
 import type { BullBoardJson, ListKey, MetaJson, StrategyMeta } from "@/lib/types";
-import { SOURCE_LABEL, fmtE8 } from "@/lib/format";
 import { UPDATE_SCHEDULE, staleAutoFills, staleFreshnessLines } from "@/lib/freshness";
 import { BOARD_DEFINITION, BOARD_TAB_LABEL } from "@/lib/bullBoard";
 import BullBoardList from "@/components/BullBoardList";
@@ -225,7 +224,6 @@ function RadarView() {
   // F4.2: 已展開的策略組(session 內即可,不持久化);預設只展開籌碼事件。
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(() => new Set(["chips"]));
   const strategyDefaulted = useRef(false);
-  const [moneyFlowOpen, setMoneyFlowOpen] = useState(false);
   const [listSort, setListSort] = useState<ListSort>("score");
   // 期貨分頁「當日｜近 N 日」(docs/38 §7.19)。預設當日;上次的選擇只在瀏覽器端讀。
   const [futuresView, setFuturesView] = useState<FuturesView>("today");
@@ -393,35 +391,8 @@ function RadarView() {
 
   return (
     <>
-      {/* Compact Daily Brief */}
-      <ScrollHint
-        wrapperClassName="my-3.5"
-        fade="background"
-        variant="plain"
-        className="grid auto-cols-[minmax(110px,1fr)] grid-flow-col gap-2 overflow-x-auto [scroll-snap-type:x_proximity] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-      >
-        <div className="flex snap-start flex-col gap-0.5 rounded-[var(--r-md)] border border-border bg-card px-3 py-2 shadow-[var(--shadow-card)]">
-          <span className="text-[10.5px] text-muted-foreground">{"資料日"}</span>
-          <span className="num text-[15px] font-bold">
-            <span className="whitespace-nowrap">{radar.data_date}</span>
-            {stale.length > 0 && <span className="ml-1.5 text-[11px] font-medium text-warn">{"部分待更新"}</span>}
-          </span>
-        </div>
-        {radar.summary.map((m) => (
-          <div
-            key={m.market}
-            className="flex snap-start flex-col gap-0.5 rounded-[var(--r-md)] border border-border bg-card px-3 py-2 shadow-[var(--shadow-card)]"
-          >
-            <span className="text-[10.5px] text-muted-foreground">{(SOURCE_LABEL[m.market] ?? m.market) + "成交"}</span>
-            <span className="num text-[15px] font-bold">
-              {fmtE8(m.turnover)}
-              <span className="ml-1 text-[11px] font-medium text-[color:var(--ink-2)]">
-                <span className="text-up">{"↑"}{m.up}</span>{" / "}<span className="text-down">{"↓"}{m.down}</span>
-              </span>
-            </span>
-          </div>
-        ))}
-      </ScrollHint>
+      {/* 市場概況(docs/49 §11,2026-10-09):取代原本三張 資料日／上櫃成交／上市成交 橫滑卡 */}
+      <MarketBrief radar={radar} stale={stale.length > 0} />
 
       {stale.length > 0 && (
         <Alert className="mb-3 border-warn/30 bg-warn/5">
@@ -738,7 +709,8 @@ function RadarView() {
         </div>
       ) : tab === "insti" ? (
         <div className="mb-4 animate-[fadeUp_0.35s_ease_backwards]">
-          <InstiGroupFlow />
+          {/* sectors/themes 已在 head.json 裡(多方榜族群檢視也用),只給族群列加量能徽章,不多抓檔 */}
+          <InstiGroupFlow sectors={radar.sectors} themes={radar.themes} />
         </div>
       ) : stocksPending ? (
         // 第一次切到要畫股票的分頁:home/stocks.json 還在路上(表頭與分頁檔數已經畫好了)
@@ -860,32 +832,7 @@ function RadarView() {
         </>
       )}
 
-      {/* Context: MoneyFlow collapsible */}
-      <div className="mb-4">
-        <button
-          className="flex w-full items-center justify-between rounded-[var(--r-md)] border border-border bg-card px-4 py-2.5 text-left text-[13.5px] font-semibold text-foreground transition-colors hover:border-[color:var(--border-strong)] hover:bg-secondary"
-          onClick={() => setMoneyFlowOpen((v) => !v)}
-          aria-expanded={moneyFlowOpen}
-          aria-controls="moneyflow-panel"
-        >
-          <span>市場資金流向</span>
-          <span
-            className={cn(
-              "text-muted-foreground transition-transform duration-200",
-              moneyFlowOpen && "rotate-180",
-            )}
-            aria-hidden
-          >
-            {"▾"}
-          </span>
-        </button>
-        {moneyFlowOpen && (
-          <div id="moneyflow-panel" className="mt-2">
-            <MoneyFlow sectors={radar.sectors} themes={radar.themes} />
-          </div>
-        )}
-      </div>
-
+      {/* 「市場資金流向」收合面板已於 2026-10-09 併入「法人族群」分頁(族群列量能徽章,docs/49 §10) */}
       <Alert className="mt-1 bg-card">
         <AlertDescription className="flex flex-wrap items-baseline gap-2.5 text-[13px] text-foreground">
           <span className="shrink-0 rounded-md bg-warn/15 px-2 py-0.5 text-[11.5px] font-bold tracking-[0.3px] text-warn">
