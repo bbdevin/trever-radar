@@ -1070,6 +1070,13 @@ export interface IndicesHistJson {
   series: Record<string, { name: string; points: [string, number, number | null, number | null, string?][]; contract_month?: string | null }>;
 }
 
+/** `market/indices_intraday.json`(docs/49 §12.5):只有最新一個交易日;走勢 sheet 選「1日」才抓。
+ *  series[市場] = [epoch 秒(該分鐘開始時間), 值][](1 分線,舊→新);抓不到的市場沒有鍵 */
+export interface IndicesIntradayJson {
+  date: string;
+  series: Partial<Record<"twse" | "tpex" | "tx", [number, number][]>>;
+}
+
 export interface InstiMarket {
   /** 法人日(可能早於 data_date) */
   date: string;

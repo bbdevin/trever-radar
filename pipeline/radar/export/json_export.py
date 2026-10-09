@@ -27,6 +27,7 @@ from ..market_index import latest_indices, write_indices_hist
 from .insti_stocks import FILE_1D as INSTI_STOCKS_FILE_1D, write_insti_stocks
 from .spark_day import attach_spark_day
 from .intraday_bars import export_intraday_safe
+from .indices_intraday import export_indices_intraday_safe, tx_month_from_db
 from .stock_parts import (
     StockPartsWriter,
     hist_cut,
@@ -2303,6 +2304,14 @@ def export_json(
             write_indices_hist(out, conn, d, now)
         except Exception:
             _log.warning("indices_hist export failed; previous file kept", exc_info=True)
+        try:
+            tx_month_today = tx_month_from_db(conn, d)
+        except Exception:
+            tx_month_today = None  # 表還沒建等:indices_intraday 退回規則推算近月
+
+    # 大盤當日 1 分線(docs/49 §12.5):與 spark_day 同一閘門(台北今天 = 價格日),同日已齊就不再抓;
+    # 走網路,所以放在 DB 連線外。任何例外只記 warning、舊檔保留。
+    export_indices_intraday_safe(out, d, tx_month=tx_month_today)
 
     # 全市場搜尋索引(id/名稱/市場/產業/描述;compact 陣列省體積)
     with engine.connect() as conn:

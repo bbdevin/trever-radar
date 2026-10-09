@@ -170,9 +170,10 @@ export function sparkTone(values: number[] | undefined): "up" | "down" | "flat" 
   return d > 0 ? "up" : d < 0 ? "down" : "flat";
 }
 
-export type TrendRange = "1m" | "3m" | "6m" | "1y";
-/** 以交易日數切範圍(來源每個序列最多 260 列,1 年取 250) */
+export type TrendRange = "1d" | "1m" | "3m" | "6m" | "1y";
+/** 以交易日數切範圍(來源每個序列最多 260 列,1 年取 250)。「1日」不切歷史檔,改畫當日 1 分線(§12.5) */
 export const TREND_RANGES: { key: TrendRange; label: string; days: number }[] = [
+  { key: "1d", label: "1日", days: 1 },
   { key: "1m", label: "1月", days: 21 },
   { key: "3m", label: "3月", days: 63 },
   { key: "6m", label: "6月", days: 126 },
@@ -212,5 +213,66 @@ export function rangeStats(points: TrendPoint[]): { high: number; low: number; c
 export function rangeTone(points: TrendPoint[]): "up" | "down" | "flat" {
   if (points.length < 2) return "flat";
   const d = points[points.length - 1][1] - points[0][1];
+  return d > 0 ? "up" : d < 0 ? "down" : "flat";
+}
+
+// ── 1日:當日 1 分線(docs/49 §12.5,`market/indices_intraday.json`,選「1日」才抓) ──
+
+export const INDEX_INTRADAY_URL = "/data/market/indices_intraday.json";
+export const INTRADAY_EMPTY = "尚無日內走勢";
+export const TX_INTRADAY_EMPTY = "台指期暫無日內走勢";
+export const INTRADAY_HINT = "點圖上任一點看那一分鐘的指數與相對前一交易日收盤的漲跌;虛線為前一交易日收盤。只整理來源公布的數字,不下判斷。";
+export const TX_INTRADAY_NOTE = "台指期為近月一般時段(08:45–13:45),虛線為前一交易日收盤價(非結算價)。";
+export const PREV_CLOSE_LABEL = "昨收";
+
+/** [epoch 秒(該分鐘開始時間), 值] */
+export type IntradayPoint = [number, number];
+
+const TW_OFFSET_S = 8 * 3600;
+
+/** epoch 秒 → 台北「HH:MM」(不經瀏覽器時區) */
+export function hhmmOf(epochS: number): string {
+  return new Date((epochS + TW_OFFSET_S) * 1000).toISOString().slice(11, 16);
+}
+
+/**
+ * 1日走勢的基準:歷史檔裡**日期早於當日**的最後一列收盤(前一交易日收盤)。
+ * 歷史檔已含今天時跳過今天那列;沒有更早的列 → null(不畫虛線、漲跌顯示「—」)。
+ */
+export function prevCloseBefore(points: TrendPoint[] | undefined, date: string): number | null {
+  const src = points ?? [];
+  for (let i = src.length - 1; i >= 0; i--) {
+    if (src[i][0] < date) return src[i][1];
+  }
+  return null;
+}
+
+/** 相對前收的漲跌(點、%,兩位);前收缺 → 都 null */
+export function changeVsPrev(value: number, prev: number | null): { change: number | null; chgPct: number | null } {
+  if (prev == null || !prev) return { change: null, chgPct: null };
+  const change = Math.round((value - prev) * 100) / 100;
+  return { change, chgPct: Math.round((change / prev) * 10000) / 100 };
+}
+
+/** 日高/日低/最新與日漲跌(相對前收);少於 1 點 → null */
+export function intradayStats(points: IntradayPoint[], prev: number | null): {
+  high: number; low: number; last: number; change: number | null; chgPct: number | null; from: string; to: string;
+} | null {
+  if (!points.length) return null;
+  let high = -Infinity;
+  let low = Infinity;
+  for (const p of points) {
+    if (p[1] > high) high = p[1];
+    if (p[1] < low) low = p[1];
+  }
+  const last = points[points.length - 1][1];
+  return { high, low, last, ...changeVsPrev(last, prev), from: hhmmOf(points[0][0]), to: hhmmOf(points[points.length - 1][0]) };
+}
+
+/** 1日線顏色跟著當日漲跌(最新 vs 前收);前收缺 → 首尾相比 */
+export function intradayTone(points: IntradayPoint[], prev: number | null): "up" | "down" | "flat" {
+  if (!points.length) return "flat";
+  const base = prev ?? points[0][1];
+  const d = points[points.length - 1][1] - base;
   return d > 0 ? "up" : d < 0 ? "down" : "flat";
 }

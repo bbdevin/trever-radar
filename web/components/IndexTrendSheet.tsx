@@ -6,9 +6,21 @@ import { X } from "lucide-react";
 import { dataFetch } from "@/lib/dataFetch";
 import { OFFLINE_DATA_COPY, isBrowserOffline } from "@/lib/pwa";
 import { cn, filterChipClass, pillTabClass } from "@/lib/utils";
-import type { IndicesHistJson, MarketIndex } from "@/lib/types";
+import type { IndicesHistJson, IndicesIntradayJson, MarketIndex } from "@/lib/types";
 import {
   INDEX_HIST_URL,
+  INDEX_INTRADAY_URL,
+  INTRADAY_EMPTY,
+  INTRADAY_HINT,
+  PREV_CLOSE_LABEL,
+  TX_INTRADAY_EMPTY,
+  TX_INTRADAY_NOTE,
+  changeVsPrev,
+  hhmmOf,
+  intradayStats,
+  intradayTone,
+  prevCloseBefore,
+  type IntradayPoint,
   TREND_EMPTY,
   TREND_HINT,
   TREND_RANGES,
@@ -29,6 +41,7 @@ import {
   type TrendRange,
 } from "@/lib/marketBrief";
 import { crosshairTimeLabel, tickMarkLabel } from "@/lib/chartTime";
+import { chartTimeOf, twWallKey } from "@/lib/resample";
 
 const UP = "#e66767";
 const DOWN = "#0ca30c";
@@ -55,6 +68,20 @@ function loadHist(): Promise<IndicesHistJson> {
       });
   }
   return histCache;
+}
+
+// 當日 1 分線(§12.5):選「1日」才抓、一個 session 一次;404/空檔 = 還沒有(null,不重試),其他失敗不快取。
+let intradayCache: Promise<IndicesIntradayJson | null> | null = null;
+function loadIntraday(): Promise<IndicesIntradayJson | null> {
+  if (!intradayCache) {
+    intradayCache = dataFetch(INDEX_INTRADAY_URL)
+      .then((r) => (r.status === 404 ? null : r.ok ? r.json() : Promise.reject(r.status)))
+      .catch((e) => {
+        intradayCache = null;
+        throw e;
+      });
+  }
+  return intradayCache;
 }
 
 function useIsDark() {
@@ -142,6 +169,92 @@ function TrendChart({ points, decimals, onHover }: { points: TrendPoint[]; decim
 }
 
 /**
+ * 「1日」:當日 1 分線(§12.5)。時間用「台北牆上時間當 UTC」(chartTimeOf(twWallKey(epoch)),
+ * 與個股分K同一招),軸與游標一律 HH:MM;虛線 = 前一交易日收盤,價格軸範圍一定含它。
+ */
+function IntradayChart({ points, prev, decimals, onHover }: {
+  points: IntradayPoint[]; prev: number | null; decimals: number; onHover: (p: IntradayPoint | null) => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const isDark = useIsDark();
+  const onHoverRef = useRef(onHover);
+  onHoverRef.current = onHover;
+
+  useEffect(() => {
+    if (!ref.current || points.length < 2) return;
+    let disposed = false;
+    let chart: import("lightweight-charts").IChartApi | undefined;
+    const toChart = (p: IntradayPoint) => chartTimeOf(twWallKey(p[0])) as number;
+    const byTime = new Map(points.map((p) => [toChart(p), p]));
+    const color = TONE_COLOR[intradayTone(points, prev)];
+    const host = ref.current;
+    import("lightweight-charts").then((lw) => {
+      if (disposed || !ref.current) return;
+      const { createChart, AreaSeries, ColorType, CrosshairMode, LineStyle } = lw;
+      const colors = chartColors(isDark);
+      const hhmm = (t: unknown) => tickMarkLabel(t, 3); // 數字 time → 「HH:MM」
+      chart = createChart(ref.current, {
+        autoSize: true,
+        layout: { background: { type: ColorType.Solid, color: "transparent" }, textColor: colors.text, fontSize: 12 },
+        grid: { vertLines: { color: colors.grid }, horzLines: { color: colors.grid } },
+        rightPriceScale: { borderColor: colors.border },
+        localization: { timeFormatter: hhmm },
+        timeScale: {
+          borderColor: colors.border, timeVisible: true, secondsVisible: false, fixLeftEdge: true, fixRightEdge: true,
+          tickMarkFormatter: hhmm,
+        },
+        crosshair: { mode: CrosshairMode.Magnet },
+        handleScroll: { vertTouchDrag: false, mouseWheel: false, pressedMouseMove: false, horzTouchDrag: false },
+        handleScale: { mouseWheel: false, pinch: false, axisPressedMouseMove: false, axisDoubleClickReset: false },
+      });
+      const prec = decimals === 0 || points[points.length - 1][1] >= 10000 ? 0 : 2;
+      const series = chart.addSeries(AreaSeries, {
+        lineColor: color,
+        lineWidth: 2,
+        topColor: `${color}55`,
+        bottomColor: `${color}05`,
+        priceLineVisible: false,
+        lastValueVisible: true,
+        crosshairMarkerVisible: true,
+        priceFormat: { type: "price", precision: prec, minMove: 1 / 10 ** prec },
+        // 前收虛線一定在畫面內(開低走低時它會在線的上方)
+        autoscaleInfoProvider: (orig: () => import("lightweight-charts").AutoscaleInfo | null) => {
+          const r = orig();
+          if (!r || r.priceRange == null || prev == null) return r;
+          return { ...r, priceRange: { minValue: Math.min(r.priceRange.minValue, prev), maxValue: Math.max(r.priceRange.maxValue, prev) } };
+        },
+      });
+      series.setData(points.map((p) => ({ time: toChart(p) as import("lightweight-charts").UTCTimestamp, value: p[1] })));
+      if (prev != null) {
+        series.createPriceLine({
+          price: prev, color: colors.text, lineWidth: 1, lineStyle: LineStyle.Dashed,
+          axisLabelVisible: true, title: PREV_CLOSE_LABEL,
+        });
+      }
+      chart.timeScale().fitContent();
+      chart.subscribeCrosshairMove((param) => {
+        const t = typeof param.time === "number" ? param.time : null;
+        onHoverRef.current(t != null ? byTime.get(t) ?? null : null);
+      });
+      requestAnimationFrame(() => {
+        const logo = host.querySelector<HTMLAnchorElement>('a[href*="tradingview"]');
+        if (logo) {
+          logo.setAttribute("aria-label", "TradingView Lightweight Charts(圖表元件)");
+          logo.setAttribute("title", "TradingView Lightweight Charts");
+        }
+      });
+    });
+    return () => {
+      disposed = true;
+      chart?.remove();
+      onHoverRef.current(null);
+    };
+  }, [points, prev, isDark, decimals]);
+
+  return <div ref={ref} className="h-[300px] w-full" data-testid="index-intraday-chart" />;
+}
+
+/**
  * 大盤走勢 bottom sheet(docs/49 §12)。base-ui Dialog 提供 focus trap、ESC、點背景關閉、
  * 鎖頁面捲動;這裡只管內容:指數切換 chips、範圍 chips、走勢圖(十字游標讀值)、區間統計。
  * 歷史檔 `market/indices_hist.json` 第一次開才抓;抓不到時退回 head.json 的 spark(只有收盤)。
@@ -165,6 +278,11 @@ export default function IndexTrendSheet({
   const [error, setError] = useState(false);
   const [range, setRange] = useState<TrendRange>(TREND_RANGE_DEFAULT);
   const [hover, setHover] = useState<TrendPoint | null>(null);
+  // 1日:undefined = 還沒抓/抓取中;null = 沒有檔(404)
+  const [intra, setIntra] = useState<IndicesIntradayJson | null | undefined>(undefined);
+  const [intraError, setIntraError] = useState(false);
+  const [iHover, setIHover] = useState<IntradayPoint | null>(null);
+  const isDay = range === "1d";
 
   // 鎖頁面捲動(與 BranchDrillView 同一招;base-ui 的鎖法在 overflow 上看不出來,這裡明寫一次)
   useEffect(() => {
@@ -188,6 +306,19 @@ export default function IndexTrendSheet({
     };
   }, [open]);
 
+  // 當日 1 分線只在選了「1日」才抓(預設 3月 不抓)
+  useEffect(() => {
+    if (!open || !isDay) return;
+    let alive = true;
+    setIntraError(false);
+    loadIntraday()
+      .then((j) => alive && setIntra(j))
+      .catch(() => alive && setIntraError(true));
+    return () => {
+      alive = false;
+    };
+  }, [open, isDay]);
+
   const ordered = orderedIndices(indices);
   const head = ordered.find((i) => i.market === market) ?? ordered[0];
   const series = hist?.series?.[head?.market ?? ""];
@@ -209,6 +340,42 @@ export default function IndexTrendSheet({
       })
     : null;
 
+  // ── 1日 ──
+  const dayPoints = useMemo<IntradayPoint[]>(
+    () => (intra?.series?.[(head?.market ?? "") as "twse" | "tpex" | "tx"] ?? []),
+    [intra, head?.market],
+  );
+  const dayPrev = intra ? prevCloseBefore(series?.points, intra.date) : null;
+  const dayStats = useMemo(() => intradayStats(dayPoints, dayPrev), [dayPoints, dayPrev]);
+  const dayShown = iHover ?? (dayPoints.length ? dayPoints[dayPoints.length - 1] : null);
+  const dayChg = dayShown ? changeVsPrev(dayShown[1], dayPrev) : { change: null, chgPct: null };
+  const dayTone = (dayChg.change ?? 0) > 0 ? "up" : (dayChg.change ?? 0) < 0 ? "down" : "flat";
+  const dayReady = isDay && intra && dayPoints.length >= 2;
+  const dayEmpty = head?.market === "tx" && intra ? TX_INTRADAY_EMPTY : INTRADAY_EMPTY;
+
+  // 標頭:1日且有資料時顯示那一分鐘;其餘(含 1日 尚無資料)照日收盤
+  const headTime = dayReady && dayShown
+    ? `${mmdd(intra!.date)} ${hhmmOf(dayShown[0])}`
+    : `${mmdd(shown ? shown[0] : head?.date)} 收盤`;
+  const headValue = dayReady && dayShown ? dayShown[1] : shown ? shown[1] : head?.close ?? 0;
+  const headChange = dayReady
+    ? indexChangeText(dayChg.change, dayChg.chgPct, dec)
+    : shown ? indexChangeText(shown[2], shown[3], dec) : indexChangeText(head?.change ?? null, head?.chg_pct ?? null, dec);
+  const headTone = dayReady ? dayTone : shownTone;
+  const daySub = head?.market === "tx" && isDay
+    ? txSubtitle({ contract_month: series?.contract_month ?? head.contract_month, settlement: null })
+    : null;
+
+  const statsView = isDay
+    ? dayReady && dayStats
+      ? { labels: ["日高", "日低", "日漲跌"], high: dayStats.high, low: dayStats.low, change: dayStats.change,
+          chgPct: dayStats.chgPct, tone: intradayTone(dayPoints, dayPrev), from: dayStats.from, to: dayStats.to }
+      : null
+    : stats
+      ? { labels: ["區間高", "區間低", "區間漲跌"], high: stats.high, low: stats.low, change: stats.change as number | null,
+          chgPct: stats.chgPct, tone: rangeTone(points), from: mmdd(stats.from), to: mmdd(stats.to) }
+      : null;
+
   return (
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
       <DialogPrimitive.Portal>
@@ -226,7 +393,7 @@ export default function IndexTrendSheet({
             <div className="min-w-0 flex-1">
               <DialogPrimitive.Title className="text-[12px] font-semibold text-muted-foreground">
                 {TREND_SHEET_TITLE}
-                {head && <span className="num ml-2 text-[11.5px] font-normal">{`${mmdd(shown ? shown[0] : head.date)} 收盤`}</span>}
+                {head && <span className="num ml-2 text-[11.5px] font-normal" data-testid="index-trend-time">{headTime}</span>}
               </DialogPrimitive.Title>
               <DialogPrimitive.Description className="sr-only">{TREND_HINT}</DialogPrimitive.Description>
             </div>
@@ -248,7 +415,7 @@ export default function IndexTrendSheet({
                   role="tab"
                   aria-selected={ix.market === head?.market}
                   className={cn(pillTabClass(ix.market === head?.market), "min-h-9")}
-                  onClick={() => { onMarketChange(ix.market); setHover(null); }}
+                  onClick={() => { onMarketChange(ix.market); setHover(null); setIHover(null); }}
                 >
                   {ix.name}
                 </button>
@@ -260,25 +427,36 @@ export default function IndexTrendSheet({
               <div className="mt-2.5" data-testid="index-trend-head">
                 <div className="flex flex-wrap items-baseline gap-x-2">
                   <span className="text-[13px] font-bold">{head.name}</span>
-                  {sub && <span className="num text-[11px] text-muted-foreground">{sub}</span>}
-                  {dateTag(head.date, dataDate) && !hover && (
+                  {(isDay ? daySub : sub) && <span className="num text-[11px] text-muted-foreground">{isDay ? daySub : sub}</span>}
+                  {!isDay && dateTag(head.date, dataDate) && !hover && (
                     <span className="num text-[11px] text-warn">{`指數日 ${mmdd(head.date)}`}</span>
+                  )}
+                  {dayReady && dateTag(intra!.date, dataDate) && (
+                    <span className="num text-[11px] text-warn">{`日內 ${mmdd(intra!.date)}`}</span>
                   )}
                 </div>
                 <div className="mt-0.5 flex flex-wrap items-baseline gap-x-3">
-                  <span className={cn("num text-[30px] font-bold leading-none tracking-tight", TONE_CLASS[shownTone])}>
-                    {fmtIndex(shown ? shown[1] : head.close, dec)}
+                  <span className={cn("num text-[30px] font-bold leading-none tracking-tight", TONE_CLASS[headTone])}>
+                    {fmtIndex(headValue, dec)}
                   </span>
-                  <span className={cn("num text-[13px] font-semibold", TONE_CLASS[shownTone])}>
-                    {shown ? indexChangeText(shown[2], shown[3], dec) : indexChangeText(head.change, head.chg_pct, dec)}
-                  </span>
+                  <span className={cn("num text-[13px] font-semibold", TONE_CLASS[headTone])}>{headChange}</span>
                 </div>
               </div>
             )}
 
             {/* 圖 */}
             <div className="mt-2 min-h-[300px]">
-              {error ? (
+              {isDay ? (
+                intraError ? (
+                  <p className="py-16 text-center text-sm text-muted-foreground">{isBrowserOffline() ? OFFLINE_DATA_COPY : INTRADAY_EMPTY}</p>
+                ) : intra === undefined ? (
+                  <div className="h-[300px] w-full animate-pulse rounded-[var(--r-md)] bg-secondary" aria-label="載入中" />
+                ) : !dayReady ? (
+                  <p className="py-16 text-center text-sm text-muted-foreground" data-testid="index-intraday-empty">{dayEmpty}</p>
+                ) : (
+                  <IntradayChart points={dayPoints} prev={dayPrev} decimals={dec} onHover={setIHover} />
+                )
+              ) : error ? (
                 <p className="py-16 text-center text-sm text-muted-foreground">{isBrowserOffline() ? OFFLINE_DATA_COPY : TREND_EMPTY}</p>
               ) : !hist ? (
                 <div className="h-[300px] w-full animate-pulse rounded-[var(--r-md)] bg-secondary" aria-label="載入中" />
@@ -298,39 +476,39 @@ export default function IndexTrendSheet({
                   aria-pressed={range === r.key}
                   data-testid={`index-trend-range-${r.key}`}
                   className={cn(filterChipClass(range === r.key), "min-h-9")}
-                  onClick={() => { setRange(r.key); setHover(null); }}
+                  onClick={() => { setRange(r.key); setHover(null); setIHover(null); }}
                 >
                   {r.label}
                 </button>
               ))}
-              {stats && (
-                <span className="num ml-auto text-[10.5px] text-muted-foreground">{`${mmdd(stats.from)} – ${mmdd(stats.to)}`}</span>
+              {statsView && (
+                <span className="num ml-auto text-[10.5px] text-muted-foreground">{`${statsView.from} – ${statsView.to}`}</span>
               )}
             </div>
 
-            {/* 區間統計 */}
-            {stats && (
+            {/* 區間統計(1日:日高/日低/日漲跌,漲跌相對前一交易日收盤) */}
+            {statsView && (
               <dl className="mt-2.5 grid grid-cols-3 gap-2 rounded-[var(--r-md)] bg-secondary/60 px-3 py-2 text-center" data-testid="index-trend-stats">
                 <div>
-                  <dt className="text-[10.5px] text-muted-foreground">區間高</dt>
-                  <dd className="num text-[13px] font-semibold">{fmtIndex(stats.high, dec)}</dd>
+                  <dt className="text-[10.5px] text-muted-foreground">{statsView.labels[0]}</dt>
+                  <dd className="num text-[13px] font-semibold">{fmtIndex(statsView.high, dec)}</dd>
                 </div>
                 <div>
-                  <dt className="text-[10.5px] text-muted-foreground">區間低</dt>
-                  <dd className="num text-[13px] font-semibold">{fmtIndex(stats.low, dec)}</dd>
+                  <dt className="text-[10.5px] text-muted-foreground">{statsView.labels[1]}</dt>
+                  <dd className="num text-[13px] font-semibold">{fmtIndex(statsView.low, dec)}</dd>
                 </div>
-                <div title={`區間漲跌 ${indexChangeText(stats.change, stats.chgPct, dec)}`}>
-                  <dt className="text-[10.5px] text-muted-foreground">區間漲跌</dt>
+                <div title={`${statsView.labels[2]} ${indexChangeText(statsView.change, statsView.chgPct, dec)}`}>
+                  <dt className="text-[10.5px] text-muted-foreground">{statsView.labels[2]}</dt>
                   {/* 只放 %(點數在 title),390px 三格並排才不換行 */}
-                  <dd className={cn("num whitespace-nowrap text-[13px] font-semibold", TONE_CLASS[rangeTone(points)])}>
-                    {indexChangeText(null, stats.chgPct, dec)}
+                  <dd className={cn("num whitespace-nowrap text-[13px] font-semibold", TONE_CLASS[statsView.tone])}>
+                    {indexChangeText(null, statsView.chgPct, dec)}
                   </dd>
                 </div>
               </dl>
             )}
             <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
-              {TREND_HINT}
-              {head?.market === "tx" && ` ${TX_STITCH_NOTE}`}
+              {isDay ? INTRADAY_HINT : TREND_HINT}
+              {head?.market === "tx" && ` ${isDay ? TX_INTRADAY_NOTE : TX_STITCH_NOTE}`}
             </p>
           </div>
         </DialogPrimitive.Popup>

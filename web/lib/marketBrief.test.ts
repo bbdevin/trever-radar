@@ -35,7 +35,22 @@ import {
   sparkTone,
   txSubtitle,
   type TrendPoint,
+  INDEX_INTRADAY_URL,
+  INTRADAY_EMPTY,
+  INTRADAY_HINT,
+  PREV_CLOSE_LABEL,
+  TREND_RANGE_DEFAULT,
+  TX_INTRADAY_EMPTY,
+  TX_INTRADAY_NOTE,
+  changeVsPrev,
+  hhmmOf,
+  intradayStats,
+  intradayTone,
+  prevCloseBefore,
+  type IntradayPoint,
 } from "./marketBrief.ts";
+import { tickMarkLabel } from "./chartTime.ts";
+import { chartTimeOf, twWallKey } from "./resample.ts";
 
 test("指數:千分位兩位小數,與來源同字;台指期整數", () => {
   assert.equal(fmtIndex(49313.44), "49,313.44");
@@ -143,12 +158,57 @@ test("走勢範圍:依交易日數取尾段;區間統計高低與首尾漲跌", 
   assert.equal(sliceRange(pts, "1y").length, 250);
   assert.equal(sliceRange(pts.slice(0, 10), "1y").length, 10);
   assert.deepEqual(sliceRange(undefined, "1m"), []);
-  assert.deepEqual(TREND_RANGES.map((r) => r.label), ["1月", "3月", "6月", "1年"]);
+  assert.deepEqual(TREND_RANGES.map((r) => r.label), ["1日", "1月", "3月", "6月", "1年"]);
+  assert.equal(TREND_RANGE_DEFAULT, "3m");
   const s = rangeStats([["a", 100, null, null], ["b", 110, null, null], ["c", 95, null, null], ["d", 105, null, null]])!;
   assert.deepEqual([s.high, s.low, s.change, s.chgPct, s.from, s.to], [110, 95, 5, 5, "a", "d"]);
   assert.equal(rangeStats([]), null);
   assert.equal(rangeTone([["a", 100, null, null], ["b", 90, null, null]]), "down");
   assert.equal(rangeTone([["a", 100, null, null]]), "flat");
+});
+
+// 2026-10-08 台北;epoch 為真實 UTC 秒(09:00 台北 = 01:00Z),與 pipeline indices_intraday 同一個慣例
+const ep = (hhmm: string) => Date.parse(`2026-10-08T${hhmm}:00+08:00`) / 1000;
+
+test("1日:時間一律台北 HH:MM,與瀏覽器時區無關;圖表 time 走 chartTimeOf(twWallKey)", () => {
+  assert.equal(hhmmOf(ep("09:00")), "09:00");
+  assert.equal(hhmmOf(ep("13:30")), "13:30");
+  assert.equal(hhmmOf(ep("08:45")), "08:45");
+  const t = chartTimeOf(twWallKey(ep("09:05")));
+  assert.equal(t, ep("09:05") + 8 * 3600);
+  // 元件的時間軸刻度與游標標籤都用 tickMarkLabel(t, 3)
+  assert.equal(tickMarkLabel(t, 3), "09:05");
+  assert.equal(tickMarkLabel(chartTimeOf(twWallKey(ep("13:30"))), 3), "13:30");
+});
+
+test("1日基準:歷史檔裡早於當日的最後一列收盤(歷史檔已含今天時跳過今天)", () => {
+  const hist: TrendPoint[] = [["2026-10-06", 100, null, null], ["2026-10-07", 110, null, null], ["2026-10-08", 105, null, null]];
+  assert.equal(prevCloseBefore(hist, "2026-10-08"), 110);
+  assert.equal(prevCloseBefore(hist.slice(0, 2), "2026-10-08"), 110); // 歷史檔還沒有今天
+  assert.equal(prevCloseBefore(hist, "2026-10-07"), 100); // 日內檔是前一天的
+  assert.equal(prevCloseBefore(hist, "2026-10-06"), null);
+  assert.equal(prevCloseBefore(undefined, "2026-10-08"), null);
+});
+
+test("1日:相對前收漲跌、日高日低、線色跟當日漲跌", () => {
+  assert.deepEqual(changeVsPrev(49313.44, 49806.37), { change: -492.93, chgPct: -0.99 });
+  assert.deepEqual(changeVsPrev(110, 100), { change: 10, chgPct: 10 });
+  assert.deepEqual(changeVsPrev(110, null), { change: null, chgPct: null });
+  assert.equal(indexChangeText(-492.93, -0.99), "▼492.93 · -0.99%");
+
+  const pts: IntradayPoint[] = [[ep("09:00"), 49411.36], [ep("10:00"), 49900], [ep("11:00"), 49200], [ep("13:30"), 49313.44]];
+  const s = intradayStats(pts, 49806.37)!;
+  assert.deepEqual([s.high, s.low, s.last, s.change, s.chgPct, s.from, s.to], [49900, 49200, 49313.44, -492.93, -0.99, "09:00", "13:30"]);
+  assert.equal(intradayStats([], 1), null);
+  const noPrev = intradayStats(pts, null)!;
+  assert.deepEqual([noPrev.change, noPrev.chgPct], [null, null]);
+  // 收在前收之下 → 綠,即使開盤後一路比 09:00 那根低也一樣看前收
+  assert.equal(intradayTone(pts, 49806.37), "down");
+  assert.equal(intradayTone(pts, 49000), "up");
+  assert.equal(intradayTone(pts, 49313.44), "flat");
+  assert.equal(intradayTone(pts, null), "down"); // 沒有前收:首尾相比
+  assert.equal(intradayTone([], 1), "flat");
+  assert.equal(INDEX_INTRADAY_URL, "/data/market/indices_intraday.json");
 });
 
 test("禁詞:標題、標籤、提示", () => {
@@ -161,7 +221,8 @@ test("禁詞:標題、標籤、提示", () => {
     word(0x5efa, 0x8b70), word(0x558a, 0x55ae),
   ].join("|"));
   for (const t of [BRIEF_TITLE, BRIEF_STALE_BADGE, BRIEF_TURNOVER_LABEL, BRIEF_INSTI_LABEL, BRIEF_INSTI_HINT, BRIEF_UPDOWN_HINT,
-    TREND_AFFORDANCE, TREND_SHEET_TITLE, TREND_EMPTY, TREND_HINT, TX_STITCH_NOTE, ...TREND_RANGES.map((r) => r.label)]) {
+    TREND_AFFORDANCE, TREND_SHEET_TITLE, TREND_EMPTY, TREND_HINT, TX_STITCH_NOTE, ...TREND_RANGES.map((r) => r.label),
+    INTRADAY_EMPTY, TX_INTRADAY_EMPTY, INTRADAY_HINT, TX_INTRADAY_NOTE, PREV_CLOSE_LABEL, "日高", "日低", "日漲跌"]) {
     assert.ok(!banned.test(t), t);
   }
   assert.ok(banned.test(word(0x505a, 0x591a)), "regex 本身有效");

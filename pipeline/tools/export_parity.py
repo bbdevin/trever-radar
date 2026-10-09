@@ -82,7 +82,8 @@ NON_DB_INPUTS = """\
   1. DATA_DIR/spark_day.json   intraday spark cache (export/spark_day.py). Pinned: each run gets
                                its own fresh DATA_DIR holding a copy of --spark-cache (or nothing).
   2. FUGLE_API_KEY + Taipei date  with a key and today == price date, spark_day fetches from the
-                               network and rewrites the cache. Pinned: the key is removed from the env.
+                               network and rewrites the cache (indices_intraday, docs/49 §12.5, uses
+                               the same gate). Pinned: the key is removed from the env.
   3. radar/data/company_groups.json  repo file — same commit on both sides (--old-code/--new-code).
   4. wall clock                 only generated_at (ignored by the comparison).
   5. PYTHONHASHSEED             object key order in ~100 branches/track files. Pinned to 0.

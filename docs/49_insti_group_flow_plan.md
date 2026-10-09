@@ -369,3 +369,36 @@ web/public/data/rankings/insti_flow_20d.json     (P1)
 
 - pytest `test_market_index.py`(18)+ 相關 export 測試;node `marketBrief.test.ts`(迷你走勢 path、範圍切片、區間統計、台指期副標、禁詞)、全套;`tsc`、`next build`。
 - 390px 深／淺色 Playwright(攔截 Supabase、假 session):卡 144px、無水平溢出、開卡前**沒有**抓歷史檔;點台指期開 sheet(646px,焦點在 sheet 內,只抓一次歷史檔)、游標移動標頭數字跟著變、切 1年＋加權統計更新、ESC 與點背景都能關;缺台指期一格「—」、舊 payload 三格「—」。
+
+### 12.5 走勢圖加「1日」:當日 1 分線(2026-10-09,程式完成於分支、未合 main、未上線)
+
+使用者:「我想增加一日的走勢」。範圍 chip 改為 **1日**／1月／3月／6月／1年。
+
+**來源(全部免費、無驗證碼;一天各一次請求)**
+
+| 序列 | 主來源 | 備援 | 狀態 |
+|---|---|---|---|
+| 加權 | Fugle `stock/intraday/candles/IX0001?timeframe=1`(與 spark_day 同一把金鑰、同一個節流) | TWSE `rwd/zh/TAIEX/MI_5MINS_INDEX?date=YYYYMMDD`(每 5 秒一列,~1.2 MB/日;同一分鐘取最後一列 = 1 分 K 收盤) | TWSE 備援 2026-10-08 本機實抓:3,241 列 → 271 點,13:30 = 49,313.44 與日收相同;09:00:00 那列是前收參考值,被同分鐘後面的列蓋掉 |
+| 櫃買 | Fugle `stock/intraday/candles/IX0043`(**代號待 VPS probe 核對**) | 無:TPEx 舊 `minute_index/1MIN_result.php` 與新站 `indexInfo/minute` 都 404,沒找到公開的盤中分鐘指數 | 待 probe |
+| 台指期 | Fugle `futopt/intraday/candles/TXF{月碼}{年尾}`(近月:當天 `market_indices` tx 列的 `contract_month`,沒有就用「第三個週三(含)以前 = 當月」推算;例 202610 → `TXFJ6`) | 無:TAIFEX 只有每日逐筆成交 zip(數十 MB),不禮貌、不採用 | **免費方案是否含期權待 probe**;不含 → 檔內沒有 `tx`,前端寫「台指期暫無日內走勢」 |
+
+代號都是 `pipeline/radar/export/indices_intraday.py` 頂端常數(`FUGLE_TWSE_INDEX`、`FUGLE_TPEX_INDEX`、`FUGLE_TX_PRODUCT`),probe 後直接改。
+
+**VPS probe(唯讀,只印)**:`pipeline/tools/probe_index_intraday.py` —— 列 Fugle `tickers?type=INDEX`(TWSE/TPEx)、兩個指數代號的 ticker 與 1 分 K、`futopt/intraday/tickers?type=FUTURE` 的 TXF 列與近月 1 分 K(看 HTTP 狀態判斷免費方案)、TWSE 5 秒表,最後印管線會寫出的點數與檔案大小(不寫檔)。Fugle intraday 只有當天,要在交易日 13:45 後、隔天開盤前跑。指令見檔頭 docstring。結果寫回本節。
+
+**管線**(`export/indices_intraday.py`,json_export 在 `write_indices_hist` 之後、DB 連線外呼叫 `export_indices_intraday_safe`)
+
+- 閘門同 spark_day:有 `FUGLE_API_KEY` 且台北今天 = 價格日才打來源。同日檔已有三個序列 → 不再打(一天一次);缺哪個下一輪只補哪個(例:台指期不在免費方案時,每輪多 1 次 4xx 請求,可接受)。
+- 輸出 `market/indices_intraday.json` = `{date, series: {twse|tpex|tx: [[epoch_s, close], …]}}`:1 分鐘、epoch 為真實 UTC 秒(該分鐘**開始時間**,與 `stocks/intraday` 同慣例)、整數價寫 int、固定順序、緊湊、tmp+rename、內容沒變不重寫。時段外列丟掉(指數 09:00–13:30、台指期一般時段 08:45–13:45);值 ≤0 丟掉;<2 點的序列不出鍵;三個都沒有 → 不寫檔、舊檔留著。**只留最新一天**(新的一天抓到任何一個序列就整檔換掉)。實測三序列 271+271+301 點 ≈ **17 KB raw**。
+- 任何例外只記 warning、不中斷 export、舊檔保留。
+
+**UI**(`IndexTrendSheet.tsx`、純函式 `lib/marketBrief.ts`)
+
+- **預設仍是 3月**:1日檔只有盤後才有、休市日是前一天的;卡片格本身就是「今日」收盤漲跌,打開 sheet 想看的通常是更長的形狀。另外「有資料才預設 1日」得在開 sheet 時先抓日內檔才知道,違反「選 1日 才抓」。選擇不記憶(與其他範圍一致)。
+- 選 1日 才抓 `market/indices_intraday.json`(一個 session 一次;404 → 「尚無日內走勢」不重試;其他失敗不快取、離線顯示既有離線文案)。
+- AreaSeries,time = `chartTimeOf(twWallKey(epoch))`(台北牆上時間當 UTC,與個股分K同一招),時間軸與游標標籤一律 `HH:MM`(`tickMarkLabel(t, 3)`),與瀏覽器時區無關(截圖以 `America/Los_Angeles` 時區跑)。
+- 基準 = 指數歷史檔裡**日期早於日內檔日期**的最後一列收盤(`prevCloseBefore`;歷史檔已含今天時跳過今天)。虛線價格線「昨收」,價格軸範圍一定含它。線色跟當日漲跌(最新 vs 昨收)紅漲綠跌;沒有前收時首尾相比。
+- 標頭:標題「MM/DD HH:MM」、大字為那一分鐘的值、漲跌為相對昨收(游標移動跟著變);日內檔日期與頁面資料日不同時標「日內 MM/DD」。統計列 **日高／日低／日漲跌**(%;點數在 title),右側「09:00 – 13:30」(台指期 08:45 – 13:45)。
+- 台指期:副標只寫「近月 YYYY/MM」(不寫結算);提示加「台指期為近月一般時段(08:45–13:45),虛線為前一交易日收盤價(非結算價)」。**注意**:1日的台指期漲跌是相對前一日收盤價,卡片與 1月以上的漲跌是來源值(相對前一日結算價),兩者可差幾點。
+
+**驗證**:pytest `test_indices_intraday.py` 12 項(Fugle/TWSE 5 秒解析、分鐘取最後一筆、時段與別天、壞列、台指期代號與近月推算、閘門、一天一次與只補缺的、只留最新一天、隔離、檔案格式、TWSE 備援與請求 URL)、全套 1675 passed;web `marketBrief.test.ts` +3(HH:MM 與時區無關、前收基準、漲跌/日高日低/線色)與禁詞,node 全套 348 passed(TZ=America/Los_Angeles 亦過);`tsc`、`next build`。390px 深／淺色 Playwright(攔截 Supabase、假 session;加權用 10/08 TWSE 實際 5 秒資料,櫃買/台指期為合成資料):開 sheet 預設 3月且**沒有**抓日內檔、選 1日 才抓一次、切回 3月不重抓、標頭 13:30 49,313.44 ▼492.93 · -0.99%、游標時間跟著變、無水平溢出;缺 tx「台指期暫無日內走勢」、檔 404「尚無日內走勢」。截圖 `docs/evidence/49_index_intraday/`。
