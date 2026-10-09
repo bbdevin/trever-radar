@@ -15,7 +15,6 @@ import {
   TREND_RANGE_DEFAULT,
   TREND_SHEET_TITLE,
   TX_STITCH_NOTE,
-  axisTickLabel,
   dateTag,
   fmtIndex,
   indexChangeText,
@@ -29,6 +28,7 @@ import {
   type TrendPoint,
   type TrendRange,
 } from "@/lib/marketBrief";
+import { crosshairTimeLabel, tickMarkLabel } from "@/lib/chartTime";
 
 const UP = "#e66767";
 const DOWN = "#0ca30c";
@@ -93,10 +93,11 @@ function TrendChart({ points, decimals, onHover }: { points: TrendPoint[]; decim
         grid: { vertLines: { color: colors.grid }, horzLines: { color: colors.grid } },
         rightPriceScale: { borderColor: colors.border },
         // 時間軸與游標日期一律 MM/DD(月刻度 M月、年刻度 YYYY年),與全站日期寫法一致
-        localization: { timeFormatter: (t: unknown) => (typeof t === "string" ? mmdd(t) : String(t)) },
+        // (與個股 K 線共用 lib/chartTime)
+        localization: { timeFormatter: (t: unknown) => crosshairTimeLabel(t) },
         timeScale: {
           borderColor: colors.border, timeVisible: false, fixLeftEdge: true, fixRightEdge: true,
-          tickMarkFormatter: (t: unknown, type: number) => (typeof t === "string" ? axisTickLabel(t, type) : String(t)),
+          tickMarkFormatter: (t: unknown, type: number) => tickMarkLabel(t, type),
         },
         // 十字游標吸附到序列值(價格標籤顯示那天的收盤);手機垂直拖曳還給 sheet 捲動
         crosshair: { mode: CrosshairMode.Magnet },

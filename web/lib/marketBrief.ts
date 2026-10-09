@@ -7,6 +7,7 @@
  */
 import type { InstiMarket, MarketIndex, RadarJson } from "./types.ts";
 import { fmtAmt } from "./instiGroupFlow.ts";
+import { tickMarkLabel } from "./chartTime.ts";
 
 export const BRIEF_TITLE = "市場概況";
 export const BRIEF_STALE_BADGE = "部分待更新";
@@ -134,13 +135,9 @@ export function txSubtitle(ix: Pick<MarketIndex, "contract_month" | "settlement"
 /** 台指期歷史是近月連續、不回溯調整換月價差;sheet 的提示行在台指期時加這句 */
 export const TX_STITCH_NOTE = "台指期為近月連續、未調整換月價差。";
 
-/** 時間軸刻度:lightweight-charts TickMarkType 0=年 1=月 2=日(3/4 時刻不會出現,日線) */
+/** 時間軸刻度:lightweight-charts TickMarkType 0=年 1=月 2=日;與個股 K 線共用 lib/chartTime */
 export function axisTickLabel(time: string, tickType: number): string {
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(time);
-  if (!m) return time;
-  if (tickType === 0) return `${m[1]}年`;
-  if (tickType === 1) return `${Number(m[2])}月`;
-  return `${m[2]}/${m[3]}`;
+  return tickMarkLabel(time, tickType);
 }
 
 /**

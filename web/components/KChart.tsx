@@ -21,6 +21,7 @@ import {
   type IntradayStatus,
   type Timeframe,
 } from "@/lib/resample";
+import { crosshairTimeLabel, tickMarkLabel } from "@/lib/chartTime";
 import { cn, pillTabClass, segBtnClass } from "@/lib/utils";
 import { ScrollHint } from "@/components/ScrollHint";
 import { PL_LABELS, pricePrecision, type ChartLevel } from "@/lib/priceLevels";
@@ -344,7 +345,13 @@ export default function KChart({
         },
         grid: { vertLines: { color: colors.grid }, horzLines: { color: colors.grid } },
         rightPriceScale: { borderColor: colors.border },
-        timeScale: { borderColor: colors.border, timeVisible: minute, secondsVisible: false },
+        // 十字線/時間軸標籤(lib/chartTime,讀 UTC 欄位 → 任何瀏覽器時區都是台北時間):
+        // 日K 10/07、週/月K 2026/10/07、分K 10/06 11:55;刻度 2026年/9月/10/07,分K一天之內 11:55。
+        localization: { timeFormatter: (t: unknown) => crosshairTimeLabel(t, tf === "W" || tf === "M") },
+        timeScale: {
+          borderColor: colors.border, timeVisible: minute, secondsVisible: false,
+          tickMarkFormatter: (t: unknown, type: number) => tickMarkLabel(t, type),
+        },
         crosshair: { mode: 0 },
         // 手機版：垂直拖曳還給頁面捲動；水平 pan/縮放維持
         handleScroll: { vertTouchDrag: !mobile },
