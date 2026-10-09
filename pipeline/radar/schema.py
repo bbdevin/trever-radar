@@ -587,3 +587,16 @@ director_holdings = Table(
     Column("market", Text),                       # twse | tpex
     Index("ix_director_holdings_ym", "as_of_ym"),
 )
+
+# 大盤指數日收(docs/49 §11,2026-10-09):加權指數(TWSE MI_INDEX type=IND)與櫃買指數
+# (TPEx afterTrading/tradingIndex)。原始值逐筆照來源存:close、change(點)、chg_pct(%,
+# 來源沒給就 NULL,export 再由 close/change 推)。一市一日一列。
+market_indices = Table(
+    "market_indices",
+    metadata,
+    Column("market", Text, primary_key=True),     # twse | tpex
+    Column("date", Text, primary_key=True),       # YYYY-MM-DD
+    Column("close", Float, nullable=False),
+    Column("change", Float),                      # 漲跌點數(含正負)
+    Column("chg_pct", Float),                     # 漲跌百分比;TPEx 來源未提供 → NULL
+)

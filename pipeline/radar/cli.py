@@ -1409,8 +1409,38 @@ def main(argv=None):
     pr.add_argument("--dry-run", action="store_true", help="count only, write nothing")
     pr.set_defaults(fn=cmd_prune)
 
+    # 大盤指數(docs/49 §11;2026-10-09)。獨立區塊、放最後,方便與其他分支合併。
+    mi = sub.add_parser("import-index",
+                        help="加權指數/櫃買指數日收 → market_indices(0 到齊、75 還沒公布、1 錯誤)")
+    mi.add_argument("--date", help="YYYYMMDD(預設台北今天)")
+    mi.add_argument("--days", type=int, default=1,
+                    help="往回補幾個日曆日(含 --date;休市日的 empty 不算失敗)")
+    mi.set_defaults(fn=cmd_import_index)
+
     args = p.parse_args(argv)
     args.fn(args)
+
+
+def cmd_import_index(args):
+    """`import-index`:單日 → 0 兩市都到、75 任一市還沒公布(已到的照樣留著)、1 任一市錯誤。
+    `--days N` 回補時休市日的 empty 是常態,只有 error 才回 1。"""
+    from .market_index import import_market_index
+
+    start = _iso_arg(args.date) or datetime.now(ZoneInfo(config.TZ)).date().isoformat()
+    days = max(1, int(args.days or 1))
+    d0 = datetime.strptime(start, "%Y-%m-%d").date()
+    any_error = any_empty = False
+    for k in range(days):
+        day = (d0 - timedelta(days=k)).strftime("%Y%m%d")
+        for r in import_market_index(day):
+            print(f"index {day} {r['source']}: {r['status']} rows={r['rows']}"
+                  + (f" ({r.get('error')})" if r.get("error") else ""))
+            any_error |= r["status"] == "error"
+            any_empty |= r["status"] == "empty"
+    if any_error:
+        raise SystemExit(1)
+    if any_empty and days == 1:
+        raise SystemExit(IMPORT_DAILY_PENDING_EXIT)
 
 
 if __name__ == "__main__":

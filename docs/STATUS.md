@@ -2,6 +2,13 @@
 
 > 單一進度真相。每完成一個里程碑就更新本檔。規格細節看各編號文件,別寫在這裡。
 
+## 2026-10-09 首頁「市場概況」卡＋大盤指數匯入;法人族群「個股」排序與手機版面(`docs/49` §11、`docs/25` §18;程式完成於分支、未合 main、未上線;v3.6)
+
+- **需求**:使用者「法人連續買賣超顯示功能很棒 但這邊ui是否能以手機畫面為優化 並且增加排序 / 還有首頁上方的 資料日 上櫃成交 上市成交 這些資訊 跟ui是否可以優化好看點 … 或是可以增加指數之類的 或是對使用者有用的資訊」。
+- **做了什麼**:①「法人族群 → 個股」加排序 chip(金額(估)／張數／連續日數／漲跌;買賣兩邊各自排;`sortStockRows` 確定性同分規則;偏好存 `localStorage` try/catch),列改兩行、連續日數膠囊前置、數字欄固定寬。② 首頁頂部三張卡換成一張「市場概況」卡(`MarketBrief.tsx` / `lib/marketBrief.ts`):加權指數、櫃買指數、成交額(兩市合計＋↑↓家數)、三大法人(估)(與法人族群 marketLine 同一組數字),資料日與「部分待更新」在標題列,主色 9% 漸層底、零新色票。③ 大盤指數**新資料**:`market_indices` 表、`providers/market_index.py`(TWSE MI_INDEX type=IND、TPEx afterTrading/tradingIndex;原始值逐筆照來源,TPEx 無百分比存 NULL、export 推算)、`radar/market_index.py`、`cli.py` 末尾 `import-index [--date] [--days]`(0/75/1);export 新鍵 `indices`、`insti_market`(無資料不出鍵;head.json +452 B)。
+- **驗證**:pytest `test_market_index.py`(12,含抓回的原始回應 fixture 逐值相同)+ 相關 export 測試 67 passed;web node 全套 359 passed(`marketBrief.test.ts` 7 新、排序 3 新);`tsc`、`next build`;390px 深／淺色截圖(Playwright 攔截 Supabase、假 session):市場概況卡、個股預設與連續日數排序(重整後仍在)、舊 payload 只畫成交額格。
+- **待人類／維運**:**排程接線未做**(另一 agent 正在改 `vps/scripts`):依 `docs/49` §11.3 在 `daily-market.sh` / `daily-tpex-quotes.sh` / `daily-insti.sh` 加 `run_step_or_warn "import-index" radar import-index`,並在 VPS 跑一次 `radar import-index --days 10`;沒接線時首頁兩個指數格不畫、其餘照常。合 main。
+
 ## 2026-10-09 首頁「市場資金流向」面板併入「法人族群」分頁(`docs/49` §10、`docs/25` §17;程式完成於分支、未合 main、未上線;v3.6)
 
 - **需求**:使用者「因為做了法人族群 感覺下面市場資金流向重複到了 可以整併或移除」,決定權交給 Planner。

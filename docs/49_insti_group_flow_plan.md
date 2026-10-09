@@ -1,6 +1,6 @@
 # 49 法人族群買賣超(外資／投信／自營 × 產業／題材)規劃
 
-> **狀態**:✅ **MVP 程式完成(2026-10-08,分支、未合 main、未上線;v3.5)**;✅ **「個股」模式(§9,2026-10-09,分支;v3.6)**;✅ **首頁「市場資金流向」面板併入本分頁(§10,2026-10-09,分支;v3.6)**;P1/P2 📝 未做。原規劃 2026-10-08 Fable Planner;使用者已核准,分頁名稱沿用「法人族群」。
+> **狀態**:✅ **MVP 程式完成(2026-10-08,分支、未合 main、未上線;v3.5)**;✅ **「個股」模式(§9,2026-10-09,分支;v3.6)**;✅ **首頁「市場資金流向」面板併入本分頁(§10,2026-10-09,分支;v3.6)**;✅ **「個股」排序＋首頁「市場概況」卡＋大盤指數匯入(§11,2026-10-09,分支;v3.6;排程接線待做)**;P1/P2 📝 未做。原規劃 2026-10-08 Fable Planner;使用者已核准,分頁名稱沿用「法人族群」。
 >
 > **MVP 實作備註**(與本檔的差異或補充):
 > - 張數取「逐檔 `淨股數 ÷ 1000` **向零截斷**再相加」(`trunc_lots`),兩條恆等式(族群 = Σ 成員、產業各組 + 其他 = 全市場)因此逐張成立;`buy_n`/`sell_n` 與成員前 5/前 3 只計截斷後 ≠ 0 張的檔(零股不算買也不算賣)。**與個股卡片 `foreign_net_lots` 的 `//`(向下取整)刻意不同**:`//` 把 −500 股算成 −1 張、+500 股算成 0 張,買賣超檔數會系統性偏向賣方,並出現「−1張 · 0萬」的假賣超;卡片值逐檔顯示、不計檔數,所以不動(兩者在負數有零股尾數時差 1 張)。
@@ -287,3 +287,39 @@ web/public/data/rankings/insti_flow_20d.json     (P1)
 
 - node `web/lib/instiGroupFlow.test.ts` 加 `vs20Deviation`/`vs20ByName`/`VS20_LEGEND` 禁詞;web node 全套、`tsc`、`next build` 通過。
 - 390px 深／淺色截圖(靜態 build + 種子資料;Playwright 攔截 Supabase `/auth/v1/*`、`/rest/v1/*`,假 session,未動 AuthGate):首頁多方榜(面板已不在)、法人族群 產業／題材(族群列帶量能徽章)。
+
+## 11. 首頁「市場概況」卡 + 大盤指數匯入;「個股」檢視排序與手機版面(2026-10-09,程式完成於分支;v3.6)
+
+使用者:「法人連續買賣超顯示功能很棒 但這邊ui是否能以手機畫面為優化 並且增加排序 / 還有首頁上方的 資料日 上櫃成交 上市成交 這些資訊 跟ui是否可以優化好看點 像是背景顏色 還有這資訊沒什麼太大幫助 或是可以增加指數之類的 或是對使用者有用的資訊」。
+
+### 11.1 「個股」檢視(§9)排序與 390px 版面
+
+- **排序**:計數行下方一排 chip「金額(估)｜張數｜連續日數｜漲跌」(`filterChipClass`,選中主色),買超、賣超**兩邊各自**排,換身分不重置。偏好存 `localStorage["trever.insti.stockSort.v1"]`(讀寫 try/catch,讀不到就是預設「金額(估)」)。規則在 `web/lib/instiGroupFlow.ts` `sortStockRows`,**確定性**:金額 = 檔內順序原樣;張數 = 買超降冪／賣超升冪 → |金額| 降冪 → 代號;連續日數 = streak 降冪 → |金額| 降冪 → 代號;漲跌 = chg_pct 降冪、缺值最後 → |金額| → 代號。欄頭跟著寫「依張數」等;預設不寫。
+- **列版面**:第一行 名稱｜張數(粗、側別色)｜金額(估)｜漲跌,數字欄固定寬;第二行 **連續日數膠囊放最前**(`bg-up/15 text-up` / `bg-down/15 text-down`,使用者最常看的訊號,不再是行尾小字)+ 代號 · 市場 · 產業。拿掉每列的 ›(390px 省 12px 給數字;整列本來就可點)。欄頭右側一行小字「張數 / 金額(估) / 漲跌」交代三個數字欄。
+- 不改資料檔(`insti_stocks_1d.json` 逐位元不變)。
+
+### 11.2 首頁頂部:三張「資料日／上櫃成交／上市成交」卡 → 一張「市場概況」卡
+
+- **為什麼換**:原三張卡只有兩市成交額與漲跌家數,橫滑才看得到第三張;使用者說「沒什麼太大幫助」。決策有用的市場脈絡是:大盤今天漲跌(加權／櫃買)、錢多不多(成交額)、廣度(漲跌家數)、法人整體進出(三大法人全市場淨額)。四格剛好 390px 兩欄兩列,不用橫滑。
+- **版面**(`web/components/MarketBrief.tsx`,句子 `web/lib/marketBrief.ts`):標題「市場概況 · 資料日 YYYY-MM-DD [部分待更新]」;格 1 加權指數、格 2 櫃買指數(收盤 19px 粗體、下一行「▼492.93 · -0.99%」,紅漲綠跌、箭頭與正負號都在字裡);格 3 成交額(兩市合計,下一行 上市/上櫃 各自與 ↑漲家數/↓跌家數);格 4 三大法人(估)(外資大字,投信、自營小字;金額＝張數×當日收盤(估),與法人族群分頁 marketLine **同一組數字**)。md 以上四格一列。底色 `linear-gradient(135deg, color-mix(primary 9%, card), card)`,零新色票(docs/19 §1)。
+- **資料日**:指數日或法人日與頁面資料日不同時,格標籤旁標 `(10/06)` / `(法人 10/06)`;「部分待更新」徽章沿用 freshness。
+- **舊 payload**:缺 `indices` → 兩個指數格不畫;缺 `insti_market` → 法人格不畫;`summary` 永遠有 → 至少成交額格。首頁預設分頁多下載 **452 B raw**(兩個鍵,種子資料實測),其餘 head.json 不變。
+- **不做**:期貨指數、外資期貨未平倉(資料不在站上)、任何預測或強弱判讀字眼。
+
+### 11.3 大盤指數匯入(新資料,原始值逐筆照來源)
+
+| 項目 | 內容 |
+|---|---|
+| 表 | `market_indices(market, date, close, change, chg_pct)`(`schema.py`;`init_db` 的 `create_all` 會在 VPS 下一次任何 `radar` 指令時建表,不需 migration) |
+| 來源 | 上市:TWSE `rwd/zh/afterTrading/MI_INDEX?type=IND`,第一張表「價格指數」列「發行量加權股價指數」(收盤指數、漲跌(+/-)、漲跌點數、漲跌百分比)。上櫃:TPEx `www/zh-tw/afterTrading/tradingIndex?date=YYY/MM/DD`(整月逐日「成交量值及櫃買指數」,取日期相符的列;只有櫃買指數與漲/跌點數,**沒有百分比** → DB 存 NULL,export 以 change ÷ (close − change) 推,四捨五入兩位)。兩者公開、無驗證碼,與既有 quotes 同站。 |
+| 程式 | `pipeline/radar/providers/market_index.py`(`parse_twse_index`/`parse_tpex_index` 純函式 + fetch)、`pipeline/radar/market_index.py`(`import_market_index` 走 `importer._run`,`import_logs` dataset=`index`;`latest_indices` 供 export)、`cli.py` 末尾新增 `import-index [--date YYYYMMDD] [--days N]`(獨立區塊,方便與其他分支合併) |
+| 離開碼 | 單日:0 兩市都到、**75 任一市還沒公布**(已到的照樣留著,與 `import-daily`/`import-futures-day` 的 75 同義)、1 任一市錯誤。`--days N` 回補:休市日 empty 不算失敗,只有 error 回 1 |
+| Export | `radar.json` / `home/head.json` 新鍵 `indices`(每市 ≤ data_date 的最新一列,固定 twse、tpex;一列都沒有 → 鍵不出)與 `insti_market`(`{date: i_date, foreign/trust/dealer/total: {net_lots, amt_est}}`,呼叫 `insti_group_flow.aggregate` 的 `market`,與分頁同函式;i_date 為 None 或算失敗 → 鍵不出、記 warning)。其餘鍵與順序不變。 |
+| 測試 | `pipeline/tests/test_market_index.py`(12):fixture `tests/fixtures/twse_mi_index_ind_20261008.json`、`tpex_trading_index_20261008.json` 是 2026-10-09 抓回來的**原始回應**,解析值逐字對來源(49,313.44 / −492.93 / −0.99;426.71 / −3.75);方向欄為 + 時正號;stat 不是 OK / 當日列不在 → NoDataError;版面變 → RuntimeError;匯入兩市與 import_logs、upsert 不重複;CLI 0/75/1 與 `--days`;export 的 `indices`(含 TPEx 推算百分比)與 `insti_market` == `insti_flow_1d.json` 的 `market`;無資料時兩鍵不出;head.json 帶鍵。 |
+
+**排程接線(待做,留給人類/維運分支;本次不動 `vps/scripts`,另一個 agent 正在改)**:在 `daily-market.sh`(14:05 上市日K輪)`import-daily` 成功之後、`export-json` 之前加一行 `run_step_or_warn "import-index" radar import-index`(上市指數與 MI_INDEX 同一刻公布;上櫃 tradingIndex 通常 14:45 前後才有,這一步回 75 只 warn 不擋);`daily-tpex-quotes.sh`(14:45)與 `daily-insti.sh`(16:00)各加同一行當保底(冪等 upsert)。第一次上線前在 VPS 跑一次 `radar import-index --days 10` 把近期補齊(休市日 empty 無害)。不加也不會壞:缺鍵時首頁兩個指數格不畫。
+
+### 11.4 驗證
+
+- pytest `tests/test_market_index.py` + `test_insti_group_flow.py` + `test_insti_stocks.py` + `test_home_split.py` + `test_json_export.py`;node `marketBrief.test.ts`(新)、`instiGroupFlow.test.ts`(排序三項);`tsc`、`next build`。
+- 390px 深／淺色截圖(同 §10.4 方法):首頁市場概況卡、法人族群「個股」預設與「連續日數」排序(重新整理後排序仍在)、舊 payload(拿掉兩鍵)只畫成交額格。

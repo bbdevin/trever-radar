@@ -1035,7 +1035,34 @@ export interface RadarJson {
    * 有鍵 = 數過了,即使四個數字全是 0——兩者不可塌成同一件事。
    */
   futures_open_interest_direction?: FuturesOpenInterestDirection;
+  /**
+   * 首頁「市場概況」(docs/49 §11):大盤指數,每市 ≤ data_date 的最新一列(固定 twse、tpex)。
+   * 缺鍵 = 還沒匯入過指數(舊 payload),那兩格不畫。`date` 可能早於 data_date(指數晚到)。
+   */
+  indices?: MarketIndex[];
+  /** 三大法人全市場淨額(與法人族群分頁 marketLine 同一組數字);缺鍵 = 沒有法人資料。 */
+  insti_market?: InstiMarket;
   stocks: RadarStock[];
+}
+
+export interface MarketIndex {
+  market: "twse" | "tpex" | string;
+  name: string;
+  date: string;
+  close: number;
+  /** 漲跌點數(含正負);來源缺 → null */
+  change: number | null;
+  /** 漲跌百分比;TPEx 由 close/change 推 */
+  chg_pct: number | null;
+}
+
+export interface InstiMarket {
+  /** 法人日(可能早於 data_date) */
+  date: string;
+  foreign: { net_lots: number; amt_est: number };
+  trust: { net_lots: number; amt_est: number };
+  dealer: { net_lots: number; amt_est: number };
+  total: { net_lots: number; amt_est: number };
 }
 
 /**
