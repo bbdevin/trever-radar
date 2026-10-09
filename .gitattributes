@@ -19,3 +19,4 @@
 # `binary` because Big5 bytes are not reviewable as a text diff in the first place.
 pipeline/tests/fixtures/taifex_stock_lists.html -text whitespace=-trailing-space,-space-before-tab,-tab-in-indent,-indent-with-non-tab
 pipeline/tests/fixtures/taifex_fut_history.csv binary
+pipeline/tests/fixtures/taifex_daily_tx_20261008_trim.csv binary

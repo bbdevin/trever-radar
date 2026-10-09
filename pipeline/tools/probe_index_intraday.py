@@ -1,7 +1,7 @@
 """唯讀探測:大盤當日走勢(docs/49 §12.5)的來源代號與回應格式。只印、不寫任何檔、不碰 DB。
 
     cd pipeline
-    FUGLE_API_KEY=… python tools/probe_index_intraday.py [--date YYYY-MM-DD] [--tx-month YYYYMM]
+    FUGLE_API_KEY=… python tools/probe_index_intraday.py [--date YYYY-MM-DD] [--tx-month YYYYMM] [--taifex]
 
 VPS(金鑰只在容器 env 裡;見 vps/scripts/lib.sh `radar()`):
 
@@ -9,9 +9,10 @@ VPS(金鑰只在容器 env 裡;見 vps/scripts/lib.sh `radar()`):
       docker run --rm --env-file "$RADAR_SECRET_ENV_FILE" -v "$REPO/pipeline":/app/pipeline \
         -w /app/pipeline radar-pipeline python tools/probe_index_intraday.py; radar_secret_env_cleanup
 
-Fugle intraday/candles 只有**當天**,所以要在交易日 13:45 之後、隔天 08:30 之前跑。約 8 次 Fugle
-請求(間隔 1.1 秒)+ 1 次 TWSE。看完把結果寫回 docs/49 §12.5,代號不對就改
-``radar/export/indices_intraday.py`` 頂端的 ``FUGLE_*`` 常數。
+Fugle intraday/candles 只有**當天**,所以要在交易日 13:45 之後、隔天 08:30 之前跑。約 6 次 Fugle
+請求(間隔 1.1 秒)+ 1 次 TWSE + 1 次 TAIFEX HEAD(看逐筆成交 zip 公布了沒、Last-Modified);
+``--taifex`` 另下載那個 zip(~1.6 MB)解析台指期近月一般時段。看完把結果寫回 docs/49 §12.5,
+代號不對就改 ``radar/export/indices_intraday.py`` 頂端的 ``FUGLE_*`` 常數。
 """
 from __future__ import annotations
 
@@ -77,13 +78,12 @@ def show_tickers(label: str, status: int, body, needles: tuple[str, ...], prefix
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--date", default=ii.taipei_today())
-    ap.add_argument("--tx-month", default=None, help="YYYYMM;預設以第三個週三規則推算")
+    ap.add_argument("--tx-month", default=None, help="YYYYMM;預設取一般時段有成交的最小月份")
+    ap.add_argument("--taifex", action="store_true", help="下載 TAIFEX 逐筆成交 zip(~1.6 MB)並解析台指期")
     a = ap.parse_args()
     day = a.date
-    tx_month = a.tx_month or ii.near_month_by_rule(day)
-    tx_sym = ii.tx_symbol(tx_month)
-    print(f"date={day} tx_month={tx_month} tx_symbol={tx_sym}")
-    print(f"configured: twse={ii.FUGLE_TWSE_INDEX} tpex={ii.FUGLE_TPEX_INDEX} tx_product={ii.FUGLE_TX_PRODUCT}")
+    print(f"date={day} tx_month={a.tx_month or '(auto)'}")
+    print(f"configured: twse={ii.FUGLE_TWSE_INDEX} tpex={ii.FUGLE_TPEX_INDEX}")
 
     series: dict[str, list] = {}
     key = os.environ.get("FUGLE_API_KEY")
@@ -103,14 +103,26 @@ def main() -> int:
             show_rows(f"stock candles {sym} ({market})", st, body)
             if isinstance(body, dict):
                 series[market] = ii.parse_fugle_candles(body, day, market)
-        # 3) 台指期(futopt 是否在免費方案)
-        st, body = get(f"{API}/futopt/intraday/tickers", {"type": "FUTURE", "exchange": "TAIFEX"}, h)
-        show_tickers("futopt tickers FUTURE", st, body, ("臺股期貨", "台股期貨"), prefix=ii.FUGLE_TX_PRODUCT)
-        if tx_sym:
-            st, body = get(f"{API}/futopt/intraday/candles/{tx_sym}", {"timeframe": ii.FUGLE_TIMEFRAME}, h)
-            show_rows(f"futopt candles {tx_sym}", st, body)
-            if isinstance(body, dict):
-                series["tx"] = ii.parse_fugle_candles(body, day, "tx")
+
+    # 3) 台指期:TAIFEX 逐筆成交 zip(Fugle futopt 免費方案 403,2026-10-09 probe)
+    y, m, d = day.split("-")
+    url = ii.TAIFEX_DAILY_URL.format(y=y, m=m, d=d)
+    try:
+        r = requests.head(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=30)
+        print(f"\n[TAIFEX daily HEAD] HTTP {r.status_code} Content-Type={r.headers.get('Content-Type')} "
+              f"Last-Modified={r.headers.get('Last-Modified')} Length={r.headers.get('Content-Length')}")
+        print("  (Content-Type 不是 application/zip = 還沒公布)")
+        if a.taifex:
+            time.sleep(GAP)
+            g = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=120)
+            lines = ii.read_taifex_daily_zip(g.content)
+            if lines is None:
+                print(f"  download: not a zip ({len(g.content)} B)")
+            else:
+                print(f"  download: {len(g.content)} B zip, {len(lines)} lines; header={lines[0]!r}")
+                series["tx"] = ii.parse_taifex_daily_tx(lines, day, a.tx_month)
+    except Exception as e:  # noqa: BLE001
+        print(f"\n[TAIFEX daily] {e}")
 
     # 4) TWSE 官方每 5 秒指數(加權備援)
     st, body = 0, None

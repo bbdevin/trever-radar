@@ -1,6 +1,8 @@
 """docs/49 §12.5:大盤當日 1 分線(indices_intraday.json)——解析、聚合、閘門、隔離、檔案格式(不發網路)。"""
+import io
 import json
 import os
+import zipfile
 import tempfile
 import unittest
 from datetime import datetime
@@ -60,18 +62,6 @@ class ParseTests(unittest.TestCase):
                          [[ep("09:00"), 49700], [ep("09:01"), 49710.1], [ep("13:30"), 49900]])
         self.assertEqual(ii.parse_twse_5s({"stat": "很抱歉,沒有符合條件的資料!"}, DAY), [])
         self.assertEqual(ii.parse_twse_5s({"stat": "OK", "fields": ["時間"], "data": []}, DAY), [])
-
-    def test_tx_symbol_and_near_month_rule(self):
-        self.assertEqual(ii.tx_symbol("202610"), "TXFJ6")
-        self.assertEqual(ii.tx_symbol("202701"), "TXFA7")
-        self.assertEqual(ii.tx_symbol("202612"), "TXFL6")
-        self.assertIsNone(ii.tx_symbol("2026/10"))
-        self.assertIsNone(ii.tx_symbol(None))
-        # 2026-10 第三個週三 = 10/21:當天仍是 10 月,隔天換 11 月
-        self.assertEqual(ii.near_month_by_rule("2026-10-21"), "202610")
-        self.assertEqual(ii.near_month_by_rule("2026-10-22"), "202611")
-        self.assertEqual(ii.near_month_by_rule("2026-12-31"), "202701")
-        self.assertEqual(ii.near_month_by_rule("2026-09-16"), "202609")  # 09/16 是 9 月結算日
 
 
 class UpdateTests(unittest.TestCase):
@@ -161,12 +151,93 @@ class UpdateTests(unittest.TestCase):
             f = ii.default_fetchers("k", "202610")
             self.assertEqual(f["twse"](DAY), [[ep("09:00"), 100], [ep("09:01"), 101]])
             self.assertEqual(f["tpex"](DAY), [])
-            self.assertEqual(f["tx"](DAY), [])
         urls = [c.args[0] for c in fg.call_args_list]
+        self.assertEqual(len(urls), 2)  # 沒有 futopt 請求(免費方案 403)
         self.assertTrue(urls[0].endswith("/stock/intraday/candles/" + ii.FUGLE_TWSE_INDEX))
         self.assertTrue(urls[1].endswith("/stock/intraday/candles/" + ii.FUGLE_TPEX_INDEX))
-        self.assertTrue(urls[2].endswith("/futopt/intraday/candles/TXFJ6"))
         self.assertEqual(tw.call_args.args[1], {"date": "20261008", "response": "json"})
+
+    def test_default_fetchers_tx_from_taifex_zip_and_unpublished_page(self):
+        zblob = io.BytesIO()
+        with zipfile.ZipFile(zblob, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr("Daily_2026_10_08.csv", FIXTURE.read_bytes())
+        resp = mock.Mock(status_code=200, content=zblob.getvalue(), headers={"Content-Type": "application/zip"})
+        with mock.patch("requests.Session.get", return_value=resp) as g:
+            s = ii.default_fetchers("k", "202610")["tx"](DAY)
+        self.assertEqual(g.call_args.args[0],
+                         "https://www.taifex.com.tw/file/taifex/Dailydownload/DailydownloadCSV/Daily_2026_10_08.zip")
+        self.assertEqual(s[-1], [ep("13:44"), 49349])
+        # 還沒公布:站方回 200 + HTML 錯誤頁 → 安靜地當沒有
+        html = mock.Mock(status_code=200, content=b"<!DOCTYPE html><html>...", headers={"Content-Type": "text/html"})
+        with mock.patch("requests.Session.get", return_value=html):
+            self.assertEqual(ii.default_fetchers("k", "202610")["tx"](DAY), [])
+        with mock.patch("requests.Session.get", side_effect=OSError("down")):
+            self.assertEqual(ii.default_fetchers("k", "202610")["tx"](DAY), [])
+
+
+FIXTURE = Path(__file__).parent / "fixtures" / "taifex_daily_tx_20261008_trim.csv"
+
+
+class TaifexDailyTests(unittest.TestCase):
+    """TAIFEX Daily_2026_10_08.zip 的裁切版(原始 Big5 位元組;322 列:一般時段 220 列含開盤集合競價與收盤前
+    最後 25 筆,另有前一晚夜盤、凌晨夜盤、價差、遠月、小台/微台與其他商品各十幾列)。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.lines = FIXTURE.read_bytes().decode("cp950").splitlines()
+
+    def test_header_is_the_documented_one(self):
+        self.assertEqual([h.strip() for h in self.lines[0].split(",")],
+                         ["成交日期", "商品代號", "到期月份(週別)", "成交時間", "成交價格", "成交數量(B+S)",
+                          "近月價格", "遠月價格", "開盤集合競價"])
+
+    def test_parity_last_day_session_trade_equals_official_close(self):
+        # market_indices tx 2026-10-08 一般時段收盤 49349(futDataDown);逐筆最後一筆 13:44:59 49349
+        s = ii.parse_taifex_daily_tx(self.lines, DAY, "202610")
+        self.assertEqual(s[-1], [ep("13:44"), 49349])
+        self.assertEqual(s[0], [ep("08:45"), s[0][1]])
+        self.assertTrue(all(ep("08:45") <= t <= ep("13:45") for t, _ in s))
+        self.assertEqual([t for t, _ in s], sorted({t for t, _ in s}))
+        self.assertTrue(all(isinstance(v, int) for _, v in s))
+
+    def test_night_session_spreads_other_months_and_products_excluded(self):
+        s = ii.parse_taifex_daily_tx(self.lines, DAY, "202610")
+        day_rows = [r.split(",") for r in self.lines[1:]]
+        tx_day = [r for r in day_rows if r[1].strip() == "TX" and r[0] == "20261008" and r[2].strip() == "202610"
+                  and "084500" <= r[3].strip().zfill(6) <= "134500"]
+        # 每分鐘一點,值 = 該分鐘最後一筆
+        last_by_min: dict[str, int] = {}
+        for r in tx_day:
+            last_by_min[r[3].strip().zfill(6)[:4]] = int(r[4])
+        self.assertEqual([v for _, v in s], [last_by_min[k] for k in sorted(last_by_min)])
+        # 夜盤(前一晚 15:00 起、凌晨 00:00–05:00)與價差真的在 fixture 裡,而且沒被算進來
+        self.assertTrue(any(r[1].strip() == "TX" and r[0] == "20261007" for r in day_rows))
+        self.assertTrue(any(r[1].strip() == "TX" and r[0] == "20261008" and r[3].strip().zfill(6) < "084500"
+                            for r in day_rows))
+        self.assertTrue(any(r[1].strip() == "TX" and "/" in r[2] for r in day_rows))
+
+    def test_opening_auction_row_counts_as_the_0845_trade(self):
+        auction = [r.split(",") for r in self.lines[1:] if r.split(",")[1].strip() == "TX"
+                   and r.split(",")[0] == "20261008" and r.split(",")[2].strip() == "202610"
+                   and r.rstrip().endswith("*")]
+        self.assertEqual([(a[3].strip(), a[4].strip()) for a in auction], [("084500", "49480")])
+        # 只有開盤那一筆時,08:45 那點就是集合競價價
+        only = [self.lines[0], ",".join(auction[0])]
+        self.assertEqual(ii.parse_taifex_daily_tx(only, DAY, "202610"), [[ep("08:45"), 49480]])
+
+    def test_near_month_default_and_other_month(self):
+        auto = ii.parse_taifex_daily_tx(self.lines, DAY, None)
+        self.assertEqual(auto, ii.parse_taifex_daily_tx(self.lines, DAY, "202610"))  # 最小月份 = 近月
+        far = ii.parse_taifex_daily_tx(self.lines, DAY, "202611")
+        self.assertTrue(far and far[-1][1] != 49349)
+        self.assertEqual(ii.parse_taifex_daily_tx(self.lines, "2026-10-09", "202610"), [])
+
+    def test_zip_reader(self):
+        zblob = io.BytesIO()
+        with zipfile.ZipFile(zblob, "w") as zf:
+            zf.writestr("Daily_2026_10_08.csv", FIXTURE.read_bytes())
+        self.assertEqual(ii.read_taifex_daily_zip(zblob.getvalue()), self.lines)
+        self.assertIsNone(ii.read_taifex_daily_zip(b"<html>not yet</html>"))
 
 
 if __name__ == "__main__":

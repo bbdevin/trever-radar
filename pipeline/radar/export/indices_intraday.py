@@ -9,16 +9,17 @@
 * 每根 = 那一分鐘的最後一個值(1 分 K 的收盤)。缺分鐘不補。
 * 某序列抓不到就不出那個鍵(前端顯示「暫無日內走勢」);三個都沒有 → 不寫檔、舊檔留著。
 
-來源(全部免費、無驗證碼;第一次正式跑前用 ``pipeline/tools/probe_index_intraday.py`` 在 VPS 核對):
+來源(全部免費、無驗證碼;``pipeline/tools/probe_index_intraday.py`` 為唯讀核對工具):
 
-* 加權:Fugle ``stock/intraday/candles/{FUGLE_TWSE_INDEX}``(1 分);沒金鑰或失敗 → TWSE
-  ``TAIEX/MI_5MINS_INDEX``(每 5 秒一列,一天一次請求 ~1.2 MB)聚成 1 分。
-* 櫃買:Fugle ``stock/intraday/candles/{FUGLE_TPEX_INDEX}``。TPEx 沒找到公開的盤中分鐘指數端點,無備援。
-* 台指期:Fugle ``futopt/intraday/candles/{TXF+月碼+年尾}``(一般時段 08:45–13:45)。免費方案
-  不含期權時回 4xx → 不出 ``tx``,前端寫「台指期暫無日內走勢」。
+* 加權:Fugle ``stock/intraday/candles/IX0001``(1 分;2026-10-09 VPS probe 確認 271 列、13:30 = 官方收盤);
+  失敗 → TWSE ``TAIEX/MI_5MINS_INDEX``(每 5 秒一列,一天一次請求 ~1.2 MB)聚成 1 分。
+* 櫃買:Fugle ``stock/intraday/candles/IX0043``(同上確認)。TPEx 沒找到公開的盤中分鐘指數端點,無備援。
+* 台指期:TAIFEX 每日逐筆成交 ``Daily_YYYY_MM_DD.zip``(全期貨、Big5 CSV,~1.6 MB zip / ~34 MB 解壓;
+  一天一次)。Fugle futopt 免費方案回 403(probe 確認),不用。檔案約 16:40 才公布(Last-Modified
+  2026-10-07 16:38、10-08 16:37);還沒公布時站方回 200 + HTML 錯誤頁 → 當「還沒有」,較晚的一輪再補。
 
-閘門與 spark_day 相同:有 ``FUGLE_API_KEY`` 且台北今天 == 價格日才打來源(盤後各輪;14:10 第一輪時
-三個市場都已收盤)。
+閘門與 spark_day 相同:有 ``FUGLE_API_KEY`` 且台北今天 == 價格日才打來源(盤後各輪;台指期要等
+16:40 之後那幾輪,例 20:00 mid-backfill-publish、20:45 資券)。
 同一天已經三個都有 → 不再打(一天一次);缺哪個下一輪只補哪個。整步在 export 裡**隔離**:
 ``export_indices_intraday_safe`` 任何例外只記 warning。寫檔 tmp+rename,內容沒變不重寫。
 """
@@ -27,7 +28,7 @@ from __future__ import annotations
 import json
 import logging
 import os
-from datetime import date as date_cls, datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from typing import Callable
 from zoneinfo import ZoneInfo
@@ -41,13 +42,13 @@ OUT_FILE = "indices_intraday.json"
 MARKETS = ("twse", "tpex", "tx")
 
 # ── 來源代號(VPS probe 後可直接改這幾個常數) ──
-FUGLE_TWSE_INDEX = "IX0001"   # 發行量加權股價指數
-FUGLE_TPEX_INDEX = "IX0043"   # 櫃買指數(待 probe 核對:tickers?type=INDEX&exchange=TPEx)
-FUGLE_TX_PRODUCT = "TXF"      # 台指期;完整代號 = TXF + 月碼(A=1月…L=12月)+ 西元年尾數,例 TXFJ6
+FUGLE_TWSE_INDEX = "IX0001"   # 發行量加權股價指數(VPS probe 2026-10-09 確認)
+FUGLE_TPEX_INDEX = "IX0043"   # 櫃買指數(VPS probe 2026-10-09 確認)
 FUGLE_TIMEFRAME = "1"
 
 FUGLE_STOCK_CANDLES_URL = "https://api.fugle.tw/marketdata/v1.0/stock/intraday/candles/{symbol}"
-FUGLE_FUTOPT_CANDLES_URL = "https://api.fugle.tw/marketdata/v1.0/futopt/intraday/candles/{symbol}"
+TAIFEX_DAILY_URL = "https://www.taifex.com.tw/file/taifex/Dailydownload/DailydownloadCSV/Daily_{y}_{m}_{d}.zip"
+TAIFEX_TX_CODE = "TX"         # 商品代號(來源右側補空白;小台 MTX、微台 TMF 不算)
 TWSE_5S_URL = "https://www.twse.com.tw/rwd/zh/TAIEX/MI_5MINS_INDEX"
 TWSE_5S_FIELD = "發行量加權股價指數"
 
@@ -140,29 +141,59 @@ def parse_twse_5s(payload: dict | None, day: str) -> Series:
     return minute_series(pts, day, "twse")
 
 
-# ── 台指期近月代號 ──
+# ── 台指期:TAIFEX 每日逐筆成交 ──
+#
+# 欄位:成交日期,商品代號,到期月份(週別),成交時間,成交價格,成交數量(B+S),近月價格,遠月價格,開盤集合競價
+# 各欄右側補空白。D 日的檔含「前一晚夜盤」(成交日期 = D-1 的 15:00 起,以及 D 的 00:00–05:00)與
+# D 的一般時段;只取成交日期 == D 且 08:45:00–13:45:00 的列。價差(到期月份含 "/")不算。
+# 「開盤集合競價」欄標 "*" 的是開盤集合競價撮合那一筆(08:45:00 的開盤價,夜盤 15:00 也有一筆),
+# 是真的成交價,照常計入(它落在 08:45 那一分鐘,同分鐘之後的成交會蓋掉它)。
 
-_MONTH_CODES = "ABCDEFGHIJKL"
+def parse_taifex_daily_tx(lines, day: str, contract_month: str | None = None) -> Series:
+    """逐筆成交 CSV 的文字列(已解碼、含表頭)→ 台指期近月一般時段 1 分線(每分鐘最後一筆)。
+
+    ``contract_month``(YYYYMM)= 當天 ``market_indices`` tx 列的近月;缺 → 取一般時段有成交的非價差月份中
+    最小者(與 ``providers.market_index.pick_tx_near_month`` 同一個定義)。同一秒多筆以檔案順序最後一筆為準。
+    """
+    import csv
+
+    d8 = day.replace("-", "")
+    y, mo, d = (int(x) for x in day.split("-"))
+    lo, hi = SESSION["tx"]
+    by_month: dict[str, list] = {}
+    for row in csv.reader(lines):
+        if len(row) < 5 or row[1].strip() != TAIFEX_TX_CODE or row[0].strip() != d8:
+            continue
+        month = row[2].strip()
+        if "/" in month:
+            continue
+        t = row[3].strip().zfill(6)
+        try:
+            hh, mm, ss = int(t[:2]), int(t[2:4]), int(t[4:])
+            px = float(row[4])
+        except ValueError:
+            continue
+        if not lo <= hh * 60 + mm <= hi or (hh * 60 + mm == hi and ss > 0):
+            continue
+        by_month.setdefault(month, []).append((datetime(y, mo, d, hh, mm, ss, tzinfo=_TPE), px))
+    if not by_month:
+        return []
+    month = (contract_month or "").strip() or min(by_month)
+    return minute_series(by_month.get(month, []), day, "tx")
 
 
-def tx_symbol(contract_month: str) -> str | None:
-    """"202610" → "TXFJ6"(Fugle futopt 代號:商品 + 月碼 + 西元年尾數)。格式不對 → None。"""
-    s = str(contract_month or "").strip()
-    if len(s) != 6 or not s.isdigit() or not 1 <= int(s[4:]) <= 12:
+def read_taifex_daily_zip(blob: bytes) -> list[str] | None:
+    """zip 位元組 → CSV 文字列;不是 zip(檔案還沒公布時站方回 HTML 錯誤頁)→ None。"""
+    import io
+    import zipfile
+
+    if not blob.startswith(b"PK"):
         return None
-    return f"{FUGLE_TX_PRODUCT}{_MONTH_CODES[int(s[4:]) - 1]}{s[3]}"
-
-
-def near_month_by_rule(day: str) -> str:
-    """沒有當天 TX 匯入列時的近月推算:當月第三個週三(含)以前 = 當月,之後 = 次月。
-    不處理期交所的假日順延(那幾天 DB 的匯入列會蓋過這個推算)。"""
-    d = date_cls.fromisoformat(day)
-    first = d.replace(day=1)
-    third_wed = first + timedelta(days=(2 - first.weekday()) % 7 + 14)
-    if d <= third_wed:
-        return f"{d.year}{d.month:02d}"
-    y, m = (d.year + 1, 1) if d.month == 12 else (d.year, d.month + 1)
-    return f"{y}{m:02d}"
+    with zipfile.ZipFile(io.BytesIO(blob)) as zf:
+        names = [n for n in zf.namelist() if n.lower().endswith(".csv")]
+        if not names:
+            return None
+        return zf.read(names[0]).decode("cp950", errors="replace").splitlines()
 
 
 def tx_month_from_db(conn, day: str) -> str | None:
@@ -213,11 +244,19 @@ def default_fetchers(api_key: str | None, tx_month: str | None) -> dict[str, Cal
             day, "tpex")
 
     def tx(day: str) -> Series:
-        sym = tx_symbol(tx_month or near_month_by_rule(day))
-        if not api_key or not sym:
+        y, m, d = day.split("-")
+        url = TAIFEX_DAILY_URL.format(y=y, m=m, d=d)
+        try:
+            r = sess.get(url, headers={"User-Agent": config.USER_AGENT}, timeout=max(config.HTTP_TIMEOUT, 60))
+        except Exception as e:  # noqa: BLE001 — 來源掛了 = 這輪沒有台指期
+            print(f"indices_intraday: taifex daily fetch failed: {e}")
             return []
-        return parse_fugle_candles(
-            _fugle_get(FUGLE_FUTOPT_CANDLES_URL.format(symbol=sym), api_key, sess), day, "tx")
+        lines = read_taifex_daily_zip(r.content) if r.status_code == 200 else None
+        if lines is None:
+            print(f"indices_intraday: taifex daily {day} not published yet "
+                  f"(HTTP {r.status_code}, {r.headers.get('Content-Type', '')})")
+            return []
+        return parse_taifex_daily_tx(lines, day, tx_month)
 
     return {"twse": twse, "tpex": tpex, "tx": tx}
 

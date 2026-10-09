@@ -5,9 +5,10 @@
 ## 2026-10-09 大盤走勢圖「1日」當日 1 分線(`docs/49` §12.5;程式完成於分支、未合 main、未上線;v3.6)
 
 - **需求**:使用者「我想增加一日的走勢」。
-- **做了什麼**:新模組 `export/indices_intraday.py`:加權/櫃買走 Fugle `stock/intraday/candles`(IX0001/IX0043)、加權備援 TWSE `MI_5MINS_INDEX`(5 秒聚成 1 分)、台指期走 Fugle `futopt/intraday/candles/TXF{月碼}{年尾}`;與 spark_day 同閘門(有金鑰且今天=價格日),同日三個齊了就不再抓、缺的下一輪補;輸出 `market/indices_intraday.json`(`{date, series:{twse|tpex|tx:[[epoch_s,close]…]}}`,只留最新一天,~17 KB raw),json_export 在 indices_hist 之後隔離呼叫。唯讀 probe `pipeline/tools/probe_index_intraday.py`。前端:範圍 chip 1日/1月/3月/6月/1年(預設仍 3月),選 1日 才抓;HH:MM 時間軸、昨收虛線、線色跟當日漲跌、游標 HH:MM＋值＋相對昨收、日高/日低/日漲跌;缺檔「尚無日內走勢」、缺台指期「台指期暫無日內走勢」。
+- **做了什麼**:新模組 `export/indices_intraday.py`:加權/櫃買走 Fugle `stock/intraday/candles`(IX0001/IX0043)、加權備援 TWSE `MI_5MINS_INDEX`(5 秒聚成 1 分)、台指期走 TAIFEX 逐筆成交檔(見下);與 spark_day 同閘門(有金鑰且今天=價格日),同日三個齊了就不再抓、缺的下一輪補;輸出 `market/indices_intraday.json`(`{date, series:{twse|tpex|tx:[[epoch_s,close]…]}}`,只留最新一天,~17 KB raw),json_export 在 indices_hist 之後隔離呼叫。唯讀 probe `pipeline/tools/probe_index_intraday.py`。前端:範圍 chip 1日/1月/3月/6月/1年(預設仍 3月),選 1日 才抓;HH:MM 時間軸、昨收虛線、線色跟當日漲跌、游標 HH:MM＋值＋相對昨收、日高/日低/日漲跌;缺檔「尚無日內走勢」、缺台指期「台指期暫無日內走勢」。
 - **驗證**:pytest 新 12 項＋全套 1675 passed;web node 348 passed(含 LA 時區);`tsc`、`next build`;390px 深/淺色截圖 `docs/evidence/49_index_intraday/`。
-- **待人類**:①合 main;②交易日 13:45 後在 VPS 跑 `pipeline/tools/probe_index_intraday.py`(唯讀,~8 次 Fugle 請求),核對櫃買代號 `IX0043` 與 Fugle futopt 是否在免費方案,必要時改 `indices_intraday.py` 頂端常數並把結果寫回 `docs/49` §12.5。不改 crontab/Worker/secret。
+- **VPS probe 後(同日)**:Fugle `IX0001`/`IX0043` 確認(各 271 列,13:30 = 官方收盤);Fugle futopt 免費方案 **403** → 台指期改用 TAIFEX 每日逐筆成交 `Daily_YYYY_MM_DD.zip`(官方免費,~1.6 MB,一天一次;只取成交日期 = D、08:45–13:45、近月、非價差,每分鐘最後一筆;10/08 實檔最後一筆 49349 = 官方一般時段收盤,裁切 fixture 測試鎖住)。檔案約 16:40 公布,未公布回 200+HTML → 安靜略過,16:40 後的輪(20:00/20:45/22:30)補上。futopt 程式移除。pytest 全套 1681 passed、web node 348 passed、`tsc`、`next build`、台指期 1日 390px 深/淺色截圖(真實 TAIFEX 資料)。
+- **待人類**:①合 main;②第一個交易日上線後看 `radar-cron.log` 的 `indices_intraday:` 行,確認台指期在 16:40 後的輪補上(`fetched=['tx']`)。不改 crontab/Worker/secret。
 
 ## 2026-10-09 個股分K 5/30/60 分 MVP(`docs/50`;程式完成於分支、未合 main、未上線;v3.6)
 
