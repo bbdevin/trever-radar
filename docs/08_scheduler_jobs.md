@@ -18,6 +18,7 @@
 
 | 台北時間 | 執行者(VPS cron script / GitHub Actions) | 內容 |
 |---|---|---|
+| 平日 13:15(2026-10-09 新增;**正式 crontab 待人類套用**) | VPS `vps/scripts/adjust-incremental.sh` | 除權息還原因子日增量:安靜窗/mid flag/距下一個排程寫入者 ≤30 分 → 略過;`flock -n` 搶不到 → 略過(notify_skip)→ `compute-adjustments --ex-dates-since 10 --print-ids`(證交所 TWT49U + 櫃買 exDailyQ 只當代號挑選器)→ `compute-adjustments --ids`(逐檔 FinMind,因子邏輯不變)→ `compute-indicators --ids`(全歷史)。不 export/deploy,14:05 輪上線;有因子變動才 notify_ok。旺季 ~260 檔約 20–25 分 |
 | 平日 14:05(舊 14:10) | VPS `vps/scripts/daily-market.sh` | 每 3 分輪詢上市日K(`--require twse:quotes`)至 14:40 → 當日權證彙總 → 指標增量(--days 5)→ 綜合分 → export-json(**含 Fugle 當日 1 分 K spark_day**)→ `wrangler deploy`。截止仍沒到 → warn、不上線。週一題材/地緣已搬到 11:00 |
 | 平日 14:45(舊 15:00) | VPS `vps/scripts/daily-tpex-quotes.sh` | 等鎖(≤45 分)→ 每 3 分輪詢**上櫃日K**(`--require tpex:quotes:0.8`,≥前一交易日 80% 列數)至 15:30 → 權證彙總 + 指標增量 + 分數 → export-json → deploy |
 | 平日 16:00(舊 16:10) | VPS `vps/scripts/daily-insti.sh` | **上櫃日K 保底再抓** → 每 5 分輪詢法人(上市＋上櫃都要到)至 17:10,每次順手試個股期貨當日 → 權證主檔(失敗不擋)/庫藏股 → **當日權證重新彙總** → 指標 → 分數 → export → deploy。截止仍缺 → 有其他變動先上線已到部分、否則略過。TPEx HTTP 520(TWSE 已成功)仍 exit 75 不發布,留給分點輪;非 75 仍 High fail |

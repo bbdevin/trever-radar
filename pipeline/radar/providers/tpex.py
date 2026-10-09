@@ -64,6 +64,36 @@ def fetch_daily_quotes(date: str) -> list[Quote]:
     return quotes
 
 
+def fetch_ex_rights(start: str, end: str) -> list[dict]:
+    """bulletin/exDailyQ 上櫃除權除息計算結果表,start/end = YYYYMMDD(含兩端)。
+
+    與 twse.fetch_ex_rights 同形:``[{"date": "YYYY-MM-DD", "code": ...}]``,
+    **只拿來挑股票代號**。區間內沒有資料時 stat=ok、data 為空 → 空清單。
+    """
+    j = get_json(f"{BASE}/bulletin/exDailyQ",
+                 {"startDate": roc_date(start), "endDate": roc_date(end), "response": "json"})
+    if str(j.get("stat", "")).lower() != "ok":
+        raise RuntimeError(f"tpex exDailyQ {start}-{end}: stat={j.get('stat')}")
+    tables = j.get("tables") or []
+    if not tables:
+        raise RuntimeError(f"tpex exDailyQ {start}-{end}: no tables")
+    table = tables[0]
+    fields = [str(f).strip() for f in table.get("fields") or []]
+    idx = {name: i for i, name in enumerate(fields)}
+    missing = [n for n in ("除權息日期", "代號") if n not in idx]
+    if missing:
+        raise RuntimeError(f"tpex exDailyQ {start}-{end}: missing fields {missing}; got {fields}")
+    out = []
+    for row in table.get("data") or []:
+        parts = str(row[idx["除權息日期"]]).strip().split("/")
+        code = str(row[idx["代號"]]).strip()
+        if len(parts) != 3 or not all(p.isdigit() for p in parts) or not code:
+            raise RuntimeError(f"tpex exDailyQ {start}-{end}: unparseable row {row[:3]}")
+        y, mo, d = (int(x) for x in parts)
+        out.append({"date": f"{y + 1911:04d}-{mo:02d}-{d:02d}", "code": code})
+    return out
+
+
 def fetch_warrant_master() -> list[dict]:
     """TPEx OpenAPI 權證發行基本資料(一般 + 牛熊 + 展延型)。直接含標的代號。"""
     from ..classify import warrant_kind

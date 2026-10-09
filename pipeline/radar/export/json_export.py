@@ -635,8 +635,8 @@ def _futures_spot_quotes(
     ``exdiv: true``(只在成立時出現):``prev`` 與 ``d`` 的 ``adj_factor`` 不同 = 兩天之間
     有除權息,``chg_pct`` 是未還原的收盤對收盤,會把除權息缺口算成漲跌(§7.19 要求期貨
     表面的價格 % 講明未扣除權息)。判斷法與 ``spot_after.ex_rights`` 相同。**偵測不到
-    不代表沒有**:``adj_factor`` 只在手動跑 compute-adjustments 時更新(不在排程裡),
-    新列一律 1.0,所以多數除權息當天這裡不會舉起來;缺鍵只是「沒偵測到」。
+    不代表沒有**:``adj_factor`` 由平日 13:15 adjust-incremental.sh 補(docs/47 §3.2),
+    除權息當天 FinMind 還沒有該筆時要到隔天才補上,那一天這裡不會舉起來;缺鍵只是「沒偵測到」。
     """
     if not stock_ids:
         return {}

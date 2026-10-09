@@ -340,8 +340,9 @@ def spot_after(prices: Sequence[dict[str, Any]], *, day: str) -> dict[str, Any] 
       有收盤的交易日數,``ex_rights`` = 舉旗日到最後一天之間 ``adj_factor`` 有變
       (除權息,價格未經還原)。全部是觀測值,沒有一個除法。
 
-    **``ex_rights`` 為假不代表沒有除權息**:production 的 ``adj_factor`` 只在手動跑
-    compute-adjustments 時更新(不在排程裡),新列一律 1.0;daily_prices 也沒有漲跌價
+    **``ex_rights`` 為假不代表沒有除權息**:production 的 ``adj_factor`` 由平日 13:15
+    adjust-incremental.sh 補(docs/47 §3.2;2026-10-09 前只在手動跑時更新),FinMind
+    晚到的那一天、以及排程套用前的舊資料仍可能是 1.0;daily_prices 也沒有漲跌價
     / 參考價欄位、資料庫沒有除權息日表。所以多數除權息缺口偵測不到,前端每一句
     價格都標「未扣除權息」,只有偵測得到時才改講「窗內有除權息」。
     """

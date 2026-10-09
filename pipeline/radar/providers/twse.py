@@ -1,4 +1,6 @@
 """TWSE (上市) after-trading endpoints. date format: YYYYMMDD."""
+import re
+
 from ..dto import InstiRow, MarginRow, Quote
 from ..http import get_json
 from . import NoDataError, to_float, to_int
@@ -43,6 +45,37 @@ def fetch_daily_quotes(date: str) -> list[Quote]:
             transactions=to_int(row[idx["成交筆數"]]),
         ))
     return quotes
+
+
+def fetch_ex_rights(start: str, end: str) -> list[dict]:
+    """TWT49U 上市除權息計算結果表,start/end = YYYYMMDD(含兩端)。
+
+    回傳 ``[{"date": "YYYY-MM-DD", "code": "2330"}, ...]``——**只拿來挑要重算
+    還原因子的股票代號**(compute-adjustments --ex-dates-since),因子本身仍由
+    FinMind TaiwanStockDividendResult 算,這裡的價格欄一概不用。
+    區間內沒有資料時 TWSE 回 stat「很抱歉，沒有符合條件的資料!」→ 空清單。
+    """
+    j = get_json(f"{BASE}/exRight/TWT49U",
+                 {"startDate": start, "endDate": end, "response": "json"})
+    stat = str(j.get("stat", ""))
+    if stat != "OK":
+        if "沒有符合條件" in stat:
+            return []
+        raise RuntimeError(f"twse TWT49U {start}-{end}: stat={stat}")
+    fields = [str(f).strip() for f in j.get("fields") or []]
+    idx = {name: i for i, name in enumerate(fields)}
+    missing = [n for n in ("資料日期", "股票代號") if n not in idx]
+    if missing:
+        raise RuntimeError(f"twse TWT49U {start}-{end}: missing fields {missing}; got {fields}")
+    out = []
+    for row in j.get("data") or []:
+        m = re.fullmatch(r"\s*(\d{2,3})年(\d{1,2})月(\d{1,2})日\s*", str(row[idx["資料日期"]]))
+        code = str(row[idx["股票代號"]]).strip()
+        if not m or not code:
+            raise RuntimeError(f"twse TWT49U {start}-{end}: unparseable row {row[:3]}")
+        y, mo, d = (int(x) for x in m.groups())
+        out.append({"date": f"{y + 1911:04d}-{mo:02d}-{d:02d}", "code": code})
+    return out
 
 
 def fetch_warrant_master() -> list[dict]:

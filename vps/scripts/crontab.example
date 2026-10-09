@@ -22,6 +22,11 @@ CRON_TZ=Asia/Taipei
 # 每週參考資料(題材/地緣/產業別;docs/47):週一 11:00,只寫 DB,14:05 收盤輪一起上線
 0  11 * * 1    bash /home/huang/trever-radar/vps/scripts/weekly-refdata.sh    >> /home/huang/radar-cron.log 2>&1
 
+# 除權息還原因子日增量(2026-10-09):平日 13:15,14:05 收盤輪之前的空檔。TWT49U + 櫃買
+# exDailyQ 挑近 10 天有除權息的個股 → compute-adjustments --ids → 這幾檔指標全歷史重算;
+# 不 export,14:05 輪上線。`flock -n`,搶不到就略過(窗內隔天會再處理)。
+15 13 * * 1-5  bash /home/huang/trever-radar/vps/scripts/adjust-incremental.sh >> /home/huang/radar-cron.log 2>&1
+
 # Disabled candidate — all-market TWSE+TPEx warrant branches need 6–8h at
 # sleep=1.0; VPS free space was only 7.6GB on 2026-08-28 (<20GB gate).
 # Enable only after 1/5-day + 3-trading-day PoC, capacity approval, and a

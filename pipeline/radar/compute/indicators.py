@@ -454,8 +454,11 @@ def score_technical(**x) -> tuple[int, list[dict], list[dict]]:
         return None
 
     prev_close = _val(closes, 1)
-    prev_ma5 = _val([_sma(closes, 5, j) for j in range(i+1)], 1)
-    prev_ma20 = _val([_sma(closes, 20, j) for j in range(i+1)], 1)
+    # 前一根的 MA:直接算 i-1 那一點(與「先算 0..i 整串再取 i-1」逐值相同)。
+    # 舊寫法每根都重算整段歷史,全歷史重算是 O(n²)——6,500 根要 ~50 秒/檔,
+    # 除權息後的逐檔全歷史重算(adjust-incremental.sh)因此塞不進 13:15 的空檔。
+    prev_ma5 = _sma(closes, 5, i - 1) if i >= 1 else None
+    prev_ma20 = _sma(closes, 20, i - 1) if i >= 1 else None
 
     chg_pct = (close / prev_close - 1) * 100 if prev_close else 0
 

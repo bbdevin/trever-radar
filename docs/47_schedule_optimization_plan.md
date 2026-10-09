@@ -35,6 +35,7 @@
 | 新時刻(舊) | 腳本 | 行為 |
 |---|---|---|
 | 週一 11:00(新增) | `weekly-refdata.sh` | `acquire_db_lock_wait 1800` → sync → 題材/地緣/產業別(warn-and-continue)→ 寫 `/tmp/radar-refdata-<ISO 週>.done`;不 export(14:05 那輪一起上線)。過渡:crontab 還沒加這行時,週一 `daily-market.sh` 看不到標記就在 **deploy 之後**補跑 |
+| 13:15(2026-10-09 新增) | `adjust-incremental.sh` | 除權息還原因子日增量,見 §3.2;只寫 DB,14:05 那輪一起上線 |
 | 14:05(14:10) | `daily-market.sh` | 等鎖(2026-10-07 起不再先跑 futures_probe,見 docs/38 §7.18)→ 每 3 分輪詢 `import-daily --datasets quotes --require twse:quotes` 至 14:40 → 彙總 → 指標 → 分數 → export → deploy |
 | 14:45(15:00) | `daily-tpex-quotes.sh` | `acquire_db_lock_wait 2700` → 每 3 分輪詢 `--require tpex:quotes:0.8` 至 15:30 → 彙總 → 指標 → 分數 → export → deploy。今天上市日K不在庫(休市)→ 只試一次 |
 | 16:00(16:10) | `daily-insti.sh` | 日K保底(TPEx 520 → 75 分支保留)→ 每 5 分輪詢 `--datasets insti --require twse:insti,tpex:insti` 至 17:10,每次嘗試順手 `import-futures-day`(75 下次再試、0 不再試)→ 權證主檔、庫藏股(warn-and-continue)→ 彙總 → 指標 → 分數 → export → deploy → futures_digest。**截止仍缺**:有其他變動(上櫃法人/期貨等)→ warn 並先上線已到的部分(舊 16:10 也是先上線上櫃法人;不讓它陪等到 20:30);沒有 → `publish skipped` |
@@ -50,6 +51,17 @@
 3. **分點輪順手匯入資券加 `--require twse:margin,tpex:margin`**(只到一邊 → 75 → 留給資券輪);資券輪「已由分點輪帶入」改成要求**上市與上櫃**今天都有 `import_logs` 的 ok、rows>0 紀錄,不再只看 `MAX(date)`。
 4. 22:30 第二輪的「第一輪覆蓋率 100% → 收工」移到日K/法人匯入與期貨當日重試**之後**(仍是期貨當日的最後一次重試)。
 5. 首頁時間表(`web/lib/freshness.ts`)已是新時刻:**合併與正式 crontab 套用要同一次完成**,否則首頁時刻會與實際差 5–35 分。
+
+### 3.2 除權息還原因子日增量(2026-10-09;正式 crontab 待人類套用)
+
+- **問題**:`daily_prices.adj_factor` 只在手動 `compute-adjustments`(`adjust-backfill.sh`,刻意不在 crontab)時更新,最後一次正式跑是 2026-09-04;之後除權息的個股,還原序列在除權息日斷開,指標/分數/價格位置跟著錯。
+- **排程**:`15 13 * * 1-5  bash /home/huang/trever-radar/vps/scripts/adjust-incremental.sh >> /home/huang/radar-cron.log 2>&1`。13:15 到 14:05 安靜窗有 50 分鐘(12:00 mid-publish 已結束),守衛要求 > 30 分。不加進 `quiet_window_at`、不 export、不 deploy;首頁時間表不列(不是上線輪)。
+- **流程**:守衛(安靜窗 / mid flag / `minutes_until_next_scheduled_writer` > 30)→ `flock -n` DB 鎖(搶不到 = `notify_skip` 後略過,不等)→ pause 本程序暫停的 bf 容器 → ① `compute-adjustments --ex-dates-since 10 --print-ids`(證交所 TWT49U + 櫃買 `bulletin/exDailyQ`,各一次公開請求,只當代號挑選器,再與庫內 stock/etf 交集)→ ② `compute-adjustments --ids …`(既有逐檔 FinMind `TaiwanStockDividendResult` → `factors_for_dates` → 整檔覆寫,**邏輯未改**;CLI 另印 `changed: K stocks, R rows`)→ ③ `compute-indicators --ids …`(不帶 `--days` = 這幾檔全歷史重算)。每步 `radar_timeout`,上限算到下一個排程寫入者前 5 分鐘。log 一行 `adjust-incremental summary: selected= adjusted= changed= changed_rows= failed= quota_hit= indicators= elapsed=`。有因子變動才 `notify_ok`;部分失敗/FinMind 額度用完 → `notify_warn`;步驟失敗 → high。
+- **為什麼不用 FinMind 一次全市場**:`TaiwanStockDividendResult` 不帶 `data_id` 只開放贊助會員,免費 token 回 `status 400「Your level is free」`(2026-10-09 實測)。
+- **為什麼窗是 10 天**:FinMind 除權息結果可能晚於除權息日才出現;同一檔在窗內每天重跑(冪等),晚到、某天被略過或指標失敗,隔天自動補上。代價:除權息當天 13:15 若 FinMind 還沒有該筆,當天 14:05 上線的仍是未還原缺口,隔天才修正。指標對**全部選到的檔**都重算(不只 changed),前一天指標失敗的檔才補得回來。
+- **量級**:現在(10 月)10 天窗 32 檔;旺季 2026-07-10..07-20 上市 142 + 上櫃 122 列。因子約 3 秒/檔,低於 FinMind 免費 token 每小時 ~600 次;指標全歷史重算約 1–2 秒/檔(2026-10-09 同時修掉 `score_technical` 前一根 MA 的 O(n²) 寫法:6,500 根從 ~52 秒降到 ~0.9 秒,輸出逐值相同)。旺季估 ~260 × ~5 秒 ≈ 20–25 分,在 45 分硬上限內。
+- **一次性追補(2026-09-04 以後漏掉的)**:合併後由使用者在空檔(例:平日 09:30 ~ 10:30,避開 09:00/12:00 mid-publish 與週一 11:00;腳本自己會拒絕距下一個排程寫入者 ≤ 30 分的時刻)執行 `ADJUST_SINCE=2026-09-04 bash vps/scripts/adjust-incremental.sh >> ~/radar-cron.log 2>&1`;2026-10-09 實測候選 179 個代號(其中 100 個是 0 開頭的 ETF/受益憑證,與庫內 stock/etf 交集後只會更少),估 ≤179 × ~5 秒 ≈ 15 分。之後下一輪 14:05/14:45 照常上線;歷史 `daily_scores` 不回算(docs/20 Phase 2 決議)。
+- **回滾**:從 crontab 刪那一行即可;已寫入的因子是正確值,不需還原。
 
 ## 4. 預期效果(依 §1 實測推估,套用後要以 log 驗證)
 

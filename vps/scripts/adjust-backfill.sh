@@ -26,6 +26,11 @@
 #     while bash vps/scripts/adjust-backfill.sh; do sleep 180; done
 #   或就手動重複呼叫直到印出 "all done"。任何一次略過都回 0,失敗才回非 0。
 #
+# 日常維護(2026-10-09 起)不靠本腳本:平日 13:15 `adjust-incremental.sh` 只挑近 10 天
+# 有除權息的個股(TWT49U + 櫃買 exDailyQ)重算因子與其指標(docs/47 §3.2)。本腳本
+# 只留給「全市場重來一次」——例如因子邏輯或 FinMind 資料本身被修正之後。
+# 漏掉一段期間的追補也不必用本腳本:`ADJUST_SINCE=YYYY-MM-DD bash vps/scripts/adjust-incremental.sh`。
+#
 # 不跑重算鏈:本腳本只修 adj_factor。compute-indicators / compute-performance /
 # compute-branch-stats / compute-scores / export 是還原完成之後由維運者另外
 # 刻意執行的一步,不要把它們接到這裡來。

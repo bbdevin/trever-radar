@@ -188,12 +188,44 @@ def cmd_aggregate_warrants(args):
 
 
 def cmd_compute_adjustments(args):
-    from .adjustments import compute_adjustments
+    from . import adjustments as adj
     ids = args.ids.split(",") if args.ids else None
-    info = compute_adjustments(ids=ids, top=args.top, all_stocks=args.all,
-                               start_date=args.start_date, sleep_s=args.sleep)
+    if args.ex_dates_since is not None:
+        if ids or args.top or args.all:
+            raise SystemExit("--ex-dates-since cannot be combined with --ids/--top/--all")
+        today = datetime.now(ZoneInfo(config.TZ)).date()
+        since = adj.resolve_since(args.ex_dates_since, today)
+        ids = adj.select_ex_date_ids(since, today.isoformat())
+        if args.print_ids:
+            print(",".join(ids))  # 只印這一行:給 shell 用 $(...) 接
+            return
+        print(f"ex-date window {since}..{today.isoformat()}: {len(ids)} stocks selected", flush=True)
+        print(f"ids={','.join(ids)}", flush=True)
+    elif args.print_ids:
+        raise SystemExit("--print-ids needs --ex-dates-since")
+    if args.dry_run:
+        if ids is None:
+            with get_engine().connect() as conn:
+                ids = adj._targets(conn, None, args.top, args.all)
+            print(f"ids={','.join(ids)}")
+        print(f"dry-run: {len(ids)} stocks would be adjusted; nothing written")
+        return
+    if ids is not None and not ids:
+        print("adjustments: 0 stocks selected, nothing to do")
+        print("changed: 0 stocks, 0 rows")
+        print("changed_ids=")
+        return
+    if ids is not None:
+        init_db()
+        before = adj.factor_snapshot(ids)
+    info = adj.compute_adjustments(ids=ids, top=args.top, all_stocks=args.all,
+                                   start_date=args.start_date, sleep_s=args.sleep)
     print(f"adjustments: {info['done']} stocks, {info['events']} events, "
           f"{info['rows']} rows updated, {info['failed']} failed")
+    if ids is not None:
+        changed_ids, changed_rows = adj.diff_factor_snapshots(before, adj.factor_snapshot(ids))
+        print(f"changed: {len(changed_ids)} stocks, {changed_rows} rows")
+        print(f"changed_ids={','.join(changed_ids)}")
 
 
 def cmd_compute_indicators(args):
@@ -969,11 +1001,22 @@ def main(argv=None):
     adj.add_argument("--all", action="store_true", help="all stocks/ETFs with daily_prices")
     adj.add_argument("--start-date", default="1990-01-01", help="YYYY-MM-DD")
     adj.add_argument("--sleep", type=float, default=1.0, help="seconds between FinMind requests")
+    adj.add_argument("--ex-dates-since", nargs="?", const="10", default=None, metavar="N|YYYY-MM-DD",
+                     help="select stocks with an ex-rights/ex-dividend date in [today-N days "
+                          "(or the given date), today] from TWSE TWT49U + TPEx exDailyQ "
+                          "(ID selector only); bare flag = 10 days")
+    adj.add_argument("--dry-run", action="store_true",
+                     help="print the selected ids and exit; writes nothing")
+    adj.add_argument("--print-ids", action="store_true",
+                     help="with --ex-dates-since: print only the comma list of ids and exit "
+                          "(implies --dry-run)")
     adj.set_defaults(fn=cmd_compute_adjustments)
 
     ind = sub.add_parser("compute-indicators",
                          help="compute indicators_daily from adjusted daily_prices")
-    ind.add_argument("--ids", default=None, help="comma list, e.g. 2330,2317")
+    ind.add_argument("--ids", default=None,
+                     help="comma list, e.g. 2330,2317; without --days = full-history recompute "
+                          "of just these stocks (after compute-adjustments)")
     ind.add_argument("--top", type=int, default=None, help="top N by latest-day turnover")
     ind.add_argument("--all", action="store_true", help="all stocks/ETFs with daily_prices")
     ind.add_argument("--days", type=int, default=None,

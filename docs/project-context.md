@@ -76,7 +76,7 @@
 6. 前端無伺服器程式碼;登入 = 站內 Google OAuth + `app_profiles` 核准,資料門鎖 = `/data` Worker 驗 JWT(2026-08-20 WP-B7 完成,Cloudflare Access 已關;歷史設定見 `docs/21` §4 A3)。
 7. SQLite 為唯一真相;JSON 是產出物,可隨時重建。
 8. 首頁「綜合」榜使用 `daily_scores.final`;分點分/權證分/技術分/法人融資分已接入,題材分暫為 NULL 並自動重分配權重。
-9. 技術指標與績效回填必須用還原價:`adj_price = price * adj_factor`;`adj_factor` 由 `python -m radar compute-adjustments --ids/--top/--all` 補,尚未全市場自動排程。
+9. 技術指標與績效回填必須用還原價:`adj_price = price * adj_factor`;`adj_factor` 由 `python -m radar compute-adjustments --ids/--top/--all` 補;2026-10-09 起平日 13:15 `adjust-incremental.sh` 用 `--ex-dates-since 10` 只補近 10 天除權息的個股並重算其指標(docs/47 §3.2,正式 crontab 待套用)。
 10. 2026-07-10 使用者確認 B 方案(`docs/20`):S1-S13 最終應為不影響分數的策略 tag,以績效決定 Active/Retired;`/explore` 內容併回首頁與 `/branch`,不再擴張原剩餘 tab。實作與正式重算分階段另行確認。
 11. 2026-07-10 使用者確認 A 私人測試版(`docs/21`):邀請制、無公開註冊。門禁 2026-08-20 起為站內登入 + Worker JWT;Access 已關。R2 已被取捨 16 取代。
 12. 2026-07-10 使用者確認 Armed 追蹤規劃(`docs/22`):用狀態池(未發動/已發動)重用 S12/W3/B3,不新增策略、不抬綜合分、不新開一級路由;實作排在 Access + B Phase 1–3 之後。

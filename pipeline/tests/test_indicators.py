@@ -620,5 +620,41 @@ class NullFieldGuardTests(unittest.TestCase):
         self.assertNotIn("S6_HIGH_BASE_BREAKOUT", last_codes)
 
 
+class PrevMaLinearTimeTests(unittest.TestCase):
+    """score_technical 的前一根 MA5/MA20 改成直接算 i-1(2026-10-09)。
+
+    舊寫法 `_val([_sma(closes, w, j) for j in range(i+1)], 1)` 每根重算整段歷史,
+    全歷史 compute_series 是 O(n²)(6,500 根 ~50 秒)。新舊必須逐值相同。
+    """
+
+    def test_prev_ma_matches_the_old_full_list_expression(self):
+        import random
+
+        from radar.compute.indicators import _sma
+
+        rnd = random.Random(3)
+        closes = [None if rnd.random() < 0.05 else rnd.uniform(10, 20) for _ in range(120)]
+        for i in range(len(closes)):
+            for w in (5, 20):
+                old_list = [_sma(closes, w, j) for j in range(i + 1)]
+                old = old_list[i - 1] if i - 1 >= 0 else None
+                new = _sma(closes, w, i - 1) if i >= 1 else None
+                self.assertEqual(old, new, (i, w))
+
+    def test_full_history_is_not_quadratic(self):
+        import time
+
+        rows = []
+        for i in range(6500):
+            c = 100 + 10 * math.sin(i / 30)
+            r = row(1, c, 1000 + i % 7)
+            r["date"] = f"D{i:05d}"
+            rows.append(r)
+        t0 = time.perf_counter()
+        out = compute_series(rows)
+        self.assertEqual(len(out), 6500)
+        self.assertLess(time.perf_counter() - t0, 15.0)   # 舊寫法 ~50 s;新 ~1 s
+
+
 if __name__ == "__main__":
     unittest.main()

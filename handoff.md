@@ -1,5 +1,9 @@
 # Handoff — 2026-09-24（期貨切片從未真的渲染過的結構性 bug 已修、四輪日更補上失敗語音（過程自己又生一個更嚴重的）、期貨補到每契約每天、兩道守門缺口補上、一個記成已出貨卻沒上畫面的按鈕、一次自己的效能預測被實測打臉 2.5 倍、「隔天大漲」事前登記落地）
 
+## 2026-10-09 補記(除權息還原因子日增量)
+
+- 新 `vps/scripts/adjust-incremental.sh`(平日 13:15)+ `compute-adjustments --ex-dates-since/--dry-run/--print-ids`;因子邏輯未改。正式 crontab 待人類加 `15 13 * * 1-5 … adjust-incremental.sh`;合併後一次性追補 `ADJUST_SINCE=2026-09-04 bash vps/scripts/adjust-incremental.sh`(≤15 分)。細節 `docs/47` §3.2、`docs/STATUS.md` 同日條目。上線後看 log `adjust-incremental summary:` 一行。
+
 ## 2026-10-07 補記
 
 - 期貨 `probe-futures-day` 已整段移除(腳本、lib.sh、CLI、importer);`import-futures-day` 不動。

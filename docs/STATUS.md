@@ -2,6 +2,15 @@
 
 > 單一進度真相。每完成一個里程碑就更新本檔。規格細節看各編號文件,別寫在這裡。
 
+## 2026-10-09 除權息還原因子日增量(`docs/47` §3.2;程式完成於分支、未合 main;正式 crontab 待人類套用)
+
+- **問題**:`adj_factor` 只在手動 `compute-adjustments` 時更新,最後一次正式跑 2026-09-04;之後除權息的個股還原序列在除權息日斷開,指標/分數/價格位置跟著錯(`docs/38` §7.21 的 `exdiv` 因此多數偵測不到)。
+- **做了什麼**:CLI `compute-adjustments --ex-dates-since [N|YYYY-MM-DD]`(裸旗標 = 10 天)、`--dry-run`、`--print-ids`;選股用證交所 TWT49U + 櫃買 `bulletin/exDailyQ`(各一次公開請求,**只當代號挑選器**,再與庫內 stock/etf 交集),之後原樣呼叫既有 `compute_adjustments(ids=…)`——因子邏輯未改;另印 `changed: K stocks, R rows` / `changed_ids=`。`compute-indicators --ids`(不帶 `--days`)本來就是全歷史重算,只補說明。新腳本 `vps/scripts/adjust-incremental.sh`(平日 13:15):守衛同 `adjust-backfill.sh`(安靜窗/mid flag/距下一個寫入者 >30 分/`flock -n`)→ 選股 → 因子 → 指標全歷史;每步 `radar_timeout`;不 export/deploy(14:05 輪上線);有變動才 `notify_ok`。`crontab.example`、`docs/08` §0、`docs/47` §3.2、`docs/38` §7.21、`adjust-backfill.sh` 註解、`project-context` 第 9 條同步。
+- **FinMind 全市場查詢**:`TaiwanStockDividendResult` 不帶 `data_id` 回 `status 400「Your level is free」`(2026-10-09 單次實測),所以改用官方兩張表選股。
+- **順帶修的效能**:`score_technical` 每根重算整段 `prev_ma5/prev_ma20`(O(n²)),全歷史指標 6,500 根 ~52 秒/檔 → ~0.9 秒;與 main 版 `compute_series` 在 5,460 列隨機資料(含 NULL、因子)上整列逐值相同,另加測試鎖等價與線性。
+- **驗證**:新測試 `test_adjust_incremental.py`(真實回應裁切 fixture 解析、去重/窗/庫內交集、dry-run 與 print-ids DB 檔 SHA-256 不變且不呼叫 FinMind、種子庫新除息 → 因子在除息日階梯、原始 OHLC 逐位元不變、指標全歷史重算且 MA20 跨除息日連續、重跑冪等)、`test_adjust_incremental_script.py`(原始碼接線 + WSL stub harness 真跑腳本 6 情境 + 13:15 距下一個寫入者 >30 分)、`test_indicators.py` +2;pytest 全套 1617 passed。
+- **待人類**:①合 main;②正式 crontab 加 `15 13 * * 1-5  bash /home/huang/trever-radar/vps/scripts/adjust-incremental.sh >> /home/huang/radar-cron.log 2>&1`;③一次性追補(使用者已核准):空檔(例平日 09:30)跑 `ADJUST_SINCE=2026-09-04 bash vps/scripts/adjust-incremental.sh >> ~/radar-cron.log 2>&1`,候選 ≤179 代號,估 ≤15 分;歷史 `daily_scores` 不回算。
+
 ## 2026-10-09 期貨異常名單加現貨股價與漲跌(`docs/38` §7.21;程式完成於分支、未合 main、未上線;v3.6)
 
 - **需求**:使用者「期貨異常那邊可以顯示股價漲跌跟股價嗎」。

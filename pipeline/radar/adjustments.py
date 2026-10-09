@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import time
-from datetime import datetime
+from array import array
+from datetime import date as date_cls
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import text
@@ -116,3 +118,86 @@ def compute_adjustments(ids: list[str] | None = None, top: int | None = None,
             time.sleep(sleep_s)
 
     return {"done": done, "failed": failed, "events": events_seen, "rows": rows_updated}
+
+
+# ── 增量選股(compute-adjustments --ex-dates-since)───────────────────────────
+#
+# 以下只負責「挑哪幾檔要重算」與「重算前後比對」,不碰上面的因子邏輯:
+# 挑出來的代號原樣交給 compute_adjustments(ids=…),同一個 FinMind 逐檔請求、
+# 同一個 factors_for_dates、同一個整檔覆寫。
+#
+# 為什麼不用 FinMind 一次全市場:TaiwanStockDividendResult 不帶 data_id 只開放
+# 贊助會員,免費 token 回 status 400「Your level is free」(2026-10-09 實測)。
+# 改用證交所 TWT49U 與櫃買 bulletin/exDailyQ(公開、無驗證碼、各一次請求)
+# **只當代號挑選器**。
+
+def resolve_since(value: str, today: date_cls) -> str:
+    """``--ex-dates-since`` 的值:整數 N(往前 N 個日曆日)或 YYYY-MM-DD。回傳 ISO 日期。"""
+    v = str(value).strip()
+    if v.isdigit():
+        return (today - timedelta(days=int(v))).isoformat()
+    try:
+        return date_cls.fromisoformat(v).isoformat()
+    except ValueError:
+        raise SystemExit(f"--ex-dates-since needs N (days) or YYYY-MM-DD, got {value!r}") from None
+
+
+def ex_date_candidates(since: str, until: str) -> list[str]:
+    """上市＋上櫃在 [since, until](ISO,含兩端)內有除權息日的代號,去重排序。
+
+    任一市場抓失敗就整個失敗(不要靜默只做一半);隔天的 N 日窗會再涵蓋到。
+    """
+    from .providers import tpex, twse
+
+    start, end = since.replace("-", ""), until.replace("-", "")
+    rows = twse.fetch_ex_rights(start, end) + tpex.fetch_ex_rights(start, end)
+    return sorted({r["code"] for r in rows if since <= r["date"] <= until})
+
+
+def select_ex_date_ids(since: str, until: str) -> list[str]:
+    """ex_date_candidates ∩ 本庫可還原的標的(與 --all 同一宇宙:stocks.type IN
+    ('stock','etf') 且有 daily_prices 列)。唯讀,不呼叫 init_db。"""
+    candidates = ex_date_candidates(since, until)
+    if not candidates:
+        return []
+    with get_engine().connect() as conn:
+        known = {r[0] for r in conn.execute(text("""
+            SELECT s.id FROM stocks s
+            WHERE s.type IN ('stock', 'etf')
+              AND EXISTS (SELECT 1 FROM daily_prices p WHERE p.stock_id = s.id)
+        """))}
+    return [c for c in candidates if c in known]
+
+
+def factor_snapshot(ids: list[str]) -> dict[str, array]:
+    """{stock_id: 依日期排序的 adj_factor 陣列}。只給前後比對用。
+
+    用 array('d')(每列 8 bytes)而不是 (date, factor) tuple:旺季一次 ~300 檔 ×
+    數千列,tuple 版要幾百 MB,VPS 只有 1.7 GB。比對期間持 DB 鎖、回補容器已暫停,
+    日期集合不會變,所以只比因子序列即可。
+    """
+    out: dict[str, array] = {}
+    with get_engine().connect() as conn:
+        for sid in ids:
+            out[sid] = array("d", (r[0] for r in conn.execute(text(
+                "SELECT adj_factor FROM daily_prices WHERE stock_id = :sid ORDER BY date"
+            ), {"sid": sid})))
+    return out
+
+
+def diff_factor_snapshots(before: dict[str, array],
+                          after: dict[str, array]) -> tuple[list[str], int]:
+    """回傳 (因子有變的代號, 因子有變的列數)。列數不同時整檔算變動。"""
+    changed_ids: list[str] = []
+    changed_rows = 0
+    for sid in sorted(set(before) | set(after)):
+        b = before.get(sid, array("d"))
+        a = after.get(sid, array("d"))
+        if len(a) != len(b):
+            n = max(len(a), len(b))
+        else:
+            n = sum(1 for x, y in zip(a, b) if x != y)
+        if n:
+            changed_ids.append(sid)
+            changed_rows += n
+    return changed_ids, changed_rows
