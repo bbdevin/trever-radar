@@ -1,6 +1,8 @@
-# 48 — 首頁「多方榜」:選股規則凍結與「上榜隔天」事前登記(bull-board-v1)
+# 48 — 首頁「多方榜」:選股規則凍結與「上榜隔天」事前登記(bull-board-v2;v1 見 §8)
 
-> **地位**:§1 是上線中的選股規則(凍結,版本字串 `bull-board-v1`);§2–§6 是事前登記。效力只來自時間順序:本文件 commit 時,**沒有任何人把任何一版多方榜(或其候選規則)與之後的股價 JOIN 過**。§6 逐項揭露凍結前已看過的東西。
+> **版本現況(2026-10-10)**:目前版本字串 `bull-board-v2`。§1 的規則與 rank 表自 v1 起**一字未改**;v2 改的是輸入資料——分點日史從每天 |淨額| 前 12 列改成來源完整的買超前 15 + 賣超前 15(`docs/44` §3.4),詳見 §8。v1 的紀錄行(2026-10-04 起)原樣保留在 `bull_board_log/*.jsonl`,只是**不再累積進任何評估**;v2 的 60 個市場日時鐘從第一個以新資料建置的資料日(`log_from`,建置器只數 `version == bull-board-v2` 的行)重新起算。
+>
+> **地位**:§1 是上線中的選股規則(凍結,版本字串 `bull-board-v2`);§2–§6 是事前登記。效力只來自時間順序:本文件 commit 時,**沒有任何人把任何一版多方榜(或其候選規則)與之後的股價 JOIN 過**。§6 逐項揭露凍結前已看過的東西。
 >
 > **凍結規則**:同 `docs/38` §0、`docs/40` 開頭。本文件 commit 之後,§1 與 §2–§4 的每一個數字、每一條規則、`web/lib/bullBear.ts` 的 rank 表任何一格,都不得在資料可見後修改;要改只能開 v2(版本字串 `bull-board-v2`),而 v2 只能用 **v2 commit 之後才出現的市場日**。
 >
@@ -8,7 +10,7 @@
 >
 > **先講清楚**:多方榜**只是排序已發生的事實**——依「今日影響最大的多方事實」的條數排列。它不是預測,畫面上**沒有**任何往後表現的數字。往後表現要等 §2–§5 的檢定通過(SHIP)才會以**次數**顯示;在那之前畫面只寫「名單自 MM/DD 起每日留存;往後表現須累積 60 個交易日並通過事前登記的檢定,才會以次數顯示。」
 
-## 1. 選股規則(凍結;`web/lib/bullBoard.ts`,版本 `bull-board-v1`)
+## 1. 選股規則(凍結;`web/lib/bullBoard.ts`,版本 `bull-board-v2`;規則文字與 v1 相同)
 
 - **母體 U(t)**:`stocks/{id}.json` 的 `scores != null`(評分池,約 740 檔)**且** `candles` 最後一根的日期 == `radar.json` 的 `data_date`。
 - **事實**:與個股頁「多空」分頁**同一次呼叫**——`web/lib/bullBearFromStock.ts summaryFromStockJson(data, muted)`(個股頁也呼叫它,畫面逐字不變)。建置器的 `muted` 恆為空集合(全站共用名單的覆寫只在瀏覽器端)。
@@ -22,7 +24,7 @@
 ### 1.1 計算路徑與資料契約
 
 - `web/scripts/build-bull-board.mjs`(Node 22+,`--experimental-strip-types`,跑同一份 TS,**不移植 Python**):讀 `radar.json` → 逐檔讀 `stocks/*.json`(一次一檔)→ `summaryFromStockJson` → `buildBullBoard`(純函式)→ 原子寫 `bull_board.json`(`.tmp` → rename)→ 追加一行到 `data/bull_board_log/YYYY-MM.jsonl`,並把當月檔複製到 `web/public/data/bull_board_log/YYYY-MM.jsonl`(使用者核准的異地副本)→ 印 `bull-board timing: files=… universe=… qualified=… elapsed=…s`。CLI:`--data <dir> --log <dir>`。
-- `bull_board.json`:`{version:"bull-board-v1", data_date, generated_at, radar_generated_at, log_from, universe, qualified, min_bull_key:3, inputs:{insti:{date,stale}, branch:{…}, margin:{…}, holders_week}, entries:[{id,name,market,industry,close,chg_pct,turnover,final,state,bull_key_n,bear_key_n, bull:[{code,source,section,text,segments}]×≤3, bear:{code,source,section,risk,text,segments,date}|null, counts:{tech:{bull,bear},chips:{…},levels:{…}}}]}`。**不輸出** `rank`/`magnitude`/`score`/`position`(形狀鎖在 `bullBoard.test.ts`)。entries 的陣列順序就是 §1 的排序,畫面不顯示第 N 名。
+- `bull_board.json`:`{version:"bull-board-v2", data_date, generated_at, radar_generated_at, log_from, universe, qualified, min_bull_key:3, inputs:{insti:{date,stale}, branch:{…}, margin:{…}, holders_week}, entries:[{id,name,market,industry,close,chg_pct,turnover,final,state,bull_key_n,bear_key_n, bull:[{code,source,section,text,segments}]×≤3, bear:{code,source,section,risk,text,segments,date}|null, counts:{tech:{bull,bear},chips:{…},levels:{…}}}]}`。**不輸出** `rank`/`magnitude`/`score`/`position`(形狀鎖在 `bullBoard.test.ts`)。entries 的陣列順序就是 §1 的排序,畫面不顯示第 N 名。
 - **族群欄位(2026-10-04 追加,只影響顯示,不屬 §1 凍結規則)**:entries 每項多一個選用鍵 `theme:{name,vs20}|null`。建置器以 `web/lib/themeGroups.ts hottestListedTheme(radar.stocks[].themes, radar.themes)` 算——與首頁「題材」排序(WP-H1)同一個最熱題材挑法,但只從今日題材資金流(`radar.themes`)上有的題材裡挑;一個都不在上面 = `null`。首頁「事實｜族群」切換的族群檢視(`groupBoardEntries`,純函式)依 `theme` → `industry` → 「其他」分組:族群依檔數多 → 族群內最前面那檔的原順序,「其他」最後;族群內維持 entries 原順序;標頭顯示檔數與「成交為20日均 X 倍」(題材取 `theme.vs20`、產業查 `radar.sectors`)。兩種檢視上方都有一列「多方集中」族群分布膠囊(`groupSummary`):同一個分組與順序取前 6 個有名字的族群,其餘(含「其他」)併成「其他」放最後;點膠囊切到族群檢視並捲到該組。缺 `theme` 鍵的舊 `bull_board.json` 由畫面從 `radar.json` 補查。**`theme` 不參與入榜、排序、40 上限,也不寫進紀錄行**(`bullBoard.test.ts` 鎖住:有無 theme,`selectBoard` 與 `boardLogLine` 結果相同)。
 - **三態**:檔不存在/404 = 沒算過(「這一版還沒有多方榜…」);`qualified 0` 且 `entries []` = 算過、沒人入榜;非空 = 名單。不得把前兩者塌成同一句。
 - **紀錄行**(`bull_board_log/*.jsonl`,一次建置一行):`{version, data_date, generated_at, radar_generated_at, universe, qualified, universe_ids:[…], entries:[{id,bull_key_n,bear_key_n,bull_codes:[…]}], excluded:[{id,bull_key_n,codes:[…]}], inputs}`。`excluded` = `|K_bull| ≥ 3` 但被 E 排除者。這是 §2 的唯一資料來源;建置器**只追加,不改寫**。
@@ -93,4 +95,10 @@
 
 ## 8. 變更紀錄
 
+- **2026-10-10:開 `bull-board-v2`(使用者決定「都改成前15大分點一致化」)。**
+  - **為什麼**:個股 JSON 的分點日史 `branch_history` 每天只留 |淨額| 前 12 列(買賣兩側合計)是 export 的裁剪產物,不是來源的樣子——來源每天給買超前 15 + 賣超前 15。一邊倒的日子另一側整個不見(2464 10/08 匯出 12 列全賣超,買超空白),所以 v1 的分點事實是建立在「少一側」的資料上。使用者 2026-10-10 決定全站改成來源的前 15 大一致化,chips 換成 `branch_days` v2(`docs/44` §3.4)。
+  - **改了什麼**:§1 的規則、排序、上限、rank 表(`catalogue.ts`、`backendRank`)**一格未動**;改的是多空事實的**輸入**與定義:`C_TOP15_FLOW_*` 從「前 12 列合計」變成「買超前 15 + 賣超前 15 全部列合計」(句子「前15大買賣超分點合計今日淨買超」;門檻 2%/5% 不變);囤貨/出貨(`C_ACC_*`/`C_DIST_*`)、融資×分點集中度、強分點、追蹤/地緣/隔日沖事實每天看得到全部列而不是 12 列;`branch_tags` 名字範圍隨之變大。輸入變了 = 名單會變 = 必須開新版。
+  - **紀錄**:`bull_board.json.version` 與紀錄行 `version` 改 `bull-board-v2`;v1 行原樣留在同一批月檔,不刪不改;建置器 `log_from` 只看 `version == bull-board-v2` 的最早一行(`bullBoardBuild.test.ts` 鎖:v1 行在前、v2 第一次建置的 `log_from` 是當天,同日 v1 最後一行與 v2 行不同 → 照樣追加)。**生效日 = VPS 第一個以 chips v2 export 之後建置的資料日**(程式與 export 同一份 checkout,`git pull` 後第一輪)。
+  - **評估時鐘**:§2–§5 的 60 個市場日自 v2 第一個紀錄日重新起算;v1 自 2026-10-04 起的 4 個市場日不併入(樣本量太小,也不同輸入)。§6 的揭露不變:v2 commit 時,沒有任何人把任何一版多方榜與之後的股價 JOIN 過。
+  - **名單差異(只能合成,未碰正式資料)**:本機 600 檔合成個股(同一批 raw 列 → before = 每日 |淨額| 前 12 列的 chips v1,after = 全部列的 chips v2,其餘鍵相同)跑正式建置器:入榜 33 → 64 檔(32 檔兩邊都在、1 檔只在 before、32 檔只在 after),40 檔上限內順序改變;多出來的主要是 `C_TOP15_FLOW_BUY` 與 `C_ACC_1W` 在看到全部列後成立。**這是合成資料的方向性示意,不是正式機的差異量**——正式差異要在 VPS 以同一天 radar.db 的兩份 export 各建一次才知道(本任務不 SSH)。
 - 2026-10-04:§1.1 加「重複行」讀法釐清——檢定只讀每個 data_date 的 r(t)(09:00 前最後一行,即當日最終名單),同日較早行僅為稽核軌跡;建置器跳過只差時間戳的相同重建、既有重複行可用壓縮工具移除(每段留第一行,r(t) 內容不變)。評估中立,§1–§4 規則未改,不需開 v2。

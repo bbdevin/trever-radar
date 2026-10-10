@@ -281,7 +281,7 @@ export default function AccumulationBranches({
         </summary>
         <div className="grid gap-1.5 pb-2.5">
           <p className="text-foreground">{definitionText(win.days, side)}</p>
-          <p>只計入每天淨買賣前 {TOP_N_PER_DAY} 大的分點，小量吃貨的會漏掉，數字是下限。</p>
+          <p>只計入每天買超前 {TOP_N_PER_DAY} 大與賣超前 {TOP_N_PER_DAY} 大的分點（來源只公布這些），小量吃貨的會漏掉，數字是下限。</p>
           <p>
             期間以這檔股票的交易日計算：{WINDOWS.map((w) => `${w.label}＝${w.days} 天`).join("、")}，
             截至最新一天的分點資料。期間內任一天缺分點資料，整個期間就不列名單。
@@ -296,7 +296,7 @@ export default function AccumulationBranches({
             建倉後沒有跑掉四成以上；出貨則看賣出後有沒有被買回。這取代上面的留倉率，因為長期間的大戶常來回操作。
           </p>
           <p>
-            某天沒進前 {TOP_N_PER_DAY} 大的分點，當天記為 0，不算買也不算賣。佔量＝期間淨張數 ÷ 期間總成交量。
+            某天沒進買超或賣超前 {TOP_N_PER_DAY} 大的分點，當天記為 0，不算買也不算賣。佔量＝期間淨張數 ÷ 期間總成交量。
             依期間淨張數大小排序，點分點可看它在這檔股票的每日進出。
           </p>
           <p>這是過去的進出紀錄，不是預測；同一分點可能是許多客戶合在一起的結果。</p>

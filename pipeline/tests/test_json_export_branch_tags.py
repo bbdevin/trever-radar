@@ -2,7 +2,7 @@
 
 釘住的契約:
   * 鍵永遠存在;沒有就是空清單,不是缺鍵(前端缺鍵與空清單都畫「什麼都不標」)。
-  * 名字只限這檔股票 payload 裡會出現的分點(branch_history ∪ 當日 branches)。
+  * 名字只限這檔股票 payload 裡會出現的分點(branch_days 名字表 ∪ 當日 branches)。
   * 隔日沖只收 is_daytrade_suspect = 1;NULL(未判定)與 0 都不輸出。
   * 地緣排除總公司/外資席位;公司縣市未知 → rule 為 null、名單為空。
   * 門檻數字從 compute_branch_stats 讀,不寫死。
@@ -14,6 +14,7 @@ from tempfile import TemporaryDirectory
 
 import radar.config as config
 import radar.db as db
+from radar.export.branch_days import branch_history_of
 from radar.export.stock_parts import read_merged_stock
 from radar import schema
 from radar.compute.compute_branch_stats import DAYTRADE_MIN_OBS, DAYTRADE_RATE
@@ -111,7 +112,7 @@ class BranchTagsExportTests(unittest.TestCase):
         return read_merged_stock(out / "stocks", sid)
 
     def _names(self, payload):
-        names = {b["n"] for day in payload["branch_history"] for b in day["branches"]}
+        names = {b["n"] for day in branch_history_of(payload) for b in day["branches"]}
         return names | {b["name"] for b in payload["branches"]}
 
     def test_shape_and_contents(self):

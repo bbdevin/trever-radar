@@ -4,6 +4,7 @@ import { forwardRef, useMemo, useState, useEffect } from "react";
 import { Clock, ShieldCheck } from "lucide-react";
 import type { BranchPctileCounts, BranchTags, Buyback, ReasonItem, StockJson } from "@/lib/types";
 import { fmtLots } from "@/lib/format";
+import { RANGE_NOTE, SIDE_MAX, aggregateBranchFlow } from "@/lib/branchFlow";
 import { branchTags as tagsFor, historyWindow, type Tag } from "@/lib/branchTags";
 import { useBranchTrack } from "@/lib/branchTrackList";
 import { cn, pillTabClass } from "@/lib/utils";
@@ -46,8 +47,6 @@ function fmtYMD(isoDate: string): string {
  */
 /** 圖表疊加勾選上限:超過視覺與效能都失焦 */
 export const MAX_SELECTED_BRANCHES = 10;
-/** 每側最多列幾家 = 來源每日每側公布的上限(前 15 大買超、前 15 大賣超)。 */
-export const SIDE_MAX = 15;
 
 const BranchFlowSection = forwardRef<
   HTMLElement,
@@ -167,45 +166,8 @@ const BranchFlowSection = forwardRef<
     !!branchAsOf &&
     ((branchStale === true) || (!!quoteDate && branchAsOf !== quoteDate));
 
-  const agg = useMemo(() => {
-    // 1日 且當日 `branches` 有列:直接用它(來源當日完整的買超/賣超各前 15 大;舊 chips 的
-    // branch_history 每天只有 |淨額| 前 12 列,一邊可能整個不見——2026-10-10 使用者指出盟立買超空白)。
-    // branches 非空就代表 raw 當日有列,所以它與 branchHistory[0] 必是同一天。
-    const latestFull = activeDays === 1 && branches.length > 0;
-    // 同名同日多列(多個 branch_key)加總,每個名字一列。
-    const map: Record<string, { buy: number; sell: number; net: number }> = {};
-    const add = (n: string, b: number, s: number, net: number) => {
-      if (!map[n]) map[n] = { buy: 0, sell: 0, net: 0 };
-      map[n].buy += b;
-      map[n].sell += s;
-      map[n].net += net;
-    };
-    const sliced = !branchHistory?.length || latestFull ? [] : branchHistory.slice(0, activeDays);
-    if (sliced.length) {
-      for (const day of sliced) for (const b of day.branches) add(b.n, b.b, b.s, b.net);
-    } else {
-      for (const b of branches) add(b.name, b.buy, b.sell, b.net);
-    }
-    const allDates = sliced.length ? sliced.map((s) => s.t).reverse() : branchHistory?.[0]?.t ? [branchHistory[0].t] : [];
-
-    const arr = Object.keys(map).map((name) => ({ name, ...map[name] }));
-    const buyers = arr.filter((x) => x.net > 0).sort((a, b) => b.net - a.net);
-    const sellers = arr.filter((x) => x.net < 0).sort((a, b) => a.net - b.net);
-
-    // 同名同日多列(多個 branch_key)加總,與上面的聚合一致。
-    const withHistory = (b: (typeof arr)[number]) => ({
-      ...b,
-      history: allDates.map((dt) => {
-        if (!sliced.length) return { t: dt, net: b.net }; // 1日:整列就是當天
-        const dObj = sliced.find((s) => s.t === dt);
-        return { t: dt, net: dObj ? dObj.branches.reduce((s, x) => s + (x.n === b.name ? x.net : 0), 0) : 0 };
-      }),
-    });
-    const topBuy = buyers.slice(0, SIDE_MAX).map(withHistory);
-    const topSell = sellers.slice(0, SIDE_MAX).map(withHistory);
-
-    return { buyers, sellers, topBuy, topSell };
-  }, [branchHistory, branches, activeDays]);
+  // 聚合規則(1日 用當日完整列、N 日 = 各日前 15 大合計、同名加總)在 lib/branchFlow.ts,node 測試鎖住。
+  const agg = useMemo(() => aggregateBranchFlow(branches, branchHistory, activeDays), [branchHistory, branches, activeDays]);
 
   // 無 branch_history 且無當日 branches:整節收合為教育性空狀態(一行,不佔版面)。
   // 分點 Tab 情境(score 已帶)仍渲染分點分卡,交由外層守衛處理完全無資料的情況。
@@ -331,6 +293,7 @@ const BranchFlowSection = forwardRef<
           )}
           <span className="text-[11px] leading-relaxed text-muted-foreground">
             {rangeHint}盤後 T+1、每日買賣超各取前 15 大，僅供籌碼觀察。15 是上限不是張數：冷清的日子不足 15 家，是當天只有那些分點進出。
+            {activeDays > 1 && <> {RANGE_NOTE}</>}
           </span>
         </div>
       )}
@@ -354,8 +317,9 @@ const BranchFlowSection = forwardRef<
         )}
         <StatTile label={`${activeDays}日買超`} value={`${agg.buyers.length} 點`} />
         <StatTile label={`${activeDays}日賣超`} value={`${agg.sellers.length} 點`} />
-        {/* 有分點分時手機是對稱 2×2(原本淨流獨佔一列,賣超旁邊空一格,白白多一列高度) */}
-        <StatTile label={`${activeDays}日淨流`} value={`${fmtLots(netTotal)} 張`} tone={toneOf(netTotal)} />
+        {/* 有分點分時手機是對稱 2×2(原本淨流獨佔一列,賣超旁邊空一格,白白多一列高度)。
+            淨流 = 各日前 15 大買賣超合計(來源只公布這兩側各前 15),標題寫明 */}
+        <StatTile label={`${activeDays}日前15大淨流`} value={`${fmtLots(netTotal)} 張`} tone={toneOf(netTotal)} />
       </div>
 
       {/* 分點理由 pills（WP-H2 語意家族色，升級版分點區）*/}
@@ -450,16 +414,16 @@ const BranchFlowSection = forwardRef<
       <BuySellSplit
         value={sideTab}
         onChange={setSideTab}
-        buyLabel={`買方 Top${agg.topBuy.length || SIDE_MAX}`}
-        sellLabel={`賣方 Top${agg.topSell.length || SIDE_MAX}`}
+        buyLabel={agg.topBuy.length ? `買方 Top${agg.topBuy.length}` : "買方 0 家"}
+        sellLabel={agg.topSell.length ? `賣方 Top${agg.topSell.length}` : "賣方 0 家"}
       />
 
       <div className="flex flex-col gap-2.5 rounded-[var(--r-md)] border border-border bg-secondary p-3">
         <h3 className={cn("mb-1 border-b border-[color:var(--line)] pb-2 text-center text-[14.5px] font-bold", sideTab === "buy" ? "text-up" : "text-down")}>
-          {/* 名單不足 15 家時照實講(與上方「買方 TopN」同一個數字) */}
+          {/* 名單不足 15 家時照實講(與上方「買方 TopN」同一個數字);一家都沒有就寫 0 家,不寫 Top15 */}
           {sideTab === "buy"
-            ? `前 ${agg.topBuy.length || SIDE_MAX} 大買超分點`
-            : `前 ${agg.topSell.length || SIDE_MAX} 大賣超分點`}
+            ? (agg.topBuy.length ? `前 ${agg.topBuy.length} 大買超分點` : "買超分點 0 家")
+            : (agg.topSell.length ? `前 ${agg.topSell.length} 大賣超分點` : "賣超分點 0 家")}
         </h3>
         {showTagLegend && <BranchTagLegend ctx={tagCtx} />}
         <div className="flex flex-col gap-1.5">
@@ -494,6 +458,7 @@ const BranchFlowSection = forwardRef<
       {!heading && (
         <div className="text-xs leading-relaxed text-muted-foreground">
           分點資料來自免費公開頁,每日買賣超各只公布前 15 大,不是全市場全量分點;T+1 盤後資料,僅供籌碼觀察。
+          {activeDays > 1 && <> {RANGE_NOTE}</>}
           <br />
           <span className="text-muted-foreground/80">
             15 是上限不是配額:熱絡的日子看不到第 16 名之後,冷清的日子不足 15 家則是當天真的只有那些分點有進出(實測某檔全日成交 1,023 張時只有 5 家)。兩種情況在這張表上長得一樣,但意思相反。

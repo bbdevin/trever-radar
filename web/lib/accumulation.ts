@@ -1,7 +1,7 @@
 // 個股頁「囤貨／出貨分點」的純邏輯。UI 只讀這裡的常數產生定義文字,避免文案與判準漂移。
 //
-// 資料限制:branch_history 每天只留淨買賣前 12 大分點(見 json_export),某天不在前 12
-// 的分點當天記為 0——所以天數與張數都是下限。
+// 資料限制:來源每天只公布買超前 15 大與賣超前 15 大(branch_history 每天就是這最多 30 列;
+// 2026-10-10 之前的匯出只留 |淨額| 前 12 列),某天不在名單上的分點當天記為 0——所以天數與張數都是下限。
 
 export type BranchDay = { t: string; branches: { n: string; b: number; s: number; net: number }[] };
 export type VolumeDay = { t: string; v: number };
@@ -52,8 +52,8 @@ export const RECENT_REVERSAL = 0.3;
 /** 預設顯示列數與展開上限 */
 export const DEFAULT_VISIBLE = 5;
 export const MAX_ROWS = 20;
-/** 每日分點資料只含前幾大(文案用) */
-export const TOP_N_PER_DAY = 12;
+/** 每日分點資料每側只含前幾大(來源上限:買超前 15、賣超前 15;文案用) */
+export const TOP_N_PER_DAY = 15;
 
 export type Side = "acc" | "dist";
 

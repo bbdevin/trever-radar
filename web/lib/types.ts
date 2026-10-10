@@ -115,6 +115,31 @@ export interface ActiveWarrant {
   branches?: BranchRow[]; // 該權證當日前8大分點進出(僅上市權證有來源)
 }
 
+/** 分點日史的一天。 */
+export interface BranchDay {
+  t: string;
+  branches: BranchDayRow[];
+}
+
+export interface BranchDayRow {
+  n: string;
+  b: number;
+  s: number;
+  net: number;
+}
+
+/**
+ * chips v2 的分點日史(2026-10-10):每天全部列、名字查表。
+ * `days` 新→舊;每列 `[名字索引, 買張, 賣張]`,來源淨張 ≠ 買−賣 時多第 4 欄 `淨張`。
+ */
+export interface BranchDaysV2 {
+  version: 2;
+  /** 來源每側上限(買超前 N、賣超前 N) */
+  per_side: number;
+  names: string[];
+  days: [string, number[][]][];
+}
+
 export interface PocketTag {
   code: string;
   // "KEY" kept for payloads exported before the K1→T1 rename (docs/27); drop once
@@ -339,15 +364,14 @@ export interface StockJson {
   /** 價格位置事實(docs/45);舊 JSON 沒有此鍵,K 棒不足 20 根時 status = "insufficient"。只供顯示,不進任何分數。 */
   price_levels?: PriceLevels | null;
   branches: BranchRow[];
-  branch_history?: {
-    t: string;
-    branches: {
-      n: string;
-      b: number;
-      s: number;
-      net: number;
-    }[];
-  }[];
+  /**
+   * 分點日史(新→舊,最多 480 個交易日)。前端一律讀這個形狀:chips v2 的 `branch_days` 由
+   * `stockParts.ts` 在接回時解碼成它;舊 chips v1 直接就是它(每天只有 |淨額| 前 12 列)。
+   * v2 起每天 = 來源當日全部列(買超前 15 + 賣超前 15),同名同日多列不合併(讀端自己加總)。
+   */
+  branch_history?: BranchDay[];
+  /** chips v2 的緊湊日史(`pipeline/radar/export/branch_days.py`);接回後解碼進 `branch_history`,畫面不直接讀它。 */
+  branch_days?: BranchDaysV2;
   /**
    * 每一對(分點, 個股)在固定窗口內的買/賣進出場價格分位計數。
    * 只有分子與分母,沒有旗標、分數或名次——這個性質量測到「傾向為真、標籤不可

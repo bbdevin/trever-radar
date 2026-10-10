@@ -19,13 +19,17 @@ from typing import Any
 
 PARTS_VERSION = 1
 HIST_VERSION = 1
-CHIPS_VERSION = 1
+# chips v2(2026-10-10):``branch_history``(每日 |淨額| 前 12 列)換成 ``branch_days``(每日全部
+# 列、名字查表;``radar/export/branch_days.py``)。前端兩種都讀;舊前端讀到 v2 只是沒有分點日史。
+CHIPS_VERSION = 2
 
-# 從舊單一檔搬去 chips 檔的四個鍵。順序 = 舊 payload 裡的插入順序(branch_pnl_est 原本
-# 就是最後才 setdefault 進去的),合併時照這個順序放回,舊檔與合併結果連鍵序都一樣。
+# 從單一 payload 搬去 chips 檔的四個鍵。順序 = payload 裡的插入順序(branch_pnl_est 原本
+# 就是最後才 setdefault 進去的),合併時照這個順序放回,原 payload 與合併結果連鍵序都一樣。
 CHIPS_KEYS: tuple[str, ...] = (
-    "branch_history", "branch_pctile_counts", "branch_tags", "branch_pnl_est",
+    "branch_days", "branch_pctile_counts", "branch_tags", "branch_pnl_est",
 )
+# 讀舊 chips(v1)時放回原位的鍵;新 export 不再寫它。
+_LEGACY_CHIPS_KEYS: tuple[str, ...] = ("branch_history",)
 
 # 新檔一律緊湊序列化;舊單一檔維持 json_export 原本的 ``json.dumps(payload, ensure_ascii=False)``。
 _COMPACT = {"ensure_ascii": False, "separators": (",", ":")}
@@ -113,7 +117,7 @@ def merge_stock_parts(core: dict, hist: dict | None, chips: dict | None) -> dict
             v = list(hist["candles"]) + list(v)
         out[k] = v
         if k == "branches":
-            for ck in ("branch_history", "branch_pctile_counts", "branch_tags"):
+            for ck in (*_LEGACY_CHIPS_KEYS, "branch_days", "branch_pctile_counts", "branch_tags"):
                 if ck in chips:
                     out[ck] = chips[ck]
     if "branch_pnl_est" in chips:

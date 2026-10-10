@@ -10,6 +10,7 @@ from tempfile import TemporaryDirectory
 
 import radar.config as config
 import radar.db as db
+from radar.export.branch_days import branch_history_of
 from radar.export.stock_parts import read_merged_stock
 from radar import schema
 from radar.compute.branch_interval_pnl import (
@@ -263,7 +264,7 @@ class ExportKeyTests(unittest.TestCase):
                 {"stock_id": sid, "date": day, "close": 100.0 + i * 10, "volume": 1_000_000, "turnover": 1}
                 for sid in ("2330", "2317") for i, day in enumerate(self.DATES)
             ])
-            # 13 個分點同一天 → 裁剪後的 branch_history 只留 12 個;損益要用未裁剪的
+            # 13 個分點同一天;損益用全部分點列(branch_days v2 之後日史也不再裁剪)
             upsert_branch_trades(conn, [
                 _trade("2330", self.DATES[0], f"k{i}", f"分點{i:02d}", 100 + i) for i in range(13)
             ] + [_trade("2330", self.DATES[-1], "z", "分點00", -1)])
@@ -288,11 +289,12 @@ class ExportKeyTests(unittest.TestCase):
         est = p["2330"]["branch_pnl_est"]
         self.assertEqual(est["as_of"], self.DATES[-1])
         w = est["windows"]["all"]
-        # 13 個分點都看得到(第 13 小的「分點00」只在裁剪前存在)
+        # 13 個分點都看得到;日史(branch_days)同樣 13 列都在(v2 不裁剪)
         self.assertEqual(w["pairs_considered"], 13)
         self.assertEqual(w["n_gainers"], 13)
-        first_day = next(d for d in p["2330"]["branch_history"] if d["t"] == self.DATES[0])
-        self.assertNotIn("分點00", {b["n"] for b in first_day["branches"]})
+        first_day = next(d for d in branch_history_of(p["2330"]) if d["t"] == self.DATES[0])
+        self.assertIn("分點00", {b["n"] for b in first_day["branches"]})
+        self.assertEqual(len(first_day["branches"]), 13)
         # 分點00:買 100@100、賣 1@120 → 已實現 20,000;剩 99 張,現價 120 → 未實現 1,980,000
         row = next(r for r in w["gainers"] if r["name"] == "分點00")
         self.assertEqual(row["realized"], 20_000)

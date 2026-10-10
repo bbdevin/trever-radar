@@ -1,5 +1,6 @@
 /**
- * 分點(docs/46 v2 §2.5):branch_history(每天只留淨額前 12 大,新→舊)、branch_tags(地緣/隔日沖/追蹤)、
+ * 分點(docs/46 v2 §2.5):branch_history(每天 = 來源買超前 15 + 賣超前 15,新→舊;2026-10-10 前的匯出只有
+ * |淨額| 前 12 列)、branch_tags(地緣/隔日沖/追蹤)、
  * branch_pnl_est(區間損益估算)。囤貨/出貨沿用籌碼日報 accumulation.computeWindow 的同一套判準。
  */
 import type { DerivedFact } from "../bullBear.ts";
@@ -43,7 +44,8 @@ export function branchFacts(
     const today = lag ? "" : "今日";
     const nets = dayNet(d0);
 
-    // 前 N 大分點淨流
+    // 前 15 大買賣超合計淨流:當天買超前 15 + 賣超前 15 全部列的淨張加總(來源只公布這兩側各前 15,
+    // 不是全市場合計;bull-board-v2 起的定義,見 docs/48 §8)
     const flow = (d: (typeof bh)[number]) => d.branches.reduce((s, b) => s + b.net, 0);
     const f0 = flow(d0);
     if (vol > 0 && Math.abs(f0) >= vol * 0.02) {
@@ -55,7 +57,7 @@ export function branchFacts(
       const sh = (Math.abs(f0) / vol) * 100;
       const buy = f0 > 0;
       out.push(mk(buy ? "C_TOP15_FLOW_BUY" : "C_TOP15_FLOW_SELL",
-        [`前${TOP_N_PER_DAY}大分點${today}淨${buy ? "買超" : "賣超"} ${fmtInt(Math.abs(f0))} 張(佔量 ${sh.toFixed(1)}%)`, k >= 2 ? `,連 ${k} 日為${buy ? "正" : "負"}` : ""],
+        [`前${TOP_N_PER_DAY}大買賣超分點合計${today}淨${buy ? "買超" : "賣超"} ${fmtInt(Math.abs(f0))} 張(佔量 ${sh.toFixed(1)}%)`, k >= 2 ? `,連 ${k} 日為${buy ? "正" : "負"}` : ""],
         { rank: sh >= 5 ? 5 : 4, magnitude: sh, mirrors: buy && k >= 3 ? ["B6_BIG_MONEY_FLOW"] : [], date }));
     }
 

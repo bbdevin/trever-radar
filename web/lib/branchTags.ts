@@ -314,7 +314,7 @@ function agentDefinition(ctx: TagContext): TagDefinition | null {
   if (!latest.broker) {
     return { label: "股代", text: "本公司的股務代理是銀行或公司自辦，不是券商，這檔不標股代。" };
   }
-  const absent = latest.names.length ? "" : "（本檔近兩年前 12 大無其總公司席位）";
+  const absent = latest.names.length ? "" : "（本檔近兩年每日前 15 大買賣超無其總公司席位）";
   let history = "";
   if (periods.length > 1) {
     history = "換過股代：" + periods.map((p, i) => {

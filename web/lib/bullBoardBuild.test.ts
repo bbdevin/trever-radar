@@ -67,7 +67,7 @@ test("建置器對自造 fixture 跑兩次:輸出可解析、相同重建不追�
     const out1 = run();
     assert.match(out1, /bull-board timing: files=3 layout=legacy universe=2 qualified=1 /);
     const board = JSON.parse(fs.readFileSync(path.join(data, "bull_board.json"), "utf8"));
-    assert.equal(board.version, "bull-board-v1");
+    assert.equal(board.version, "bull-board-v2");
     assert.equal(board.universe, 2);
     assert.equal(board.qualified, 1);
     assert.equal(board.log_from, DAY);
@@ -218,6 +218,38 @@ test("新的資料日 → 追加", () => {
     run();
     assert.deepEqual(logLines().map((l) => JSON.parse(l).data_date), [DAY, "2026-09-09"]);
   });
+});
+
+test("版本換代(docs/48 §8 2026-10-10):舊版 v1 的行原樣保留,log_from 只從這一版最早的行起算", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "bull-board-v2-"));
+  try {
+    const data = path.join(root, "data");
+    const log = path.join(root, "log");
+    fixture(data);
+    // 建置時刻固定在資料日當晚,紀錄行才會進 2026-09 月檔(與下面預放的 v1 行同一檔)
+    const env = { ...process.env, BULL_BOARD_NOW: "2026-09-08T14:00:00Z" };
+    const run = () => execFileSync(process.execPath, ["--experimental-strip-types", "--no-warnings", SCRIPT, "--data", data, "--log", log], { encoding: "utf8", env });
+    // 月檔裡先有兩行 v1(更早的資料日):不刪、不改
+    const v1 = (date: string) =>
+      JSON.stringify({ version: "bull-board-v1", data_date: date, generated_at: `${date}T22:00:00+08:00`, radar_generated_at: `${date}T22:00:00+08:00`, universe: 2, qualified: 1, universe_ids: ["1111", "2222"], entries: [{ id: "1111" }], excluded: [], inputs: {} });
+    fs.mkdirSync(log, { recursive: true });
+    const file = path.join(log, "2026-09.jsonl");
+    fs.writeFileSync(file, `${v1("2026-09-04")}\n${v1("2026-09-07")}\n`);
+    run();
+    const board = JSON.parse(fs.readFileSync(path.join(data, "bull_board.json"), "utf8"));
+    assert.equal(board.version, "bull-board-v2");
+    assert.equal(board.log_from, DAY, "v2 的時鐘從第一個以新資料建置的資料日起算,不接 v1 的 09-04");
+    const lines = () => fs.readFileSync(file, "utf8").split("\n").filter((l) => l.trim()).map((l) => JSON.parse(l));
+    assert.deepEqual(lines().map((l) => l.version), ["bull-board-v1", "bull-board-v1", "bull-board-v2"]);
+    assert.deepEqual(fs.readdirSync(log), ["2026-09.jsonl"]);
+    // 同日 v1 最後一行與新 v2 行不同(版本與名單都不同)→ 照樣追加,不當成「相同重建」
+    fs.appendFileSync(file, `${v1(DAY)}\n`);
+    run();
+    assert.equal(lines().length, 5);
+    assert.equal(lines()[4].version, "bull-board-v2");
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("最後一行壞掉(截斷、沒有換行)→ 照樣追加,而且新行自成一行", () => {

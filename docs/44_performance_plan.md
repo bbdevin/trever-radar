@@ -178,6 +178,60 @@ home/stocks.json       {version:1, data_date, generated_at, stocks:[逐檔投影
 
 **沒做、留著以後量**:`spark`(30 根收盤)在有 `spark_day` 的檔其實沒畫(卡片畫分時),fixture 裡 `spark` 佔逐檔 raw 14%;要省得把「有 spark_day 就不給 spark」寫進 export,與卡片的判斷耦合,先不做。`themes[].top` / `sectors[].subs`(資金流向面板,預設收合)約 33 KB raw,也可延後抓,但多方榜族群檢視要 `themes`/`sectors` 的 `vs20`,拆了省不多。**2026-10-09 後**:資金流向面板已移除(`docs/49` §10),`subs`/`top`/`share`/`avg_chg`/`up`/`down`/`turnover` 已無前端讀者,可直接從 `head.json` 投影丟掉(`radar.json` 不動);列為清理候選,另案。
 
+### 3.4 chips v2:分點日史換成「每日全部列」的緊湊格式 `branch_days`(2026-10-10,Fable Planner+Executor;程式在分支,未合 main)
+
+**問題(使用者 2026-10-10:「為什麼我每日買賣超籌碼分點不是前15…盟立就沒有資料。鉅祥只有六筆」)**:`branch_trades_raw` 每檔每日本來就有來源完整的 30 列(MoneyDJ 買超前 15 + 賣超前 15),但 `json_export` 的 `branch_history` 每天只留 **|淨額| 前 12 列(兩側合計)**。一邊倒的日子另一側整個不見:2464 10/08 匯出 12 列全是賣超 → 買超名單空白;2476 剩 6+6;2330 剩 3 買 9 賣。前端再把這 12 列拆成買/賣各切 13。這個裁剪也是多空事實、囤貨/出貨、股代、區間損益以外所有分點讀者的輸入。
+
+**使用者決定(2026-10-10)**:「都改成前15大分點一致化」——全站所有讀「前 12 大」的地方改成來源的「買超前 15 + 賣超前 15」。這改了多方榜的輸入 → `bull-board-v2`(見 `docs/48` §8)。
+
+**格式(`pipeline/radar/export/branch_days.py`;chips `version` 1 → 2)**
+
+```
+"branch_days": {"version": 2, "per_side": 15, "names": ["凱基-台北", …],
+                "days": [["2026-10-08", [[ni, buy, sell], [ni, buy, sell, net], …]], …]}
+```
+
+- **與 raw 逐列相等**:每檔每日每一列都留(不裁、不合併同名、不重排,順序 = `branch_id DESC`,與以前相同);最多 480 個交易日、新→舊;NULL 張數同舊格式視為 0;`net` 只在來源 `net_lots ≠ buy − sell` 時寫第 4 欄,解碼後 net 永遠等於 raw。pytest `test_branch_days_export.py` 以種子 DB 逐列對照 raw(含 15 列全賣超的日子、同名兩個 branch_key、net ≠ 買−賣、482 天上限)。
+- 前端 `web/lib/stockParts.ts decodeBranchDays`(與 Python `decode_branch_days` 同規則)在接回時解碼成舊 `branch_history` 形狀並拿掉 `branch_days`;**所有讀者仍讀 `branch_history`**,只是每天從 ≤12 列變成來源全部列。`mergeStockParts`/`mergeIfSplit`/`loadStock`(含舊單一檔)都走這條;建置器同一份程式。
+- 評估過的其他選項:(a) 維持舊形狀直接放 30 列 → 每檔 ~700 KB raw(2.4×),否決;(b) 新舊兩鍵並存過渡 → chips 體積 1.6×,且舊前端讀到新 chips 本來就不會壞(見相容矩陣),否決;(c) 短鍵 `{n,b,s}` 不建名字表 → 省不到名字重複的那一半,否決。
+
+**大小與時間(本機合成 480 日 × 30 列、名字池形狀同正式分點名;合成的 v1 每檔 295 KB raw 與 §3.1 正式機實測「`branch_history` 固定約 290 KB」吻合)**
+
+| 每檔 480 日 | raw | gzip-6 |
+|---|---|---|
+| v1:每日 12 列、逐列物件(今天) | 295 KB | 57 KB |
+| 舊形狀直接放 30 列(否決) | 699 KB | 128 KB |
+| **v2:每日 30 列、名字查表** | **178 KB(−40%)** | 67 KB(+17%) |
+
+- 正式機 chips 總量 596 MB(2,419 檔)→ 以 `branch_history` 佔 chips 75–85% 推估 **v2 ≈ 395–420 MB(約 −30%)**;若直接放 30 列會是 ≈ 1.2 GB。壓縮後(線上 brotli)每檔多約 +17%:內容真的多了 2.5 倍列,壓縮只能抵銷重複的名字。VPS 磁碟與 wrangler 上傳位元組(raw)都降。
+- encode 時間:v2 每檔 4.2 ms vs 舊 sort+slice 6.7 ms(不再每天排序),export 的 `branch_history` 分段估 −6 s/輪;查詢不變(同一條 730 日 SQL)。正式機數字上線後看 `radar-cron.log` 的 `export timing: branch_history=…` 與 `du -sh web/public/data/stocks/chips`。
+
+**全站「前 15 大」一致化(讀者盤點)**
+
+| 讀者 | 以前 | 現在 |
+|---|---|---|
+| 籌碼日報 `BranchFlowSection`(聚合搬進 `lib/branchFlow.ts`,node 測試) | 12 列拆買/賣各切 13 | **1日** = 當日完整列(來源 30 列;舊 chips 時用個股 JSON 的 `branches`,它本來就是完整當日列);**N 日** = 各日前 15 大合計,每側最多 15;畫面常駐一句「各日前 15 大買賣超合計(來源每日只公布買超、賣超各前 15 大…),不是全市場完整合計」;淨流格改名「N日前15大淨流」;同名同日多列加總 |
+| K 線「主力買賣超(前15大)」pane | 12 列 net 加總 | 全部列 net 加總,改名 **「前15大買賣超合計」**(手機 segment「前15大」) |
+| 多空事實 `C_TOP15_FLOW_*` | 「前12大分點今日淨買超」(12 列合計) | **「前15大買賣超分點合計今日淨買超」**(30 列合計);門檻(佔量 2%/5%)不變 |
+| 囤貨/出貨 `accumulation.ts`、融資×分點集中度 | 每天只看得到 12 列 | 每天全部列;文案 `TOP_N_PER_DAY` 12 → 15 |
+| 強分點 `smartFacts`、追蹤/地緣/隔日沖事實、股代「近兩年前 12 大」、籌碼段「每天只存淨額前 12 大」 | 同上 | 同上,文案改「每日前 15 大買賣超」 |
+| `branch_tags` 名字範圍 | 12 列 ∪ 當日 | 全部列 ∪ 當日(標籤因此可能多幾個分點) |
+| `branch_pnl_est`、`pocket`、分點頁、權證分點 | 本來就用 raw 全部列 / 自己的查詢 | 不變 |
+
+**相容矩陣**(程式走 Pages push 即上線;資料等 VPS 下一輪 `git pull` 後 export)
+
+| | 舊 chips v1(`branch_history`) | 新 chips v2(`branch_days`) |
+|---|---|---|
+| 舊前端(使用者還沒重新整理的舊 bundle) | 今天 | `branch_history` 不在 → 走既有「沒有分點日史」路徑(籌碼日報只剩 1日 用 `branches`、K 線沒有主力 pane、多空少分點事實);**不會壞**,重新整理就好。chips 檔仍是 JSON、key 都認得 |
+| 新前端 | 直接放回(每天 ≤12 列;1日 改用 `branches` 所以已經是完整的) | 解碼 → 全部列 |
+| 多方榜建置器(VPS,與 export 同一份 checkout) | 同新前端 | 同新前端;版本字串 `bull-board-v2` |
+| `read_merged_stock`(pytest/工具) | `branch_history` 放回原位 | `branch_days` 放回原位;`branch_history_of()` 兩代都讀 |
+
+- 舊前端的「沒有日史」降級只發生在「VPS 已 export v2、使用者的分頁還是舊 bundle」的那段時間;所以**不留舊鍵並存**(體積 1.6×)。清理:chips v1 的讀取相容(`_LEGACY_CHIPS_KEYS`、TS `CHIPS_KEYS` 裡的 `branch_history`、`branch_history_of`)可在正式機連續 2–3 個交易日都是 v2 之後移除;另案。
+- `--legacy-stocks` 逃生口寫的舊單一檔同樣帶 `branch_days`(前端 `loadStock` 的舊檔路徑也解碼)。
+
+**驗證**:pytest 全套 1704 passed(新 `test_branch_days_export.py` 7 項;`test_stock_parts`/`test_json_export_branch_tags`/`test_branch_interval_pnl`/`test_bull_bear_codes` 跟著改);web node 398 passed(新 `branchFlow.test.ts` 5 項、`stockParts`/`stockLoad` v2 案例、`bullBoardBuild` 版本換代案例、事實文案);`tsc`、`next build`;390px 深/淺色 Playwright 截圖(假 session 攔截 Supabase、`/data/**` 餵 2464 型/2476 型合成 chips v2)`docs/evidence/44_branch_days/`:2464 1日 買方 0 家/賣方 15、5日 14/15,2476 1日 8/6(同名兩列加總成一列、怪怪-分點 net=5),K 線 pane 標題「前15大買賣超合計」,無水平溢出。
+
 ## 4. 明確不做
 
 - 不換 DB 引擎、不引入任何需綁卡或常駐服務(Postgres、D1、R2、KV、SSR)。

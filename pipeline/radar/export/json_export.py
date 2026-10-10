@@ -26,6 +26,7 @@ from .insti_group_flow import FILE_1D as INSTI_FILE_1D, aggregate as insti_aggre
 from ..market_index import latest_indices, write_indices_hist
 from .insti_stocks import FILE_1D as INSTI_STOCKS_FILE_1D, write_insti_stocks
 from .spark_day import attach_spark_day
+from .branch_days import encode_branch_days
 from .intraday_bars import export_intraday_safe
 from .indices_intraday import export_indices_intraday_safe, tx_month_from_db
 from .stock_parts import (
@@ -551,7 +552,7 @@ def _branch_tags_payload(
 ) -> dict:
     """個股頁籌碼日報的分點標籤(地緣/股代/隔日沖/追蹤)。鍵永遠存在,沒有就是空清單。
 
-    names = 這檔股票 payload 裡會出現的分點名(branch_history ∪ 當日 branches),
+    names = 這檔股票 payload 裡會出現的分點名(branch_days 的名字表 ∪ 當日 branches),
     輸出只限這些名字,JSON 不為畫面上不會出現的分點多帶資料。
     股代(docs/37 §3.1):股務代理是券商 → 只標該券商的總公司席位,依 transfer_agent_history
     分段(換股代時,每筆交易看當日的股代);銀行代理部/公司自辦 broker 為 null。
@@ -2438,8 +2439,8 @@ def export_json(
                 "SELECT 1 FROM branch_trades WHERE stock_id = :s LIMIT 1"
             ), {"s": sid}).scalar()
             if has_any_branch:
-                # 同日內的先後(下面依 |net| 穩定排序取前 12,同值時就看它)明寫成
-                # branch_id 遞減 = 以前倒著走索引的自然順序,輸出逐位元不變(docs/43)。
+                # 同日內的先後明寫成 branch_id 遞減 = 以前倒著走索引的自然順序(docs/43);
+                # v2 不再裁剪,但每天列的順序就是這個(前端不重排)。
                 branch_history_rows = conn.execute(text("""
                     SELECT r.date, d.branch_name, r.buy_lots, r.sell_lots, r.net_lots
                     FROM branch_trades_raw r
@@ -2456,16 +2457,10 @@ def export_json(
                 ORDER BY date DESC
                 LIMIT 240
             """), {"s": sid, "d": d}).fetchall()
-            history_by_date: dict[str, list] = {}
-            for r in branch_history_rows:
-                history_by_date.setdefault(r[0], []).append({
-                    "n": r[1], "b": r[2] or 0, "s": r[3] or 0, "net": r[4] or 0
-                })
-            # 2 年深度;每日僅留淨額前 12 分點,控制 JSON 體積
-            branch_history = [
-                {"t": dt, "branches": sorted(branches, key=lambda x: -abs(x["net"]))[:12]}
-                for dt, branches in sorted(history_by_date.items(), reverse=True)[:480]
-            ]
+            # 2 年深度、最多 480 個交易日;每一列都留(來源每日買超前 15 + 賣超前 15),
+            # 以名字查表的緊湊格式輸出(branch_days v2;以前每天只留 |淨額| 前 12 列,
+            # 一邊倒的日子另一側整個不見——2026-10-10 使用者決定全站改成「前 15 大」一致)。
+            branch_days = encode_branch_days(branch_history_rows)
             timing["branch_history"] += time.perf_counter() - t_sec
             margin_hist, margin_meta = _margin_history_payload(conn, sid, d)
             t_sec = time.perf_counter()
@@ -2511,13 +2506,12 @@ def export_json(
                      "net": r[3] or 0, "pct": r[4]}
                     for r in stock_branches
                 ],
-                "branch_history": branch_history,
+                "branch_days": branch_days,
                 # 計數與分母,不是判定;鍵永遠存在,沒有合格分點時是空清單。
                 "branch_pctile_counts": branch_pctile_counts,
                 "branch_tags": _branch_tags_payload(
                     as_of=d,
-                    names={b["n"] for day in branch_history for b in day["branches"]}
-                    | {r[0] for r in stock_branches},
+                    names=set(branch_days["names"]) | {r[0] for r in stock_branches},
                     profile=company_profiles.get(sid),
                     geo_by_key=branch_geo,
                     tracked_keys=tracked_keys,
@@ -2551,7 +2545,7 @@ def export_json(
                 "holders_meta": holders_meta,
                 "directors_latest": directors_latest,
             }
-            # 區間損益(估算,docs/42):用裁成前 12 名之前的分點列;沒有分點列 → 鍵不輸出。
+            # 區間損益(估算,docs/42):用全部分點列(與 branch_days 同一批,730 日不限 480 天);沒有分點列 → 鍵不輸出。
             t_sec = time.perf_counter()
             branch_pnl = branch_pnl_payload(
                 ((r[0], r[1], r[4]) for r in branch_history_rows),

@@ -1,10 +1,14 @@
 /**
- * 首頁「多方榜」(docs/48,版本 bull-board-v1):選股規則、payload 組裝與畫面句子。
+ * 首頁「多方榜」(docs/48,版本 bull-board-v2):選股規則、payload 組裝與畫面句子。
  *
  * 純函式,不 import 任何執行期的 "@/" 模組:VPS 上的建置器(web/scripts/build-bull-board.mjs)
  * 用 Node 直接跑這份 TS,首頁也用同一份產生狀態句。
  *
- * 規則(docs/48 §1,凍結;改任何一條 = v2):
+ * v2(2026-10-10,docs/48 §8):規則與 rank 表一字未改,改的是**輸入**——分點日史從每天 |淨額| 前 12 列
+ * 改成來源完整的買超前 15 + 賣超前 15(docs/44 §3.4),分點事實(C_TOP15_FLOW_*、囤貨/出貨、強分點…)
+ * 的計算基礎因此不同,評估時鐘從第一個以新資料建置的資料日重新起算;v1 的紀錄行原樣保留。
+ *
+ * 規則(docs/48 §1,凍結;改任何一條 = 下一版):
  * - 母體:個股 JSON 有評分(scores != null)且最後一根 K 棒 == radar.data_date。
  * - K_bull / K_bear:summary.bull / bear 中技術、籌碼兩段、rank ≥4、不是滯後資料(沒有 date/dataDate)的項。
  * - 排除 E:summary.bear 中技術、籌碼兩段、rank == 5、不是滯後資料的項;有任何一條就不入榜。壓力段不計也不排除。
@@ -23,7 +27,7 @@ import { UPDATE_SCHEDULE } from "./freshness.ts";
 import { hottestListedTheme } from "./themeGroups.ts";
 import type { BullBoardBearFact, BullBoardEntry, BullBoardFact, BullBoardJson } from "./types.ts";
 
-export const BULL_BOARD_VERSION = "bull-board-v1";
+export const BULL_BOARD_VERSION = "bull-board-v2";
 export const MIN_BULL_KEY = 3;
 export const BOARD_CAP = 40;
 /** 入榜與排除只看這兩段;壓力段(levels)不計也不排除。 */

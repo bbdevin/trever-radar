@@ -200,7 +200,7 @@ test("股代:只標股代券商的總公司席位,排在追蹤之後、總公司
   // 定義講出券商名;總公司席位不在名單裡也講
   assert.ok(tagDefinitions(withAgent).find((d) => d.label === "股代")!.text.includes("是 凱基"));
   const absent = ctx({ ...TAGS, agent: { current: { broker: "元大", names: [] } } });
-  assert.ok(tagDefinitions(absent).find((d) => d.label === "股代")!.text.includes("本檔近兩年前 12 大無其總公司席位"));
+  assert.ok(tagDefinitions(absent).find((d) => d.label === "股代")!.text.includes("本檔近兩年每日前 15 大買賣超無其總公司席位"));
 });
 
 test("股代換過:依日期找當時的股代,最早觀察之前依最早觀察推定", () => {

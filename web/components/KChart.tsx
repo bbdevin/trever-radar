@@ -93,7 +93,8 @@ function loadSettings(): Settings {
 const UP = "#e66767";
 const DOWN = "#0ca30c";
 const CUM_COLOR = "#c98500"; // 累計買賣超線:非紅綠(避免與漲跌柱混淆)
-const MF_TITLE = "主力買賣超(前15大)";
+// 每日買超前 15 + 賣超前 15 全部列的淨張合計(來源每日只公布這兩側各前 15,不是全市場合計)
+const MF_TITLE = "前15大買賣超合計";
 const SEL_TITLE = "分點進出(勾選分點)";
 
 /** chart 的格線/軸/水印色隨主題切換。dark = 遷移前寫死值逐字不變;light = 柔和淺色組(對白 grid≥1.25、文字≥5:1)。
@@ -170,7 +171,7 @@ export default function KChart({
    *  目前只有個股 K 線分頁傳。請傳 useMemo 過的陣列(effect 相依)。 */
   levels?: ChartLevel[];
   visibleDays: number;
-  /** 每日全部分點 net 加總(branch_history 裁剪版);缺省時不渲染主力買賣超 pane */
+  /** 每日前 15 大買賣超合計(branch_history 每天全部列的 net 加總);缺省時不渲染這個 pane */
   mainForce?: NetPoint[];
   /** 已勾選分點集合的每日 net 加總;缺省時不渲染分點進出 pane */
   branchFlow?: NetPoint[];
@@ -675,7 +676,7 @@ export default function KChart({
               className={cn(segBtnClass(mobilePaneKey === "main", "warn"), "px-2")}
               onClick={() => handleMobilePaneChange("main")}
             >
-              主力
+              前15大
             </button>
           )}
           {isMobile && !minute && !!branchFlow?.length && (
@@ -738,7 +739,7 @@ export default function KChart({
             {PL_LABELS.chartToggle}
           </label>
         )}
-        {/* 桌機版：主力買賣超 checkbox */}
+        {/* 桌機版：前 15 大買賣超合計 checkbox */}
         {!isMobile && !minute && !!mainForce?.length && (
           <label className={cn(chipBase, "min-h-9")} style={settings.mainForce ? { color: CUM_COLOR, borderColor: CUM_COLOR } : undefined}>
             <input
@@ -746,7 +747,7 @@ export default function KChart({
               checked={settings.mainForce}
               onChange={(e) => setSettings((s) => ({ ...s, mainForce: e.target.checked }))}
             />
-            主力買賣超
+            {MF_TITLE}
           </label>
         )}
       </ScrollHint>

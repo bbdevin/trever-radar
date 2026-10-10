@@ -198,7 +198,8 @@ function StockView() {
     return days === Infinity ? Number.MAX_SAFE_INTEGER : days;
   }, [range]);
 
-  // 主力買賣超:每日全部分點(前15大裁剪版)net 加總;branch_history 為新到舊,圖表要舊到新
+  // 前 15 大買賣超合計:每日 branch_history 全部列(來源買超前 15 + 賣超前 15)的 net 加總;
+  // 2026-10-10 前的舊 chips 每天只有 |淨額| 前 12 列,那時這條線是 12 列的合計。新到舊 → 圖表要舊到新
   const mainForce = useMemo(() => {
     const bh = data?.branch_history;
     if (!bh?.length) return undefined;

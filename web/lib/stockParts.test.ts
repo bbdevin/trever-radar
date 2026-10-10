@@ -4,8 +4,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { CHIPS_KEYS, isSplitCore, mergeIfSplit, mergeStockParts, type StockCoreJson, type StockHistFile } from "./stockParts.ts";
-import type { StockJson } from "./types.ts";
+import { CHIPS_KEYS, decodeBranchDays, isSplitCore, mergeIfSplit, mergeStockParts, type StockCoreJson, type StockHistFile } from "./stockParts.ts";
+import type { BranchDaysV2, StockJson } from "./types.ts";
 
 function candles(n: number, first: string) {
   const start = Date.parse(`${first}T00:00:00Z`);
@@ -96,6 +96,43 @@ test("舊單一檔不是核心:isSplitCore=false,mergeIfSplit 原樣回傳同一
   const full = legacy();
   assert.equal(isSplitCore(full), false);
   assert.equal(mergeIfSplit(full, () => assert.fail("不該讀檔")), full);
+});
+
+const V2_DAYS: BranchDaysV2 = {
+  version: 2, per_side: 15, names: ["凱基-台北", "元大-士林", "怪怪-分點"],
+  days: [["2024-01-03", [[0, 10, 0], [1, 0, 7], [0, 3, 0], [2, 5, 2, 4]]], ["2024-01-02", [[0, 1, 0]]]],
+};
+const V2_DECODED = [
+  { t: "2024-01-03", branches: [
+    { n: "凱基-台北", b: 10, s: 0, net: 10 }, { n: "元大-士林", b: 0, s: 7, net: -7 },
+    { n: "凱基-台北", b: 3, s: 0, net: 3 }, { n: "怪怪-分點", b: 5, s: 2, net: 4 },
+  ] },
+  { t: "2024-01-02", branches: [{ n: "凱基-台北", b: 1, s: 0, net: 1 }] },
+];
+
+test("chips v2(branch_days):接回時解碼成 branch_history,結果裡沒有 branch_days;與 Python decode 同規則", () => {
+  assert.deepStrictEqual(decodeBranchDays(V2_DAYS), V2_DECODED);
+  assert.deepStrictEqual(decodeBranchDays(undefined), []);
+  assert.deepStrictEqual(decodeBranchDays({ version: 2 } as never), []);
+  const full = legacy();
+  delete full.branch_history;
+  full.branch_days = V2_DAYS;
+  const { core, hist, chips } = split(full, "2024-01-01");
+  assert.deepStrictEqual(core.parts.chips.keys, ["branch_days", "branch_pctile_counts", "branch_tags", "branch_pnl_est"]);
+  const merged = mergeStockParts(core, hist, chips as never);
+  assert.ok(!("branch_days" in merged));
+  assert.deepStrictEqual(merged.branch_history, V2_DECODED);
+  // 其餘鍵與舊檔相同
+  const expected = { ...legacy(), branch_history: V2_DECODED };
+  assert.deepStrictEqual(merged, expected);
+  // 舊單一檔(--legacy-stocks)帶 branch_days 也解碼
+  const single = { ...legacy(), branch_days: V2_DAYS } as StockJson;
+  delete single.branch_history;
+  const norm = mergeIfSplit(single, () => assert.fail("不該讀檔"));
+  assert.deepStrictEqual(norm.branch_history, V2_DECODED);
+  assert.ok(!("branch_days" in norm));
+  // 舊 chips v1(branch_history)照舊
+  assert.deepStrictEqual(mergeStockParts(split(legacy(), null).core, null, split(legacy(), null).chips as never), legacy());
 });
 
 test("mergeIfSplit:依 parts 指標讀兩個檔再接回", () => {

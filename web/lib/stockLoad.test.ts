@@ -69,6 +69,26 @@ test("新佈局:先 core+chips(complete=false),hist 到了 complete=true 且 == 
   assert.deepStrictEqual([...log].sort(), ["/data/stocks/chips/2330.json", "/data/stocks/core/2330.json", "/data/stocks/hist/2330.aaaaaaaa.json"]);
 });
 
+test("chips v2(branch_days):載入後 data.branch_history 是解碼結果、沒有 branch_days;舊單一檔帶 branch_days 也一樣", async () => {
+  const days = { version: 2, per_side: 15, names: ["凱基-台北"], days: [["2024-01-03", [[0, 5, 2]]]] };
+  const decoded = [{ t: "2024-01-03", branches: [{ n: "凱基-台北", b: 5, s: 2, net: 3 }] }];
+  const core = { ...CORE, parts: { ...CORE.parts, hist: null, chips: { file: "chips/2330.json", keys: ["branch_days"] } }, candles: FULL.candles };
+  const fetcher = fakeFetch({ "/data/stocks/core/2330.json": core, "/data/stocks/chips/2330.json": { version: 2, id: "2330", branch_days: days } });
+  const { states, errors, done } = collect();
+  loadStock("2330", fetcher, (s) => states.push(s), (e) => errors.push(e));
+  await done;
+  assert.deepStrictEqual(errors, []);
+  assert.deepStrictEqual(states[0].data.branch_history, decoded);
+  assert.ok(!("branch_days" in states[0].data));
+  const legacy = { ...FULL, branch_days: days } as Record<string, unknown>;
+  delete legacy.branch_history;
+  const s2 = collect();
+  loadStock("2330", fakeFetch({ "/data/stocks/2330.json": legacy }), (s) => s2.states.push(s), (e) => s2.errors.push(e));
+  await s2.done;
+  assert.deepStrictEqual(s2.states[0].data.branch_history, decoded);
+  assert.ok(!("branch_days" in s2.states[0].data));
+});
+
 test("非聯集核心(parts.hist=null):一次就 complete", async () => {
   const core = { ...CORE, candles: FULL.candles, parts: { ...CORE.parts, hist: null } };
   const fetcher = fakeFetch({ "/data/stocks/core/2330.json": core, "/data/stocks/chips/2330.json": CHIPS });

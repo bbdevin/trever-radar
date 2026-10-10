@@ -134,10 +134,10 @@ test("外資席位:X商前綴、常見外資券商名、去掉 (…) 前綴後�
   for (const n of ["統一-敦南", "康和", "元大-士林", "凱基-台北"]) assert.ok(!isForeignBroker(n), n);
 });
 
-test("分點:前 12 大淨流、1 月囤貨/出貨、隔日沖買超、地緣、區間損益(估算)", () => {
+test("分點:前 15 大買賣超合計淨流、1 月囤貨/出貨、隔日沖買超、地緣、區間損益(估算)", () => {
   const f = branchMonth();
   const m = byCode(branchFacts(f, f.candles, LAST, new Set()));
-  assert.equal(m.get("C_TOP15_FLOW_BUY")?.text, "前12大分點今日淨買超 1,000 張(佔量 10.0%)");
+  assert.equal(m.get("C_TOP15_FLOW_BUY")?.text, "前15大買賣超分點合計今日淨買超 1,000 張(佔量 10.0%)");
   assert.equal(m.get("C_ACC_1M")?.text, "近1月囤貨分點 1 家:A分點 +6,000 張,合計 +6,000 張");
   assert.equal(m.get("C_DIST_1M")?.text, "近1月出貨分點 1 家:B分點 −6,000 張,合計 −6,000 張");
   assert.equal(m.get("C_DIST_1M")?.risk, true);
@@ -226,13 +226,13 @@ test("分點:強分點賣超與追蹤分點賣超不重複;資料日落後帶日
   assert.doesNotThrow(() => branchFacts({ branch_pctile_counts: { version: 2 } as never, branch_pnl_est: { as_of: LAST, definitions_version: "x", windows: {} } }, [], LAST, new Set()));
 });
 
-test("分點:只有 1 週的囤貨/出貨、追蹤分點賣超(關掉的不算)、地緣賣超、前 12 大淨賣", () => {
+test("分點:只有 1 週的囤貨/出貨、追蹤分點賣超(關掉的不算)、地緣賣超、前 15 大買賣超合計淨賣", () => {
   const f = branchWeek();
   const m = byCode(branchFacts(f, f.candles, LAST, new Set(["靜音分點"])));
   assert.ok(m.has("C_ACC_1W") && m.has("C_DIST_1W") && !m.has("C_ACC_1M") && !m.has("C_DIST_1M"));
   assert.equal(m.get("C_TRACKED_SELL")?.text, "追蹤分點今日淨賣超 1 家:H分點 −1,500 張");
   assert.deepEqual(m.get("C_GEO_SELL")?.mirrors, ["G2_GEO_SELL"]);
-  assert.equal(m.get("C_TOP15_FLOW_SELL")?.text, "前12大分點今日淨賣超 1,500 張(佔量 15.0%)");
+  assert.equal(m.get("C_TOP15_FLOW_SELL")?.text, "前15大買賣超分點合計今日淨賣超 1,500 張(佔量 15.0%)");
   const muted = byCode(branchFacts(f, f.candles, LAST, new Set(["H分點"])));
   assert.ok(!muted.has("C_TRACKED_SELL"));
   assert.deepEqual(branchFacts({}, [], LAST, new Set()), []);

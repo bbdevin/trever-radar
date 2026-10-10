@@ -16,7 +16,7 @@
  */
 import type { StockJson } from "./types.ts";
 import type { IntradayFile } from "./resample.ts";
-import { isSplitCore, mergeStockParts, type StockChipsFile, type StockCoreJson, type StockHistFile } from "./stockParts.ts";
+import { isSplitCore, mergeStockParts, withBranchHistory, type StockChipsFile, type StockCoreJson, type StockHistFile } from "./stockParts.ts";
 
 export type Fetcher = (path: string, init?: RequestInit) => Promise<Response>;
 
@@ -68,10 +68,10 @@ export async function fetchStockIntraday(id: string, fetcher: Fetcher): Promise<
   return Array.isArray(body?.bars) && body.bars.length > 0 ? body : null;
 }
 
-/** 舊單一檔;抓不到回 null(呼叫端決定要不要當失敗)。 */
+/** 舊單一檔;抓不到回 null(呼叫端決定要不要當失敗)。`--legacy-stocks` 寫的檔也可能帶 v2 `branch_days`。 */
 async function tryLegacy(id: string, fetcher: Fetcher): Promise<StockJson | null> {
   try {
-    return await getJson<StockJson>(fetcher, STOCK_LEGACY_PATH(id));
+    return withBranchHistory(await getJson<StockJson>(fetcher, STOCK_LEGACY_PATH(id)));
   } catch {
     return null;
   }
@@ -101,7 +101,7 @@ export function loadStock(
   async function recoverAfterHist404(): Promise<StockLoadState | null> {
     try {
       const again = await getJson<StockJson>(fetcher, STOCK_CORE_PATH(id));
-      if (!isSplitCore(again)) return { data: again, complete: true };
+      if (!isSplitCore(again)) return { data: withBranchHistory(again), complete: true };
       const chips2 = await fetchChips(again);
       if (!again.parts.hist) return { data: mergeStockParts(again, null, chips2), complete: true };
       const hist2 = await fetchHist(again);
@@ -114,7 +114,7 @@ export function loadStock(
   (async () => {
     const first = await fetchStockCore(id, fetcher);
     if (!isSplitCore(first)) {
-      emit({ data: first, complete: true });
+      emit({ data: withBranchHistory(first), complete: true });
       return;
     }
     const core: StockCoreJson = first;

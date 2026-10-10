@@ -23,7 +23,8 @@ export { FACT_CATALOGUE } from "./catalogue.ts";
 /** 會產生多空事實的個股 payload 鍵 */
 export const STOCK_KEYS_USED = [
   "candles", "technical", "price_levels", "reasons", "raw_reasons", "risks", "raw_risks", "pocket_tags",
-  "branch_history", "branch_tags", "branch_pnl_est", "branch_pctile_counts", "insti_history", "margin_history",
+  // branch_days(chips v2)在接回時解碼成 branch_history(stockParts.withBranchHistory);事實讀 branch_history
+  "branch_days", "branch_tags", "branch_pnl_est", "branch_pctile_counts", "insti_history", "margin_history",
   "holders_history", "holders_meta", "directors_latest", "warrant", "warrant_history",
   "futures", "recent_theme_heat", "buyback",
 ] as const;
@@ -32,7 +33,7 @@ export const STOCK_KEYS_USED = [
 export const STOCK_KEYS_NOT_FACTS = [
   "id", "name", "market", "industry", "company_profile", "company_groups", "company_themes",
   "scores", "strategy_signals", "pocket_score",
-  // 今日分點清單:多空用 branch_history[0](同一天、已按名稱可加總)
+  // 今日分點清單:多空用 branch_history[0](v2 起與 branches 是同一批列;同名多列讀端加總)
   "branches",
   "active_warrants", "margin_meta",
 ] as const;

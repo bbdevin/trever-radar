@@ -43,7 +43,7 @@ def _payload(n_candles: int, first: str = "2023-06-01", **extra) -> dict:
         "candles": candles, "technical": None, "price_levels": {"status": "ok"},
         "scores": None, "reasons": [], "raw_reasons": [], "risks": [], "raw_risks": [],
         "branches": [{"name": "凱基-台北", "buy": 1, "sell": 0, "net": 1, "pct": 0.1}],
-        "branch_history": [{"t": "2024-01-02", "branches": [{"n": "凱基-台北", "b": 1, "s": 0, "net": 1}]}],
+        "branch_days": {"version": 2, "per_side": 15, "names": ["凱基-台北"], "days": [["2024-01-02", [[0, 1, 0]]]]},
         "branch_pctile_counts": {"version": 2, "short": {}, "long": {}},
         "branch_tags": {"as_of": "2024-01-02", "tracked": []},
         "warrant": None, "warrant_history": [], "active_warrants": [],
@@ -86,8 +86,24 @@ class SplitMergeTests(unittest.TestCase):
         self.assertEqual(list(merged.keys()), list(p.keys()))
         self.assertEqual(json.dumps(merged, ensure_ascii=False), json.dumps(p, ensure_ascii=False))
         # 原 payload 沒被改到
-        self.assertIn("branch_history", p)
+        self.assertIn("branch_days", p)
         self.assertEqual(len(p["candles"]), 400)
+
+    def test_old_chips_v1_with_branch_history_still_merge_back(self):
+        """過渡期:磁碟上還有 v1 chips(branch_history)的目錄,讀取端照樣接回原位。"""
+        p = _payload(10)
+        legacy_hist = [{"t": "2024-01-02", "branches": [{"n": "凱基-台北", "b": 1, "s": 0, "net": 1}]}]
+        core = {k: v for k, v in p.items() if k not in CHIPS_KEYS}
+        core["parts"] = {"version": 1, "hist": None,
+                         "chips": {"file": "chips/2330.json", "keys": ["branch_history", "branch_pctile_counts", "branch_tags", "branch_pnl_est"]}}
+        chips = {"version": 1, "id": "2330", "branch_history": legacy_hist,
+                 "branch_pctile_counts": p["branch_pctile_counts"], "branch_tags": p["branch_tags"],
+                 "branch_pnl_est": p["branch_pnl_est"]}
+        merged = merge_stock_parts(core, None, chips)
+        self.assertEqual(merged["branch_history"], legacy_hist)
+        self.assertNotIn("branch_days", merged)
+        keys = list(merged.keys())
+        self.assertEqual(keys.index("branch_history"), keys.index("branches") + 1)
 
     def test_no_cut_keeps_all_candles(self):
         p = _payload(50)
@@ -110,7 +126,7 @@ class SplitMergeTests(unittest.TestCase):
         del p["futures"]
         parts = split_stock_payload(p, cut=None)
         self.assertEqual(parts["core"]["parts"]["chips"]["keys"],
-                         ["branch_history", "branch_pctile_counts", "branch_tags"])
+                         ["branch_days", "branch_pctile_counts", "branch_tags"])
         merged = merge_stock_parts(parts["core"], None, parts["chips"])
         self.assertEqual(merged, p)
         self.assertEqual(list(merged.keys()), list(p.keys()))
@@ -353,7 +369,10 @@ class ExportSplitTests(unittest.TestCase):
         merged = read_merged_stock(out / "stocks", "2330")
         self.assertEqual(merged["id"], "2330")
         self.assertNotIn("parts", merged)
-        self.assertIn("branch_history", merged)
+        self.assertIn("branch_days", merged)
+        self.assertNotIn("branch_history", merged)
+        chips = self._read(out, "stocks/chips/2330.json")
+        self.assertEqual(chips["version"], 2)
 
     def test_cli_default_and_flags(self):
         """CLI 預設不寫舊檔;--no-legacy-stocks 仍被接受(無作用);--legacy-stocks 才寫。"""
