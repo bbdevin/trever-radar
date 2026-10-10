@@ -15,7 +15,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { BULL_BOARD_VERSION, boardLogLine, buildBullBoard, selectBoard } from "../lib/bullBoard.ts";
+import { BULL_BOARD_EVAL_FROM, BULL_BOARD_VERSION, boardLogLine, buildBullBoard, selectBoard } from "../lib/bullBoard.ts";
 import { lastCandleDate, summaryFromStockJson } from "../lib/bullBearFromStock.ts";
 import { shouldAppendLogLine } from "../lib/bullBoardLog.ts";
 import { mergeIfSplit } from "../lib/stockParts.ts";
@@ -49,8 +49,9 @@ function chgPct(candles) {
   return Math.round(((candles[n - 1].c - candles[n - 2].c) / candles[n - 2].c) * 10000) / 100;
 }
 
-/** 紀錄最早的資料日:**這一版**(BULL_BOARD_VERSION)最早一行的 data_date。舊版的行照留在檔裡,
- *  但 log_from 與 60 個交易日的時鐘只從這一版起算(docs/48 §8 2026-10-10)。 */
+/** 紀錄最早的資料日:**這一版**(BULL_BOARD_VERSION)且 data_date ≥ BULL_BOARD_EVAL_FROM 的最早一行。
+ *  舊版的行、以及這一版但資料日早於評估起點的行(改版當晚匯出的 10/08)照留在檔裡,但 log_from 與
+ *  60 個交易日的時鐘只從評估起點之後的第一行起算(docs/48 §2、§8 2026-10-10)。 */
 function earliestLogged(dir) {
   if (!fs.existsSync(dir)) return null;
   const months = fs.readdirSync(dir).filter((f) => /^\d{4}-\d{2}\.jsonl$/.test(f)).sort();
@@ -59,7 +60,7 @@ function earliestLogged(dir) {
       if (!line.trim()) continue;
       try {
         const rec = JSON.parse(line);
-        if (rec.version === BULL_BOARD_VERSION && rec.data_date) return rec.data_date;
+        if (rec.version === BULL_BOARD_VERSION && rec.data_date && rec.data_date >= BULL_BOARD_EVAL_FROM) return rec.data_date;
       } catch {
         /* 壞行:看下一行 */
       }

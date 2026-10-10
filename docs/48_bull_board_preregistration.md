@@ -35,7 +35,8 @@
 ## 2. 名詞(事前登記)
 
 - **市場交易日曆 D**:`daily_prices` 任一列存在的日期集合(同 `docs/39` §0、`docs/40` §0)。
-- **紀錄版 r(t)**:對資料日 t,`bull_board_log` 中 `data_date == t`、`generated_at` 早於 **e(t) 的 09:00(台北)** 的**最後一行**。沒有這一行 → t 不產生任何事件,也不提供對照日(計數)。用 09:00 前最後一次成功建置,是因為那是讀者在 e(t) 開盤前最後看得到的名單。
+- **評估起點(2026-10-10 v2 追加)**:只有 `version == bull-board-v2` **且** `data_date ≥ 2026-10-11`(`web/lib/bullBoard.ts BULL_BOARD_EVAL_FROM`,即程式改動日 2026-10-10 之後的資料日)的行才是 v2 的紀錄;v1 行,以及 v2 改版當晚 VPS 第一輪 export 的 10/08 那一行(version 已是 v2、data_date 卻是改動前的市場日),**都不進 r(t)、不進評估期、不當對照日**。建置器的 `log_from` 用同一條規則(`bullBoardBuild.test.ts` 鎖);日後的 battery 讀行時必須套同一個過濾。
+- **紀錄版 r(t)**:對資料日 t,`bull_board_log` 中符合評估起點、`data_date == t`、`generated_at` 早於 **e(t) 的 09:00(台北)** 的**最後一行**。沒有這一行 → t 不產生任何事件,也不提供對照日(計數)。用 09:00 前最後一次成功建置,是因為那是讀者在 e(t) 開盤前最後看得到的名單。
 - **進場日 e(t)**:D 中 t 之後第 1 個市場日。由日曆算,不由任何儲存欄位讀。
 - **上榜日**:s ∈ r(t).entries。**事件**:s 的上榜日 t,若 D 上 t 的前一個市場日 s 不是上榜日(含前一日沒有紀錄版),t 是事件(連續上榜取首日)。
 - **漲 ≥ 3%(hit)**:`100 × close(s, e) ≥ 103 × open(s, e)`;**跌 ≥ 3%(drop)**:`100 × close(s, e) ≤ 97 × open(s, e)`。原始價、同一列,十進位比較(同 `next_day_surge_battery._dec`)。不含 t 收盤到 e 開盤的跳空。畫面與文件一律寫「漲 ≥ 3%」。
@@ -55,7 +56,7 @@
 - **P_stock(同股、同半段)**:對每個 (s, 半段 h),s 在 h 有 k 個事件,就從 s 在 h 的合格對照日不放回抽 k 天。
 - **P_date(同日、他股)**:對每個有 k_t 個事件的日子 t,從 r(t) 的 U 中未上榜的他股抽 k_t 個。
 - `LOW_SAMPLE_SURVIVORS`、`PLACEBO_SEEDS`、`seed_result`、`PLACEBO_SIGMA_MULTIPLE`、`split_window` 一律從既有模組 import(`futures_volume_battery` / `branch_window_direction_battery`),不重寫;抽法同 `next_day_surge_battery.draw_matched`。任一鍵抽不滿 → **NOT EVALUABLE**,逐項列出。
-- **對半**:評估期(第一個有紀錄版的資料日 → as_of)內的市場日依 `split_window` 慣例對半;事件與對照日依 t 歸半。
+- **對半**:評估期(第一個有紀錄版的資料日 → as_of;紀錄版依 §2 評估起點只算 v2 且 `data_date ≥ 2026-10-11` 的行)內的市場日依 `split_window` 慣例對半;事件與對照日依 t 歸半。
 
 ## 4. 檢定(全過才 SHIP)
 
@@ -98,7 +99,7 @@
 - **2026-10-10:開 `bull-board-v2`(使用者決定「都改成前15大分點一致化」)。**
   - **為什麼**:個股 JSON 的分點日史 `branch_history` 每天只留 |淨額| 前 12 列(買賣兩側合計)是 export 的裁剪產物,不是來源的樣子——來源每天給買超前 15 + 賣超前 15。一邊倒的日子另一側整個不見(2464 10/08 匯出 12 列全賣超,買超空白),所以 v1 的分點事實是建立在「少一側」的資料上。使用者 2026-10-10 決定全站改成來源的前 15 大一致化,chips 換成 `branch_days` v2(`docs/44` §3.4)。
   - **改了什麼**:§1 的規則、排序、上限、rank 表(`catalogue.ts`、`backendRank`)**一格未動**;改的是多空事實的**輸入**與定義:`C_TOP15_FLOW_*` 從「前 12 列合計」變成「買超前 15 + 賣超前 15 全部列合計」(句子「前15大買賣超分點合計今日淨買超」;門檻 2%/5% 不變);囤貨/出貨(`C_ACC_*`/`C_DIST_*`)、融資×分點集中度、強分點、追蹤/地緣/隔日沖事實每天看得到全部列而不是 12 列;`branch_tags` 名字範圍隨之變大。輸入變了 = 名單會變 = 必須開新版。
-  - **紀錄**:`bull_board.json.version` 與紀錄行 `version` 改 `bull-board-v2`;v1 行原樣留在同一批月檔,不刪不改;建置器 `log_from` 只看 `version == bull-board-v2` 的最早一行(`bullBoardBuild.test.ts` 鎖:v1 行在前、v2 第一次建置的 `log_from` 是當天,同日 v1 最後一行與 v2 行不同 → 照樣追加)。**生效日 = VPS 第一個以 chips v2 export 之後建置的資料日**(程式與 export 同一份 checkout,`git pull` 後第一輪)。
+  - **紀錄**:`bull_board.json.version` 與紀錄行 `version` 改 `bull-board-v2`;v1 行原樣留在同一批月檔,不刪不改;建置器 `log_from` 只看 `version == bull-board-v2` 的最早一行(`bullBoardBuild.test.ts` 鎖:v1 行在前、v2 第一次建置的 `log_from` 是當天,同日 v1 最後一行與 v2 行不同 → 照樣追加)。**生效日(評估起點)= 第一個 `data_date ≥ 2026-10-11` 的 v2 行**(`BULL_BOARD_EVAL_FROM`;10/10 當晚 VPS 第一輪 v2 export 的資料日是 10/08,那一行 version 是 v2 但不進評估、不是 `log_from`,見 §2)。在那之前建置器的 `log_from` 退回 radar 的 data_date(只影響首頁「名單自 MM/DD 起每日留存」那一句,不影響任何評估)。
   - **評估時鐘**:§2–§5 的 60 個市場日自 v2 第一個紀錄日重新起算;v1 自 2026-10-04 起的 4 個市場日不併入(樣本量太小,也不同輸入)。§6 的揭露不變:v2 commit 時,沒有任何人把任何一版多方榜與之後的股價 JOIN 過。
   - **名單差異(只能合成,未碰正式資料)**:本機 600 檔合成個股(同一批 raw 列 → before = 每日 |淨額| 前 12 列的 chips v1,after = 全部列的 chips v2,其餘鍵相同)跑正式建置器:入榜 33 → 64 檔(32 檔兩邊都在、1 檔只在 before、32 檔只在 after),40 檔上限內順序改變;多出來的主要是 `C_TOP15_FLOW_BUY` 與 `C_ACC_1W` 在看到全部列後成立。**這是合成資料的方向性示意,不是正式機的差異量**——正式差異要在 VPS 以同一天 radar.db 的兩份 export 各建一次才知道(本任務不 SSH)。
 - 2026-10-04:§1.1 加「重複行」讀法釐清——檢定只讀每個 data_date 的 r(t)(09:00 前最後一行,即當日最終名單),同日較早行僅為稽核軌跡;建置器跳過只差時間戳的相同重建、既有重複行可用壓縮工具移除(每段留第一行,r(t) 內容不變)。評估中立,§1–§4 規則未改,不需開 v2。

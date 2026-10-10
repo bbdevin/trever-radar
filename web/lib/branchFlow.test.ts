@@ -83,6 +83,25 @@ test("v2 chips 解碼後第一天與當日 branches 是同一批列 → 兩條�
   assert.equal(aggregateBranchFlow([], hist, 2).topSell.find((x) => x.name === "B")?.net, -4);
 });
 
+test("1日 不砍列:同名加總後一側若超過 15 家(來源 net ≠ 買−賣 讓賣超列變正)全列;N 日每側仍前 15", () => {
+  // 15 列買超 + 1 列「賣超名單上但來源 net 為正」→ 16 個名字淨買超
+  const branches: BranchRow[] = [
+    ...Array.from({ length: 15 }, (_, i) => row(`買${i}`, 300 - i)),
+    { name: "淨為正的賣方列", buy: 3, sell: 1, net: 2, pct: 0 },
+  ];
+  const h = [{ t: "2026-10-08", branches: branches.map((b) => ({ n: b.name, b: b.buy, s: b.sell, net: b.net })) }, day("2026-10-07", 15, 15)];
+  const one = aggregateBranchFlow(branches, h, 1);
+  assert.equal(one.buyers.length, 16);
+  assert.equal(one.topBuy.length, 16);
+  assert.equal(one.topBuy.at(-1)!.name, "淨為正的賣方列");
+  // 沒有當日 branches、走日史第一天也一樣全列
+  assert.equal(aggregateBranchFlow([], h, 1).topBuy.length, 16);
+  // 2 日:每側前 15
+  const two = aggregateBranchFlow([], h, 2);
+  assert.ok(two.buyers.length > SIDE_MAX);
+  assert.equal(two.topBuy.length, SIDE_MAX);
+});
+
 test("沒有任何資料:空名單,不丟例外;自訂天數 0 或負數當 1 天", () => {
   const empty = aggregateBranchFlow([], undefined, 5);
   assert.deepEqual([empty.buyers, empty.sellers, empty.topBuy, empty.topSell], [[], [], [], []]);

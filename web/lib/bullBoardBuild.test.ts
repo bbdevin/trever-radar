@@ -252,6 +252,33 @@ test("版本換代(docs/48 §8 2026-10-10):舊版 v1 的行原樣保留,log_from
   }
 });
 
+test("評估起點(docs/48 §2):v2 行但 data_date 早於 2026-10-11(改版當晚匯出的 10/08)不算 log_from;第一個 ≥ 起點的 v2 行才算", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "bull-board-evalfrom-"));
+  try {
+    const data = path.join(root, "data");
+    const log = path.join(root, "log");
+    const rec = (version: string, date: string) =>
+      JSON.stringify({ version, data_date: date, generated_at: `${date}T22:00:00+08:00`, radar_generated_at: `${date}T22:00:00+08:00`, universe: 2, qualified: 1, universe_ids: ["1111", "2222"], entries: [{ id: "1111" }], excluded: [], inputs: {} });
+    fs.mkdirSync(log, { recursive: true });
+    fs.writeFileSync(path.join(log, "2026-10.jsonl"), [rec("bull-board-v1", "2026-10-07"), rec("bull-board-v2", "2026-10-08"), rec("bull-board-v2", "2026-10-13")].join("\n") + "\n");
+    fixture(data, "2026-10-14");
+    const env = { ...process.env, BULL_BOARD_NOW: "2026-10-14T14:00:00Z" };
+    execFileSync(process.execPath, ["--experimental-strip-types", "--no-warnings", SCRIPT, "--data", data, "--log", log], { encoding: "utf8", env });
+    const board = JSON.parse(fs.readFileSync(path.join(data, "bull_board.json"), "utf8"));
+    assert.equal(board.log_from, "2026-10-13", "10/08 的 v2 行與 v1 行都不算,起點是 10/13");
+    // 還沒有任何 ≥ 起點的行(改版當晚):log_from 退回 radar 的 data_date
+    const data2 = path.join(root, "data2");
+    const log2 = path.join(root, "log2");
+    fs.mkdirSync(log2, { recursive: true });
+    fs.writeFileSync(path.join(log2, "2026-10.jsonl"), rec("bull-board-v2", "2026-10-07") + "\n");
+    fixture(data2, "2026-10-08");
+    execFileSync(process.execPath, ["--experimental-strip-types", "--no-warnings", SCRIPT, "--data", data2, "--log", log2], { encoding: "utf8", env: { ...process.env, BULL_BOARD_NOW: "2026-10-10T14:00:00Z" } });
+    assert.equal(JSON.parse(fs.readFileSync(path.join(data2, "bull_board.json"), "utf8")).log_from, "2026-10-08");
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("最後一行壞掉(截斷、沒有換行)→ 照樣追加,而且新行自成一行", () => {
   withBuilder(({ data, run, logLines, logFile }) => {
     fixture(data);

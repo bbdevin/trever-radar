@@ -13,7 +13,7 @@ import fs from "node:fs";
 import path from "node:path";
 import zlib from "node:zlib";
 
-import { mergeStockParts } from "../lib/stockParts.ts";
+import { mergeStockParts, withBranchHistory } from "../lib/stockParts.ts";
 
 const args = Object.fromEntries(
   process.argv.slice(2).reduce((acc, v, i, all) => (v.startsWith("--") ? [...acc, [v.slice(2), all[i + 1]]] : acc), []),
@@ -35,7 +35,9 @@ const rows = [];
 let mismatches = 0;
 for (const f of files) {
   const id = f.slice(0, -5);
-  const legacy = readJson(path.join(LEGACY, "stocks", f));
+  // chips v2(docs/44 §3.4):mergeStockParts 會把 branch_days 解碼成 branch_history;舊單一檔
+  // (--legacy-stocks)帶的是 branch_days,兩邊都過同一個 withBranchHistory 再比,否則每檔都 MISMATCH。
+  const legacy = withBranchHistory(readJson(path.join(LEGACY, "stocks", f)));
   const corePath = path.join(SPLIT, "stocks", "core", f);
   const core = readJson(corePath);
   const histRel = core.parts.hist?.file ?? null;

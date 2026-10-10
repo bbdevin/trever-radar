@@ -191,7 +191,7 @@ home/stocks.json       {version:1, data_date, generated_at, stocks:[逐檔投影
                 "days": [["2026-10-08", [[ni, buy, sell], [ni, buy, sell, net], …]], …]}
 ```
 
-- **與 raw 逐列相等**:每檔每日每一列都留(不裁、不合併同名、不重排,順序 = `branch_id DESC`,與以前相同);最多 480 個交易日、新→舊;NULL 張數同舊格式視為 0;`net` 只在來源 `net_lots ≠ buy − sell` 時寫第 4 欄,解碼後 net 永遠等於 raw。pytest `test_branch_days_export.py` 以種子 DB 逐列對照 raw(含 15 列全賣超的日子、同名兩個 branch_key、net ≠ 買−賣、482 天上限)。
+- **與 raw 逐列相等**:每檔每日每一列都留(不裁、不合併同名、不重排,順序 = `branch_id DESC`,與以前相同);最多 480 個交易日、新→舊;NULL 張數同舊格式視為 0;`net` 只在來源 `net_lots ≠ buy − sell` 時寫第 4 欄,解碼後 net 永遠等於 raw。pytest `test_branch_days_export.py` 以種子 DB 逐列對照 raw(含 15 列全賣超的日子、同名兩個 branch_key、net ≠ 買−賣、種子 482 天只留 480 天的上限)。
 - 前端 `web/lib/stockParts.ts decodeBranchDays`(與 Python `decode_branch_days` 同規則)在接回時解碼成舊 `branch_history` 形狀並拿掉 `branch_days`;**所有讀者仍讀 `branch_history`**,只是每天從 ≤12 列變成來源全部列。`mergeStockParts`/`mergeIfSplit`/`loadStock`(含舊單一檔)都走這條;建置器同一份程式。
 - 評估過的其他選項:(a) 維持舊形狀直接放 30 列 → 每檔 ~700 KB raw(2.4×),否決;(b) 新舊兩鍵並存過渡 → chips 體積 1.6×,且舊前端讀到新 chips 本來就不會壞(見相容矩陣),否決;(c) 短鍵 `{n,b,s}` 不建名字表 → 省不到名字重複的那一半,否決。
 

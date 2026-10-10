@@ -28,6 +28,12 @@ import { hottestListedTheme } from "./themeGroups.ts";
 import type { BullBoardBearFact, BullBoardEntry, BullBoardFact, BullBoardJson } from "./types.ts";
 
 export const BULL_BOARD_VERSION = "bull-board-v2";
+/**
+ * v2 評估期的第一個可用資料日(docs/48 §2、§8):程式改動日 2026-10-10 之後的資料日才算。
+ * 2026-10-10 當晚 VPS 第一輪 v2 export 的資料日是 10/08(改動前的市場日),那一行 version 已是 v2
+ * 但不進評估、也不是 `log_from`;建置器與日後的 battery 都以這個常數為準。
+ */
+export const BULL_BOARD_EVAL_FROM = "2026-10-11";
 export const MIN_BULL_KEY = 3;
 export const BOARD_CAP = 40;
 /** 入榜與排除只看這兩段;壓力段(levels)不計也不排除。 */

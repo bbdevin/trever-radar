@@ -76,11 +76,15 @@ export function aggregateBranchFlow(
       return { t: dt, net: dObj ? dObj.branches.reduce((s, x) => s + (x.n === b.name ? x.net : 0), 0) : 0 };
     }),
   });
+  // 1日:同名加總後整天的列全列(來源每側最多 15 列,合併後只會更少;但同名兩個 branch_key 或
+  // 來源 net 與買賣差不同的列,理論上可讓一側超過 15 家,不為了湊 15 偷砍一家)。
+  // N 日:各日前 15 大合計後每側只列前 15(名單是「前 15 大」的設計,其餘在 buyers/sellers)。
+  const cap = sliced.length > 1 ? SIDE_MAX : Infinity;
   return {
     buyers,
     sellers,
-    topBuy: buyers.slice(0, SIDE_MAX).map(withHistory),
-    topSell: sellers.slice(0, SIDE_MAX).map(withHistory),
+    topBuy: buyers.slice(0, cap).map(withHistory),
+    topSell: sellers.slice(0, cap).map(withHistory),
     source: sliced.length ? "history" : "branches",
   };
 }
