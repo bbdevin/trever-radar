@@ -17,6 +17,7 @@ import StatTile, { toneOf } from "@/components/StatTile";
 
 const BRANCH_RANGES = [
   { label: "1日", days: 1 },
+  { label: "2日", days: 2 },
   { label: "3日", days: 3 },
   { label: "5日", days: 5 },
   { label: "10日", days: 10 },
