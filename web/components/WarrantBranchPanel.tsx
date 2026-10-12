@@ -30,6 +30,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { toneClass } from "@/lib/format";
 import { fmtMoney, fmtMoneyAbs } from "@/lib/branchPnl";
 import {
+  ENTRY_CAP_NOTE,
   ENTRY_INLINE_MAX,
   ENTRY_NOTE,
   KIND_LABEL,
@@ -39,6 +40,7 @@ import {
   WPOS_LEAD,
   WPOS_UNDER_NOTE,
   entryLine,
+  entryRestLine,
   fmtLots,
   fmtMD,
   fmtPct,
@@ -49,6 +51,7 @@ import {
   positionNotes,
   underDiffText,
   type BuyDay,
+  type BuyDaysRest,
   type PositionAgg,
   type WarrantKindKey,
   type WarrantPositions,
@@ -985,12 +988,15 @@ function PositionCard({
  * 進場日(使用者 2026-10-12:「什麼時候進場,幾月幾號;兩三天也要寫」):≤ 3 天直接逐日列;
  * 更多只列起訖與天數,點開才展開逐日(日期 · 張數 · 成本 · 當天現股)。張數是仍持有的部分(ENTRY_NOTE)。
  */
-function EntryDays({ days }: { days: BuyDay[] | undefined }) {
-  const line = entryLine(days);
-  if (!line || !days) {
+function EntryDays({ days, rest }: { days: BuyDay[] | undefined; rest?: BuyDaysRest }) {
+  // undefined = 舊 payload 沒有這個鍵;[] = 算過但沒有(仍持有為 0 時本來就不顯示這塊)。
+  if (days === undefined) {
     return <p className="text-[10.5px] text-muted-foreground">進場日要等下一次資料匯出後才會出現。</p>;
   }
-  const inline = days.length <= ENTRY_INLINE_MAX;
+  const line = entryLine(days, rest);
+  if (!line) return null;
+  const inline = days.length <= ENTRY_INLINE_MAX && !rest;
+  const restLine = entryRestLine(rest);
   const list = (
     <ol className="mt-1 grid gap-0.5" data-testid="warrant-entry-days">
       {days.map(([d, lots, cost, under]) => (
@@ -1001,6 +1007,7 @@ function EntryDays({ days }: { days: BuyDay[] | undefined }) {
           <span className="text-muted-foreground">{under != null ? `現股 ${fmtUnderPrice(under)}` : "現股 —"}</span>
         </li>
       ))}
+      {restLine && <li className="num text-[11px] text-muted-foreground" title={ENTRY_CAP_NOTE}>{restLine}</li>}
     </ol>
   );
   return (
@@ -1077,7 +1084,7 @@ function PositionBlock({ kind, agg, underLast }: { kind: WarrantKindKey; agg: Po
         </dl>
       )}
       {underText && <p className="num text-[11.5px] text-foreground">{underText}</p>}
-      {held && <EntryDays days={agg.buy_days} />}
+      {held && <EntryDays days={agg.buy_days} rest={agg.buy_days_rest} />}
       <p className="num text-[10.5px] text-muted-foreground">
         買超 {agg.buy_lots.toLocaleString("zh-TW")} 張 · 賣超對應 {agg.sell_lots_attributed.toLocaleString("zh-TW")} 張
         {agg.realized !== 0 && <> · 已實現(估) {fmtMoney(agg.realized)}</>}

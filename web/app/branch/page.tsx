@@ -7,6 +7,7 @@ import { ArrowLeft, Search, Info, TrendingUp, TrendingDown, Building2, User, Sta
 import WarrantHoldersList from "@/components/WarrantHoldersList";
 import WarrantSplitCard from "@/components/WarrantSplitCard";
 import { warrantTabHref } from "@/lib/warrantDeepLink";
+import { currentParams, replaceQuery } from "@/lib/urlState";
 import { IconFlame, IconTrend, IconZap } from "@/components/Icons";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -446,7 +447,9 @@ export default function BranchPage() {
     router.prefetch("/stock");
   }, [router]);
   const [radar, setRadar] = useState<RadarJson | null>(null);
-  const [tab, setTab] = useState<"rankings" | "today" | "warrant">("rankings");
+  type BranchTab = "rankings" | "today" | "warrant";
+  type WarrantView = "by_stock" | "by_branch" | "holders";
+  const [tab, setTabState] = useState<BranchTab>("rankings");
   const [rankingsData, setRankingsData] = useState<RankingsData | null>(null);
   const [today, setToday] = useState<TodayPayload | null>(null);
   const [warrantBranches, setWarrantBranches] = useState<WarrantBranchPayload>({
@@ -454,7 +457,24 @@ export default function BranchPage() {
   });
   const [warrantTimeframe, setWarrantTimeframe] = useState<"1d" | "2d" | "5d" | "30d" | "120d">("1d");
   // holders = 「仍持有(估)」全市場篩選清單(docs/51 §4),點了才抓檔。
-  const [viewMode, setViewMode] = useState<"by_stock" | "by_branch" | "holders">("by_stock");
+  const [viewMode, setViewModeState] = useState<WarrantView>("by_stock");
+  // 分頁與檢視放網址(?tab=warrant&view=holders,replaceState):返回鍵回來還在(docs/51 §3.2)。
+  // 靜態輸出第一次 render 沒有 query,掛載後才讀。
+  useEffect(() => {
+    const p = currentParams();
+    const t = p.get("tab");
+    if (t === "today" || t === "warrant") setTabState(t);
+    const v = p.get("view");
+    if (v === "by_branch" || v === "holders") setViewModeState(v);
+  }, []);
+  const setTab = (t: BranchTab) => {
+    setTabState(t);
+    replaceQuery({ tab: t === "rankings" ? null : t, ...(t === "warrant" ? {} : { view: null, wk: null, wpct: null, wsort: null }) });
+  };
+  const setViewMode = (v: WarrantView) => {
+    setViewModeState(v);
+    replaceQuery({ view: v === "by_stock" ? null : v, ...(v === "holders" ? {} : { wk: null, wpct: null, wsort: null }) });
+  };
   const [trackIndex, setTrackIndex] = useState<TrackIndexEntry[]>([]);
   const [trackIndexStatus, setTrackIndexStatus] = useState<"loading" | "ready" | "error">("loading");
   const [trackOpen, setTrackOpen] = useState(false);

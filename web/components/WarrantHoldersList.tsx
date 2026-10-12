@@ -21,12 +21,15 @@ import {
   fmtPct,
   fmtUnderPrice,
   normalizeScreening,
+  screenFilterFromParams,
+  screenFilterToParams,
   screenSummary,
   underDiffText,
   type ScreenFilter,
   type ScreenPayload,
   type WarrantKindKey,
 } from "@/lib/warrantPositions";
+import { currentParams, replaceQuery } from "@/lib/urlState";
 
 const PAGE = 30;
 
@@ -36,8 +39,18 @@ const PAGE = 30;
  */
 export default function WarrantHoldersList() {
   const [payload, setPayload] = useState<ScreenPayload | null | undefined>(undefined);
-  const [filter, setFilter] = useState<ScreenFilter>(DEFAULT_SCREEN_FILTER);
+  // 篩選狀態放網址(wk/wpct/wsort,replaceState):返回鍵回來還在。靜態輸出沒有 SSR 的 query,
+  // 所以第一次 render 用預設、掛載後才讀網址(與 /branch 的 tab/view 同一招)。
+  const [filter, setFilterState] = useState<ScreenFilter>(DEFAULT_SCREEN_FILTER);
   const [limit, setLimit] = useState(PAGE);
+  useEffect(() => { setFilterState(screenFilterFromParams(currentParams())); }, []);
+  const setFilter = (update: (f: ScreenFilter) => ScreenFilter) => {
+    setFilterState((f) => {
+      const next = update(f);
+      replaceQuery(screenFilterToParams(next));
+      return next;
+    });
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -48,7 +61,8 @@ export default function WarrantHoldersList() {
     return () => { cancelled = true; };
   }, []);
 
-  const rows = useMemo(() => (payload ? filterScreenRows(payload.rows, filter) : []), [payload, filter]);
+  const bucket = payload?.kinds[filter.kind];
+  const rows = useMemo(() => (bucket ? filterScreenRows(bucket.rows, filter) : []), [bucket, filter]);
   useEffect(() => { setLimit(PAGE); }, [filter]);
 
   if (payload === undefined) return <Skeleton className="h-40 w-full rounded-[var(--r-lg)]" />;
@@ -85,7 +99,7 @@ export default function WarrantHoldersList() {
         </div>
       </div>
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <span className="text-[11.5px] text-muted-foreground">{screenSummary(rows.length, payload)}</span>
+        <span className="text-[11.5px] text-muted-foreground">{screenSummary(rows.length, bucket ?? { rows: [], total: 0, excluded_self: 0 })}</span>
         <label className="flex items-center gap-1.5 text-[11.5px] text-muted-foreground">
           排序
           <select
@@ -108,7 +122,7 @@ export default function WarrantHoldersList() {
           {rows.slice(0, limit).map((r) => {
             const pct = fmtPct(r.unrealized_pct);
             const under = underDiffText(r.avg_under, r.under_last);
-            const entry = entryLine(r.buy_days);
+            const entry = entryLine(r.buy_days, r.buy_days_rest);
             return (
               <li key={`${r.branch_name}|${r.underlying_id}|${r.kind}`} className="rounded-[var(--r-lg)] border border-border bg-card p-3 shadow-sm">
                 <div className="flex items-start justify-between gap-2">

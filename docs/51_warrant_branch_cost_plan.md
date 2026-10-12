@@ -52,15 +52,19 @@
 
 ### 2.4 進場日（仍持有部分）
 
-每腿維護 `buys = [[日期, 剩餘張數, 剩餘成本, 當日標的收盤]]`：買超追加（同日合併），賣超把每一列乘 `(1 − frac)`，出清清空。跨權證依日期合併，四捨五入不到 1 張的日子不列。因此 `Σ 張數 = 仍持有張數`、`Σ 成本 = 仍持有成本`（測試釘住）。文案鎖定 `ENTRY_NOTE`：「進場日列的是仍持有的部分：平均成本法沒有先進先出，每次賣超把每個買超日的剩餘張數等比例縮小。」
+每腿維護 `(日索引, 張數÷S, 金額÷S)` 三個平行串列與縮放因子 `S`：買超追加（同日合併），賣超只把 `S *= (1 − frac)`（O(1)，不逐筆改），出清清空、`S` 歸 1。跨權證依日期合併後**最大餘數法**取整：先各取 floor，餘數依小數部分由大到小（平手取較早的日子）各加 1，所以 `Σ 張數 = 仍持有張數（取整後）`；分不到 1 張的日子**併入**前一個有張數的日子（第一天就併入下一天），不丟；成本各自四捨五入後把差額補到最後一天，`Σ 成本 = 仍持有成本`（測試釘住：買 3+3 賣 3 → [2, 1]，不是 [2, 2]）。文案鎖定 `ENTRY_NOTE`：「進場日列的是仍持有的部分：平均成本法沒有先進先出，每次賣超把每個買超日的剩餘張數等比例縮小。」
 
-### 2.5 認購／認售
+### 2.5 認購／認售／牛熊
 
-方向相反，永遠分開：每個 (券商, 標的) 輸出 `{call, put}` 兩塊（沒有那一邊就沒有鍵）。排行列第二行與篩選清單預設看認購，認售另切。
+方向相反，永遠分開：每個 (券商, 標的) 輸出 `{call, put}` 兩塊（沒有那一邊就沒有鍵）。**牛熊證（bull/bear/bull_ext/bear_ext）不進持有估算、不進篩選清單**；逐日序列維持 main 的語意（只有認購進第 1 欄、認售進第 2 欄，牛熊是 0 但那一天仍有一列）——`test_bull_bear_rows_keep_main_daily_semantics_byte_for_byte` 把分片 `daily` 與 main 的查詢結果 `json.dumps` 逐位元比對。排行列第二行與篩選清單預設看認購，認售另切。
 
 ### 2.6 發行商／同券商
 
-沿用 2026-10-02 的 `_warrant_issuer_group`（權證簡稱）× `_branch_broker_group`（分點名）判定。每腿 `self: true`、每塊 `self_cost`；篩選清單排除 `self_cost / cost ≥ 50%` 或「總公司席位且有任何自家持有」，排除筆數在 `excluded_self`，畫面摘要句說出來。
+沿用 2026-10-02 的 `_warrant_issuer_group`（權證簡稱 2 字發行商）× `_branch_broker_group`（分點名的券商段）判定，2026-10-12 補**明確的別名表**（`json_export._ISSUER_TO_BROKER`、`_BRANCH_HEAD_ALIASES`、`_BRANCH_COUNTRY_PREFIX_RE`，測試 `test_issuer_alias_table`）：麥證→麥格理（分點「港商麥格理」）、法興→法國興業（「法商法國興業」）、匯豐→匯豐（「港商匯豐」）、國泰綜合→國泰、台北富邦→富邦，國別前綴（港商／法商／美商／英商／新加坡商／瑞士商／德商／荷商／日商／澳商／加商／韓商）先剝掉；解不出發行商 → 不算自家（不猜）。每塊 `self_cost`；篩選清單排除 `self_cost / cost ≥ 50%` 或「總公司席位且有任何自家持有」，排除筆數**每種各自**在 `excluded_self`，畫面摘要句說出來。
+
+### 2.7 缺權證收盤的腿
+
+任一交易日沒有權證收盤 → 整腿 `cost_unknown`：**連買超／賣超張數都不進該塊的總計**（否則卡上「買超 N 張」與持有對不起來），只計 `n_cost_unknown` 並在註記說「N 檔有交易日缺權證收盤價，整檔不列入估算」。
 
 ## 3. 畫面（手機優先，390px 驗證）
 
@@ -74,21 +78,29 @@
 ### 3.2 /branch → 權證分點異動
 
 - 「依標的」「依分點」卡片改用 `WarrantSplitCard`：標題列（淨額）＋左「買超」右「賣超」兩欄（各自合計），點一列在兩欄下方全寬展開逐檔權證（手機兩欄太窄放不下）；每列右側「›」直達個股權證分頁並選中該券商。
-- 第三個檢視 **「仍持有(估)」**（`WarrantHoldersList`，點了才抓 `warrant_positions.json`）：認購／認售切換、帳面門檻（不限／−10％／−20％／−40％ 以下，預設 −20%）、排序（帳面 %／帳面金額／持有成本／最近買超）；每張卡：券商、標的（連結＝深連結）、帳面估算、仍持有張數、成本、換算現股均價、進場日一行、現股相對位置、未估值檔數、自家發行占比；摘要句「N 筆符合；另有 M 筆自家發行占過半未列」；區間列在此檢視收起（固定看 120 日）。
+- 第三個檢視 **「仍持有(估)」**（`WarrantHoldersList`，點了才抓 `warrant_positions.json`）：認購／認售切換（各自一份清單）、帳面門檻（不限／−10％／−20％／−40％ 以下，預設 −20%）、排序（帳面 %／帳面金額／持有成本／最近買超）；每張卡：券商、標的（連結＝深連結）、帳面估算、仍持有張數、成本、換算現股均價、進場日一行、現股相對位置、未估值檔數、自家發行占比；摘要句「N 筆符合（檔內只保留帳面最差的前 400 / 共 M 筆…）；另有 X 筆自家發行占過半未列」（截斷訊息只在真的截掉時出現）；區間列在此檢視收起（固定看 120 日）。
+- **網址狀態**（返回鍵不丟）：`/branch?tab=warrant&view=holders&wk=put&wpct=0&wsort=cost`——分頁、檢視與篩選用 `history.replaceState` 寫進 query（`lib/urlState.ts`；預設值不寫），掛載後讀回。
+- 排行列第二行的百分比分母是估得出值的成本；只估到一部分時標「(部分)」。
 
 ### 3.3 文案守則
 
 禁用：勝率 獲利 報酬 關鍵分點 大漲 噴 極品 機率 目標價 買進 賣出 看多 看空 將會 有效支撐 壓力沉重 做多 做空 建議 喊單 套牢（`warrantPositions.test.ts` 以字碼組字檢查，避免 `test_label_honesty.py` 掃到字面）。中性用語：「帳面估算 +X／−X」「估算成本」「仍持有(估)」「進場 MM/DD N 張」「找不到對應的買超」。
 
-## 4. 篩選清單契約 `branches/warrant_positions.json`
+## 4. 篩選清單契約 `branches/warrant_positions.json`（v2）
 
 ```
-{ version: 1, definitions_version: "wpos-avgcost-v1", data_date, window_from,
-  rows_total, excluded_self, min_cost: 5000000,
-  rows: [ { branch_name, underlying_id, underlying_name, kind, lots, cost, n_held, n_unvalued, self_pct,
-            value?, unrealized?, unrealized_pct?, avg_under?, last_buy_date?, first_date?, buy_days?,
-            under_last?, under_last_date? } ... ] }   // 最多 300 列，帳面 % 由差到好；估不出值的排最後
+{ version: 2, definitions_version: "wpos-avgcost-v1", data_date, window_from,
+  min_cost: 5000000, max_rows_per_kind: 400,
+  kinds: { call: Bucket, put: Bucket } }
+Bucket = { rows: Row[], total, excluded_self }
+  // rows = 門檻內（仍持有 > 0 且成本 ≥ 500 萬）帳面 % 由差到好的前 400 列（估不出值的排最後）；
+  // total = 門檻內全部筆數；前端在 total > rows.length 時寫「檔內只保留前 N / 共 M 筆」。
+Row = { branch_name, underlying_id, underlying_name, kind, lots, cost, n_held, n_unvalued, self_pct,
+        cost_valued?, value?, unrealized?, unrealized_pct?, avg_under?, last_buy_date?, first_date?, buy_days?,
+        under_last?, under_last_date? }
 ```
+
+v1（認購認售混排、全體 `[:300]`）已作廢：一個 9 億的認售部位會被認購擠掉、估不出值的列會消失。前端 `normalizeScreening` 只收 v2。
 
 分片 `warrant-stock-details/{id}.json` 新增可選鍵：
 
@@ -97,19 +109,37 @@ positions: { version, as_of, window_from, under_last?, under_last_date?,
              branches: { 券商: { call?: Agg, put?: Agg } } }
 Agg = { lots, cost, buy_lots, sell_lots_attributed, sell_lots_unattributed, realized,
         n_warrants, n_held, n_expired, n_no_price, n_cost_unknown, self_cost,
-        warrants: [ { warrant_id, lots, cost, status, avg_cost?, avg_under?, last_price?, value?, unrealized?, last_buy_date?, self? } ],
         avg_under?, cost_valued?, value?, unrealized?, unrealized_pct?, last_buy_date?, first_date?,
-        buy_days: [[date, lots, cost, under_close|null]] }
+        buy_days: [[date, lots, cost, under_close|null]],      // 最多 20 天（張數最大的），日期遞增
+        buy_days_rest?: { n, lots, cost, first, last } }       // 第 21 天起併成一段；Σ(buy_days)+rest = 仍持有
 ```
 
-缺鍵 = 舊分片（前端不出現持有估算）；舊前端讀新分片不受影響（多出的鍵不讀）。
+（逐檔權證的 `warrants[]` 明細 2026-10-12 拿掉：前端沒讀、每塊多數百 B、正式機分片數萬塊。）`Row` 同樣帶 `buy_days` / `buy_days_rest?`。缺鍵 = 舊分片（前端不出現持有估算）；舊前端讀新分片不受影響（多出的鍵不讀）。前端：≤ 3 天且沒有其餘 → 逐日一行；否則「MM/DD 起 共 N 天，最近 MM/DD」（N 含其餘、起訖取兩邊）點開逐日，最後一列「其餘 N 天合計 X 張 · 成本 Y（起–訖）」。
 
 ## 5. 計算位置與成本
 
-- 在 `_export_warrant_branches` 內，把原本「逐日序列」的 `GROUP BY (券商, 標的, 日期)` 查詢改成**一條依 (券商, 標的, 權證, 日期) 排序的逐列串流**，同時餵逐日序列（結果逐位元相同，既有測試釘住）與平均成本法累計器——不多掃一次 `branch_trades`。累計器數量 = 分片內的 (券商, 權證) 腿數（與既有 `rows` 同一數量級），不把全部逐日列留在記憶體。
-- 額外查詢：`daily_prices` 近 120 日（只限有權證的標的）、`warrant_daily` 近 5 日最後收盤、`warrants` 主檔——都是小表。
-- 體積：分片每家券商約 300–600 B（含 `buy_days`），熱門標的 60 家 ≈ 20–40 KB；`warrant_positions.json` ≤ 300 列 ≈ 60–120 KB，點「仍持有(估)」才抓。
-- 耗時：本機合成 14 檔 × 130 日 × 56 檔權證全 export 無感；正式機差異待 §6 量測（估 +5–20 秒，主要是 Python 迭代逐列）。
+**前提（verifier 2026-10-12 於 VPS 實測）**：120 個交易日窗口（2026-04-17 起）有 **4,884,497** 列權證分點列；VPS 1.7 GB RAM（可用約 1.15 GB）＋1 GB swap，曾經 OOM。`warrants` 表 kind：call 94,828、put 10,802、bull 81、bear 89、bull_ext 59。第一版（088ef0a）的 Python 逐列串流在 1.15M 合成列上 +123 MB／+11 s（約 107 B/列），外推 490 萬列 ≈ +520 MB／+45 s，**不可接受**；重寫如下。
+
+- **逐日序列**：維持 main 的 SQL `GROUP BY (券商, 標的, 日期)` 查詢（逐字相同），Python 只看分組後的列。
+- **持有估算**：另一條查詢，**只取分片裡的 (標的, 券商)**（配對先寫進 `TEMP TABLE _wpos_pairs`，SQLite 掃描時就 JOIN 掉不相干的列；TEMP 表建不起來就退回 Python 過濾，結果相同）、只取 `kind IN ('call','put')`，`GROUP BY (標的, 券商, 權證, 日期)`（同腿同日的多列先合併）、`ORDER BY` 同序，用 DBAPI cursor 迭代 tuple。
+- **串流處理**（`PositionStream.consume`，單一迴圈、區域變數、一列一次方法呼叫）：列依 (標的, 券商, 權證, 日期) 到來，所以一腿處理完就併進該 (標的, 券商) 的累計器、一組處理完就定稿、**換標的時整檔 `branches` 立刻 `json.dumps` 成一段字串**（dict 丟掉；分片寫檔時用佔位字串原文替換）。篩選摘要只留 scalar tuple（進場日等前 400 列定案後才從該檔字串解回）。進場日每塊最多 20 天（§2.4 cap）。常駐記憶體 = 每檔一段 JSON ＋ 摘要 tuple ＋ 一腿＋一組，**與列數無關**；賣超用縮放因子 O(1)。`under_close` 一份共用，只載分片裡的標的。
+- 其他查詢：`warrant_daily` 近 5 日最後收盤、`warrants` 主檔——小表。
+- 體積：分片每家券商約 300–600 B（含 `buy_days`，無逐檔明細），熱門標的 60 家 ≈ 20–40 KB；`warrant_positions.json` 每種 ≤ 400 列 ≈ 100–250 KB，點「仍持有(估)」才抓。
+- **量測**：見 §5.1。
+
+### 5.1 量測（2026-10-12，本機 Windows，`_export_warrant_branches` 整段，main `8bc317f` vs 本分支）
+
+合成 DB：`tools/make_synthetic_branch_db.py --stocks 400 --days 130 --branches 40 --warrants-per-stock 50`（窗口內 5,099,247 列權證分點列、801 個分片）。兩種情境：
+
+| 情境 | 進持有估算的列數 / 配對 | main 牆鐘 | 本分支牆鐘 | 差 | 持有估算段（`wpos:` log） | tracemalloc 峰值 main → 本分支 |
+|---|---|---|---|---|---|---|
+| **最壞**：所有 (券商, 標的) 都過 100 萬門檻（每腿天天有交易） | 4,719,036 列 / 15,730 對 | 109.9 s | 145.4 s | **+35.5 s** | 56.9 s（SQL 掃描＋GROUP BY ≈ 35 s，Python ≈ 18 s；輸出 JSON 34.9 MB） | 1,741.8 → 1,815.3 MiB（**+73.5 MiB**；砍重複扁平 `under_close`、`WarrantInfo` slots 之前是 +82.5） |
+| **較接近正式**：1/7 的券商有量，其餘縮 100 倍 | 707,606 列 / 2,358 對 | 86.0 s | 96.0 s | **+10.0 s** | 15.5 s（輸出 JSON 5.2 MB） | 未量（輸出僅 5 MB 等級） |
+
+- 第一版（088ef0a）在最壞情境外推是 +520 MB／+45–50 s；現在記憶體與列數無關（最壞情境留下的是 34.9 MB 輸出 JSON＋3.1 萬筆 scalar 摘要）。
+- **記憶體達標（+73.5 MiB ≤ 80）、時間在最壞情境未達（+35.5 s > 15）**：+35.5 s 之中約 35 s 是第二次 SQL 掃描＋GROUP BY（與 main 自己的逐日 GROUP BY 同量級，是「多一條查詢」的固有成本，TEMP 表 JOIN 在所有配對都入選時剪不掉任何列）；Python 端 ≈ 18 s（4.7M 列，≈ 3.8 µs/列）。+73.5 MiB 之中 ~35 MB 是必須寫出的 JSON。較接近正式的情境兩者皆達標。
+- 正式 VPS 預期落在兩者之間、偏「較接近正式」：4.88M 列裡只有分片配對的列會被 GROUP BY／送進 Python。上線後第一輪看 `radar-cron.log` 的 `wpos: rows= pairs= stocks= json_kib= summaries= secs=` 一行回填本表；若 `rows` 接近全部 4.9M 或 `secs` > 60，備案是把配對再縮到每檔各區間排行前 N 名（分片只對這些券商出 positions）。
+- 時間量測皆未開 tracemalloc（開了會慢 3–5 倍：main 442 s、本分支 571–618 s）；峰值量測另跑一次開 tracemalloc。
 
 ## 6. 待人類／上線後
 

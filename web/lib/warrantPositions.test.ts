@@ -6,10 +6,12 @@ import { test } from "node:test";
 
 import {
   DEFAULT_SCREEN_FILTER,
+  ENTRY_CAP_NOTE,
   ENTRY_INLINE_MAX,
   ENTRY_NOTE,
   KIND_LABEL,
   entryLine,
+  entryRestLine,
   fmtMD,
   type BuyDay,
   SCREEN_LEAD,
@@ -91,11 +93,12 @@ test("禁用詞不出現在任何文案", () => {
   assert.equal(banned.length, 21);
   const a = agg({ n_expired: 1, n_no_price: 1, n_cost_unknown: 1, cost_valued: 6_000_000, sell_lots_unattributed: 40, self_cost: 3_000_000 });
   const texts = [
-    WPOS_HEADING, WPOS_LEAD, WPOS_UNDER_NOTE, WPOS_FOOTER, SCREEN_LEAD, ENTRY_NOTE, ...WPOS_FORMULA,
+    WPOS_HEADING, WPOS_LEAD, WPOS_UNDER_NOTE, WPOS_FOOTER, SCREEN_LEAD, ENTRY_NOTE, ENTRY_CAP_NOTE, ...WPOS_FORMULA,
+    entryRestLine({ n: 8, lots: 120, cost: 360_000, first: "2026-08-20", last: "2026-10-09" }) ?? "",
     entryLine([["2026-09-15", 120, 1, 500]]) ?? "", entryLine(Array.from({ length: 5 }, () => ["2026-09-15", 1, 1, null] as BuyDay)) ?? "",
     ...positionNotes(a), holdingLine(a) ?? "", unrealizedText(a) ?? "", underDiffText(1000, 920) ?? "",
     underDiffText(1000, 1080) ?? "", underDiffText(1000, 1000) ?? "",
-    screenSummary(3, { data_date: null, window_from: null, rows_total: 5, excluded_self: 2, min_cost: 0, rows: [] }),
+    screenSummary(3, { rows: [srow()], total: 5, excluded_self: 2 }),
     ...SCREEN_SORTS.map((s) => s.label), ...SCREEN_LOSS_STEPS.map((s) => s.label), ...Object.values(KIND_LABEL),
   ];
   for (const t of texts) for (const w of banned) assert.ok(!t.includes(w), `「${t}」含禁用詞 ${w}`);
@@ -113,12 +116,20 @@ test("進場日:≤3 天逐日、更多只列起訖與天數;日期 MM/DD", () =
   many[7][0] = "2026-10-07";
   assert.equal(entryLine(many), "09/02 起 共 8 天，最近 10/07");
   assert.equal(ENTRY_INLINE_MAX, 3);
+  // 其餘併成一段:天數相加、起訖取兩邊最早／最晚;≤3 天但有其餘 → 也走摘要寫法
+  const rest = { n: 8, lots: 120, cost: 360_000, first: "2026-08-20", last: "2026-10-09" };
+  assert.equal(entryLine([["2026-09-15", 120, 1, 500], ["2026-09-16", 80, 1, 510]], rest), "08/20 起 共 10 天，最近 10/09");
+  assert.equal(entryLine(many, { ...rest, first: "2026-09-10", last: "2026-09-20" }), "09/02 起 共 16 天，最近 10/07");
+  assert.equal(entryRestLine(rest), "其餘 8 天合計 120 張 · 成本 36 萬（08/20–10/09）");
+  assert.equal(entryRestLine(undefined), null);
 });
 
 test("排行列第二行與帳面文字", () => {
   assert.equal(holdingLine(agg()), "持有(估) 1,200萬 · −40.0%");
   assert.equal(holdingLine(agg({ unrealized_pct: undefined })), "持有(估) 1,200萬 · 未估值");
-  assert.equal(holdingLine(agg({ cost: 270_000_000, unrealized_pct: 12 })), "持有(估) 2.7億 · +12.0%");
+  assert.equal(holdingLine(agg({ cost: 270_000_000, cost_valued: 270_000_000, unrealized_pct: 12 })), "持有(估) 2.7億 · +12.0%");
+  // 只估到一部分成本 → 標「(部分)」,百分比的分母不是整筆成本。
+  assert.equal(holdingLine(agg({ cost_valued: 6_000_000 })), "持有(估) 1,200萬 · −40.0%(部分)");
   assert.equal(holdingLine(agg({ lots: 0, cost: 0 })), null);
   assert.equal(holdingLine(null), null);
   assert.equal(unrealizedText(agg()), "帳面估算 −480 萬（−40.0%）");
@@ -193,11 +204,21 @@ test("篩選清單:門檻、種類、排序、估不出值的列", () => {
   assert.deepEqual(filterScreenRows(rows, { ...DEFAULT_SCREEN_FILTER, minCost: 0, maxPct: -20 }).map((r) => r.branch_name), ["戊-分點", "甲-分點"]);
 });
 
-test("篩選清單 payload 與摘要句", () => {
-  assert.equal(normalizeScreening({ version: 1, definitions_version: "x", rows: [] }), null);
-  const p = normalizeScreening({ version: 1, definitions_version: "wpos-avgcost-v1", data_date: "2026-10-08", window_from: "2026-04-10", rows_total: 2, excluded_self: 1, min_cost: 5_000_000, rows: [srow()] });
+test("篩選清單 payload(v2,認購／認售各一份)與摘要句", () => {
+  assert.equal(normalizeScreening({ version: 1, definitions_version: "wpos-avgcost-v1", rows: [srow()] }), null);   // v1 混排:不收
+  assert.equal(normalizeScreening({ version: 2, definitions_version: "x", kinds: {} }), null);
+  const p = normalizeScreening({
+    version: 2, definitions_version: "wpos-avgcost-v1", data_date: "2026-10-08", window_from: "2026-04-10",
+    min_cost: 5_000_000, max_rows_per_kind: 400,
+    kinds: { call: { rows: [srow()], total: 2, excluded_self: 1 }, put: { rows: [], total: 0, excluded_self: 0 } },
+  });
   assert.ok(p);
-  assert.equal(p.rows.length, 1);
-  assert.equal(screenSummary(1, p), "1 筆符合；另有 1 筆自家發行占過半（發行商造市／避險）未列");
-  assert.equal(screenSummary(0, { ...p, excluded_self: 0 }), "0 筆符合");
+  assert.equal(p.kinds.call.rows.length, 1);
+  assert.deepEqual(p.kinds.put, { rows: [], total: 0, excluded_self: 0 });
+  // 缺 put 桶 → 空桶,不是 undefined
+  const q = normalizeScreening({ version: 2, definitions_version: "wpos-avgcost-v1", kinds: { call: { rows: [] } } });
+  assert.deepEqual(q?.kinds.put, { rows: [], total: 0, excluded_self: 0 });
+  assert.equal(screenSummary(1, p.kinds.call), "1 筆符合（檔內只保留帳面最差的前 1 / 共 2 筆，門檻與排序只在這 1 筆內）；另有 1 筆自家發行占過半（發行商造市／避險）未列");
+  assert.equal(screenSummary(1, { rows: [srow()], total: 1, excluded_self: 0 }), "1 筆符合");
+  assert.equal(screenSummary(0, { rows: [], total: 0, excluded_self: 2 }), "0 筆符合；另有 2 筆自家發行占過半（發行商造市／避險）未列");
 });

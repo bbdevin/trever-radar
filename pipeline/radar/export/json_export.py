@@ -56,10 +56,13 @@ from ..compute.strategy_performance import (
 from ..compute.compute_branch_stats import DAYTRADE_MIN_OBS, DAYTRADE_PAYBACK, DAYTRADE_RATE
 from ..compute.warrant_position_est import (
     DEFINITIONS_VERSION as WPOS_VERSION,
+    POSITION_KINDS,
+    SCREEN_MAX_ROWS_PER_KIND,
     SCREEN_MIN_COST,
+    PositionStream,
     WarrantInfo,
+    entry_days_lookup,
     screening_rows,
-    warrant_positions,
 )
 from ..compute.branch_point_in_time_report import (
     HIGH_SELL_MIN_PCTILE,
@@ -1097,17 +1100,36 @@ def _branch_code(branch_key: str | None) -> str | None:
 # 命名慣例為「標的簡稱 + 發行商簡稱(2 字) + 序號(2 碼) + 購/售/牛/熊 + 序號(2 碼)」,
 # 例「環球晶凱基5C購02」。簡稱與分點名稱的券商前綴多半相同,不同的列在這裡。
 _WARRANT_ISSUER_RE = re.compile(r"([一-鿿]{2})[0-9A-Z]{2}[購售牛熊][0-9A-Z]{2}$")
+# 權證簡稱裡的 2 字發行商 → 正規化券商名(分點名稱的券商段也正規化成同一套,見
+# _BRANCH_HEAD_ALIASES)。沒列的 2 字發行商就以原字當券商名(元大、凱基、統一、兆豐…)。
+# 2026-10-12 verifier 補外資發行商:麥證=麥格理(分點「港商麥格理」)、法興=法國興業
+# (分點「法商法國興業」)、匯豐(分點「港商匯豐」)。
 _ISSUER_TO_BROKER = {
     "群益": "群益金鼎",
     "永豐": "永豐金",
     "中信": "中國信託",
     "第一": "第一金",
     "華南": "華南永昌",
+    "麥證": "麥格理",
+    "法興": "法國興業",
+    "匯豐": "匯豐",
+    "富邦": "富邦",
+    "國泰": "國泰",
 }
+# 分點名稱的券商段 → 正規化券商名:「國泰綜合-敦南」→ 國泰、「台北富邦-建國」→ 富邦、
+# 「法商法國興業」→ 法國興業(國別前綴先剝掉)。
+_BRANCH_HEAD_ALIASES = {
+    "國泰綜合": "國泰",
+    "台北富邦": "富邦",
+    "麥格理資本": "麥格理",
+    "法國興業": "法國興業",
+    "匯豐": "匯豐",
+}
+_BRANCH_COUNTRY_PREFIX_RE = re.compile(r"^(港商|法商|美商|英商|新加坡商|瑞士商|德商|荷商|日商|澳商|加商|韓商)")
 
 
 def _warrant_issuer_group(warrant_name: str | None) -> str | None:
-    """權證簡稱 → 發行券商的分點前綴(群益 → 群益金鼎)。解不出來回 None,不猜。"""
+    """權證簡稱 → 發行券商的正規化券商名(群益 → 群益金鼎、麥證 → 麥格理)。解不出來回 None,不猜。"""
     m = _WARRANT_ISSUER_RE.search((warrant_name or "").strip())
     if not m:
         return None
@@ -1115,16 +1137,24 @@ def _warrant_issuer_group(warrant_name: str | None) -> str | None:
 
 
 def _branch_broker_group(branch_name: str) -> tuple[str, bool]:
-    """分點名稱 → (券商前綴, 是否總公司席位)。
+    """分點名稱 → (正規化券商名, 是否總公司席位)。
 
-    「元大-南京」→(元大, False);「元大證券」→(元大, True);「凱基」→(凱基, True)。
+    「元大-南京」→(元大, False);「元大證券」→(元大, True);「凱基」→(凱基, True);
+    「港商麥格理」→(麥格理, True);「國泰綜合-敦南」→(國泰, False)。
     總公司 = 名稱沒有「-分公司」段,發行商的自營／造市席位就在這裡。
     """
     name = re.sub(r"^\(.*?\)", "", branch_name.strip())
     head, sep, _ = name.partition("-")
+    head = _BRANCH_COUNTRY_PREFIX_RE.sub("", head)
     if head.endswith("證券") and len(head) > 2:
         head = head[:-2]
-    return head, not sep
+    return _BRANCH_HEAD_ALIASES.get(head, head), not sep
+
+
+def _is_self_issued(branch_name: str, warrant_name: str | None) -> bool:
+    """這檔權證是不是這個分點所屬券商集團發行的(發行商解不出來 → False,不猜)。"""
+    issuer = _warrant_issuer_group(warrant_name)
+    return issuer is not None and issuer == _branch_broker_group(branch_name)[0]
 
 
 def _warrant_info_for_positions(conn, d1: str, d5: str) -> dict[str, WarrantInfo]:
@@ -1148,17 +1178,76 @@ def _warrant_info_for_positions(conn, d1: str, d5: str) -> dict[str, WarrantInfo
     return info
 
 
+#: 分片 positions.branches 的佔位字串(串流已把每檔的 branches 序列化成字串,寫檔時原文替換)。
+_WPOS_BRANCHES_SENTINEL = "__wpos_branches_7f3a9c__"
+_POSITION_ROWS_SQL = """
+    SELECT w.stock_id, b.branch_name, b.stock_id, b.date, SUM(b.net_lots), MAX(wd.close)
+    FROM branch_trades b
+    JOIN warrants w ON w.id = b.stock_id
+    JOIN stocks s ON s.id = w.stock_id
+    LEFT JOIN warrant_daily wd ON wd.warrant_id = b.stock_id AND wd.date = b.date
+    {pairs_join}
+    WHERE LENGTH(b.stock_id) = 6 AND b.date >= ? AND b.date <= ?
+      AND s.type = 'stock'
+      AND s.name NOT LIKE '%指%'
+      AND w.kind IN ('call', 'put')
+    GROUP BY w.stock_id, b.branch_name, b.stock_id, b.date
+    ORDER BY 1, 2, 3, 4
+"""
+
+
+def _iter_position_rows(conn, charted: dict[str, set[str]], d120: str, d1: str):
+    """持有估算的輸入列:(標的, 券商, 權證, 日期, 淨張數合計, 當日收盤),已排序、同腿同日合併。
+
+    只取分片裡的 (標的, 券商):先把配對寫進 TEMP 表讓 SQLite 在掃描時就過濾(正式庫 120 日
+    窗口約 490 萬列,Python 不該每列都看);TEMP 表建不起來(唯讀連線等)就退回 Python 過濾。
+    用 DBAPI cursor 迭代 tuple,不經 Row 物件。
+    """
+    raw = conn.connection
+    pairs = [(sid, name) for sid, names in charted.items() for name in names]
+    cur = raw.cursor()
+    try:
+        cur.execute("CREATE TEMP TABLE IF NOT EXISTS _wpos_pairs ("
+                    "underlying_id TEXT NOT NULL, branch_name TEXT NOT NULL, "
+                    "PRIMARY KEY (underlying_id, branch_name)) WITHOUT ROWID")
+        cur.execute("DELETE FROM _wpos_pairs")
+        cur.executemany("INSERT INTO _wpos_pairs VALUES (?, ?)", pairs)
+        joined = True
+    except Exception as exc:  # noqa: BLE001 — 唯讀／鎖定時退回 Python 過濾,結果相同
+        _log.warning("wpos: temp pair table unavailable (%s); filtering in Python", exc)
+        joined = False
+    try:
+        if joined:
+            cur.execute(_POSITION_ROWS_SQL.format(
+                pairs_join="JOIN temp._wpos_pairs p ON p.underlying_id = w.stock_id AND p.branch_name = b.branch_name"),
+                (d120, d1))
+            yield from cur
+        else:
+            cur.execute(_POSITION_ROWS_SQL.format(pairs_join=""), (d120, d1))
+            for row in cur:
+                names = charted.get(row[0])
+                if names and row[1] in names:
+                    yield row
+    finally:
+        if joined:
+            try:
+                cur.execute("DROP TABLE IF EXISTS temp._wpos_pairs")
+            except Exception:  # noqa: BLE001
+                pass
+        cur.close()
+
+
 def _self_issued_summary(branch_name: str, breakdown: list[dict]) -> dict | None:
     """某券商在同券商發行權證上的淨額與占比(依金額絕對值),並標記 breakdown 列。
 
     沒有任何同券商發行的權證 → None(呼叫端不寫鍵,省體積)。
     """
-    group, is_hq = _branch_broker_group(branch_name)
+    _group, is_hq = _branch_broker_group(branch_name)
     gross = own_gross = own_net = 0
     for b in breakdown:
         amt = b["net_amount"]
         gross += abs(amt)
-        if _warrant_issuer_group(b["warrant_name"]) == group:
+        if _is_self_issued(branch_name, b["warrant_name"]):
             b["self"] = True
             own_gross += abs(amt)
             own_net += amt
@@ -2870,64 +2959,72 @@ def _export_warrant_branches(out: Path, engine, date: str, base20: list[str]):
             for r in conn.execute(text("SELECT branch_name, branch_key FROM branch_dim"))
         }
         daily_by_stock: dict[str, dict[str, list[list]]] = {sid: {} for sid in charted}
-        # 持有估算(docs/51,wpos-avgcost-v1):同一條逐列串流同時餵逐日序列與平均成本法
-        # 累計器,不另掃一次 branch_trades。只處理分片裡的 (標的, 券商)。
-        positions_by_stock: dict[str, dict[str, dict]] = {}
-        under_last: dict[str, tuple[str, float]] = {}
-        screen_rows: list[dict] = []
-        screen_meta: dict = {"rows_total": 0, "excluded_self": 0, "min_cost": SCREEN_MIN_COST}
         if bd1 and charted:
+            for r in conn.execute(text("""
+                SELECT b.branch_name, w.stock_id AS underlying_id, b.date,
+                       SUM(CASE WHEN w.kind = 'call'
+                                THEN b.net_lots * CAST(ROUND(COALESCE(wd.close, 1.0) * 1000) AS INTEGER) ELSE 0 END) AS call_amt,
+                       SUM(CASE WHEN w.kind = 'put'
+                                THEN b.net_lots * CAST(ROUND(COALESCE(wd.close, 1.0) * 1000) AS INTEGER) ELSE 0 END) AS put_amt
+                FROM branch_trades b
+                JOIN warrants w ON w.id = b.stock_id
+                JOIN stocks s ON s.id = w.stock_id
+                LEFT JOIN warrant_daily wd ON wd.warrant_id = b.stock_id AND wd.date = b.date
+                WHERE LENGTH(b.stock_id) = 6 AND b.date >= :d120 AND b.date <= :d1
+                  AND s.type = 'stock'
+                  AND s.name NOT LIKE '%指%'
+                GROUP BY b.branch_name, w.stock_id, b.date
+                ORDER BY b.date
+            """), {"d1": d1, "d120": d120}):
+                names = charted.get(r.underlying_id)
+                if names and r.branch_name in names:
+                    daily_by_stock[r.underlying_id].setdefault(r.branch_name, []).append(
+                        [r.date, int(r.call_amt), int(r.put_amt)])
+
+        # 持有估算(docs/51,wpos-avgcost-v1):另一條查詢,只取分片裡的 (標的, 券商)、只取認購／
+        # 認售,在 SQL 內先依 (標的, 券商, 權證, 日期) 合併排序,Python 一腿一組地串流處理;
+        # 常駐記憶體只有輸出(見 compute/warrant_position_est.py 的說明)。
+        positions_json_by_stock: dict[str, str] = {}
+        under_last: dict[str, tuple[str, float]] = {}
+        screen_kinds: dict[str, dict] = {k: {"rows": [], "total": 0, "excluded_self": 0} for k in POSITION_KINDS}
+        if bd1 and charted:
+            t_wpos = time.perf_counter()
             warrant_info = _warrant_info_for_positions(conn, d1, d5)
-            under_close = {
-                (r.stock_id, r.date): float(r.close)
-                for r in conn.execute(text("""
-                    SELECT stock_id, date, close FROM daily_prices
-                    WHERE date >= :d120 AND date <= :d1 AND close IS NOT NULL
-                      AND stock_id IN (SELECT DISTINCT stock_id FROM warrants WHERE stock_id IS NOT NULL)
-                """), {"d1": d1, "d120": d120})
-            }
-            for (sid, day), close in under_close.items():
-                if sid in charted and (sid not in under_last or day > under_last[sid][0]):
-                    under_last[sid] = (day, close)
-            daily_acc: dict[tuple[str, str], dict[str, list[int]]] = {}
-
-            def stream():
-                for r in conn.execute(text("""
-                    SELECT b.branch_name, w.stock_id AS underlying_id, b.stock_id AS warrant_id,
-                           w.kind, b.date, b.net_lots, wd.close
-                    FROM branch_trades b
-                    JOIN warrants w ON w.id = b.stock_id
-                    JOIN stocks s ON s.id = w.stock_id
-                    LEFT JOIN warrant_daily wd ON wd.warrant_id = b.stock_id AND wd.date = b.date
-                    WHERE LENGTH(b.stock_id) = 6 AND b.date >= :d120 AND b.date <= :d1
-                      AND s.type = 'stock'
-                      AND s.name NOT LIKE '%指%'
-                    ORDER BY b.branch_name, w.stock_id, b.stock_id, b.date
-                """), {"d1": d1, "d120": d120}):
-                    names = charted.get(r.underlying_id)
-                    if not names or r.branch_name not in names:
-                        continue
-                    # 逐日金額公式與區間彙總逐字相同(缺收盤以 1.0 計),逐日加總 = 區間總額。
-                    amt = int(r.net_lots or 0) * int(round((r.close if r.close is not None else 1.0) * 1000))
-                    day = daily_acc.setdefault((r.underlying_id, r.branch_name), {}).setdefault(r.date, [0, 0])
-                    day[0 if r.kind == "call" else 1] += amt
-                    yield (r.branch_name, r.underlying_id, r.warrant_id, r.date,
-                           r.net_lots or 0, float(r.close) if r.close is not None else None)
-
-            positions = warrant_positions(
-                stream(), warrant_info=warrant_info, under_close=under_close, as_of=d1,
-                self_issued=lambda branch, wid: _warrant_issuer_group(warrant_info[wid].name) == _branch_broker_group(branch)[0],
+            under_by_sid: dict[str, dict[str, float]] = {}
+            for sid, day, close in conn.exec_driver_sql(
+                    "SELECT stock_id, date, close FROM daily_prices "
+                    "WHERE date >= ? AND date <= ? AND close IS NOT NULL", (d120, d1)):
+                if sid in charted:
+                    under_by_sid.setdefault(sid, {})[day] = float(close)
+                    if sid not in under_last or day > under_last[sid][0]:
+                        under_last[sid] = (day, close)
+            stream = PositionStream(
+                warrant_info=warrant_info, under_close={}, under_close_by_sid=under_by_sid, as_of=d1,
+                self_issued=lambda branch, wid: _is_self_issued(branch, warrant_info[wid].name),
             )
-            for (sid, branch_name), by_date in daily_acc.items():
-                daily_by_stock[sid][branch_name] = [[day, c, p] for day, (c, p) in sorted(by_date.items())]
-            for (branch_name, sid), by_kind in positions.items():
-                positions_by_stock.setdefault(sid, {})[branch_name] = by_kind
-            screen_rows, screen_meta = screening_rows(
-                positions,
+            rows_seen = 0
+
+            def counted(rows):
+                nonlocal rows_seen
+                for row in rows:
+                    rows_seen += 1
+                    yield row
+
+            stream.consume(counted(_iter_position_rows(conn, charted, d120, d1)))
+            stream.finish()
+            positions_json_by_stock = stream.stock_json   # 每檔一段已序列化的 branches 物件
+            screen_kinds = screening_rows(
+                stream.summaries,
                 names={sid: name for (_b, sid, name) in grouped},
                 under_last=under_last,
                 is_hq=lambda branch: _branch_broker_group(branch)[1],
+                entry_days=entry_days_lookup(positions_json_by_stock),
             )
+            # 正式機第一輪要看的數字(docs/51 §5):列數、配對數、秒數、輸出大小。
+            print(f"wpos: rows={rows_seen} pairs={sum(len(v) for v in charted.values())} "
+                  f"stocks={len(positions_json_by_stock)} json_kib={sum(len(s) for s in positions_json_by_stock.values()) // 1024} "
+                  f"summaries={len(stream.summaries)} secs={time.perf_counter() - t_wpos:.1f}")
+            del stream, under_by_sid, warrant_info
 
         # 與 warrant-stock-details 同一個誠實性契約:全市場檔也要說出自己的
         # 資料日,否則五個 timeframe 錨在 bd1 卻無處可查。沿用 today.json 的
@@ -2967,7 +3064,7 @@ def _export_warrant_branches(out: Path, engine, date: str, base20: list[str]):
                     for tf, values in timeframes.items()
                 },
             }, ensure_ascii=False), encoding="utf-8")
-            (detail_dir / f"{stock_id}.json").write_text(json.dumps({
+            shard_text = json.dumps({
                 "version": 1,
                 "threshold": WARRANT_BRANCH_DETAIL_MIN_AMOUNT,
                 "data_date": bd1,
@@ -2983,16 +3080,20 @@ def _export_warrant_branches(out: Path, engine, date: str, base20: list[str]):
                     if codes_by_name.get(name)
                 },
                 # 可選鍵(docs/51):每家券商在這檔標的的權證「仍持有／成本／換算現股均價／
-                # 帳面估算」,認購與認售分開。缺鍵 = 舊分片;{} = 算過、沒有可估的券商。
+                # 帳面估算／進場日」,認購與認售分開。缺鍵 = 舊分片;{} = 算過、沒有可估的券商。
+                # branches 在串流時就序列化成字串(省記憶體),這裡用佔位字串拼進去。
                 "positions": {
                     "version": WPOS_VERSION,
                     "as_of": bd1,
                     "window_from": d120,
                     **({"under_last": under_last[stock_id][1], "under_last_date": under_last[stock_id][0]}
                        if stock_id in under_last else {}),
-                    "branches": positions_by_stock.get(stock_id, {}),
+                    "branches": _WPOS_BRANCHES_SENTINEL,
                 },
-            }, ensure_ascii=False), encoding="utf-8")
+            }, ensure_ascii=False)
+            (detail_dir / f"{stock_id}.json").write_text(
+                shard_text.replace(f'"{_WPOS_BRANCHES_SENTINEL}"', positions_json_by_stock.get(stock_id, "{}"), 1),
+                encoding="utf-8")
         (detail_dir / "index.json").write_text(json.dumps({
             "version": 1,
             "threshold": WARRANT_BRANCH_DETAIL_MIN_AMOUNT,
@@ -3000,13 +3101,15 @@ def _export_warrant_branches(out: Path, engine, date: str, base20: list[str]):
             "stocks": sorted(detail_by_stock),
         }, ensure_ascii=False), encoding="utf-8")
         # 全市場「仍持有(估)」篩選清單(docs/51 §4):/branch 權證分點異動第三個檢視,點了才抓。
+        # 認購／認售各一份、各自上限(SCREEN_MAX_ROWS_PER_KIND)與排除筆數,`total` 是門檻內全部。
         (branches_dir / "warrant_positions.json").write_text(json.dumps({
-            "version": 1,
+            "version": 2,
             "definitions_version": WPOS_VERSION,
             "data_date": bd1,
             "window_from": d120 if bd1 else None,
-            **screen_meta,
-            "rows": screen_rows,
+            "min_cost": SCREEN_MIN_COST,
+            "max_rows_per_kind": SCREEN_MAX_ROWS_PER_KIND,
+            "kinds": screen_kinds,
         }, ensure_ascii=False), encoding="utf-8")
 
 

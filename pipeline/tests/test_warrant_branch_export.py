@@ -334,8 +334,7 @@ class WarrantBranchDetailExportTests(unittest.TestCase):
         self.assertEqual(uw["avg_under"], 1000.0)
         self.assertEqual((uw["n_warrants"], uw["n_held"], uw["self_cost"]), (1, 1, 0))
         self.assertEqual(uw["last_buy_date"], self.DATES[0])
-        self.assertEqual(uw["warrants"][0]["avg_cost"], 20.0)
-        self.assertEqual(uw["warrants"][0]["status"], "valued")
+        self.assertNotIn("warrants", uw)
         self.assertNotIn("put", pos["branches"]["套牢分點"])
         # 既有分點:同日買 200 張 @10、最後價 10 → 帳面 0。
         two = pos["branches"]["兩百萬分點"]["call"]
@@ -347,20 +346,21 @@ class WarrantBranchDetailExportTests(unittest.TestCase):
         # 凱基總公司自家權證:分片照算、self_cost 標出來。
         kgi = pos["branches"]["凱基"]["call"]
         self.assertEqual((kgi["cost"], kgi["self_cost"]), (10_000_000, 10_000_000))
-        self.assertTrue(kgi["warrants"][0]["self"])
-        # 逐日序列契約不變(同一條串流算出來)。
+        # 逐日序列契約不變。
         self.assertEqual(detail["daily"]["套牢分點"], [[self.DATES[0], 12_000_000, 0]])
 
         screen = json.loads((out / "branches" / "warrant_positions.json").read_text(encoding="utf-8"))
-        self.assertEqual(screen["version"], 1)
+        self.assertEqual(screen["version"], 2)
         self.assertEqual(screen["definitions_version"], "wpos-avgcost-v1")
         self.assertEqual(screen["data_date"], self.DATES[-1])
-        self.assertEqual(screen["min_cost"], 5_000_000)
-        self.assertEqual(screen["excluded_self"], 1)
+        self.assertEqual((screen["min_cost"], screen["max_rows_per_kind"]), (5_000_000, 400))
+        call = screen["kinds"]["call"]
+        self.assertEqual(call["excluded_self"], 1)
         # 六百萬分點(600 張 @10 = 600 萬,帳面 0)也過 500 萬門檻;帳面最差的在前。
-        self.assertEqual(screen["rows_total"], 2)
-        self.assertEqual([r["branch_name"] for r in screen["rows"]], ["套牢分點", "六百萬分點"])
-        row = screen["rows"][0]
+        self.assertEqual(call["total"], 2)
+        self.assertEqual([r["branch_name"] for r in call["rows"]], ["套牢分點", "六百萬分點"])
+        self.assertEqual(screen["kinds"]["put"], {"rows": [], "total": 0, "excluded_self": 0})
+        row = call["rows"][0]
         self.assertEqual((row["branch_name"], row["underlying_id"], row["underlying_name"], row["kind"]),
                          ("套牢分點", "2330", "台積電", "call"))
         self.assertEqual((row["cost"], row["unrealized"], row["unrealized_pct"]), (12_000_000, -4_800_000, -40.0))
@@ -368,7 +368,7 @@ class WarrantBranchDetailExportTests(unittest.TestCase):
         self.assertEqual(row["self_pct"], 0)
         self.assertEqual(row["buy_days"], [[self.DATES[0], 600, 12_000_000, 1000.0]])
         self.assertEqual(uw["buy_days"], row["buy_days"])
-        self.assertNotIn("warrants", row)
+        self.assertEqual(row["cost_valued"], 12_000_000)
 
     def test_positions_mark_expired_and_price_missing_legs(self):
         """到期權證仍持有但不估值;交易日沒收盤的腿整腿不估。"""
@@ -392,11 +392,94 @@ class WarrantBranchDetailExportTests(unittest.TestCase):
         ex = detail["positions"]["branches"]["到期分點"]["call"]
         self.assertEqual((ex["lots"], ex["cost"], ex["n_expired"]), (400, 2_000_000, 1))
         self.assertNotIn("unrealized", ex)
-        self.assertEqual(ex["warrants"][0]["status"], "expired")
-        # 無價分點:金額以 1.0 計入排行(既有契約),但持有估算整腿 cost_unknown。
+        # 無價分點:金額以 1.0 計入排行(既有契約),但持有估算整腿 cost_unknown,連張數都不進。
         np_ = detail["positions"]["branches"]["無價分點"]["call"]
-        self.assertEqual((np_["lots"], np_["cost"], np_["n_cost_unknown"]), (0, 0, 1))
-        self.assertEqual(np_["warrants"][0]["status"], "cost_unknown")
+        self.assertEqual((np_["lots"], np_["cost"], np_["n_cost_unknown"], np_["buy_lots"]), (0, 0, 1, 0))
+
+    # main(8bc317f)的逐日序列查詢,逐字複製當對照;輸出必須與它逐位元相同,diff 才有意義。
+    _MAIN_DAILY_SQL = """
+        SELECT b.branch_name, w.stock_id AS underlying_id, b.date,
+               SUM(CASE WHEN w.kind = 'call'
+                        THEN b.net_lots * CAST(ROUND(COALESCE(wd.close, 1.0) * 1000) AS INTEGER) ELSE 0 END) AS call_amt,
+               SUM(CASE WHEN w.kind = 'put'
+                        THEN b.net_lots * CAST(ROUND(COALESCE(wd.close, 1.0) * 1000) AS INTEGER) ELSE 0 END) AS put_amt
+        FROM branch_trades b
+        JOIN warrants w ON w.id = b.stock_id
+        JOIN stocks s ON s.id = w.stock_id
+        LEFT JOIN warrant_daily wd ON wd.warrant_id = b.stock_id AND wd.date = b.date
+        WHERE LENGTH(b.stock_id) = 6 AND b.date >= :d120 AND b.date <= :d1
+          AND s.type = 'stock'
+          AND s.name NOT LIKE '%指%'
+        GROUP BY b.branch_name, w.stock_id, b.date
+        ORDER BY b.date
+    """
+
+    def test_bull_bear_rows_keep_main_daily_semantics_byte_for_byte(self):
+        """牛熊證:逐日序列照 main 算成 0(不進認購也不進認售欄),持有估算與篩選清單不含它們。"""
+        from sqlalchemy import text
+        day0, day1 = self.DATES[0], self.DATES[-1]
+        with db.get_engine().begin() as conn:
+            conn.execute(schema.warrants.insert(), [
+                {"id": "031001", "name": "台積電元大5B牛01", "market": "twse", "kind": "bull", "stock_id": "2330", "maturity_date": None},
+                {"id": "031002", "name": "台積電元大5B熊01", "market": "twse", "kind": "bear", "stock_id": "2330", "maturity_date": None},
+                {"id": "031003", "name": "台積電凱基5C購09", "market": "twse", "kind": "call", "stock_id": "2330", "maturity_date": None},
+            ])
+            conn.execute(schema.warrant_daily.insert(), [
+                {"warrant_id": w, "date": d, "close": 8.0, "volume": 1, "turnover": 1}
+                for w in ("031001", "031002", "031003") for d in (day0, day1)
+            ])
+            upsert_branch_trades(conn, [
+                # 牛熊分點:只有牛熊 → 進分片(金額 ≥ 100 萬)但逐日序列 [d, 0, 0],無持有估算。
+                {"stock_id": "031001", "date": day0, "branch_key": "bb", "branch_name": "牛熊分點", "buy_lots": 900, "sell_lots": 0, "net_lots": 900, "pct": 0},
+                {"stock_id": "031002", "date": day1, "branch_key": "bb", "branch_name": "牛熊分點", "buy_lots": 0, "sell_lots": 400, "net_lots": -400, "pct": 0},
+                # 混合分點:牛證 + 認購同日;認購才進持有估算。
+                {"stock_id": "031001", "date": day1, "branch_key": "mx", "branch_name": "混合分點", "buy_lots": 500, "sell_lots": 0, "net_lots": 500, "pct": 0},
+                {"stock_id": "031003", "date": day1, "branch_key": "mx", "branch_name": "混合分點", "buy_lots": 300, "sell_lots": 0, "net_lots": 300, "pct": 0},
+            ])
+        detail = self._export_detail()
+        self.assertEqual(detail["daily"]["牛熊分點"], [[day0, 0, 0], [day1, 0, 0]])
+        self.assertEqual(detail["daily"]["混合分點"], [[day1, 2_400_000, 0]])
+        self.assertNotIn("牛熊分點", detail["positions"]["branches"])
+        mixed = detail["positions"]["branches"]["混合分點"]
+        self.assertEqual(set(mixed), {"call"})
+        self.assertEqual((mixed["call"]["lots"], mixed["call"]["cost"]), (300, 2_400_000))
+        # 逐位元:整個 daily 物件(含券商鍵順序、每列順序)與 main 的查詢結果相同。
+        with db.get_engine().connect() as conn:
+            dates = [r[0] for r in conn.execute(text("SELECT DISTINCT date FROM daily_prices ORDER BY date DESC LIMIT 120"))]
+            charted = {r for rows in detail["timeframes"].values() for r in (x["branch_name"] for x in rows)}
+            expect: dict[str, list] = {}
+            for r in conn.execute(text(self._MAIN_DAILY_SQL), {"d120": dates[-1], "d1": detail["data_date"]}):
+                if r.underlying_id == "2330" and r.branch_name in charted:
+                    expect.setdefault(r.branch_name, []).append([r.date, int(r.call_amt), int(r.put_amt)])
+        self.assertEqual(json.dumps(detail["daily"], ensure_ascii=False), json.dumps(expect, ensure_ascii=False))
+        # 篩選清單不含牛熊。
+        out = Path(self._tmp.name) / "out"
+        screen = json.loads((out / "branches" / "warrant_positions.json").read_text(encoding="utf-8"))
+        self.assertEqual(set(screen["kinds"]), {"call", "put"})
+        self.assertNotIn("牛熊分點", [r["branch_name"] for r in screen["kinds"]["call"]["rows"]])
+
+    def test_issuer_alias_table(self):
+        """外資發行商與分點名稱變體(verifier 2026-10-12):麥證/法興/匯豐、國泰綜合、台北富邦、國別前綴。"""
+        from radar.export.json_export import _branch_broker_group, _is_self_issued, _warrant_issuer_group
+        self.assertEqual(_warrant_issuer_group("台積電麥證5A購01"), "麥格理")
+        self.assertEqual(_warrant_issuer_group("台積電法興5B售02"), "法國興業")
+        self.assertEqual(_warrant_issuer_group("台積電匯豐5C購03"), "匯豐")
+        self.assertEqual(_branch_broker_group("港商麥格理"), ("麥格理", True))
+        self.assertEqual(_branch_broker_group("麥格理"), ("麥格理", True))
+        self.assertEqual(_branch_broker_group("法商法國興業"), ("法國興業", True))
+        self.assertEqual(_branch_broker_group("港商匯豐"), ("匯豐", True))
+        self.assertEqual(_branch_broker_group("國泰綜合-敦南"), ("國泰", False))
+        self.assertEqual(_branch_broker_group("國泰-敦南"), ("國泰", False))
+        self.assertEqual(_branch_broker_group("台北富邦-建國"), ("富邦", False))
+        self.assertEqual(_branch_broker_group("富邦-建國"), ("富邦", False))
+        self.assertTrue(_is_self_issued("港商麥格理", "台積電麥證5A購01"))
+        self.assertTrue(_is_self_issued("法商法國興業", "台積電法興5B售02"))
+        self.assertTrue(_is_self_issued("港商匯豐", "台積電匯豐5C購03"))
+        self.assertTrue(_is_self_issued("國泰綜合-敦南", "台積電國泰5D購04"))
+        self.assertTrue(_is_self_issued("台北富邦-建國", "台積電富邦5E售05"))
+        self.assertTrue(_is_self_issued("群益金鼎-板橋", "台積電群益59購03"))
+        self.assertFalse(_is_self_issued("港商麥格理", "台積電凱基5C購02"))
+        self.assertFalse(_is_self_issued("凱基-台北", "兩百萬購"))     # 解不出發行商 → 不猜
 
     def test_empty_warrant_branch_pool_reports_null_data_date(self):
         """池內沒有權證分點時報 null,不可拿報價日充當資料日。"""
@@ -419,8 +502,10 @@ class WarrantBranchDetailExportTests(unittest.TestCase):
         })
         screen = json.loads((out / "branches" / "warrant_positions.json").read_text(encoding="utf-8"))
         self.assertEqual(screen, {
-            "version": 1, "definitions_version": "wpos-avgcost-v1", "data_date": None, "window_from": None,
-            "rows_total": 0, "excluded_self": 0, "min_cost": 5_000_000, "rows": [],
+            "version": 2, "definitions_version": "wpos-avgcost-v1", "data_date": None, "window_from": None,
+            "min_cost": 5_000_000, "max_rows_per_kind": 400,
+            "kinds": {"call": {"rows": [], "total": 0, "excluded_self": 0},
+                      "put": {"rows": [], "total": 0, "excluded_self": 0}},
         })
 
 

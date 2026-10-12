@@ -50,9 +50,12 @@ export type PositionAgg = {
   first_date?: string;
   /** 進場日拆解(仍持有的部分):[日期, 張數, 成本(元), 當日標的收盤|null],日期遞增;舊 payload 沒有。 */
   buy_days?: BuyDay[];
+  /** 進場日超過 20 天時,張數較小的其餘日子併成這一段(n 天、合計張數／成本、起訖)。 */
+  buy_days_rest?: BuyDaysRest;
 };
 
 export type BuyDay = [string, number, number, number | null];
+export type BuyDaysRest = { n: number; lots: number; cost: number; first: string; last: string };
 
 export type BranchPositions = { call?: PositionAgg; put?: PositionAgg };
 
@@ -69,15 +72,26 @@ export const ENTRY_INLINE_MAX = 3;
  * 進場日一行字:≤ 3 天「進場 09/15 120 張 · 09/16 80 張」;更多「09/02 起 共 8 天，最近 10/07」。
  * 沒有資料(舊 payload)或沒有仍持有 → null。張數是平均成本法等比例扣減後**仍持有**的部分。
  */
-export function entryLine(days: BuyDay[] | undefined): string | null {
+export function entryLine(days: BuyDay[] | undefined, rest?: BuyDaysRest): string | null {
   if (!days || days.length === 0) return null;
-  if (days.length <= ENTRY_INLINE_MAX) {
+  if (days.length <= ENTRY_INLINE_MAX && !rest) {
     return `進場 ${days.map(([d, lots]) => `${fmtMD(d)} ${lots.toLocaleString("zh-TW")} 張`).join(" · ")}`;
   }
-  return `${fmtMD(days[0][0])} 起 共 ${days.length} 天，最近 ${fmtMD(days[days.length - 1][0])}`;
+  const n = days.length + (rest?.n ?? 0);
+  const first = rest && rest.first < days[0][0] ? rest.first : days[0][0];
+  const lastDay = days[days.length - 1][0];
+  const last = rest && rest.last > lastDay ? rest.last : lastDay;
+  return `${fmtMD(first)} 起 共 ${n} 天，最近 ${fmtMD(last)}`;
+}
+
+/** 展開清單最後一列:「其餘 8 天合計 120 張 · 成本 36 萬（05/02–07/13）」 */
+export function entryRestLine(rest: BuyDaysRest | undefined): string | null {
+  if (!rest || rest.n <= 0) return null;
+  return `其餘 ${rest.n} 天合計 ${rest.lots.toLocaleString("zh-TW")} 張 · 成本 ${fmtMoneyAbs(rest.cost)}（${fmtMD(rest.first)}–${fmtMD(rest.last)}）`;
 }
 
 export const ENTRY_NOTE = "進場日列的是仍持有的部分：平均成本法沒有先進先出，每次賣超把每個買超日的剩餘張數等比例縮小。";
+export const ENTRY_CAP_NOTE = "超過 20 個進場日時只逐日列張數最大的 20 天，其餘併成一列合計。";
 
 export type WarrantPositions = {
   version: string;
@@ -143,7 +157,9 @@ export function fmtWarrantPrice(p: number): string {
 export function holdingLine(agg: PositionAgg | null | undefined): string | null {
   if (!agg || agg.lots <= 0 || agg.cost <= 0) return null;
   const pct = fmtPct(agg.unrealized_pct);
-  return `持有(估) ${fmtMoneyAbs(agg.cost).replace(" ", "")} · ${pct ?? "未估值"}`;
+  // 百分比的分母是估得出值的成本;只估到一部分時標「(部分)」,不讓它看起來像整筆成本的帳面。
+  const partial = pct && agg.cost_valued != null && agg.cost_valued < agg.cost ? "(部分)" : "";
+  return `持有(估) ${fmtMoneyAbs(agg.cost).replace(" ", "")} · ${pct ? `${pct}${partial}` : "未估值"}`;
 }
 
 /** 現股相對換算均價的差距(%):(現股 ÷ 換算均價 − 1) × 100;缺一邊 → null。 */
@@ -225,28 +241,44 @@ export type ScreenRow = {
   under_last?: number;
   under_last_date?: string;
   buy_days?: BuyDay[];
+  buy_days_rest?: BuyDaysRest;
 };
+
+/** 一種(認購或認售)的清單:rows 最多 max_rows_per_kind 列,total 是門檻內全部筆數。 */
+export type ScreenBucket = { rows: ScreenRow[]; total: number; excluded_self: number };
 
 export type ScreenPayload = {
   data_date: string | null;
   window_from: string | null;
-  rows_total: number;
-  excluded_self: number;
   min_cost: number;
-  rows: ScreenRow[];
+  max_rows_per_kind: number;
+  kinds: Record<WarrantKindKey, ScreenBucket>;
 };
 
+const EMPTY_BUCKET: ScreenBucket = { rows: [], total: 0, excluded_self: 0 };
+
+function bucketOf(raw: unknown): ScreenBucket {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return EMPTY_BUCKET;
+  const b = raw as Partial<ScreenBucket>;
+  const rows = Array.isArray(b.rows) ? (b.rows as ScreenRow[]) : [];
+  return {
+    rows,
+    total: typeof b.total === "number" ? b.total : rows.length,
+    excluded_self: typeof b.excluded_self === "number" ? b.excluded_self : 0,
+  };
+}
+
+/** 只收 v2(認購／認售各一份);v1 混排的舊檔視同沒有(它會把大部位截掉,不如不顯示)。 */
 export function normalizeScreening(raw: unknown): ScreenPayload | null {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
-  const p = raw as Partial<ScreenPayload> & { version?: unknown; definitions_version?: unknown };
-  if (p.version !== 1 || p.definitions_version !== WPOS_VERSION || !Array.isArray(p.rows)) return null;
+  const p = raw as Partial<ScreenPayload> & { version?: unknown; definitions_version?: unknown; kinds?: Record<string, unknown> };
+  if (p.version !== 2 || p.definitions_version !== WPOS_VERSION || !p.kinds || typeof p.kinds !== "object") return null;
   return {
     data_date: typeof p.data_date === "string" ? p.data_date : null,
     window_from: typeof p.window_from === "string" ? p.window_from : null,
-    rows_total: typeof p.rows_total === "number" ? p.rows_total : p.rows.length,
-    excluded_self: typeof p.excluded_self === "number" ? p.excluded_self : 0,
     min_cost: typeof p.min_cost === "number" ? p.min_cost : 0,
-    rows: p.rows as ScreenRow[],
+    max_rows_per_kind: typeof p.max_rows_per_kind === "number" ? p.max_rows_per_kind : 0,
+    kinds: { call: bucketOf(p.kinds.call), put: bucketOf(p.kinds.put) },
   };
 }
 
@@ -289,10 +321,38 @@ export function filterScreenRows(rows: ScreenRow[], f: ScreenFilter): ScreenRow[
   return [...picked].sort((a, b) => cmp[f.sort](a, b) || a.branch_name.localeCompare(b.branch_name, "zh-TW") || a.underlying_id.localeCompare(b.underlying_id));
 }
 
-/** 「N 筆符合；另有 M 筆發行商／同券商自家權證過半未列」 */
-export function screenSummary(shown: number, payload: ScreenPayload): string {
-  const self = payload.excluded_self > 0 ? `；另有 ${payload.excluded_self} 筆自家發行占過半（發行商造市／避險）未列` : "";
-  return `${shown} 筆符合${self}`;
+/**
+ * 「N 筆符合（檔內只保留前 400 / 共 M 筆，門檻與排序只在這 400 筆內）；另有 X 筆自家發行占過半未列」
+ * 截斷訊息只在匯出端真的截掉時出現(total > rows.length)。
+ */
+export function screenSummary(shown: number, bucket: ScreenBucket): string {
+  const cut = bucket.total > bucket.rows.length
+    ? `（檔內只保留帳面最差的前 ${bucket.rows.length} / 共 ${bucket.total} 筆，門檻與排序只在這 ${bucket.rows.length} 筆內）`
+    : "";
+  const self = bucket.excluded_self > 0 ? `；另有 ${bucket.excluded_self} 筆自家發行占過半（發行商造市／避險）未列` : "";
+  return `${shown} 筆符合${cut}${self}`;
+}
+
+/** 篩選狀態 ↔ 網址參數(wk / wpct / wsort),返回鍵才不會丟掉;不認得的值回預設。 */
+export function screenFilterFromParams(params: { get(name: string): string | null }): ScreenFilter {
+  const kind = params.get("wk");
+  const pctRaw = params.get("wpct");
+  const pct = pctRaw == null || pctRaw === "" ? NaN : Number(pctRaw);
+  const sort = params.get("wsort");
+  return {
+    ...DEFAULT_SCREEN_FILTER,
+    kind: kind === "put" ? "put" : "call",
+    maxPct: SCREEN_LOSS_STEPS.some((s) => s.key === pct) ? pct : DEFAULT_SCREEN_FILTER.maxPct,
+    sort: SCREEN_SORTS.some((s) => s.key === sort) ? (sort as ScreenSort) : DEFAULT_SCREEN_FILTER.sort,
+  };
+}
+
+export function screenFilterToParams(f: ScreenFilter): Record<string, string | null> {
+  return {
+    wk: f.kind === DEFAULT_SCREEN_FILTER.kind ? null : f.kind,
+    wpct: f.maxPct === DEFAULT_SCREEN_FILTER.maxPct ? null : String(f.maxPct),
+    wsort: f.sort === DEFAULT_SCREEN_FILTER.sort ? null : f.sort,
+  };
 }
 
 export const SCREEN_LEAD =
