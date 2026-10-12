@@ -1186,7 +1186,6 @@ _POSITION_ROWS_SQL = """
     JOIN warrants w ON w.id = b.stock_id
     JOIN stocks s ON s.id = w.stock_id
     LEFT JOIN warrant_daily wd ON wd.warrant_id = b.stock_id AND wd.date = b.date
-    {pairs_join}
     WHERE LENGTH(b.stock_id) = 6 AND b.date >= ? AND b.date <= ?
       AND s.type = 'stock'
       AND s.name NOT LIKE '%指%'
@@ -1199,41 +1198,19 @@ _POSITION_ROWS_SQL = """
 def _iter_position_rows(conn, charted: dict[str, set[str]], d120: str, d1: str):
     """持有估算的輸入列:(標的, 券商, 權證, 日期, 淨張數合計, 當日收盤),已排序、同腿同日合併。
 
-    只取分片裡的 (標的, 券商):先把配對寫進 TEMP 表讓 SQLite 在掃描時就過濾(正式庫 120 日
-    窗口約 490 萬列,Python 不該每列都看);TEMP 表建不起來(唯讀連線等)就退回 Python 過濾。
+    只取分片裡的 (標的, 券商),在 Python 端過濾。**不要**改回 TEMP 配對表 JOIN:正式庫上
+    SQLite 會把它排成「掃 branch_dim → 逐券商走 ix_branch_trades_raw_branch(全市場、含現股)」,
+    2026-10-12 第一輪 217 萬列花 1,306 s;不 JOIN 時走 warrants → raw 主鍵,478 萬列 34 s。
     用 DBAPI cursor 迭代 tuple,不經 Row 物件。
     """
-    raw = conn.connection
-    pairs = [(sid, name) for sid, names in charted.items() for name in names]
-    cur = raw.cursor()
+    cur = conn.connection.cursor()
     try:
-        cur.execute("CREATE TEMP TABLE IF NOT EXISTS _wpos_pairs ("
-                    "underlying_id TEXT NOT NULL, branch_name TEXT NOT NULL, "
-                    "PRIMARY KEY (underlying_id, branch_name)) WITHOUT ROWID")
-        cur.execute("DELETE FROM _wpos_pairs")
-        cur.executemany("INSERT INTO _wpos_pairs VALUES (?, ?)", pairs)
-        joined = True
-    except Exception as exc:  # noqa: BLE001 — 唯讀／鎖定時退回 Python 過濾,結果相同
-        _log.warning("wpos: temp pair table unavailable (%s); filtering in Python", exc)
-        joined = False
-    try:
-        if joined:
-            cur.execute(_POSITION_ROWS_SQL.format(
-                pairs_join="JOIN temp._wpos_pairs p ON p.underlying_id = w.stock_id AND p.branch_name = b.branch_name"),
-                (d120, d1))
-            yield from cur
-        else:
-            cur.execute(_POSITION_ROWS_SQL.format(pairs_join=""), (d120, d1))
-            for row in cur:
-                names = charted.get(row[0])
-                if names and row[1] in names:
-                    yield row
+        cur.execute(_POSITION_ROWS_SQL, (d120, d1))
+        for row in cur:
+            names = charted.get(row[0])
+            if names and row[1] in names:
+                yield row
     finally:
-        if joined:
-            try:
-                cur.execute("DROP TABLE IF EXISTS temp._wpos_pairs")
-            except Exception:  # noqa: BLE001
-                pass
         cur.close()
 
 

@@ -121,7 +121,7 @@ Agg = { lots, cost, buy_lots, sell_lots_attributed, sell_lots_unattributed, real
 **前提（verifier 2026-10-12 於 VPS 實測）**：120 個交易日窗口（2026-04-17 起）有 **4,884,497** 列權證分點列；VPS 1.7 GB RAM（可用約 1.15 GB）＋1 GB swap，曾經 OOM。`warrants` 表 kind：call 94,828、put 10,802、bull 81、bear 89、bull_ext 59。第一版（088ef0a）的 Python 逐列串流在 1.15M 合成列上 +123 MB／+11 s（約 107 B/列），外推 490 萬列 ≈ +520 MB／+45 s，**不可接受**；重寫如下。
 
 - **逐日序列**：維持 main 的 SQL `GROUP BY (券商, 標的, 日期)` 查詢（逐字相同），Python 只看分組後的列。
-- **持有估算**：另一條查詢，**只取分片裡的 (標的, 券商)**（配對先寫進 `TEMP TABLE _wpos_pairs`，SQLite 掃描時就 JOIN 掉不相干的列；TEMP 表建不起來就退回 Python 過濾，結果相同）、只取 `kind IN ('call','put')`，`GROUP BY (標的, 券商, 權證, 日期)`（同腿同日的多列先合併）、`ORDER BY` 同序，用 DBAPI cursor 迭代 tuple。
+- **持有估算**：另一條查詢，**只取分片裡的 (標的, 券商)**（Python 端過濾；原本的 `TEMP TABLE _wpos_pairs` JOIN 已移除，見 §5.2）、只取 `kind IN ('call','put')`，`GROUP BY (標的, 券商, 權證, 日期)`（同腿同日的多列先合併）、`ORDER BY` 同序，用 DBAPI cursor 迭代 tuple。
 - **串流處理**（`PositionStream.consume`，單一迴圈、區域變數、一列一次方法呼叫）：列依 (標的, 券商, 權證, 日期) 到來，所以一腿處理完就併進該 (標的, 券商) 的累計器、一組處理完就定稿、**換標的時整檔 `branches` 立刻 `json.dumps` 成一段字串**（dict 丟掉；分片寫檔時用佔位字串原文替換）。篩選摘要只留 scalar tuple（進場日等前 400 列定案後才從該檔字串解回）。進場日每塊最多 20 天（§2.4 cap）。常駐記憶體 = 每檔一段 JSON ＋ 摘要 tuple ＋ 一腿＋一組，**與列數無關**；賣超用縮放因子 O(1)。`under_close` 一份共用，只載分片裡的標的。
 - 其他查詢：`warrant_daily` 近 5 日最後收盤、`warrants` 主檔——小表。
 - 體積：分片每家券商約 300–600 B（含 `buy_days`，無逐檔明細），熱門標的 60 家 ≈ 20–40 KB；`warrant_positions.json` 每種 ≤ 400 列 ≈ 100–250 KB，點「仍持有(估)」才抓。
@@ -140,6 +140,12 @@ Agg = { lots, cost, buy_lots, sell_lots_attributed, sell_lots_unattributed, real
 - **記憶體達標（+73.5 MiB ≤ 80）、時間在最壞情境未達（+35.5 s > 15）**：+35.5 s 之中約 35 s 是第二次 SQL 掃描＋GROUP BY（與 main 自己的逐日 GROUP BY 同量級，是「多一條查詢」的固有成本，TEMP 表 JOIN 在所有配對都入選時剪不掉任何列）；Python 端 ≈ 18 s（4.7M 列，≈ 3.8 µs/列）。+73.5 MiB 之中 ~35 MB 是必須寫出的 JSON。較接近正式的情境兩者皆達標。
 - 正式 VPS 預期落在兩者之間、偏「較接近正式」：4.88M 列裡只有分片配對的列會被 GROUP BY／送進 Python。上線後第一輪看 `radar-cron.log` 的 `wpos: rows= pairs= stocks= json_kib= summaries= secs=` 一行回填本表；若 `rows` 接近全部 4.9M 或 `secs` > 60，備案是把配對再縮到每檔各區間排行前 N 名（分片只對這些券商出 positions）。
 - 時間量測皆未開 tracemalloc（開了會慢 3–5 倍：main 442 s、本分支 571–618 s）；峰值量測另跑一次開 tracemalloc。
+
+### 5.2 正式機第一輪（2026-10-12 21:22 daily-margin）與修正
+
+- `wpos: rows=2167728 pairs=8166 stocks=517 json_kib=7203 summaries=1843 secs=1306.2`：**持有估算段 21.8 分鐘**，整輪 export 21:22→21:59，佔鎖拖慢每一輪。
+- 原因（VPS `EXPLAIN QUERY PLAN`）：加了 TEMP 配對表 JOIN 後，SQLite 改成 `SCAN branch_dim` → 逐券商走 `ix_branch_trades_raw_branch(branch_id, date)`——那是全市場（含現股）索引，5 GB 庫上大量隨機讀。合成 DB 小到全在快取裡，所以本機量不出來。
+- 修正：拿掉 JOIN，回到與逐日序列同樣的計畫（`SCAN warrants` → `branch_trades_raw` 主鍵），Python 端以 `charted` 過濾。VPS 實測該查詢 **4,783,455 列 34.4 s**（全掃，未過濾）。下一輪看 `wpos:` 回填。
 
 ## 6. 待人類／上線後
 
