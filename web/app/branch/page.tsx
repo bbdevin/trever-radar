@@ -3,7 +3,10 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Search, Info, TrendingUp, TrendingDown, Building2, User, Star } from "lucide-react";
+import { ArrowLeft, Search, Info, TrendingUp, TrendingDown, Building2, User, Star, Wallet } from "lucide-react";
+import WarrantHoldersList from "@/components/WarrantHoldersList";
+import WarrantSplitCard from "@/components/WarrantSplitCard";
+import { warrantTabHref } from "@/lib/warrantDeepLink";
 import { IconFlame, IconTrend, IconZap } from "@/components/Icons";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -395,172 +398,44 @@ function TabPill({ active, onClick, title, icon: Icon, label }: { active: boolea
   );
 }
 
+/** 依標的:一張卡 = 一檔標的,左買右賣兩欄列券商(docs/51 §3.2;原本單欄混列買賣)。 */
 function StockGroupCard({ stockId, stockName, totalAmt, branches }: { stockId: string, stockName: string, totalAmt: number, branches: WarrantBranch[] }) {
-  const [expandedBranch, setExpandedBranch] = useState<string | null>(null);
-
   return (
-    <div className="flex flex-col rounded-[var(--r-lg)] border border-border bg-card shadow-sm hover:border-border-strong transition-all duration-300 overflow-hidden">
-      <div className="p-4 pb-3 flex justify-between items-center border-b border-border bg-card">
-        <Link href={`/stock?id=${stockId}`} className="flex items-baseline gap-2 hover:opacity-80 transition-opacity">
-          <span className="text-foreground font-semibold text-lg tracking-tight">{stockName}</span>
-          <span className="text-sm font-medium text-muted-foreground">{stockId}</span>
+    <WarrantSplitCard
+      title={(
+        <Link href={warrantTabHref(stockId)} className="flex min-w-0 items-baseline gap-2 no-underline transition-opacity hover:opacity-80">
+          <span className="truncate text-lg font-semibold tracking-tight text-foreground">{stockName}</span>
+          <span className="num shrink-0 text-sm font-medium text-muted-foreground">{stockId}</span>
         </Link>
-        <div className="flex flex-col items-end">
-          <span className="text-[10px] uppercase font-bold tracking-wider text-muted-foreground mb-0.5">Total Net</span>
-          <span className={cn("text-xl font-bold num tracking-tight", totalAmt > 0 ? "text-up drop-shadow-[0_0_8px_rgba(239,68,68,0.3)]" : "text-down drop-shadow-[0_0_8px_rgba(34,197,94,0.3)]")}>
-            {signedWan(totalAmt, 0)} 萬
-          </span>
-        </div>
-      </div>
-      
-      <div className="flex flex-col p-3 gap-2 bg-background">
-        {branches.map((b) => {
-          const isExpanded = expandedBranch === b.branch_name;
-          const hasBreakdown = b.breakdown && b.breakdown.length > 0;
-          return (
-            <div key={b.branch_name} className="flex flex-col rounded-md border border-border/40 bg-card/50 shadow-sm hover:bg-card transition-colors duration-200 overflow-hidden group">
-              <button
-                className="min-h-11 px-3 py-2.5 flex items-center justify-between text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-                onClick={() => setExpandedBranch(isExpanded ? null : b.branch_name)}
-                aria-expanded={hasBreakdown ? isExpanded : undefined}
-                aria-label={`${b.branch_name} 權證明細`}
-              >
-                <div className="flex items-center gap-2">
-                  <span className="font-medium text-[14px] text-foreground tracking-tight group-hover:text-primary transition-colors">{b.branch_name}</span>
-                  <div className={cn("px-1.5 py-0.5 rounded text-[10px] font-bold", b.net_amount > 0 ? "bg-up/10 text-up" : "bg-down/10 text-down")}>
-                    {b.net_amount > 0 ? "買" : "賣"}
-                  </div>
-                </div>
-                <div className="flex items-center gap-2.5">
-                  <span className={cn("text-[14.5px] font-bold num tracking-tight", b.net_amount > 0 ? "text-up" : "text-down")}>
-                    {(Math.abs(b.net_amount) / 10000).toLocaleString('zh-TW', { maximumFractionDigits: 0 })} 萬
-                  </span>
-                  {hasBreakdown && (
-                    <div className={cn("transition-transform duration-300 text-muted-foreground/50 group-hover:text-muted-foreground", isExpanded && "rotate-180 text-foreground")}>
-                      <svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M2.5 4.5L6 8L9.5 4.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
-                    </div>
-                  )}
-                </div>
-              </button>
-              
-              {hasBreakdown && (
-                <div className={cn("grid transition-[grid-template-rows] duration-300 ease-out", isExpanded ? "grid-rows-[1fr]" : "grid-rows-[0fr]")}>
-                  <div className="overflow-hidden bg-secondary/20 border-t border-border/40">
-                    <div className="p-2 flex flex-col gap-1">
-                      {b.breakdown?.map(brk => (
-                        <div key={brk.warrant_id} className={cn("grid grid-cols-[1.5fr_1fr_1fr] items-center px-2 py-1.5 rounded-md hover:bg-secondary/60 transition-colors border-l-2", brk.net_amount > 0 ? "border-l-up/60" : "border-l-down/60")}>
-                          <div className="flex flex-col">
-                            <div className="flex items-center gap-1.5">
-                              <span className="text-foreground text-[12.5px] font-medium">{brk.warrant_name}</span>
-                              <span className={cn("text-[9px] px-1 py-0.5 rounded font-bold leading-none", brk.kind === "call" ? "bg-up/10 text-up" : "bg-down/10 text-down")}>
-                                {brk.kind === "call" ? "購" : "售"}
-                              </span>
-                            </div>
-                          </div>
-                          <div className={cn("text-right num font-medium text-[13px] tracking-tight", brk.net_amount > 0 ? "text-up" : "text-down")}>
-                            {signedWan(brk.net_amount, 1)} 萬
-                          </div>
-                          <div className="text-right num text-[11px] text-muted-foreground">
-                            {Math.round(Math.abs(brk.net_amount) / Math.abs(b.net_amount) * 100)}%
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
-    </div>
+      )}
+      totalAmt={totalAmt}
+      items={branches.map((b) => ({
+        key: b.branch_name, label: b.branch_name, text: b.branch_name, amount: b.net_amount, breakdown: b.breakdown,
+        href: warrantTabHref(stockId, b.branch_name),
+      }))}
+    />
   );
 }
 
-/** 元 → 帶號萬(「+1,234」「-56.7」):淨額欄只有紅綠時補上正負號,顏色不是唯一訊號。 */
-function signedWan(amt: number, digits: number): string {
-  const s = (Math.abs(amt) / 10000).toLocaleString("zh-TW", { maximumFractionDigits: digits });
-  return `${amt > 0 ? "+" : amt < 0 ? "-" : ""}${s}`;
-}
-
+/** 依分點:一張卡 = 一家券商,左買右賣兩欄列標的。 */
 function BranchGroupCard({ branchName, totalAmt, stocks }: { branchName: string, totalAmt: number, stocks: WarrantBranch[] }) {
-  const [expandedStock, setExpandedStock] = useState<string | null>(null);
-
   return (
-    <div className="flex flex-col rounded-[var(--r-lg)] border border-border bg-card shadow-sm hover:border-border-strong transition-all duration-300 overflow-hidden">
-      <div className="p-4 pb-3 flex justify-between items-center border-b border-border bg-card">
-        <span className="text-foreground font-semibold text-lg tracking-tight">{branchName}</span>
-        <div className="flex flex-col items-end">
-          <span className="text-[10px] uppercase font-bold tracking-wider text-muted-foreground mb-0.5">Total Net</span>
-          <span className={cn("text-xl font-bold num tracking-tight", totalAmt > 0 ? "text-up drop-shadow-[0_0_8px_rgba(239,68,68,0.3)]" : "text-down drop-shadow-[0_0_8px_rgba(34,197,94,0.3)]")}>
-            {signedWan(totalAmt, 0)} 萬
-          </span>
-        </div>
-      </div>
-      
-      <div className="flex flex-col p-3 gap-2 bg-background">
-        {stocks.map((s) => {
-          const isExpanded = expandedStock === s.underlying_id;
-          const hasBreakdown = s.breakdown && s.breakdown.length > 0;
-          return (
-            <div key={s.underlying_id} className="flex flex-col rounded-md border border-border/40 bg-card/50 shadow-sm hover:bg-card transition-colors duration-200 overflow-hidden group">
-              <button
-                className="min-h-11 px-3 py-2.5 flex items-center justify-between text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-                onClick={() => setExpandedStock(isExpanded ? null : s.underlying_id)}
-                aria-expanded={hasBreakdown ? isExpanded : undefined}
-                aria-label={`${s.underlying_name} 權證明細`}
-              >
-                <div className="flex items-center gap-2">
-                  <Link href={`/stock?id=${s.underlying_id}`} className="font-medium text-[14px] text-foreground tracking-tight hover:text-primary transition-colors z-10" onClick={(e) => e.stopPropagation()}>
-                    {s.underlying_name}
-                  </Link>
-                  <div className={cn("px-1.5 py-0.5 rounded text-[10px] font-bold", s.net_amount > 0 ? "bg-up/10 text-up" : "bg-down/10 text-down")}>
-                    {s.net_amount > 0 ? "買" : "賣"}
-                  </div>
-                </div>
-                <div className="flex items-center gap-2.5">
-                  <span className={cn("text-[14.5px] font-bold num tracking-tight", s.net_amount > 0 ? "text-up" : "text-down")}>
-                    {(Math.abs(s.net_amount) / 10000).toLocaleString('zh-TW', { maximumFractionDigits: 0 })} 萬
-                  </span>
-                  {hasBreakdown && (
-                    <div className={cn("transition-transform duration-300 text-muted-foreground/50 group-hover:text-muted-foreground", isExpanded && "rotate-180 text-foreground")}>
-                      <svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M2.5 4.5L6 8L9.5 4.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
-                    </div>
-                  )}
-                </div>
-              </button>
-              
-              {hasBreakdown && (
-                <div className={cn("grid transition-[grid-template-rows] duration-300 ease-out", isExpanded ? "grid-rows-[1fr]" : "grid-rows-[0fr]")}>
-                  <div className="overflow-hidden bg-secondary/20 border-t border-border/40">
-                    <div className="p-2 flex flex-col gap-1">
-                      {s.breakdown?.map(brk => (
-                        <div key={brk.warrant_id} className={cn("grid grid-cols-[1.5fr_1fr_1fr] items-center px-2 py-1.5 rounded-md hover:bg-secondary/60 transition-colors border-l-2", brk.net_amount > 0 ? "border-l-up/60" : "border-l-down/60")}>
-                          <div className="flex flex-col">
-                            <div className="flex items-center gap-1.5">
-                              <span className="text-foreground text-[12.5px] font-medium">{brk.warrant_name}</span>
-                              <span className={cn("text-[9px] px-1 py-0.5 rounded font-bold leading-none", brk.kind === "call" ? "bg-up/10 text-up" : "bg-down/10 text-down")}>
-                                {brk.kind === "call" ? "購" : "售"}
-                              </span>
-                            </div>
-                          </div>
-                          <div className={cn("text-right num font-medium text-[13px] tracking-tight", brk.net_amount > 0 ? "text-up" : "text-down")}>
-                            {signedWan(brk.net_amount, 1)} 萬
-                          </div>
-                          <div className="text-right num text-[11px] text-muted-foreground">
-                            {Math.round(Math.abs(brk.net_amount) / Math.abs(s.net_amount) * 100)}%
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
-    </div>
+    <WarrantSplitCard
+      title={<span className="block truncate text-lg font-semibold tracking-tight text-foreground">{branchName}</span>}
+      totalAmt={totalAmt}
+      items={stocks.map((s) => ({
+        key: s.underlying_id,
+        label: (
+          <>
+            {s.underlying_name} <span className="num text-[11px] text-muted-foreground">{s.underlying_id}</span>
+          </>
+        ),
+        text: s.underlying_name,
+        amount: s.net_amount,
+        breakdown: s.breakdown,
+        href: warrantTabHref(s.underlying_id, branchName),
+      }))}
+    />
   );
 }
 
@@ -578,7 +453,8 @@ export default function BranchPage() {
     data_date: null, timeframes: EMPTY_WARRANT_TIMEFRAMES,
   });
   const [warrantTimeframe, setWarrantTimeframe] = useState<"1d" | "2d" | "5d" | "30d" | "120d">("1d");
-  const [viewMode, setViewMode] = useState<"by_stock" | "by_branch">("by_stock");
+  // holders = 「仍持有(估)」全市場篩選清單(docs/51 §4),點了才抓檔。
+  const [viewMode, setViewMode] = useState<"by_stock" | "by_branch" | "holders">("by_stock");
   const [trackIndex, setTrackIndex] = useState<TrackIndexEntry[]>([]);
   const [trackIndexStatus, setTrackIndexStatus] = useState<"loading" | "ready" | "error">("loading");
   const [trackOpen, setTrackOpen] = useState(false);
@@ -962,7 +838,9 @@ export default function BranchPage() {
         const data = warrantBranches.timeframes[warrantTimeframe] || [];
         
         let content;
-        if (data.length === 0) {
+        if (viewMode === "holders") {
+          content = <WarrantHoldersList />;
+        } else if (data.length === 0) {
           content = (
             <div className="py-[46px] text-center text-sm text-muted-foreground">
               此區間內無淨買賣超 500 萬以上之權證大戶
@@ -1022,6 +900,8 @@ export default function BranchPage() {
         return (
           <div className="flex flex-col gap-4 pb-7 animate-in fade-in duration-300">
             <div className="flex flex-col sm:flex-row justify-between items-center gap-3 mb-4">
+              {/* 「仍持有(估)」固定看近 120 個交易日的持有,區間列不適用,先收起來。 */}
+              {viewMode !== "holders" && (
               <ScrollHint fade="background" activeKey={warrantTimeframe} className="flex bg-background/80 p-1.5 rounded-full border border-border/40 shadow-inner overflow-x-auto max-w-full">
                 {[
                   { k: "1d", l: "近 1 日" },
@@ -1040,26 +920,42 @@ export default function BranchPage() {
                   </button>
                 ))}
               </ScrollHint>
-              <div className="flex bg-background/80 p-1.5 rounded-full border border-border/40 shadow-inner">
+              )}
+              <div className="flex max-w-full bg-background/80 p-1.5 rounded-full border border-border/40 shadow-inner" role="tablist" aria-label="權證分點檢視">
                 <button
+                  role="tab"
+                  aria-selected={viewMode === "by_stock"}
                   onClick={() => setViewMode("by_stock")}
-                  className={cn(pillTabClass(viewMode === "by_stock"), "flex min-h-11 items-center gap-1.5")}
+                  className={cn(pillTabClass(viewMode === "by_stock"), "flex min-h-11 items-center gap-1.5 whitespace-nowrap")}
                 >
                   <Building2 size={16} /> 依標的
                 </button>
                 <button
+                  role="tab"
+                  aria-selected={viewMode === "by_branch"}
                   onClick={() => setViewMode("by_branch")}
-                  className={cn(pillTabClass(viewMode === "by_branch"), "flex min-h-11 items-center gap-1.5")}
+                  className={cn(pillTabClass(viewMode === "by_branch"), "flex min-h-11 items-center gap-1.5 whitespace-nowrap")}
                 >
                   <User size={16} /> 依分點
                 </button>
+                <button
+                  role="tab"
+                  aria-selected={viewMode === "holders"}
+                  onClick={() => setViewMode("holders")}
+                  className={cn(pillTabClass(viewMode === "holders"), "flex min-h-11 items-center gap-1.5 whitespace-nowrap")}
+                >
+                  <Wallet size={16} /> 仍持有(估)
+                </button>
               </div>
             </div>
-            <p className="text-[11.5px] text-muted-foreground">
-              {warrantBranches.data_date
-                ? `分點資料日 ${warrantBranches.data_date}；各區間由該日往前推算,不含更新的分點資料。`
-                : "此快照未提供分點資料日。"}
-            </p>
+            {viewMode !== "holders" && (
+              <p className="text-[11.5px] text-muted-foreground">
+                {warrantBranches.data_date
+                  ? `分點資料日 ${warrantBranches.data_date}；各區間由該日往前推算,不含更新的分點資料。`
+                  : "此快照未提供分點資料日。"}
+                {" "}每張卡左欄買超、右欄賣超,點一列看它的逐檔權證。
+              </p>
+            )}
             {content}
           </div>
         );

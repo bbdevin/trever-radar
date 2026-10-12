@@ -2,6 +2,13 @@
 
 > 單一進度真相。每完成一個里程碑就更新本檔。規格細節看各編號文件,別寫在這裡。
 
+## 2026-10-12 權證分點左買右賣 ＋ 持有成本／帳面估算／進場日 ＋ 仍持有(估)篩選 ＋ 深連結(`docs/51`;程式完成於分支、未合 main、未上線;v3.8)
+
+- **需求**:使用者「權證分點的 UI……分成左邊買超 右邊賣超……這個分點買的權證位置對應現股的平均價格……粗估現在賺多少……篩出買很多、賠很多、還沒賣的大戶……優化手機畫面」;追加「寫進場日期(兩三天也要寫)」「點進去直接跳到該股權證分點走勢頁籤」。
+- **做了什麼**:①新純函式 `compute/warrant_position_est.py`(`wpos-avgcost-v1`):每 (券商, 權證) 腿平均成本法(與 `docs/42` 同規則:當日權證收盤當成交價、窗口起點零持股、不放空),依 (券商, 標的, 認購/認售) 加總:仍持有張數／成本／估值／帳面(到期、近 5 日無收盤的腿「持有但不估值」)、換算現股均價(各筆買超當天現股收盤以金額加權)、進場日拆解(賣超把每個買超日剩餘等比例縮小,Σ = 仍持有)、自家發行成本。②export:`_export_warrant_branches` 的逐日序列查詢改成一條依 (券商, 標的, 權證, 日期) 排序的串流,同時餵逐日序列(結果不變)與累計器;分片 `{id}.json` 多可選鍵 `positions`;新檔 `branches/warrant_positions.json`(仍持有成本 ≥ 500 萬、排除自家過半/總公司造市,≤ 300 列,帳面由差到好)。③前端:個股權證分頁排行左買右賣並排(手機兩欄、列第二行「持有(估) 成本 · 帳面%」)、選中券商的「權證持有(估算)」卡(含進場日、條件註記、怎麼算、頁尾聲明);/branch 依標的／依分點改 `WarrantSplitCard`(左買右賣、下方展開明細、列尾「›」深連結)、第三檢視「仍持有(估)」(`WarrantHoldersList`,點了才抓);深連結 `/stock?id=X&tab=warrant&branch=券商`(`lib/warrantDeepLink.ts`:自動換到含有它的區間、選中、手機捲到切換列;不在資料裡 → 提示)。文案鎖定(`lib/warrantPositions.ts`),禁用詞以字碼檢查。
+- **驗證**:pytest `test_warrant_position_est.py` 16 + `test_warrant_branch_export.py` 12(含手算 fixture:兩筆買超成本與換算均價、部分賣超等比例、找不到對應的賣超、到期/無價/缺價、認售分開、進場日合併與縮減、篩選門檻/排除/排序、空池)+ 全套;web node `warrantPositions.test.ts` 9、`warrantDeepLink.test.ts` 3 + 全套;`tsc`、`next build`;合成 DB(`tools/make_synthetic_branch_db.py` + 2330 權證/分點種子)真跑 `export_json` 後 390px 深/淺色 Playwright 截圖(攔截 Supabase auth/rest、假 session)在 `docs/evidence/51_warrant_positions/`:排行左右兩欄、持有估算卡(套牢型 −52.9%、兩個進場日)、/branch 依標的展開、仍持有(估)清單、深連結 fresh/client 落地與缺券商提示、1280 桌機;無水平溢出。
+- **待人類**:①合 main(VPS 下一輪 export 才有 `positions` 與 `warrant_positions.json`;之前新前端只是沒有持有估算段)。②第一輪後看分片體積與 export 耗時回填 `docs/51` §5,抽 3 檔熱門標的對照排行第二行與明細。③Phase 2(履約價損益兩平需先確認 `exercise_ratio` 單位、VWAP 成交價、首頁入口)另案確認。
+
 ## 2026-10-10 分點日史改「每日全部列」chips v2 ＋ 全站前 15 大一致化 ＋ 多方榜 v2(`docs/44` §3.4、`docs/48` §8;程式完成於分支、未合 main、未上線;v3.7)
 
 - **需求**:使用者「為什麼我每日買賣超籌碼分點不是前15…盟立就沒有資料。鉅祥只有六筆」→ 決定「都改成前15大分點一致化」。

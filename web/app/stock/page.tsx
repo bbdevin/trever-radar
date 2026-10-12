@@ -186,6 +186,10 @@ function StockView() {
     if (tabParam === "tech") {
       setView("tech");
     }
+    // /branch「仍持有(估)」清單點標的直達權證分頁(docs/51)。
+    if (tabParam === "warrant") {
+      setView("warrant");
+    }
   }, [data, tabParam]);
 
   // 分K(docs/50):KChart 第一次真的要畫分K才呼叫;隨代號換一個函式,KChart 據此不沿用上一檔。

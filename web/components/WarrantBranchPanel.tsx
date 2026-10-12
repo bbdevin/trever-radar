@@ -28,6 +28,33 @@ import {
 } from "@/lib/warrantBranches";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toneClass } from "@/lib/format";
+import { fmtMoney, fmtMoneyAbs } from "@/lib/branchPnl";
+import {
+  ENTRY_INLINE_MAX,
+  ENTRY_NOTE,
+  KIND_LABEL,
+  WPOS_FOOTER,
+  WPOS_FORMULA,
+  WPOS_HEADING,
+  WPOS_LEAD,
+  WPOS_UNDER_NOTE,
+  entryLine,
+  fmtLots,
+  fmtMD,
+  fmtPct,
+  fmtUnderPrice,
+  fmtWarrantPrice,
+  holdingLine,
+  normalizePositions,
+  positionNotes,
+  underDiffText,
+  type BuyDay,
+  type PositionAgg,
+  type WarrantKindKey,
+  type WarrantPositions,
+} from "@/lib/warrantPositions";
+import { branchFromParams, timeframeContaining } from "@/lib/warrantDeepLink";
+import { useSearchParams } from "next/navigation";
 
 export type WarrantBreakdown = {
   warrant_id: string;
@@ -80,6 +107,8 @@ type WarrantBranchDetailShard = {
   branch_codes?: Record<string, string>;
   /** 可選:true = 列上沒有 breakdown,點選券商時才抓 {id}.breakdown.json。 */
   breakdown_split?: boolean;
+  /** 可選(docs/51):每家券商的權證持有估算;舊分片沒有。 */
+  positions?: unknown;
 };
 
 type Timeframe = "1d" | "2d" | "5d" | "30d" | "120d";
@@ -92,6 +121,8 @@ const TIMEFRAMES: { key: Timeframe; label: string }[] = [
   { key: "120d", label: "120日" },
 ];
 
+/** 深連結找券商時的區間順序:先看目前的 5日,再往長的找(持有估算本來就看 120 日)。 */
+const DEEP_LINK_TF_ORDER: readonly Timeframe[] = ["5d", "30d", "120d", "2d", "1d"];
 const DETAIL_MIN_AMOUNT = 1_000_000;
 /** 明細預設只列金額最大的幾檔:熱門標的一個券商可以有上百檔權證。 */
 const BREAKDOWN_PREVIEW = 10;
@@ -155,12 +186,19 @@ export default function WarrantBranchPanel({
   const [split, setSplit] = useState<SplitBreakdown | null>(null);
   const [splitError, setSplitError] = useState(false);
   const [excludeSelf, setExcludeSelf] = useState(false);
+  // 持有估算(docs/51):舊分片沒有 → null,畫面不出現那一段。
+  const [positions, setPositions] = useState<WarrantPositions | null>(null);
+  // 深連結 `?tab=warrant&branch=券商`(docs/51 §3.4):資料到了就選中它、必要時換到含有它的區間、
+  // 捲到切換列;不在任何區間 → 小提示。只處理一次(之後使用者自己點)。
+  const branchParam = branchFromParams(useSearchParams());
+  const [deepLinkState, setDeepLinkState] = useState<"pending" | "done" | "missing">("pending");
 
   useEffect(() => {
     let cancelled = false;
     setByTf(null);
     setDaily(undefined);
     setCodes({});
+    setPositions(null);
     setBreakdownSplit(false);
     setSplit(null);
     setSplitError(false);
@@ -194,6 +232,7 @@ export default function WarrantBranchPanel({
             daily: undefined,
             codes: {},
             splitFile: false,
+            positions: null,
           };
         }
         if (!indexResponse.ok) throw indexResponse.status;
@@ -208,7 +247,7 @@ export default function WarrantBranchPanel({
         // The index is authoritative: never read an old shard for a stock
         // absent from the current snapshot.
         if (!index.stocks.includes(stockId)) {
-          return { rows: {} as Record<string, WarrantBranchRow[]>, fallback: false, dataDate: index.data_date, daily: undefined, codes: {}, splitFile: false };
+          return { rows: {} as Record<string, WarrantBranchRow[]>, fallback: false, dataDate: index.data_date, daily: undefined, codes: {}, splitFile: false, positions: null };
         }
         const shardResponse = await dataFetch(`/data/branches/warrant-stock-details/${encodeURIComponent(stockId)}.json`);
         if (!shardResponse.ok) throw shardResponse.status;
@@ -232,9 +271,10 @@ export default function WarrantBranchPanel({
           rows: shard.timeframes, fallback: false, dataDate: index.data_date, daily: nextDaily, codes: nextCodes,
           // 舊分片沒有這個鍵,明細仍內嵌在列上(程式碼可能先於下一次 VPS 匯出上線)。
           splitFile: shard.breakdown_split === true,
+          positions: normalizePositions(shard.positions),
         };
       })
-      .then(({ rows, fallback, dataDate: nextDataDate, daily: nextDaily, codes: nextCodes, splitFile }) => {
+      .then(({ rows, fallback, dataDate: nextDataDate, daily: nextDaily, codes: nextCodes, splitFile, positions: nextPositions }) => {
         if (!cancelled) {
           setUsingMarketFallback(fallback);
           setDataDate(nextDataDate);
@@ -242,6 +282,7 @@ export default function WarrantBranchPanel({
           setDaily(nextDaily);
           setCodes(nextCodes ?? {});
           setBreakdownSplit(splitFile);
+          setPositions(nextPositions);
         }
       })
       .catch(() => {
@@ -287,6 +328,9 @@ export default function WarrantBranchPanel({
   const switcherRef = useRef<HTMLDivElement>(null);
   const pickAndReveal = (name: string) => {
     setPicked(name);
+    revealSwitcher();
+  };
+  const revealSwitcher = () => {
     if (!window.matchMedia("(max-width:767px)").matches) return;
     const row = switcherRef.current;
     if (!row) return;
@@ -306,7 +350,33 @@ export default function WarrantBranchPanel({
   useEffect(() => {
     setPicked(null);
     setExcludeSelf(false);
-  }, [stockId]);
+    setDeepLinkState("pending");
+  }, [stockId, branchParam]);
+
+  useEffect(() => {
+    if (deepLinkState !== "pending" || !byTf) return;
+    if (!branchParam) {
+      setDeepLinkState("done");
+      return;
+    }
+    const target = timeframeContaining(byTf, branchParam, tf, DEEP_LINK_TF_ORDER);
+    if (!target) {
+      setDeepLinkState("missing");
+      return;
+    }
+    // 選中與換區間同一批 state 更新;捲動另外做(換區間會讓本 effect 重跑,不能把捲動排在這裡的 timeout)。
+    if (target !== tf) setTf(target);
+    setPicked(branchParam);
+    setDeepLinkState("done");
+  }, [deepLinkState, byTf, branchParam, tf]);
+
+  useEffect(() => {
+    if (deepLinkState !== "done" || !branchParam) return;
+    // 等排行與圖畫好再捲到切換列(只在手機;桌機排行就在圖左邊)。
+    const id = window.setTimeout(() => revealSwitcher(), 300);
+    return () => window.clearTimeout(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deepLinkState, branchParam]);
 
   // 明細拆檔:有券商被選中(含預設選中的買超第一名)才抓,每檔股票只抓一次。
   // 排行與 K 線不等它,第一屏只需要分片本身。
@@ -381,7 +451,7 @@ export default function WarrantBranchPanel({
               用 K 線上方的「切換券商」(或下方排行、搜尋)選券商,對照股價看它每天在這檔股票權證上的買賣超金額。
               金額為認購＋認售合計;明細逐檔標示<b className="font-semibold text-foreground">購／售</b>,買認售是看空。
               金額為估計值(張數 × 1000 × 當日權證收盤價);每檔權證只有前 15 大分點,
-              區間淨額 ≥ {threshold} 萬才列入。
+              區間淨額 ≥ {threshold} 萬才列入。排行左買右賣;點選券商後,K 線下方有它的「{WPOS_HEADING}」。
               </p>
             </details>
           </div>
@@ -389,7 +459,7 @@ export default function WarrantBranchPanel({
             點選左邊的券商,右邊對照股價看它每天在這檔股票權證上的買賣超金額。
             金額為認購＋認售合計;下方明細逐檔標示<b className="font-semibold text-foreground">購／售</b>,買認售是看空。
             金額為估計值(張數 × 1000 × 當日權證收盤價);每檔權證只有前 15 大分點,
-            區間淨額 ≥ {threshold} 萬才列入。
+            區間淨額 ≥ {threshold} 萬才列入。排行左買右賣;點選券商後,K 線下方有它的「{WPOS_HEADING}」。
           </p>
           {dataDate && <p className="mt-1 text-[11px] text-muted-foreground max-md:hidden">資料日 {dataDate}</p>}
           {usingMarketFallback && (
@@ -427,6 +497,11 @@ export default function WarrantBranchPanel({
           </button>
         )}
       </div>
+      {deepLinkState === "missing" && branchParam && (
+        <p className="-mt-1 text-[11.5px] leading-relaxed text-muted-foreground" data-testid="warrant-deeplink-missing">
+          網址指定的券商「{branchParam}」不在這檔近 120 個交易日的權證分點資料裡(淨額未達 {threshold} 萬或不在任何一檔權證的前 15 大),以下為一般排行。
+        </p>
+      )}
       {exclude && (
         <p className="-mt-1 text-[11px] leading-relaxed text-muted-foreground">
           只扣有「發行商」「同券商」標籤的分點(過半金額在自家集團發行的權證)在自家權證上的金額,其他分點保留全額;
@@ -444,7 +519,8 @@ export default function WarrantBranchPanel({
         // 桌機(md 以上)左右兩欄與改版前相同。
         // 手機必須明寫單欄 minmax(0,1fr):隱式欄寬是 auto,會被最寬的子元素(放大字級時尤其)
         // 撐開,右側被卡片裁掉(2026-10-03 使用者回報「右邊被截斷」;字級大 +36px、特大 +104px)。
-        <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-3 max-md:gap-2 md:grid-cols-[minmax(0,17rem)_minmax(0,1fr)]">
+        // 2026-10-12(docs/51):買超／賣超排行改成左右並排(左買右賣),左欄因此加寬到 26rem。
+        <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-3 max-md:gap-2 md:grid-cols-[minmax(0,26rem)_minmax(0,1fr)]">
           <div className="grid min-w-0 content-start gap-3 max-md:order-1 max-md:mt-1">
             {/* 搜尋券商:名稱或代號,不限排行前 10(參考圖右上角的「搜尋券商」)。 */}
             <div className="relative">
@@ -480,24 +556,34 @@ export default function WarrantBranchPanel({
                 </ul>
               )}
             </div>
-            <RankTable
-              title="權證買超金額最多券商"
-              tone="up"
-              rows={buys}
-              codes={codes}
-              showTags={!exclude}
-              selected={selected}
-              onSelect={pickAndReveal}
-            />
-            <RankTable
-              title="權證賣超金額最多券商"
-              tone="down"
-              rows={sells}
-              codes={codes}
-              showTags={!exclude}
-              selected={selected}
-              onSelect={pickAndReveal}
-            />
+            {/* 左買右賣,手機也是兩欄(使用者 2026-10-12);手機不顯示代號欄,名稱截斷、滑鼠停留看全名。 */}
+            <div className="grid min-w-0 grid-cols-2 gap-2" data-testid="warrant-rank-split">
+              <RankTable
+                title="買超最多"
+                tone="up"
+                rows={buys}
+                codes={codes}
+                showTags={!exclude}
+                selected={selected}
+                onSelect={pickAndReveal}
+                line2={(name) => holdingLine(positions?.branches[name]?.call) ?? holdingLine(positions?.branches[name]?.put)}
+              />
+              <RankTable
+                title="賣超最多"
+                tone="down"
+                rows={sells}
+                codes={codes}
+                showTags={!exclude}
+                selected={selected}
+                onSelect={pickAndReveal}
+                line2={(name) => holdingLine(positions?.branches[name]?.call) ?? holdingLine(positions?.branches[name]?.put)}
+              />
+            </div>
+            {positions && (
+              <p className="text-[11px] leading-relaxed text-muted-foreground">
+                排行列第二行「持有(估) 成本 · 帳面%」= 近 120 個交易日平均成本法估的仍持有成本與帳面;認購優先,沒有認購持有才顯示認售。估算,不是帳戶損益。
+              </p>
+            )}
             {anyTag && (
               <p className="text-[11px] leading-relaxed text-muted-foreground">
                 <SelfBadge label="發行商" /> 發行券商的總公司席位,過半金額在自家發行的權證:發行商依規定要為自家權證造市,
@@ -571,6 +657,13 @@ export default function WarrantBranchPanel({
                 (淨 <span className={cn("num font-semibold", toneClass(selectedSelf.net))}>{fmtWanSigned(selectedSelf.net)}</span>)
                 {selectedTag?.hq ? ";這是發行商總公司席位,多為發行商造市／避險,不代表看多或看空。" : "。"}
               </p>
+            )}
+            {selected && positions && (
+              <PositionCard
+                branch={selected}
+                positions={positions}
+                underLast={underLastFromCandles(candles, positions)}
+              />
             )}
             {selectedRow && resolved === null && breakdownSplit && (
               splitError ? (
@@ -739,7 +832,10 @@ function BrokerSelect({
   );
 }
 
-/** 左邊的排行表:代號、券商、金額(萬)。點列選取,右邊的圖跟著換。 */
+/**
+ * 排行表(左買右賣各一張):券商、金額(萬),桌機多代號欄。點列選取,圖跟著換。
+ * line2:列的第二行(「仍持有(估) …」),回 null 就不佔一行。
+ */
 function RankTable({
   title,
   tone,
@@ -748,6 +844,7 @@ function RankTable({
   showTags,
   selected,
   onSelect,
+  line2,
 }: {
   title: string;
   tone: "up" | "down";
@@ -756,24 +853,26 @@ function RankTable({
   showTags: boolean;
   selected: string | null;
   onSelect: (name: string) => void;
+  line2?: (name: string) => string | null;
 }) {
   return (
     <div className="min-w-0 overflow-hidden rounded-[var(--r-md)] border border-border">
       <div
         className={cn(
-          "px-3 py-1.5 text-center text-[12px] font-bold",
+          "px-2 py-1.5 text-center text-[12px] font-bold",
           tone === "up" ? "bg-up/12 text-up" : "bg-down/12 text-down",
         )}
       >
         {title}
       </div>
       {rows.length === 0 ? (
-        <p className="px-3 py-3 text-center text-[11.5px] text-muted-foreground">這段期間沒有</p>
+        <p className="px-2 py-3 text-center text-[11.5px] text-muted-foreground">這段期間沒有</p>
       ) : (
         <ol className="divide-y divide-[color:var(--line)]">
           {rows.map((r) => {
             const active = r.branch_name === selected;
             const tag = showTags ? selfIssuedTag(r.self) : null;
+            const second = line2?.(r.branch_name) ?? null;
             return (
               <li key={r.branch_name}>
                 <button
@@ -781,12 +880,15 @@ function RankTable({
                   onClick={() => onSelect(r.branch_name)}
                   aria-pressed={active}
                   className={cn(
-                    "flex min-h-10 w-full items-center justify-between gap-2 px-3 py-1.5 text-left text-[12.5px] transition-colors hover:bg-secondary",
+                    "grid min-h-10 w-full gap-x-1.5 gap-y-0.5 px-2 py-1.5 text-left text-[12.5px] transition-colors hover:bg-secondary",
+                    "grid-cols-[minmax(0,1fr)_auto]",
                     active && cn(softSelectClass(true), "font-bold"),
                   )}
                 >
-                  <span className="flex min-w-0 items-baseline gap-2">
-                    <span className="num w-10 shrink-0 text-[11px] text-muted-foreground">{codes[r.branch_name] ?? ""}</span>
+                  <span className="flex min-w-0 items-baseline gap-1.5">
+                    {codes[r.branch_name] && (
+                      <span className="num hidden shrink-0 text-[11px] text-muted-foreground md:inline">{codes[r.branch_name]}</span>
+                    )}
                     <span className="min-w-0 truncate text-foreground" title={r.branch_name}>{r.branch_name}</span>
                     {tag && (
                       <SelfBadge
@@ -795,14 +897,196 @@ function RankTable({
                       />
                     )}
                   </span>
-                  <span className={cn("num shrink-0 font-semibold", tone === "up" ? "text-up" : "text-down")}>
+                  <span className={cn("num shrink-0 self-baseline font-semibold", tone === "up" ? "text-up" : "text-down")}>
                     {fmtWanSigned(r.amount)}
                   </span>
+                  {second && (
+                    <span className="col-span-2 truncate text-[10.5px] font-normal leading-tight text-muted-foreground" title={second}>
+                      {second}
+                    </span>
+                  )}
                 </button>
               </li>
             );
           })}
         </ol>
+      )}
+    </div>
+  );
+}
+
+/** 現股最新收盤:K 線在分點資料日當天或之前的最後一根;沒有就用分片自報的 under_last。 */
+function underLastFromCandles(candles: Candle[], positions: WarrantPositions): number | undefined {
+  const asOf = positions.as_of;
+  if (asOf) {
+    for (let i = candles.length - 1; i >= 0; i -= 1) {
+      if (candles[i].t <= asOf) return candles[i].c;
+    }
+  }
+  return positions.under_last;
+}
+
+/**
+ * 選中券商的「權證持有(估算)」卡(docs/51):認購、認售各一塊——仍持有張數、成本、權證均價、
+ * 換算現股均價 vs 現股、帳面估算、最後買超日,底下是條件註記;「怎麼算」收合;頁尾聲明。
+ */
+function PositionCard({
+  branch,
+  positions,
+  underLast,
+}: {
+  branch: string;
+  positions: WarrantPositions;
+  underLast: number | undefined;
+}) {
+  const bp = positions.branches[branch];
+  const kinds = (["call", "put"] as WarrantKindKey[]).filter((k) => bp?.[k]);
+  return (
+    <section
+      data-testid="warrant-position-card"
+      className="grid gap-2 rounded-[var(--r-md)] border border-border bg-background px-3 py-2.5"
+      aria-label={`${branch} ${WPOS_HEADING}`}
+    >
+      <div className="flex flex-wrap items-baseline justify-between gap-x-2">
+        <h4 className="text-[12.5px] font-semibold text-foreground">
+          {branch} · {WPOS_HEADING}
+        </h4>
+        {positions.as_of && (
+          <span className="text-[10.5px] text-muted-foreground">
+            {positions.window_from ? `${positions.window_from} 起` : "近 120 個交易日"} · 資料日 {positions.as_of}
+          </span>
+        )}
+      </div>
+      {kinds.length === 0 ? (
+        <p className="text-[11.5px] leading-relaxed text-muted-foreground">
+          這家券商在這段期間沒有可估算的權證持有紀錄(不在任何一檔權證的前 15 大,或交易日缺權證收盤價)。
+        </p>
+      ) : (
+        <div className={cn("grid gap-2", kinds.length > 1 && "md:grid-cols-2")}>
+          {kinds.map((k) => <PositionBlock key={k} kind={k} agg={bp![k]!} underLast={underLast} />)}
+        </div>
+      )}
+      <details className="group text-[11px] text-muted-foreground">
+        <summary className="flex min-h-7 cursor-pointer list-none items-center gap-1 [&::-webkit-details-marker]:hidden">
+          怎麼算<SummaryChevron />
+        </summary>
+        <p className="leading-relaxed">{WPOS_LEAD}</p>
+        <p className="mt-1 leading-relaxed">{WPOS_UNDER_NOTE}</p>
+        <ol className="mt-1 list-decimal space-y-0.5 pl-4 leading-relaxed">
+          {WPOS_FORMULA.map((line) => <li key={line}>{line}</li>)}
+        </ol>
+      </details>
+      <p className="text-[10.5px] leading-relaxed text-muted-foreground">{WPOS_FOOTER}</p>
+    </section>
+  );
+}
+
+/**
+ * 進場日(使用者 2026-10-12:「什麼時候進場,幾月幾號;兩三天也要寫」):≤ 3 天直接逐日列;
+ * 更多只列起訖與天數,點開才展開逐日(日期 · 張數 · 成本 · 當天現股)。張數是仍持有的部分(ENTRY_NOTE)。
+ */
+function EntryDays({ days }: { days: BuyDay[] | undefined }) {
+  const line = entryLine(days);
+  if (!line || !days) {
+    return <p className="text-[10.5px] text-muted-foreground">進場日要等下一次資料匯出後才會出現。</p>;
+  }
+  const inline = days.length <= ENTRY_INLINE_MAX;
+  const list = (
+    <ol className="mt-1 grid gap-0.5" data-testid="warrant-entry-days">
+      {days.map(([d, lots, cost, under]) => (
+        <li key={d} className="num grid grid-cols-[3.2rem_minmax(0,1fr)_auto_auto] items-baseline gap-x-2 text-[11px]">
+          <span className="font-semibold text-foreground">{fmtMD(d)}</span>
+          <span className="text-foreground">{lots.toLocaleString("zh-TW")} 張</span>
+          <span className="text-muted-foreground">{fmtMoneyAbs(cost)}</span>
+          <span className="text-muted-foreground">{under != null ? `現股 ${fmtUnderPrice(under)}` : "現股 —"}</span>
+        </li>
+      ))}
+    </ol>
+  );
+  return (
+    <div className="rounded-md bg-secondary/40 px-2 py-1.5" data-testid="warrant-entry">
+      {inline ? (
+        <>
+          <p className="num text-[11.5px] font-semibold text-foreground">{line}</p>
+          {list}
+        </>
+      ) : (
+        <details className="group">
+          <summary className="num flex min-h-7 cursor-pointer list-none items-center gap-1 text-[11.5px] font-semibold text-foreground [&::-webkit-details-marker]:hidden">
+            進場 {line}<SummaryChevron />
+          </summary>
+          {list}
+        </details>
+      )}
+      <p className="mt-1 text-[10px] leading-relaxed text-muted-foreground">{ENTRY_NOTE}</p>
+    </div>
+  );
+}
+
+function PositionBlock({ kind, agg, underLast }: { kind: WarrantKindKey; agg: PositionAgg; underLast: number | undefined }) {
+  const held = agg.lots > 0 && agg.cost > 0;
+  const avgWarrant = held ? agg.cost / (agg.lots * 1000) : null;
+  const unreal = agg.unrealized;
+  const pct = fmtPct(agg.unrealized_pct);
+  const underText = held ? underDiffText(agg.avg_under, underLast) : null;
+  const notes = positionNotes(agg);
+  return (
+    <div className="grid min-w-0 gap-1.5 rounded-md border border-border/60 p-2">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-2">
+        <span className="flex items-center gap-1.5 text-[12px] font-semibold text-foreground">
+          <span className={cn("rounded px-1 py-0.5 text-[9.5px] font-bold leading-none", kind === "call" ? "bg-up/10 text-up" : "bg-down/10 text-down")}>
+            {kind === "call" ? "購" : "售"}
+          </span>
+          {KIND_LABEL[kind]}
+          <span className="num text-[11px] font-normal text-muted-foreground">{agg.n_warrants} 檔</span>
+        </span>
+        {held ? (
+          <span className="num text-[12px] font-semibold text-foreground">仍持有(估) {fmtLots(agg.lots)}</span>
+        ) : (
+          <span className="text-[11.5px] text-muted-foreground">目前無持有(估)</span>
+        )}
+      </div>
+      {held && (
+        <dl className="grid grid-cols-2 gap-x-3 gap-y-1 text-[11.5px] sm:grid-cols-3">
+          <div className="min-w-0">
+            <dt className="text-[10.5px] text-muted-foreground">成本(估)</dt>
+            <dd className="num font-semibold text-foreground">{fmtMoneyAbs(agg.cost)}</dd>
+          </div>
+          <div className="min-w-0">
+            <dt className="text-[10.5px] text-muted-foreground">權證均價</dt>
+            <dd className="num font-semibold text-foreground">{avgWarrant != null ? fmtWarrantPrice(avgWarrant) : "—"}</dd>
+          </div>
+          <div className="min-w-0">
+            <dt className="text-[10.5px] text-muted-foreground">換算現股均價</dt>
+            <dd className="num font-semibold text-foreground">{agg.avg_under != null ? fmtUnderPrice(agg.avg_under) : "—"}</dd>
+          </div>
+          <div className="col-span-2 min-w-0 sm:col-span-3">
+            <dt className="text-[10.5px] text-muted-foreground">帳面估算</dt>
+            <dd className="flex flex-wrap items-baseline gap-x-2">
+              {unreal != null ? (
+                <>
+                  <span className={cn("num text-[15px] font-bold", toneClass(unreal) || "text-foreground")}>{fmtMoney(unreal)}</span>
+                  {pct && <span className={cn("num text-[12px] font-semibold", toneClass(unreal) || "text-foreground")}>({pct})</span>}
+                  {agg.value != null && <span className="num text-[11px] text-muted-foreground">估值 {fmtMoneyAbs(agg.value)}</span>}
+                </>
+              ) : (
+                <span className="text-[12px] text-muted-foreground">未估值(到期或近 5 日無收盤)</span>
+              )}
+            </dd>
+          </div>
+        </dl>
+      )}
+      {underText && <p className="num text-[11.5px] text-foreground">{underText}</p>}
+      {held && <EntryDays days={agg.buy_days} />}
+      <p className="num text-[10.5px] text-muted-foreground">
+        買超 {agg.buy_lots.toLocaleString("zh-TW")} 張 · 賣超對應 {agg.sell_lots_attributed.toLocaleString("zh-TW")} 張
+        {agg.realized !== 0 && <> · 已實現(估) {fmtMoney(agg.realized)}</>}
+        {agg.last_buy_date && <> · 最後買超日 {agg.last_buy_date}</>}
+      </p>
+      {notes.length > 0 && (
+        <ul className="list-disc space-y-0.5 pl-4 text-[10.5px] leading-relaxed text-muted-foreground">
+          {notes.map((n) => <li key={n}>{n}</li>)}
+        </ul>
       )}
     </div>
   );

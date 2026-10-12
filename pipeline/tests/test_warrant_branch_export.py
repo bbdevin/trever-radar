@@ -295,6 +295,109 @@ class WarrantBranchDetailExportTests(unittest.TestCase):
         self.assertIsNone(_self_issued_summary("元大-南京", [
             {"warrant_name": "台積電凱基5C購02", "net_amount": 100}]))
 
+    def test_positions_estimate_in_shard_and_market_screening_file(self):
+        """docs/51 wpos-avgcost-v1:分片 positions 鍵與全市場 warrant_positions.json。
+
+        套牢分點 08-03 以 20 元買 600 張(成本 1,200 萬,現股 1000)→ 08-07 權證收 12
+        → 估值 720 萬、帳面 −480 萬(−40%)。凱基總公司買自家權證 1,000 萬 → 分片有、
+        篩選清單排除。
+        """
+        with db.get_engine().begin() as conn:
+            conn.execute(schema.warrants.insert(), [
+                {"id": "123460", "name": "台積電元大5A購01", "market": "twse", "kind": "call",
+                 "stock_id": "2330", "maturity_date": "2027-01-29"},
+                {"id": "700001", "name": "台積電凱基5C購02", "market": "twse", "kind": "call",
+                 "stock_id": "2330", "maturity_date": "2027-01-29"},
+            ])
+            conn.execute(schema.warrant_daily.insert(), [
+                {"warrant_id": "123460", "date": self.DATES[0], "close": 20.0, "volume": 1, "turnover": 1},
+                {"warrant_id": "123460", "date": self.DATES[-1], "close": 12.0, "volume": 1, "turnover": 1},
+                {"warrant_id": "700001", "date": self.DATES[-1], "close": 10.0, "volume": 1, "turnover": 1},
+            ])
+            upsert_branch_trades(conn, [
+                {"stock_id": "123460", "date": self.DATES[0], "branch_key": "uw", "branch_name": "套牢分點",
+                 "buy_lots": 600, "sell_lots": 0, "net_lots": 600, "pct": 0},
+                {"stock_id": "700001", "date": self.DATES[-1], "branch_key": "9200", "branch_name": "凱基",
+                 "buy_lots": 1000, "sell_lots": 0, "net_lots": 1000, "pct": 0},
+            ])
+        out = Path(self._tmp.name) / "out"
+        out.mkdir(parents=True, exist_ok=True)
+        export_json(out)
+        detail = json.loads((out / "branches" / "warrant-stock-details" / "2330.json").read_text(encoding="utf-8"))
+        pos = detail["positions"]
+        self.assertEqual(pos["version"], "wpos-avgcost-v1")
+        self.assertEqual((pos["as_of"], pos["window_from"]), (self.DATES[-1], self.DATES[0]))
+        self.assertEqual((pos["under_last"], pos["under_last_date"]), (1000.0, self.DATES[-1]))
+        uw = pos["branches"]["套牢分點"]["call"]
+        self.assertEqual((uw["lots"], uw["cost"], uw["value"], uw["unrealized"], uw["unrealized_pct"]),
+                         (600, 12_000_000, 7_200_000, -4_800_000, -40.0))
+        self.assertEqual(uw["avg_under"], 1000.0)
+        self.assertEqual((uw["n_warrants"], uw["n_held"], uw["self_cost"]), (1, 1, 0))
+        self.assertEqual(uw["last_buy_date"], self.DATES[0])
+        self.assertEqual(uw["warrants"][0]["avg_cost"], 20.0)
+        self.assertEqual(uw["warrants"][0]["status"], "valued")
+        self.assertNotIn("put", pos["branches"]["套牢分點"])
+        # 既有分點:同日買 200 張 @10、最後價 10 → 帳面 0。
+        two = pos["branches"]["兩百萬分點"]["call"]
+        self.assertEqual((two["cost"], two["unrealized"]), (2_000_000, 0))
+        # 賣超分點:沒有持股,只有找不到對應的賣出。
+        seven = pos["branches"]["七百萬賣超分點"]["put"]
+        self.assertEqual((seven["lots"], seven["sell_lots_unattributed"]), (0, 700))
+        self.assertNotIn("unrealized", seven)
+        # 凱基總公司自家權證:分片照算、self_cost 標出來。
+        kgi = pos["branches"]["凱基"]["call"]
+        self.assertEqual((kgi["cost"], kgi["self_cost"]), (10_000_000, 10_000_000))
+        self.assertTrue(kgi["warrants"][0]["self"])
+        # 逐日序列契約不變(同一條串流算出來)。
+        self.assertEqual(detail["daily"]["套牢分點"], [[self.DATES[0], 12_000_000, 0]])
+
+        screen = json.loads((out / "branches" / "warrant_positions.json").read_text(encoding="utf-8"))
+        self.assertEqual(screen["version"], 1)
+        self.assertEqual(screen["definitions_version"], "wpos-avgcost-v1")
+        self.assertEqual(screen["data_date"], self.DATES[-1])
+        self.assertEqual(screen["min_cost"], 5_000_000)
+        self.assertEqual(screen["excluded_self"], 1)
+        # 六百萬分點(600 張 @10 = 600 萬,帳面 0)也過 500 萬門檻;帳面最差的在前。
+        self.assertEqual(screen["rows_total"], 2)
+        self.assertEqual([r["branch_name"] for r in screen["rows"]], ["套牢分點", "六百萬分點"])
+        row = screen["rows"][0]
+        self.assertEqual((row["branch_name"], row["underlying_id"], row["underlying_name"], row["kind"]),
+                         ("套牢分點", "2330", "台積電", "call"))
+        self.assertEqual((row["cost"], row["unrealized"], row["unrealized_pct"]), (12_000_000, -4_800_000, -40.0))
+        self.assertEqual((row["avg_under"], row["under_last"], row["under_last_date"]), (1000.0, 1000.0, self.DATES[-1]))
+        self.assertEqual(row["self_pct"], 0)
+        self.assertEqual(row["buy_days"], [[self.DATES[0], 600, 12_000_000, 1000.0]])
+        self.assertEqual(uw["buy_days"], row["buy_days"])
+        self.assertNotIn("warrants", row)
+
+    def test_positions_mark_expired_and_price_missing_legs(self):
+        """到期權證仍持有但不估值;交易日沒收盤的腿整腿不估。"""
+        with db.get_engine().begin() as conn:
+            conn.execute(schema.warrants.insert(), [
+                {"id": "123461", "name": "到期購", "market": "twse", "kind": "call",
+                 "stock_id": "2330", "maturity_date": self.DATES[2]},
+                {"id": "123462", "name": "無價購", "market": "twse", "kind": "call", "stock_id": "2330",
+                 "maturity_date": None},
+            ])
+            conn.execute(schema.warrant_daily.insert(), [
+                {"warrant_id": "123461", "date": self.DATES[0], "close": 5.0, "volume": 1, "turnover": 1},
+            ])
+            upsert_branch_trades(conn, [
+                {"stock_id": "123461", "date": self.DATES[0], "branch_key": "ex", "branch_name": "到期分點",
+                 "buy_lots": 400, "sell_lots": 0, "net_lots": 400, "pct": 0},
+                {"stock_id": "123462", "date": self.DATES[0], "branch_key": "np", "branch_name": "無價分點",
+                 "buy_lots": 2000, "sell_lots": 0, "net_lots": 2000, "pct": 0},
+            ])
+        detail = self._export_detail()
+        ex = detail["positions"]["branches"]["到期分點"]["call"]
+        self.assertEqual((ex["lots"], ex["cost"], ex["n_expired"]), (400, 2_000_000, 1))
+        self.assertNotIn("unrealized", ex)
+        self.assertEqual(ex["warrants"][0]["status"], "expired")
+        # 無價分點:金額以 1.0 計入排行(既有契約),但持有估算整腿 cost_unknown。
+        np_ = detail["positions"]["branches"]["無價分點"]["call"]
+        self.assertEqual((np_["lots"], np_["cost"], np_["n_cost_unknown"]), (0, 0, 1))
+        self.assertEqual(np_["warrants"][0]["status"], "cost_unknown")
+
     def test_empty_warrant_branch_pool_reports_null_data_date(self):
         """池內沒有權證分點時報 null,不可拿報價日充當資料日。"""
         with db.get_engine().begin() as conn:
@@ -313,6 +416,11 @@ class WarrantBranchDetailExportTests(unittest.TestCase):
             "threshold": 5_000_000,
             "data_date": None,
             "timeframes": {"1d": [], "2d": [], "5d": [], "30d": [], "120d": []},
+        })
+        screen = json.loads((out / "branches" / "warrant_positions.json").read_text(encoding="utf-8"))
+        self.assertEqual(screen, {
+            "version": 1, "definitions_version": "wpos-avgcost-v1", "data_date": None, "window_from": None,
+            "rows_total": 0, "excluded_self": 0, "min_cost": 5_000_000, "rows": [],
         })
 
 

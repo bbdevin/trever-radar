@@ -54,6 +54,13 @@ from ..compute.strategy_performance import (
     fetch_strategy_events,
 )
 from ..compute.compute_branch_stats import DAYTRADE_MIN_OBS, DAYTRADE_PAYBACK, DAYTRADE_RATE
+from ..compute.warrant_position_est import (
+    DEFINITIONS_VERSION as WPOS_VERSION,
+    SCREEN_MIN_COST,
+    WarrantInfo,
+    screening_rows,
+    warrant_positions,
+)
 from ..compute.branch_point_in_time_report import (
     HIGH_SELL_MIN_PCTILE,
     LOW_BUY_MAX_PCTILE,
@@ -1118,6 +1125,27 @@ def _branch_broker_group(branch_name: str) -> tuple[str, bool]:
     if head.endswith("證券") and len(head) > 2:
         head = head[:-2]
     return head, not sep
+
+
+def _warrant_info_for_positions(conn, d1: str, d5: str) -> dict[str, WarrantInfo]:
+    """持有估算用的權證主檔:kind、到期日、簡稱,與 as_of 當日或之前近 5 個交易日內的最後收盤。
+
+    超過 5 個交易日沒有收盤(下市／久無成交)→ last_price None,持有的那腿「無法估值」。
+    """
+    info: dict[str, WarrantInfo] = {}
+    for r in conn.execute(text(
+            "SELECT id, kind, maturity_date, name FROM warrants WHERE stock_id IS NOT NULL")):
+        info[r.id] = WarrantInfo(kind=r.kind, maturity_date=r.maturity_date, last_price=None, name=r.name)
+    for r in conn.execute(text("""
+        SELECT warrant_id, date, close FROM warrant_daily
+        WHERE date <= :d1 AND date >= :d5 AND close IS NOT NULL AND close > 0
+        ORDER BY date
+    """), {"d1": d1, "d5": d5}):
+        hit = info.get(r.warrant_id)
+        if hit is not None:
+            hit.last_price = float(r.close)
+            hit.last_price_date = r.date
+    return info
 
 
 def _self_issued_summary(branch_name: str, breakdown: list[dict]) -> dict | None:
@@ -2842,27 +2870,64 @@ def _export_warrant_branches(out: Path, engine, date: str, base20: list[str]):
             for r in conn.execute(text("SELECT branch_name, branch_key FROM branch_dim"))
         }
         daily_by_stock: dict[str, dict[str, list[list]]] = {sid: {} for sid in charted}
+        # 持有估算(docs/51,wpos-avgcost-v1):同一條逐列串流同時餵逐日序列與平均成本法
+        # 累計器,不另掃一次 branch_trades。只處理分片裡的 (標的, 券商)。
+        positions_by_stock: dict[str, dict[str, dict]] = {}
+        under_last: dict[str, tuple[str, float]] = {}
+        screen_rows: list[dict] = []
+        screen_meta: dict = {"rows_total": 0, "excluded_self": 0, "min_cost": SCREEN_MIN_COST}
         if bd1 and charted:
-            for r in conn.execute(text("""
-                SELECT b.branch_name, w.stock_id AS underlying_id, b.date,
-                       SUM(CASE WHEN w.kind = 'call'
-                                THEN b.net_lots * CAST(ROUND(COALESCE(wd.close, 1.0) * 1000) AS INTEGER) ELSE 0 END) AS call_amt,
-                       SUM(CASE WHEN w.kind = 'put'
-                                THEN b.net_lots * CAST(ROUND(COALESCE(wd.close, 1.0) * 1000) AS INTEGER) ELSE 0 END) AS put_amt
-                FROM branch_trades b
-                JOIN warrants w ON w.id = b.stock_id
-                JOIN stocks s ON s.id = w.stock_id
-                LEFT JOIN warrant_daily wd ON wd.warrant_id = b.stock_id AND wd.date = b.date
-                WHERE LENGTH(b.stock_id) = 6 AND b.date >= :d120 AND b.date <= :d1
-                  AND s.type = 'stock'
-                  AND s.name NOT LIKE '%指%'
-                GROUP BY b.branch_name, w.stock_id, b.date
-                ORDER BY b.date
-            """), {"d1": d1, "d120": d120}):
-                names = charted.get(r.underlying_id)
-                if names and r.branch_name in names:
-                    daily_by_stock[r.underlying_id].setdefault(r.branch_name, []).append(
-                        [r.date, int(r.call_amt), int(r.put_amt)])
+            warrant_info = _warrant_info_for_positions(conn, d1, d5)
+            under_close = {
+                (r.stock_id, r.date): float(r.close)
+                for r in conn.execute(text("""
+                    SELECT stock_id, date, close FROM daily_prices
+                    WHERE date >= :d120 AND date <= :d1 AND close IS NOT NULL
+                      AND stock_id IN (SELECT DISTINCT stock_id FROM warrants WHERE stock_id IS NOT NULL)
+                """), {"d1": d1, "d120": d120})
+            }
+            for (sid, day), close in under_close.items():
+                if sid in charted and (sid not in under_last or day > under_last[sid][0]):
+                    under_last[sid] = (day, close)
+            daily_acc: dict[tuple[str, str], dict[str, list[int]]] = {}
+
+            def stream():
+                for r in conn.execute(text("""
+                    SELECT b.branch_name, w.stock_id AS underlying_id, b.stock_id AS warrant_id,
+                           w.kind, b.date, b.net_lots, wd.close
+                    FROM branch_trades b
+                    JOIN warrants w ON w.id = b.stock_id
+                    JOIN stocks s ON s.id = w.stock_id
+                    LEFT JOIN warrant_daily wd ON wd.warrant_id = b.stock_id AND wd.date = b.date
+                    WHERE LENGTH(b.stock_id) = 6 AND b.date >= :d120 AND b.date <= :d1
+                      AND s.type = 'stock'
+                      AND s.name NOT LIKE '%指%'
+                    ORDER BY b.branch_name, w.stock_id, b.stock_id, b.date
+                """), {"d1": d1, "d120": d120}):
+                    names = charted.get(r.underlying_id)
+                    if not names or r.branch_name not in names:
+                        continue
+                    # 逐日金額公式與區間彙總逐字相同(缺收盤以 1.0 計),逐日加總 = 區間總額。
+                    amt = int(r.net_lots or 0) * int(round((r.close if r.close is not None else 1.0) * 1000))
+                    day = daily_acc.setdefault((r.underlying_id, r.branch_name), {}).setdefault(r.date, [0, 0])
+                    day[0 if r.kind == "call" else 1] += amt
+                    yield (r.branch_name, r.underlying_id, r.warrant_id, r.date,
+                           r.net_lots or 0, float(r.close) if r.close is not None else None)
+
+            positions = warrant_positions(
+                stream(), warrant_info=warrant_info, under_close=under_close, as_of=d1,
+                self_issued=lambda branch, wid: _warrant_issuer_group(warrant_info[wid].name) == _branch_broker_group(branch)[0],
+            )
+            for (sid, branch_name), by_date in daily_acc.items():
+                daily_by_stock[sid][branch_name] = [[day, c, p] for day, (c, p) in sorted(by_date.items())]
+            for (branch_name, sid), by_kind in positions.items():
+                positions_by_stock.setdefault(sid, {})[branch_name] = by_kind
+            screen_rows, screen_meta = screening_rows(
+                positions,
+                names={sid: name for (_b, sid, name) in grouped},
+                under_last=under_last,
+                is_hq=lambda branch: _branch_broker_group(branch)[1],
+            )
 
         # 與 warrant-stock-details 同一個誠實性契約:全市場檔也要說出自己的
         # 資料日,否則五個 timeframe 錨在 bd1 卻無處可查。沿用 today.json 的
@@ -2917,12 +2982,31 @@ def _export_warrant_branches(out: Path, engine, date: str, base20: list[str]):
                     for name in sorted(charted.get(stock_id, ()))
                     if codes_by_name.get(name)
                 },
+                # 可選鍵(docs/51):每家券商在這檔標的的權證「仍持有／成本／換算現股均價／
+                # 帳面估算」,認購與認售分開。缺鍵 = 舊分片;{} = 算過、沒有可估的券商。
+                "positions": {
+                    "version": WPOS_VERSION,
+                    "as_of": bd1,
+                    "window_from": d120,
+                    **({"under_last": under_last[stock_id][1], "under_last_date": under_last[stock_id][0]}
+                       if stock_id in under_last else {}),
+                    "branches": positions_by_stock.get(stock_id, {}),
+                },
             }, ensure_ascii=False), encoding="utf-8")
         (detail_dir / "index.json").write_text(json.dumps({
             "version": 1,
             "threshold": WARRANT_BRANCH_DETAIL_MIN_AMOUNT,
             "data_date": bd1,
             "stocks": sorted(detail_by_stock),
+        }, ensure_ascii=False), encoding="utf-8")
+        # 全市場「仍持有(估)」篩選清單(docs/51 §4):/branch 權證分點異動第三個檢視,點了才抓。
+        (branches_dir / "warrant_positions.json").write_text(json.dumps({
+            "version": 1,
+            "definitions_version": WPOS_VERSION,
+            "data_date": bd1,
+            "window_from": d120 if bd1 else None,
+            **screen_meta,
+            "rows": screen_rows,
         }, ensure_ascii=False), encoding="utf-8")
 
 
