@@ -18,6 +18,7 @@
 
 | 台北時間 | 執行者(VPS cron script / GitHub Actions) | 內容 |
 |---|---|---|
+| 平日 08:00(2026-10-13 新增;**pending:正式 crontab 待人類/orchestrator 安裝**,提案行見 `docs/49` §12.6.5) | VPS `vps/scripts/morning-index.sh` | 早上台指期夜盤上線:週末收工 → 等鎖(≤300 s)→ `sync_code` → 每 10 分輪詢 `import-index`(加權/櫃買/台指期一般時段早上必 75,正常)直到今天的 `tx_night` 入庫,截止 08:40;每次印 `morning-index tx_night date=… present=yes|no … at=HH:MM`(期交所最早幾點公布的量測紀錄)→ `export-index`(只重寫 radar.json 的 `indices`、`home/{head,stocks}.json`、`market/indices_hist.json`;資料日讀現有 radar.json,`generated_at` 不動)→ deploy。截止仍無 = 休市/未公布,只寫 log 不通知;失敗只 warn(14:05 收盤輪照常帶上)。約 1–2 分鐘;08:50 盤中 worker、09:00 mid-backfill-publish 之前收工 |
 | 平日 13:15(2026-10-09 新增;**正式 crontab 待人類套用**) | VPS `vps/scripts/adjust-incremental.sh` | 除權息還原因子日增量:安靜窗/mid flag/距下一個排程寫入者 ≤30 分 → 略過;`flock -n` 搶不到 → 略過(notify_skip)→ `compute-adjustments --ex-dates-since 10 --print-ids`(證交所 TWT49U + 櫃買 exDailyQ 只當代號挑選器)→ `compute-adjustments --ids`(逐檔 FinMind,因子邏輯不變)→ `compute-indicators --ids`(全歷史)。不 export/deploy,14:05 輪上線;有因子變動才 notify_ok。旺季 ~260 檔約 20–25 分 |
 | 平日 14:05(舊 14:10) | VPS `vps/scripts/daily-market.sh` | 每 3 分輪詢上市日K(`--require twse:quotes`)至 14:40 → 當日權證彙總 → 指標增量(--days 5)→ 綜合分 → export-json(**含 Fugle 當日 1 分 K spark_day**)→ `wrangler deploy`。截止仍沒到 → warn、不上線。週一題材/地緣已搬到 11:00 |
 | 平日 14:45(舊 15:00) | VPS `vps/scripts/daily-tpex-quotes.sh` | 等鎖(≤45 分)→ 每 3 分輪詢**上櫃日K**(`--require tpex:quotes:0.8`,≥前一交易日 80% 列數)至 15:30 → 權證彙總 + 指標增量 + 分數 → export-json → deploy |

@@ -135,22 +135,49 @@ def _series(conn, market: str, d: str, n: int) -> list[tuple]:
     return [tuple(r) for r in reversed(rows)]
 
 
+def _night_after(conn, d: str) -> tuple | None:
+    """``d`` 之後緊接的那一夜(``d`` 15:00 開盤、次日 05:00 收盤):期交所把它標在 ``d`` 的次一交易日 N,
+    2026-10-13 VPS 實測 N 當天早上就已公布(docs/49 §12.6.5)。條件:最早一列 date > d 的 ``tx_night``,
+    且早於它的最後一個 ``tx`` 日正是 ``d``(= 那一夜的 ``from``)。沒有 → None。"""
+    from sqlalchemy import text
+
+    row = conn.execute(text("""
+        SELECT date, close, change, chg_pct, contract_month, settlement FROM market_indices
+        WHERE market = :m AND date > :d ORDER BY date LIMIT 1
+    """), {"m": src.TX_NIGHT, "d": d}).fetchone()
+    if row is None:
+        return None
+    prev = conn.execute(text(
+        "SELECT MAX(date) FROM market_indices WHERE market = 'tx' AND date < :n"), {"n": row[0]}).scalar()
+    return tuple(row) if prev == d else None
+
+
 def latest_tx_night(conn, d: str) -> dict | None:
-    """``tx`` 項目的 ``night`` 鍵(docs/49 §12.6):≤ ``d`` 最新一列 ``tx_night``。
+    """``tx`` 項目的 ``night`` 鍵(docs/49 §12.6):``d`` 15:00 開盤的那一夜(若已入庫),否則 ≤ ``d`` 最新一列 ``tx_night``。
 
     ``date`` 是 futDataDown 標示的交易日(那一夜**結束**的那一天 05:00);``from`` 是那一夜開始的交易日
     (= 早於 date 的最後一個 ``tx`` 列日期,15:00 開盤),``to`` = from 的次一個日曆日(05:00 收盤;週五夜
     → 週六 05:00,TAIFEX 卻標週一)。沒有更早的 tx 列 → from/to 都 None(前端只標日期)。
     ``change`` 是來源值,基準 = 前一交易日結算價(與同日一般時段列相同);``chg_pct`` 由此推。
-    """
-    rows = _series(conn, src.TX_NIGHT, d, 1)
-    if not rows:
-        return None
-    date, close, change, pct, cm, _settle = rows[-1]
-    from sqlalchemy import text
 
-    prev = conn.execute(text(
-        "SELECT MAX(date) FROM market_indices WHERE market = 'tx' AND date < :d"), {"d": date}).scalar()
+    「d 之後緊接的那一夜」(``_night_after``):早上 ``morning-index.sh`` 先匯入次一交易日標的那一夜,
+    此時 daily_prices 仍停在 d;**全量 export 與窄 export 都走這個函式**,所以早上之後任何一次全量 export
+    (09:00/12:00 mid-backfill-publish、手動)都保留同一個夜盤,不會倒退回上一夜。只認 from == d 的那一夜,
+    再往後(資料日落後兩天以上)不拿。
+    """
+    after = _night_after(conn, d)
+    if after is not None:
+        date, close, change, pct, cm, _settle = after
+        prev = d
+    else:
+        rows = _series(conn, src.TX_NIGHT, d, 1)
+        if not rows:
+            return None
+        date, close, change, pct, cm, _settle = rows[-1]
+        from sqlalchemy import text
+
+        prev = conn.execute(text(
+            "SELECT MAX(date) FROM market_indices WHERE market = 'tx' AND date < :d"), {"d": date}).scalar()
     to = (date_cls.fromisoformat(prev) + timedelta(days=1)).isoformat() if prev else None
     return {"date": date, "from": prev, "to": to, "close": close, "change": change,
             "chg_pct": _pct(close, change, pct), "contract_month": cm}

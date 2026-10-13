@@ -38,6 +38,7 @@ job_zh() {
     adjust-incremental.sh) echo "還原因子日增量" ;;
     warrant-backfill.sh) echo "權證分點回補" ;;
     repair-window.sh) echo "正式修復窗" ;;
+    morning-index.sh) echo "早上夜盤" ;;
     *) echo "${SCRIPT_NAME%.sh}" ;;
   esac
 }

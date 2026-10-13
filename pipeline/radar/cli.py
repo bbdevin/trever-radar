@@ -900,6 +900,23 @@ def cmd_export_intraday(args):
     update_intraday(out, ids, d, cap=None if args.backfill else ROUND_CAP)
 
 
+def cmd_export_index(args):
+    """只重寫指數相關三份檔(docs/49 §12.6.5):早上夜盤收盤入庫後用,不跑 ~15 分鐘的全量 export。
+
+    資料日讀 ``--out`` 底下現有 radar.json 的 data_date。印一行可 grep 的結果:
+    ``export-index date=<d> night=<夜盤交易日>|none close=<收盤>``。
+    """
+    from pathlib import Path
+
+    from .export.index_export import export_index
+    from .export.json_export import DEFAULT_OUT
+
+    info = export_index(Path(args.out) if args.out else DEFAULT_OUT)
+    n = info["night"]
+    print(f"export-index date={info['date']} night={n['date'] if n else 'none'}"
+          + (f" close={n['close']}" if n else ""))
+
+
 def cmd_futures_anomaly_digest(args):
     """印出期貨量異常摘要:第一行標題、其後內文。沒有名單就什麼都不印,exit 0。
 
@@ -1452,6 +1469,12 @@ def main(argv=None):
     eid.add_argument("--backfill", action="store_true",
                      help="no per-round request cap (full union ~275 requests ~ 5 min)")
     eid.set_defaults(fn=cmd_export_intraday)
+
+    eix = sub.add_parser("export-index",
+                         help="rewrite only radar.json indices + home/head.json + market/indices_hist.json "
+                              "(docs/49 §12.6.5 morning tx night)")
+    eix.add_argument("--out", default=None, help="export dir holding radar.json (default web/public/data)")
+    eix.set_defaults(fn=cmd_export_index)
 
     fad = sub.add_parser(
         "futures-anomaly-digest",
