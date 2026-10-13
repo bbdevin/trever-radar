@@ -170,13 +170,76 @@ class CrawlInOrder(unittest.TestCase):
         t0 = time.monotonic()
         results, stats = crawl_in_order(
             [f"t{i}" for i in range(40)], fetch, ["a"], 0, dead_after=2,
-            standby_hosts=["b", "c"], standby_check=check, standby_every=60)
+            standby_hosts=["b", "c"], standby_check=check, standby_every=60, orphan_grace=0)
         self.assertLess(time.monotonic() - t0, 5, "不能等到 standby_every / 硬上限")
         self.assertTrue(stats["a"].dead)
         self.assertEqual(sum(1 for r in results if r.outcome == "failed"), 2)
         self.assertEqual(sum(1 for r in results if r.outcome == "pending"
                              and r.error == "no live mirror"), 38)
         self.assertGreaterEqual(checks["n"], 2, "待命站至少各問過一次")
+
+    def test_supervisor_gives_up_after_the_grace_when_nobody_ever_joins(self):
+        """寬限(docs/47 §8.9)有上限:過了 orphan_grace 仍沒人進來就收工,不等到硬上限。"""
+        def fetch(t, host, interval):
+            raise RuntimeError("down")
+
+        t0 = time.monotonic()
+        results, _ = crawl_in_order(
+            [f"t{i}" for i in range(10)], fetch, ["a"], 0, dead_after=1,
+            standby_hosts=["b"], standby_check=lambda h: False, standby_every=0.01,
+            orphan_grace=0.2)
+        elapsed = time.monotonic() - t0
+        self.assertGreaterEqual(elapsed, 0.2, "寬限內繼續問")
+        self.assertLess(elapsed, 5)
+        self.assertEqual(sum(1 for r in results if r.error == "no live mirror"), 9)
+
+    def test_sole_live_mirror_dies_and_a_standby_mirror_takes_over_within_the_grace(self):
+        """§8.9:一站開爬、那唯一的活站死掉,而其他站幾輪之後才公布 → 寬限內加入、把佇列抓完,
+        不再一死就收工(以前整天會掉到 22:30 第二輪)。"""
+        checks = {"n": 0}
+        lock = threading.Lock()
+
+        def check(host):
+            with lock:
+                checks["n"] += 1
+                return checks["n"] >= 5           # 第 5 輪才公布
+
+        def fetch(t, host, interval):
+            if host == "a":
+                raise RuntimeError("down")
+            time.sleep(0.001)
+            return [{"t": t}]
+
+        results, stats = crawl_in_order(
+            [f"t{i}" for i in range(30)], fetch, ["a"], 0, dead_after=2,
+            standby_hosts=["b"], standby_check=check, standby_every=0.01, orphan_grace=30)
+        self.assertTrue(stats["a"].dead)
+        self.assertTrue(stats["b"].joined_late)
+        self.assertEqual(sum(1 for r in results if r.outcome == "done"), 28)
+        self.assertEqual(sum(1 for r in results if r.outcome == "pending"), 0)
+
+    def test_standby_checks_run_in_parallel(self):
+        """§8.9:待命站各自檢查一次 ~60 秒;逐站做時 4 站一輪 ~4 分鐘,平行做 ~1 分鐘。"""
+        in_flight = {"now": 0, "max": 0}
+        lock = threading.Lock()
+
+        def check(host):
+            with lock:
+                in_flight["now"] += 1
+                in_flight["max"] = max(in_flight["max"], in_flight["now"])
+            time.sleep(0.05)
+            with lock:
+                in_flight["now"] -= 1
+            return False
+
+        def fetch(t, host, interval):
+            time.sleep(0.01)
+            return []
+
+        crawl_in_order([f"t{i}" for i in range(20)], fetch, ["a"], 0,
+                       standby_hosts=["b", "c", "d", "e"], standby_check=check,
+                       standby_every=0.01)
+        self.assertEqual(in_flight["max"], 4, "四個待命站同時檢查")
 
     def test_supervisor_keeps_waiting_while_a_worker_is_alive(self):
         """活 worker 還在抓時,待命站沒過不算理由收工。"""

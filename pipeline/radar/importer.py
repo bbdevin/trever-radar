@@ -1508,9 +1508,11 @@ def probe_branch_day(date: str | None = None, sample: int = 24, threshold: int =
     從 ``--top 0`` 目標池等距抽 ``sample`` 檔,**每一站各抓一次**(釘站、平行、單站間隔
     = ``sleep_s`` × 站數,單站節奏與循序爬相同);抓得到列的算 ok,NoDataError(還沒公布)
     與任何其他失敗都算沒到。ok ≥ ``threshold`` 的站算就緒(``ready_hosts``);就緒的站
-    ≥ ``min_ready_hosts`` 才是「可以開始全量爬了」。門檻站數的理由:只有一站就緒時全量爬
-    只能用那一站(單站 5 秒間隔 → 2,000 檔 10,000 秒,超過硬上限);daily-branches.sh 用 3,
-    其餘站在爬的途中待命、公布了就加進來(mirror_crawl standby)。
+    ≥ ``min_ready_hosts`` 才是「可以開始全量爬了」。daily-branches.sh 2026-10-13 起用 **1**
+    (docs/47 §8.9):一站連續兩次就緒就開爬,其餘站在爬的途中待命、連續兩次通過就加進來
+    (mirror_crawl standby);以前用 3(19:00 起 2),10-12 因此多等了 ~33 分鐘。只有一站時
+    單站 5 秒間隔抓 ~2,700 檔要 ~3.8 小時,所以腳本把抓取上限改成「最晚 23:00」,
+    假空由 _confirm_empties 與 0.98 第一段門檻把關。
     逐站探測是因為五站各自更新時間可能不同(2026-10-07 使用者觀察):一站 17:00 就有、
     另一站 18:30 才有的話,循序輪替的探測要等到多數站都有才過門檻。
 
@@ -1607,6 +1609,34 @@ def previous_ok_rows(source: str, dataset: str, date: str) -> int | None:
 # 的站(20:30 截止照常全量爬的情況),行為與平行化之前一樣由覆蓋率閘門把關。
 BRANCH_MIRROR_CHECK_SAMPLE = 12
 BRANCH_STANDBY_CONSECUTIVE = 2
+# probe-branch-day 存連勝數的檔名(在 config.DATA_DIR 下;內容帶日期)。
+BRANCH_PROBE_STATE_FILE = "branch-probe-state-latest.json"
+
+
+def _probe_ready_hosts(iso_d: str, hosts: list[str],
+                       need: int = BRANCH_STANDBY_CONSECUTIVE) -> list[str]:
+    """探測(probe-branch-day)今天留下的連勝數裡已就緒(≥ ``need``)的站;讀不到/別天 → []。
+
+    給開跑前檢查「一站都沒過」時用(docs/47 §8.9):一站就開爬之後,那唯一的站在開跑前檢查
+    抖一下(10-08 kgieworld 11→1/12)就會落到「五站全用」的退路——還沒公布的站對每一檔都回
+    假空,而確認空的那一步湊不到乾淨站。探測幾分鐘前剛看到它連續兩次過,就照探測的結果開爬,
+    其餘站待命。"""
+    try:
+        saved = json.loads((Path(config.DATA_DIR) / BRANCH_PROBE_STATE_FILE)
+                           .read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    if not isinstance(saved, dict) or saved.get("date") != iso_d \
+            or not isinstance(saved.get("streaks"), dict):
+        return []
+    out = []
+    for h in hosts:
+        try:
+            if int(saved["streaks"].get(h, 0)) >= need:
+                out.append(h)
+        except (TypeError, ValueError):
+            continue
+    return out
 
 
 class MirrorReadinessGate:
@@ -1797,7 +1827,7 @@ def _fetch_branch_targets(targets: list[str], date: str, sleep_s: float,
     all_hosts = list(fubon.MIRROR_HOSTS)
     per_host = sleep_s * len(all_hosts)
     hosts = all_hosts[:workers]
-    # 哪些站今天已經公布:抽 6 檔每站各問一次(釘站、平行,約 30 秒)。
+    # 哪些站今天已經公布:抽 12 檔每站各問一次(釘站、平行,約 60 秒)。
     picks = _evenly_spaced(todo or targets, BRANCH_MIRROR_CHECK_SAMPLE)
     counts = probe_mirrors(picks, date, hosts, per_host) if picks else {}
     need = max(1, len(picks) - 1)
@@ -1805,9 +1835,16 @@ def _fetch_branch_targets(targets: list[str], date: str, sleep_s: float,
     standby = [h for h in hosts if h not in ready]
     report["mirror_check"] = counts
     if not ready:
-        print(f"branch crawl: no mirror passed the readiness check "
-              f"({counts}); using all {len(hosts)} mirrors", flush=True)
-        ready, standby = hosts, []
+        probed = _probe_ready_hosts(iso(date), hosts)
+        if probed:
+            print(f"branch crawl: no mirror passed the readiness check ({counts}); "
+                  f"starting on the probe-ready mirror(s) {probed}, others standby", flush=True)
+            ready = probed
+            standby = [h for h in hosts if h not in ready]
+        else:
+            print(f"branch crawl: no mirror passed the readiness check "
+                  f"({counts}); using all {len(hosts)} mirrors", flush=True)
+            ready, standby = hosts, []
     print(f"branch crawl: {len(ready)}/{len(hosts)} mirror(s) ready, "
           f"per-host interval {per_host:.1f}s: {ready}; standby: {standby}", flush=True)
 
@@ -1818,7 +1855,9 @@ def _fetch_branch_targets(targets: list[str], date: str, sleep_s: float,
         print(f"branch {sid} FAILED @{host}: {str(exc)[:100]}", flush=True)
 
     # 待命站的檢查:與開跑前同一條規則(12 檔 ≥ 11),而且要連續兩次通過才加入
-    # (2026-10-08 一檔檢查放進了只公布一半的 cathay)。每站 12 請求/5 分鐘,仍遠低於 0.2 req/s。
+    # (2026-10-08 一檔檢查放進了只公布一半的 cathay)。各站平行檢查、每輪之間睡
+    # mirror_crawl.STANDBY_RECHECK_SECONDS(120 秒):一站 12 請求/~180 秒 = 0.067 req/s,
+    # 仍是單站上限 0.2 req/s 的三分之一(docs/47 §8.9)。
     gate = MirrorReadinessGate(BRANCH_STANDBY_CONSECUTIVE)
 
     def standby_check(host: str) -> bool:
