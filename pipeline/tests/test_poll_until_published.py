@@ -98,9 +98,9 @@ class RoundsUseTheWaitingLock(unittest.TestCase):
         probe = code.index('poll_until "branch-probe"')
         line = code[code.rfind("\n", 0, probe) + 1:code.index("\n", probe)]
         self.assertIn("POLL_HOLD_DB_LOCK=0 poll_until", line)
-        self.assertIn("branch_probe_attempt", line, "探測指令包在函式裡(依時刻選站數門檻)")
+        self.assertIn("branch_probe_attempt", line, "探測指令包在函式裡")
         self.assertIn("probe-branch-day", code[:probe], "函式要定義在呼叫之前")
-        self.assertIn(" 2030 600 ", line, "16:30 起每 10 分鐘,最晚 20:30(docs/47 §8)")
+        self.assertIn(" 2030 240 ", line, "16:30 起每 4 分鐘(+探測 ~1 分),最晚 20:30(docs/47 §8.9)")
         self.assertLess(code.rfind("release_db_lock", 0, probe), probe)
         self.assertGreater(code.rfind("release_db_lock", 0, probe), -1,
                            "探測前要先放 DB 鎖")

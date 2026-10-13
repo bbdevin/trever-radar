@@ -16,8 +16,12 @@ max(1 秒, 來源回應時間) + 寫入。正式機實測 1.66 秒/檔(2026-10-0
   視為死站退出,剩下的標的由活站接手(第一輪抓失敗的標的照舊在重試輪再抓一次,
   重試輪只用活站)。
 * **還沒公布的站先待命**(``standby_hosts``):開爬時只有部分站公布了,其餘站由一條
-  監督執行緒每 ``standby_every`` 秒各問一次(一個請求),一過就加進來當 worker。
-  2026-10-07 驗證者抓到的洞:只有一站就緒時 2,000 檔 × 5 秒 = 10,000 秒,超過硬上限。
+  監督執行緒每 ``standby_every`` 秒**平行**各問一次(``standby_check``),一過就加進來當
+  worker。2026-10-13 起開爬只要一站就緒(docs/47 §8.9),吞吐靠待命站盡快加入:檢查
+  平行做(以前逐站做,4 站 × ~60 秒 + 300 秒 = 每輪 ~9 分鐘),間隔 120 秒。
+* **沒有活 worker 時的寬限**(``orphan_grace``):活站全死、待命站又還沒過,以前這一輪
+  就收工(剩下的 pending)。一站開爬時「唯一的活站死掉」比以前容易發生,而其他站通常
+  再 20–40 分鐘就公布,所以先繼續問待命站 ``orphan_grace`` 秒,過了仍沒人才收工。
 * **可中止**(``stop``):收到 SIGTERM 時呼叫端 set 這個 event,worker 不再領新工作、
   做完手上那一檔就收工,呼叫端再把已完成的結果寫 checkpoint。
 * **不寫資料庫**:worker 只抓與解析;寫入由呼叫端(主執行緒)在所有結果到齊之後
@@ -34,6 +38,7 @@ from __future__ import annotations
 
 import queue
 import threading
+import time
 from dataclasses import dataclass, field
 
 from .providers import NoDataError
@@ -41,8 +46,12 @@ from .providers import NoDataError
 # 連續失敗幾次就把一站當死站(退出本輪;重試輪不再用它)。5 次 × (30 秒逾時 ×
 # 3 次重試 + 退避) 最多約 9 分鐘的白等,之後那一站就不再拖任何人。
 DEAD_AFTER_CONSECUTIVE_FAILURES = 5
-# 待命站多久再問一次「公布了沒」(秒)。每次一個請求,遠低於單站 0.2 req/s 的上限。
-STANDBY_RECHECK_SECONDS = 300
+# 待命站兩輪檢查之間睡多久(秒)。分點輪的檢查是每站 12 檔、單站間隔 5 秒(~60 秒),
+# 所以一站每 ~180 秒 12 個請求 = 0.067 req/s,仍是單站上限 0.2 req/s 的三分之一;
+# 連續兩次通過才加入 → 公布後 ~3–6 分鐘加入(docs/47 §8.9)。
+STANDBY_RECHECK_SECONDS = 120
+# 沒有活 worker、待命站也還沒過時,再等多久才收工(秒)。見模組說明。
+NO_WORKER_GRACE_SECONDS = 1800
 
 
 @dataclass
@@ -69,17 +78,22 @@ def crawl_in_order(targets: list[str], fetch, hosts: list[str], per_host_interva
                    *, dead_after: int = DEAD_AFTER_CONSECUTIVE_FAILURES,
                    on_failure=None, on_result=None, stop: threading.Event | None = None,
                    standby_hosts: list[str] | None = None, standby_check=None,
-                   standby_every: float = STANDBY_RECHECK_SECONDS,
+                   standby_every: float | None = None, orphan_grace: float | None = None,
                    ) -> tuple[list[Result], dict[str, HostStats]]:
     """用 ``hosts`` 各一個 worker 抓完 ``targets``,回傳**照 targets 順序**的結果。
 
     ``fetch(target, host, interval)`` 回傳列(list[dict]);``NoDataError`` = empty,
     其他例外 = failed。``on_failure(target, host, exc)`` 可選,失敗時立刻呼叫(印 log)。
-    ``standby_check(host) -> bool`` 可選:待命站公布了沒(一個請求);True 就加進來。
-    沒有活站把佇列抓完、或被 ``stop`` 中止時,剩下的標的一律 ``pending``
-    (error="no live mirror" / "stopped"),呼叫端的重試輪、checkpoint 與覆蓋率閘門照常處理。
+    ``standby_check(host) -> bool`` 可選:待命站公布了沒;True 就加進來。同一輪的各站檢查
+    **平行**呼叫(每站一條執行緒),所以它必須是執行緒安全的。``standby_every`` /
+    ``orphan_grace`` 省略 = 模組常數(呼叫時才讀,測試可 patch)。
+    沒有活站把佇列抓完(且寬限 ``orphan_grace`` 秒內沒有待命站加入)、或被 ``stop`` 中止時,
+    剩下的標的一律 ``pending``(error="no live mirror" / "stopped"),呼叫端的重試輪、
+    checkpoint 與覆蓋率閘門照常處理。
     """
     stop = stop if stop is not None else threading.Event()
+    standby_every = STANDBY_RECHECK_SECONDS if standby_every is None else standby_every
+    orphan_grace = NO_WORKER_GRACE_SECONDS if orphan_grace is None else orphan_grace
     stats = {h: HostStats() for h in hosts}
     results: dict[int, Result] = {}
     results_lock = threading.Lock()
@@ -144,22 +158,33 @@ def crawl_in_order(targets: list[str], fetch, hosts: list[str], per_host_interva
     for t in threads:
         t.start()
 
-    # 待命站的監督:每 standby_every 秒各問一次,過了就起一條 worker。
+    # 待命站的監督:每 standby_every 秒**平行**各問一次,過了就起一條 worker。
     standby = list(standby_hosts or [])
     if standby and standby_check is not None:
         def supervisor() -> None:
             pending = list(standby)
+            orphaned_since: float | None = None
             while pending and not stop.is_set() and not work.empty():
+                verdict: dict[str, bool] = {}
+
+                def _check(host: str) -> None:
+                    try:
+                        verdict[host] = bool(standby_check(host))
+                    except Exception:  # noqa: BLE001 - a check never kills the crawl
+                        verdict[host] = False
+
+                checkers = [threading.Thread(target=_check, args=(h,), daemon=True,
+                                             name=f"branch-standby-{h}") for h in pending]
+                for t in checkers:
+                    t.start()
+                for t in checkers:
+                    t.join()
+                if stop.is_set() or work.empty():
+                    return
                 still = []
                 joined = 0
                 for host in pending:
-                    if stop.is_set() or work.empty():
-                        return
-                    try:
-                        ok = bool(standby_check(host))
-                    except Exception:  # noqa: BLE001 - a check never kills the crawl
-                        ok = False
-                    if ok:
+                    if verdict.get(host):
                         with results_lock:
                             stats[host] = HostStats(joined_late=True)
                         t = threading.Thread(target=worker, args=(host,),
@@ -170,14 +195,25 @@ def crawl_in_order(targets: list[str], fetch, hosts: list[str], per_host_interva
                     else:
                         still.append(host)
                 pending = still
-                # 沒有活著的 worker、這一輪待命站也一個都沒進來:再等下去只是等硬上限。
+                # 沒有活著的 worker、這一輪待命站也一個都沒進來:寬限 orphan_grace 秒內繼續問
+                # (唯一的活站死掉時,其他站常常再一會兒就公布);過了寬限再等下去只是等硬上限,
                 # 剩下的標的回 pending/"no live mirror"(舊行為),交給重試輪 / 76 / 覆蓋率閘門。
                 with results_lock:
                     nobody = live["n"] == 0
                 if pending and nobody and joined == 0:
-                    print(f"branch crawl: no live mirror and {len(pending)} standby mirror(s) "
-                          f"still not ready; giving up on {work.qsize()} target(s)", flush=True)
-                    return
+                    now = time.monotonic()
+                    if orphaned_since is None:
+                        orphaned_since = now
+                        if orphan_grace > 0:
+                            print(f"branch crawl: no live mirror; still checking "
+                                  f"{len(pending)} standby mirror(s) for up to "
+                                  f"{orphan_grace:.0f}s", flush=True)
+                    if now - orphaned_since >= orphan_grace:
+                        print(f"branch crawl: no live mirror and {len(pending)} standby mirror(s) "
+                              f"still not ready; giving up on {work.qsize()} target(s)", flush=True)
+                        return
+                else:
+                    orphaned_since = None
                 if pending:
                     stop.wait(standby_every)
         sup = threading.Thread(target=supervisor, name="branch-standby", daemon=True)

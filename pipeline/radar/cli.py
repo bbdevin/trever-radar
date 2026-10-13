@@ -438,7 +438,7 @@ BRANCH_PROBE_PENDING_EXIT = 75
 
 def cmd_probe_branch_day(args):
     """唯讀探測分點來源公布進度(不寫 DB、不記 import_logs)。一行輸出給 cron log。"""
-    from .importer import probe_branch_day
+    from .importer import BRANCH_PROBE_STATE_FILE, probe_branch_day
 
     from pathlib import Path
 
@@ -447,7 +447,8 @@ def cmd_probe_branch_day(args):
     state_path = args.state_file
     if state_path is None and args.min_consecutive > 1:
         # 預設放 data/(容器內 /app/data,主機 $REPO/data);內容帶日期,別天的自動作廢。
-        state_path = str(Path(_config.DATA_DIR) / "branch-probe-state-latest.json")
+        # 抓取(import-branch-trades --stage-to)開跑前檢查一站都沒過時讀它(docs/47 §8.9)。
+        state_path = str(Path(_config.DATA_DIR) / BRANCH_PROBE_STATE_FILE)
     info = probe_branch_day(args.date, args.sample, args.threshold, args.sleep,
                             min_ready_hosts=args.min_ready_hosts,
                             min_consecutive=args.min_consecutive, state_path=state_path)
@@ -1166,7 +1167,8 @@ def main(argv=None):
     pbd.add_argument("--sleep", type=float, default=1.0, help="request interval")
     pbd.add_argument("--min-ready-hosts", type=int, default=1,
                      help="exit 0 only when at least N mirrors passed the threshold "
-                          "(one mirror alone cannot crawl 2,000 targets inside the hard limit)")
+                          "(daily-branches.sh uses 1: the crawl starts on the first ready "
+                          "mirror and late mirrors join as standby, docs/47 §8.9)")
     pbd.add_argument("--min-consecutive", type=int, default=1,
                      help="a mirror counts as ready only after N consecutive probes passed "
                           "(flicker guard; streaks are kept in --state-file)")

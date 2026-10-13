@@ -334,7 +334,7 @@ class LockPhasesInTheScript(unittest.TestCase):
 
     def test_fetch_is_bounded_and_writes_nothing(self):
         line = next(ln for ln in self.lines if 'run_step_or_fail "fetch-branch-trades"' in ln)
-        self.assertIn("radar_timeout 9000", line, "抓取要有硬上限")
+        self.assertIn('radar_timeout "$(branch_fetch_timeout)"', line, "抓取要有硬上限")
         self.assertIn("--workers 5", line)
         self.assertIn('--stage-to "$STAGE_FILE"', line, "只抓不寫:結果落暫存檔")
         self.assertIn("--sleep 1.0", line, "全域間隔不變(單站 = 1.0 × 5 秒)")
@@ -386,41 +386,59 @@ class LockPhasesInTheScript(unittest.TestCase):
         self.assertIn("fast publish skipped", skipped)
         self.assertIn("notify_warn", skipped)
 
-    def test_probe_requires_two_consecutive_passes_and_three_hosts_until_1900_then_two(self):
-        """§8.8 第四次驗證:2 站只剩 ~5% 餘裕 → 19:00 前要 3 站,之後 2 站;抓取上限 9000 秒。"""
+    def test_probe_starts_on_one_ready_mirror_with_two_consecutive_passes(self):
+        """§8.9(2026-10-13):一站連續兩次就緒就開爬(以前 19:00 前 3 站、之後 2 站);
+        探測每 4 分鐘(+探測本身 ~1 分);抓取上限 = 最晚 23:00、至少 9000 秒。"""
         line = next(ln for ln in self.lines if "probe-branch-day" in ln)
-        self.assertIn('--min-ready-hosts "$need"', line)
+        self.assertIn('--min-ready-hosts "$BRANCH_PROBE_MIN_READY_HOSTS"', line)
         self.assertIn("--min-consecutive 2", line)
-        m = re.search(r"branch_probe_attempt\(\)\s*\{(.*?)\n\}", self.code, re.S)
-        self.assertIsNotNone(m)
-        body = m.group(1)
-        self.assertIn("local need=3", body)
-        self.assertRegex(body, r'-ge "\$BRANCH_PROBE_THREE_HOSTS_UNTIL" \]; then\n\s*need=2')
-        self.assertIn('BRANCH_PROBE_THREE_HOSTS_UNTIL="${BRANCH_PROBE_THREE_HOSTS_UNTIL:-1900}"', self.code)
-        self.assertIn('poll_until "branch-probe" 2030 600 branch_probe_attempt', self.code)
+        self.assertIn('BRANCH_PROBE_MIN_READY_HOSTS="${BRANCH_PROBE_MIN_READY_HOSTS:-1}"', self.code)
+        self.assertNotIn("THREE_HOSTS", self.code)
+        self.assertIn('poll_until "branch-probe" 2030 240 branch_probe_attempt', self.code)
+        self.assertIn('BRANCH_FETCH_DEADLINE_HHMM="${BRANCH_FETCH_DEADLINE_HHMM:-2300}"', self.code)
         fetch = next(ln for ln in self.lines if 'run_step_or_fail "fetch-branch-trades"' in ln)
-        self.assertIn("radar_timeout 9000", fetch)
-        # 「當天一定有人上線」:第二輪等來源鎖的上限要蓋過第一輪最壞收工(20:30 + 9000 s + ~50 分 ≈ 23:50)。
+        self.assertIn('radar_timeout "$(branch_fetch_timeout)"', fetch)
+        self.assertLess(self._idx("branch_fetch_timeout() {"), self._idx('run_step_or_fail "fetch-branch-trades"'))
+        # 「當天一定有人上線」:第二輪等來源鎖的上限要蓋過第一輪最壞收工(23:00 抓完 + ~50 分 ≈ 23:50)。
         self.assertIn("acquire_branch_source_lock_wait 5400", self.code)
 
-    def test_probe_attempt_picks_three_hosts_before_the_cutoff_and_two_after(self):
-        """stub harness:branch_probe_attempt 依台北時刻決定 --min-ready-hosts。"""
+    def test_probe_attempt_passes_the_min_ready_hosts_override(self):
+        """stub harness:預設 1 站;crontab 前綴 BRANCH_PROBE_MIN_READY_HOSTS=3 = 回滾。"""
         if not _bash_available():
             self.skipTest("需要 bash")
         fn = re.search(r"(branch_probe_attempt\(\)\s*\{.*?\n\})", self.code, re.S).group(1)
         r = _run_harness(f"""
 radar_timeout() {{ echo "ARGS $*"; }}
 ROUND_DATE="2026-10-08"
-BRANCH_PROBE_THREE_HOSTS_UNTIL=1900
+BRANCH_PROBE_MIN_READY_HOSTS=1
 {fn}
-taipei_date() {{ echo 1859; }}; branch_probe_attempt
-taipei_date() {{ echo 1900; }}; branch_probe_attempt
-taipei_date() {{ echo 2029; }}; branch_probe_attempt
-BRANCH_PROBE_THREE_HOSTS_UNTIL=2100
-taipei_date() {{ echo 2029; }}; branch_probe_attempt
+branch_probe_attempt
+BRANCH_PROBE_MIN_READY_HOSTS=3
+branch_probe_attempt
 """)
         needs = re.findall(r"--min-ready-hosts (\d)", r.stdout)
-        self.assertEqual(needs, ["3", "2", "2", "3"], r.stdout + r.stderr)
+        self.assertEqual(needs, ["1", "3"], r.stdout + r.stderr)
+        self.assertIn("--min-consecutive 2", r.stdout)
+
+    def test_fetch_timeout_runs_to_the_2300_deadline_but_never_below_9000s(self):
+        """stub harness:18:00 開爬 → 5 小時(18,000 s);20:30 → 9000;22:30 第二輪 → 9000(下限);
+        跨午夜(時鐘已是 D+1)→ 9000,不會算出一整天。"""
+        if not _bash_available():
+            self.skipTest("需要 bash")
+        fn = re.search(r"(branch_fetch_timeout\(\)\s*\{.*?\n\})", self.code, re.S).group(1)
+        r = _run_harness(f"""
+ROUND_DATE="2026-10-12"
+BRANCH_FETCH_DEADLINE_HHMM=2300
+{fn}
+clock() {{ eval "taipei_date() {{ if [ \\"\\$1\\" = +%F ]; then echo $1; else echo $2; fi; }}"; }}
+clock 2026-10-12 1800; echo "T $(branch_fetch_timeout)"
+clock 2026-10-12 1635; echo "T $(branch_fetch_timeout)"
+clock 2026-10-12 2030; echo "T $(branch_fetch_timeout)"
+clock 2026-10-12 2230; echo "T $(branch_fetch_timeout)"
+clock 2026-10-13 0010; echo "T $(branch_fetch_timeout)"
+""")
+        got = re.findall(r"(?m)^T (\d+)$", r.stdout)
+        self.assertEqual(got, ["18000", "23100", "9000", "9000", "9000"], r.stdout + r.stderr)
 
     def test_every_date_sensitive_call_uses_round_date_not_the_clock(self):
         """第五次驗證(2026-10-08):第二輪可能等鎖到 00:00 之後,台北「今天」= D+1。
@@ -441,13 +459,16 @@ taipei_date() {{ echo 2029; }}; branch_probe_attempt
                 tail = self.code[m.end():m.end() + 16]
                 self.assertTrue(tail.startswith(' "$ROUND_DATE"'),
                                 f"{fn} 必須帶 $ROUND_DATE:…{self.code[m.start()-20:m.end()+16]!r}")
-        # taipei_date 只准用在:定 ROUND_DATE、log 時戳、探測站數的時刻門檻、資券的 21:00 判斷。
+        # taipei_date 只准用在:定 ROUND_DATE、log 時戳、抓取上限的 23:00 截止(含跨午夜判斷)、
+        # 資券的 21:00 判斷。
         for ln in self.lines:
             if "taipei_date" not in ln:
                 continue
             s = ln.strip()
             ok = (s.startswith("ROUND_DATE=") or "daily-branches start" in s or "daily-branches done" in s
-                  or "BRANCH_PROBE_THREE_HOSTS_UNTIL" in s or "-ge 21" in s or "printf" in s)
+                  or s == 'if [ "$(taipei_date +%F)" != "$ROUND_DATE" ]; then'
+                  or s == 'now_hhmm="$(taipei_date +%H%M)"'
+                  or "-ge 21" in s or "printf" in s)
             self.assertTrue(ok, f"taipei_date 出現在不該看時鐘的地方:{s}")
 
     @unittest.skipUnless(_bash_available(), "需要 bash + flock + fuser")

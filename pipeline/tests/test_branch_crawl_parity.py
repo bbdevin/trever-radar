@@ -517,6 +517,118 @@ class FalseEmptiesFromAPartialMirror(unittest.TestCase):
         self.assertRegex(out.getvalue(), r"self_confirmed=1")
 
 
+class SingleMirrorStart(unittest.TestCase):
+    """docs/47 §8.9(2026-10-13):一站就緒就開爬,其餘站待命、連續兩次通過就加入。
+    安全性靠的是既有的機制:假空要乾淨站確認、加入的站不等於被信任。"""
+
+    H = fubon.MIRROR_HOSTS
+
+    def _crawl(self, *, partial: dict, standby_ok: set, precheck_ok: set,
+               probe_state: dict | None = None):
+        """開跑前檢查只讓 ``precheck_ok`` 過;待命站的檢查 ``standby_ok`` 的過、其他永遠不過。
+        回傳 (stage payload, import 結果, 實際 HTTP 呼叫, log)。"""
+        import contextlib
+        import io
+
+        from radar import mirror_crawl
+
+        def fake_probe(picks, date, hosts, per_host):
+            if len(hosts) > 1:                                   # 開跑前檢查(五站一次)
+                return {h: (len(picks) if h in precheck_ok else 0) for h in hosts}
+            return {h: (len(picks) if h in standby_ok else 0) for h in hosts}
+
+        calls = []
+        out = io.StringIO()
+        with _Runner() as r, \
+             mock.patch.object(fubon, "get_text",
+                               side_effect=_http_stub(calls, partial, latency=0.01)), \
+             mock.patch("radar.importer.probe_mirrors", side_effect=fake_probe), \
+             mock.patch.object(mirror_crawl, "STANDBY_RECHECK_SECONDS", 0.01), \
+             contextlib.redirect_stdout(out):
+            if probe_state is not None:
+                (r.dir / "branch-probe-state-latest.json").write_text(
+                    json.dumps(probe_state), encoding="utf-8")
+            stage = r.dir / "stage.json"
+            import_branch_trades(DATE_COMPACT, top=0, warrants=0, sleep_s=0, workers=5,
+                                 stage_to=stage)
+            payload = json.loads(stage.read_text(encoding="utf-8"))
+            info = import_branch_trades(from_stage=stage, top=0, warrants=0, sleep_s=0)
+            snap = r.snapshot()
+        return payload, info, snap, calls, out.getvalue()
+
+    def _committed_false_empties(self, payload) -> list[str]:
+        return [x["sid"] for x in payload["results"]
+                if x["outcome"] == "empty" and x["sid"] not in EMPTY]
+
+    def test_one_ready_mirror_starts_and_late_mirrors_join_including_a_partial_one(self):
+        """開跑時只有 H0 過;H1(完整)與 H4(只公布 12 檔)之後通過待命檢查加入。
+        H4 的假空全部由別站救回,寫進去的列與循序爬位元級相同。"""
+        seq = _run(1, False, [])
+        h0, h1, h4 = self.H[0], self.H[1], self.H[4]
+        published = set(sorted(STOCKS)[:12])
+        payload, info, snap, calls, log = self._crawl(
+            partial={h4: published}, standby_ok={h1, h4}, precheck_ok={h0})
+        self.assertIn("1/5 mirror(s) ready", log)
+        mirrors = payload["report"]["mirrors"]
+        self.assertFalse(mirrors[h0]["late"])
+        self.assertTrue(mirrors[h1]["late"] and mirrors[h4]["late"], "待命站加入了")
+        self.assertNotIn(self.H[2], mirrors, "沒通過檢查的站不參與")
+        self.assertGreater(len([c for c in calls if c[1] == h4 and c[0] not in published
+                                and c[0] not in EMPTY]), 0, "H4 真的回了假空(測試前提)")
+        self.assertEqual(self._committed_false_empties(payload), [])
+        self.assertEqual((info["done"], info["empty"], info["failed"]), (37, len(EMPTY), 0))
+        self.assertEqual(snap["raw"], seq["raw"])
+        self.assertEqual(snap["dim"], seq["dim"])
+
+    def test_the_first_ready_mirror_itself_is_partial(self):
+        """開爬的那一站其實只公布了一部分(探測抽樣剛好都抽到已公布的):它回的空在確認時
+        一律交給別站——救回或標 failed,**絕不以 empty 寫入**。"""
+        h0, h1 = self.H[0], self.H[1]
+        published = set(sorted(STOCKS)[:20])
+        payload, info, snap, calls, log = self._crawl(
+            partial={h0: published}, standby_ok={h1}, precheck_ok={h0})
+        self.assertTrue(payload["report"]["mirrors"][h1]["late"])
+        self.assertEqual(self._committed_false_empties(payload), [],
+                         "半公布的開爬站回的空不准被當成「當天沒有分點」")
+        self.assertEqual(info["empty"], len(EMPTY) - sum(
+            1 for x in payload["results"] if x["sid"] in EMPTY and x["outcome"] == "failed"))
+        self.assertTrue(all(x["outcome"] != "done" for x in payload["results"]
+                            if x["sid"] in EMPTY), "真空不會變成 done")
+
+    def test_precheck_flicker_starts_on_the_probe_ready_mirror_not_on_all_five(self):
+        """開跑前檢查一站都沒過(唯一就緒的站抖了一下),但探測剛看到 H0 連續兩次過 →
+        照探測開爬,其餘站待命;不落到「五站全用」(沒公布的站會對每一檔回假空)。"""
+        h0 = self.H[0]
+        payload, info, snap, calls, log = self._crawl(
+            partial={h: set() for h in self.H[1:]}, standby_ok=set(), precheck_ok=set(),
+            probe_state={"date": DATE, "streaks": {h0: 2, self.H[1]: 1}})
+        self.assertIn("starting on the probe-ready mirror(s)", log)
+        self.assertEqual({c[1] for c in calls}, {h0}, "只有 H0 抓;沒公布的站一個請求都沒有")
+        self.assertEqual(set(payload["report"]["mirrors"]), {h0})
+        self.assertEqual(info["done"], 37)
+
+    def test_precheck_fallback_ignores_another_days_probe_state(self):
+        h0 = self.H[0]
+        payload, _, _, calls, log = self._crawl(
+            partial={}, standby_ok=set(), precheck_ok=set(),
+            probe_state={"date": "2026-10-06", "streaks": {h0: 2}})
+        self.assertIn("using all 5 mirrors", log, "別天的探測結果不算(舊退路)")
+        self.assertEqual(len(payload["report"]["mirrors"]), 5)
+
+    def test_probe_ready_hosts_unit(self):
+        from radar import importer
+        with _Runner() as r:
+            p = r.dir / importer.BRANCH_PROBE_STATE_FILE
+            self.assertEqual(importer._probe_ready_hosts(DATE, list(self.H)), [], "沒有檔")
+            p.write_text("{not json", encoding="utf-8")
+            self.assertEqual(importer._probe_ready_hosts(DATE, list(self.H)), [])
+            p.write_text(json.dumps({"date": DATE, "streaks": {
+                self.H[2]: 3, self.H[0]: 2, self.H[1]: 1, self.H[3]: "x", "https://other": 9}}),
+                encoding="utf-8")
+            self.assertEqual(importer._probe_ready_hosts(DATE, list(self.H)),
+                             [self.H[0], self.H[2]], "照站序、≥2、壞值略過、不認得的站略過")
+
+
 class StageResumeRules(unittest.TestCase):
     """續抓只接「同一天、未完成、形狀正確」的暫存檔;其他一律當不存在、整份重爬。"""
 
