@@ -2,11 +2,20 @@
 
 > 單一進度真相。每完成一個里程碑就更新本檔。規格細節看各編號文件,別寫在這裡。
 
-## 2026-10-13 分點一站就緒就開爬(`docs/47` §8.9;程式完成於分支、未合 main、未上線;不動 crontab)
+## 2026-10-13 分點一站就緒就開爬(`docs/47` §8.9;verifier CONFIRMED,已合 main 2026-10-13 11:54,當天 16:30 輪起生效;不動 crontab)
 
 - **為什麼**:10-12 sinotrade 18:34 已連續兩次就緒,舊門檻要 3 站(19:00 起 2 站)→ 19:07 才開爬、20:15 上線。改成**一站連續兩次就緒就開爬**、其餘站待命加入;探測 600 → 240 s(每站 0.04 req/s)、待命檢查平行且 300 → 120 s(每站 0.067 req/s,單站 5 s 節流不變)、抓取上限改「最晚 23:00、至少 9000 s」、唯一活站死掉時寬限 1800 s、開跑前檢查抖掉時照探測結果開爬(不落到五站全用)。假空仍由 `_confirm_empties`(乾淨站確認)、0.98 第一段門檻、22:30 重爬把關。回滾:crontab 前綴 `BRANCH_PROBE_MIN_READY_HOSTS=3`。
 - **預期**:10-12 → ~20:01–20:06 上線(省 ~9–14 分)、10-08 → 省 ~8 分;不是 30 分,因為等的那段只有一站(0.2 檔/s),爬完時刻主要由第 3–5 站幾點公布決定(推導見 §8.9)。請求量每天多 ~1,300(探測 + 待命檢查),單站速率不變。
 - **驗證**:pytest 全套 1741 passed(新:單站開爬 + 待命加入 + 半公布站假空不以 empty 寫入、探測結果退路、寬限接手、平行檢查、23:00 上限 bash harness)。**待人類**:合 main 後第一個交易日照 §8.9「核對」看 log。
+
+## 2026-10-13 台指期夜盤早上上線(`docs/49` §12.6.5;verifier CONFIRMED,已合 main;**crontab 待安裝**)
+
+- **verifier 殘差(低)**:①`import-index` 對 TWSE/TPEx 任一錯誤回 1 → 早上這輪直接 warn 收工,即使 `tx_night` 已入庫(14:05 補上,只是晚)。②成功通知以 DB 有今天 `tx_night` 為準,若前一天 export 沒上線(data_date 落後兩日)網站顯示的會是較舊那一夜。③每月 16 日 07:00 monthly-directors 也拿 DB 鎖(§12.6.5 漏列;最壞是 300 s 等鎖逾時告警)。
+
+- **事實**:2026-10-13 11:25 VPS probe → futDataDown TX 2026-10-13 一般 0 列、盤後 6 列(202610 = 48946.0,−399)。期交所在 D 早上就公布前一交易日 15:00 → D 05:00 那一夜;最早幾點尚未量到。
+- **做了什麼**:①新 `vps/scripts/morning-index.sh`(等鎖 ≤300 s → sync_code → 每 10 分 `import-index` 輪詢到今天的 `tx_night` 入庫、截止 08:40 → `export-index` → deploy;每次印 `morning-index tx_night … present=yes|no … at=HH:MM` 作為公布時刻量測;截止沒有只寫 log,失敗只 warn)。②新 CLI `radar export-index`:只重寫 radar.json 的 `indices`、`home/{head,stocks}.json`、`market/indices_hist.json`,資料日讀現有 radar.json、`generated_at` 不動,與全量 export 逐位元相同。③`latest_tx_night` 也收「d 15:00 開盤那一夜」(from == d),全量與窄 export 一致,09:00/12:00 mid-backfill-publish 不會倒退回上一夜。④走勢 sheet 1日 夜盤:日內檔還是上一夜時不畫舊線,標頭/副標改用 head 的這一夜收盤(`nightCurveIsOlder`),圖區說明分線下午才有。
+- **驗證**:pytest `test_index_export.py`(逐位元對照全量 export、DB 沒變不改位元組、鍵位置、缺 radar.json、CLI 行、夜盤選擇規則)、`test_morning_index_script.py`(原始碼守衛 + bash 實跑 8 條路徑:第一次就有、第二次才有且等待時放鎖、截止靜默、匯入/匯出/上線失敗 warn、週末)、`test_market_index.py`(週一早上規則更新)+ 全套;web node 全套(`marketBrief.test.ts` +1 早上狀態)、`TZ=America/Los_Angeles`、`tsc`。
+- **待人類/orchestrator**:①合 main。②安裝 crontab 行 `0  8 * * 1-5  bash /home/huang/trever-radar/vps/scripts/morning-index.sh >> /home/huang/radar-cron.log 2>&1`(理由與鎖分析見 `docs/49` §12.6.5、`docs/08` §0)。③上線後一週看 `grep 'morning-index tx_night' ~/radar-cron.log` 回填最早公布時刻;若 08:00 前就有,可把時刻提前(06:30–07:30)。
 
 ## 2026-10-12 權證分點左買右賣 ＋ 持有成本／帳面估算／進場日 ＋ 仍持有(估)篩選 ＋ 深連結(`docs/51`;程式完成於分支、未合 main、未上線;v3.8)
 

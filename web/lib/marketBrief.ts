@@ -197,6 +197,23 @@ export function isNightNewer(n: Pick<TxNight, "date"> | undefined, txDate: strin
   return !!n && !!txDate && n.date > txDate;
 }
 
+/**
+ * 早上(docs/49 §12.6.5,`morning-index.sh`):head.json 的 `night` 已是今天 05:00 收完的那一夜,而夜盤 1 分線
+ * (期交所逐筆成交檔 ~16:40 才有)還是上一夜。線比 `night` 舊 → true:sheet 不畫那條舊線(標頭/副標/統計會
+ * 和卡上的夜盤數字對不上),改用 `night` 的收盤,圖區說明這一夜的分線下午才有。
+ * 比法:兩邊都有 05:00 收盤日(`night.to`、線的 `nightSpan().to`)就比它;否則退回期交所交易日 vs 日內檔日期。
+ */
+export function nightCurveIsOlder(
+  night: Pick<TxNight, "date" | "to"> | undefined,
+  span: { to: string } | null,
+  intradayDate: string | undefined,
+): boolean {
+  if (!night) return false;
+  if (span && night.to) return span.to < night.to;
+  return !!intradayDate && intradayDate < night.date;
+}
+export const TX_NIGHT_INTRADAY_PENDING = "這一夜的分線要等期交所今天下午公布逐筆成交後才有;上方為這一夜的收盤。";
+
 /** epoch 秒 → 台北日曆日 "YYYY-MM-DD"(不經瀏覽器時區) */
 export function taipeiDateOf(epochS: number): string {
   return new Date((epochS + TW_OFFSET_S) * 1000).toISOString().slice(0, 10);
@@ -319,8 +336,12 @@ export function trendHintText(o: { isDay: boolean; dayReady: boolean; market: st
   return tx ? `${INTRADAY_HINT} ${TX_INTRADAY_NOTE}` : INTRADAY_HINT;
 }
 
-/** 1日沒圖時圖區顯示的那一句:有檔但沒台指期 → 台指期專屬(日盤/夜盤各一句);其餘(404、檔內沒這個市場)→ 通用 */
-export function intradayEmptyText(market: string | undefined, hasFile: boolean, session: TxSession = "day"): string {
+/**
+ * 1日沒圖時圖區顯示的那一句:有檔但沒台指期 → 台指期專屬(日盤/夜盤各一句);其餘(404、檔內沒這個市場)→ 通用。
+ * `nightPending`(`nightCurveIsOlder`:早上夜盤收盤已上線、分線還是上一夜)→ 說明這一夜的分線下午才有。
+ */
+export function intradayEmptyText(market: string | undefined, hasFile: boolean, session: TxSession = "day", nightPending = false): string {
+  if (market === "tx" && session === "night" && nightPending) return TX_NIGHT_INTRADAY_PENDING;
   if (market !== "tx" || !hasFile) return INTRADAY_EMPTY;
   return session === "night" ? TX_NIGHT_INTRADAY_EMPTY : TX_INTRADAY_EMPTY;
 }

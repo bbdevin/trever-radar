@@ -19,6 +19,7 @@ import {
   intradayTone,
   missingAwareLoader,
   nightActive,
+  nightCurveIsOlder,
   nightHeadTime,
   nightSpan,
   nightSubtitle,
@@ -353,10 +354,13 @@ export default function IndexTrendSheet({
   const isTx = head?.market === "tx";
   // 只在 台指期 × 1日 才是夜盤模式;1月以上與其他指數一律日盤資料(nightActive)
   const night = nightActive({ market: head?.market, range, session });
-  const dayPoints = useMemo<IntradayPoint[]>(
+  const rawDayPoints = useMemo<IntradayPoint[]>(
     () => (intra?.series?.[night ? "tx_night" : ((head?.market ?? "") as "twse" | "tpex" | "tx")] ?? []),
     [intra, head?.market, night],
   );
+  // 早上(§12.6.5):head.json 已有今天 05:00 收完的那一夜、日內檔的夜盤線還是上一夜 → 不畫舊線,標頭走 nightOnly
+  const nightPending = night && nightCurveIsOlder(head?.night, nightSpan(rawDayPoints), intra?.date);
+  const dayPoints = useMemo<IntradayPoint[]>(() => (nightPending ? [] : rawDayPoints), [rawDayPoints, nightPending]);
   // 基準:日盤 = 早於日內檔日期的最後一列收盤;夜盤 = 那一夜開始那天(15:00 開盤那個交易日)的一般時段收盤
   // (= 早於 from 次日 的最後一列,夜盤跨午夜所以用 from+1)
   const span = night ? nightSpan(dayPoints) : null;
@@ -366,7 +370,7 @@ export default function IndexTrendSheet({
   const dayChg = dayShown ? changeVsPrev(dayShown[1], dayPrev) : { change: null, chgPct: null };
   const dayTone = (dayChg.change ?? 0) > 0 ? "up" : (dayChg.change ?? 0) < 0 ? "down" : "flat";
   const dayReady = isDay && intra && dayPoints.length >= 2;
-  const dayEmpty = intradayEmptyText(head?.market, !!intra, night ? "night" : "day");
+  const dayEmpty = intradayEmptyText(head?.market, !!intra, night ? "night" : "day", nightPending);
   const hint = trendHintText({ isDay, dayReady: !!dayReady && !intraError, market: head?.market, session: night ? "night" : "day" });
 
   // 夜盤還沒有 1 分線(檔還沒公布/缺)但 head.json 已有那一夜的收盤(futDataDown):標頭就顯示它,不退回日盤數字

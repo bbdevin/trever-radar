@@ -19,6 +19,10 @@ CRON_TZ=Asia/Taipei
 45 20 * * 1-5  bash /home/huang/trever-radar/vps/scripts/daily-margin.sh      >> /home/huang/radar-cron.log 2>&1
 30 22 * * 1-5  BRANCH_ROUND_MODE=import bash /home/huang/trever-radar/vps/scripts/daily-branches.sh >> /home/huang/radar-cron.log 2>&1
 
+# 早上台指期夜盤上線(docs/49 §12.6.5;2026-10-13 新增,**pending:正式 crontab 待人類安裝**):
+# 輪詢到今天的盤後列入庫(截止 08:40)→ export-index(只重寫指數三份檔)→ deploy;09:00 mid-publish 前收工。
+# 0  8 * * 1-5  bash /home/huang/trever-radar/vps/scripts/morning-index.sh   >> /home/huang/radar-cron.log 2>&1
+
 # 每週參考資料(題材/地緣/產業別;docs/47):週一 11:00,只寫 DB,14:05 收盤輪一起上線
 0  11 * * 1    bash /home/huang/trever-radar/vps/scripts/weekly-refdata.sh    >> /home/huang/radar-cron.log 2>&1
 

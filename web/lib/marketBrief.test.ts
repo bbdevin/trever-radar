@@ -67,7 +67,9 @@ import {
   nightTileText,
   nightTileTitle,
   nightActive,
+  nightCurveIsOlder,
   taipeiDateOf,
+  TX_NIGHT_INTRADAY_PENDING,
 } from "./marketBrief.ts";
 import { crosshairTimeLabel } from "./chartTime.ts";
 import { tickMarkLabel } from "./chartTime.ts";
@@ -371,6 +373,40 @@ test("夜盤模式只在 台指期 × 1日:切 1月以上或換指數就回日�
   assert.equal(prevCloseBefore(hist, "2026-10-03"), 49200);
 });
 
+test("早上狀態(§12.6.5):夜盤標今天、一般時段還停在昨天 — 卡加粗、不標舊日期;sheet 不畫上一夜的舊線", () => {
+  const e = (s: string) => Date.parse(`${s}+08:00`) / 1000;
+  // 10/13 08:05:head.json 資料日 10/12;tx 一般時段 10/12;night = 10/12 15:00 → 10/13 05:00(期交所標 10/13)
+  const dataDate = "2026-10-12";
+  const tx = { date: "2026-10-12" };
+  const night = { date: "2026-10-13", from: "2026-10-12", to: "2026-10-13", close: 48946, change: -399, chg_pct: -0.81, contract_month: "202610" };
+  // 卡:台指期格不標「(10/12)」(與資料日相同),夜盤那一行是比一般時段新的數字 → 加粗
+  assert.equal(dateTag(tx.date, dataDate), null);
+  assert.equal(isNightNewer(night, tx.date), true);
+  assert.equal(nightTileText(night), "夜 48,946 ▼0.81%");
+  assert.ok(nightTileTitle(night).startsWith("夜盤 10/12 15:00 – 10/13 05:00 收 48,946 ▼399 · -0.81%"));
+  // sheet 1日 夜盤:日內檔還是 10/12 那一份(夜盤 10/09 15:00 → 10/12 05:00 那條線,連假後標 10/12)
+  const oldCurve: IntradayPoint[] = [[e("2026-10-08T15:00:00"), 49500], [e("2026-10-09T04:59:00"), 49400]];
+  assert.equal(nightCurveIsOlder(night, nightSpan(oldCurve), "2026-10-12"), true);
+  assert.equal(intradayEmptyText("tx", true, "night", true), TX_NIGHT_INTRADAY_PENDING);
+  // 不畫線時副標用 night 的範圍(nightSpan([]) = null → 退回 head.night)
+  assert.equal(nightSubtitle({ ...night, ...(nightSpan([]) ?? {}) }), "夜盤 10/12 15:00 – 10/13 05:00 · 近月 2026/10");
+  // 下午 16:40 之後日內檔換成 10/13:線就是這一夜 → 照畫
+  const newCurve: IntradayPoint[] = [[e("2026-10-12T15:00:00"), 49300], [e("2026-10-13T04:59:00"), 48946]];
+  assert.equal(nightCurveIsOlder(night, nightSpan(newCurve), "2026-10-13"), false);
+  // 週一早上:night = 週五 15:00 → 週六 05:00(標週一);日內檔是週五的(夜盤 週四 → 週五)
+  const mon = { date: "2026-10-05", to: "2026-10-03" };
+  assert.equal(nightCurveIsOlder(mon, { to: "2026-10-02" }, "2026-10-02"), true);
+  assert.equal(nightCurveIsOlder(mon, { to: "2026-10-03" }, "2026-10-05"), false);
+  // from/to 缺(管線找不到更早的 tx 列)→ 比期交所交易日與日內檔日期
+  assert.equal(nightCurveIsOlder({ date: "2026-10-13", to: null }, { to: "2026-10-12" }, "2026-10-12"), true);
+  assert.equal(nightCurveIsOlder({ date: "2026-10-13", to: null }, null, "2026-10-13"), false);
+  // 沒有 night 鍵 → 照舊(不藏線)
+  assert.equal(nightCurveIsOlder(undefined, nightSpan(oldCurve), "2026-10-12"), false);
+  // 日盤與其他指數不受影響
+  assert.equal(intradayEmptyText("tx", true, "day", true), TX_INTRADAY_EMPTY);
+  assert.equal(intradayEmptyText("twse", true, "night", true), INTRADAY_EMPTY);
+});
+
 test("禁詞:標題、標籤、提示", () => {
   const word = (...codes: number[]) => String.fromCharCode(...codes);
   const banned = new RegExp([
@@ -383,7 +419,7 @@ test("禁詞:標題、標籤、提示", () => {
   for (const t of [BRIEF_TITLE, BRIEF_STALE_BADGE, BRIEF_TURNOVER_LABEL, BRIEF_INSTI_LABEL, BRIEF_INSTI_HINT, BRIEF_UPDOWN_HINT,
     TREND_AFFORDANCE, TREND_SHEET_TITLE, TREND_EMPTY, TREND_HINT, TX_STITCH_NOTE, ...TREND_RANGES.map((r) => r.label),
     INTRADAY_EMPTY, TX_INTRADAY_EMPTY, INTRADAY_HINT, TX_INTRADAY_NOTE, PREV_CLOSE_LABEL, "日高", "日低", "日漲跌",
-    TX_NIGHT_LABEL, TX_NIGHT_TILE_LABEL, TX_NIGHT_INTRADAY_EMPTY, TX_NIGHT_INTRADAY_NOTE, TX_NIGHT_CHANGE_BASIS,
+    TX_NIGHT_LABEL, TX_NIGHT_TILE_LABEL, TX_NIGHT_INTRADAY_EMPTY, TX_NIGHT_INTRADAY_NOTE, TX_NIGHT_CHANGE_BASIS, TX_NIGHT_INTRADAY_PENDING,
     ...SESSION_TABS.map((s) => s.label), nightSubtitle(NIGHT), nightTileTitle(NIGHT), "夜高", "夜低", "夜漲跌"]) {
     assert.ok(!banned.test(t), t);
   }

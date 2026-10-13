@@ -427,8 +427,14 @@ class ExportMarketBrief(_TempDb):
             tx = next(i for i in latest_indices(conn, "2026-10-05") if i["market"] == "tx")
             self.assertEqual((tx["night"]["date"], tx["night"]["from"], tx["night"]["to"]),
                              ("2026-10-05", "2026-10-02", "2026-10-03"))
-            # ≤ d:查週五時還沒有這一夜
-            self.assertNotIn("night", next(i for i in latest_indices(conn, "2026-10-02") if i["market"] == "tx"))
+            # 週一早上(daily_prices 仍停在週五):週五 15:00 開盤的那一夜已入庫就掛在週五的 tx 上
+            # (docs/49 §12.6.5,2026-10-13 實測期交所當天早上已公布;原本「≤ d」的規則改為也收 from == d 的那一夜)
+            fri = next(i for i in latest_indices(conn, "2026-10-02") if i["market"] == "tx")
+            self.assertEqual((fri["date"], fri["night"]["date"], fri["night"]["from"], fri["night"]["to"]),
+                             ("2026-10-02", "2026-10-05", "2026-10-02", "2026-10-03"))
+            # 再早一天(from ≠ d):不拿未來的那一夜
+            from radar.market_index import latest_tx_night
+            self.assertIsNone(latest_tx_night(conn, "2026-10-01"))
 
     def test_hist_file_and_spark_caps(self):
         self._seed(long=True)
