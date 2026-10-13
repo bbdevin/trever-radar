@@ -321,20 +321,79 @@ class ScreeningTests(unittest.TestCase):
         self.assertEqual(sorted(asked), sorted([("甲-分點", "2330", "call"), ("乙-分點", "2330", "call"),
                                                 ("丁-分點", "2330", "call"), ("乙-分點", "2330", "put")]))
         self.assertEqual(set(kinds), {"call", "put"})
-        self.assertEqual([r["branch_name"] for r in kinds["call"]["rows"]], ["甲-分點", "乙-分點", "丁-分點"])
-        self.assertEqual((kinds["call"]["total"], kinds["call"]["excluded_self"]), (3, 2))
-        self.assertEqual([r["branch_name"] for r in kinds["put"]["rows"]], ["乙-分點"])
-        self.assertEqual((kinds["put"]["total"], kinds["put"]["excluded_self"]), (1, 1))
-        first = kinds["call"]["rows"][0]
+        call, put = kinds["call"], kinds["put"]
+        self.assertEqual(set(call), {"excluded_self", "down", "up"})
+        # 帳面為負(最差在前,估不出值的接在最後);帳面為正另一份。
+        self.assertEqual([r["branch_name"] for r in call["down"]["rows"]], ["甲-分點", "丁-分點"])
+        self.assertEqual([r["branch_name"] for r in call["up"]["rows"]], ["乙-分點"])
+        self.assertEqual((call["down"]["total"], call["up"]["total"], call["excluded_self"]), (2, 1, 2))
+        self.assertEqual([r["branch_name"] for r in put["down"]["rows"]], ["乙-分點"])
+        self.assertEqual((put["down"]["total"], put["up"], put["excluded_self"]), (1, {"rows": [], "total": 0}, 1))
+        first = call["down"]["rows"][0]
         self.assertEqual(first["underlying_name"], "台積電")
         self.assertEqual((first["under_last"], first["under_last_date"]), (580.0, AS_OF))
         self.assertEqual((first["n_unvalued"], first["self_pct"], first["cost_valued"]), (0, 0, 10_000_000))
         self.assertEqual(first["buy_days"], days)
-        last = kinds["call"]["rows"][2]
+        last = call["down"]["rows"][1]
         self.assertNotIn("unrealized", last)
         self.assertEqual(last["n_unvalued"], 1)
         self.assertEqual(last["buy_days_rest"], rest_of_ding)
         self.assertNotIn("buy_days_rest", first)
+        self.assertEqual(call["up"]["rows"][0]["unrealized_pct"], 20.0)
+        self.assertEqual(call["up"]["rows"][0]["buy_days"], days)
+
+    def _up_down_summaries(self):
+        base = {"lots": 1000, "n_held": 1, "n_expired": 0, "n_no_price": 0, "self_cost": 0}
+
+        def row(branch, pct, cost=10_000_000, kind="call", **over):
+            agg = {**base, "cost": cost, **over}
+            if pct is not None:
+                agg.update(cost_valued=cost, value=round(cost * (1 + pct / 100)),
+                           unrealized=round(cost * pct / 100), unrealized_pct=pct)
+            return summary_from_agg(branch, "2330", kind, agg)
+
+        return [
+            row("甲", 35.0), row("乙", 80.0), row("丙", 12.5, cost=30_000_000), row("丁", 12.5, cost=60_000_000),
+            row("戊", -5.0), row("己", 0.0), row("庚", None, n_expired=1),          # 0% 與估不出值 → down
+            row("辛", 50.0, self_cost=6_000_000),                                    # 自家過半 → 排除(不分正負)
+            row("壬", -30.0, self_cost=9_000_000),
+            row("癸", 90.0, kind="put"), row("子", 40.0, kind="put"),
+        ]
+
+    def test_up_side_best_first_and_unvalued_stay_out(self):
+        kinds = screening_rows(self._up_down_summaries(), names={}, under_last={}, is_hq=lambda _b: False)
+        call = kinds["call"]
+        # 帳面 % 由高到低,同 % 成本大的在前。
+        self.assertEqual([r["branch_name"] for r in call["up"]["rows"]], ["乙", "甲", "丁", "丙"])
+        self.assertTrue(all(r["unrealized_pct"] > 0 for r in call["up"]["rows"]))
+        # 0% 進 down(不是「為正」),估不出值的接在 down 最後,不進 up。
+        self.assertEqual([r["branch_name"] for r in call["down"]["rows"]], ["戊", "己", "庚"])
+        self.assertEqual(call["excluded_self"], 2)
+        self.assertEqual([r["branch_name"] for r in kinds["put"]["up"]["rows"]], ["癸", "子"])
+        self.assertEqual((kinds["put"]["down"]["total"], kinds["put"]["excluded_self"]), (0, 0))
+
+    def test_cap_is_per_side_and_totals_are_honest(self):
+        asked: list[str] = []
+
+        def entry_days(branch, _sid, _kind):
+            asked.append(branch)
+            return [], None
+
+        kinds = screening_rows(self._up_down_summaries(), names={}, under_last={}, is_hq=lambda _b: False,
+                               max_rows=2, entry_days=entry_days)
+        call = kinds["call"]
+        self.assertEqual([r["branch_name"] for r in call["up"]["rows"]], ["乙", "甲"])
+        self.assertEqual([r["branch_name"] for r in call["down"]["rows"]], ["戊", "己"])
+        self.assertEqual((call["up"]["total"], call["down"]["total"]), (4, 3))
+        # 進場日只對兩邊留下來的列查。
+        self.assertEqual(sorted(asked), sorted(["乙", "甲", "戊", "己", "癸", "子"]))
+
+    def test_empty_screening_shape(self):
+        from radar.compute.warrant_position_est import empty_screening
+        empty = empty_screening()
+        self.assertEqual(empty, screening_rows([], names={}, under_last={}, is_hq=lambda _b: False))
+        self.assertEqual(empty["call"], {"excluded_self": 0, "down": {"rows": [], "total": 0},
+                                         "up": {"rows": [], "total": 0}})
 
     def test_entry_days_lookup_reads_back_from_stock_json(self):
         from radar.compute.warrant_position_est import entry_days_lookup
@@ -349,10 +408,12 @@ class ScreeningTests(unittest.TestCase):
 
     def test_cap_is_per_kind_and_total_is_honest(self):
         kinds = screening_rows(self._summaries(), names={}, under_last={}, is_hq=lambda _b: False, max_rows=1)
-        self.assertEqual(len(kinds["call"]["rows"]), 1)
-        self.assertEqual(kinds["call"]["total"], 4)   # is_hq False → 凱基 不排除;凱基-台北 50% 仍排除
-        self.assertEqual(len(kinds["put"]["rows"]), 1)
-        self.assertEqual(kinds["put"]["total"], 1)
+        self.assertEqual(len(kinds["call"]["down"]["rows"]), 1)
+        self.assertEqual(kinds["call"]["down"]["total"], 3)   # is_hq False → 凱基 不排除;凱基-台北 50% 仍排除
+        self.assertEqual(kinds["call"]["up"]["total"], 1)
+        self.assertEqual(kinds["call"]["excluded_self"], 1)
+        self.assertEqual(len(kinds["put"]["down"]["rows"]), 1)
+        self.assertEqual(kinds["put"]["down"]["total"], 1)
 
 
 if __name__ == "__main__":

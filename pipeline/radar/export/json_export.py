@@ -56,11 +56,12 @@ from ..compute.strategy_performance import (
 from ..compute.compute_branch_stats import DAYTRADE_MIN_OBS, DAYTRADE_PAYBACK, DAYTRADE_RATE
 from ..compute.warrant_position_est import (
     DEFINITIONS_VERSION as WPOS_VERSION,
-    POSITION_KINDS,
-    SCREEN_MAX_ROWS_PER_KIND,
+    SCREEN_FILE_VERSION,
+    SCREEN_MAX_ROWS_PER_SIDE,
     SCREEN_MIN_COST,
     PositionStream,
     WarrantInfo,
+    empty_screening,
     entry_days_lookup,
     screening_rows,
 )
@@ -2963,7 +2964,7 @@ def _export_warrant_branches(out: Path, engine, date: str, base20: list[str]):
         # 常駐記憶體只有輸出(見 compute/warrant_position_est.py 的說明)。
         positions_json_by_stock: dict[str, str] = {}
         under_last: dict[str, tuple[str, float]] = {}
-        screen_kinds: dict[str, dict] = {k: {"rows": [], "total": 0, "excluded_self": 0} for k in POSITION_KINDS}
+        screen_kinds: dict[str, dict] = empty_screening()
         if bd1 and charted:
             t_wpos = time.perf_counter()
             warrant_info = _warrant_info_for_positions(conn, d1, d5)
@@ -3078,14 +3079,15 @@ def _export_warrant_branches(out: Path, engine, date: str, base20: list[str]):
             "stocks": sorted(detail_by_stock),
         }, ensure_ascii=False), encoding="utf-8")
         # 全市場「仍持有(估)」篩選清單(docs/51 §4):/branch 權證分點異動第三個檢視,點了才抓。
-        # 認購／認售各一份、各自上限(SCREEN_MAX_ROWS_PER_KIND)與排除筆數,`total` 是門檻內全部。
+        # 認購／認售各一份(排除筆數各自),每份再分帳面為負(down,最差在前)／為正(up,最好在前)
+        # 兩邊,各自上限 SCREEN_MAX_ROWS_PER_SIDE,`total` 是該邊門檻內全部。
         (branches_dir / "warrant_positions.json").write_text(json.dumps({
-            "version": 2,
+            "version": SCREEN_FILE_VERSION,
             "definitions_version": WPOS_VERSION,
             "data_date": bd1,
             "window_from": d120 if bd1 else None,
             "min_cost": SCREEN_MIN_COST,
-            "max_rows_per_kind": SCREEN_MAX_ROWS_PER_KIND,
+            "max_rows_per_side": SCREEN_MAX_ROWS_PER_SIDE,
             "kinds": screen_kinds,
         }, ensure_ascii=False), encoding="utf-8")
 

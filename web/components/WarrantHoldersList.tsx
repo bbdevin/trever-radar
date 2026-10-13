@@ -13,18 +13,22 @@ import {
   ENTRY_NOTE,
   KIND_LABEL,
   entryLine,
+  SCREEN_DIR_LABEL,
   SCREEN_LEAD,
-  SCREEN_LOSS_STEPS,
   SCREEN_SORTS,
+  SCREEN_STEPS,
   WPOS_FOOTER,
   filterScreenRows,
   fmtPct,
   fmtUnderPrice,
   normalizeScreening,
+  screenEmptyText,
   screenFilterFromParams,
   screenFilterToParams,
   screenSummary,
   underDiffText,
+  withScreenDir,
+  type ScreenDir,
   type ScreenFilter,
   type ScreenPayload,
   type WarrantKindKey,
@@ -33,13 +37,20 @@ import { currentParams, replaceQuery } from "@/lib/urlState";
 
 const PAGE = 30;
 
+/** 方向切換的選中樣式沿用全站漲跌色(紅＝帳面為正、綠＝帳面為負),淡底＋描邊,不整塊填滿。 */
+const DIR_ACTIVE: Record<ScreenDir, string> = {
+  down: "bg-down/12 text-down ring-1 ring-inset ring-down/45",
+  up: "bg-up/12 text-up ring-1 ring-inset ring-up/45",
+};
+
 /**
  * /branch 權證分點異動 → 「仍持有(估)」檢視(docs/51 §4):全市場仍持有成本 ≥ 500 萬的
- * 券商 × 標的,預設只看認購、帳面 −20% 以下,由差到好排。點了這個檢視才抓檔。
+ * 券商 × 標的,分「帳面為負」(預設,−20% 以下,由差到好)與「帳面為正」(由高到低)兩邊,
+ * 認購／認售各自一份。點了這個檢視才抓檔。
  */
 export default function WarrantHoldersList() {
   const [payload, setPayload] = useState<ScreenPayload | null | undefined>(undefined);
-  // 篩選狀態放網址(wk/wpct/wsort,replaceState):返回鍵回來還在。靜態輸出沒有 SSR 的 query,
+  // 篩選狀態放網址(wk/wdir/wpct/wsort,replaceState):返回鍵回來還在。靜態輸出沒有 SSR 的 query,
   // 所以第一次 render 用預設、掛載後才讀網址(與 /branch 的 tab/view 同一招)。
   const [filter, setFilterState] = useState<ScreenFilter>(DEFAULT_SCREEN_FILTER);
   const [limit, setLimit] = useState(PAGE);
@@ -62,7 +73,7 @@ export default function WarrantHoldersList() {
   }, []);
 
   const bucket = payload?.kinds[filter.kind];
-  const rows = useMemo(() => (bucket ? filterScreenRows(bucket.rows, filter) : []), [bucket, filter]);
+  const rows = useMemo(() => (bucket ? filterScreenRows(bucket[filter.dir].rows, filter) : []), [bucket, filter]);
   useEffect(() => { setLimit(PAGE); }, [filter]);
 
   if (payload === undefined) return <Skeleton className="h-40 w-full rounded-[var(--r-lg)]" />;
@@ -89,17 +100,28 @@ export default function WarrantHoldersList() {
             </button>
           ))}
         </div>
-        <div className="flex flex-wrap gap-1.5" role="group" aria-label="帳面門檻">
-          {SCREEN_LOSS_STEPS.map((s) => (
-            <button key={s.key} type="button" aria-pressed={filter.maxPct === s.key}
-              onClick={() => setFilter((f) => ({ ...f, maxPct: s.key }))} className={cn(filterChipClass(filter.maxPct === s.key), "min-h-9")}>
-              {s.label}
+        <div className="flex rounded-full border border-border/40 bg-background/80 p-1" role="tablist" aria-label="帳面估算方向" data-testid="warrant-holders-dir">
+          {(["down", "up"] as ScreenDir[]).map((d) => (
+            <button key={d} type="button" role="tab" aria-selected={filter.dir === d}
+              onClick={() => setFilter((f) => withScreenDir(f, d))}
+              className={cn(pillTabClass(false), "min-h-9", filter.dir === d && DIR_ACTIVE[d])}>
+              {SCREEN_DIR_LABEL[d]}
             </button>
           ))}
         </div>
       </div>
+      <div className="flex flex-wrap gap-1.5" role="group" aria-label="帳面門檻">
+        {SCREEN_STEPS[filter.dir].map((s) => (
+          <button key={s.key} type="button" aria-pressed={filter.pct === s.key}
+            onClick={() => setFilter((f) => ({ ...f, pct: s.key }))} className={cn(filterChipClass(filter.pct === s.key), "min-h-9")}>
+            {s.label}
+          </button>
+        ))}
+      </div>
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <span className="text-[11.5px] text-muted-foreground">{screenSummary(rows.length, bucket ?? { rows: [], total: 0, excluded_self: 0 })}</span>
+        <span className="text-[11.5px] text-muted-foreground">
+          {bucket ? screenSummary(rows.length, bucket, filter.dir) : `${rows.length} 筆符合`}
+        </span>
         <label className="flex items-center gap-1.5 text-[11.5px] text-muted-foreground">
           排序
           <select
@@ -114,9 +136,7 @@ export default function WarrantHoldersList() {
       </div>
 
       {rows.length === 0 ? (
-        <div className="py-8 text-center text-[13px] text-muted-foreground">
-          沒有符合條件的券商 × 標的。涵蓋已匯入權證池、每檔權證只有前 15 大分點;沒有資料不代表沒有持有。
-        </div>
+        <div className="py-8 text-center text-[13px] text-muted-foreground">{screenEmptyText(filter.dir)}</div>
       ) : (
         <ol className="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-3">
           {rows.slice(0, limit).map((r) => {
@@ -135,10 +155,15 @@ export default function WarrantHoldersList() {
                   <div className="shrink-0 text-right">
                     <div className="text-[10px] text-muted-foreground">帳面估算</div>
                     {r.unrealized != null ? (
-                      <div className={cn("num text-[15px] font-bold leading-tight", toneClass(r.unrealized) || "text-foreground")}>
-                        {fmtMoney(r.unrealized)}
-                        {pct && <span className="ml-1 text-[11.5px] font-semibold">({pct})</span>}
-                      </div>
+                      <>
+                        {/* 百分比放大當主數字(兩邊一致),金額在下一行;顏色沿用全站漲跌色。 */}
+                        <div className={cn("num text-[16px] font-bold leading-tight", toneClass(r.unrealized_pct) || "text-foreground")} data-testid="holder-pct">
+                          {pct ?? "—"}
+                        </div>
+                        <div className={cn("num text-[11.5px] font-semibold leading-tight", toneClass(r.unrealized) || "text-foreground")}>
+                          {fmtMoney(r.unrealized)}
+                        </div>
+                      </>
                     ) : (
                       <div className="text-[11.5px] text-muted-foreground">未估值</div>
                     )}

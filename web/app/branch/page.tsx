@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, Search, Info, TrendingUp, TrendingDown, Building2, User, Star, Wallet } from "lucide-react";
 import WarrantHoldersList from "@/components/WarrantHoldersList";
+import { SCREEN_PARAM_KEYS } from "@/lib/warrantPositions";
 import WarrantSplitCard from "@/components/WarrantSplitCard";
 import { warrantTabHref } from "@/lib/warrantDeepLink";
 import { currentParams, replaceQuery } from "@/lib/urlState";
@@ -24,6 +25,9 @@ import type { RadarJson } from "@/lib/types";
 import type { TrackIndexEntry } from "@/lib/branchTrack";
 import { MARKET_LABEL, fmtX } from "@/lib/format";
 import { cn, filterChipClass, navPillClass, pillTabClass } from "@/lib/utils";
+
+/** 離開「仍持有(估)」檢視時清掉它的篩選參數(wk/wdir/wpct/wsort)。 */
+const SCREEN_PARAMS_CLEARED: Record<string, null> = Object.fromEntries(SCREEN_PARAM_KEYS.map((k) => [k, null]));
 
 type Ranking = {
   branch_name: string;
@@ -469,11 +473,11 @@ export default function BranchPage() {
   }, []);
   const setTab = (t: BranchTab) => {
     setTabState(t);
-    replaceQuery({ tab: t === "rankings" ? null : t, ...(t === "warrant" ? {} : { view: null, wk: null, wpct: null, wsort: null }) });
+    replaceQuery({ tab: t === "rankings" ? null : t, ...(t === "warrant" ? {} : { view: null, ...SCREEN_PARAMS_CLEARED }) });
   };
   const setViewMode = (v: WarrantView) => {
     setViewModeState(v);
-    replaceQuery({ view: v === "by_stock" ? null : v, ...(v === "holders" ? {} : { wk: null, wpct: null, wsort: null }) });
+    replaceQuery({ view: v === "by_stock" ? null : v, ...(v === "holders" ? {} : { ...SCREEN_PARAMS_CLEARED }) });
   };
   const [trackIndex, setTrackIndex] = useState<TrackIndexEntry[]>([]);
   const [trackIndexStatus, setTrackIndexStatus] = useState<"loading" | "ready" | "error">("loading");

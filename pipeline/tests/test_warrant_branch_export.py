@@ -311,12 +311,16 @@ class WarrantBranchDetailExportTests(unittest.TestCase):
             ])
             conn.execute(schema.warrant_daily.insert(), [
                 {"warrant_id": "123460", "date": self.DATES[0], "close": 20.0, "volume": 1, "turnover": 1},
+                {"warrant_id": "123460", "date": self.DATES[1], "close": 8.0, "volume": 1, "turnover": 1},
                 {"warrant_id": "123460", "date": self.DATES[-1], "close": 12.0, "volume": 1, "turnover": 1},
                 {"warrant_id": "700001", "date": self.DATES[-1], "close": 10.0, "volume": 1, "turnover": 1},
             ])
             upsert_branch_trades(conn, [
                 {"stock_id": "123460", "date": self.DATES[0], "branch_key": "uw", "branch_name": "套牢分點",
                  "buy_lots": 600, "sell_lots": 0, "net_lots": 600, "pct": 0},
+                # 帳面為正:08-04 以 8 元買 1,000 張(800 萬)→ 最後 12 元 → +400 萬(+50%)。
+                {"stock_id": "123460", "date": self.DATES[1], "branch_key": "up", "branch_name": "帳面為正分點",
+                 "buy_lots": 1000, "sell_lots": 0, "net_lots": 1000, "pct": 0},
                 {"stock_id": "700001", "date": self.DATES[-1], "branch_key": "9200", "branch_name": "凱基",
                  "buy_lots": 1000, "sell_lots": 0, "net_lots": 1000, "pct": 0},
             ])
@@ -350,17 +354,25 @@ class WarrantBranchDetailExportTests(unittest.TestCase):
         self.assertEqual(detail["daily"]["套牢分點"], [[self.DATES[0], 12_000_000, 0]])
 
         screen = json.loads((out / "branches" / "warrant_positions.json").read_text(encoding="utf-8"))
-        self.assertEqual(screen["version"], 2)
+        self.assertEqual(screen["version"], 3)
         self.assertEqual(screen["definitions_version"], "wpos-avgcost-v1")
         self.assertEqual(screen["data_date"], self.DATES[-1])
-        self.assertEqual((screen["min_cost"], screen["max_rows_per_kind"]), (5_000_000, 400))
+        self.assertEqual((screen["min_cost"], screen["max_rows_per_side"]), (5_000_000, 400))
+        self.assertNotIn("max_rows_per_kind", screen)
         call = screen["kinds"]["call"]
+        self.assertEqual(set(call), {"excluded_self", "down", "up"})
         self.assertEqual(call["excluded_self"], 1)
-        # 六百萬分點(600 張 @10 = 600 萬,帳面 0)也過 500 萬門檻;帳面最差的在前。
-        self.assertEqual(call["total"], 2)
-        self.assertEqual([r["branch_name"] for r in call["rows"]], ["套牢分點", "六百萬分點"])
-        self.assertEqual(screen["kinds"]["put"], {"rows": [], "total": 0, "excluded_self": 0})
-        row = call["rows"][0]
+        # 六百萬分點(600 張 @10 = 600 萬,帳面 0)也過 500 萬門檻,0% 歸帳面為負那邊;最差的在前。
+        self.assertEqual(call["down"]["total"], 2)
+        self.assertEqual([r["branch_name"] for r in call["down"]["rows"]], ["套牢分點", "六百萬分點"])
+        self.assertEqual(call["up"]["total"], 1)
+        up = call["up"]["rows"][0]
+        self.assertEqual((up["branch_name"], up["cost"], up["unrealized"], up["unrealized_pct"]),
+                         ("帳面為正分點", 8_000_000, 4_000_000, 50.0))
+        self.assertEqual(up["buy_days"], [[self.DATES[1], 1000, 8_000_000, 1000.0]])
+        self.assertEqual(screen["kinds"]["put"], {"excluded_self": 0, "down": {"rows": [], "total": 0},
+                                                  "up": {"rows": [], "total": 0}})
+        row = call["down"]["rows"][0]
         self.assertEqual((row["branch_name"], row["underlying_id"], row["underlying_name"], row["kind"]),
                          ("套牢分點", "2330", "台積電", "call"))
         self.assertEqual((row["cost"], row["unrealized"], row["unrealized_pct"]), (12_000_000, -4_800_000, -40.0))
@@ -456,7 +468,8 @@ class WarrantBranchDetailExportTests(unittest.TestCase):
         out = Path(self._tmp.name) / "out"
         screen = json.loads((out / "branches" / "warrant_positions.json").read_text(encoding="utf-8"))
         self.assertEqual(set(screen["kinds"]), {"call", "put"})
-        self.assertNotIn("牛熊分點", [r["branch_name"] for r in screen["kinds"]["call"]["rows"]])
+        self.assertNotIn("牛熊分點", [r["branch_name"] for side in ("down", "up")
+                                     for r in screen["kinds"]["call"][side]["rows"]])
 
     def test_issuer_alias_table(self):
         """外資發行商與分點名稱變體(verifier 2026-10-12):麥證/法興/匯豐、國泰綜合、台北富邦、國別前綴。"""
@@ -502,10 +515,10 @@ class WarrantBranchDetailExportTests(unittest.TestCase):
         })
         screen = json.loads((out / "branches" / "warrant_positions.json").read_text(encoding="utf-8"))
         self.assertEqual(screen, {
-            "version": 2, "definitions_version": "wpos-avgcost-v1", "data_date": None, "window_from": None,
-            "min_cost": 5_000_000, "max_rows_per_kind": 400,
-            "kinds": {"call": {"rows": [], "total": 0, "excluded_self": 0},
-                      "put": {"rows": [], "total": 0, "excluded_self": 0}},
+            "version": 3, "definitions_version": "wpos-avgcost-v1", "data_date": None, "window_from": None,
+            "min_cost": 5_000_000, "max_rows_per_side": 400,
+            "kinds": {k: {"excluded_self": 0, "down": {"rows": [], "total": 0}, "up": {"rows": [], "total": 0}}
+                      for k in ("call", "put")},
         })
 
 

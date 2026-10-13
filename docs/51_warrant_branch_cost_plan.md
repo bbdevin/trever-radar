@@ -12,6 +12,7 @@
 | MVP-2 每券商 × 標的 × 認購／認售 的仍持有／成本／換算現股均價／帳面估算／進場日 | ✅ 程式完成於分支（分片 `positions` 鍵） |
 | MVP-3 全市場「仍持有(估)」篩選清單（`branches/warrant_positions.json` + /branch 第三檢視） | ✅ 程式完成於分支 |
 | MVP-4 深連結 `?tab=warrant&branch=` | ✅ 程式完成於分支 |
+| MVP-5 仍持有(估)「帳面為正」（檔案 v3：每種 down／up 兩邊各 ≤ 400；方向切換、對稱門檻、`wdir` 網址參數；§3.2／§4） | ✅ 程式完成於分支（2026-10-13），未合 main |
 | 正式 VPS 匯出與體積／耗時量測 | ⏳ 待合 main 後第一輪 export（§6） |
 | Phase 2（履約價損益兩平、VWAP 成交價、首頁入口、跨股彙總） | 📝 未授權 |
 
@@ -78,29 +79,39 @@
 ### 3.2 /branch → 權證分點異動
 
 - 「依標的」「依分點」卡片改用 `WarrantSplitCard`：標題列（淨額）＋左「買超」右「賣超」兩欄（各自合計），點一列在兩欄下方全寬展開逐檔權證（手機兩欄太窄放不下）；每列右側「›」直達個股權證分頁並選中該券商。
-- 第三個檢視 **「仍持有(估)」**（`WarrantHoldersList`，點了才抓 `warrant_positions.json`）：認購／認售切換（各自一份清單）、帳面門檻（不限／−10％／−20％／−40％ 以下，預設 −20%）、排序（帳面 %／帳面金額／持有成本／最近買超）；每張卡：券商、標的（連結＝深連結）、帳面估算、仍持有張數、成本、換算現股均價、進場日一行、現股相對位置、未估值檔數、自家發行占比；摘要句「N 筆符合（檔內只保留帳面最差的前 400 / 共 M 筆…）；另有 X 筆自家發行占過半未列」（截斷訊息只在真的截掉時出現）；區間列在此檢視收起（固定看 120 日）。
-- **網址狀態**（返回鍵不丟）：`/branch?tab=warrant&view=holders&wk=put&wpct=0&wsort=cost`——分頁、檢視與篩選用 `history.replaceState` 寫進 query（`lib/urlState.ts`；預設值不寫），掛載後讀回。
+- 第三個檢視 **「仍持有(估)」**（`WarrantHoldersList`，點了才抓 `warrant_positions.json`）：認購／認售切換（各自一份清單）、**方向切換「帳面為負｜帳面為正」**（2026-10-13，預設為負；選中樣式沿用全站漲跌色：為正紅、為負綠，淡底＋描邊）、帳面門檻隨方向換（為負：不限／−10％／−20％／−40％ 以下，預設 −20%；為正：不限／+10％／+20％／+40％ 以上，預設 +20%，切方向時門檻回到該邊預設、種類與排序保留）、排序（帳面 %／帳面金額／持有成本／最近買超；帳面 %／金額在為負由差到好、在為正由高到低）；每張卡：券商、標的（連結＝深連結）、**右上帳面百分比為主數字（帶號、漲跌色）、估算金額在下一行**、仍持有張數、成本、換算現股均價、進場日一行、現股相對位置、未估值檔數、自家發行占比；摘要句「N 筆符合（檔內只保留帳面最差／最高的前 400 / 共 M 筆…）；另有 X 筆自家發行占過半未列」（截斷訊息只在那一邊真的截掉時出現）；空狀態每邊一句（「沒有帳面估算為負／為正、符合門檻的券商 × 標的。…」）；估不出值的列只在為負＋不限時出現（排最後），為正那邊永遠不列；區間列在此檢視收起（固定看 120 日）。
+- **網址狀態**（返回鍵不丟）：`/branch?tab=warrant&view=holders&wk=put&wdir=up&wpct=40&wsort=cost`——分頁、檢視與篩選用 `history.replaceState` 寫進 query（`lib/urlState.ts`；預設值不寫：`wdir` 預設 down、`wpct` 預設是**該方向**的預設門檻），掛載後讀回；`wpct` 與方向不合（如 `wdir=up&wpct=-20`）回該方向預設。離開此檢視時清掉 `SCREEN_PARAM_KEYS`（wk/wdir/wpct/wsort）。
+- 截圖（2026-10-13，合成 DB export、攔截 Supabase 假 session）：`docs/evidence/51_warrant_positions/branch-390-{dark,light}-holders-{down,up}.png`、`branch-390-light-holders-up-empty.png`（認售為正空狀態）；390px 無水平溢出；切到為正＋40% 後重新整理仍還原（`wdir=up&wpct=40`）。
 - 排行列第二行的百分比分母是估得出值的成本；只估到一部分時標「(部分)」。
 
 ### 3.3 文案守則
 
 禁用：勝率 獲利 報酬 關鍵分點 大漲 噴 極品 機率 目標價 買進 賣出 看多 看空 將會 有效支撐 壓力沉重 做多 做空 建議 喊單 套牢（`warrantPositions.test.ts` 以字碼組字檢查，避免 `test_label_honesty.py` 掃到字面）。中性用語：「帳面估算 +X／−X」「估算成本」「仍持有(估)」「進場 MM/DD N 張」「找不到對應的買超」。
 
-## 4. 篩選清單契約 `branches/warrant_positions.json`（v2）
+## 4. 篩選清單契約 `branches/warrant_positions.json`（v3，2026-10-13）
 
 ```
-{ version: 2, definitions_version: "wpos-avgcost-v1", data_date, window_from,
-  min_cost: 5000000, max_rows_per_kind: 400,
+{ version: 3, definitions_version: "wpos-avgcost-v1", data_date, window_from,
+  min_cost: 5000000, max_rows_per_side: 400,
   kinds: { call: Bucket, put: Bucket } }
-Bucket = { rows: Row[], total, excluded_self }
-  // rows = 門檻內（仍持有 > 0 且成本 ≥ 500 萬）帳面 % 由差到好的前 400 列（估不出值的排最後）；
-  // total = 門檻內全部筆數；前端在 total > rows.length 時寫「檔內只保留前 N / 共 M 筆」。
+Bucket = { excluded_self, down: Side, up: Side }
+Side   = { rows: Row[], total }
+  // 門檻 = 仍持有 > 0 且成本 ≥ 500 萬，且不是自家發行過半／總公司自家（excluded_self，每種各自、兩邊共用）。
+  // down = 帳面 % ≤ 0 由差到好（同 % 成本大的在前），估不出值的（全部到期／無價）接在最後——與 v2 的 rows 同序、
+  //        只是拿掉了帳面為正的列；0.0% 歸這邊（不是「為正」）。
+  // up   = 帳面 % > 0 由高到低（同 % 成本大的在前）；估不出值的不進來（不能宣稱它帳面為正）。
+  // 每邊各留前 400 列；total = 該邊門檻內全部筆數；前端在 total > rows.length 時寫「檔內只保留帳面最差／最高的前 N / 共 M 筆」。
 Row = { branch_name, underlying_id, underlying_name, kind, lots, cost, n_held, n_unvalued, self_pct,
         cost_valued?, value?, unrealized?, unrealized_pct?, avg_under?, last_buy_date?, first_date?, buy_days?,
-        under_last?, under_last_date? }
+        buy_days_rest?, under_last?, under_last_date? }
 ```
 
-v1（認購認售混排、全體 `[:300]`）已作廢：一個 9 億的認售部位會被認購擠掉、估不出值的列會消失。前端 `normalizeScreening` 只收 v2。
+- **為什麼 v3**（使用者 2026-10-13「權證分點仍持有 賺錢幾%的也幫我新增」）：v2 每種只留帳面最差的前 400 列，帳面為正的列在正式機大多被截掉，前端無從列出。v3 每種多一份由高到低的清單，兩邊各自上限、各自 `total`。
+- **版本**：前端 `normalizeScreening` 只收 v3（`SCREEN_FILE_VERSION`）；讀到 v2／v1 顯示「要等下一次資料匯出後才會出現」，與 v2 上線時同一策略（不混用兩種形狀）。合 main 前後的落差只有一輪 export。
+- **成本**：只是把已在記憶體的摘要分兩堆各排一次，進場日多解最多 800 列（同一檔的分片 JSON 有快取）。合成 DB（`--stocks 150 --days 130 --branches 40 --warrants-per-stock 20`，667,102 列進估算、3,462 筆摘要）`wpos:` 段 v2 8.0／8.2 s、v3 8.7／8.2 s（雜訊內）。正式機 `wpos` 52.7 s 主要是 SQL 掃描，這段不變。
+- **體積**：同一合成 DB，v2 901 KB（gzip 216 KB）→ v3 1,836 KB（gzip 443 KB）——兩邊都被 400 截滿的最壞情況剛好兩倍（每列含最多 20 個進場日）。正式機 2026-10-13 只有 1,843 筆摘要（兩種合計），v3 列數不會超過它，點了「仍持有(估)」才抓。
+
+v1（認購認售混排、全體 `[:300]`）已作廢：一個 9 億的認售部位會被認購擠掉、估不出值的列會消失。v2（每種一份、只留最差 400）2026-10-13 由 v3 取代。
 
 分片 `warrant-stock-details/{id}.json` 新增可選鍵：
 
@@ -124,7 +135,7 @@ Agg = { lots, cost, buy_lots, sell_lots_attributed, sell_lots_unattributed, real
 - **持有估算**：另一條查詢，**只取分片裡的 (標的, 券商)**（Python 端過濾；原本的 `TEMP TABLE _wpos_pairs` JOIN 已移除，見 §5.2）、只取 `kind IN ('call','put')`，`GROUP BY (標的, 券商, 權證, 日期)`（同腿同日的多列先合併）、`ORDER BY` 同序，用 DBAPI cursor 迭代 tuple。
 - **串流處理**（`PositionStream.consume`，單一迴圈、區域變數、一列一次方法呼叫）：列依 (標的, 券商, 權證, 日期) 到來，所以一腿處理完就併進該 (標的, 券商) 的累計器、一組處理完就定稿、**換標的時整檔 `branches` 立刻 `json.dumps` 成一段字串**（dict 丟掉；分片寫檔時用佔位字串原文替換）。篩選摘要只留 scalar tuple（進場日等前 400 列定案後才從該檔字串解回）。進場日每塊最多 20 天（§2.4 cap）。常駐記憶體 = 每檔一段 JSON ＋ 摘要 tuple ＋ 一腿＋一組，**與列數無關**；賣超用縮放因子 O(1)。`under_close` 一份共用，只載分片裡的標的。
 - 其他查詢：`warrant_daily` 近 5 日最後收盤、`warrants` 主檔——小表。
-- 體積：分片每家券商約 300–600 B（含 `buy_days`，無逐檔明細），熱門標的 60 家 ≈ 20–40 KB；`warrant_positions.json` 每種 ≤ 400 列 ≈ 100–250 KB，點「仍持有(估)」才抓。
+- 體積：分片每家券商約 300–600 B（含 `buy_days`，無逐檔明細），熱門標的 60 家 ≈ 20–40 KB；`warrant_positions.json` 每種每邊 ≤ 400 列（v3，最壞是 v2 的兩倍，實測見 §4），點「仍持有(估)」才抓。
 - **量測**：見 §5.1。
 
 ### 5.1 量測（2026-10-12，本機 Windows，`_export_warrant_branches` 整段，main `8bc317f` vs 本分支）

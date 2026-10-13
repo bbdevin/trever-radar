@@ -31,8 +31,10 @@ DEFINITIONS_VERSION = "wpos-avgcost-v1"
 SHARES_PER_LOT = 1000
 #: 篩選清單(warrant_positions.json)的門檻:仍持有成本(估)≥ 500 萬才列。
 SCREEN_MIN_COST = 5_000_000
-#: 每一種(認購／認售)各自最多留幾列;總數另外回報,畫面寫「顯示前 N / 共 M 筆」。
-SCREEN_MAX_ROWS_PER_KIND = 400
+#: 每一種(認購／認售)的每一邊(帳面為負／為正)各自最多留幾列;總數另外回報,畫面寫「顯示前 N / 共 M 筆」。
+SCREEN_MAX_ROWS_PER_SIDE = 400
+#: warrant_positions.json 的版本:v3 = 每種再分 down／up 兩邊(docs/51 §4)。
+SCREEN_FILE_VERSION = 3
 #: 自家發行占仍持有成本過半 → 視為發行商造市／避險,篩選清單排除。
 SCREEN_SELF_MAX_PCT = 50
 POSITION_KINDS = ("call", "put")
@@ -462,18 +464,21 @@ def screening_rows(
     under_last: Mapping[str, tuple[str, float]],
     is_hq: Callable[[str], bool],
     min_cost: int = SCREEN_MIN_COST,
-    max_rows: int = SCREEN_MAX_ROWS_PER_KIND,
+    max_rows: int = SCREEN_MAX_ROWS_PER_SIDE,
     entry_days: Callable[[str, str, str], tuple[list, dict | None]] | None = None,
 ) -> dict[str, dict]:
-    """全市場「仍持有(估)」清單,**認購／認售各自一份**:仍持有成本 ≥ min_cost,帳面最差的在前,
-    估不出值的(全部到期／無價)排最後;每種各留前 max_rows 列,`total` 是門檻內全部筆數,
-    畫面寫「顯示前 N / 共 M 筆」。
+    """全市場「仍持有(估)」清單,**認購／認售各自一份、每份再分帳面為負／為正兩邊**(v3):
+    仍持有成本 ≥ min_cost;
 
+    * `down`:帳面 % ≤ 0,最差的在前;估不出值的(全部到期／無價)接在最後(與 v2 相同)。
+    * `up`:帳面 % > 0,最好的在前;估不出值的不進來(不能宣稱它帳面為正)。
+
+    每邊各留前 max_rows 列,`total` 是該邊門檻內全部筆數,畫面寫「顯示前 N / 共 M 筆」。
     排除:自家發行占仍持有成本 ≥ 50%(發行商造市／避險),以及總公司席位且有任何自家發行
-    持有;被排除的筆數每種各自回在 `excluded_self`。
+    持有;被排除的筆數每種各自回在 `excluded_self`(兩邊共用,排除與帳面正負無關)。
     entry_days(branch, sid, kind) → (buy_days, buy_days_rest|None):只對留下來的列呼叫。
     """
-    kinds: dict[str, dict] = {k: {"rows": [], "total": 0, "excluded_self": 0} for k in POSITION_KINDS}
+    kinds: dict[str, dict] = {k: _empty_screen_bucket() for k in POSITION_KINDS}
     for summary in summaries:
         branch, underlying, kind = summary[0], summary[1], summary[2]
         agg = dict(zip(SUMMARY_FIELDS, summary[3:]))
@@ -500,26 +505,38 @@ def screening_rows(
                 row[k] = agg[k]
         if underlying in under_last:
             row["under_last_date"], row["under_last"] = under_last[underlying]
-        kinds[kind]["rows"].append(row)
+        pct = row.get("unrealized_pct")
+        kinds[kind]["up" if pct is not None and pct > 0 else "down"]["rows"].append(row)
     for bucket in kinds.values():
-        rows = bucket["rows"]
-        rows.sort(key=lambda r: (
+        down, up = bucket["down"], bucket["up"]
+        down["rows"].sort(key=lambda r: (
             0 if "unrealized_pct" in r else 1,
             r.get("unrealized_pct", 0.0),
             -r["cost"],
             r["branch_name"],
             r["underlying_id"],
         ))
-        bucket["total"] = len(rows)
-        kept = rows[:max_rows]
-        if entry_days is not None:
-            for r in kept:   # 只有留下的列才把進場日解回來
-                days, rest = entry_days(r["branch_name"], r["underlying_id"], r["kind"])
-                r["buy_days"] = days
-                if rest:
-                    r["buy_days_rest"] = rest
-        bucket["rows"] = kept
+        up["rows"].sort(key=lambda r: (-r["unrealized_pct"], -r["cost"], r["branch_name"], r["underlying_id"]))
+        for side in (down, up):
+            side["total"] = len(side["rows"])
+            kept = side["rows"][:max_rows]
+            if entry_days is not None:
+                for r in kept:   # 只有留下的列才把進場日解回來
+                    days, rest = entry_days(r["branch_name"], r["underlying_id"], r["kind"])
+                    r["buy_days"] = days
+                    if rest:
+                        r["buy_days_rest"] = rest
+            side["rows"] = kept
     return kinds
+
+
+def _empty_screen_bucket() -> dict:
+    return {"excluded_self": 0, "down": {"rows": [], "total": 0}, "up": {"rows": [], "total": 0}}
+
+
+def empty_screening() -> dict[str, dict]:
+    """沒有資料時的 kinds(與 screening_rows 同形)。"""
+    return {k: _empty_screen_bucket() for k in POSITION_KINDS}
 
 
 def entry_days_lookup(stock_json: Mapping[str, str]) -> Callable[[str, str, str], tuple[list, dict | None]]:

@@ -244,45 +244,61 @@ export type ScreenRow = {
   buy_days_rest?: BuyDaysRest;
 };
 
-/** 一種(認購或認售)的清單:rows 最多 max_rows_per_kind 列,total 是門檻內全部筆數。 */
-export type ScreenBucket = { rows: ScreenRow[]; total: number; excluded_self: number };
+/**
+ * 一種(認購或認售)的一邊:帳面為負(down,最差在前,估不出值的接在最後)或帳面為正
+ * (up,最好在前,不含估不出值的)。rows 最多 max_rows_per_side 列,total 是這一邊門檻內全部筆數。
+ */
+export type ScreenSide = { rows: ScreenRow[]; total: number };
+export type ScreenDir = "down" | "up";
+export type ScreenBucket = { excluded_self: number; down: ScreenSide; up: ScreenSide };
 
 export type ScreenPayload = {
   data_date: string | null;
   window_from: string | null;
   min_cost: number;
-  max_rows_per_kind: number;
+  max_rows_per_side: number;
   kinds: Record<WarrantKindKey, ScreenBucket>;
 };
 
-const EMPTY_BUCKET: ScreenBucket = { rows: [], total: 0, excluded_self: 0 };
+export const SCREEN_FILE_VERSION = 3;
+
+function sideOf(raw: unknown): ScreenSide {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { rows: [], total: 0 };
+  const s = raw as Partial<ScreenSide>;
+  const rows = Array.isArray(s.rows) ? (s.rows as ScreenRow[]) : [];
+  return { rows, total: typeof s.total === "number" ? s.total : rows.length };
+}
 
 function bucketOf(raw: unknown): ScreenBucket {
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return EMPTY_BUCKET;
-  const b = raw as Partial<ScreenBucket>;
-  const rows = Array.isArray(b.rows) ? (b.rows as ScreenRow[]) : [];
+  const b = raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
   return {
-    rows,
-    total: typeof b.total === "number" ? b.total : rows.length,
     excluded_self: typeof b.excluded_self === "number" ? b.excluded_self : 0,
+    down: sideOf(b.down),
+    up: sideOf(b.up),
   };
 }
 
-/** 只收 v2(認購／認售各一份);v1 混排的舊檔視同沒有(它會把大部位截掉,不如不顯示)。 */
+/**
+ * 只收 v3(認購／認售各一份、每份再分帳面為負／為正);v2(只有帳面最差的前 400,為正的大多被截掉)
+ * 與 v1 混排的舊檔視同沒有,畫面顯示「等下一次匯出」。
+ */
 export function normalizeScreening(raw: unknown): ScreenPayload | null {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
   const p = raw as Partial<ScreenPayload> & { version?: unknown; definitions_version?: unknown; kinds?: Record<string, unknown> };
-  if (p.version !== 2 || p.definitions_version !== WPOS_VERSION || !p.kinds || typeof p.kinds !== "object") return null;
+  if (p.version !== SCREEN_FILE_VERSION || p.definitions_version !== WPOS_VERSION || !p.kinds || typeof p.kinds !== "object") return null;
   return {
     data_date: typeof p.data_date === "string" ? p.data_date : null,
     window_from: typeof p.window_from === "string" ? p.window_from : null,
     min_cost: typeof p.min_cost === "number" ? p.min_cost : 0,
-    max_rows_per_kind: typeof p.max_rows_per_kind === "number" ? p.max_rows_per_kind : 0,
+    max_rows_per_side: typeof p.max_rows_per_side === "number" ? p.max_rows_per_side : 0,
     kinds: { call: bucketOf(p.kinds.call), put: bucketOf(p.kinds.put) },
   };
 }
 
+export const SCREEN_DIR_LABEL: Record<ScreenDir, string> = { down: "帳面為負", up: "帳面為正" };
+
 export type ScreenSort = "pct" | "unrealized" | "cost" | "recent";
+/** 排序選項兩邊共用;帳面 % ／金額在「為負」由差到好、在「為正」由好到差。 */
 export const SCREEN_SORTS: { key: ScreenSort; label: string }[] = [
   { key: "pct", label: "帳面 %" },
   { key: "unrealized", label: "帳面金額" },
@@ -298,63 +314,109 @@ export const SCREEN_LOSS_STEPS: { key: number; label: string }[] = [
   { key: -40, label: "帳面 −40% 以下" },
 ];
 
-export type ScreenFilter = { kind: WarrantKindKey; maxPct: number; minCost: number; sort: ScreenSort };
-export const DEFAULT_SCREEN_FILTER: ScreenFilter = { kind: "call", maxPct: -20, minCost: 5_000_000, sort: "pct" };
+/** 帳面為正的門檻(%,與為負那邊對稱):0 = 不限;20 = 帳面 +20% 或更高。 */
+export const SCREEN_GAIN_STEPS: { key: number; label: string }[] = [
+  { key: 0, label: "不限" },
+  { key: 10, label: "帳面 +10% 以上" },
+  { key: 20, label: "帳面 +20% 以上" },
+  { key: 40, label: "帳面 +40% 以上" },
+];
+
+export const SCREEN_STEPS: Record<ScreenDir, { key: number; label: string }[]> = {
+  down: SCREEN_LOSS_STEPS,
+  up: SCREEN_GAIN_STEPS,
+};
+
+/** 切換方向時門檻回到該邊的預設(−20 / +20)。 */
+export const SCREEN_DEFAULT_PCT: Record<ScreenDir, number> = { down: -20, up: 20 };
+
+/** pct:帳面門檻,帶號;為負那邊 ≤ pct、為正那邊 ≥ pct;0 = 不限。 */
+export type ScreenFilter = { kind: WarrantKindKey; dir: ScreenDir; pct: number; minCost: number; sort: ScreenSort };
+export const DEFAULT_SCREEN_FILTER: ScreenFilter = { kind: "call", dir: "down", pct: -20, minCost: 5_000_000, sort: "pct" };
+
+/** 換方向:門檻換成那一邊的預設,其餘(種類、排序)保留。 */
+export function withScreenDir(f: ScreenFilter, dir: ScreenDir): ScreenFilter {
+  return f.dir === dir ? f : { ...f, dir, pct: SCREEN_DEFAULT_PCT[dir] };
+}
 
 /**
- * 篩選＋排序。帳面門檻只對估得出值的列生效:估不出的列(全部到期／無價)在門檻 0
- * 時保留並排最後,門檻 < 0 時不列(不能宣稱它帳面多差)。
+ * 篩選＋排序(rows 是同一邊的清單)。帳面門檻只對估得出值的列生效:
+ * - 為負:估不出的列(全部到期／無價)在門檻 0 時保留並排最後,門檻 < 0 時不列(不能宣稱它帳面多差);
+ *   帳面 > 0 的列不列(防禦:v3 檔本來就分開)。
+ * - 為正:只列帳面 > 0 的估得出值列;門檻 > 0 時 ≥ 門檻。
  */
 export function filterScreenRows(rows: ScreenRow[], f: ScreenFilter): ScreenRow[] {
+  const up = f.dir === "up";
   const picked = rows.filter((r) => {
     if (r.kind !== f.kind || r.lots <= 0 || r.cost < f.minCost) return false;
-    if (f.maxPct < 0) return r.unrealized_pct != null && r.unrealized_pct <= f.maxPct;
+    const p = r.unrealized_pct;
+    if (up) return p != null && p > 0 && p >= f.pct;
+    if (p != null && p > 0) return false;
+    if (f.pct < 0) return p != null && p <= f.pct;
     return true;
   });
   const valued = (r: ScreenRow) => (r.unrealized_pct == null ? 1 : 0);
+  const s = up ? -1 : 1;   // 為正那邊:帳面 % ／金額由高到低
   const cmp: Record<ScreenSort, (a: ScreenRow, b: ScreenRow) => number> = {
-    pct: (a, b) => valued(a) - valued(b) || (a.unrealized_pct ?? 0) - (b.unrealized_pct ?? 0) || b.cost - a.cost,
-    unrealized: (a, b) => valued(a) - valued(b) || (a.unrealized ?? 0) - (b.unrealized ?? 0) || b.cost - a.cost,
-    cost: (a, b) => b.cost - a.cost || (a.unrealized_pct ?? 0) - (b.unrealized_pct ?? 0),
+    pct: (a, b) => valued(a) - valued(b) || s * ((a.unrealized_pct ?? 0) - (b.unrealized_pct ?? 0)) || b.cost - a.cost,
+    unrealized: (a, b) => valued(a) - valued(b) || s * ((a.unrealized ?? 0) - (b.unrealized ?? 0)) || b.cost - a.cost,
+    cost: (a, b) => b.cost - a.cost || s * ((a.unrealized_pct ?? 0) - (b.unrealized_pct ?? 0)),
     recent: (a, b) => (b.last_buy_date ?? "").localeCompare(a.last_buy_date ?? "") || b.cost - a.cost,
   };
   return [...picked].sort((a, b) => cmp[f.sort](a, b) || a.branch_name.localeCompare(b.branch_name, "zh-TW") || a.underlying_id.localeCompare(b.underlying_id));
 }
 
 /**
- * 「N 筆符合（檔內只保留前 400 / 共 M 筆，門檻與排序只在這 400 筆內）；另有 X 筆自家發行占過半未列」
- * 截斷訊息只在匯出端真的截掉時出現(total > rows.length)。
+ * 「N 筆符合（檔內只保留帳面最差的前 400 / 共 M 筆，門檻與排序只在這 400 筆內）；另有 X 筆自家發行占過半未列」
+ * 截斷訊息只在匯出端那一邊真的截掉時出現(total > rows.length)。
  */
-export function screenSummary(shown: number, bucket: ScreenBucket): string {
-  const cut = bucket.total > bucket.rows.length
-    ? `（檔內只保留帳面最差的前 ${bucket.rows.length} / 共 ${bucket.total} 筆，門檻與排序只在這 ${bucket.rows.length} 筆內）`
+export function screenSummary(shown: number, bucket: ScreenBucket, dir: ScreenDir): string {
+  const side = bucket[dir];
+  const cut = side.total > side.rows.length
+    ? `（檔內只保留帳面${dir === "up" ? "最高" : "最差"}的前 ${side.rows.length} / 共 ${side.total} 筆，門檻與排序只在這 ${side.rows.length} 筆內）`
     : "";
   const self = bucket.excluded_self > 0 ? `；另有 ${bucket.excluded_self} 筆自家發行占過半（發行商造市／避險）未列` : "";
   return `${shown} 筆符合${cut}${self}`;
 }
 
-/** 篩選狀態 ↔ 網址參數(wk / wpct / wsort),返回鍵才不會丟掉;不認得的值回預設。 */
+/** 沒有符合的列時的說明(每邊各一句)。 */
+export function screenEmptyText(dir: ScreenDir): string {
+  const head = dir === "up" ? "沒有帳面估算為正、符合門檻的券商 × 標的。" : "沒有帳面估算為負、符合門檻的券商 × 標的。";
+  return `${head}涵蓋已匯入權證池、每檔權證只有前 15 大分點；沒有資料不代表沒有持有。`;
+}
+
+/**
+ * 篩選狀態 ↔ 網址參數(wk / wdir / wpct / wsort),返回鍵才不會丟掉;不認得的值回預設。
+ * wpct 只收該方向的門檻(wdir=up&wpct=-20 → 回到為正的預設)。
+ */
 export function screenFilterFromParams(params: { get(name: string): string | null }): ScreenFilter {
   const kind = params.get("wk");
+  const dir: ScreenDir = params.get("wdir") === "up" ? "up" : "down";
   const pctRaw = params.get("wpct");
   const pct = pctRaw == null || pctRaw === "" ? NaN : Number(pctRaw);
   const sort = params.get("wsort");
   return {
     ...DEFAULT_SCREEN_FILTER,
     kind: kind === "put" ? "put" : "call",
-    maxPct: SCREEN_LOSS_STEPS.some((s) => s.key === pct) ? pct : DEFAULT_SCREEN_FILTER.maxPct,
+    dir,
+    pct: SCREEN_STEPS[dir].some((s) => s.key === pct) ? pct : SCREEN_DEFAULT_PCT[dir],
     sort: SCREEN_SORTS.some((s) => s.key === sort) ? (sort as ScreenSort) : DEFAULT_SCREEN_FILTER.sort,
   };
 }
 
+/** 預設值不寫(為負、該方向的預設門檻、認購、帳面 %)。 */
 export function screenFilterToParams(f: ScreenFilter): Record<string, string | null> {
   return {
     wk: f.kind === DEFAULT_SCREEN_FILTER.kind ? null : f.kind,
-    wpct: f.maxPct === DEFAULT_SCREEN_FILTER.maxPct ? null : String(f.maxPct),
+    wdir: f.dir === DEFAULT_SCREEN_FILTER.dir ? null : f.dir,
+    wpct: f.pct === SCREEN_DEFAULT_PCT[f.dir] ? null : String(f.pct),
     wsort: f.sort === DEFAULT_SCREEN_FILTER.sort ? null : f.sort,
   };
 }
 
+/** /branch 離開「仍持有(估)」檢視時要清掉的網址參數。 */
+export const SCREEN_PARAM_KEYS = ["wk", "wdir", "wpct", "wsort"] as const;
+
 export const SCREEN_LEAD =
-  "近 120 個交易日內，權證仍持有成本（估）達 500 萬以上的券商 × 標的，依帳面估算由差到好排。"
-  + "同一家券商可能是很多客戶的合計；帳面差不代表之後會怎樣。";
+  "近 120 個交易日內，權證仍持有成本（估）達 500 萬以上的券商 × 標的，分帳面為負（由差到好）與帳面為正（由高到低）兩份清單。"
+  + "同一家券商可能是很多客戶的合計；帳面正負不代表之後會怎樣。";

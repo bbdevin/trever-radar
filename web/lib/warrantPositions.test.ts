@@ -14,9 +14,16 @@ import {
   entryRestLine,
   fmtMD,
   type BuyDay,
+  SCREEN_DEFAULT_PCT,
+  SCREEN_DIR_LABEL,
+  SCREEN_GAIN_STEPS,
   SCREEN_LEAD,
   SCREEN_LOSS_STEPS,
+  SCREEN_PARAM_KEYS,
   SCREEN_SORTS,
+  SCREEN_STEPS,
+  screenEmptyText,
+  withScreenDir,
   WPOS_FOOTER,
   WPOS_FORMULA,
   WPOS_HEADING,
@@ -98,8 +105,11 @@ test("禁用詞不出現在任何文案", () => {
     entryLine([["2026-09-15", 120, 1, 500]]) ?? "", entryLine(Array.from({ length: 5 }, () => ["2026-09-15", 1, 1, null] as BuyDay)) ?? "",
     ...positionNotes(a), holdingLine(a) ?? "", unrealizedText(a) ?? "", underDiffText(1000, 920) ?? "",
     underDiffText(1000, 1080) ?? "", underDiffText(1000, 1000) ?? "",
-    screenSummary(3, { rows: [srow()], total: 5, excluded_self: 2 }),
-    ...SCREEN_SORTS.map((s) => s.label), ...SCREEN_LOSS_STEPS.map((s) => s.label), ...Object.values(KIND_LABEL),
+    screenSummary(3, { excluded_self: 2, down: { rows: [srow()], total: 5 }, up: { rows: [srow()], total: 5 } }, "down"),
+    screenSummary(3, { excluded_self: 2, down: { rows: [srow()], total: 5 }, up: { rows: [srow()], total: 5 } }, "up"),
+    screenEmptyText("down"), screenEmptyText("up"), ...Object.values(SCREEN_DIR_LABEL),
+    ...SCREEN_SORTS.map((s) => s.label), ...SCREEN_LOSS_STEPS.map((s) => s.label),
+    ...SCREEN_GAIN_STEPS.map((s) => s.label), ...Object.values(KIND_LABEL),
   ];
   for (const t of texts) for (const w of banned) assert.ok(!t.includes(w), `「${t}」含禁用詞 ${w}`);
 });
@@ -194,31 +204,81 @@ test("篩選清單:門檻、種類、排序、估不出值的列", () => {
     srow({ branch_name: "戊-分點", cost: 4_000_000, unrealized_pct: -70 }),
   ];
   assert.deepEqual(filterScreenRows(rows, DEFAULT_SCREEN_FILTER).map((r) => r.branch_name), ["甲-分點"]);
-  assert.deepEqual(filterScreenRows(rows, { ...DEFAULT_SCREEN_FILTER, maxPct: 0 }).map((r) => r.branch_name),
+  assert.deepEqual(filterScreenRows(rows, { ...DEFAULT_SCREEN_FILTER, pct: 0 }).map((r) => r.branch_name),
     ["甲-分點", "乙-分點", "丁-分點"]);
-  assert.deepEqual(filterScreenRows(rows, { ...DEFAULT_SCREEN_FILTER, maxPct: 0, sort: "cost" }).map((r) => r.branch_name),
+  assert.deepEqual(filterScreenRows(rows, { ...DEFAULT_SCREEN_FILTER, pct: 0, sort: "cost" }).map((r) => r.branch_name),
     ["丁-分點", "甲-分點", "乙-分點"]);
-  assert.deepEqual(filterScreenRows(rows, { ...DEFAULT_SCREEN_FILTER, maxPct: 0, sort: "recent" }).map((r) => r.branch_name),
+  assert.deepEqual(filterScreenRows(rows, { ...DEFAULT_SCREEN_FILTER, pct: 0, sort: "recent" }).map((r) => r.branch_name),
     ["乙-分點", "丁-分點", "甲-分點"]);   // 同日 → 成本大的在前
-  assert.deepEqual(filterScreenRows(rows, { ...DEFAULT_SCREEN_FILTER, kind: "put", maxPct: -20 }).map((r) => r.branch_name), ["丙-分點"]);
-  assert.deepEqual(filterScreenRows(rows, { ...DEFAULT_SCREEN_FILTER, minCost: 0, maxPct: -20 }).map((r) => r.branch_name), ["戊-分點", "甲-分點"]);
+  assert.deepEqual(filterScreenRows(rows, { ...DEFAULT_SCREEN_FILTER, kind: "put", pct: -20 }).map((r) => r.branch_name), ["丙-分點"]);
+  assert.deepEqual(filterScreenRows(rows, { ...DEFAULT_SCREEN_FILTER, minCost: 0, pct: -20 }).map((r) => r.branch_name), ["戊-分點", "甲-分點"]);
+  // 為負那邊即使「不限」也不列帳面為正的列(防禦;v3 檔本來就分開)。
+  assert.deepEqual(filterScreenRows([...rows, srow({ branch_name: "正-分點", unrealized_pct: 5, unrealized: 600_000 })],
+    { ...DEFAULT_SCREEN_FILTER, pct: 0 }).map((r) => r.branch_name), ["甲-分點", "乙-分點", "丁-分點"]);
 });
 
-test("篩選清單 payload(v2,認購／認售各一份)與摘要句", () => {
+test("篩選清單:帳面為正(由高到低、門檻 ≥、估不出值的不列)", () => {
+  const up = withScreenDir(DEFAULT_SCREEN_FILTER, "up");
+  const rows = [
+    srow({ branch_name: "甲-分點", unrealized_pct: 35, unrealized: 4_200_000, last_buy_date: "2026-10-02" }),
+    srow({ branch_name: "乙-分點", unrealized_pct: 80, unrealized: 2_400_000, cost: 3_000_000 }),            // < 500 萬
+    srow({ branch_name: "丙-分點", unrealized_pct: 12.5, unrealized: 7_500_000, cost: 60_000_000, last_buy_date: "2026-10-07" }),
+    srow({ branch_name: "丁-分點", unrealized_pct: 22, unrealized: 2_200_000, cost: 10_000_000 }),
+    srow({ branch_name: "戊-分點", unrealized_pct: undefined, unrealized: undefined, n_unvalued: 1 }),       // 估不出
+    srow({ branch_name: "己-分點", unrealized_pct: -3, unrealized: -360_000 }),                              // 為負
+    srow({ branch_name: "庚-分點", kind: "put", unrealized_pct: 60, unrealized: 7_200_000 }),
+  ];
+  const names = (f: typeof up) => filterScreenRows(rows, f).map((r) => r.branch_name);
+  assert.deepEqual(names(up), ["甲-分點", "丁-分點"]);                                   // 預設 +20% 以上,% 高的在前
+  assert.deepEqual(names({ ...up, pct: 0 }), ["甲-分點", "丁-分點", "丙-分點"]);           // 不限:仍只有帳面 > 0
+  assert.deepEqual(names({ ...up, pct: 0, sort: "unrealized" }), ["丙-分點", "甲-分點", "丁-分點"]);   // 金額大到小
+  assert.deepEqual(names({ ...up, pct: 0, sort: "cost" }), ["丙-分點", "甲-分點", "丁-分點"]);
+  assert.deepEqual(names({ ...up, pct: 0, sort: "recent" }), ["丙-分點", "甲-分點", "丁-分點"]);
+  assert.deepEqual(names({ ...up, pct: 40 }), []);
+  assert.deepEqual(names({ ...up, pct: 0, minCost: 0 }), ["乙-分點", "甲-分點", "丁-分點", "丙-分點"]);
+  assert.deepEqual(names({ ...up, kind: "put" }), ["庚-分點"]);
+  // 門檻:兩邊對稱
+  assert.deepEqual(SCREEN_GAIN_STEPS.map((s) => s.key), SCREEN_LOSS_STEPS.map((s) => 0 - s.key || 0));
+  assert.deepEqual(SCREEN_STEPS.up, SCREEN_GAIN_STEPS);
+  assert.deepEqual(SCREEN_DEFAULT_PCT, { down: -20, up: 20 });
+  assert.equal(fmtPct(12.5), "+12.5%");
+});
+
+function side(rows: ScreenRow[], total = rows.length) {
+  return { rows, total };
+}
+
+test("篩選清單 payload(v3,認購／認售 × 帳面為負／為正)與摘要句", () => {
   assert.equal(normalizeScreening({ version: 1, definitions_version: "wpos-avgcost-v1", rows: [srow()] }), null);   // v1 混排:不收
-  assert.equal(normalizeScreening({ version: 2, definitions_version: "x", kinds: {} }), null);
+  // v2(只有帳面最差的前 400,為正的大多被截掉)也不收:畫面顯示「等下一次匯出」。
+  assert.equal(normalizeScreening({ version: 2, definitions_version: "wpos-avgcost-v1", kinds: { call: { rows: [srow()], total: 1, excluded_self: 0 } } }), null);
+  assert.equal(normalizeScreening({ version: 3, definitions_version: "x", kinds: {} }), null);
   const p = normalizeScreening({
-    version: 2, definitions_version: "wpos-avgcost-v1", data_date: "2026-10-08", window_from: "2026-04-10",
-    min_cost: 5_000_000, max_rows_per_kind: 400,
-    kinds: { call: { rows: [srow()], total: 2, excluded_self: 1 }, put: { rows: [], total: 0, excluded_self: 0 } },
+    version: 3, definitions_version: "wpos-avgcost-v1", data_date: "2026-10-08", window_from: "2026-04-10",
+    min_cost: 5_000_000, max_rows_per_side: 400,
+    kinds: {
+      call: { excluded_self: 1, down: side([srow()], 2), up: side([srow({ unrealized_pct: 30, unrealized: 3_600_000 })], 5) },
+      put: { excluded_self: 0, down: side([]), up: side([]) },
+    },
   });
   assert.ok(p);
-  assert.equal(p.kinds.call.rows.length, 1);
-  assert.deepEqual(p.kinds.put, { rows: [], total: 0, excluded_self: 0 });
-  // 缺 put 桶 → 空桶,不是 undefined
-  const q = normalizeScreening({ version: 2, definitions_version: "wpos-avgcost-v1", kinds: { call: { rows: [] } } });
-  assert.deepEqual(q?.kinds.put, { rows: [], total: 0, excluded_self: 0 });
-  assert.equal(screenSummary(1, p.kinds.call), "1 筆符合（檔內只保留帳面最差的前 1 / 共 2 筆，門檻與排序只在這 1 筆內）；另有 1 筆自家發行占過半（發行商造市／避險）未列");
-  assert.equal(screenSummary(1, { rows: [srow()], total: 1, excluded_self: 0 }), "1 筆符合");
-  assert.equal(screenSummary(0, { rows: [], total: 0, excluded_self: 2 }), "0 筆符合；另有 2 筆自家發行占過半（發行商造市／避險）未列");
+  assert.equal(p.max_rows_per_side, 400);
+  assert.equal(p.kinds.call.down.rows.length, 1);
+  assert.equal(p.kinds.call.up.total, 5);
+  assert.deepEqual(p.kinds.put, { excluded_self: 0, down: { rows: [], total: 0 }, up: { rows: [], total: 0 } });
+  // 缺 put 桶、缺 up 邊 → 空的,不是 undefined
+  const q = normalizeScreening({ version: 3, definitions_version: "wpos-avgcost-v1", kinds: { call: { down: { rows: [srow()] } } } });
+  assert.deepEqual(q?.kinds.put, { excluded_self: 0, down: { rows: [], total: 0 }, up: { rows: [], total: 0 } });
+  assert.deepEqual(q?.kinds.call.up, { rows: [], total: 0 });
+  assert.equal(q?.kinds.call.down.total, 1);
+  assert.equal(screenSummary(1, p.kinds.call, "down"), "1 筆符合（檔內只保留帳面最差的前 1 / 共 2 筆，門檻與排序只在這 1 筆內）；另有 1 筆自家發行占過半（發行商造市／避險）未列");
+  assert.equal(screenSummary(1, p.kinds.call, "up"), "1 筆符合（檔內只保留帳面最高的前 1 / 共 5 筆，門檻與排序只在這 1 筆內）；另有 1 筆自家發行占過半（發行商造市／避險）未列");
+  const plain = { excluded_self: 0, down: side([srow()]), up: side([]) };
+  assert.equal(screenSummary(1, plain, "down"), "1 筆符合");
+  assert.equal(screenSummary(0, plain, "up"), "0 筆符合");
+  assert.equal(screenSummary(0, { ...plain, excluded_self: 2 }, "up"), "0 筆符合；另有 2 筆自家發行占過半（發行商造市／避險）未列");
+  assert.equal(screenEmptyText("down"), "沒有帳面估算為負、符合門檻的券商 × 標的。涵蓋已匯入權證池、每檔權證只有前 15 大分點；沒有資料不代表沒有持有。");
+  assert.equal(screenEmptyText("up"), "沒有帳面估算為正、符合門檻的券商 × 標的。涵蓋已匯入權證池、每檔權證只有前 15 大分點；沒有資料不代表沒有持有。");
+  assert.deepEqual(SCREEN_DIR_LABEL, { down: "帳面為負", up: "帳面為正" });
+  assert.deepEqual([...SCREEN_PARAM_KEYS], ["wk", "wdir", "wpct", "wsort"]);
 });
