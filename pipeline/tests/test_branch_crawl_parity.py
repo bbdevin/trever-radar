@@ -174,8 +174,9 @@ class BranchCrawlParity(unittest.TestCase):
             with self.subTest(sid=sid, host=host):
                 self.assertEqual(key, host, "節流 key = 那一站,不碰全域節流")
                 self.assertEqual(throttle, 0 * len(fubon.MIRROR_HOSTS))
-        # 每檔的請求數:1 次,TRANSIENT 2 次(重試),每個 empty 多 1 次(另一站確認,docs/47
-        # §8.8),加上開跑前每站 12 檔的公布檢查。
+        # 每檔的請求數:1 次,TRANSIENT 2 次(重試),每個 empty 多 1–2 次(乾淨站確認,有第三個
+        # 活站時再問一站;零延遲時一條 worker 可能把佇列抓光 → 只剩一個活站 → 同站再抓一次,
+        # 所以多幾次取決於排程),加上開跑前每站 12 檔的公布檢查。
         from radar.importer import BRANCH_MIRROR_CHECK_SAMPLE, _evenly_spaced
         per_sid = {}
         for sid, *_ in calls:
@@ -185,10 +186,15 @@ class BranchCrawlParity(unittest.TestCase):
         check = BRANCH_MIRROR_CHECK_SAMPLE * n_hosts
         # 開跑前檢查若剛好抽到 TRANSIENT,它的那一次瞬時失敗就被檢查吸收,主爬不再重試。
         retry = 0 if TRANSIENT in picks else 1
-        self.assertEqual(sum(per_sid.values()), len(STOCKS) + retry + len(EMPTY) + check)
-        for sid in EMPTY:
+        self.assertEqual(sum(per_sid.values()) - check,
+                         len(STOCKS) + retry + sum(per_sid[s] - (n_hosts if s in picks else 0) - 1
+                                                   for s in EMPTY))
+        for sid in STOCKS:
             own = per_sid[sid] - (n_hosts if sid in picks else 0)
-            self.assertEqual(own, 2, f"{sid} 空的要被第二站問一次")
+            if sid in EMPTY:
+                self.assertIn(own, (2, 3), f"{sid} 空的要再被問 1–2 次")
+            else:
+                self.assertEqual(own, 1 + (retry if sid == TRANSIENT else 0), sid)
 
     def test_sequential_path_is_byte_for_byte_the_old_shape(self):
         """workers=1 不得碰新機制:輪替站、全域節流(throttle_key=None)、每檔一請求。"""
@@ -438,6 +444,41 @@ class FalseEmptiesFromAPartialMirror(unittest.TestCase):
         tally = _confirm_empties(results2, ["A", "x"], stats2, fetch, 0, None, None)
         self.assertEqual([r["outcome"] for r in results2], ["failed", "failed"])
         self.assertEqual(tally["failed"], 2)
+
+    def test_a_partial_mirror_that_is_clean_by_luck_cannot_confirm_alone(self):
+        """2026-10-13 重播約 1% 的失敗,定格成決定性的情境:三個好站都抽到真空(不乾淨),
+        半公布的 D 剛好沒抽到自己缺的檔 → D 是唯一的乾淨站;E 抖動回的空(D 也缺那一檔)
+        不能只靠 D 確認——要再問一站,好站有列 → done。真空仍確認、確認用的三站都不同。"""
+        from radar.importer import _confirm_empties
+        from radar.mirror_crawl import HostStats
+        from radar.providers import NoDataError
+
+        A, B, C, D, E = "A", "B", "C", "D", "E"
+        d_missing = {"X"}
+        results = [{"sid": "T", "outcome": "empty", "rows": None, "host": A},   # 真空
+                   {"sid": "X", "outcome": "empty", "rows": None, "host": E},   # E 抖動的假空
+                   {"sid": "T2", "outcome": "empty", "rows": None, "host": B},  # 真空
+                   {"sid": "T3", "outcome": "empty", "rows": None, "host": C}]  # 真空
+        stats = {A: HostStats(done=72, empty=1), B: HostStats(done=72, empty=1),
+                 C: HostStats(done=72, empty=1), D: HostStats(done=71),
+                 E: HostStats(done=71, empty=36)}
+        asked = []
+
+        def fetch(sid, host, interval):
+            asked.append((sid, host))
+            if sid.startswith("T") or (host == D and sid in d_missing):
+                raise NoDataError("empty")
+            return [{"stock_id": sid, "host": host}]
+
+        tally = _confirm_empties(results, ["T", "X", "T2", "T3"], stats, fetch, 0, None, None)
+        self.assertEqual(results[1]["outcome"], "done", "唯一的乾淨站也缺 → 第二站救回")
+        for sid in ("T", "X", "T2", "T3"):
+            self.assertEqual(next(h for s, h in asked if s == sid), D, "先問唯一的乾淨站 D")
+        for i in (0, 2, 3):
+            self.assertEqual(results[i]["outcome"], "empty")
+            self.assertEqual(len(set(results[i]["confirmed_by"])), 3, "三個不同的站都說空")
+        self.assertEqual(tally, {"checked": 4, "recovered": 1, "confirmed": 3, "failed": 0,
+                                 "self_confirmed": 0})
 
     def test_verifier_replay_partial_plus_flickering_mirror_seeds(self):
         """驗證者的重播(replay1008b):400 檔、D 半公布(20 個假空)、E 30% 機率回空、三個好站。

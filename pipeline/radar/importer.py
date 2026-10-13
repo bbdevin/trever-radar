@@ -1665,7 +1665,8 @@ def _confirm_empties(results: list[dict], targets: list[str], stats: dict, fetch
     * 確認用的站必須是**乾淨站**:這一輪一個 empty 都沒回過的活站(2026-10-08 第四次
       驗證:只排除回空的那一站不夠——半公布的 D 回的空會被抖動的 E 的空「確認」)。
       有多個乾淨站時用 done 最多的那一站。
-    * 有列 → done(用那一份);仍空 → 確認 empty;失敗 → 到**另一個**乾淨站再試一次
+    * 有列 → done(用那一份);仍空 → 再問一個沒問過的站(其他乾淨站優先),它有列 → done,
+      也空 → 確認 empty(乾淨不等於公布齊,2026-10-13);失敗 → 到**另一個**乾淨站再試一次
       (瞬時失敗不該把真空變成 failed),仍失敗 → failed。
     * 沒有乾淨站 → 要**兩個不同的**其他站都說空才算確認;任一站有列 → done;湊不到兩站
       或結果對不上 → failed(交給覆蓋率閘門、次日冪等重抓)。
@@ -1707,12 +1708,36 @@ def _confirm_empties(results: list[dict], targets: list[str], stats: dict, fetch
             got = _fetch_on(idxs, first)
             retry_idx = [i for i in idxs if got[i].outcome not in ("done", "empty")]
             second = next((h for h in clean if h != first), None)
+            tried = {i: {src, first} for i in idxs}
             if retry_idx and second is not None:
                 got.update(_fetch_on(retry_idx, second))     # 瞬時失敗:換另一個乾淨站再一次
+                for i in retry_idx:
+                    tried[i].add(second)
+            # 乾淨站也說空 → 再問一個沒問過的站(2026-10-13):「乾淨」只代表它這一輪分到的
+            # 標的都有列,不代表它公布齊了——分到的檔少、剛好沒抽到自己缺的那幾檔的半公布站
+            # 也會是乾淨站(驗證者重播約 1%:半公布的 D 成了唯一的乾淨站,把抖動的 E 回的空
+            # 「確認」了)。第二站有列 → done;也空 → 確認;沒有站可問或第二站失敗 → 維持
+            # 單一乾淨站的結論(不比以前差)。先問其他乾淨站,再問 done 最多的活站。
+            third_pool = clean + sorted((h for h in alive if h not in clean),
+                                        key=lambda h: -stats[h].done)
+            by_host: dict[str, list[int]] = {}
+            for i in idxs:
+                if got[i].outcome == "empty":
+                    h = next((h for h in third_pool if h not in tried[i]), None)
+                    if h is not None:
+                        by_host.setdefault(h, []).append(i)
+            again = {}
+            for h, hidx in by_host.items():
+                again.update(_fetch_on(hidx, h))
             for i in idxs:
                 r = got[i]
+                r2 = again.get(i)
                 if r.outcome == "done":
                     _set(i, "done", r)
+                elif r.outcome == "empty" and r2 is not None and r2.outcome == "done":
+                    _set(i, "done", r2)
+                elif r.outcome == "empty" and r2 is not None and r2.outcome == "empty":
+                    _set(i, "empty", r, [src, r.host, r2.host])
                 elif r.outcome == "empty":
                     _set(i, "empty", r, [src, r.host])
                 else:
