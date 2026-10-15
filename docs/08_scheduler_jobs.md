@@ -15,6 +15,8 @@
 > **2026-10-04 排程優化(`docs/47`)**:程式與 `crontab.example` 已改為「各輪是起點、腳本輪詢到來源公布為止、搶不到鎖會等、沒變動不上線、非交易日分點/資券/夜間輪收工」。**正式 crontab 尚未套用**(`vps/scripts/crontab.proposed.diff`,待人類核准);下表為**新時刻(舊時刻)**,腳本在舊時刻下也正確。
 >
 > 新增:週一 11:00 `weekly-refdata.sh`(題材/地緣/產業別,只寫 DB;crontab 套用前由 `daily-market.sh` 在 deploy 後補跑)。
+>
+> 長工作讓路表(2026-10-15):warrant-backfill／repair-window／build-branch-cover-index 的預算用 `lib.sh` `minutes_until_next_scheduled_writer` = 安靜窗(`quiet_window_at`)＋ overlay:mid-publish 03/09/12/20:00 起 20 分(`mid_publish_at`)、每天 00:05–00:54(`nightly_stats_at`)、每月 16 日 07:00 起 20 分(`monthly_directors_at`)、**平日 08:00–08:45 morning-index 與 13:15–13:35 adjust-incremental(`WEEKDAY_SHORT_JOBS`/`weekday_short_job_at`)**。overlay 不進 `quiet_window_at`(短輪自己不能判定在安靜窗裡);adjust-incremental 問預算時排除自己的 13:15。新增會拿 DB 鎖的排程輪時,要同步加進 overlay(10-14／15 morning-index 被 06:36 開的回補塊擋掉,見 `docs/49` §12.6.5)。
 
 | 台北時間 | 執行者(VPS cron script / GitHub Actions) | 內容 |
 |---|---|---|

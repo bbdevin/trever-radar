@@ -264,13 +264,56 @@ class AdjustIncrementalHarness(unittest.TestCase):
         self.assertTrue(any("注意" in n and "1 檔失敗" in n for n in notes), notes)
 
 
+    def test_its_own_13_15_slot_would_make_it_skip_itself_without_the_exclusion(self):
+        # lib.sh 的 WEEKDAY_SHORT_JOBS 含 1315-1335(讓長回補別握鎖跨過 13:15);
+        # adjust-incremental 問「下一個寫者」時若不把自己那段拿掉,永遠是 0 分 → 略過。
+        r, calls, notes, _ = self.run_script(ADJ_OTHER_SHORT_JOBS="0800-0845 1315-1335")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("only 0 min until the next scheduled writer", r.stdout)
+        self.assertEqual(calls, [])
+        self.assertEqual(notes, [])
+
+
+def _adjust_exclusion():
+    """adjust-incremental.sh 問預算時代入的 WEEKDAY_SHORT_JOBS(預設值)。"""
+    m = re.search(r'WEEKDAY_SHORT_JOBS="\$\{ADJ_OTHER_SHORT_JOBS:-([0-9 -]*)\}"',
+                  _code_lines(SCRIPT.read_text(encoding="utf-8")))
+    assert m, "adjust-incremental.sh must pass WEEKDAY_SHORT_JOBS when asking for its budget"
+    return m.group(1)
+
+
+def _lib_short_jobs():
+    m = re.search(r'^WEEKDAY_SHORT_JOBS="\$\{WEEKDAY_SHORT_JOBS:-([0-9 -]*)\}"',
+                  LIB.read_text(encoding="utf-8"), re.M)
+    assert m, "lib.sh must define WEEKDAY_SHORT_JOBS"
+    return m.group(1)
+
+
+class AdjustIncrementalShortJobsExclusionTests(unittest.TestCase):
+    def test_exclusion_is_lib_list_minus_its_own_slot(self):
+        # 不能漂移:lib.sh 加了新的平日短輪,這裡也要跟著有(只少自己 13:15 那段)。
+        own = [r for r in _lib_short_jobs().split() if r.startswith("1315-")]
+        self.assertEqual(len(own), 1, "lib.sh WEEKDAY_SHORT_JOBS must contain the 13:15 slot")
+        expected = [r for r in _lib_short_jobs().split() if r not in own]
+        self.assertEqual(_adjust_exclusion().split(), expected)
+
+
 @unittest.skipUnless(BASH_OK, "no usable bash (drives the real lib.sh; on Windows it needs WSL)")
 class AdjustIncrementalBudgetTests(unittest.TestCase):
     def test_13_15_has_more_than_30_minutes_before_the_next_writer_every_weekday(self):
+        # 用和腳本完全相同的排除(自己的 13:15 槽拿掉):13:15 → 14:05 安靜窗 = 50 分。
+        env = {"WEEKDAY_SHORT_JOBS": _adjust_exclusion()}
         for dow in range(1, 6):
             for dom in (1, 15, 16):
                 with self.subTest(dow=dow, dom=dom):
-                    self.assertGreater(minutes_until_writer(dow, 1315, dom), 30)
+                    self.assertGreater(minutes_until_writer(dow, 1315, dom, env=env), 30)
+                    self.assertEqual(minutes_until_writer(dow, 1315, dom, env=env), 50)
+
+    def test_long_jobs_see_13_15_as_a_writer(self):
+        # 對其他呼叫者(warrant-backfill 等)13:15 就是寫入者在跑。
+        for dow in range(1, 6):
+            with self.subTest(dow=dow):
+                self.assertEqual(minutes_until_writer(dow, 1315), 0)
 
 
 if __name__ == "__main__":

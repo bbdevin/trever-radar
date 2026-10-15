@@ -38,16 +38,19 @@ def _lib_path_for_bash():
 LIB_FOR_BASH = _lib_path_for_bash()
 
 
-def _script(args, fn="minutes_until_quiet_window"):
+def _script(args, fn="minutes_until_quiet_window", env=None):
+    # env 以「呼叫前綴」的形式內嵌(`VAR=… fn args`),和 adjust-incremental.sh 呼叫
+    # 時一模一樣;理由同上:WSL 啟動器不保證把 Python 端的環境帶進去。
+    prefix = "".join(f'{k}="{v}" ' for k, v in (env or {}).items())
     return (
         f'source "{LIB_FOR_BASH}"\n'
-        f'{fn} {args}\n'
+        f'{prefix}{fn} {args}\n'
     )
 
 
-def _run(args="", fn="minutes_until_quiet_window"):
+def _run(args="", fn="minutes_until_quiet_window", env=None):
     return subprocess.run(
-        [BASH, "-c", _script(args, fn)], capture_output=True, text=True, timeout=120,
+        [BASH, "-c", _script(args, fn, env)], capture_output=True, text=True, timeout=120,
     )
 
 
@@ -64,14 +67,14 @@ def _bash_available():
 BASH_OK = _bash_available()
 
 
-def _minutes(fn, dow=None, hhmm=None, dom=None):
+def _minutes(fn, dow=None, hhmm=None, dom=None, env=None):
     if dow is None:
         args = ""
     elif dom is None:
         args = f"{int(dow)} {int(hhmm)}"
     else:
         args = f"{int(dow)} {int(hhmm)} {int(dom)}"
-    proc = _run(args, fn)
+    proc = _run(args, fn, env)
     assert proc.returncode == 0, f"shell call failed: {proc.stderr}"
     out = proc.stdout.strip()
     assert out.isdigit(), f"expected a whole number of minutes, got {out!r} ({proc.stderr})"
@@ -82,8 +85,8 @@ def minutes_until(dow=None, hhmm=None):
     return _minutes("minutes_until_quiet_window", dow, hhmm)
 
 
-def minutes_until_writer(dow=None, hhmm=None, dom=None):
-    return _minutes("minutes_until_next_scheduled_writer", dow, hhmm, dom)
+def minutes_until_writer(dow=None, hhmm=None, dom=None, env=None):
+    return _minutes("minutes_until_next_scheduled_writer", dow, hhmm, dom, env)
 
 
 @unittest.skipUnless(
@@ -173,8 +176,15 @@ class MinutesUntilNextScheduledWriterTest(unittest.TestCase):
         # 03:00 起 20 分鐘內視為有寫入者在跑。
         self.assertEqual(minutes_until_writer(1, 300), 0)
         self.assertEqual(minutes_until_writer(1, 319), 0)
-        # 03:20 已出 mid 區間,下一個是 09:00 → (9*60) - (3*60+20) = 340
-        self.assertEqual(minutes_until_writer(1, 320), 340)
+        # 03:20 已出 mid 區間。平日下一個是 08:00 的 morning-index(平日短輪,見下方
+        # WeekdayShortJobsTest)→ (8*60) - (3*60+20) = 280。
+        self.assertEqual(minutes_until_writer(1, 320), 280)
+        # 週日沒有平日短輪:04:20(週日安靜窗 04:00 已結束)下一個就是 09:00 的 mid
+        # → (9*60) - (4*60+20) = 280。
+        self.assertEqual(minutes_until_writer(7, 420), 280)
+        # 09:00 起 20 分鐘同樣在跑(平日、週日皆然)。
+        self.assertEqual(minutes_until_writer(7, 900), 0)
+        self.assertEqual(minutes_until_writer(7, 919), 0)
 
     def test_the_long_weekday_gap_is_cut_short_by_mid_publish(self):
         # 只問安靜窗:02:31 → 14:05 是 694 分鐘。
@@ -228,25 +238,93 @@ class MinutesUntilNextScheduledWriterTest(unittest.TestCase):
         月排程一律不成立(而不是假裝每天都會發生);正式路徑不帶參數,
         會自己帶上台北當下的 day-of-month。
         """
-        # 平日 06:00,無日期:下一個是 09:00 的 mid-publish → 180 分。
-        self.assertEqual(minutes_until_writer(1, 600), 180)
+        # 平日 06:00,無日期:下一個是 08:00 的 morning-index → 120 分。
+        self.assertEqual(minutes_until_writer(1, 600), 120)
         # 同一時刻,但今天是 16 號:07:00 的董監輪先到 → 60 分。
         self.assertEqual(minutes_until_writer(1, 600, 16), 60)
-        # 15 號沒有這一輪,答案回到 180。
-        self.assertEqual(minutes_until_writer(1, 600, 15), 180)
-        # 07:00–07:19 視為在跑;07:20 之後下一個是 09:00 → 100 分。
+        # 15 號沒有這一輪,答案回到 120。
+        self.assertEqual(minutes_until_writer(1, 600, 15), 120)
+        # 07:00–07:19 視為在跑;07:20 之後下一個是 08:00 → 40 分。
         self.assertEqual(minutes_until_writer(1, 700, 16), 0)
         self.assertEqual(minutes_until_writer(1, 719, 16), 0)
-        self.assertEqual(minutes_until_writer(1, 720, 16), 100)
+        self.assertEqual(minutes_until_writer(1, 720, 16), 40)
         # 它落在平日 02:31–14:05 那段唯一的長空檔裡,正是這個守衛最會核准長塊的地方。
         self.assertEqual(minutes_until_writer(1, 320, 16), 220)   # 03:20 → 07:00
-        self.assertEqual(minutes_until_writer(1, 320), 340)       # 無日期:09:00
+        self.assertEqual(minutes_until_writer(1, 320), 280)       # 無日期:08:00
+        # 週日沒有平日短輪,07:20 之後下一個仍是 09:00 → 100 分(董監這段不受平日短輪影響)。
+        self.assertEqual(minutes_until_writer(7, 720, 16), 100)
 
     def test_mid_publish_applies_on_weekends_too(self):
         # crontab 是 `0 3,9,12,20 * * *`——每天,與 dow 無關。
         # 週六 08:00 只問安靜窗要等到週日 00:55(1015 分),但 09:00 那輪先到。
         self.assertEqual(minutes_until(6, 800), 1015)
         self.assertEqual(minutes_until_writer(6, 800), 60)
+
+
+@unittest.skipUnless(
+    BASH_OK,
+    "no usable bash (this test drives the real shell function; on Windows it needs WSL)",
+)
+class WeekdayShortJobsTest(unittest.TestCase):
+    """平日 08:00 morning-index 與 13:15 adjust-incremental 是排程寫入者(2026-10-15)。
+
+    2026-10-14／15:warrant-backfill 06:36 開的塊握著 /tmp/radar-db.lock 跨過 08:00,
+    morning-index 兩天都等鎖 300 s 逾時沒發布;10-14 的 13:15 adjust-incremental 也因
+    鎖被占而略過。當時 overlay 不認得這兩輪。和 00:05 分點排行一樣,它們**只**加在
+    overlay、不進 quiet_window_at(否則它們自己會判定在安靜窗裡;
+    test_cron_quiet_window.py 直接斷言 cron 時刻不得落在安靜窗內)。
+
+    warrant-backfill 在沒有 radar-bf-* 容器時會把 MID_PUBLISH_HOURS 清空(正式環境
+    現況),所以這裡的「回補預算」情境都帶 MID_PUBLISH_HOURS="" 來量。
+    """
+
+    NO_MID = {"MID_PUBLISH_HOURS": ""}
+    WARRANT_SAFETY = 15  # warrant-backfill.sh 的 WARRANT_SAFETY_MINUTES 預設
+
+    def test_slots_are_scheduled_writers_on_weekdays(self):
+        for dow in range(1, 6):
+            with self.subTest(dow=dow):
+                self.assertEqual(minutes_until_writer(dow, 800), 0)
+                self.assertEqual(minutes_until_writer(dow, 845), 0)
+                # 08:46 出槽,下一個是 09:00 的 mid → 14
+                self.assertEqual(minutes_until_writer(dow, 846), 14)
+                self.assertEqual(minutes_until_writer(dow, 1315), 0)
+                self.assertEqual(minutes_until_writer(dow, 1335), 0)
+                # 13:36 出槽,下一個是 14:05 的安靜窗 → 29
+                self.assertEqual(minutes_until_writer(dow, 1336), 29)
+
+    def test_quiet_window_itself_is_unchanged(self):
+        # 只問安靜窗的函式不認得平日短輪(它們不能進 quiet_window_at)。
+        self.assertEqual(minutes_until(1, 800), 365)    # 08:00 → 14:05
+        self.assertEqual(minutes_until(1, 1315), 50)    # 13:15 → 14:05
+
+    def test_weekday_06_36_chunk_ends_before_08_00(self):
+        # 事故情境:平日 06:36,mid 已清空。舊版答 449(→ 14:05),預算封頂 240,
+        # 塊一路握鎖到 10:36;新版答 84(→ 08:00)。
+        until = minutes_until_writer(3, 636, env=self.NO_MID)
+        self.assertEqual(until, 84)
+        budget = until - self.WARRANT_SAFETY
+        self.assertLessEqual(6 * 60 + 36 + budget, 8 * 60, "塊必須在 08:00 前收工")
+
+    def test_weekday_12_20_chunk_ends_before_13_15(self):
+        # 舊版答 105(→ 14:05),預算 90,塊握到 13:50 吃掉 13:15;新版答 55。
+        until = minutes_until_writer(3, 1220, env=self.NO_MID)
+        self.assertEqual(until, 55)
+        self.assertLessEqual(12 * 60 + 20 + until - self.WARRANT_SAFETY, 13 * 60 + 15)
+
+    def test_weekends_are_unaffected(self):
+        # 週六 06:36 本來就在週六安靜窗 04:50–07:30 裡 → 0。
+        self.assertEqual(minutes_until_writer(6, 636, env=self.NO_MID), 0)
+        no_short = dict(self.NO_MID, WEEKDAY_SHORT_JOBS="")
+        for dow in (6, 7):
+            for hhmm in (636, 731, 800, 1200, 1315):
+                with self.subTest(dow=dow, hhmm=hhmm):
+                    self.assertEqual(
+                        minutes_until_writer(dow, hhmm, env=self.NO_MID),
+                        minutes_until_writer(dow, hhmm, env=no_short),
+                    )
+        # 週六 07:31 出安靜窗、mid 清空 → 一路到週日 00:05 的分點排行:(1440-451)+5 = 994
+        self.assertEqual(minutes_until_writer(6, 731, env=self.NO_MID), 994)
 
 
 class DriverSanityTest(unittest.TestCase):

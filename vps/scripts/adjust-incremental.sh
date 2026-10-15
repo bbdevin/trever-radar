@@ -56,7 +56,9 @@ if [ -f "$FLAG" ]; then
   exit 0
 fi
 
-LEFT="$(minutes_until_next_scheduled_writer)"
+# 自己的 13:15 槽在 lib.sh 的 WEEKDAY_SHORT_JOBS 裡(讓長回補別握鎖跨過來);問「下一個
+# 寫者」時要把自己那段拿掉,否則永遠是 0 分鐘、自己略過自己。
+LEFT="$(WEEKDAY_SHORT_JOBS="${ADJ_OTHER_SHORT_JOBS:-0800-0845}" minutes_until_next_scheduled_writer)"
 if [ "$LEFT" -le "$MIN_LEFT_MIN" ]; then
   echo "only ${LEFT} min until the next scheduled writer (need > ${MIN_LEFT_MIN}) — skip"
   exit 0

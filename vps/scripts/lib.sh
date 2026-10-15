@@ -832,8 +832,24 @@ monthly_directors_at() {
   [ "$hhmm" -ge 700 ] && [ "$hhmm" -lt $(( 700 + MONTHLY_DIRECTORS_RUN_MINUTES )) ]
 }
 
+# 平日短輪:08:00 morning-index(輪詢到 08:40,收工約 08:45)、13:15 adjust-incremental
+# (實測約 100 s,取 20 分鐘)。和 mid-publish 一樣只加在 overlay、不併進 quiet_window_at
+# (那會讓它們自己判定「在安靜窗裡」)。
+# 2026-10-14／15 morning-index 兩天都沒跑成:warrant-backfill 06:36 開的塊握著 DB 鎖跨過
+# 08:00,morning-index 等鎖 300 s 逾時;10-14 adjust-incremental 也因鎖被占而略過——當時
+# 這張表不認得 08:00／13:15。adjust-incremental 自己問的時候會把 1315 那段拿掉。
+WEEKDAY_SHORT_JOBS="${WEEKDAY_SHORT_JOBS:-0800-0845 1315-1335}"
+weekday_short_job_at() {
+  local dow="$1" hhmm="$2" r
+  [ "$dow" -le 5 ] || return 1
+  for r in $WEEKDAY_SHORT_JOBS; do
+    [ "$hhmm" -ge $((10#${r%-*})) ] && [ "$hhmm" -le $((10#${r#*-})) ] && return 0
+  done
+  return 1
+}
+
 # 距離「下一個會有排程寫入者在跑的分鐘」還有幾分鐘——安靜窗與 overlay(mid-publish、
-# 00:05 分點排行、每月 16 日董監)取先。長工作要問的是這個,不是只問安靜窗;
+# 00:05 分點排行、每月 16 日董監、平日 08:00／13:15 短輪)取先。長工作要問的是這個,不是只問安靜窗;
 # `minutes_until_quiet_window` 保留給只在意 daily/deep 那類窗口的呼叫者。
 #
 # 2026-09-07 23:40 實測:只認得 00:55 安靜窗的舊版回答 75 分鐘,真正的答案是
@@ -871,6 +887,7 @@ minutes_until_next_scheduled_writer() {
     if quiet_window_at "$probe_dow" "$probe_hhmm" \
        || mid_publish_at "$probe_hhmm" \
        || nightly_stats_at "$probe_hhmm" \
+       || weekday_short_job_at "$probe_dow" "$probe_hhmm" \
        || monthly_directors_at "$probe_hhmm" "$probe_dom"; then
       echo "$i"
       return 0

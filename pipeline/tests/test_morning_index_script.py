@@ -54,6 +54,22 @@ class MorningIndexSource(unittest.TestCase):
         self.assertLessEqual(int(m.group(1)), 840)
         self.assertNotRegex(self.code, r"(?m)^\s*sleep\b", "輪詢只透過 poll_until(睡前放鎖)")
 
+    def test_does_not_consult_the_scheduled_writer_overlay(self):
+        # 2026-10-15:08:00–08:45 進了 lib.sh 的 WEEKDAY_SHORT_JOBS(讓長回補讓路)。
+        # morning-index 自己不問這些守衛,所以不會因自己的槽而略過自己。
+        for guard in ("minutes_until_next_scheduled_writer", "minutes_until_quiet_window",
+                      "in_radar_quiet_window", "weekday_short_job_at"):
+            self.assertNotIn(guard, self.code, guard)
+
+    def test_its_slot_is_in_the_weekday_short_jobs_overlay(self):
+        m = re.search(r'^WEEKDAY_SHORT_JOBS="\$\{WEEKDAY_SHORT_JOBS:-([0-9 -]*)\}"',
+                      LIB.read_text(encoding="utf-8"), re.M)
+        self.assertIsNotNone(m)
+        slot = next((r for r in m.group(1).split() if r.startswith("0800-")), None)
+        self.assertIsNotNone(slot, "08:00 morning-index must be reserved in WEEKDAY_SHORT_JOBS")
+        deadline = int(re.search(r'MORNING_DEADLINE="\$\{MORNING_DEADLINE:-(\d{4})\}"', self.code).group(1))
+        self.assertGreater(int(slot.split("-")[1]), deadline, "保留段要涵蓋最後一次輪詢之後的匯出/上線")
+
     def test_presence_is_logged_every_attempt(self):
         self.assertIn('echo "morning-index tx_night date=${TODAY} present=yes close=${close} at=', self.code)
         self.assertIn('echo "morning-index tx_night date=${TODAY} present=no at=', self.code)

@@ -2,6 +2,12 @@
 
 > 單一進度真相。每完成一個里程碑就更新本檔。規格細節看各編號文件,別寫在這裡。
 
+## 2026-10-15 長回補讓路平日 08:00／13:15(`docs/49` §12.6.5「事故」;已 commit、未 push;VPS 需 `sync_code` 後生效,不動 crontab)
+
+- **事故**:10-14／10-15 `warrant-backfill`(`~/warrant-driver.sh`)06:36 開的塊握 `/tmp/radar-db.lock` 跨過 08:00,`morning-index` 兩天等鎖 300 s 逾時沒上線;10-14 13:15 `adjust-incremental` 也因鎖被占略過。根因:`minutes_until_next_scheduled_writer` 的 overlay 不認得這兩輪(mid 已清空時 06:36 答 449 分 → 預算封頂 240、握到 10:36)。
+- **修正**:`lib.sh` 新增 `WEEKDAY_SHORT_JOBS="0800-0845 1315-1335"`/`weekday_short_job_at`(只週一–五),只加在 overlay、**不進 `quiet_window_at`**;`adjust-incremental.sh` 問預算時用 `WEEKDAY_SHORT_JOBS="${ADJ_OTHER_SHORT_JOBS:-0800-0845}"` 拿掉自己的 13:15。warrant-backfill 平日 06:36 預算 240 → **69 分**(07:45 收工)、12:20 預算 90 → **40 分**(13:00 收工);週末不變;repair-window／build-branch-cover-index 同樣讓路。
+- **驗證**:pytest 新增 `WeekdayShortJobsTest`(槽邊界、06:36/12:20 預算、週末與無短輪逐點相同、安靜窗本身不變)、adjust-incremental 排除與 lib 清單防漂移、harness 證明不排除就會略過自己、morning-index 不問這些守衛且保留段涵蓋 08:40 截止;全套見 commit。
+
 ## 2026-10-13 權證「仍持有(估)」加帳面為正(`docs/51` §3.2/§4;程式完成於分支、未合 main、未上線;v3.9)
 
 - **需求**:使用者「權證分點仍持有 賺錢幾%的也幫我新增」。
