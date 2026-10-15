@@ -1,5 +1,9 @@
 # Handoff — 2026-09-24（期貨切片從未真的渲染過的結構性 bug 已修、四輪日更補上失敗語音（過程自己又生一個更嚴重的）、期貨補到每契約每天、兩道守門缺口補上、一個記成已出貨卻沒上畫面的按鈕、一次自己的效能預測被實測打臉 2.5 倍、「隔天大漲」事前登記落地）
 
+## 2026-10-15 補記(export-json 提速,分支未合)
+
+- `export-json` 六項提速(權證窗口一次掃描、active_warrants 預讀、分點日史不 JOIN、損益/分位去重算、沒變的 core/chips 不重寫)+ 計時補齊,合成庫全量 export 逐位元相同。合 main 後第一輪看 `radar-cron.log` 的 `export timing:`(新鍵 radar/intraday/side/warrant_q/margin/holders/payload/loop_other/branches/total)回填 `docs/44` §3.5。第二段 export 增量是提案(§3.5 末),未實作。
+
 ## 2026-10-09 補記(除權息還原因子日增量)
 
 - 新 `vps/scripts/adjust-incremental.sh`(平日 13:15)+ `compute-adjustments --ex-dates-since/--dry-run/--print-ids`;因子邏輯未改。正式 crontab 待人類加 `15 13 * * 1-5 … adjust-incremental.sh`;合併後一次性追補 `ADJUST_SINCE=2026-09-04 bash vps/scripts/adjust-incremental.sh`(≤15 分)。細節 `docs/47` §3.2、`docs/STATUS.md` 同日條目。上線後看 log `adjust-incremental summary:` 一行。

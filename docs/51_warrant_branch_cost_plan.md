@@ -158,6 +158,7 @@ Agg = { lots, cost, buy_lots, sell_lots_attributed, sell_lots_unattributed, real
 - 原因（VPS `EXPLAIN QUERY PLAN`）：加了 TEMP 配對表 JOIN 後，SQLite 改成 `SCAN branch_dim` → 逐券商走 `ix_branch_trades_raw_branch(branch_id, date)`——那是全市場（含現股）索引，5 GB 庫上大量隨機讀。合成 DB 小到全在快取裡，所以本機量不出來。
 - 修正：拿掉 JOIN，回到與逐日序列同樣的計畫（`SCAN warrants` → `branch_trades_raw` 主鍵），Python 端以 `charted` 過濾。VPS 實測該查詢 **4,783,455 列 34.4 s**（全掃，未過濾）。
 - 修正後正式機（2026-10-13 00:34 手動 export，`97b9dc9`）：`wpos: rows=2167728 pairs=8166 stocks=517 json_kib=7203 summaries=1843 secs=52.7`——列數／配對／輸出與修正前一致，**1,306 s → 52.7 s**；整段 export 910 s（修正前同日他輪不含 wpos 約 847 s）。超過原訂 +15 s 預算，但不再佔鎖拖輪；若要再省，下一步是把持有估算併進逐日序列那次掃描。
+- **2026-10-15（分支，未合 main）**：區間彙總、逐日序列、持有估算三條窗口查詢合成**一次**掃描（`_WARRANT_WINDOW_SQL` / `_WarrantWindowScan`，計畫同本節修正後的持有估算查詢，沒有 TEMP JOIN），輸出逐位元不變；`wpos: secs=` 自此是整個窗口掃描的秒數。量測與等價理由見 `docs/44` §3.5。
 
 ## 6. 待人類／上線後
 
