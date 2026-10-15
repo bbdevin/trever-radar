@@ -1287,7 +1287,8 @@ class _WarrantWindowScan:
                 slot[1] += amt or 0
             elif kind == "put":
                 slot[2] += amt or 0
-        self.daily[(u, branch)] = [by_day[day] for day in sorted(by_day)]
+        # 舊查詢是 SQL SUM 後 int(r.call_amt):逐日總和再截斷(net_lots 若有非整數 REAL 也一致)。
+        self.daily[(u, branch)] = [[day, int(by_day[day][1]), int(by_day[day][2])] for day in sorted(by_day)]
         if u not in self._under_loaded:
             self._under_loaded.add(u)
             closes: dict[str, float] = {}
