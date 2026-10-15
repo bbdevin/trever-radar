@@ -75,7 +75,11 @@ def to_production_layout(conn: sqlite3.Connection) -> None:
 
 
 def build(out: Path, *, stocks: int = 60, days: int = 120, branches: int = 40,
-          warrants_per_stock: int = 3, seed: int = 20261003) -> dict:
+          warrants_per_stock: int = 3, seed: int = 20261003,
+          stock_rows: tuple[int, int] = (3, 15), warrant_branch_days: int | None = None) -> dict:
+    """``stock_rows`` = 每檔每日分點列數範圍(正式機約 30 = 買超前 15 + 賣超前 15);
+    ``warrant_branch_days`` = 權證分點列只留最近 N 個交易日(正式機 prune 150,docs/44 §6)。
+    兩者預設值 = 舊行為,同一個 seed 產生同一個庫。"""
     if out.exists():
         raise SystemExit(f"refusing to overwrite {out}")
     rnd = random.Random(seed)
@@ -173,10 +177,11 @@ def build(out: Path, *, stocks: int = 60, days: int = 120, branches: int = 40,
                       enumerate(dict.fromkeys(dim[i][3] for i in range(0, len(dim), 4)))])
 
     raw = 0
+    warrant_from = dates[-warrant_branch_days] if warrant_branch_days else dates[0]
     for d in dates:                      # append date by date, like the daily import
         day_rows = []
-        for s in sids + [w for w, _s, _k in wids]:
-            k = min(branches, rnd.randint(3, 15) if len(s) == 4 else rnd.randint(0, 4))
+        for s in sids + ([w for w, _s, _k in wids] if d >= warrant_from else []):
+            k = min(branches, rnd.randint(*stock_rows) if len(s) == 4 else rnd.randint(0, 4))
             for b in rnd.sample(range(1, branches + 1), k):   # source order, not branch_id order
                 buy = rnd.choice([0, 0, 1, 2, 5, 10, 20, 50, 120, 300])
                 sell = rnd.choice([0, 0, 1, 2, 5, 10, 20, 50, 120, 300])
@@ -218,9 +223,14 @@ def main() -> int:
     ap.add_argument("--branches", type=int, default=40)
     ap.add_argument("--warrants-per-stock", type=int, default=3)
     ap.add_argument("--seed", type=int, default=20261003)
+    ap.add_argument("--stock-rows", type=int, nargs=2, default=(3, 15), metavar=("MIN", "MAX"),
+                    help="branch rows per stock per day (production ~30)")
+    ap.add_argument("--warrant-branch-days", type=int, default=None,
+                    help="keep warrant branch rows for the last N trading days only (production prune: 150)")
     a = ap.parse_args()
     info = build(a.out, stocks=a.stocks, days=a.days, branches=a.branches,
-                 warrants_per_stock=a.warrants_per_stock, seed=a.seed)
+                 warrants_per_stock=a.warrants_per_stock, seed=a.seed,
+                 stock_rows=tuple(a.stock_rows), warrant_branch_days=a.warrant_branch_days)
     print(f"built {a.out}: {info}")
     return 0
 

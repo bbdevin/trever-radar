@@ -56,6 +56,7 @@ from ..compute.strategy_performance import (
 from ..compute.compute_branch_stats import DAYTRADE_MIN_OBS, DAYTRADE_PAYBACK, DAYTRADE_RATE
 from ..compute.warrant_position_est import (
     DEFINITIONS_VERSION as WPOS_VERSION,
+    POSITION_KINDS,
     SCREEN_FILE_VERSION,
     SCREEN_MAX_ROWS_PER_SIDE,
     SCREEN_MIN_COST,
@@ -345,17 +346,14 @@ def _rank_branch_pctile_rows_by_lots(
 
 def _branch_pctile_camp_rows(rows: list[dict], suffix: str) -> list[dict]:
     """把某一派的欄位(帶後綴)攤成不帶後綴的同一組鍵,兩派因此共用排序與前端。"""
-    return [
-        {
-            "branch_name": row["branch_name"],
-            **{field: row[f"{field}{suffix}"] for field in _BRANCH_PCTILE_CAMP_FIELDS},
-            **{field: row[f"{field}{suffix}"]
-               for field in _BRANCH_PCTILE_CAMP_STOCK_FIELDS},
-            **({column: row[column] for column in _BRANCH_PCTILE_DAYTRADE_COLUMNS}
-               if suffix == "" else {}),
-        }
-        for row in rows
-    ]
+    # (輸出鍵, 來源欄) 先排好一次,不在每一列重組 f-string(docs/44 §3.5);鍵與順序同以前。
+    pairs = (
+        [("branch_name", "branch_name")]
+        + [(field, f"{field}{suffix}") for field in _BRANCH_PCTILE_CAMP_FIELDS]
+        + [(field, f"{field}{suffix}") for field in _BRANCH_PCTILE_CAMP_STOCK_FIELDS]
+        + ([(column, column) for column in _BRANCH_PCTILE_DAYTRADE_COLUMNS] if suffix == "" else [])
+    )
+    return [{key: row[src] for key, src in pairs} for row in rows]
 
 
 def _branch_pctile_payload(conn, sid: str, meta: dict | None, table_exists: bool) -> dict:
@@ -377,10 +375,16 @@ def _branch_pctile_payload(conn, sid: str, meta: dict | None, table_exists: bool
             + _BRANCH_PCTILE_DAYTRADE_COLUMNS + _BRANCH_PCTILE_STOCK_DAYTRADE_COLUMNS
             + _BRANCH_PCTILE_WINDOW_COLUMNS
         )
-        rows = [dict(row) for row in conn.execute(text(f"""
-            SELECT {", ".join(columns)}
-            FROM branch_stock_pctile_counts WHERE stock_id = :s
-        """), {"s": sid}).mappings()]
+        # DBAPI cursor + zip:與 .mappings() 的 dict 同鍵、同序、同值,少掉 SQLAlchemy 每列的開銷。
+        cur = conn.connection.cursor()
+        try:
+            cur.execute(f"""
+                SELECT {", ".join(columns)}
+                FROM branch_stock_pctile_counts WHERE stock_id = ?
+            """, (sid,))
+            rows = [dict(zip(columns, row)) for row in cur.fetchall()]
+        finally:
+            cur.close()
     window = dict(rows[0]) if rows else (dict(meta) if meta else {})
     stock_totals = rows[0] if rows else {}
     # 整份快照同一個版本:有列就看列,沒有列就看快照中繼資料。
@@ -1181,8 +1185,19 @@ def _warrant_info_for_positions(conn, d1: str, d5: str) -> dict[str, WarrantInfo
 
 #: 分片 positions.branches 的佔位字串(串流已把每檔的 branches 序列化成字串,寫檔時原文替換)。
 _WPOS_BRANCHES_SENTINEL = "__wpos_branches_7f3a9c__"
-_POSITION_ROWS_SQL = """
-    SELECT w.stock_id, b.branch_name, b.stock_id, b.date, SUM(b.net_lots), MAX(wd.close)
+# 權證分點 120 日窗口的**唯一一次**掃描(2026-10-15,docs/44 §3.5、docs/51 §5.2 的「下一步」)。
+# 以前同一個窗口掃三次:區間彙總(GROUP BY 券商×權證)、逐日序列(GROUP BY 券商×標的×日)、
+# 持有估算(GROUP BY 標的×券商×權證×日)。三者都能由最細的那一份——(標的, 券商, 權證, 日)
+# 的淨張數合計與金額合計——加總出來,所以只留這一條,條件與 JOIN 與舊的三條逐字相同
+# (舊持有估算那條多一個 kind IN ('call','put'),改在 Python 端篩)。
+# 金額欄與舊的區間彙總/逐日序列同一個式子:同一 (權證, 日) 的 wd.close 只有一個(主鍵),
+# 所以先在日內加總再跨日加總,與舊的「逐列加總」是同一組整數相加。
+# **不要**加 TEMP 配對表 JOIN:正式庫上 SQLite 會把它排成「掃 branch_dim → 逐券商走
+# ix_branch_trades_raw_branch(全市場、含現股)」,2026-10-12 第一輪 217 萬列花 1,306 s;
+# 不 JOIN 時走 warrants → raw 主鍵,478 萬列 34 s。
+_WARRANT_WINDOW_SQL = """
+    SELECT w.stock_id, b.branch_name, b.stock_id, b.date, SUM(b.net_lots), MAX(wd.close),
+           SUM(b.net_lots * CAST(ROUND(COALESCE(wd.close, 1.0) * 1000) AS INTEGER))
     FROM branch_trades b
     JOIN warrants w ON w.id = b.stock_id
     JOIN stocks s ON s.id = w.stock_id
@@ -1190,29 +1205,217 @@ _POSITION_ROWS_SQL = """
     WHERE LENGTH(b.stock_id) = 6 AND b.date >= ? AND b.date <= ?
       AND s.type = 'stock'
       AND s.name NOT LIKE '%指%'
-      AND w.kind IN ('call', 'put')
     GROUP BY w.stock_id, b.branch_name, b.stock_id, b.date
     ORDER BY 1, 2, 3, 4
 """
 
 
-def _iter_position_rows(conn, charted: dict[str, set[str]], d120: str, d1: str):
-    """持有估算的輸入列:(標的, 券商, 權證, 日期, 淨張數合計, 當日收盤),已排序、同腿同日合併。
+class _WarrantWindowScan:
+    """把 ``_WARRANT_WINDOW_SQL`` 的列一次讀完,同時產出三樣東西:
 
-    只取分片裡的 (標的, 券商),在 Python 端過濾。**不要**改回 TEMP 配對表 JOIN:正式庫上
-    SQLite 會把它排成「掃 branch_dim → 逐券商走 ix_branch_trades_raw_branch(全市場、含現股)」,
-    2026-10-12 第一輪 217 萬列花 1,306 s;不 JOIN 時走 warrants → raw 主鍵,478 萬列 34 s。
-    用 DBAPI cursor 迭代 tuple,不經 Row 物件。
+    * ``pairs``:{(券商, 標的): [(權證, [淨張1d, 金額1d, 淨張2d, 金額2d, …120d])]},**只留**
+      任一區間合計 |金額| ≥ ``min_amount`` 的配對(= 舊程式 detail_by_stock / charted 的配對;
+      其餘配對在舊程式裡也不產生任何輸出)。權證依代號遞增(= 舊 GROUP BY 的順序)。
+    * ``daily``:{(標的, 券商): [[日, 認購金額, 認售金額], …]}(日期遞增),只給上面的配對。
+    * ``position_rows()``:持有估算的輸入列 (標的, 券商, 權證, 日, 淨張合計, 收盤),只給上面
+      的配對、只給認購/認售——與舊持有估算查詢 + charted 過濾後的列逐列相同、順序相同。
+
+    列依 (標的, 券商, …) 排序,一個配對的列一定相鄰,所以一次只在記憶體裡放一個配對。
+    標的現股收盤(換算現股均價用)在遇到該標的第一個入選配對時才讀(主鍵範圍),
+    內容與舊的「整窗讀 daily_prices 再篩 charted」相同。
+    """
+
+    def __init__(self, conn, *, d120: str, d1: str, starts: tuple[str, ...],
+                 warrant_info: dict[str, WarrantInfo], min_amount: int):
+        self.conn = conn
+        self.d120, self.d1 = d120, d1
+        self.starts = starts
+        self.warrant_info = warrant_info
+        self.min_amount = min_amount
+        self.pairs: dict[tuple[str, str], list[tuple[str, list[int]]]] = {}
+        self.daily: dict[tuple[str, str], list[list]] = {}
+        self.under_by_sid: dict[str, dict[str, float]] = {}
+        self.under_last: dict[str, tuple[str, float]] = {}
+        self._under_loaded: set[str] = set()
+        self.rows_seen = 0
+
+    def position_rows(self):
+        cur = self.conn.connection.cursor()
+        try:
+            cur.execute(_WARRANT_WINDOW_SQL, (self.d120, self.d1))
+            cur_u = cur_b = None
+            block: list[tuple] = []
+            for row in cur:
+                if row[1] != cur_b or row[0] != cur_u:
+                    if block:
+                        yield from self._finish(cur_u, cur_b, block)
+                    cur_u, cur_b = row[0], row[1]
+                    block = [row]
+                else:
+                    block.append(row)
+            if block:
+                yield from self._finish(cur_u, cur_b, block)
+        finally:
+            cur.close()
+
+    def _finish(self, u: str, branch: str, block: list[tuple]):
+        starts = self.starts
+        n_tf = len(starts)
+        per_w: dict[str, list[int]] = {}
+        for _u, _b, wid, day, net, _close, amt in block:
+            v = per_w.get(wid)
+            if v is None:
+                v = per_w[wid] = [0] * (2 * n_tf)
+            n = net or 0
+            a = amt or 0
+            for i in range(n_tf):
+                if day >= starts[i]:
+                    v[2 * i] += n
+                    v[2 * i + 1] += a
+        min_amount = self.min_amount
+        if not any(abs(sum(v[2 * i + 1] for v in per_w.values())) >= min_amount for i in range(n_tf)):
+            return
+        self.pairs[(branch, u)] = list(per_w.items())
+        wi = self.warrant_info
+        by_day: dict[str, list] = {}
+        for _u, _b, wid, day, _net, _close, amt in block:
+            slot = by_day.get(day)
+            if slot is None:
+                slot = by_day[day] = [day, 0, 0]
+            kind = wi[wid].kind
+            if kind == "call":
+                slot[1] += amt or 0
+            elif kind == "put":
+                slot[2] += amt or 0
+        self.daily[(u, branch)] = [by_day[day] for day in sorted(by_day)]
+        if u not in self._under_loaded:
+            self._under_loaded.add(u)
+            closes: dict[str, float] = {}
+            last = None
+            for day, close in self.conn.exec_driver_sql(
+                    "SELECT date, close FROM daily_prices "
+                    "WHERE stock_id = ? AND date >= ? AND date <= ? AND close IS NOT NULL",
+                    (u, self.d120, self.d1)):
+                closes[day] = float(close)
+                if last is None or day > last[0]:
+                    last = (day, close)
+            if closes:
+                self.under_by_sid[u] = closes
+                self.under_last[u] = last
+        for row in block:
+            if wi[row[2]].kind in POSITION_KINDS:
+                self.rows_seen += 1
+                yield row[:6]
+
+
+_ACTIVE_WARRANTS_SQL = """
+    SELECT w.id, w.name, w.kind, w.strike, w.exercise_ratio, w.maturity_date,
+           d.close, d.volume, d.turnover
+    FROM warrant_daily d
+    JOIN warrants w ON w.id = d.warrant_id
+    WHERE w.stock_id = :s
+      AND d.date = :d
+      AND w.kind IN ('call', 'put')
+      AND d.turnover > 0
+    ORDER BY d.turnover DESC
+    LIMIT 12
+"""
+_ACTIVE_WARRANTS_LIMIT = 12
+
+
+def _active_warrant_candidates(conn, d: str) -> dict[str, list[tuple]]:
+    """{標的: [(id, name, kind, strike, exercise_ratio, maturity_date, close, volume, turnover)]}:
+    ``_ACTIVE_WARRANTS_SQL`` 去掉 stock_id 條件、ORDER BY 與 LIMIT 的同一組列(一次讀齊)。"""
+    out: dict[str, list[tuple]] = {}
+    for r in conn.exec_driver_sql("""
+        SELECT w.stock_id, w.id, w.name, w.kind, w.strike, w.exercise_ratio, w.maturity_date,
+               d.close, d.volume, d.turnover
+        FROM warrant_daily d
+        JOIN warrants w ON w.id = d.warrant_id
+        WHERE d.date = ?
+          AND w.kind IN ('call', 'put')
+          AND d.turnover > 0
+          AND w.stock_id IS NOT NULL
+    """, (d,)):
+        out.setdefault(r[0], []).append(tuple(r[1:]))
+    return out
+
+
+def _active_warrants_for(conn, sid: str, d: str, candidates: dict[str, list[tuple]]) -> list:
+    """個股頁 ``active_warrants``:當日成交金額前 12 檔(與 ``_ACTIVE_WARRANTS_SQL`` 逐列相同)。
+
+    成交金額互不相同時,「依金額遞減取前 12」只有一個答案,直接由預先讀好的列排出來。
+    有同額(前 13 名內)時,同額的先後與誰被 LIMIT 擠掉取決於 SQLite 的計畫與排序器,
+    Python 無法保證重現——那幾檔照舊跑原本的單檔查詢,輸出因此與以前逐位元相同。
+    """
+    rows = candidates.get(sid)
+    if not rows:
+        return []
+    top = sorted(rows, key=lambda r: r[8], reverse=True)[:_ACTIVE_WARRANTS_LIMIT + 1]
+    turnovers = [r[8] for r in top]
+    if len(set(turnovers)) == len(turnovers):
+        return top[:_ACTIVE_WARRANTS_LIMIT]
+    return conn.execute(text(_ACTIVE_WARRANTS_SQL), {"s": sid, "d": d}).fetchall()
+
+
+class _BranchNames:
+    """branch_dim 的 id → 名稱(export 開頭讀一次)。
+
+    查不到的 id:不持鎖的並行 export(mid-backfill-publish)期間若有新分點寫進 branch_dim,
+    舊的 JOIN 看得到它——所以查不到時重讀一次表再判斷,重讀後仍沒有的才是孤兒(照 JOIN 語意丟掉,
+    之後不再重讀)。
+    """
+
+    def __init__(self, conn):
+        self.by_id: dict[int, str] = {}
+        self._missing: set = set()
+        self._load(conn)
+
+    def _load(self, conn) -> None:
+        self.by_id.update(
+            (r[0], r[1]) for r in conn.exec_driver_sql("SELECT id, branch_name FROM branch_dim"))
+
+    def lookup_missing(self, conn, bid) -> str | None:
+        if bid in self._missing:
+            return None
+        self._load(conn)
+        name = self.by_id.get(bid)
+        if name is None:
+            self._missing.add(bid)
+        return name
+
+
+_BRANCH_HISTORY_SQL = """
+    SELECT date, branch_id, buy_lots, sell_lots, net_lots
+    FROM branch_trades_raw
+    WHERE stock_id = ? AND date >= date(?, '-730 days')
+    ORDER BY date DESC, branch_id DESC
+"""
+
+
+def _branch_history_rows(conn, sid: str, d: str, names: _BranchNames) -> list[tuple]:
+    """個股 2 年分點列 (date, branch_name, buy, sell, net),date DESC、branch_id DESC。
+
+    與以前 ``branch_trades_raw JOIN branch_dim`` 的查詢逐列相同:同一個主鍵範圍、同一個 ORDER BY
+    (主鍵倒走,不排序),名字改在 Python 查表;``branch_dim`` 沒有的 id 照 JOIN 的語意丟掉。
     """
     cur = conn.connection.cursor()
     try:
-        cur.execute(_POSITION_ROWS_SQL, (d120, d1))
-        for row in cur:
-            names = charted.get(row[0])
-            if names and row[1] in names:
-                yield row
+        cur.execute(_BRANCH_HISTORY_SQL, (sid, d))
+        rows = cur.fetchall()
     finally:
         cur.close()
+    get = names.by_id.get
+    out = []
+    append = out.append
+    for date_, bid, buy, sell, net in rows:
+        name = get(bid)
+        if name is None:
+            name = names.lookup_missing(conn, bid)
+            if name is None:
+                continue
+        append((date_, name, buy, sell, net))
+    return out
 
 
 def _self_issued_summary(branch_name: str, breakdown: list[dict]) -> dict | None:
@@ -1518,6 +1721,7 @@ def export_json(
     ``verify_split`` 對每一檔在記憶體內把三份接回,與單一 payload 深度比對,不相等就擲例外。
     ``size_report`` 給路徑時寫每鍵大小分布(聯集/其餘兩組)。
     """
+    t_start = time.perf_counter()
     out = Path(out_dir) if out_dir else DEFAULT_OUT
     out.mkdir(parents=True, exist_ok=True)
     init_db()
@@ -1869,8 +2073,10 @@ def export_json(
                 "SELECT close FROM (SELECT close, date FROM daily_prices "
                 "WHERE stock_id = :s AND close IS NOT NULL AND date <= :d "
                 "ORDER BY date DESC LIMIT 30) ORDER BY date"), {"s": s["id"], "d": d})]
+        t_intraday = time.perf_counter()
         attach_spark_day(union, d)
         export_intraday_safe(out, union, d)  # 分K(docs/50):同一閘門、失敗只記 warning
+        t_intraday = time.perf_counter() - t_intraday
 
         # ── 族群資金流(官方產業別;題材標籤之後人工維護再加) ──
         sector_today: dict[str, dict] = {}
@@ -2371,6 +2577,7 @@ def export_json(
     # 照寫、逐位元不變(分點頁、自選頁、盤中 worker、建置器、期貨推播都還讀它)。
     home_sizes = write_home(out, radar)
     (out / "meta.json").write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
+    t_radar_done = time.perf_counter()
 
     # 各份排行各自一檔、各自的分頁才讀:任一份失敗只記警告,不可中斷 export
     # (否則 stocks_index/個股檔整輪不寫、整輪不上線)。
@@ -2467,9 +2674,24 @@ def export_json(
         export_ids = list(dict.fromkeys(
             list(union.keys()) + sorted(stock_meta.keys())
         ))
+        # 分點名查表(branch_history 不 JOIN branch_dim,docs/44 §3.5)。
+        branch_names_by_id = _BranchNames(conn)
+        # 當日有成交的認購/認售,依標的分組一次讀齊(docs/44 §3.5;以前每檔一條查詢、每條都掃整張 warrants)。
+        active_by_stock = _active_warrant_candidates(conn, d)
         # 各段累計秒數(docs/43):只印一行 log,輸出的 JSON 一個位元都不變。
+        # 前 8 個鍵是原本的(順序不動,舊 log 可直接比);之後是 2026-10-15 補的(docs/44 §3.5):
+        # radar = 開頭到 radar.json／meta.json 寫完(不含 intraday)、intraday = spark_day＋分K、
+        # side = 排行／法人族群／指數／搜尋索引與個股迴圈前的讀表、loop 內的 warrant_q／margin／
+        # holders／payload、loop_other = 迴圈內其餘未分段的部分、branches = rankings／today／
+        # warrant_movers、total = 整個 export_json。
         timing = {k: 0.0 for k in ("branch_history", "candles", "pctile", "pnl",
-                                   "levels", "warrant_shards", "tracked", "write")}
+                                   "levels", "warrant_shards", "tracked", "write",
+                                   "radar", "intraday", "side", "warrant_q", "margin",
+                                   "holders", "payload", "loop_other", "branches", "total")}
+        timing["intraday"] = t_intraday
+        timing["radar"] = t_radar_done - t_start - t_intraday
+        t_loop = time.perf_counter()
+        timing["side"] = t_loop - t_radar_done
         # 拆檔(docs/44 §3.2):聯集股的 K 線以 cut 切出 hist;其餘不切。
         parts_writer = StockPartsWriter(stock_dir)
         cut = hist_cut(d)
@@ -2501,24 +2723,15 @@ def export_json(
                     "FROM daily_prices p WHERE p.stock_id = :s AND p.close IS NOT NULL "
                     "ORDER BY p.date DESC LIMIT 600"), {"s": sid}).fetchall()))
             timing["candles"] += time.perf_counter() - t_sec
+            t_sec = time.perf_counter()
             warrant_history = conn.execute(text("""
                 SELECT date, call_turnover, put_turnover, call_count, put_count
                 FROM warrant_stock_daily
                 WHERE stock_id = :s
                 ORDER BY date DESC LIMIT 60
             """), {"s": sid}).fetchall()
-            active_warrants = conn.execute(text("""
-                SELECT w.id, w.name, w.kind, w.strike, w.exercise_ratio, w.maturity_date,
-                       d.close, d.volume, d.turnover
-                FROM warrant_daily d
-                JOIN warrants w ON w.id = d.warrant_id
-                WHERE w.stock_id = :s
-                  AND d.date = :d
-                  AND w.kind IN ('call', 'put')
-                  AND d.turnover > 0
-                ORDER BY d.turnover DESC
-                LIMIT 12
-            """), {"s": sid, "d": d}).fetchall()
+            active_warrants = _active_warrants_for(conn, sid, d, active_by_stock)
+            timing["warrant_q"] += time.perf_counter() - t_sec
             t_sec = time.perf_counter()
             # 同張數的先後明寫成 branch_id(= 以前走 PK 索引時的自然順序,輸出逐位元不變),
             # 不再靠索引走訪順序(docs/43)。view 沒有 branch_id,所以直接 join。
@@ -2530,21 +2743,13 @@ def export_json(
                 ORDER BY r.net_lots DESC, r.branch_id
             """), {"s": sid, "d": d}).fetchall()
 
-            has_any_branch = conn.execute(text(
-                "SELECT 1 FROM branch_trades WHERE stock_id = :s LIMIT 1"
-            ), {"s": sid}).scalar()
-            if has_any_branch:
-                # 同日內的先後明寫成 branch_id 遞減 = 以前倒著走索引的自然順序(docs/43);
-                # v2 不再裁剪,但每天列的順序就是這個(前端不重排)。
-                branch_history_rows = conn.execute(text("""
-                    SELECT r.date, d.branch_name, r.buy_lots, r.sell_lots, r.net_lots
-                    FROM branch_trades_raw r
-                    JOIN branch_dim d ON r.branch_id = d.id
-                    WHERE r.stock_id = :s AND r.date >= date(:d, '-730 days')
-                    ORDER BY r.date DESC, r.branch_id DESC
-                """), {"s": sid, "d": d}).fetchall()
-            else:
-                branch_history_rows = []
+            # 同日內的先後明寫成 branch_id 遞減 = 以前倒著走索引的自然順序(docs/43);
+            # v2 不再裁剪,但每天列的順序就是這個(前端不重排)。
+            # 2026-10-15 提速(docs/44 §3.5):整個 export 最大的一段(每檔 ~1.4 萬列 × 2,400 檔)。
+            # 只讀 raw 主鍵範圍、不 JOIN branch_dim,名字在 Python 查表(查不到 = JOIN 會丟掉的列,
+            # 照丟);DBAPI cursor 直接拿 tuple。以前先問「這檔有沒有任何分點列」再查——沒有列時
+            # 這條查詢本來就回空,所以那一問拿掉,結果相同。
+            branch_history_rows = _branch_history_rows(conn, sid, d, branch_names_by_id)
             insti_history_rows = conn.execute(text("""
                 SELECT date, foreign_net, trust_net, dealer_net, total_net
                 FROM daily_institutional
@@ -2557,14 +2762,18 @@ def export_json(
             # 一邊倒的日子另一側整個不見——2026-10-10 使用者決定全站改成「前 15 大」一致)。
             branch_days = encode_branch_days(branch_history_rows)
             timing["branch_history"] += time.perf_counter() - t_sec
+            t_sec = time.perf_counter()
             margin_hist, margin_meta = _margin_history_payload(conn, sid, d)
+            timing["margin"] += time.perf_counter() - t_sec
             t_sec = time.perf_counter()
             branch_pctile_counts = _branch_pctile_payload(
                 conn, sid, branch_pctile_meta, branch_pctile_exists,
             )
             timing["pctile"] += time.perf_counter() - t_sec
+            t_sec = time.perf_counter()
             holders_hist, holders_meta = _holders_history_payload(conn, sid, d)
             directors_latest = _directors_latest_payload(conn, sid)
+            timing["holders"] += time.perf_counter() - t_sec
             # 價格位置(docs/45):只給顯示用事實,刻意不進 technical(Armed 判定讀 technical.risks)。
             t_sec = time.perf_counter()
             price_levels = compute_price_levels(
@@ -2572,6 +2781,7 @@ def export_json(
                 as_of_limit=d,
             )
             timing["levels"] += time.perf_counter() - t_sec
+            t_sec = time.perf_counter()
             payload = {
                 "id": sid, "name": s["name"], "market": s["market"],
                 "industry": s.get("industry"),
@@ -2640,6 +2850,7 @@ def export_json(
                 "holders_meta": holders_meta,
                 "directors_latest": directors_latest,
             }
+            timing["payload"] += time.perf_counter() - t_sec
             # 區間損益(估算,docs/42):用全部分點列(與 branch_days 同一批,730 日不限 480 天);沒有分點列 → 鍵不輸出。
             t_sec = time.perf_counter()
             branch_pnl = branch_pnl_payload(
@@ -2679,6 +2890,9 @@ def export_json(
                 size_entries[sid] = size_entry(payload)
             timing["write"] += time.perf_counter() - t_sec
         parts_writer.finish()
+        timing["loop_other"] = (time.perf_counter() - t_loop) - sum(
+            timing[k] for k in ("branch_history", "candles", "pctile", "pnl", "levels", "write",
+                                "warrant_q", "margin", "holders", "payload"))
         if size_report is not None:
             Path(size_report).write_text(json.dumps({
                 "data_date": d, "generated_at": now, "cut": cut,
@@ -2691,18 +2905,21 @@ def export_json(
     }, ensure_ascii=False), encoding="utf-8")
 
     # ── Export Branches ──
+    t_sec = time.perf_counter()
     _export_branches(out, engine, d)
+    timing["branches"] += time.perf_counter() - t_sec
     t_sec = time.perf_counter()
     _export_warrant_branches(out, engine, d, base20)
     timing["warrant_shards"] += time.perf_counter() - t_sec
     t_sec = time.perf_counter()
     _export_tracked_branch_history(out, engine, d)
     timing["tracked"] += time.perf_counter() - t_sec
+    timing["total"] = time.perf_counter() - t_start
     # 一行、固定鍵序,正式機 radar-cron.log 可直接 grep 'export timing:' 比較前後。
     print("export timing: " + " ".join(f"{k}={v:.1f}s" for k, v in timing.items()), flush=True)
     print(f"export parts: hist_written={parts_writer.hist_written} "
           f"hist_reused={parts_writer.hist_reused} hist_total={len(parts_writer.index)} "
-          f"legacy={'on' if legacy_stocks else 'off'}", flush=True)
+          f"legacy={'on' if legacy_stocks else 'off'} unchanged={parts_writer.unchanged}", flush=True)
     # docs/44 P2:首頁拆檔的 raw bytes,正式機 radar-cron.log 可直接 grep 'export home:'。
     print(f"export home: radar={len(json.dumps(radar, ensure_ascii=False).encode('utf-8'))} "
           f"head={home_sizes['head']} stocks={home_sizes['stocks']} union={len(union)}", flush=True)
@@ -2833,38 +3050,36 @@ def _export_warrant_branches(out: Path, engine, date: str, base20: list[str]):
         d5 = prior[3] if len(prior) > 3 else d2
         d30 = prior[28] if len(prior) > 28 else (prior[-1] if prior else d1)
 
-        # Calculate estimated NTD amount: net_lots * 1000 * price
-        # Since warrant_daily might miss some days, we fallback to 1.0 if unknown, though usually it's there.
-        # We query per warrant to provide breakdown.
+        # 區間彙總、逐日序列、持有估算三者共用**一次**窗口掃描(2026-10-15,docs/44 §3.5;以前是
+        # 三條查詢各掃一次 120 日窗口)。見 _WARRANT_WINDOW_SQL / _WarrantWindowScan 的說明。
         # 金額用整數算(價格 ×1000 先取整,權證價最多 3 位小數,所以等於原值):浮點 SUM
         # 的結果跟列的加總順序有關,int() 截斷後會差 1 元;整數加總與順序無關(docs/43)。
-        rows = [] if not bd1 else conn.execute(text("""
-            SELECT
-                b.branch_name,
-                w.stock_id AS underlying_id,
-                s.name AS underlying_name,
-                b.stock_id AS warrant_id,
-                w.name AS warrant_name,
-                w.kind,
-                SUM(CASE WHEN b.date >= :d1 THEN b.net_lots ELSE 0 END) AS net_lots_1d,
-                SUM(CASE WHEN b.date >= :d1 THEN b.net_lots * CAST(ROUND(COALESCE(wd.close, 1.0) * 1000) AS INTEGER) ELSE 0 END) AS net_amt_1d,
-                SUM(CASE WHEN b.date >= :d2 THEN b.net_lots ELSE 0 END) AS net_lots_2d,
-                SUM(CASE WHEN b.date >= :d2 THEN b.net_lots * CAST(ROUND(COALESCE(wd.close, 1.0) * 1000) AS INTEGER) ELSE 0 END) AS net_amt_2d,
-                SUM(CASE WHEN b.date >= :d5 THEN b.net_lots ELSE 0 END) AS net_lots_5d,
-                SUM(CASE WHEN b.date >= :d5 THEN b.net_lots * CAST(ROUND(COALESCE(wd.close, 1.0) * 1000) AS INTEGER) ELSE 0 END) AS net_amt_5d,
-                SUM(CASE WHEN b.date >= :d30 THEN b.net_lots ELSE 0 END) AS net_lots_30d,
-                SUM(CASE WHEN b.date >= :d30 THEN b.net_lots * CAST(ROUND(COALESCE(wd.close, 1.0) * 1000) AS INTEGER) ELSE 0 END) AS net_amt_30d,
-                SUM(CASE WHEN b.date >= :d120 THEN b.net_lots ELSE 0 END) AS net_lots_120d,
-                SUM(CASE WHEN b.date >= :d120 THEN b.net_lots * CAST(ROUND(COALESCE(wd.close, 1.0) * 1000) AS INTEGER) ELSE 0 END) AS net_amt_120d
-            FROM branch_trades b
-            JOIN warrants w ON w.id = b.stock_id
-            JOIN stocks s ON s.id = w.stock_id
-            LEFT JOIN warrant_daily wd ON wd.warrant_id = b.stock_id AND wd.date = b.date
-            WHERE LENGTH(b.stock_id) = 6 AND b.date >= :d120 AND b.date <= :d1
-              AND s.type = 'stock'
-              AND s.name NOT LIKE '%指%'
-            GROUP BY b.branch_name, w.stock_id, s.name, b.stock_id, w.name, w.kind
-        """), {"d1": d1, "d2": d2, "d5": d5, "d30": d30, "d120": d120}).fetchall()
+        tf_keys = ("1d", "2d", "5d", "30d", "120d")
+        positions_json_by_stock: dict[str, str] = {}
+        under_last: dict[str, tuple[str, float]] = {}
+        screen_kinds: dict[str, dict] = empty_screening()
+        pairs: dict[tuple[str, str], list[tuple[str, list[int]]]] = {}
+        daily_by_pair: dict[tuple[str, str], list[list]] = {}
+        warrant_info: dict[str, WarrantInfo] = {}
+        stream = None
+        scan = None
+        t_wpos = time.perf_counter()
+        if bd1:
+            warrant_info = _warrant_info_for_positions(conn, d1, d5)
+            scan = _WarrantWindowScan(
+                conn, d120=d120, d1=d1, starts=(d1, d2, d5, d30, d120),
+                warrant_info=warrant_info, min_amount=WARRANT_BRANCH_DETAIL_MIN_AMOUNT,
+            )
+            # 持有估算(docs/51,wpos-avgcost-v1):只吃入選配對的認購/認售列,依 (標的, 券商, 權證, 日)
+            # 串流處理;常駐記憶體只有輸出(見 compute/warrant_position_est.py 的說明)。
+            stream = PositionStream(
+                warrant_info=warrant_info, under_close={}, under_close_by_sid=scan.under_by_sid, as_of=d1,
+                self_issued=lambda branch, wid: _is_self_issued(branch, warrant_info[wid].name),
+            )
+            stream.consume(scan.position_rows())
+            stream.finish()
+            pairs, daily_by_pair, under_last = scan.pairs, scan.daily, scan.under_last
+        stock_names = {r[0]: r[1] for r in conn.exec_driver_sql("SELECT id, name FROM stocks")} if pairs else {}
 
         # Keep the full-market contract strict.  Individual stock detail is
         # sharded so a 100 萬 threshold never makes every mobile client fetch
@@ -2873,32 +3088,29 @@ def _export_warrant_branches(out: Path, engine, date: str, base20: list[str]):
             "1d": [], "2d": [], "5d": [], "30d": [], "120d": []
         }
         detail_by_stock: dict[str, dict[str, list[dict]]] = {}
-        
-        grouped = {}
-        for r in rows:
-            m = dict(r._mapping)
-            key = (m["branch_name"], m["underlying_id"], m["underlying_name"])
-            if key not in grouped:
-                grouped[key] = []
-            grouped[key].append(m)
-            
-        for (branch_name, underlying_id, underlying_name), warrants in grouped.items():
-            for tf in ["1d", "2d", "5d", "30d", "120d"]:
-                total_amt = sum(w[f"net_amt_{tf}"] for w in warrants)
+
+        # 舊的區間彙總查詢是 GROUP BY (券商, 標的, 標的名, 權證, …),輸出依這組鍵排序;
+        # 同額時的先後(下面都是穩定排序)就是這個順序,所以照 (券商, 標的) 走、配對內權證遞增。
+        for branch_name, underlying_id in sorted(pairs):
+            underlying_name = stock_names[underlying_id]
+            warrants = pairs[(branch_name, underlying_id)]
+            for i, tf in enumerate(tf_keys):
+                total_amt = sum(v[2 * i + 1] for _wid, v in warrants)
                 if abs(total_amt) >= WARRANT_BRANCH_DETAIL_MIN_AMOUNT:
                     breakdown = []
-                    for w in warrants:
-                        w_amt = w[f"net_amt_{tf}"]
+                    for wid, v in warrants:
+                        w_amt = v[2 * i + 1]
                         if abs(w_amt) > 0:
+                            info = warrant_info[wid]
                             breakdown.append({
-                                "warrant_id": w["warrant_id"],
-                                "warrant_name": w["warrant_name"],
-                                "kind": w["kind"],
-                                "net_lots": int(w[f"net_lots_{tf}"]),
+                                "warrant_id": wid,
+                                "warrant_name": info.name,
+                                "kind": info.kind,
+                                "net_lots": int(v[2 * i]),
                                 "net_amount": int(w_amt)
                             })
                     breakdown.sort(key=lambda x: -abs(x["net_amount"]))
-                    
+
                     item = {
                         "branch_name": branch_name,
                         "underlying_id": underlying_id,
@@ -2914,7 +3126,7 @@ def _export_warrant_branches(out: Path, engine, date: str, base20: list[str]):
                     )[tf].append(item)
                     if abs(total_amt) >= WARRANT_BRANCH_MARKET_MIN_AMOUNT:
                         results[tf].append(item)
-                
+
         # Sort each list by absolute net amount
         for k in results:
             results[k].sort(key=lambda x: -abs(x["net_amount"]))
@@ -2936,73 +3148,28 @@ def _export_warrant_branches(out: Path, engine, date: str, base20: list[str]):
             r.branch_name: _branch_code(r.branch_key)
             for r in conn.execute(text("SELECT branch_name, branch_key FROM branch_dim"))
         }
+        # 每檔裡券商的先後 = 舊逐日查詢(GROUP BY 券商, 標的, 日 ORDER BY 日)第一次出現的順序:
+        # 最早有列的日子先,同一天依券商名(SQLite 把 GROUP BY 排成 (日, 券商, 標的) 一次排序)。
         daily_by_stock: dict[str, dict[str, list[list]]] = {sid: {} for sid in charted}
-        if bd1 and charted:
-            for r in conn.execute(text("""
-                SELECT b.branch_name, w.stock_id AS underlying_id, b.date,
-                       SUM(CASE WHEN w.kind = 'call'
-                                THEN b.net_lots * CAST(ROUND(COALESCE(wd.close, 1.0) * 1000) AS INTEGER) ELSE 0 END) AS call_amt,
-                       SUM(CASE WHEN w.kind = 'put'
-                                THEN b.net_lots * CAST(ROUND(COALESCE(wd.close, 1.0) * 1000) AS INTEGER) ELSE 0 END) AS put_amt
-                FROM branch_trades b
-                JOIN warrants w ON w.id = b.stock_id
-                JOIN stocks s ON s.id = w.stock_id
-                LEFT JOIN warrant_daily wd ON wd.warrant_id = b.stock_id AND wd.date = b.date
-                WHERE LENGTH(b.stock_id) = 6 AND b.date >= :d120 AND b.date <= :d1
-                  AND s.type = 'stock'
-                  AND s.name NOT LIKE '%指%'
-                GROUP BY b.branch_name, w.stock_id, b.date
-                ORDER BY b.date
-            """), {"d1": d1, "d120": d120}):
-                names = charted.get(r.underlying_id)
-                if names and r.branch_name in names:
-                    daily_by_stock[r.underlying_id].setdefault(r.branch_name, []).append(
-                        [r.date, int(r.call_amt), int(r.put_amt)])
+        for (underlying_id, branch_name), series in sorted(
+                daily_by_pair.items(), key=lambda kv: (kv[1][0][0], kv[0][1], kv[0][0])):
+            daily_by_stock[underlying_id][branch_name] = series
 
-        # 持有估算(docs/51,wpos-avgcost-v1):另一條查詢,只取分片裡的 (標的, 券商)、只取認購／
-        # 認售,在 SQL 內先依 (標的, 券商, 權證, 日期) 合併排序,Python 一腿一組地串流處理;
-        # 常駐記憶體只有輸出(見 compute/warrant_position_est.py 的說明)。
-        positions_json_by_stock: dict[str, str] = {}
-        under_last: dict[str, tuple[str, float]] = {}
-        screen_kinds: dict[str, dict] = empty_screening()
-        if bd1 and charted:
-            t_wpos = time.perf_counter()
-            warrant_info = _warrant_info_for_positions(conn, d1, d5)
-            under_by_sid: dict[str, dict[str, float]] = {}
-            for sid, day, close in conn.exec_driver_sql(
-                    "SELECT stock_id, date, close FROM daily_prices "
-                    "WHERE date >= ? AND date <= ? AND close IS NOT NULL", (d120, d1)):
-                if sid in charted:
-                    under_by_sid.setdefault(sid, {})[day] = float(close)
-                    if sid not in under_last or day > under_last[sid][0]:
-                        under_last[sid] = (day, close)
-            stream = PositionStream(
-                warrant_info=warrant_info, under_close={}, under_close_by_sid=under_by_sid, as_of=d1,
-                self_issued=lambda branch, wid: _is_self_issued(branch, warrant_info[wid].name),
-            )
-            rows_seen = 0
-
-            def counted(rows):
-                nonlocal rows_seen
-                for row in rows:
-                    rows_seen += 1
-                    yield row
-
-            stream.consume(counted(_iter_position_rows(conn, charted, d120, d1)))
-            stream.finish()
+        if stream is not None and charted:
             positions_json_by_stock = stream.stock_json   # 每檔一段已序列化的 branches 物件
             screen_kinds = screening_rows(
                 stream.summaries,
-                names={sid: name for (_b, sid, name) in grouped},
+                names={sid: stock_names[sid] for (_b, sid) in sorted(pairs)},
                 under_last=under_last,
                 is_hq=lambda branch: _branch_broker_group(branch)[1],
                 entry_days=entry_days_lookup(positions_json_by_stock),
             )
             # 正式機第一輪要看的數字(docs/51 §5):列數、配對數、秒數、輸出大小。
-            print(f"wpos: rows={rows_seen} pairs={sum(len(v) for v in charted.values())} "
+            # secs 自 2026-10-15 起是整個窗口掃描(含區間彙總與逐日序列),不再只是持有估算。
+            print(f"wpos: rows={scan.rows_seen} pairs={sum(len(v) for v in charted.values())} "
                   f"stocks={len(positions_json_by_stock)} json_kib={sum(len(s) for s in positions_json_by_stock.values()) // 1024} "
                   f"summaries={len(stream.summaries)} secs={time.perf_counter() - t_wpos:.1f}")
-            del stream, under_by_sid, warrant_info
+        del stream, scan, warrant_info, pairs, daily_by_pair
 
         # 與 warrant-stock-details 同一個誠實性契約:全市場檔也要說出自己的
         # 資料日,否則五個 timeframe 錨在 bd1 卻無處可查。沿用 today.json 的

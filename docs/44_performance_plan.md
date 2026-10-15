@@ -232,6 +232,70 @@ home/stocks.json       {version:1, data_date, generated_at, stocks:[逐檔投影
 
 **驗證**:pytest 全套 1704 passed(新 `test_branch_days_export.py` 7 項;`test_stock_parts`/`test_json_export_branch_tags`/`test_branch_interval_pnl`/`test_bull_bear_codes` 跟著改);web node 398 passed(新 `branchFlow.test.ts` 5 項、`stockParts`/`stockLoad` v2 案例、`bullBoardBuild` 版本換代案例、事實文案);`tsc`、`next build`;390px 深/淺色 Playwright 截圖(假 session 攔截 Supabase、`/data/**` 餵 2464 型/2476 型合成 chips v2)`docs/evidence/44_branch_days/`:2464 1日 買方 0 家/賣方 15、5日 14/15,2476 1日 8/6(同名兩列加總成一列、怪怪-分點 net=5),K 線 pane 標題「前15大買賣超合計」,無水平溢出。
 
+### 3.5 export-json 提速(2026-10-15;程式在分支,未合 main)
+
+**問題**:每一輪都跑 `radar export-json`(持 DB 鎖),晚上分點輪還跑兩次(第一段上線、第二段排行統計)。正式機 2026-10-14:19:45→20:01(1,000 s)、20:14→20:31(996 s);使用者要等第一次 export 跑完才看得到當天分點。20:14 那輪 `export timing: branch_history=220.3s candles=16.1s pctile=78.1s pnl=115.8s levels=6.2s warrant_shards=207.6s tracked=22.1s write=46.3s`(合計 ~712 s,其餘 ~290 s 沒有計時;`wpos: … secs=63.9` 在 warrant_shards 裡)。
+
+**硬前提**:同一個 DB 狀態下,每一個輸出檔與改前**逐位元相同**(`generated_at` 除外);記憶體峰值不得多於 ~50 MB;不加任何依賴。
+
+**改了什麼**(每一項都附「為什麼結果不變」;`pipeline/tests/test_export_speedups.py` 把每一項與它取代的舊查詢/舊程式原文逐列比對)
+
+1. **計時補齊**:`export timing:` 原本 8 個鍵順序不動,後面加 `radar`(開頭到 radar.json/meta.json 寫完,不含 intraday)、`intraday`(spark_day＋分K,晚上那輪會連 Fugle)、`side`(資券排行/法人族群/指數/搜尋索引/個股迴圈前的讀表)、迴圈內的 `warrant_q`(權證歷史＋active_warrants)、`margin`、`holders`(集保＋董監)、`payload`(組 payload,含 branch_tags)、`loop_other`(迴圈內其餘)、`branches`(rankings/today/warrant_movers)、`total`。下一輪正式 log 就能說出那 ~290 s 在哪。`export parts:` 行多一個 `unchanged=`(見第 7 點)。
+2. **權證分點 120 日窗口:三次掃描 → 一次**(`_WARRANT_WINDOW_SQL` / `_WarrantWindowScan`;`docs/51` §5.2 列的下一步)。以前同一窗口掃三次:區間彙總(GROUP BY 券商×權證)、逐日序列(GROUP BY 券商×標的×日)、持有估算(GROUP BY 標的×券商×權證×日)。三者都能由最細的 (標的, 券商, 權證, 日) 的淨張合計＋金額合計加回去:同一 (權證, 日) 的 `wd.close` 只有一個(主鍵),所以「日內先加再跨日加」與舊的「逐列加」是同一組整數相加。條件與 JOIN 與舊查詢逐字相同(舊持有估算多的 `kind IN ('call','put')` 改在 Python 篩),計畫同舊持有估算那條(`SCAN warrants → branch_trades_raw 主鍵`,**沒有** TEMP 表 JOIN)。列依 (標的, 券商) 相鄰,一次只留一個配對在記憶體:配對結束時判定是否入選(任一區間 |合計| ≥ 100 萬,= 舊 charted),沒入選的整個丟掉(舊程式裡它們本來就不產生任何輸出),入選的才算逐日序列、餵持有估算串流;標的現股收盤在遇到該標的第一個入選配對時才讀(主鍵範圍)。輸出順序:舊區間彙總的 GROUP BY 依 (券商, 標的, …) 排序 → 新程式照 `sorted((券商, 標的))` 走、配對內權證遞增;逐日序列每檔裡券商的先後 = 舊查詢第一次出現的順序 = (最早日, 券商名)。副作用:舊程式把區間彙總全部 `fetchall()` 再每組建一個 17 鍵 dict,合成庫上這是整個 export 的記憶體峰值(見下表)。
+3. **個股 `active_warrants`**:舊的單檔查詢在每一檔都 `SCAN warrants`(`warrants.stock_id` 沒有索引;正式約 10.5 萬列 × 2,418 檔)。改成當日成交的認購/認售一次讀齊、依標的分組,Python 依成交金額遞減取前 12。**成交金額有同額(前 13 名內)時**,同額的先後與誰被 LIMIT 擠掉取決於 SQLite 的計畫與排序器,Python 不保證重現 → 那幾檔照舊跑原本的單檔查詢;沒有同額時「遞減取前 12」只有一個答案。
+4. **個股分點日史**(`branch_history`):只讀 `branch_trades_raw` 主鍵範圍、不 JOIN `branch_dim`(名字在 Python 查表;查不到的 id 照 JOIN 語意丟掉),DBAPI cursor 直接拿 tuple;同一個 ORDER BY(主鍵倒走、不排序)。以前先問「這檔有沒有任何分點列」再查——沒有列時這條本來就回空,那一問拿掉。
+5. **區間損益**(`compute/branch_interval_pnl.py`):三個窗口都是同一串日子的後綴,「淨額非 0 的日子、(淨額, 價格)、最後一個缺價/還原因子變動的位置、正淨額後綴和」每個分點先算一次,各窗口只切後綴;買進張數(整數)後綴和 < 50 的配對直接跳過模擬(模擬完也會被同一條門檻濾掉;淨額不是整數時不預篩);換算價每個日期算一次;`simulate_pair` 的 `min()/max()` 換成同義比較(`min(a,b)` 只在 `b<a` 時回 `b`),浮點式子與順序一個沒動。隨機輸入 300 組與舊實作的 JSON 逐字相同。
+6. **分位計數**(`branch_pctile_counts`):DBAPI cursor + `zip`(與 `.mappings()` 同鍵同序同值)、兩派欄位對照表先排好一次,不在每列重組 f-string。
+7. **內容沒變的 core/chips 不重寫**(`stock_parts.write_atomic_if_changed`):先比大小、相同才讀回逐位元比;寫出的位元組不變(wrangler 本來就只傳變了的檔;core/chips 的 mtime 沒有讀者,hist 的寬限期邏輯不經過這裡)。同一資料日的各輪,多數 chips(分點列只在分點輪變)與部分 core 一個位元都沒變。
+
+**沒有改、量過不值得的**:`bd1`(`SELECT MAX(b.date)` 權證分點資料日)在合成庫量起來 0.0 s,維持原查詢(試過「逐日往回找」的寫法,省不到東西,已撤回)。集保/董監(`holders`)合成庫沒有資料量不到,改成計時。
+
+**量測**(本機 Windows,Python 3.11 / SQLite 3.38.4;合成庫 `make_synthetic_branch_db.py --stocks 800 --days 500 --branches 300 --warrants-per-stock 10 --stock-rows 22 30 --warrant-branch-days 150` → `convert_branch_raw_without_rowid.py --analyze`(正式版面:WITHOUT ROWID＋日期覆蓋索引＋ANALYZE)→ `compute-branch-stats` ＋ `branch-stock-pctile-counts`:現股分點 1,040 萬列(每檔每日 22–30 列 × 500 日)、權證分點 240 萬列(150 日)、持有估算 73.6 萬列 / 83,976 配對、pctile 24 萬列;資料庫 1.8 GiB)。每次都是獨立行程、唯讀 immutable 開庫、`PYTHONHASHSEED=0`。
+
+| 段(秒) | 舊(1a59c60)兩次 | 新,空目錄(兩次) | 新,寫進同一目錄再跑(兩次) |
+|---|---|---|---|
+| branch_history | 34.3 / 31.9 | 24.2 / 25.8 | 23.3 / 28.0 |
+| candles | 1.1 / 1.1 | 1.1 / 1.1 | 1.0 / 1.0 |
+| pctile | 8.1 / 7.5 | 5.8 / 4.9 | 5.6 / 5.2 |
+| pnl | 27.0 / 25.0 | 21.8 / 19.0 | 20.9 / 21.1 |
+| levels | 0.9 / 0.9 | 0.9 / 0.9 | 0.9 / 1.0 |
+| warrant_shards(其中 `wpos: secs`) | 66.4 / 56.0(19.9,只含持有估算) | 31.5 / 28.4(23.3 / 20.3,含整個窗口掃描) | 29.9 / 31.4 |
+| tracked | 7.5 / 6.9 | 7.1 / 7.9 | 7.2 / 7.5 |
+| write | 22.8 / 21.3 | 23.0 / 21.2 | **11.4 / 12.1**(`unchanged=1600`,全部 core/chips 沒重寫) |
+| 舊版未計時(總計 − 8 段) | 8.5 / 7.4 | radar 1.7、intraday 0.1、side 0.2、warrant_q 0.2、margin 1.7–1.9、holders 0.3–0.4、payload 0.7–1.0、loop_other 0.0、branches 1.8 | 同左 |
+| **total** | **176.5 / 159.0** | **122.8 / 115.9(約 −25~30%)** | **107.2 / 114.3(約 −30~35%)** |
+| 行程記憶體峰值(Peak Working Set) | 2,186 MiB | **709 / 709 MiB** | 708 / 709 MiB |
+
+(第二次「新」是最後版本的程式;兩次之間只差並行寫入的分點名重讀與損益/分位的最後一輪微調。本機同一份程式前後兩次差 ±10%,讀數以區間看。)
+
+- **逐位元一致**:`export_parity.py --dirs 舊 新`:3,374 檔 = 3,366 IDENTICAL + 8 TIMESTAMP(只差 `generated_at`),0 VALUE/ORDER-ONLY/MISSING;空目錄與「寫進舊匯出目錄再跑一次」(走不重寫路徑)兩種都通過。另一個小庫(60 檔 × 250 日,60 個分點)同樣通過。
+- 記憶體峰值降了約 1.5 GB:舊程式的區間彙總 `fetchall()` + 每組一個 dict 在這個合成庫上是整個 export 的峰值(合成庫的「券商 × 權證」組數比正式機多,正式機的降幅會小很多,但方向一樣,不會變大)。
+- 合成庫的 `warrants` 只有 8,000 檔(正式 ~10.5 萬),所以舊的 active_warrants 逐檔掃表本機只要 0.36 s(800 檔);依「檔數 × 權證數」外推正式機舊做法約是本機的 40 倍,是那 ~290 s 未計時裡的嫌疑之一(新做法 0.05 s,量級與權證數無關)。
+
+**正式機省多少(誠實估計)**:本機量到的是 CPU 為主(合成庫幾乎全在 OS 快取裡);正式機 1.7 GB RAM、慢磁碟,快取效應會讓本機**低估** I/O 的那一半。
+
+| 段 | 正式 10-14 | 預估 | 依據 |
+|---|---|---|---|
+| warrant_shards | 207.6 s | 約 90–120 s(省 ~90–120 s) | 三次窗口掃描剩一次;wpos 那一次在正式機 52–64 s,另兩次是同量級的整窗掃描+排序器 |
+| branch_history | 220.3 s | 約 150–190 s(省 ~30–70 s) | 本機 −25~30%(省掉每列一次 branch_dim B-tree 查找與 SQLAlchemy Row);正式機若是讀盤為主,省得較少 |
+| pnl | 115.8 s | 約 90–95 s(省 ~20–25 s) | 純 CPU,本機 −15~20% |
+| pctile | 78.1 s | 約 55–60 s(省 ~20 s) | 純 CPU,本機 −25~30% |
+| active_warrants(未計時) | ? | 省 ~20–60 s(猜) | 正式 2,418 次整表掃描 × 10.5 萬列 → 1 次 |
+| write | 46.3 s | 第一次 export 不變;同日重跑省約一半 | 第二段 export、無新資料的輪次 |
+
+合計**第一段 export 約省 180–300 s(1,000 → 約 700–820 s)**;第二段 export 再多省 write 的一半。數字要以合併後第一輪的 `export timing:`(新鍵會把未計時的 ~290 s 拆開)為準,回填本節。
+
+**風險**:
+- 逐日序列裡每檔券商的**鍵順序**依「舊 SQLite 排序結果 = (最早日, 券商名)」重現;本機 SQLite 3.38.4 與 VPS 容器的 SQLite 版本若排序器行為不同,舊輸出本身在 VPS 上就可能不是這個順序 → 新舊會差在 `daily` 物件的鍵順序(值不變;前端以券商名查表,不依賴順序)。上線前可在 VPS 用週備份快照跑 `export_parity.py SNAPSHOT SNAPSHOT --old-code <main> --new-code <本分支>` 一次核對(兩次全量 export,約 30–35 分 CPU,不持鎖、不碰正式庫)。
+- active_warrants 的同額退路:判斷是「前 13 名內有沒有同額」,保守(寧可多跑舊查詢)。
+- 不重寫:與 `mid-backfill-publish.sh` 的並行 export 交錯時,結果與「另一個 export 後寫」相同;core 仍在 hist 之後寫,core 指到的 hist 一定存在。
+- 記憶體:合成庫峰值 −1.5 GB;新的權證窗口掃描常駐只有入選配對的整數陣列(舊程式是全部組的 dict)。
+
+**第二段 export 增量(提案,未實作;需人類決定)**:`daily-branches.sh` 第一段上線後,第二段之前只跑 `compute-branch-stats`,它只寫 `branch_stock_stats`、`branch_rankings`、`tracked_branches`(自動增減)。export 讀這三張表的地方:`branches/rankings.json`、`branches/track/*`、`branches/today.json`(追蹤名單)、chips 的 `branch_tags`(追蹤/隔日沖)、radar.json/home/core 的口袋名單(`pocket`,讀追蹤名單＋最新排行 ≥ 70)。**完全不讀**這三張表的:權證分點全部輸出(`warrant_branches.json`、`warrant-stock-details/*`、`warrant_positions.json`)、K 線/hist、法人/資券/集保、`branch_days`、`branch_pnl_est`、`branch_pctile_counts`(那張表是 00:05 夜間作業才算)。所以:
+  - **低風險一步**:`export-json --skip-warrant-shards`,只給第二段用(第一段有上線時;`FAST_PUBLISH=0` 的那條路第一段沒有 export,第二段必須全量)。第一段與第二段之間這輪持著 DB 鎖、沒有別的寫者,權證輸出會與第一段逐位元相同。預估再省 ~90–120 s/晚。
+  - **較大一步**:第二段只重算 chips 的 `branch_tags`、core 的 `pocket_*` 與 radar/home、branches 三份,其餘沿用第一段的檔。省下大半個 export(~600 s),但要把「哪些輸出依賴哪些表」寫成可測的清單並逐位元比對兩段;改動面大,建議等本節上線、新計時看清楚後再議。
+  - 兩者都會動 `vps/scripts/daily-branches.sh` 的上線流程,屬「仍須人工確認」範圍,這裡只提案。
+
 ## 4. 明確不做
 
 - 不換 DB 引擎、不引入任何需綁卡或常駐服務(Postgres、D1、R2、KV、SSR)。

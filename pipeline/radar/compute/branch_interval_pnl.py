@@ -47,6 +47,9 @@ def simulate_pair(trades: Iterable[tuple[float, float]], p_last: float) -> PairR
     net>0 → 加碼並重算均價;net<0 → 先賣掉手上的(sold=min(|net|,pos)),
     超過持股的部分記為 unattributed(不放空)。
     """
+    # export 每輪對全市場呼叫數千萬次(docs/44 §3.5):min()/max() 換成同義的比較、常數放區域變數。
+    # 浮點運算的式子與順序一個都沒動,結果逐位元相同(min(a, b) 只在 b < a 時回 b;max 同理)。
+    lot = SHARES_PER_LOT
     pos = avg = realized = 0.0
     buy = sold_attr = sold_unattr = max_cost = 0.0
     buy_cost = proceeds = 0.0
@@ -55,17 +58,20 @@ def simulate_pair(trades: Iterable[tuple[float, float]], p_last: float) -> PairR
             avg = (pos * avg + net * price) / (pos + net)
             pos += net
             buy += net
-            buy_cost += net * price * SHARES_PER_LOT
+            buy_cost += net * price * lot
         elif net < 0:
-            sold = min(-net, pos)
-            realized += sold * (price - avg) * SHARES_PER_LOT
-            proceeds += sold * price * SHARES_PER_LOT
+            want = -net
+            sold = pos if pos < want else want
+            realized += sold * (price - avg) * lot
+            proceeds += sold * price * lot
             pos -= sold
             sold_attr += sold
-            sold_unattr += -net - sold
+            sold_unattr += want - sold
             if pos == 0:
                 avg = 0.0
-        max_cost = max(max_cost, pos * avg * SHARES_PER_LOT)
+        cost = pos * avg * lot
+        if cost > max_cost:
+            max_cost = cost
     unrealized = pos * (p_last - avg) * SHARES_PER_LOT
     return PairResult(
         realized=realized, unrealized=unrealized, pos_lots=pos, avg_cost=avg,
@@ -76,33 +82,71 @@ def simulate_pair(trades: Iterable[tuple[float, float]], p_last: float) -> PairR
 
 @dataclass
 class _Branch:
-    """一個分點在這檔股票的全部可見日,依日期排序;價格已換算(缺價為 None)。"""
+    """一個分點在這檔股票的全部可見日,依日期排序;價格已換算(缺價為 None)。
+
+    三個窗口都是同一串日子的後綴,所以「淨額非 0 的日子」與它們的 (淨額, 價格) 先算一次
+    (``nz_*``),各窗口只切後綴(2026-10-15 export 提速,docs/44 §3.5;結果逐位元不變):
+      * ``nz_pos``:淨額非 0 的日子在 ``dates`` 裡的位置(遞增)。
+      * ``nz_pairs``:對應的 (淨額, 價格),``simulate_pair`` 的輸入。
+      * ``last_none`` / ``last_moved``:``nz`` 裡最後一個缺價／還原因子有變動的位置(-1 = 沒有);
+        後綴 ``nz[k:]`` 有缺價 ⇔ ``last_none >= k``。
+      * ``buy_suffix``:``buy_suffix[k]`` = ``nz[k:]`` 的正淨額合計(= simulate_pair 的
+        ``buy_lots``);淨額全是整數時才給(整數加總與順序無關,才能拿來先篩),否則 None。
+    """
     dates: list[str]          # 每個可見日(含淨額 0 的列)
-    nets: list[float]
-    prices: list[float | None]
-    af_moved: list[bool]
+    nz_pos: list[int]
+    nz_pairs: list[tuple[float, float | None]]
+    last_none: int
+    last_moved: int
+    buy_suffix: list[int] | None
 
 
 def _prepare(
     by_branch: dict[str, dict[str, float]],
     prices: dict[str, tuple[float, float]],
     af_last: float | None,
+    dates: Iterable[str],
 ) -> dict[str, _Branch]:
+    # 換算價只跟日期有關(與分點無關):``dates``(全部分點列的日期)每個算一次,分點迴圈只查表。式子不變。
+    px_by_date: dict[str, tuple[float, bool]] = {}
+    if af_last is not None:
+        for d in dates:
+            hit = prices.get(d)
+            if hit is not None:
+                close, af = hit
+                px_by_date[d] = (close * af / af_last, abs(af - af_last) > _AF_EPS)
     out: dict[str, _Branch] = {}
     for name in sorted(by_branch):
         days = sorted(by_branch[name].items())
-        px: list[float | None] = []
-        moved: list[bool] = []
-        for d, _ in days:
-            hit = prices.get(d)
-            if hit is None or af_last is None:
-                px.append(None)
-                moved.append(False)
+        nz_pos: list[int] = []
+        nz_pairs: list[tuple[float, float | None]] = []
+        last_none = last_moved = -1
+        all_int = True
+        for i, (d, net) in enumerate(days):
+            if net == 0:
+                continue
+            hit = px_by_date.get(d)
+            if hit is None:
+                px = None
+                last_none = len(nz_pos)
             else:
-                close, af = hit
-                px.append(close * af / af_last)
-                moved.append(abs(af - af_last) > _AF_EPS)
-        out[name] = _Branch([d for d, _ in days], [n for _, n in days], px, moved)
+                px, moved = hit
+                if moved:
+                    last_moved = len(nz_pos)
+            if type(net) is not int:
+                all_int = False
+            nz_pos.append(i)
+            nz_pairs.append((net, px))
+        buy_suffix: list[int] | None = None
+        if all_int:
+            buy_suffix = [0] * (len(nz_pairs) + 1)
+            acc = 0
+            for k in range(len(nz_pairs) - 1, -1, -1):
+                net = nz_pairs[k][0]
+                if net > 0:
+                    acc += net
+                buy_suffix[k] = acc
+        out[name] = _Branch([d for d, _ in days], nz_pos, nz_pairs, last_none, last_moved, buy_suffix)
     return out
 
 
@@ -120,14 +164,17 @@ def _window(
         i0 = bisect_left(b.dates, first)
         if i0 >= len(b.dates):
             continue
-        idx = [i for i in range(i0, len(b.dates)) if b.nets[i] != 0]
-        if not idx:
+        k0 = bisect_left(b.nz_pos, i0)
+        if k0 >= len(b.nz_pos):
             continue
-        if last_close is None or any(b.prices[i] is None for i in idx):
+        if last_close is None or b.last_none >= k0:
             skipped += 1
             continue
-        af_adjusted = any(b.af_moved[i] for i in idx)
-        res = simulate_pair([(b.nets[i], b.prices[i]) for i in idx], last_close)
+        # 買進張數不到門檻的配對,模擬完也會被下面那行濾掉;整數淨額時先用後綴和跳過模擬。
+        if b.buy_suffix is not None and b.buy_suffix[k0] < MIN_BUY_LOTS:
+            continue
+        af_adjusted = b.last_moved >= k0
+        res = simulate_pair(b.nz_pairs[k0:], last_close)
         if res.buy_lots < MIN_BUY_LOTS or res.max_cost < MIN_MAX_COST:
             continue
         est = res.est_total
@@ -185,7 +232,9 @@ def branch_pnl_payload(
         if d > as_of_limit or not name:
             continue
         date_set.add(d)
-        per = by_branch.setdefault(name, {})
+        per = by_branch.get(name)
+        if per is None:
+            per = by_branch[name] = {}
         per[d] = per.get(d, 0) + (net or 0)
     if not date_set:
         return None
@@ -201,7 +250,7 @@ def branch_pnl_payload(
         last_close, af_last = prices[max(last_dates)]
     else:
         last_close = af_last = None
-    branches = _prepare(by_branch, prices, af_last)
+    branches = _prepare(by_branch, prices, af_last, dates)
     return {
         "as_of": as_of,
         "definitions_version": DEFINITIONS_VERSION,

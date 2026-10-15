@@ -2,6 +2,14 @@
 
 > 單一進度真相。每完成一個里程碑就更新本檔。規格細節看各編號文件,別寫在這裡。
 
+## 2026-10-15 export-json 提速(`docs/44` §3.5;程式完成於分支、未合 main、未上線)
+
+- **為什麼**:正式機每輪 export ~1,000 s 持鎖,晚上分點輪跑兩次;10-14 20:14 輪 `branch_history=220 warrant_shards=208 pnl=116 pctile=78 write=46`,另有 ~290 s 沒計時。
+- **做了什麼**:①計時補齊(`export timing:` 原 8 鍵不動,後加 radar/intraday/side/warrant_q/margin/holders/payload/loop_other/branches/total)。②權證分點 120 日窗口三條查詢合成一次掃描(`docs/51` §5.2 的下一步)。③個股 active_warrants 由「每檔整表掃 warrants」改一次預讀(同額才退回舊單檔查詢)。④分點日史不 JOIN branch_dim、DBAPI cursor。⑤區間損益/分位計數去重複計算(浮點式子不動)。⑥內容沒變的 core/chips 不重寫。第二段 export 增量(`--skip-warrant-shards` 等)只寫成提案,動上線流程需人類決定。
+- **驗證**:合成庫(800 檔 × 500 日、現股分點 1,040 萬列、權證分點 240 萬列,正式版面 WITHOUT ROWID＋覆蓋索引＋ANALYZE)全量 export 新舊逐位元比對 3,374 檔全同(只差 `generated_at`),空目錄與同目錄重跑兩種都過;total 176.5/159.0 s → 122.8/115.9 s(同目錄重跑 107–114 s),行程峰值 2,186 → 709 MiB;pytest 新 `test_export_speedups.py`(每個新路徑對舊查詢/舊實作原文逐列比對,含同額退路、並行新增分點、隨機 300 組損益)+ 全套 1770 passed;web node lib 全套 380 passed(前端未改)。
+- **正式機預估**:第一段 export 約省 180–300 s(1,000 → ~700–820 s),第二段再省 write 約一半;本機以 CPU 為主、低估 I/O,以合併後第一輪 `export timing:` 回填 §3.5。
+- **待人類**:合 main;第一輪看新計時行回填;(可選)用週備份快照在 VPS 跑一次 `export_parity.py --old-code/--new-code` 核對逐位元;第二段增量提案另行決定。
+
 ## 2026-10-13 權證「仍持有(估)」加帳面為正(`docs/51` §3.2/§4;程式完成於分支、未合 main、未上線;v3.9)
 
 - **需求**:使用者「權證分點仍持有 賺錢幾%的也幫我新增」。

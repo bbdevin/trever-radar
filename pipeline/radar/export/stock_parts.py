@@ -156,6 +156,24 @@ def write_atomic(path: Path, text: str) -> None:
     os.replace(tmp, path)
 
 
+def write_atomic_if_changed(path: Path, text: str) -> bool:
+    """內容與磁碟上的檔逐位元相同就不寫(回傳 False),否則 ``write_atomic``(回傳 True)。
+
+    2026-10-15(docs/44 §3.5):同一個資料日的各輪 export,多數個股的 chips(分點列只在分點輪變)
+    與不少 core 一個位元都沒變,以前每輪照樣 tmp+rename 重寫 ~2,400×2 個檔。先比大小(不同就
+    一定要寫,不必讀),大小相同才讀回來逐位元比。寫出的位元組不變——wrangler 本來就只傳內容
+    變了的檔;核心/籌碼檔的 mtime 沒有任何讀者(hist 的寬限期邏輯不經過這裡)。
+    """
+    data = text.encode("utf-8")
+    try:
+        if path.stat().st_size == len(data) and path.read_bytes() == data:
+            return False
+    except OSError:
+        pass
+    write_atomic(path, text)
+    return True
+
+
 # 刪舊 hist 的寬限期:mid-backfill-publish.sh 的 export 不持 DB 鎖,兩個 export 可能重疊。
 # 只刪「目前 index 沒指到、而且 mtime 已經老過這麼久」的檔,另一個正在跑的 export 剛寫的
 # 檔(它的 core 會指到)就不會被這一個誤刪;代價是換雜湊後舊檔多留一天(wrangler 多傳一天)。
@@ -179,6 +197,7 @@ class StockPartsWriter:
         self.index: dict[str, dict] = {}
         self.hist_written = 0
         self.hist_reused = 0
+        self.unchanged = 0      # core/chips 內容與磁碟相同、沒有重寫的檔數
         self._now = time.time() if now is None else now
 
     def write(self, parts: dict) -> None:
@@ -208,9 +227,11 @@ class StockPartsWriter:
                 "file": name, "hash": target.name.split(".")[1], "bars": parts["hist"]["bars"],
                 "cut": parts["hist"]["cut"], "first": parts["hist"]["candles"][0]["t"],
             }
-        write_atomic(self.stock_dir / "chips" / f"{sid}.json",
-                     dumps_compact({"version": CHIPS_VERSION, "id": sid, **parts["chips"]}))
-        write_atomic(self.stock_dir / "core" / f"{sid}.json", dumps_compact(core))
+        if not write_atomic_if_changed(self.stock_dir / "chips" / f"{sid}.json",
+                                       dumps_compact({"version": CHIPS_VERSION, "id": sid, **parts["chips"]})):
+            self.unchanged += 1
+        if not write_atomic_if_changed(self.stock_dir / "core" / f"{sid}.json", dumps_compact(core)):
+            self.unchanged += 1
 
     def _referenced_by_core(self, sid: str) -> set[str]:
         """磁碟上 core/{sid}.json 目前指到的 hist 檔名(沒有 core 或讀不出來 → 空集合)。"""
