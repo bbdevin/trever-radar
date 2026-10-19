@@ -80,7 +80,7 @@ export-json 的個股迴圈本來就逐檔讀 2 年分點列(`_branch_history_ro
 
 - 合成庫(800 檔 × 130 日、現股分點每檔每日 24–30 列 = 318 萬列、400 個分點,WITHOUT ROWID＋覆蓋索引＋ANALYZE),新舊 code 同庫:total 65.6 s → 66.8 s,`watch` 段 3.2 s(含迴圈摘要與寫 65 檔);`branches/watch` 共 3.7 MB(gzip 1.0 MB),45,605 列(當日 21,605);分片平均 58 KB(gzip 16 KB)、最大 115 KB(gzip 30 KB);index 12.7 KB。
 - 正式機推估(~2,400 檔、每檔每日 ~30 列、~900 分點):`watch` 段約 10–20 s(export 660–780 s 的 ~2%);總量約 10 MB(gzip ~3 MB),分片約 150 KB(gzip ~45 KB)。使用者只抓 index＋選的分點所在分片(預設 3 片,~150 KB gzip)。Workers 檔數 +65(~9,500 / 20,000)。
-- 合併後第一輪看 `export watch:` 與 `export timing:` 的 `watch=` 回填。若分片偏大可把 `SHARDS` 調成 128(前端讀 index 的分片編號,不必改)。
+- **正式機第一輪(2026-10-19 20:51 daily-margin)**:`export watch: as_of=2026-10-19 branches=822 rows=74551 shard_bytes=5898422 index_bytes=27608`,`watch=14.8s`(整段 export 647 s)。分片平均 ~92 KB、index 27 KB;預設三家 ≈ index＋3 片 ≈ 300 KB(未壓縮)。暫不需要調 `SHARDS`。
 
 ## 6. 組合存放(待人類)
 
