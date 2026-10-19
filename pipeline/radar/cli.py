@@ -281,6 +281,7 @@ def cmd_import_branch_trades(args):
         workers=args.workers,
         stage_to=args.stage_to,
         from_stage=args.from_stage,
+        phase=args.phase,
     )
     if info.get("staged"):
         # 只抓不寫:沒有覆蓋率可分級,暫存檔寫出來就是 0;分級留給 --from-stage 那一步。
@@ -294,7 +295,8 @@ def cmd_import_branch_trades(args):
               "the date itself is still fit to publish", file=sys.stderr)
         raise SystemExit(BRANCH_FEED_DEAD_EXIT)
     if info["failed"]:
-        print(f"import-branch-trades: {info['failed']} stock(s) failed twice; "
+        what = "warrant(s)" if info.get("phase") == "warrants" else "stock(s)"
+        print(f"import-branch-trades: {info['failed']} {what} failed twice; "
               "the date is still fit to publish", file=sys.stderr)
         raise SystemExit(BRANCH_IMPORT_INCOMPLETE_EXIT)
 
@@ -1119,6 +1121,11 @@ def main(argv=None):
     bt.add_argument("--from-stage", default=None,
                     help="commit only: write rows from this JSON file in target order, "
                          "log coverage and grade the exit code (no network)")
+    bt.add_argument("--phase", choices=("all", "stocks", "warrants"), default="all",
+                    help="all = stock + warrant pools together (default); stocks = stock pool "
+                         "only; warrants = the --warrant-turnover-min pool only, logged as "
+                         "branch_warrant_pool, no coverage gate (docs/47 §8.10). "
+                         "--from-stage takes the phase from the stage file")
     bt.set_defaults(fn=cmd_import_branch_trades)
 
     wbt = sub.add_parser(

@@ -179,6 +179,8 @@ cat /tmp/radar-branch-round-$(date +%F).done                            # 第二
 | `warrant-backfill.sh` | 來源鎖(就地 `flock -n`)→ 再 DB 鎖 | | 分點輪握著來源鎖 → 略過 |
 | `bf-cron-guard.sh`(常駐) | 不拿鎖;看 DB 鎖檔(`fuser`)、來源鎖檔(`fuser`,新)、安靜窗、flag | | 任一成立 → pause bf 容器 |
 
+(§8.10 兩段式抓取之後:權證池的背景抓取子 shell 關掉 fd 9、留著 fd 8——它抓的時候本輪照常握/放 DB 鎖做股票寫入與第一段上線;`warrant_phase_finish` 若抓取還沒結束,**放 DB 鎖等**、收回來再 `acquire_db_lock_wait 3600` 寫入權證。整輪的 DB 鎖相位因此多一個 ④:第一段上線之後、權證寫入之前,最多到權證抓完。)
+
 無死鎖:`daily-branches.sh` 的順序是**來源鎖(等)→ DB 鎖(等)**,等來源鎖時不握 DB 鎖;其他拿來源鎖的腳本(`warrant-backfill.sh`、`daily-warrant-branches-poc.sh`)先握 DB 鎖、再**非阻塞**拿來源鎖(拿不到就收工),所以沒有人會握著 DB 鎖等來源鎖,也沒有人會握著來源鎖無上限地等 DB 鎖(分點輪等 DB 鎖 ≤3600 s)。(反過來「先 DB 後等來源」會讓第一輪寫入時拿不到 DB 鎖、第二輪拿不到來源鎖,互等到逾時——驗證者 MED 3 的修法刻意避開。)每一次等鎖都有上限(3600 / 5400 / `LOCK_WAIT_SECS`)。沒有部分上線,所以沒有「部分與完整互相競賽」的問題;兩段式上線在同一輪、同一把鎖之下依序進行。寫 DB 的只有握著 DB 鎖的那一個程序(抓取 worker 只抓不寫)。**當天一定有人上線的保證**:第一輪抓取最晚 20:30 開始、7200 s 硬上限、寫入+上線 ~35 分 → 最晚 ~23:05 收工;第二輪 22:30 起最多等 3600 s 來源鎖(到 23:30)→ 第一輪有標記就只刷新評分、沒標記就從暫存檔續抓並接手完整鏈。測試:`tests/test_daily_branches_lock_phases.py`(對真的 lib.sh 用 stub 量:放鎖期間別的程序 `flock -n` 拿得到、`fuser` 仍看得到 fd、重新拿回;等鎖逾時;來源鎖等待版拿得到/逾時 high、非阻塞版略過;`--init`;鎖序)。
 
 ### 8.6 正式機要做的事(人類)
@@ -245,6 +247,60 @@ cat /tmp/radar-branch-round-$(date +%F).done                            # 第二
 **為什麼不是 30 分**:舊規則等的那 30 分鐘裡,只有先公布的那一站有資料,它最多 0.2 檔/s;爬完的時刻主要由**第 3–5 站幾點公布**決定(之後是 0.8–1.0 檔/s)。省下的時間 ≈「舊開爬時刻之前多抓到的檔數 ÷ 0.93 檔/s」≈ 領先時間 × 0.2–0.4。領先越久省越多(第一站領先 60 分 → ~15–20 分),但上限就是這樣。下一個大塊仍是 export 972 s(16 分,`docs/44` P1 增量化),不在本次。
 
 **核對**(合併後第一個交易日,唯讀):`grep -E '^branch-probe at=|^poll branch-probe|^branch crawl' ~/radar-cron.log` —— 預期 `need_mirrors=1`、探測間隔 ~5 分、`branch crawl: 1/5 mirror(s) ready`、`branch crawl standby mirror=… streak=2/2 ready=1` 一站接一站出現(間隔 ~3 分);`empties checked=… failed=0`;`branch_coverage` ratio 1.0;`step fetch-branch-trades done` 的耗時 > 以前(多了單站那一段)但 `deploy` 的時刻較早。若某天 `failed` 或 ratio < 0.98 變多 → 先看 `confirming empties; live=… clean=…` 是哪一站在回空。
+
+### 8.10 兩段式抓取:股票池先上線、權證池背景補(2026-10-20;verifier CONFIRMED,已合 main;不動 crontab)
+
+> **verifier 殘差(皆低)**:①權證段的硬上限在權證段開跑時才算(9000 s 下限),股票段若拖到接近 23:00,權證段可能跑過「最晚 23:00」,極慢的夜可能讓 22:30 輪拿不到來源鎖而放棄重抓(第一輪自己照常上線)。②warrant_phase_finish 等待時放 DB 鎖、沒有午夜守衛:22:30 接手輪若拖過午夜,00:05 safe-branch-stats／01:10 data-backfill 可能插隊,最壞是重拿鎖逾時、少一次第二段上線與完成標記(第一段已上線、資料不壞;舊設計抓取期同樣曝險)。③pkill -P 在背景抓取剛啟動的毫秒內被 TERM 可能落空(找不到實際路徑)。④個股頁權證表空狀態文案常駐。
+
+> 使用者核准的目標:晚上的分點**現股**資料更早上線;權證晚一點沒關係。
+
+**事實**(正式機 2026-10-19 `radar-cron.log`):一次抓 2,743 檔(≈1,960 普通股 + 成交金額 ≥100 萬的上市認購/認售 ≈783 檔,`--top 0 --warrant-turnover-min 1000000 --workers 5 --sleep 1.0`,單站 5 s,五站陸續加入)18:31→19:47(**76 分**;其他日 66–81 分)→ fetch-intraday 78 s → 第一次 export 606 s → deploy → **第一段 20:02** → compute-branch-stats → 第二次 export 617 s → **第二段 20:24**。目標順序本來就是「股票(金額大的先)→ 權證」,所以那 ~783 檔權證一直是**最後**才抓的,而且是在五站都已加入、吞吐最高(0.93–0.97 檔/s)的時段。
+
+**改了什麼**
+
+1. `import-branch-trades --phase {all,stocks,warrants}`(`importer.py`;預設 `all` = 舊行為逐字不變)。`stocks` = 只有股票池;`warrants` = 只有 `--warrant-turnover-min` 權證池(必填)。暫存檔帶 `phase`,續抓只接同一段(舊格式算 `all`;換版當天的 `all` 暫存檔不會被 `stocks` 續抓 → 整份重爬)。`--from-stage` 依暫存檔的 `phase` 收尾。
+2. **import_logs 語意**:股票段照舊寫 `branch` + `branch_coverage` 兩列(覆蓋率分母 = `_branch_stock_pool`,與以前同一個數字);差別只在 `branch` 的 failed 現在只算股票——以前權證抓失敗也會把**股票池**記成 `incomplete`,讓 `docs/52` 的 `import_complete` 誤判「現股匯入未完成」。權證段**不寫**這兩列(寫一列 expected=0 的覆蓋率會讓「最新一列」的讀者——`branch_round_coverage_ratio`、0.98 門檻、完成標記——讀到假比例),改記一列 `dataset='branch_warrant_pool'`(`rows` = 權證列數,`error` = `targets= done= empty= failed=`;status ok / incomplete(有失敗)/ error(一筆都沒抓到))。權證沒有覆蓋率閘門;CLI 離開碼 0 / 75 / 76 同義,沒有「不合格」。
+3. `daily-branches.sh`:
+   - 前景只抓股票池(`--top 0 --phase stocks`),抓完**立刻在背景**起權證池抓取(`warrant_fetch_start`:子 shell 先 `exec 9>&-` 不帶走 DB 鎖、留著分點來源鎖;硬上限同 `branch_fetch_timeout`;輸出落 `/tmp/radar-branch-warrant-fetch-<日>.log`,收回來時加 `[warrants] ` 前綴倒進 cron log;暫存檔 `data/branch-stage-<日>-warrants.json`)。同一時間仍只有一條抓取在打鏡像站(股票抓完才開始),單站 5 s 節奏與確認空、checkpoint、SIGTERM 全部沿用。
+   - 股票寫入 → 0/75/76/不合格 分級、0.98 第一段門檻、評分、**第一段上線**:與以前相同,只是不等權證。
+   - `warrant_phase_finish`(第一段上線之後、`compute-branch-stats` 之前):抓取還在跑 → 放 DB 鎖等、收回來再拿鎖;抓取 rc≠0 → warn「今天的權證分點暫用前一日」、不寫;寫入 75/76/其他 → warn。**權證段任何失敗都不中止本輪**,排行統計、第二段上線、完成標記照常。
+   - 本輪不論怎麼結束(不合格 exit、`run_step_or_fail` 中止),EXIT trap 先 `warrant_fetch_stop`:對 `timeout` 送 TERM(轉進容器,CLI 寫 checkpoint 以 143 離開)並等它結束,才放掉來源鎖;下一輪從 checkpoint 續抓。
+   - **22:30 第二輪**:股票(標記 `coverage_ratio` = 1.0 → 不抓)與權證(今天最新一列 `branch_warrant_pool` = ok → 不抓)各自判斷;兩段都完整 → 照舊 `publish skipped: first round complete`。只缺權證 → 不抓股票、只抓權證,走「只刷新評分」那條路(標記一定在),**權證在 compute-scores 之前寫入**(那一輪只上線一次);只缺股票 → 照舊重抓股票、不抓權證;沒有標記 → 兩段都抓、接手完整鏈(權證照樣背景抓)。權證段在第二輪仍失敗 → warn「今天沒有下一輪會再抓,權證分點停在前一日」。
+4. 個股頁「權證」表點開某權證的空狀態文案改成「此權證尚無今日分點資料(…晚間先更新現股分點,權證分點約 20 分鐘後補上)」:第一段上線到第二段之間,當日的權證分點還沒寫入,`active_warrants[].branches`(只讀**當天**的權證列)是空的,以前的文案會說成「無分點資料」。
+
+**第一段上線時,權證相關輸出看到什麼**(每一個讀權證分點列的地方都核對過)
+
+| 輸出 | 讀法 | 第一段(權證未寫入) | 第二段 |
+|---|---|---|---|
+| `branches/warrant_branches.json`、`warrant-stock-details/*`、`warrant_positions.json`(`_export_warrant_branches`) | 錨在 `bd1` = 不晚於報價日的**最大權證分點日** | 全部錨在**前一交易日**,`data_date` 自述是前一日,頁面顯示「分點資料日 …」(既有測試 `test_data_date_and_windows_follow_branch_trades_not_price_date` 就是這個狀態) | 今天 |
+| 個股 `active_warrants[].branches` | `date = 報價日 AND LENGTH(stock_id)=6` | 空(上面第 4 點的文案) | 今天 |
+| `branches/warrant_movers.json` | 近 40 交易日累計,帶 `last_date` | 到前一日為止 | 含今天 |
+| 評分 `compute-scores` | `LENGTH(r.stock_id) = 4`;權證分項讀 `warrant_stock_daily`(成交,非分點) | **不讀**權證分點 | 同 |
+| 多方榜 v2(`docs/48`,凍結)| 個股 JSON 的 `STOCK_KEYS_USED`:`warrant`/`warrant_history` 是權證**成交**,`branch_*` 是現股分點;`active_warrants` 在 `STOCK_KEYS_NOT_FACTS` | **輸入不含權證分點**,第一段與兩段式之前的第一段相同(排行統計也同樣是前一版) | 同;紀錄版 r(t) = 隔天 09:00 前最後一行 = 第二段(或 22:30 刷新)那一版,與以前相同 |
+| `branches/today.json`(追蹤分點)、口袋名單、`branch_watch` | `JOIN stocks` / `LENGTH=4` / `LENGTH<6` | 不含權證 | 同 |
+| `compute-branch-stats` | 在 `warrant_phase_finish` **之後**跑 | — | 看到的是與以前相同的最終資料(股票＋權證) |
+
+**預估時間線**(依上面的事實;吞吐取五站齊時的 0.93–0.97 檔/s)
+
+| 段 | 以前(10-19) | 兩段式 |
+|---|---|---|
+| 股票抓完 | (含在 18:31→19:47 裡) | 19:47 − 783 檔 ÷ ~0.95 檔/s(~13.5–14 分)≈ **~19:33**(股票的確認空/重試輪改在股票段尾,量級 0–2 分,不變) |
+| 第一段上線 | 19:47 + 15 分(寫入、評分、fetch-intraday 78 s、export 606 s、榜、deploy)= **20:02** | 19:33 + 同樣 ~15 分 ≈ **~19:48**(**早 ~13–15 分**) |
+| 權證抓完 | — | 19:33 + 開跑前每站 12 檔檢查 ~1 分 + ~14 分 ≈ ~19:48(與第一段上線幾乎同時;背景抓取不吃 CPU,不拖 export) |
+| 第二段上線 | 20:02 + 22 分(統計 ~9–10 分 + export 617 s + deploy)= **20:24** | ~19:49 + 權證寫入 ~0.2 分 + 同樣 ~22 分 ≈ **~20:11**(早 ~13 分) |
+
+- 省下的時間 ≈「權證檔數 ÷ 抓權證那一段的吞吐」:五站齊時 ~14 分;若尾段只剩 3 站(0.6 檔/s)則 ~22 分。權證池變大(成交熱絡的日子)省得更多。
+- 抓取總時長、來源負載不變(同樣 2,743 個請求、單站 5 s);多的只有權證段開跑前的 12 檔×5 站檢查(60 個請求)。
+- 第一段上線的那 ~20 分鐘,權證頁停在前一日、個股權證表點開是「尚無今日分點資料」;以前這段時間整站都是前一日。
+
+**風險 / 已知限制**
+
+- 背景抓取開跑時讀一次權證池(唯讀),此時本輪正要寫入股票、算評分:SQLite WAL 下讀者不擋寫者;與以前「抓取期間 20:45 資券輪在寫」是同一種並行。CLI 開頭的 `init_db()`(`CREATE … IF NOT EXISTS`、PRAGMA、冪等遷移、`branch_dim` 名稱正規化,平常 0 列)與本輪的股票寫入可能重疊:兩者都是冪等、各自一個交易,SQLite 依 busy_timeout 排隊;以前抓取的 `init_db()` 與資券輪重疊是同一種情形。
+- `branch_dim.id`:股票全部先寫、權證後寫,與 `all`(股票在前、權證在後)同序 → 新分點 id 位元級相同(`TwoPhaseCrawl` 測試)。前提是兩段之間沒有別的寫者插入 `branch_dim`:能插的只有 warrant-backfill(要分點來源鎖,本輪全程握著)。
+- 等權證時放 DB 鎖:若此時 20:45 資券輪插進來(~20 分),第二段順延;與 `prefetch_intraday` 放鎖同一種暴露。
+- `pkill`(procps)要在 VPS 上;沒有的話 `warrant_fetch_stop` 只會 `wait` 到抓取自己結束(有硬上限),不會卡死。
+
+**核對**(合併後第一個交易日,唯讀):`grep -E 'branch phases this round|warrant pool fetch|step (fetch-branch-trades|import-branch-trades|fetch-warrant-branches|import-warrant-branches|export-json|deploy|compute-branch-stats) (start|done)|^\[warrants\] branch (fetch|warrant pool)' ~/radar-cron.log`——預期 `fetch-branch-trades` 收在 ~19:30 前後、第一個 `deploy done` 比以前早 ~14 分、`[warrants] branch warrant pool … → ok`;`import_logs` 有 `branch_warrant_pool` ok 一列、`branch_coverage` 照舊。回填本節。**回滾**:`git revert`(單一 commit;不動 crontab、不動 schema)。
 
 ### 8.7 SIGTERM 真的到得了容器:人工核對
 

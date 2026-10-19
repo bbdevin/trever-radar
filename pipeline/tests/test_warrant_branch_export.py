@@ -103,7 +103,11 @@ class WarrantBranchDetailExportTests(unittest.TestCase):
             self.assertNotIn("五十萬分點", [row["branch_name"] for row in detail["timeframes"][timeframe]])
 
     def test_data_date_and_windows_follow_branch_trades_not_price_date(self):
-        """分點比報價晚一輪時,資料日必須是實際分點日,1d 桶不可被清空。"""
+        """分點比報價晚一輪時,資料日必須是實際分點日,1d 桶不可被清空。
+
+        這也正是兩段式抓取(docs/47 §8.10)第一段上線時權證頁的狀態:當天的現股分點已寫入、
+        權證池還在背景抓,權證分點列最新仍是前一個交易日 → 權證頁的 data_date 是前一日,
+        不宣稱今天的權證分點。"""
         lead = "2026-08-10"  # 只有報價、沒有分點的較新交易日
         with db.get_engine().begin() as conn:
             conn.execute(schema.daily_prices.insert(), [

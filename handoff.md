@@ -1,5 +1,9 @@
 # Handoff — 2026-09-24（期貨切片從未真的渲染過的結構性 bug 已修、四輪日更補上失敗語音（過程自己又生一個更嚴重的）、期貨補到每契約每天、兩道守門缺口補上、一個記成已出貨卻沒上畫面的按鈕、一次自己的效能預測被實測打臉 2.5 倍、「隔天大漲」事前登記落地）
 
+## 2026-10-20 補記(分點輪兩段式抓取,分支未合)
+
+- `daily-branches.sh`:前景 `import-branch-trades --phase stocks` → 寫入 → 第一段上線;權證池 `--phase warrants` 在背景抓(`warrant_fetch_start`),第一段之後 `warrant_phase_finish` 寫入,再統計、第二段。權證失敗只 warn。新 import_logs 列 `branch_warrant_pool`。22:30 股票/權證各自判斷要不要再抓。預估第一段早 ~14 分(~19:48)。合 main 後第一個交易日照 `docs/47` §8.10「核對」回填。
+
 ## 2026-10-19 補記(Fugle 抓取搬出 export 的 DB 鎖,分支未合)
 
 - 各日更輪 `export-json` 前一行多 `prefetch_intraday`(`lib.sh`):放 DB 鎖跑新 CLI `radar fetch-intraday`(唯讀選聯集,spark_day/分K 抓進 `data/` 快取)再拿回鎖;export 預設只讀快取。合 main 後第一個交易日看 `step fetch-intraday … elapsed=` 與 `export timing: … intraday=`(應 ≤ ~5 s)回填 `docs/44` §3.5。回滾:`vps/.env` 加 `RADAR_EXPORT_FETCH=1`。細節 `docs/50` §3.1。

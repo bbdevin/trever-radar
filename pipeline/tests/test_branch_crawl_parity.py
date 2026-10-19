@@ -717,6 +717,164 @@ class StageResumeRules(unittest.TestCase):
         self.assertEqual(fetched, set(STOCKS))
 
 
+WARRANTS = [f"{30000 + i:06d}" for i in range(1, 9)]   # 6 碼、數字(_page_for 用 int)
+W_BELOW = WARRANTS[-1]                                   # 成交金額低於門檻,不在池裡
+
+
+def _seed_warrants() -> None:
+    """股票池旁邊放一個權證池:上市認購/認售、標的是 active 普通股、成交金額 ≥ 100 萬
+    (只有 W_BELOW 不到)。金額刻意與代號順序相反,抓的順序 ≠ 代號順序。"""
+    with db.get_engine().begin() as conn:
+        conn.execute(schema.warrants.insert(), [
+            {"id": w, "name": f"w{w}", "market": "twse", "kind": "call" if i % 2 else "put",
+             "stock_id": STOCKS[i]} for i, w in enumerate(WARRANTS)])
+        conn.execute(schema.warrant_daily.insert(), [
+            {"warrant_id": w, "date": DATE, "close": 1.5, "volume": 1000,
+             "turnover": 999_999 if w == W_BELOW else 9_000_000 - i}
+            for i, w in enumerate(WARRANTS)])
+
+
+class TwoPhaseCrawl(unittest.TestCase):
+    """docs/47 §8.10:股票池先抓先寫(phase=stocks)、權證池後抓後寫(phase=warrants)。
+    寫進資料庫的列與一口氣抓(phase=all,股票在前、權證在後)位元級相同;import_logs 的
+    branch / branch_coverage 只講股票池,權證段另記一列 branch_warrant_pool。"""
+
+    def _logs(self) -> list[tuple]:
+        with db.get_engine().connect() as conn:
+            return [tuple(r) for r in conn.exec_driver_sql(
+                "SELECT dataset, rows, status, COALESCE(error,'') FROM import_logs "
+                "WHERE dataset LIKE 'branch%' ORDER BY id").fetchall()]
+
+    def _all_at_once(self) -> dict:
+        with _Runner() as r, mock.patch.object(fubon, "get_text", side_effect=_http_stub([])):
+            _seed_warrants()
+            info = import_branch_trades(DATE_COMPACT, top=0, warrant_turnover_min=1_000_000,
+                                        sleep_s=0, workers=5)
+            snap = r.snapshot()
+            snap["info"], snap["all_logs"] = info, self._logs()
+        return snap
+
+    def test_two_staged_phases_write_the_same_rows_as_one_crawl(self):
+        one = self._all_at_once()
+        calls = []
+        with _Runner() as r, mock.patch.object(fubon, "get_text", side_effect=_http_stub(calls)):
+            _seed_warrants()
+            s_stage, w_stage = r.dir / "stage.json", r.dir / "stage-warrants.json"
+            s = import_branch_trades(DATE_COMPACT, top=0, sleep_s=0, workers=5,
+                                     stage_to=s_stage, phase="stocks")
+            s_payload = json.loads(s_stage.read_text(encoding="utf-8"))
+            self.assertEqual(s_payload["phase"], "stocks")
+            self.assertEqual(s_payload["targets"], sorted(STOCKS), "股票段一檔權證都不接")
+            self.assertEqual(s["expected"], len(STOCKS))
+            stock_info = import_branch_trades(from_stage=s_stage)
+            after_stocks = r.snapshot()
+            # 股票寫完、權證還沒抓:匯出看得到的權證分點列 = 0(權證頁錨在前一個有列的日子)。
+            self.assertFalse([x for x in after_stocks["raw"] if len(x[0]) == 6])
+            stock_fetches = len(calls)
+
+            w = import_branch_trades(DATE_COMPACT, top=0, warrant_turnover_min=1_000_000,
+                                     sleep_s=0, workers=5, stage_to=w_stage, phase="warrants")
+            w_payload = json.loads(w_stage.read_text(encoding="utf-8"))
+            self.assertEqual(w_payload["phase"], "warrants")
+            self.assertEqual(w_payload["targets"], WARRANTS[:-1], "成交金額大的先;門檻外的不抓")
+            self.assertEqual(w["expected"], 0)
+            self.assertFalse({c[0] for c in calls[stock_fetches:]} & set(STOCKS),
+                             "權證段不再碰股票")
+            warrant_info = import_branch_trades(from_stage=w_stage)
+            two = r.snapshot()
+            logs = self._logs()
+
+        self.assertEqual(two["raw"], one["raw"], "兩段寫進去的列與一口氣抓的位元級相同")
+        self.assertEqual(two["dim"], one["dim"], "branch_dim 的 id 配法相同(股票全部先寫、再權證)")
+        self.assertEqual(stock_info["status"], "ok")
+        self.assertEqual((stock_info["coverage"], stock_info["expected"], stock_info["ratio"]),
+                         (one["info"]["coverage"], one["info"]["expected"], one["info"]["ratio"]))
+        self.assertEqual((warrant_info["status"], warrant_info["done"], warrant_info["failed"]),
+                         ("ok", len(WARRANTS) - 1, 0))
+        self.assertTrue(warrant_info["fit"])
+        datasets = [x[0] for x in logs]
+        self.assertEqual(datasets, ["branch", "branch_coverage", "branch_warrant_pool"],
+                         "權證段不寫 branch / branch_coverage(docs/52 import_complete、0.98 門檻讀它們)")
+        self.assertIn(f"expected={len(STOCKS)} ratio=0.9250 done=37 empty=3", logs[1][3],
+                      "分母是股票池 40 檔(3 檔當天真的沒有分點);權證不進分子也不進分母")
+        self.assertEqual(logs[2][2], "ok")
+        self.assertIn(f"targets={len(WARRANTS) - 1} done={len(WARRANTS) - 1}", logs[2][3])
+        # branch 那一列只算股票的列,不含權證。
+        self.assertEqual(logs[0][1], sum(1 for x in after_stocks["raw"]))
+
+    def test_warrant_failures_do_not_touch_the_stock_completion_rows(self):
+        """一口氣抓的時候,權證抓失敗會把股票池的 branch 列記成 incomplete(failed 算全部);
+        兩段式之後股票池的完成與否只看股票,權證失敗只落在 branch_warrant_pool。"""
+        bad = WARRANTS[0]
+
+        def stub(*a, **kw):
+            if kw.get("params", {}).get("a") == bad or (len(a) > 1 and a[1]["a"] == bad):
+                raise RuntimeError("warrant page down")
+            return base(*a, **kw)
+        base = _http_stub([])
+        with _Runner() as r, mock.patch.object(fubon, "get_text", side_effect=stub):
+            _seed_warrants()
+            s_stage, w_stage = r.dir / "s.json", r.dir / "w.json"
+            import_branch_trades(DATE_COMPACT, top=0, sleep_s=0, workers=5, stage_to=s_stage,
+                                 phase="stocks")
+            s = import_branch_trades(from_stage=s_stage)
+            import_branch_trades(DATE_COMPACT, top=0, warrant_turnover_min=1_000_000, sleep_s=0,
+                                 workers=5, stage_to=w_stage, phase="warrants")
+            w = import_branch_trades(from_stage=w_stage)
+            logs = self._logs()
+        self.assertEqual(s["status"], "ok")
+        self.assertEqual((w["status"], w["failed"]), ("incomplete", 1))
+        self.assertEqual([x[2] for x in logs], ["ok", "ok", "incomplete"])
+
+    def test_cli_exit_codes_for_the_warrant_phase(self):
+        import radar.cli as cli
+        for info, code in (({"phase": "warrants", "fit": True, "dead_feed": False, "failed": 0}, None),
+                           ({"phase": "warrants", "fit": True, "dead_feed": False, "failed": 2}, 75),
+                           ({"phase": "warrants", "fit": True, "dead_feed": True, "failed": 7}, 76)):
+            with self.subTest(code=code), \
+                 mock.patch("radar.importer.import_branch_trades", return_value=info) as imp:
+                if code is None:
+                    cli.main(["import-branch-trades", "--from-stage", "w.json"])
+                else:
+                    with self.assertRaises(SystemExit) as cm:
+                        cli.main(["import-branch-trades", "--from-stage", "w.json"])
+                    self.assertEqual(cm.exception.code, code)
+                self.assertEqual(imp.call_args.kwargs["phase"], "all", "--from-stage 依暫存檔的 phase")
+        with mock.patch("radar.importer.import_branch_trades",
+                        return_value={"staged": True}) as imp:
+            cli.main(["import-branch-trades", "--top", "0", "--phase", "warrants",
+                      "--warrant-turnover-min", "1000000", "--stage-to", "w.json"])
+        self.assertEqual(imp.call_args.kwargs["phase"], "warrants")
+
+    def test_phase_warrants_needs_the_turnover_pool(self):
+        with _Runner():
+            with self.assertRaisesRegex(ValueError, "warrant_turnover_min"):
+                import_branch_trades(DATE_COMPACT, top=0, sleep_s=0, phase="warrants")
+            with self.assertRaisesRegex(ValueError, "phase"):
+                import_branch_trades(DATE_COMPACT, top=0, sleep_s=0, phase="bogus")
+
+    def test_resume_only_takes_a_stage_of_the_same_phase(self):
+        """被砍掉的權證段暫存檔,下一輪 phase=warrants 從它續抓;股票段(或舊格式 all)的
+        暫存檔絕不會被當成權證段續抓,反之亦然。"""
+        from radar import importer
+        with _Runner() as r:
+            p = r.dir / "stage.json"
+            importer.write_branch_stage(p, {"date": DATE, "complete": False, "phase": "warrants",
+                                            "targets": ["030001"], "expected": 0,
+                                            "results": [{"sid": "030001", "outcome": "pending",
+                                                         "rows": None}]})
+            self.assertIsNotNone(importer._load_branch_stage(p, DATE, "warrants"))
+            self.assertIsNone(importer._load_branch_stage(p, DATE, "stocks"))
+            self.assertIsNone(importer._load_branch_stage(p, DATE), "舊呼叫(all)不接權證段")
+            importer.write_branch_stage(p, {"date": DATE, "complete": False,
+                                            "targets": ["2001"], "expected": 1,
+                                            "results": [{"sid": "2001", "outcome": "pending",
+                                                         "rows": None}]})
+            self.assertIsNotNone(importer._load_branch_stage(p, DATE), "舊格式(沒有 phase)= all")
+            self.assertIsNone(importer._load_branch_stage(p, DATE, "stocks"),
+                              "換版當天留下的 all 暫存檔不給 stocks 續抓(整份重爬)")
+
+
 def _rows_via_parser(sid: str) -> list[dict]:
     """用真的解析器產生某檔的列(給「上一輪已抓到」的暫存檔用)。"""
     with mock.patch.object(fubon, "get_text", return_value=_page_for(sid)):

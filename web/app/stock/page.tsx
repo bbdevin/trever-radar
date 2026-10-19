@@ -1322,7 +1322,7 @@ function WarrantPanel({ data }: { data: StockJson }) {
                             <span className="text-xs text-muted-foreground">※ 權證分點多為發行商造市部位,重點看非發行商大額買超</span>
                           </div>
                         ) : (
-                          <span className="text-xs text-muted-foreground">此權證無分點資料(僅上市權證有免費來源,且僅榜單熱門權證每晚抓取)</span>
+                          <span className="text-xs text-muted-foreground">此權證尚無今日分點資料(僅上市熱門權證每晚抓取;晚間先更新現股分點,權證分點約 20 分鐘後補上)</span>
                         )}
                       </td>
                     </tr>

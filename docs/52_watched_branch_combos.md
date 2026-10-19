@@ -31,7 +31,7 @@ export-json 的個股迴圈本來就逐檔讀 2 年分點列(`_branch_history_ro
 `coverage`(全部照匯入端,不另推;2026-10-19 verifier 第二輪修正):
 
 - `expected` = `importer._branch_stock_pool(as_of)` 的檔數——直接呼叫同一個函式:當日有收盤、active 的**普通股**,**不含 ETF**(匯入端從不抓 ETF,`daily-branches.sh`「不含 ETF」)。`covered` = 池裡 `as_of` 已有任何分點列的檔數(個股迴圈本來就知道,零額外查詢)。
-- `complete` = 匯入端把當日記為完成:`import_logs` 有一輪 `dataset='branch'` status=`ok`,且同一輪(同一個交易寫的 `branch_coverage` 列,`run_at` 相差 ≤ 10 s)的 `expected=N` ≥ 池大小。status=ok 的意思是那一輪每個目標都有答案(有列,或經別站確認的空,`_confirm_empties`)、failed=0、覆蓋率不低於 0.8 警報線;`--top 80`/`--ids` 的局部輪不算。分點在 ≥50% 覆蓋就會上線(2026-09-16 17:40 輪 86%、09-17 46% 被扣留),第二輪約 22:00 才補齊,所以 17:40 輪常是 incomplete。
+- `complete` = 匯入端把當日記為完成:`import_logs` 有一輪 `dataset='branch'` status=`ok`,且同一輪(同一個交易寫的 `branch_coverage` 列,`run_at` 相差 ≤ 10 s)的 `expected=N` ≥ 池大小。status=ok 的意思是那一輪每個目標都有答案(有列,或經別站確認的空,`_confirm_empties`)、failed=0、覆蓋率不低於 0.8 警報線;`--top 80`/`--ids` 的局部輪不算。(2026-10-20 `docs/47` §8.10 兩段式抓取起:股票段的 `branch` 列 failed 只算股票——以前權證抓失敗也會把這一列記成 incomplete、讓本頁誤標「尚未匯入」;權證段另記 `branch_warrant_pool`,不寫這兩列,本頁不讀它。)分點在 ≥50% 覆蓋就會上線(2026-09-16 17:40 輪 86%、09-17 46% 被扣留),第二輪約 22:00 才補齊,所以 17:40 輪常是 incomplete。
 - 當日沒有任何分點匯入紀錄(本機/測試庫、import_logs 被 prune)→ 視為完成:沒有證據時不宣稱「待補」。
 - 完成時,池裡沒列的 ~2% 是確認空(冷門股當天沒有分點成交),**不出提示、也不標待補**。只有 `complete=false` 且 `covered < expected` 時頁面才出琥珀提示。
 

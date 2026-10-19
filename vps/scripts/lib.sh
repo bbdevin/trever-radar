@@ -578,6 +578,15 @@ branch_round_coverage_ratio() {
   printf '%s\n' "$note" | sed -n 's/.*ratio=\([0-9.]*\).*/\1/p' | head -n 1
 }
 
+# 兩段式抓取的後段(權證池,docs/47 §8.10)對 $1(YYYY-MM-DD)最新一次匯入是不是 ok
+# (import_logs dataset='branch_warrant_pool')。ok → 0;incomplete/error/沒有紀錄/查詢失敗 → 1
+# (22:30 第二輪就重抓權證;寧可多抓一次 ~15 分鐘,也不要讓當天的權證分點缺著)。
+branch_warrant_pool_ok() {
+  local st=""
+  st="$(radar_ro_sql "SELECT status FROM import_logs WHERE dataset = 'branch_warrant_pool' AND date = ? ORDER BY id DESC LIMIT 1" "$1" 2>/dev/null)" || st=""
+  [ "$st" = "ok" ]
+}
+
 # 完成標記($1 = 日期)裡的 coverage_ratio=;舊格式(只有時間一行)→ 空字串。
 branch_marker_coverage_ratio() {
   sed -n 's/^coverage_ratio=\([0-9.]*\)$/\1/p' "$(branch_round_marker "$1")" 2>/dev/null | head -n 1 || true
