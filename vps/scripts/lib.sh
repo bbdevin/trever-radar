@@ -454,6 +454,13 @@ prefetch_intraday() {
     echo "fetch-intraday skipped: RADAR_EXPORT_FETCH=1 (export-json fetches inside the DB lock)"
     return 0
   fi
+  # 過了午夜(22:30 第二輪拖過 00:00 的夜)今天 ≠ 報價日,fetch-intraday 本來就一個請求都不發;
+  # 這時放鎖只會讓 00:05 safe-branch-stats(flock -w)或 01:10 data-backfill 插進本輪中間
+  # (verifier 2026-10-19)。直接握著鎖匯出,沿用快取。
+  if [ "$((10#$(taipei_date +%H)))" -lt "${PREFETCH_SKIP_BEFORE_HOUR:-6}" ]; then
+    echo "fetch-intraday skipped: after midnight (no same-day candles to fetch); keeping the DB lock"
+    return 0
+  fi
   release_db_lock
   if run_step "fetch-intraday" fetch_intraday_queued; then
     :

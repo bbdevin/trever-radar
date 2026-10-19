@@ -76,7 +76,9 @@ radar_timeout() {
 
 
 def _run_harness(body: str, env: dict | None = None) -> subprocess.CompletedProcess:
-    exports = "".join(f'export {k}="{v}"\n' for k, v in (env or {}).items())
+    # 午夜守衛看台北現在幾點;預設關掉,測試結果才不會跟執行時刻有關(守衛自己另有測試)。
+    env = {"PREFETCH_SKIP_BEFORE_HOUR": "0", **(env or {})}
+    exports = "".join(f'export {k}="{v}"\n' for k, v in env.items())
     script = exports + HARNESS_PRELUDE.replace("__LIB__", _bash_path(LIB)) + "\n" + body
     with tempfile.NamedTemporaryFile("w", suffix=".sh", delete=False, encoding="utf-8",
                                      newline="\n") as fh:
@@ -145,6 +147,18 @@ other_db
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertNotIn("FETCH ", r.stdout)
         self.assertIn("fetch-intraday skipped: RADAR_EXPORT_FETCH=1", r.stdout)
+        self.assertEqual(_marks(r.stdout), ["rc=0", "db:HELD"])
+
+    def test_after_midnight_keeps_the_lock_and_skips_the_fetch(self):
+        """過午夜(門檻設 24 = 任何時刻都算)不放鎖:00:05 safe-branch-stats 插不進本輪。"""
+        r = _run_harness("""
+db_lock_take 5
+prefetch_intraday; echo "rc=$?"
+other_db
+""", {"PREFETCH_SKIP_BEFORE_HOUR": "24"})
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertNotIn("FETCH ", r.stdout)
+        self.assertIn("fetch-intraday skipped: after midnight", r.stdout)
         self.assertEqual(_marks(r.stdout), ["rc=0", "db:HELD"])
 
     def test_concurrent_fetch_queues_on_the_fetch_lock_then_gives_up_softly(self):
