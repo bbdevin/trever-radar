@@ -248,7 +248,9 @@ cat /tmp/radar-branch-round-$(date +%F).done                            # 第二
 
 **核對**(合併後第一個交易日,唯讀):`grep -E '^branch-probe at=|^poll branch-probe|^branch crawl' ~/radar-cron.log` —— 預期 `need_mirrors=1`、探測間隔 ~5 分、`branch crawl: 1/5 mirror(s) ready`、`branch crawl standby mirror=… streak=2/2 ready=1` 一站接一站出現(間隔 ~3 分);`empties checked=… failed=0`;`branch_coverage` ratio 1.0;`step fetch-branch-trades done` 的耗時 > 以前(多了單站那一段)但 `deploy` 的時刻較早。若某天 `failed` 或 ratio < 0.98 變多 → 先看 `confirming empties; live=… clean=…` 是哪一站在回空。
 
-### 8.10 兩段式抓取:股票池先上線、權證池背景補(2026-10-20;程式完成於分支、未合 main、未上線;不動 crontab)
+### 8.10 兩段式抓取:股票池先上線、權證池背景補(2026-10-20;verifier CONFIRMED,已合 main;不動 crontab)
+
+> **verifier 殘差(皆低)**:①權證段的硬上限在權證段開跑時才算(9000 s 下限),股票段若拖到接近 23:00,權證段可能跑過「最晚 23:00」,極慢的夜可能讓 22:30 輪拿不到來源鎖而放棄重抓(第一輪自己照常上線)。②warrant_phase_finish 等待時放 DB 鎖、沒有午夜守衛:22:30 接手輪若拖過午夜,00:05 safe-branch-stats／01:10 data-backfill 可能插隊,最壞是重拿鎖逾時、少一次第二段上線與完成標記(第一段已上線、資料不壞;舊設計抓取期同樣曝險)。③pkill -P 在背景抓取剛啟動的毫秒內被 TERM 可能落空(找不到實際路徑)。④個股頁權證表空狀態文案常駐。
 
 > 使用者核准的目標:晚上的分點**現股**資料更早上線;權證晚一點沒關係。
 
