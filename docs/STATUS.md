@@ -2,6 +2,13 @@
 
 > 單一進度真相。每完成一個里程碑就更新本檔。規格細節看各編號文件,別寫在這裡。
 
+## 2026-10-19 自選「特定分點」(`docs/52`;程式完成於分支、未合 main、未上線;v3.10)
+
+- **需求**:使用者要每天快速看到 富邦-新店(主)、永豐金-內湖、元大-松江 這組分點今天在哪些股票同步買超／賣超,以及仍持有很多的股票;可按鈕篩選、可增減分點。
+- **做了什麼**:①export 新增 `branches/watch/{index,s00..s63}.json`:搭個股迴圈已讀的分點列就地摘要,不另掃 `branch_trades_raw`;每分點當日列＋近 60 交易日估計仍持有(歸 0 不往負推)與進場日;當日沒列的寫 null(未知,不是 0)。②自選頁新增 `自選股｜特定分點 N` 分頁(`?tab=branches`):分點組合編輯(搜尋加入、移除、換主,最多 6)、買超／賣超／估計仍持有、四種組合按鈕＋可見定義句、四種排序、「持有量大」(≥1,000 張或 ≥20 日均量)、誠實註記。③組合目前只存本機;綁帳號的 Supabase SQL 只寫草稿 `docs/sql/20261019160000_create_watched_branch_sets.sql`(**未執行**)。不做手機通知。
+- **驗證**:pytest `test_branch_watch_export.py`(持有/歸 0/進場日、null 未知、視窗邊界、同名合併、停業排除、權證列不當今天、門檻與上限、個股摘要、分片、逐位元重現、空形狀)＋全套 1787 passed;web node `watchedBranches.test.ts`(組合篩選、排序、金額、持有量大、組合增刪、搜尋、禁用詞)＋全套 428 passed;`tsc`、`next build`;合成庫 `export_parity.py` 新舊 code 同庫其他檔全 IDENTICAL/TIMESTAMP,只多 65 檔;`watch` 段 3.2 s/總 66.8 s(800 檔),正式機估 10–20 s。390px 深/淺截圖 `docs/evidence/52_watched_branches/`。
+- **待人類**:合 main(下一輪 export 才有資料,之前分頁顯示「還沒產生」);第一輪看 `export watch:` 行回填 `docs/52` §5;決定是否執行綁帳號 SQL(建議資安審查)。
+
 ## 2026-10-15 長回補讓路平日 08:00／13:15(`docs/49` §12.6.5「事故」;已 commit、未 push;VPS 需 `sync_code` 後生效,不動 crontab)
 
 - **事故**:10-14／10-15 `warrant-backfill`(`~/warrant-driver.sh`)06:36 開的塊握 `/tmp/radar-db.lock` 跨過 08:00,`morning-index` 兩天等鎖 300 s 逾時沒上線;10-14 13:15 `adjust-incremental` 也因鎖被占略過。根因:`minutes_until_next_scheduled_writer` 的 overlay 不認得這兩輪(mid 已清空時 06:36 答 449 分 → 預算封頂 240、握到 10:36)。

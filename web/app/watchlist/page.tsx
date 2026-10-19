@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { toast } from "sonner";
-import { ArrowUpDown, ChevronDown, ShieldCheck } from "lucide-react";
+import { ArrowUpDown, ChevronDown, ShieldCheck, Star, Users } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -15,7 +15,11 @@ import type { RadarJson, StockJson } from "@/lib/types";
 import { chgClass, fmtPct, MARKET_LABEL } from "@/lib/format";
 import { signInWithGoogle, useSession } from "@/lib/useSession";
 import { useWatchlist } from "@/lib/watchlist";
-import { cn } from "@/lib/utils";
+import { cn, navPillClass } from "@/lib/utils";
+import { currentParams, replaceQuery } from "@/lib/urlState";
+import { todayCount } from "@/lib/watchedBranches";
+import { useWatchedBranchData, useWatchedBranchSet } from "@/lib/watchedBranchSet";
+import WatchedBranchesPanel from "@/components/WatchedBranchesPanel";
 
 type Row = {
   stock_id: string;
@@ -172,7 +176,67 @@ function sortRows(rows: Row[], key: SortKey): Row[] {
   });
 }
 
+type PageTab = "stocks" | "branches";
+
+/** 自選頁兩個分頁:自選股(原本的佇列)與特定分點(docs/52)。分頁記在網址 ?tab=branches。 */
 export default function WatchlistPage() {
+  const [tab, setTab] = useState<PageTab>("stocks");
+  const [branchSet, setBranchSet] = useWatchedBranchSet();
+  const branchData = useWatchedBranchData(branchSet);
+  const badge = branchData.status === "ready" ? todayCount(branchData.rows) : null;
+
+  useEffect(() => {
+    if (currentParams().get("tab") === "branches") setTab("branches");
+  }, []);
+
+  const pick = (t: PageTab) => {
+    setTab(t);
+    replaceQuery({ tab: t === "branches" ? "branches" : null });
+  };
+
+  return (
+    <div>
+      <div role="tablist" aria-label="自選分頁" className="mt-3.5 flex w-fit max-w-full gap-0.5 rounded-full border border-border bg-card p-[3px]">
+        <button
+          role="tab"
+          aria-selected={tab === "stocks"}
+          onClick={() => pick("stocks")}
+          className={cn(navPillClass(tab === "stocks"), "inline-flex min-h-11 items-center gap-1.5 whitespace-nowrap")}
+        >
+          <Star size={15} className="opacity-85" />{"自選股"}
+        </button>
+        <button
+          role="tab"
+          aria-selected={tab === "branches"}
+          onClick={() => pick("branches")}
+          className={cn(navPillClass(tab === "branches"), "inline-flex min-h-11 items-center gap-1.5 whitespace-nowrap")}
+          data-testid="watchlist-tab-branches"
+        >
+          <Users size={15} className="opacity-85" />{"特定分點"}
+          {badge != null && badge > 0 && (
+            <span
+              className={cn(
+                "num min-w-5 rounded-full px-1.5 text-center text-[11px] font-bold leading-5",
+                tab === "branches" ? "bg-primary-foreground/20 text-primary-foreground" : "bg-up/15 text-up",
+              )}
+              title={"今天選的分點有進出的股票檔數"}
+              aria-label={`今天 ${badge} 檔有進出`}
+            >
+              {badge}
+            </span>
+          )}
+        </button>
+      </div>
+      {tab === "stocks" ? (
+        <WatchlistStocks />
+      ) : (
+        <WatchedBranchesPanel set={branchSet} onChange={setBranchSet} data={branchData} />
+      )}
+    </div>
+  );
+}
+
+function WatchlistStocks() {
   const { session, loading: sessionLoading } = useSession();
   const { items, loading: listLoading } = useWatchlist();
   const [rows, setRows] = useState<Row[] | null>(null);
