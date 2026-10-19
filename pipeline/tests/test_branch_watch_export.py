@@ -122,7 +122,9 @@ class BranchWatchExportTests(unittest.TestCase):
         self.assertEqual(idx["window_from"], WF)
         self.assertEqual(idx["window_days"], WINDOW_TRADING_DAYS)
         self.assertEqual(idx["shards"], SHARDS)
-        self.assertEqual(entry, ["富邦-新店", shard_of("富邦-新店"), 1, 1, 1])
+        self.assertEqual(entry, ["富邦-新店", shard_of("富邦-新店"), 1, 1, 1, 1])
+        # 2454 有報價、今天沒有任何分點列 → 尚未匯入;覆蓋 2 / 3
+        self.assertEqual(idx["coverage"], {"covered": 2, "expected": 3})
         rows = {r[0]: r for r in shard["branches"]["富邦-新店"]}
         self.assertEqual(sorted(rows), ["2317", "2330", "2454"])
         # 2330:300 → 賣 500 歸 0 → 200 → +120(兩來源合併)= 320;進場日 = 歸 0 後再轉正那天
@@ -132,8 +134,10 @@ class BranchWatchExportTests(unittest.TestCase):
         # 2454:今天不在前 15 大 → 當日三欄 null(未知,不是 0)
         self.assertEqual(rows["2454"], ["2454", None, None, None, 500, DAYS[-20], 1, 500, DAYS[-20]])
         # 個股摘要:收盤、還原漲跌、20 日均量張
-        self.assertEqual(shard["stocks"]["2330"], ["台積電", 1069.0, round(1 / 1068 * 100, 2), 30000])
-        self.assertEqual(shard["stocks"]["2317"], ["鴻海", 190.0, 0.0, 10000])
+        self.assertEqual(shard["stocks"]["2330"], ["台積電", 1069.0, round(1 / 1068 * 100, 2), 30000, 1])
+        self.assertEqual(shard["stocks"]["2317"], ["鴻海", 190.0, 0.0, 10000, 1])
+        # 2454 今天整檔沒匯入:第 5 欄 0,前端顯示「尚未匯入」而不是「未進前 15 大」
+        self.assertEqual(shard["stocks"]["2454"], ["聯發科", 1200.0, 0.0, 2000, 0])
 
     def test_warrant_rows_do_not_define_today(self):
         # 權證分點先到、現股分點還沒到的那段時間:今天仍是最後一個有現股列的日子。
@@ -149,7 +153,7 @@ class BranchWatchExportTests(unittest.TestCase):
     def test_threshold_closed_and_index(self):
         wdir = self._export()
         idx, entry, shard = self._shard_of(wdir, "元大-松江")
-        self.assertEqual(entry[2:], [0, 0, 0])
+        self.assertEqual(entry[2:], [0, 0, 0, 0])
         self.assertNotIn("元大-松江", shard["branches"])
         names = [b[0] for b in idx["branches"]]
         self.assertEqual(names, sorted(names))
@@ -198,8 +202,36 @@ class BranchWatchCapTests(unittest.TestCase):
         # 留下的是估計仍持有最大的那些
         self.assertEqual(min(r[4] for r in held), HOLD_MIN_LOTS + 5)
         self.assertIn("9999", [r[0] for r in rows])
-        self.assertEqual(index["branches"], [["B", shard_of("B"), 0, 1, HOLD_TOP_PER_BRANCH]])
+        self.assertEqual(index["branches"], [["B", shard_of("B"), 0, 1, HOLD_TOP_PER_BRANCH, HOLD_TOP_PER_BRANCH + 5]])
         self.assertEqual([r[0] for r in rows], sorted(r[0] for r in rows))
+
+
+class BranchWatchThresholdTests(unittest.TestCase):
+    """當日沒出現的列:≥ 100 張,或 ≥ 20 日均量且 ≥ 20 張(小型股的相對大部位)。"""
+
+    def _rows_for(self, hold, avg_lots):
+        col = BranchWatchCollector(AS_OF, WF)
+        candles = [(AS_OF, 1, 1, 1, 10.0, avg_lots * 1000, 1, 1.0)]
+        col.add_stock("9999", "x", [(DAYS[-5], "B", hold, 0, hold)], candles)
+        _index, shards = col.payloads()
+        return shards[shard_of("B")]["branches"].get("B", [])
+
+    def test_small_cap_relative_holding_listed(self):
+        self.assertEqual(len(self._rows_for(80, 30)), 1)
+        self.assertEqual(len(self._rows_for(50, 60)), 0)     # 未達均量、也未達 100
+        self.assertEqual(len(self._rows_for(15, 10)), 0)     # 達均量但低於 20 張地板
+        self.assertEqual(len(self._rows_for(100, 5000)), 1)  # 100 張絕對門檻
+
+    def test_coverage_counts_only_priced_stocks(self):
+        col = BranchWatchCollector(AS_OF, WF)
+        priced = [(AS_OF, 1, 1, 1, 10.0, 1000, 1, 1.0)]
+        stale = [(DAYS[-2], 1, 1, 1, 10.0, 1000, 1, 1.0)]
+        col.add_stock("1", "a", [(AS_OF, "B", 1, 0, 1)], priced)       # 有報價、已匯入
+        col.add_stock("2", "b", [(DAYS[-3], "B", 1, 0, 1)], priced)    # 有報價、未匯入
+        col.add_stock("3", "c", [], priced)                            # 有報價、完全沒分點列
+        col.add_stock("4", "d", [(AS_OF, "B", 1, 0, 1)], stale)        # 今天沒報價:不算分母
+        index, _ = col.payloads()
+        self.assertEqual(index["coverage"], {"covered": 1, "expected": 3})
 
 
 if __name__ == "__main__":

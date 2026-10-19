@@ -54,14 +54,16 @@ export type WatchDataState =
   | { status: "error" }
   | { status: "ready"; index: WatchIndex; rows: ComboRow[]; loadingShards: boolean };
 
-/** 讀 index 一次,再依組合抓需要的分片(抓過的留著,換組合不重抓)。 */
-export function useWatchedBranchData(set: BranchSet): WatchDataState {
+/** 讀 index 一次,再依組合抓需要的分片(抓過的留著,換組合不重抓)。
+ *  enabled = false 時什麼都不抓(自選股分頁先畫完、閒置後才抓徽章要的資料)。 */
+export function useWatchedBranchData(set: BranchSet, enabled = true): WatchDataState {
   const [index, setIndex] = useState<WatchIndex | null>(null);
   const [indexStatus, setIndexStatus] = useState<"loading" | "missing" | "error" | "ready">("loading");
   const [shards, setShards] = useState<Record<number, WatchShard>>({});
   const [pending, setPending] = useState(0);
 
   useEffect(() => {
+    if (!enabled) return;
     let cancelled = false;
     dataFetch("/data/branches/watch/index.json")
       .then((r) => {
@@ -79,7 +81,7 @@ export function useWatchedBranchData(set: BranchSet): WatchDataState {
       })
       .catch(() => { if (!cancelled) setIndexStatus("error"); });
     return () => { cancelled = true; };
-  }, []);
+  }, [enabled]);
 
   const need = useMemo(() => (index ? shardsFor(index, set.branches) : []), [index, set.branches]);
 

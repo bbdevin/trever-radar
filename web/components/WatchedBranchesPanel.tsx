@@ -14,16 +14,20 @@ import {
   addBranch,
   amountEst,
   cellLine,
+  coverageText,
   emptyText,
   filterRows,
   fmtMD,
+  holdCapText,
   HONESTY_NOTE,
   isBigHold,
   MAX_BRANCHES,
   modeDefinition,
   modeLabel,
   PUSH_NOTE,
+  PENDING_TODAY,
   removeBranch,
+  SEARCH_EMPTY,
   searchBranches,
   setAnchor,
   SIDE_LABEL,
@@ -89,6 +93,14 @@ export default function WatchedBranchesPanel({
             {" · 估計仍持有看近 "}{ready.index.window_days}{" 個交易日("}{fmtMD(ready.index.window_from)}{" 起)。"}
             {PUSH_NOTE}
           </p>
+          {coverageText(ready.index) && (
+            <p
+              className="mb-2.5 rounded-md border border-warn/40 bg-warn/10 px-2.5 py-2 text-[12px] text-foreground"
+              data-testid="watched-coverage"
+            >
+              {coverageText(ready.index)}
+            </p>
+          )}
 
           {/* 買超／賣超／估計仍持有 */}
           <div role="tablist" aria-label="方向" className="mb-2 flex w-fit max-w-full gap-0.5 rounded-full border border-border bg-card p-[3px]">
@@ -126,7 +138,8 @@ export default function WatchedBranchesPanel({
           )}
           {side === "hold" && (
             <p className="mb-2.5 text-[12px] text-foreground/85">
-              {`任一選的分點估計仍持有 ≥ ${holdMin.toLocaleString("zh-TW")} 張的股票,含今天沒進前 15 大的;每個分點最多列 ${ready.index.hold_top} 檔今天沒出現的。`}
+              {`任一選的分點估計仍持有 ≥ ${holdMin.toLocaleString("zh-TW")} 張,或 ≥ 這檔 20 日均量(且 ≥ ${ready.index.hold_floor ?? 20} 張)的股票,含今天沒進出的;今天沒進出的每個分點最多列 ${ready.index.hold_top} 檔。`}
+              {holdCapText(ready.index, set.branches) && <span className="mt-1 block text-muted-foreground">{holdCapText(ready.index, set.branches)}</span>}
             </p>
           )}
 
@@ -261,7 +274,7 @@ function BranchSetEditor({ set, onChange, index }: { set: BranchSet; onChange: (
           {q.trim() && (
             <ul className="mt-1.5 flex flex-col overflow-hidden rounded-md border border-border">
               {hits.length === 0 && (
-                <li className="px-3 py-2.5 text-[12.5px] text-muted-foreground">{"近 60 個交易日沒有符合的分點。"}</li>
+                <li className="px-3 py-2.5 text-[12.5px] text-muted-foreground">{SEARCH_EMPTY}</li>
               )}
               {hits.map(([name, , nb, ns]) => (
                 <li key={name} className="border-b border-border last:border-b-0">
@@ -329,7 +342,7 @@ function ComboCard({ row, set, side }: { row: ComboRow; set: BranchSet; side: Si
       <ul className="flex flex-col divide-y divide-border">
         {set.branches.map((b) => {
           const c = row.cells[b];
-          const line = cellLine(c);
+          const line = cellLine(c, row.pending);
           const big = isBigHold(c?.hold ?? 0, row.avgVol);
           const net = c?.net ?? null;
           return (
@@ -342,7 +355,7 @@ function ComboCard({ row, set, side }: { row: ComboRow; set: BranchSet; side: Si
                 "num text-right text-[12.5px] font-semibold",
                 net == null ? "font-normal text-muted-foreground" : net > 0 ? "text-up" : net < 0 ? "text-down" : "text-foreground",
               )}>
-                {net == null ? (c ? "未進前 15 大" : "—") : `${net > 0 ? "+" : net < 0 ? "−" : ""}${Math.abs(net).toLocaleString("zh-TW")} 張`}
+                {net == null ? (row.pending ? PENDING_TODAY : c ? "未進前 15 大" : "—") : `${net > 0 ? "+" : net < 0 ? "−" : ""}${Math.abs(net).toLocaleString("zh-TW")} 張`}
               </span>
               {c && (
                 <span className="col-span-2 mt-0.5 flex flex-wrap items-center gap-1.5 text-[11.5px] text-muted-foreground">

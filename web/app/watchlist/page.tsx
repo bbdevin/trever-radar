@@ -182,11 +182,20 @@ type PageTab = "stocks" | "branches";
 export default function WatchlistPage() {
   const [tab, setTab] = useState<PageTab>("stocks");
   const [branchSet, setBranchSet] = useWatchedBranchSet();
-  const branchData = useWatchedBranchData(branchSet);
+  // 特定分點的資料:在那個分頁就立刻抓;在自選股分頁時等畫面閒下來再抓(只為了分頁徽章)。
+  const [branchFetch, setBranchFetch] = useState(false);
+  const branchData = useWatchedBranchData(branchSet, branchFetch || tab === "branches");
   const badge = branchData.status === "ready" ? todayCount(branchData.rows) : null;
 
   useEffect(() => {
     if (currentParams().get("tab") === "branches") setTab("branches");
+    const w = window as Window & { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number };
+    if (w.requestIdleCallback) {
+      w.requestIdleCallback(() => setBranchFetch(true), { timeout: 4000 });
+    } else {
+      const t = window.setTimeout(() => setBranchFetch(true), 1500);
+      return () => window.clearTimeout(t);
+    }
   }, []);
 
   const pick = (t: PageTab) => {

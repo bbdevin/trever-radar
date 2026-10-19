@@ -14,7 +14,12 @@
 資料誠實(與 docs/42、docs/51 同一套):分點列只有「當天在該股前 15 大買超或前 15 大
 賣超」才存在。沒有列的日子是**未知**,不是 0。所以:
 
-* 當日欄位(buy/sell/net)只有當天真的有列才給數字;沒有列 → ``null``(不寫 0)。
+* 當日欄位(buy/sell/net)只有當天真的有列才給數字;沒有列 → ``null``(不寫 0)。null 有兩種
+  意思,由個股摘要第 5 欄分辨:這檔 as_of 已匯入任何分點列(1)→ 該分點「未進前 15 大」;
+  這檔還沒匯入(0,17:40 那輪可能只匯一半)→「尚未匯入」。index 的 ``coverage`` 給頁面
+  說「今日分點已匯入 X / Y 檔」。
+* 同名不同 branch_id(不同來源頁)同一天加總,與 ``branches/track`` 同口徑。進場日只看得到
+  視窗內:60 交易日以前就持有的部位,進場日最早只會是視窗起點那段。
 * 估計仍持有 = 視窗起點從 0 開始的累計淨買超,賣超超過已知買超時歸 0(更早的部位未知,
   不往負的推);進場日 = 這一段持有從 0 轉正的那一天。視窗內沒被觀察到的賣超不會被扣,
   所以這是「估」,畫面一律標「估」。
@@ -33,7 +38,8 @@ from ..branch_source import COVER_INDEX, has_date_cover
 FILE_VERSION = 1
 WINDOW_TRADING_DAYS = 60     # 估計仍持有的視窗(交易日);理由見 docs/52 §3
 SHARDS = 64
-HOLD_MIN_LOTS = 100          # 當日沒出現的列:估計仍持有 ≥ 這個張數才輸出
+HOLD_MIN_LOTS = 100          # 當日沒出現的列:估計仍持有 ≥ 這個張數就輸出
+HOLD_FLOOR_LOTS = 20         # 或 ≥ 該股 20 日均量且至少這麼多張(小型股的相對大部位;與前端「持有量大」同規則)
 HOLD_TOP_PER_BRANCH = 60     # 當日沒出現的列:每個分點最多輸出幾檔(依估計仍持有由大到小)
 AVG_VOL_DAYS = 20
 
@@ -61,6 +67,22 @@ def window_start(conn, as_of: str) -> str:
     return start or as_of
 
 
+def holding_worth_listing(hold: int, avg_vol: int | None) -> bool:
+    """當日沒出現的 (分點, 股) 要不要輸出:≥ HOLD_MIN_LOTS,或 ≥ 20 日均量(且 ≥ HOLD_FLOOR_LOTS)。"""
+    if hold >= HOLD_MIN_LOTS:
+        return True
+    return bool(avg_vol) and hold >= HOLD_FLOOR_LOTS and hold >= avg_vol
+
+
+def _has_candle(candles, as_of: str) -> bool:
+    for c in reversed(candles):
+        if c[0] == as_of:
+            return True
+        if c[0] < as_of:
+            return False
+    return False
+
+
 def _closed(name: str) -> bool:
     return any(m in name for m in CLOSED_MARKS)
 
@@ -74,14 +96,31 @@ class BranchWatchCollector:
         # 分點名稱 → [(sid, buy, sell, net, hold, entry, obs, sum, last)]
         self.rows: dict[str, list[tuple]] = {}
         self.names: set[str] = set()
-        # sid → [name, close, chg_pct, avg_vol20_lots]
+        # sid → [name, close, chg_pct, avg_vol20_lots, today_imported(1/0)]
         self.stocks: dict[str, list] = {}
+        # 當日分點匯入覆蓋:expected = as_of 有報價的檔數(與 importer._branch_date_fit 的
+        # 分母同一個宇宙),covered = 其中 as_of 已有任何分點列的檔數。17:40 那輪可能只匯了一半
+        # (2026-09-17 46%),22:00 第二輪才補齊——沒匯到的股票「今天」是未知,不是沒進前 15 大。
+        self.expected = 0
+        self.covered = 0
 
     def add_stock(self, sid: str, name: str, rows: list[tuple], candles) -> None:
         """rows = ``_branch_history_rows`` 的輸出 (date, branch_name, buy, sell, net),date DESC。
         candles = 該檔 K 線列 (date, o, h, l, c, v, turnover, adj_factor),date ASC。"""
         as_of, wf = self.as_of, self.window_from
-        if as_of is None or not rows:
+        if as_of is None:
+            return
+        priced = _has_candle(candles, as_of)
+        imported = False
+        for r in rows:
+            if r[0] <= as_of:
+                imported = r[0] == as_of
+                break
+        if priced:
+            self.expected += 1
+            if imported:
+                self.covered += 1
+        if not rows:
             return
         # rows 依日期遞減:先跳過 as_of 之後的列(分點比報價新時才會有),再取到視窗下緣為止。
         seqs: dict[str, list[list]] = {}
@@ -108,6 +147,8 @@ class BranchWatchCollector:
                     last[3] += net or 0
                 else:
                     seq.append([dt, buy or 0, sell or 0, net or 0])
+        meta = _stock_meta(candles, as_of)
+        avg_vol = meta[2]
         emitted = False
         for bname, seq in seqs.items():
             if _closed(bname):
@@ -127,7 +168,7 @@ class BranchWatchCollector:
                     pos = nxt
             last = seq[-1]
             today = last[0] == as_of
-            if not today and pos < HOLD_MIN_LOTS:
+            if not today and not holding_worth_listing(pos, avg_vol):
                 continue
             self.rows.setdefault(bname, []).append((
                 sid,
@@ -138,7 +179,9 @@ class BranchWatchCollector:
             ))
             emitted = True
         if emitted:
-            self.stocks[sid] = [name, *_stock_meta(candles, as_of)]
+            # 第 5 欄:這檔 as_of 已有任何分點列(1)或還沒匯入(0)。0 時當日三欄 null 的意思是
+            # 「尚未匯入」,不是「未進前 15 大」。
+            self.stocks[sid] = [name, *meta, 1 if imported else 0]
 
     def payloads(self) -> tuple[dict, list[dict]]:
         """(index, [shard 0..SHARDS-1]),全部已排序、可逐位元重現。"""
@@ -147,14 +190,14 @@ class BranchWatchCollector:
         for bname in sorted(self.names):
             rows = self.rows.get(bname, [])
             today = sorted((r for r in rows if r[3] is not None), key=lambda r: r[0])
-            held = sorted((r for r in rows if r[3] is None), key=lambda r: (-r[4], r[0]))
-            held = sorted(held[:HOLD_TOP_PER_BRANCH], key=lambda r: r[0])
+            held_all = sorted((r for r in rows if r[3] is None), key=lambda r: (-r[4], r[0]))
+            held = sorted(held_all[:HOLD_TOP_PER_BRANCH], key=lambda r: r[0])
             s = shard_of(bname)
             if today or held:
                 shards[s][bname] = [list(r) for r in sorted(today + held, key=lambda r: r[0])]
             n_buy = sum(1 for r in today if r[3] > 0)
             n_sell = sum(1 for r in today if r[3] < 0)
-            index_rows.append([bname, s, n_buy, n_sell, len(held)])
+            index_rows.append([bname, s, n_buy, n_sell, len(held), len(held_all)])
         head = {
             "version": FILE_VERSION,
             "as_of": self.as_of,
@@ -165,8 +208,11 @@ class BranchWatchCollector:
             **head,
             "shards": SHARDS,
             "hold_min": HOLD_MIN_LOTS,
+            "hold_floor": HOLD_FLOOR_LOTS,
             "hold_top": HOLD_TOP_PER_BRANCH,
-            # [名稱, 分片, 當日買超檔數, 當日賣超檔數, 當日沒出現但估計仍持有的檔數]
+            # 當日分點匯入覆蓋:as_of 有報價的檔數裡,已有任何分點列的檔數
+            "coverage": {"covered": self.covered, "expected": self.expected},
+            # [名稱, 分片, 當日買超檔數, 當日賣超檔數, 當日沒出現但估計仍持有(已輸出)檔數, 同上(截斷前)]
             "branches": index_rows,
         }
         out = []
@@ -178,7 +224,7 @@ class BranchWatchCollector:
                 # 每列 [代號, 當日買張, 當日賣張, 當日淨張, 估計仍持有, 進場日, 視窗內出現天數,
                 #       視窗內淨張合計, 最後出現日];當日三欄 null = 當日不在前 15 大(未知,不是 0)。
                 "branches": {b: branches[b] for b in sorted(branches)},
-                # 代號 → [名稱, 收盤, 漲跌%(還原價), 近 20 日均量(張)]
+                # 代號 → [名稱, 收盤, 漲跌%(還原價), 近 20 日均量(張), 當日分點已匯入 1/0]
                 "stocks": {sid: self.stocks[sid] for sid in used},
             })
         return index, out

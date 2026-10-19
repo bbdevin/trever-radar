@@ -6,11 +6,12 @@
  *  當日三欄 null = 當天不在該股前 15 大買超／賣超(未知,不是 0)。 */
 export type WatchRow = [string, number | null, number | null, number | null, number, string | null, number, number, string];
 
-/** [名稱, 收盤, 漲跌%(還原價), 近 20 日均量(張)] */
-export type WatchStockMeta = [string, number | null, number | null, number | null];
+/** [名稱, 收盤, 漲跌%(還原價), 近 20 日均量(張), 當日分點已匯入 1/0]
+ *  第 5 欄 0 = 這檔今天的分點還沒匯入(晚上第二輪才補齊):當日 null 是「尚未匯入」,不是「未進前 15 大」。 */
+export type WatchStockMeta = [string, number | null, number | null, number | null, (0 | 1)?];
 
-/** [名稱, 分片, 當日買超檔數, 當日賣超檔數, 當日沒出現但估計仍持有的檔數] */
-export type WatchIndexEntry = [string, number, number, number, number];
+/** [名稱, 分片, 當日買超檔數, 當日賣超檔數, 當日沒出現但估計仍持有(已輸出)檔數, 同上(截斷前)] */
+export type WatchIndexEntry = [string, number, number, number, number, number?];
 
 export interface WatchIndex {
   version: number;
@@ -19,7 +20,11 @@ export interface WatchIndex {
   window_from: string | null;
   shards: number;
   hold_min: number;
+  /** 小型股相對門檻的地板(≥ 20 日均量且 ≥ 這個張數);舊檔沒有 → 20 */
+  hold_floor?: number;
   hold_top: number;
+  /** 今日分點匯入覆蓋:有報價的檔數裡已有分點列的檔數;舊檔沒有 */
+  coverage?: { covered: number; expected: number };
   branches: WatchIndexEntry[];
 }
 
@@ -46,6 +51,8 @@ export const DEFAULT_BRANCH_SET: BranchSet = {
 export const MAX_BRANCHES = 6;
 /** 「估計仍持有很多」:≥ 1,000 張,或 ≥ 該股近 20 日均量(一整天的量)。 */
 export const BIG_HOLD_LOTS = 1000;
+/** 「≥ 20 日均量」那條的地板,避免 3 張 vs 均量 2 張也被標(與匯出端 HOLD_FLOOR_LOTS 同值)。 */
+export const HOLD_FLOOR_LOTS = 20;
 
 export type Side = "buy" | "sell" | "hold";
 export type ComboMode = "anchor" | "anchor_plus" | "all" | "any";
@@ -104,6 +111,8 @@ export interface ComboRow {
   chg: number | null;
   avgVol: number | null;
   cells: Record<string, Cell>;
+  /** 這檔今天的分點還沒匯入(今天的進出未知) */
+  pending: boolean;
   /** 今天淨買超的分點(依使用者選的順序) */
   buyers: string[];
   sellers: string[];
@@ -158,13 +167,19 @@ export function shardsFor(index: WatchIndex, names: string[]): number[] {
   return [...out].sort((a, b) => a - b);
 }
 
-/** 依名稱片段搜尋分點(排除已選),今天有進出的排前面。 */
+/** 搜尋用的寬鬆名稱:全形→半形(NFKC)、去空白與各種連字號、臺→台、英文小寫。
+ *  「富邦新店」「富邦 新店」「富邦－新店」都對得到「富邦-新店」。 */
+export function looseName(s: string): string {
+  return s.normalize("NFKC").replace(/[\s\-‐‑‒–—―−_·・.]/g, "").replace(/臺/g, "台").toLowerCase();
+}
+
+/** 依名稱片段搜尋分點(寬鬆比對,排除已選),今天有進出的排前面。 */
 export function searchBranches(index: WatchIndex, q: string, exclude: string[], limit = 8): WatchIndexEntry[] {
-  const t = q.trim();
+  const t = looseName(q);
   if (!t) return [];
   const ex = new Set(exclude);
   return index.branches
-    .filter((b) => b[0].includes(t) && !ex.has(b[0]))
+    .filter((b) => looseName(b[0]).includes(t) && !ex.has(b[0]))
     .sort((a, b) => (b[2] + b[3]) - (a[2] + a[3]) || a[0].localeCompare(b[0], "zh-Hant"))
     .slice(0, limit);
 }
@@ -182,6 +197,7 @@ export function buildRows(set: BranchSet, shards: WatchShard[]): ComboRow[] {
         const m = meta[sid];
         row = {
           stock_id: sid, name: m?.[0] ?? sid, close: m?.[1] ?? null, chg: m?.[2] ?? null, avgVol: m?.[3] ?? null,
+          pending: m?.[4] === 0,
           cells: {}, buyers: [], sellers: [], holdTotal: 0,
         };
         byStock.set(sid, row);
@@ -207,12 +223,18 @@ function sideList(row: ComboRow, side: "buy" | "sell"): string[] {
 
 export function isBigHold(hold: number, avgVol: number | null): boolean {
   if (hold <= 0) return false;
-  return hold >= BIG_HOLD_LOTS || (avgVol != null && avgVol > 0 && hold >= avgVol);
+  return hold >= BIG_HOLD_LOTS || (avgVol != null && avgVol > 0 && hold >= HOLD_FLOOR_LOTS && hold >= avgVol);
 }
 
-/** 估計仍持有門檻:任一選的分點 ≥ holdMin 張。 */
+/** 「估計仍持有」檢視的門檻,與匯出端相同:≥ holdMin 張,或 ≥ 20 日均量(且 ≥ 20 張)。 */
+export function holdQualifies(hold: number, avgVol: number | null, holdMin = 100): boolean {
+  return hold >= holdMin || isBigHold(hold, avgVol);
+}
+
 export function filterRows(rows: ComboRow[], set: BranchSet, side: Side, mode: ComboMode, holdMin = 100): ComboRow[] {
-  if (side === "hold") return rows.filter((r) => set.branches.some((b) => (r.cells[b]?.hold ?? 0) >= holdMin));
+  if (side === "hold") {
+    return rows.filter((r) => set.branches.some((b) => holdQualifies(r.cells[b]?.hold ?? 0, r.avgVol, holdMin)));
+  }
   return rows.filter((r) => {
     const list = sideList(r, side);
     switch (mode) {
@@ -269,11 +291,13 @@ export function fmtMD(d: string | null | undefined): string {
   return m ? `${m[1]}/${m[2]}` : d;
 }
 
-/** 單一分點在一檔上的一句話:今天 + 估計仍持有。 */
-export function cellLine(c: Cell | undefined): { today: string; hold: string } {
-  if (!c) return { today: "近 60 日未見", hold: "" };
+export const PENDING_TODAY = "今天尚未匯入";
+
+/** 單一分點在一檔上的一句話:今天 + 估計仍持有。pending = 這檔今天的分點還沒匯入。 */
+export function cellLine(c: Cell | undefined, pending = false): { today: string; hold: string } {
+  if (!c) return { today: pending ? PENDING_TODAY : "近 60 日未見", hold: "" };
   const today = c.net == null
-    ? "今天未進前 15 大"
+    ? (pending ? PENDING_TODAY : "今天未進前 15 大")
     : c.net > 0 ? `今天買超 ${c.net.toLocaleString("zh-TW")} 張`
     : c.net < 0 ? `今天賣超 ${(-c.net).toLocaleString("zh-TW")} 張`
     : "今天買賣相抵";
@@ -283,8 +307,28 @@ export function cellLine(c: Cell | undefined): { today: string; hold: string } {
   return { today, hold };
 }
 
+/** 今日分點只匯入一部分時的提示;齊了(或舊檔沒有覆蓋資訊)→ null。 */
+export function coverageText(index: WatchIndex): string | null {
+  const c = index.coverage;
+  if (!c || c.expected <= 0 || c.covered >= c.expected) return null;
+  return `${fmtMD(index.as_of)} 分點已匯入 ${c.covered.toLocaleString("zh-TW")} / ${c.expected.toLocaleString("zh-TW")} 檔,其餘待下一輪更新;還沒匯入的股票今天的進出未知(標「尚未匯入」),不會出現在買超／賣超篩選裡。`;
+}
+
+/** 選的分點中,今天沒出現的估計仍持有列被每分點上限截掉的說明;沒截 → null。 */
+export function holdCapText(index: WatchIndex, branches: string[]): string | null {
+  const by = new Map(index.branches.map((b) => [b[0], b]));
+  const parts: string[] = [];
+  for (const name of branches) {
+    const e = by.get(name);
+    if (e && e[5] != null && e[5] > e[4]) parts.push(`${name} 共 ${e[5]} 檔,只列持有最多的 ${e[4]} 檔`);
+  }
+  return parts.length ? `今天沒進出的估計仍持有:${parts.join(";")}。` : null;
+}
+
+export const SEARCH_EMPTY = "沒有找到名稱相近的分點;清單只含近 60 個交易日出現過的分點,可換個寫法(例如只打「新店」)。";
+
 export function emptyText(side: Side, mode: ComboMode, asOf: string | null): string {
   if (!asOf) return "還沒有分點資料。";
-  if (side === "hold") return "選的分點近 60 個交易日沒有估計仍持有達門檻的股票。";
+  if (side === "hold") return "選的分點近 60 個交易日沒有估計仍持有達門檻(≥ 100 張或 ≥ 20 日均量)的股票。";
   return `${fmtMD(asOf)} 沒有符合「${modeLabel(mode, side)}」的股票。可以換成「任一分點${SIDE_LABEL[side]}」或加入其他分點。`;
 }
