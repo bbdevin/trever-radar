@@ -108,11 +108,15 @@ def import_complete(conn, as_of: str, pool_size: int) -> bool | None:
     if not rows:
         return None
 
+    from zoneinfo import ZoneInfo
+
     def ts(v):
+        # 沒帶時區的列當台北時間:混到一列 naive 就讓 aware/naive 相減 TypeError、整個 export 掛掉。
         try:
-            return datetime.fromisoformat(v)
+            t = datetime.fromisoformat(v)
         except (TypeError, ValueError):
             return None
+        return t if t.tzinfo else t.replace(tzinfo=ZoneInfo("Asia/Taipei"))
 
     ok_runs = [ts(r[0]) for r in rows if r[1] == "branch" and r[2] == "ok"]
     ok_runs = [t for t in ok_runs if t is not None]

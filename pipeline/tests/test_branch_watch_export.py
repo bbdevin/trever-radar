@@ -325,6 +325,13 @@ class BranchWatchImportStatusTests(unittest.TestCase):
         with db.get_engine().connect() as conn:
             self.assertTrue(branch_watch.import_complete(conn, AS_OF, 2))
 
+    def test_naive_run_at_mixed_with_aware_does_not_crash(self):
+        """一列沒帶時區的 run_at 不可讓整個 export 掛掉(verifier 2026-10-19);naive 當台北時間。"""
+        self._log_round("error", 2, run_at="2026-10-16T19:00:00+08:00")
+        self._log_round("ok", 2, run_at="2026-10-16T21:20:05", cov_run_at="2026-10-16T21:20:06+08:00")
+        with db.get_engine().connect() as conn:
+            self.assertTrue(branch_watch.import_complete(conn, AS_OF, 2))
+
 
 if __name__ == "__main__":
     unittest.main()
