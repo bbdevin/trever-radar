@@ -26,6 +26,12 @@
 * 估計仍持有 = 視窗起點從 0 開始的累計淨買超,賣超超過已知買超時歸 0(更早的部位未知,
   不往負的推);進場日 = 這一段持有從 0 轉正的那一天。視窗內沒被觀察到的賣超不會被扣,
   所以這是「估」,畫面一律標「估」。
+
+權證(2026-10-20,docs/52 §8):分點今天在某檔標的的認購／認售權證淨額。**不另掃**:
+export 的權證分點那段(``_WarrantWindowScan``)本來就產出「每 (標的, 分點) 的逐日認購／
+認售金額」與 docs/51 的持有估算摘要,:meth:`BranchWatchCollector.add_warrants` 直接從裡面
+取一天。權證分點日可能和現股分點日不同(兩條管線分開匯入),所以另帶 ``warrant`` 資料日;
+權證比現股舊時那天的權證列照樣列出、但標成舊的,前端不算進今天的同買／同賣。
 """
 from __future__ import annotations
 
@@ -37,6 +43,7 @@ from sqlalchemy import text
 
 from ..branch_names import CLOSED_MARKS
 from ..branch_source import COVER_INDEX, has_date_cover
+from ..compute.warrant_position_est import SUMMARY_FIELDS
 
 FILE_VERSION = 1
 WINDOW_TRADING_DAYS = 60     # 估計仍持有的視窗(交易日);理由見 docs/52 §3
@@ -45,6 +52,9 @@ HOLD_MIN_LOTS = 100          # 當日沒出現的列:估計仍持有 ≥ 這個�
 HOLD_FLOOR_LOTS = 20         # 或 ≥ 該股 20 日均量且至少這麼多張(小型股的相對大部位;與前端「持有量大」同規則)
 HOLD_TOP_PER_BRANCH = 60     # 當日沒出現的列:每個分點最多輸出幾檔(依估計仍持有由大到小)
 AVG_VOL_DAYS = 20
+# 權證:當天認購(或認售)淨額 |金額| ≥ 這個數才列出、才算參與。與權證分點明細門檻
+# (json_export.WARRANT_BRANCH_DETAIL_MIN_AMOUNT)同值——低於它的配對,上游掃描本來就不一定留。
+WARRANT_MIN_AMOUNT = 1_000_000
 
 
 def shard_of(branch_name: str) -> int:
@@ -156,17 +166,26 @@ class BranchWatchCollector:
                  pool: set[str] | None = None, complete: bool = True):
         self.as_of = as_of
         self.window_from = window_from
-        # 分點名稱 → [(sid, buy, sell, net, hold, entry, obs, sum, last)]
+        # 分點名稱 → [(sid, buy, sell, net, hold, entry, obs, sum, last, avg_cost)]
         self.rows: dict[str, list[tuple]] = {}
         self.names: set[str] = set()
         # sid → [name, close, chg_pct, avg_vol20_lots, TODAY_*]
         self.stocks: dict[str, list] = {}
+        # 每一檔餵進來的股票的摘要(權證列的標的可能沒有任何現股列入選,要從這裡補 stocks)
+        self._meta_all: dict[str, list] = {}
         # 當日分點匯入覆蓋,照匯入端:pool = _branch_stock_pool(as_of);covered = 池裡今天已有
         # 分點列的檔數。17:40 那輪 ≥50% 就上線(2026-09-17 46% 被扣、09-16 86% 上線),22:00
         # 第二輪才補齊;complete = 匯入端記為完成(import_complete),那時沒列的是確認空。
         self.pool = pool or set()
         self.complete = complete
         self.covered = 0
+        # 權證(add_warrants):None = 沒有權證分點資料(或沒呼叫);否則見 payloads 的 index["warrant"]
+        self.warrant: dict | None = None
+        # (分點, 標的) → [認購淨額|None, 認售淨額|None](當天、|金額| ≥ WARRANT_MIN_AMOUNT 才有值)
+        self.w_today: dict[tuple[str, str], list] = {}
+        # (分點, 標的) → [認購仍持有成本, 認購換算現股均價, 認售仍持有成本, 認售換算現股均價](docs/51)
+        self.w_held: dict[tuple[str, str], list] = {}
+        self.warrant_secs = 0.0
 
     def add_stock(self, sid: str, name: str, rows: list[tuple], candles) -> None:
         """rows = ``_branch_history_rows`` 的輸出 (date, branch_name, buy, sell, net),date DESC。
@@ -185,6 +204,8 @@ class BranchWatchCollector:
         today_state = (TODAY_HAS_ROWS if imported
                        else TODAY_PENDING if in_pool and not self.complete
                        else TODAY_NO_DATA)
+        meta = _stock_meta(candles, as_of)
+        self._meta_all[sid] = [name, *meta, today_state]
         if not rows:
             return
         # rows 依日期遞減:先跳過 as_of 之後的列(分點比報價新時才會有),再取到視窗下緣為止。
@@ -212,8 +233,8 @@ class BranchWatchCollector:
                     last[3] += net or 0
                 else:
                     seq.append([dt, buy or 0, sell or 0, net or 0])
-        meta = _stock_meta(candles, as_of)
         avg_vol = meta[2]
+        px = _window_prices(candles, wf, as_of)
         emitted = False
         for bname, seq in seqs.items():
             if _closed(bname):
@@ -222,14 +243,25 @@ class BranchWatchCollector:
             pos = 0
             entry = None
             total = 0
+            # 平均成本(pnl-avgcost-v1,docs/42 同一套):買超日以當天收盤(還原到 as_of 的尺度)
+            # 當成交價加權;賣超依均價扣張數不改均價;歸 0 就重來。這段持有裡任一買超日沒有收盤
+            # → 均價未知(None),不拿部分成本充數。
+            avg = 0.0
+            known = True
             for dt, _b, _s, net in seq:
                 total += net
                 nxt = pos + net
                 if nxt <= 0:
-                    pos, entry = 0, None
+                    pos, entry, avg, known = 0, None, 0.0, True
                 else:
                     if pos == 0:
                         entry = dt
+                    if net > 0:
+                        p = px.get(dt)
+                        if p is None:
+                            known = False
+                        elif known:
+                            avg = (pos * avg + net * p) / nxt
                     pos = nxt
             last = seq[-1]
             today = last[0] == as_of
@@ -241,17 +273,84 @@ class BranchWatchCollector:
                 last[2] if today else None,
                 last[3] if today else None,
                 pos, entry, len(seq), total, last[0],
+                round(avg, 2) if pos > 0 and known else None,
             ))
             emitted = True
         if emitted:
             # 第 5 欄 TODAY_*:當日三欄 null 是「未進前 15 大」(1)、「尚未匯入」(0)或「無分點資料」(2)。
-            self.stocks[sid] = [name, *meta, today_state]
+            self.stocks[sid] = self._meta_all[sid]
+
+    def add_warrants(self, data_date: str | None, daily: dict, summaries=()) -> None:
+        """權證分點那段掃完後呼叫(``json_export._export_warrant_branches``)。
+
+        daily = ``_WarrantWindowScan.daily``:{(標的, 分點): [[日, 認購淨額, 認售淨額], …]}(日期遞增,
+        只有任一區間 |金額| ≥ 100 萬的配對;牛熊證不在裡面)。summaries = ``PositionStream.summaries``
+        (分點, 標的, kind, lots, cost, …)(docs/51,仍持有成本 ≥ 500 萬才有)。
+
+        取哪一天:權證分點日 ≥ 現股分點日 → 取現股那一天(``counted``:算進今天);權證分點日比較舊
+        (權證晚一步匯入)→ 取權證最新那天,標成舊的(``counted`` = False),前端只列不算。
+        """
+        import time
+        t0 = time.perf_counter()
+        as_of = self.as_of
+        if as_of is None or data_date is None:
+            return
+        day = as_of if data_date >= as_of else data_date
+        self.warrant = {"data_date": data_date, "day": day, "counted": day == as_of,
+                        "min_amount": WARRANT_MIN_AMOUNT}
+        lo = WARRANT_MIN_AMOUNT
+        for (u, branch), series in daily.items():
+            if _closed(branch):
+                continue
+            hit = None
+            for s in reversed(series):
+                if s[0] <= day:
+                    if s[0] == day:
+                        hit = s
+                    break
+            if hit is None:
+                continue
+            c = hit[1] if abs(hit[1]) >= lo else None
+            p = hit[2] if abs(hit[2]) >= lo else None
+            if c is None and p is None:
+                continue
+            self.w_today[(branch, u)] = [c, p]
+        fields = SUMMARY_FIELDS
+        i_cost, i_avg = 3 + fields.index("cost"), 3 + fields.index("avg_under")
+        for s in summaries:
+            branch, sid, kind = s[0], s[1], s[2]
+            if _closed(branch) or kind not in ("call", "put"):
+                continue
+            slot = self.w_held.setdefault((branch, sid), [None, None, None, None])
+            k = 0 if kind == "call" else 2
+            slot[k] = s[i_cost]
+            slot[k + 1] = s[i_avg]
+        self.warrant_secs += time.perf_counter() - t0
+
+    def _warrant_rows(self) -> dict[str, list[list]]:
+        """分點 → [[標的, 認購今天, 認售今天, 認購仍持有成本, 認購換算均價, 認售仍持有成本, 認售換算均價]]。
+        收:今天有權證進出的配對;以及這個分點在這檔已有現股列(或今天有權證進出)的持有估算。"""
+        out: dict[str, dict[str, list]] = {}
+        for (branch, u), (c, p) in self.w_today.items():
+            out.setdefault(branch, {})[u] = [u, c, p, None, None, None, None]
+        stock_sids = {b: {r[0] for r in rows} for b, rows in self.rows.items()}
+        for (branch, u), held in self.w_held.items():
+            got = out.get(branch, {}).get(u)
+            if got is None:
+                if u not in stock_sids.get(branch, ()):
+                    continue
+                got = out.setdefault(branch, {})[u] = [u, None, None, None, None, None, None]
+            got[3:7] = held
+        return {b: [v[k] for k in sorted(v)] for b, v in out.items()}
 
     def payloads(self) -> tuple[dict, list[dict]]:
         """(index, [shard 0..SHARDS-1]),全部已排序、可逐位元重現。"""
         shards: list[dict] = [{} for _ in range(SHARDS)]
+        wshards: list[dict] = [{} for _ in range(SHARDS)]
+        wrows = self._warrant_rows() if self.as_of else {}
+        names = self.names | set(wrows)
         index_rows = []
-        for bname in sorted(self.names):
+        for bname in sorted(names):
             rows = self.rows.get(bname, [])
             today = sorted((r for r in rows if r[3] is not None), key=lambda r: r[0])
             held_all = sorted((r for r in rows if r[3] is None), key=lambda r: (-r[4], r[0]))
@@ -259,6 +358,8 @@ class BranchWatchCollector:
             s = shard_of(bname)
             if today or held:
                 shards[s][bname] = [list(r) for r in sorted(today + held, key=lambda r: r[0])]
+            if bname in wrows:
+                wshards[s][bname] = wrows[bname]
             n_buy = sum(1 for r in today if r[3] > 0)
             n_sell = sum(1 for r in today if r[3] < 0)
             index_rows.append([bname, s, n_buy, n_sell, len(held), len(held_all)])
@@ -277,20 +378,29 @@ class BranchWatchCollector:
             # 當日分點匯入覆蓋(照匯入端的池):complete=false 時頁面說「已匯入 X / Y 檔,其餘待下一輪」
             "coverage": ({"covered": self.covered, "expected": len(self.pool),
                           "complete": bool(self.complete)} if self.as_of else None),
+            # 權證:{data_date 權證分點最新日, day 取的那一天, counted 是否算進今天, min_amount}
+            # 或 null(沒有權證分點資料)。
+            "warrant": self.warrant,
             # [名稱, 分片, 當日買超檔數, 當日賣超檔數, 當日沒出現但估計仍持有(已輸出)檔數, 同上(截斷前)]
             "branches": index_rows,
         }
         out = []
         for i, branches in enumerate(shards):
-            used = sorted({r[0] for rows in branches.values() for r in rows})
+            warrants = wshards[i]
+            used = sorted({r[0] for rows in branches.values() for r in rows}
+                          | {r[0] for rows in warrants.values() for r in rows})
             out.append({
                 **head,
                 "shard": i,
                 # 每列 [代號, 當日買張, 當日賣張, 當日淨張, 估計仍持有, 進場日, 視窗內出現天數,
-                #       視窗內淨張合計, 最後出現日];當日三欄 null = 當日不在前 15 大(未知,不是 0)。
+                #       視窗內淨張合計, 最後出現日, 均價(估)|null];當日三欄 null = 當日不在前 15 大(未知,不是 0)。
                 "branches": {b: branches[b] for b in sorted(branches)},
+                # 每列 [標的, 認購淨額, 認售淨額, 認購仍持有成本, 認購換算現股均價, 認售仍持有成本,
+                #       認售換算現股均價](元;null = 沒有/未達門檻)。哪一天見 index.warrant。
+                "warrants": {b: warrants[b] for b in sorted(warrants)},
                 # 代號 → [名稱, 收盤, 漲跌%(還原價), 近 20 日均量(張), TODAY_* (1 有列/0 尚未匯入/2 無分點資料)]
-                "stocks": {sid: self.stocks[sid] for sid in used},
+                "stocks": {sid: self._meta_all.get(sid) or [sid, None, None, None, TODAY_NO_DATA]
+                           for sid in used},
             })
         return index, out
 
@@ -310,9 +420,28 @@ class BranchWatchCollector:
         return {
             "branches": len(index["branches"]),
             "rows": sum(len(r) for s in shards for r in s["branches"].values()),
+            "warrant_rows": sum(len(r) for s in shards for r in s["warrants"].values()),
             "shard_bytes": sizes,
             "index_bytes": len(body.encode("utf-8")),
         }
+
+
+def _window_prices(candles, wf: str, as_of: str) -> dict[str, float]:
+    """視窗內每天的收盤,還原到 as_of 那根的尺度(close × adj / adj_as_of;docs/42 pnl-avgcost-v1
+    同一個換算),所以均價可以直接跟今天的收盤比。沒有收盤的日子不給(均價就算未知)。"""
+    i = len(candles) - 1
+    while i >= 0 and candles[i][0] > as_of:
+        i -= 1
+    if i < 0:
+        return {}
+    af_last = candles[i][7] or 1.0
+    out: dict[str, float] = {}
+    while i >= 0 and candles[i][0] >= wf:
+        c = candles[i]
+        if c[4] is not None:
+            out[c[0]] = c[4] * (c[7] or 1.0) / af_last
+        i -= 1
+    return out
 
 
 def _stock_meta(candles, as_of: str) -> list:

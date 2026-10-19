@@ -128,11 +128,15 @@ class BranchWatchExportTests(unittest.TestCase):
         rows = {r[0]: r for r in shard["branches"]["富邦-新店"]}
         self.assertEqual(sorted(rows), ["2317", "2330", "2454"])
         # 2330:300 → 賣 500 歸 0 → 200 → +120(兩來源合併)= 320;進場日 = 歸 0 後再轉正那天
-        self.assertEqual(rows["2330"], ["2330", 170, 50, 120, 320, DAYS[-10], 4, 120, AS_OF])
-        # 2317:400 − 100 = 300,今天淨賣
-        self.assertEqual(rows["2317"], ["2317", 0, 100, -100, 300, DAYS[-3], 2, 300, AS_OF])
+        # 均價(估,第 10 欄):歸 0 後重算 = (200 × 1060 + 120 × 1069) / 320 = 1063.375
+        self.assertEqual(rows["2330"], ["2330", 170, 50, 120, 320, DAYS[-10], 4, 120, AS_OF, 1063.38])
+        # 2317:400 − 100 = 300,今天淨賣;賣超不改均價
+        self.assertEqual(rows["2317"], ["2317", 0, 100, -100, 300, DAYS[-3], 2, 300, AS_OF, 200.0])
         # 2454:今天不在前 15 大 → 當日三欄 null(未知,不是 0)
-        self.assertEqual(rows["2454"], ["2454", None, None, None, 500, DAYS[-20], 1, 500, DAYS[-20]])
+        self.assertEqual(rows["2454"], ["2454", None, None, None, 500, DAYS[-20], 1, 500, DAYS[-20], 1200.0])
+        # 沒有權證分點資料 → warrant null、分片 warrants 空
+        self.assertIsNone(idx["warrant"])
+        self.assertEqual(shard["warrants"], {})
         # 個股摘要:收盤、還原漲跌、20 日均量張
         self.assertEqual(shard["stocks"]["2330"], ["台積電", 1069.0, round(1 / 1068 * 100, 2), 30000, 1])
         self.assertEqual(shard["stocks"]["2317"], ["鴻海", 190.0, 0.0, 10000, 1])
@@ -172,6 +176,130 @@ class BranchWatchExportTests(unittest.TestCase):
         (wdir / "s99.json").write_text("{}", encoding="utf-8")
         self._export()
         self.assertFalse((wdir / "s99.json").exists())
+
+
+class BranchWatchWarrantExportTests(unittest.TestCase):
+    """docs/52 §8:權證欄搭 _WarrantWindowScan 的逐日序列,不另掃;日期另帶、舊的不算今天。"""
+
+    # 同一個種子庫(不繼承,免得把上面的測試再跑一次)
+    setUp = BranchWatchExportTests.setUp
+    tearDown = BranchWatchExportTests.tearDown
+    _seed = BranchWatchExportTests._seed
+    _export = BranchWatchExportTests._export
+
+    def _seed_warrants(self, rows, days=None):
+        days = days or DAYS[-5:]
+        with db.get_engine().begin() as conn:
+            conn.execute(schema.warrants.insert(), [
+                {"id": "030001", "name": "台積電元大5C購01", "market": "twse", "kind": "call", "stock_id": "2330"},
+                {"id": "030002", "name": "台積電凱基5C售01", "market": "twse", "kind": "put", "stock_id": "2330"},
+                {"id": "030003", "name": "台積電統一5C牛01", "market": "twse", "kind": "bull", "stock_id": "2330"},
+            ])
+            conn.execute(schema.warrant_daily.insert(), [
+                {"warrant_id": w, "date": dt, "close": 1.0, "volume": 1, "turnover": 1000}
+                for w in ("030001", "030002", "030003") for dt in days
+            ])
+            upsert_branch_trades(conn, rows)
+
+    def _watch(self):
+        wdir = self._export()
+        idx = json.loads((wdir / "index.json").read_text(encoding="utf-8"))
+        shards = {i: json.loads((wdir / f"s{i:02d}.json").read_text(encoding="utf-8")) for i in range(SHARDS)}
+        warrants = {b: {r[0]: r for r in rows} for s in shards.values() for b, rows in s["warrants"].items()}
+        return idx, shards, warrants
+
+    def test_call_put_today_threshold_and_same_name(self):
+        self._seed_warrants([
+            # 富邦-新店:認購 +600 萬(收盤 1.0 × 1000 元/張 × 6000 張)、牛證 +900 萬(不算)
+            _row("030001", AS_OF, "a1", "富邦-新店", 6000, 0),
+            _row("030003", AS_OF, "a1", "富邦-新店", 9000, 0),
+            # 永豐金-內湖(兩個來源頁,各 60 萬 < 門檻,同名合併 120 萬 ≥ 門檻);只買權證、沒有現股列
+            _row("030001", AS_OF, "b1", "永豐金-內湖", 600, 0),
+            _row("030001", AS_OF, "b2", "永豐金-內湖", 600, 0),
+            # 元大-松江:認售 +300 萬、認購 −150 萬(上游配對門檻看「全部權證合計」,合計 150 萬才入選)
+            _row("030002", AS_OF, "c1", "元大-松江", 3000, 0),
+            _row("030001", AS_OF, "c1", "元大-松江", 0, 1500),
+            # 凱基-台北:認購 +50 萬 < 門檻 → 不列
+            _row("030001", AS_OF, "k1", "凱基-台北", 500, 0),
+            # 停業分點不列
+            _row("030001", AS_OF, "z1", "元大-西門(停)", 5000, 0),
+        ])
+        idx, shards, w = self._watch()
+        self.assertEqual(idx["warrant"], {"data_date": AS_OF, "day": AS_OF, "counted": True,
+                                          "min_amount": branch_watch.WARRANT_MIN_AMOUNT})
+        fb = w["富邦-新店"]["2330"]
+        self.assertEqual(fb[1:3], [6_000_000, None])
+        # 認購仍持有成本 600 萬 ≥ docs/51 篩選門檻 → 帶持有估算
+        self.assertEqual(fb[3], 6_000_000)
+        self.assertEqual(w["永豐金-內湖"]["2330"][1:3], [1_200_000, None])
+        self.assertEqual(w["元大-松江"]["2330"][1:3], [-1_500_000, 3_000_000])
+        self.assertNotIn("凱基-台北", w)
+        self.assertNotIn("元大-西門(停)", w)
+        # 只有權證的分點也進 index(才找得到分片),標的摘要也在那片
+        names = {b[0]: b for b in idx["branches"]}
+        self.assertIn("永豐金-內湖", names)
+        s = shards[names["永豐金-內湖"][1]]
+        self.assertEqual(s["stocks"]["2330"][0], "台積電")
+
+    def test_stale_warrant_date_not_counted(self):
+        # 權證分點只到前一天(權證晚一步匯入):列出那天的,counted=False
+        self._seed_warrants([_row("030001", DAYS[-2], "a1", "富邦-新店", 3200, 0)], days=DAYS[-5:-1])
+        idx, _shards, w = self._watch()
+        self.assertEqual(idx["as_of"], AS_OF)
+        self.assertEqual(idx["warrant"]["data_date"], DAYS[-2])
+        self.assertEqual(idx["warrant"]["day"], DAYS[-2])
+        self.assertFalse(idx["warrant"]["counted"])
+        self.assertEqual(w["富邦-新店"]["2330"][1], 3_200_000)
+
+    def test_warrant_ahead_of_stock_uses_stock_day(self):
+        # 權證分點比現股新:取現股那一天的權證,不拿明天的權證當今天
+        from sqlalchemy import text
+        with db.get_engine().begin() as conn:
+            conn.execute(text("DELETE FROM branch_trades_raw WHERE date = :d"), {"d": AS_OF})
+        self._seed_warrants([
+            _row("030001", DAYS[-3], "a1", "富邦-新店", 2000, 0),
+            _row("030001", AS_OF, "a1", "富邦-新店", 0, 9000),
+        ])
+        idx, _shards, w = self._watch()
+        self.assertEqual(idx["as_of"], DAYS[-3])
+        self.assertEqual(idx["warrant"], {"data_date": AS_OF, "day": DAYS[-3], "counted": True,
+                                          "min_amount": branch_watch.WARRANT_MIN_AMOUNT})
+        self.assertEqual(w["富邦-新店"]["2330"][1], 2_000_000)
+
+
+class BranchWatchWarrantUnitTests(unittest.TestCase):
+    def test_add_warrants_picks_day_and_threshold(self):
+        col = BranchWatchCollector(AS_OF, WF)
+        candles = [(AS_OF, 1, 1, 1, 10.0, 1000, 1, 1.0)]
+        col.add_stock("2330", "台積電", [(AS_OF, "A", 10, 0, 10)], candles)
+        daily = {
+            ("2330", "A"): [[DAYS[-3], 5_000_000, 0], [AS_OF, 999_999, -1_000_000]],
+            ("2330", "B"): [[DAYS[-3], 5_000_000, 0]],          # 今天沒列 → 不列(未知,不是 0)
+        }
+        held = [("A", "2330", "put", 10, 7_000_000) + (None,) * 20]
+        col.add_warrants(AS_OF, daily, held)
+        _index, shards = col.payloads()
+        rows = shards[shard_of("A")]["warrants"]["A"]
+        # 認購 999,999 < 門檻 → null;認售 −100 萬 = 門檻 → 列;認售持有成本帶上
+        self.assertEqual(rows, [["2330", None, -1_000_000, None, None, 7_000_000, None]])
+        self.assertNotIn("B", shards[shard_of("B")]["warrants"])
+
+    def test_avg_cost_unknown_when_a_buy_day_has_no_close(self):
+        col = BranchWatchCollector(AS_OF, WF)
+        candles = [(AS_OF, 1, 1, 1, 10.0, 1000, 1, 1.0)]   # DAYS[-5] 沒有收盤
+        col.add_stock("9999", "x", [(AS_OF, "B", 10, 0, 10), (DAYS[-5], "B", 200, 0, 200)], candles)
+        _index, shards = col.payloads()
+        self.assertIsNone(shards[shard_of("B")]["branches"]["B"][0][9])
+
+    def test_avg_cost_restarts_after_flat(self):
+        col = BranchWatchCollector(AS_OF, WF)
+        candles = [(DAYS[-3], 1, 1, 1, 10.0, 1000, 1, 1.0), (DAYS[-2], 1, 1, 1, 20.0, 1000, 1, 1.0),
+                   (AS_OF, 1, 1, 1, 30.0, 1000, 1, 1.0)]
+        col.add_stock("9999", "x", [(AS_OF, "B", 100, 0, 100), (DAYS[-2], "B", 0, 300, -300),
+                                    (DAYS[-3], "B", 200, 0, 200)], candles)
+        _index, shards = col.payloads()
+        row = shards[shard_of("B")]["branches"]["B"][0]
+        self.assertEqual((row[4], row[9]), (100, 30.0))
 
 
 class BranchWatchEmptyTests(unittest.TestCase):

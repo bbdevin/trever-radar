@@ -6,9 +6,22 @@ import { test } from "node:test";
 import {
   addBranch,
   amountEst,
+  avgLine,
   buildRows,
   cellLine,
+  combinedAvg,
   coverageText,
+  fmtWan,
+  gapPct,
+  participants,
+  sideWarrantAmount,
+  WARRANT_NOTE,
+  WARRANT_OFF,
+  WARRANT_RULE,
+  warrantChips,
+  warrantHeldLines,
+  warrantOnlyCount,
+  warrantStaleText,
   DEFAULT_BRANCH_SET,
   emptyText,
   filterRows,
@@ -218,6 +231,115 @@ test("cellLine:未知不寫成 0", () => {
   assert.equal(cellLine(ROWS.find((r) => r.stock_id === "5555")!.cells[C]).today, "今天賣超 80 張");
 });
 
+// ── 權證(docs/52 §8)──
+// 4444:B 現股買、主分點 A 沒有現股列、只買認購 320 萬;9999:沒有任何現股列,C 買認購、A 買認售;
+// 5555:A 現股賣、C 認售淨賣(只列不算);1111:A 認購淨賣 150 萬(現股買)→ 同時在賣方
+const W_SHARDS: WatchShard[] = [
+  { ...SHARDS[0], warrants: {
+    [A]: [
+      ["1111", -1_500_000, null, null, null, null, null],
+      ["4444", 3_200_000, null, 6_000_000, 95.3, null, null],
+      ["9999", null, 2_000_000, null, null, null, null],
+    ],
+    [C]: [
+      ["5555", null, -1_200_000, null, null, null, null],
+      ["9999", 1_100_000, null, null, null, null, null],
+    ],
+  }, stocks: { ...SHARDS[0].stocks, "9999": ["壬", 80, 2, 3000, 1] } },
+  SHARDS[1],
+];
+const WMETA = { data_date: "2026-10-16", day: "2026-10-16", counted: true, min_amount: 1_000_000 };
+const W_ROWS = buildRows(SET, W_SHARDS, true);
+const W_STALE = buildRows(SET, W_SHARDS, false);
+const row = (rs: typeof W_ROWS, id: string) => rs.find((r) => r.stock_id === id)!;
+
+test("權證:認購淨買 → 同買、認購淨賣／認售淨買 → 同賣、認售淨賣不計", () => {
+  assert.deepEqual(row(W_ROWS, "4444").wBuyers, [A]);
+  assert.deepEqual(participants(row(W_ROWS, "4444"), "buy"), [A, B]);
+  assert.deepEqual(participants(row(W_ROWS, "4444"), "buy", false), [B]);
+  assert.deepEqual(participants(row(W_ROWS, "9999"), "buy"), [C]);
+  assert.deepEqual(participants(row(W_ROWS, "9999"), "sell"), [A]);
+  // 認售淨賣:不進賣方、也不進買方
+  assert.deepEqual(row(W_ROWS, "5555").wSellers, []);
+  assert.deepEqual(row(W_ROWS, "5555").wBuyers, []);
+  // 現股買超＋認購淨賣:兩邊都有
+  assert.deepEqual(participants(row(W_ROWS, "1111"), "sell"), [A]);
+  assert.equal(warrantOnlyCount(row(W_ROWS, "4444"), "buy"), 1);
+});
+
+test("權證:組合篩選與計數(主分點只買認購也算主分點買超;含權證關掉回到只看現股)", () => {
+  assert.deepEqual(ids(filterRows(W_ROWS, SET, "buy", "anchor")).sort(), ["1111", "2222", "3333", "4444"]);
+  assert.deepEqual(ids(filterRows(W_ROWS, SET, "buy", "anchor_plus")).sort(), ["1111", "2222", "4444"]);
+  assert.deepEqual(ids(filterRows(W_ROWS, SET, "buy", "any")).sort(), ["1111", "2222", "3333", "4444", "9999"]);
+  assert.deepEqual(ids(filterRows(W_ROWS, SET, "sell", "anchor")).sort(), ["1111", "5555", "9999"]);
+  // 關掉含權證:與沒有權證時相同
+  assert.deepEqual(ids(filterRows(W_ROWS, SET, "buy", "anchor", 100, false)).sort(), ["1111", "2222", "3333"]);
+  assert.deepEqual(ids(filterRows(W_ROWS, SET, "buy", "any", 100, false)).sort(), ["1111", "2222", "3333", "4444"]);
+  assert.equal(todayCount(W_ROWS), 6);
+  assert.equal(todayCount(W_ROWS, false), 5);
+});
+
+test("權證:資料日比現股舊 → 只列出、不算同買／同賣", () => {
+  assert.deepEqual(row(W_STALE, "4444").wBuyers, []);
+  assert.deepEqual(ids(filterRows(W_STALE, SET, "buy", "any")).sort(), ["1111", "2222", "3333", "4444"]);
+  assert.equal(todayCount(W_STALE), 5);
+  const stale = { ...WMETA, data_date: "2026-10-15", day: "2026-10-15", counted: false };
+  const chips = warrantChips(row(W_STALE, "4444").warrants[A], stale);
+  assert.deepEqual(chips, [{ text: "權證分點 10/15 認購 +320萬", side: null }]);
+  assert.equal(
+    warrantStaleText({ ...INDEX, warrant: stale }),
+    "權證分點資料日 10/15,比現股分點 10/16 舊:權證進出只列出(標日期),不算進今天的同買／同賣,待下一輪更新。",
+  );
+  assert.equal(warrantStaleText({ ...INDEX, warrant: WMETA }), null);
+  assert.equal(warrantStaleText(INDEX), null);
+});
+
+test("權證:膠囊與持有文案", () => {
+  assert.deepEqual(warrantChips(row(W_ROWS, "4444").warrants[A], WMETA), [{ text: "權證 認購 +320萬", side: "buy" }]);
+  assert.deepEqual(warrantChips(row(W_ROWS, "1111").warrants[A], WMETA), [{ text: "權證 認購 −150萬", side: "sell" }]);
+  assert.deepEqual(warrantChips(row(W_ROWS, "5555").warrants[C], WMETA), [{ text: "權證 認售 −120萬", side: null }]);
+  assert.deepEqual(warrantChips(row(W_ROWS, "9999").warrants[A], WMETA), [{ text: "權證 認售 +200萬", side: "sell" }]);
+  assert.deepEqual(warrantHeldLines(row(W_ROWS, "4444").warrants[A], WMETA), ["權證 認購 仍持有(估) 600萬 · 換算均價 95.3"]);
+  assert.deepEqual(warrantChips(undefined, WMETA), []);
+  assert.deepEqual(warrantChips(row(W_ROWS, "4444").warrants[A], null), []);
+  assert.equal(fmtWan(150_000_000), "+1.5億");
+});
+
+test("權證:金額排序含權證金額", () => {
+  const buy = filterRows(W_ROWS, SET, "buy", "any");
+  // 2222:現股 3,400 萬;4444:現股 900 × 30 × 1000 = 2,700 萬 + 權證 320 萬;9999:只有權證 110 萬
+  assert.equal(sideWarrantAmount(row(W_ROWS, "4444"), "buy"), 3_200_000);
+  assert.equal(sideWarrantAmount(row(W_ROWS, "9999"), "sell"), 2_000_000);
+  assert.equal(sideWarrantAmount(row(W_ROWS, "1111"), "sell"), 1_500_000);
+  assert.deepEqual(ids(sortRows(buy, "buy", "amount")), ["2222", "4444", "3333", "1111", "9999"]);
+  // 權證金額大到超過:4444 的認購換成 800 萬 → 3,500 萬 > 3,400 萬
+  const big = { ...row(W_ROWS, "4444"), warrants: { [A]: { ...row(W_ROWS, "4444").warrants[A], call: 8_000_000 } } };
+  assert.deepEqual(ids(sortRows([row(W_ROWS, "2222"), big], "buy", "amount")), ["4444", "2222"]);
+  assert.deepEqual(ids(sortRows([row(W_ROWS, "2222"), big], "buy", "amount", false)), ["2222", "4444"]);
+  // 3333(1,000 萬)vs 一檔只有權證 1,200 萬的情形:含權證時權證金額也比
+  const only = { ...row(W_ROWS, "9999"), stock_id: "0001", wBuyers: [C], warrants: { [C]: { call: 12_000_000, put: null, callHeld: null, callAvg: null, putHeld: null, putAvg: null } } };
+  assert.deepEqual(ids(sortRows([row(W_ROWS, "3333"), only], "buy", "amount")), ["0001", "3333"]);
+  assert.deepEqual(ids(sortRows([row(W_ROWS, "3333"), only], "buy", "amount", false)), ["3333", "0001"]);
+});
+
+test("均價(估):文案、合計與排序", () => {
+  assert.equal(avgLine(100, 104.2), "均價(估) 100.0 · 現價高於均價 +4.2%");
+  assert.equal(avgLine(100, 96.9), "均價(估) 100.0 · 現價低於均價 −3.1%");
+  assert.equal(avgLine(100, 100), "均價(估) 100.0 · 現價約等於均價");
+  assert.equal(avgLine(null, 100), null);
+  assert.equal(gapPct(110, 100)?.toFixed(1), "10.0");
+  const mk = (id: string, close: number, avg: number | null, hold = 500) => ({
+    ...row(W_ROWS, "6666"), stock_id: id, close,
+    cells: { [A]: { ...row(W_ROWS, "6666").cells[A], hold, avg } },
+  });
+  const rs = [mk("a", 90, 100), mk("b", 120, 100), mk("c", 50, null), mk("d", 95, 100)];
+  assert.deepEqual(ids(sortRows(rs, "hold", "gap", true, [A])), ["a", "d", "b", "c"]);
+  const two = { ...mk("e", 100, 90, 100), cells: { [A]: { ...mk("e", 100, 90, 100).cells[A] }, [B]: { ...mk("e", 100, 120, 300).cells[A] } } };
+  assert.equal(combinedAvg(two, [A, B]).avg, (100 * 90 + 300 * 120) / 400);
+  const partial = { ...two, cells: { ...two.cells, [C]: { ...two.cells[A], avg: null } } };
+  assert.equal(combinedAvg(partial, [A, B, C]).partial, true);
+});
+
 test("禁用詞不出現在任何文案", () => {
   // 字面不寫出來:pipeline/tests/test_label_honesty.py 會掃 web/ 的字串字面(與 warrantPositions.test.ts 同一招)。
   const word = (...codes: number[]) => String.fromCharCode(...codes);
@@ -235,6 +357,13 @@ test("禁用詞不出現在任何文案", () => {
     ...modes.flatMap((m) => (["buy", "sell"] as const).flatMap((s) => [modeLabel(m, s), modeDefinition(m, s, A, 3), emptyText(s, m, "2026-10-16")])),
     emptyText("hold", "anchor", "2026-10-16"), emptyText("buy", "anchor", null),
     ...ROWS.flatMap((r) => Object.values(r.cells).flatMap((c) => Object.values(cellLine(c, r.today)))),
+    WARRANT_RULE, WARRANT_NOTE, WARRANT_OFF,
+    warrantStaleText({ ...INDEX, warrant: { ...WMETA, day: "2026-10-15", data_date: "2026-10-15", counted: false } }) ?? "",
+    ...W_ROWS.flatMap((r) => Object.values(r.warrants).flatMap((w) => [
+      ...warrantChips(w, WMETA).map((c) => c.text), ...warrantChips(w, { ...WMETA, counted: false }).map((c) => c.text),
+      ...warrantHeldLines(w, WMETA),
+    ])),
+    avgLine(100, 104.2) ?? "", avgLine(100, 96.9) ?? "", avgLine(100, 100) ?? "",
   ];
   for (const t of texts) for (const w of banned) assert.ok(!t.includes(w), `「${t}」含禁用詞 ${w}`);
 });

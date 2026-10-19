@@ -13,11 +13,14 @@ import type { WatchDataState } from "@/lib/watchedBranchSet";
 import {
   addBranch,
   amountEst,
+  avgLine,
   cellLine,
+  combinedAvg,
   coverageText,
   emptyText,
   filterRows,
   fmtMD,
+  fmtWan,
   holdCapText,
   HONESTY_NOTE,
   isBigHold,
@@ -26,20 +29,30 @@ import {
   modeLabel,
   PUSH_NOTE,
   nullTodayText,
+  participants,
   removeBranch,
   SEARCH_EMPTY,
   searchBranches,
   setAnchor,
   SIDE_LABEL,
   sideLots,
+  sideWarrantAmount,
   SORT_OPTIONS,
   sortRows,
+  WARRANT_NOTE,
+  WARRANT_OFF,
+  WARRANT_RULE,
+  warrantChips,
+  warrantHeldLines,
+  warrantOnlyCount,
+  warrantStaleText,
   type BranchSet,
   type ComboMode,
   type ComboRow,
   type Side,
   type SortKey,
   type WatchIndex,
+  type WatchWarrantMeta,
 } from "@/lib/watchedBranches";
 
 const MODES: ComboMode[] = ["anchor", "anchor_plus", "all", "any"];
@@ -52,10 +65,15 @@ export default function WatchedBranchesPanel({
   set,
   onChange,
   data,
+  withWarrants,
+  onWarrantsChange,
 }: {
   set: BranchSet;
   onChange: (next: BranchSet) => void;
   data: WatchDataState;
+  /** 「含權證」:分點今天的權證進出也算同買／同賣(docs/52 §8) */
+  withWarrants: boolean;
+  onWarrantsChange: (on: boolean) => void;
 }) {
   const [side, setSide] = useState<Side>("buy");
   const [mode, setMode] = useState<ComboMode>("anchor");
@@ -67,8 +85,9 @@ export default function WatchedBranchesPanel({
   const list = useMemo(() => {
     if (!ready) return [];
     const effSort: SortKey = side === "hold" && (sortKey === "lots" || sortKey === "amount") ? "hold" : sortKey;
-    return sortRows(filterRows(ready.rows, set, side, mode, holdMin), side, effSort);
-  }, [ready, set, side, mode, sortKey, holdMin]);
+    return sortRows(filterRows(ready.rows, set, side, mode, holdMin, withWarrants), side, effSort, withWarrants, set.branches);
+  }, [ready, set, side, mode, sortKey, holdMin, withWarrants]);
+  const wMeta = ready?.index.warrant ?? null;
 
   return (
     <div className="pb-7" data-testid="watched-branches">
@@ -101,6 +120,14 @@ export default function WatchedBranchesPanel({
               {coverageText(ready.index)}
             </p>
           )}
+          {warrantStaleText(ready.index) && (
+            <p
+              className="mb-2.5 rounded-md border border-warn/40 bg-warn/10 px-2.5 py-2 text-[12px] text-foreground"
+              data-testid="watched-warrant-stale"
+            >
+              {warrantStaleText(ready.index)}
+            </p>
+          )}
 
           {/* 買超／賣超／估計仍持有 */}
           <div role="tablist" aria-label="方向" className="mb-2 flex w-fit max-w-full gap-0.5 rounded-full border border-border bg-card p-[3px]">
@@ -130,9 +157,24 @@ export default function WatchedBranchesPanel({
                     {modeLabel(m, side)}
                   </button>
                 ))}
+                {wMeta && (
+                  <button
+                    aria-pressed={withWarrants}
+                    onClick={() => { onWarrantsChange(!withWarrants); setShown(PAGE); }}
+                    className={cn(filterChipClass(withWarrants), "min-h-11")}
+                    data-testid="watched-warrant-toggle"
+                  >
+                    {"含權證"}
+                  </button>
+                )}
               </div>
               <p className="mb-2.5 text-[12px] text-foreground/85" data-testid="watched-mode-definition">
                 {modeDefinition(mode, side, set.anchor, set.branches.length)}
+                {wMeta && (
+                  <span className="mt-1 block text-muted-foreground">
+                    {withWarrants ? WARRANT_RULE : WARRANT_OFF}
+                  </span>
+                )}
               </p>
             </>
           )}
@@ -154,7 +196,7 @@ export default function WatchedBranchesPanel({
                 className="min-h-11 rounded-md border border-border bg-card px-2.5 py-1.5 text-[12.5px] text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 aria-label="排序方式"
               >
-                {SORT_OPTIONS.filter((o) => side !== "hold" || o.key === "hold" || o.key === "combo").map((o) => (
+                {SORT_OPTIONS.filter((o) => side !== "hold" || o.key === "hold" || o.key === "combo" || o.key === "gap").map((o) => (
                   <option key={o.key} value={o.key}>{o.label}</option>
                 ))}
               </select>
@@ -166,7 +208,7 @@ export default function WatchedBranchesPanel({
           ) : (
             <div className="flex flex-col gap-2">
               {list.slice(0, shown).map((r) => (
-                <ComboCard key={r.stock_id} row={r} set={set} side={side} />
+                <ComboCard key={r.stock_id} row={r} set={set} side={side} withWarrants={withWarrants} wMeta={wMeta} />
               ))}
               {list.length > shown && (
                 <button
@@ -180,6 +222,7 @@ export default function WatchedBranchesPanel({
           )}
 
           <p className="mt-4 text-[11.5px] leading-relaxed text-muted-foreground">{HONESTY_NOTE}</p>
+          {wMeta && <p className="mt-1.5 text-[11.5px] leading-relaxed text-muted-foreground">{WARRANT_NOTE}</p>}
         </>
       )}
     </div>
@@ -298,12 +341,22 @@ function BranchSetEditor({ set, onChange, index }: { set: BranchSet; onChange: (
   );
 }
 
-function ComboCard({ row, set, side }: { row: ComboRow; set: BranchSet; side: Side }) {
+function ComboCard({ row, set, side, withWarrants, wMeta }: {
+  row: ComboRow;
+  set: BranchSet;
+  side: Side;
+  withWarrants: boolean;
+  wMeta: WatchWarrantMeta | null;
+}) {
   const cls = chgClass(row.chg);
   const lots = sideLots(row, side);
   const amt = side === "hold" ? null : amountEst(lots, row.close);
-  const co = side === "buy" ? row.buyers.length : side === "sell" ? row.sellers.length : null;
+  const wAmt = withWarrants && side !== "hold" ? sideWarrantAmount(row, side) : 0;
+  const co = side === "hold" ? null : participants(row, side, withWarrants).length;
+  const wOnly = side !== "hold" && withWarrants ? warrantOnlyCount(row, side) : 0;
   const anyBig = set.branches.some((b) => isBigHold(row.cells[b]?.hold ?? 0, row.avgVol));
+  const combo = side === "hold" ? combinedAvg(row, set.branches) : null;
+  const comboLine = combo?.avg != null ? avgLine(combo.avg, row.close) : null;
   return (
     <article
       className={cn(
@@ -329,14 +382,21 @@ function ComboCard({ row, set, side }: { row: ComboRow; set: BranchSet; side: Si
             side === "buy" ? "bg-up/15 text-up" : "bg-down/15 text-down",
           )}>
             {`同${side === "buy" ? "買" : "賣"} ${co}/${set.branches.length}`}
+            {wOnly > 0 && <span className="font-semibold">{`(${wOnly} 家為權證)`}</span>}
           </span>
         )}
         <span className="num text-foreground">
           {side === "hold" ? `合計估計仍持有 ${lots.toLocaleString("zh-TW")} 張` : `合計${SIDE_LABEL[side]} ${lots.toLocaleString("zh-TW")} 張`}
         </span>
-        {amt != null && <span className="num text-muted-foreground">{`約 ${fmtAmount(amt)}`}</span>}
+        {amt != null && lots > 0 && <span className="num text-muted-foreground">{`約 ${fmtAmount(amt)}`}</span>}
+        {wAmt > 0 && <span className="num text-muted-foreground">{`${amt != null && lots > 0 ? "＋" : ""}權證 ${fmtWan(wAmt, false)}`}</span>}
         {row.avgVol != null && row.avgVol > 0 && (
           <span className="num text-muted-foreground">{`20 日均量 ${row.avgVol.toLocaleString("zh-TW")} 張`}</span>
+        )}
+        {comboLine && (
+          <span className="num basis-full text-muted-foreground">
+            {`合計${comboLine}`}{combo?.partial ? "(部分分點均價未知,未計)" : ""}
+          </span>
         )}
       </div>
       <ul className="flex flex-col divide-y divide-border">
@@ -345,11 +405,15 @@ function ComboCard({ row, set, side }: { row: ComboRow; set: BranchSet; side: Si
           const line = cellLine(c, row.today);
           const big = isBigHold(c?.hold ?? 0, row.avgVol);
           const net = c?.net ?? null;
+          const avg = c && c.hold > 0 ? avgLine(c.avg, row.close) : null;
+          const chips = warrantChips(row.warrants[b], wMeta);
+          const held = warrantHeldLines(row.warrants[b], wMeta);
+          const active = !!c || chips.length > 0 || held.length > 0;
           return (
             <li key={b} className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-2 py-1.5">
               <span className="flex min-w-0 items-center gap-1 text-[12.5px]">
                 {b === set.anchor && <span className="shrink-0 rounded-sm bg-primary px-1 text-[10.5px] font-bold text-primary-foreground">{"主"}</span>}
-                <span className={cn("truncate", c ? "font-semibold text-foreground" : "text-muted-foreground")} title={b}>{b}</span>
+                <span className={cn("truncate", active ? "font-semibold text-foreground" : "text-muted-foreground")} title={b}>{b}</span>
               </span>
               <span className={cn(
                 "num text-right text-[12.5px] font-semibold",
@@ -368,6 +432,26 @@ function ComboCard({ row, set, side }: { row: ComboRow; set: BranchSet; side: Si
                       {"持有量大"}
                     </span>
                   )}
+                  {avg && <span className="num basis-full" data-testid="watched-avg">{avg}</span>}
+                </span>
+              )}
+              {(chips.length > 0 || held.length > 0) && (
+                <span className="col-span-2 mt-1 flex flex-wrap items-center gap-1.5 text-[11.5px]" data-testid="watched-warrant">
+                  {chips.map((ch) => (
+                    <span
+                      key={ch.text}
+                      className={cn(
+                        "num rounded-full border px-1.5 py-px font-semibold",
+                        ch.side == null || !withWarrants
+                          ? "border-border text-muted-foreground"
+                          : ch.side === "buy" ? "border-up/40 bg-up/10 text-up" : "border-down/40 bg-down/10 text-down",
+                      )}
+                      title={ch.side == null ? "只列出,不算同買／同賣" : ch.side === "buy" ? "算同買" : "算同賣"}
+                    >
+                      {ch.text}
+                    </span>
+                  ))}
+                  {held.map((h) => <span key={h} className="num basis-full text-muted-foreground">{h}</span>)}
                 </span>
               )}
             </li>

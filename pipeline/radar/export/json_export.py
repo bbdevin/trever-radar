@@ -2944,8 +2944,10 @@ def export_json(
     _export_branches(out, engine, d)
     timing["branches"] += time.perf_counter() - t_sec
     t_sec = time.perf_counter()
-    _export_warrant_branches(out, engine, d, base20)
-    timing["warrant_shards"] += time.perf_counter() - t_sec
+    # 自選特定分點的權證欄(docs/52 §8)搭這一段已算好的逐日序列與持有摘要,不另掃。
+    _export_warrant_branches(out, engine, d, base20, on_window=watch.add_warrants)
+    timing["warrant_shards"] += time.perf_counter() - t_sec - watch.warrant_secs
+    timing["watch"] += watch.warrant_secs
     t_sec = time.perf_counter()
     _export_tracked_branch_history(out, engine, d)
     timing["tracked"] += time.perf_counter() - t_sec
@@ -2957,7 +2959,8 @@ def export_json(
     print("export timing: " + " ".join(f"{k}={v:.1f}s" for k, v in timing.items()), flush=True)
     print(f"export watch: as_of={watch.as_of} branches={watch_info['branches']} "
           f"rows={watch_info['rows']} shard_bytes={watch_info['shard_bytes']} "
-          f"index_bytes={watch_info['index_bytes']}", flush=True)
+          f"index_bytes={watch_info['index_bytes']} warrant_rows={watch_info['warrant_rows']} "
+          f"warrant_day={(watch.warrant or {}).get('day')}", flush=True)
     print(f"export parts: hist_written={parts_writer.hist_written} "
           f"hist_reused={parts_writer.hist_reused} hist_total={len(parts_writer.index)} "
           f"legacy={'on' if legacy_stocks else 'off'} unchanged={parts_writer.unchanged}", flush=True)
@@ -3060,7 +3063,9 @@ def _export_branches(out: Path, engine, date: str):
         (branches_dir / "warrant_movers.json").write_text(
             json.dumps(movers, ensure_ascii=False), encoding="utf-8")
 
-def _export_warrant_branches(out: Path, engine, date: str, base20: list[str]):
+def _export_warrant_branches(out: Path, engine, date: str, base20: list[str], on_window=None):
+    """on_window(權證分點資料日, 逐日序列 {(標的, 券商): [[日, 認購, 認售]]}, 持有摘要):給自選特定分點
+    (docs/52 §8)取一天用;不影響這裡寫出的任何檔。"""
     branches_dir = out / "branches"
     branches_dir.mkdir(exist_ok=True)
     with engine.connect() as conn:
@@ -3120,6 +3125,8 @@ def _export_warrant_branches(out: Path, engine, date: str, base20: list[str]):
             stream.consume(scan.position_rows())
             stream.finish()
             pairs, daily_by_pair, under_last = scan.pairs, scan.daily, scan.under_last
+            if on_window is not None:
+                on_window(bd1, daily_by_pair, stream.summaries)
         stock_names = {r[0]: r[1] for r in conn.exec_driver_sql("SELECT id, name FROM stocks")} if pairs else {}
 
         # Keep the full-market contract strict.  Individual stock detail is

@@ -2,6 +2,13 @@
 
 > 單一進度真相。每完成一個里程碑就更新本檔。規格細節看各編號文件,別寫在這裡。
 
+## 2026-10-20 特定分點:權證同買／同賣＋均價(估)(`docs/52` §8;程式完成於分支、未合 main、未上線;v3.11)
+
+- **需求**:「富邦新店買雙鴻、永豐金內湖買權證雙鴻,這樣也算同買」;「可以預估平均成本更好」。
+- **做了什麼**:①export:`_export_warrant_branches` 多一個 `on_window` 回呼,把 `_WarrantWindowScan` 已算好的逐日認購／認售金額與 docs/51 持有摘要交給 `BranchWatchCollector.add_warrants`(不另掃),取「現股分點日」那一天、|金額| ≥ 100 萬才留;分片新鍵 `warrants`、index 新鍵 `warrant`(資料日、`counted`)。現股列加第 10 欄均價(估)(pnl-avgcost-v1,缺收盤 → null)。②前端:認購淨買 → 同買;認購淨賣、認售淨買 → 同賣;認售淨賣只列不計;牛熊不算。「含權證」鈕(預設開,記本機);主分點只買認購也符合主分點買超。權證膠囊「權證 認購 +320萬」,權證日比現股舊時標日期、不計、上方琥珀提示。金額排序含權證金額。均價(估)與現價差、權證仍持有(估)與換算均價(沿用 docs/51)、估計仍持有檢視可依「現價對均價」排序。
+- **驗證**:見 `docs/52` §8.8;其他 export 檔逐位元相同(`export_parity.py` 新舊 code 同合成庫)。
+- **待人類**:合 main;第一輪看 `export watch: … warrant_rows=… warrant_day=…`。
+
 ## 2026-10-19 Fugle 抓取搬出 export-json 的 DB 鎖(`docs/50` §3.1、`docs/44` §3.5;程式完成於分支、未合 main、未上線;不動 crontab)
 
 - **為什麼**:`export timing:` 的 `intraday` 段(spark_day 當日 1 分 K + 分K 補缺日,逐檔打 Fugle)在握 `/tmp/radar-db.lock` 時跑:14:05 輪 242 s、晚上第一次 export 71–122 s。

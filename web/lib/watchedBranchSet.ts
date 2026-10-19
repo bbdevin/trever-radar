@@ -48,6 +48,29 @@ export function useWatchedBranchSet(): [BranchSet, (next: BranchSet) => void] {
   return [set, update];
 }
 
+const WARRANT_KEY = "watched_branch_warrants_v1";
+
+/** 「含權證」開關(預設開;記在本機)。徽章與分頁共用同一個值。 */
+export function useWatchedWarrantToggle(): [boolean, (on: boolean) => void] {
+  const [on, setOn] = useState(true);
+  useEffect(() => {
+    try {
+      if (localStorage.getItem(WARRANT_KEY) === "0") setOn(false);
+    } catch {
+      /* 私密模式等:用預設 */
+    }
+  }, []);
+  const update = useCallback((next: boolean) => {
+    setOn(next);
+    try {
+      localStorage.setItem(WARRANT_KEY, next ? "1" : "0");
+    } catch {
+      /* 留在記憶體 */
+    }
+  }, []);
+  return [on, update];
+}
+
 export type WatchDataState =
   | { status: "loading" }
   | { status: "missing" }   // 還沒有這份匯出(舊資料)
@@ -111,8 +134,9 @@ export function useWatchedBranchData(set: BranchSet, enabled = true): WatchDataS
   }, [need]);
 
   const rows = useMemo(
-    () => buildRows(set, need.map((i) => shards[i]).filter(Boolean)),
-    [set, need, shards],
+    // 權證那天不是今天(counted=false)時,權證進出只列出、不算進同買／同賣(docs/52 §8)。
+    () => buildRows(set, need.map((i) => shards[i]).filter(Boolean), index?.warrant?.counted === true),
+    [set, need, shards, index],
   );
 
   if (indexStatus !== "ready" || !index) return { status: indexStatus === "ready" ? "loading" : indexStatus };

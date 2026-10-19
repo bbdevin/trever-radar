@@ -18,7 +18,7 @@ import { useWatchlist } from "@/lib/watchlist";
 import { cn, navPillClass } from "@/lib/utils";
 import { currentParams, replaceQuery } from "@/lib/urlState";
 import { todayCount } from "@/lib/watchedBranches";
-import { useWatchedBranchData, useWatchedBranchSet } from "@/lib/watchedBranchSet";
+import { useWatchedBranchData, useWatchedBranchSet, useWatchedWarrantToggle } from "@/lib/watchedBranchSet";
 import WatchedBranchesPanel from "@/components/WatchedBranchesPanel";
 
 type Row = {
@@ -185,7 +185,8 @@ export default function WatchlistPage() {
   // 特定分點的資料:在那個分頁就立刻抓;在自選股分頁時等畫面閒下來再抓(只為了分頁徽章)。
   const [branchFetch, setBranchFetch] = useState(false);
   const branchData = useWatchedBranchData(branchSet, branchFetch || tab === "branches");
-  const badge = branchData.status === "ready" ? todayCount(branchData.rows) : null;
+  const [withWarrants, setWithWarrants] = useWatchedWarrantToggle();
+  const badge = branchData.status === "ready" ? todayCount(branchData.rows, withWarrants) : null;
 
   useEffect(() => {
     if (currentParams().get("tab") === "branches") setTab("branches");
@@ -239,7 +240,7 @@ export default function WatchlistPage() {
       {tab === "stocks" ? (
         <WatchlistStocks />
       ) : (
-        <WatchedBranchesPanel set={branchSet} onChange={setBranchSet} data={branchData} />
+        <WatchedBranchesPanel set={branchSet} onChange={setBranchSet} data={branchData} withWarrants={withWarrants} onWarrantsChange={setWithWarrants} />
       )}
     </div>
   );

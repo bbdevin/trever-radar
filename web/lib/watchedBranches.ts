@@ -2,9 +2,23 @@
 // 以及近 60 交易日估計仍持有。純函式,資料來自 branches/watch/{index,sNN}.json。
 // 執行測試: node --test web/lib/watchedBranches.test.ts
 
-/** [代號, 當日買張, 當日賣張, 當日淨張, 估計仍持有, 進場日, 視窗內出現天數, 視窗內淨張合計, 最後出現日]
- *  當日三欄 null = 當天不在該股前 15 大買超／賣超(未知,不是 0)。 */
-export type WatchRow = [string, number | null, number | null, number | null, number, string | null, number, number, string];
+/** [代號, 當日買張, 當日賣張, 當日淨張, 估計仍持有, 進場日, 視窗內出現天數, 視窗內淨張合計, 最後出現日, 均價(估)]
+ *  當日三欄 null = 當天不在該股前 15 大買超／賣超(未知,不是 0)。
+ *  均價(估):這段持有的平均成本(買超日收盤加權,還原到資料日尺度);null = 沒有持有或有買超日缺收盤;舊檔沒有這欄。 */
+export type WatchRow = [string, number | null, number | null, number | null, number, string | null, number, number, string, (number | null)?];
+
+/** [標的, 認購淨額, 認售淨額, 認購仍持有成本, 認購換算現股均價, 認售仍持有成本, 認售換算現股均價](元)
+ *  當天淨額 null = 沒有列或 |金額| 未達門檻;持有欄來自 docs/51(仍持有成本 ≥ 500 萬才有)。哪一天見 WatchIndex.warrant。 */
+export type WatchWarrantRow = [string, number | null, number | null, number | null, number | null, number | null, number | null];
+
+/** 權證欄的資料日。counted = 權證那天就是現股分點資料日,才算進今天的同買／同賣;
+ *  false = 權證分點比較舊(晚一步匯入),只列出、標日期。 */
+export interface WatchWarrantMeta {
+  data_date: string;
+  day: string;
+  counted: boolean;
+  min_amount: number;
+}
 
 /** [名稱, 收盤, 漲跌%(還原價), 近 20 日均量(張), 今天狀態]
  *  今天狀態:1 = 這檔今天有分點列(選的分點沒列 = 未進前 15 大);0 = 匯入池的股票、今天的匯入還沒完成
@@ -29,6 +43,8 @@ export interface WatchIndex {
   hold_top: number;
   /** 今日分點匯入覆蓋,照匯入端:池(普通股、不含 ETF)裡已有分點列的檔數;complete = 匯入端記為完成。 */
   coverage?: { covered: number; expected: number; complete: boolean } | null;
+  /** 權證欄的資料日;null／舊檔沒有 = 沒有權證資料 */
+  warrant?: WatchWarrantMeta | null;
   branches: WatchIndexEntry[];
 }
 
@@ -39,6 +55,8 @@ export interface WatchShard {
   window_from: string | null;
   shard: number;
   branches: Record<string, WatchRow[]>;
+  /** 舊檔沒有 */
+  warrants?: Record<string, WatchWarrantRow[]>;
   stocks: Record<string, WatchStockMeta>;
 }
 
@@ -60,7 +78,7 @@ export const HOLD_FLOOR_LOTS = 20;
 
 export type Side = "buy" | "sell" | "hold";
 export type ComboMode = "anchor" | "anchor_plus" | "all" | "any";
-export type SortKey = "combo" | "lots" | "amount" | "hold";
+export type SortKey = "combo" | "lots" | "amount" | "hold" | "gap";
 
 export const SIDE_LABEL: Record<Side, string> = { buy: "買超", sell: "賣超", hold: "估計仍持有" };
 
@@ -90,10 +108,30 @@ export const SORT_OPTIONS: { key: SortKey; label: string }[] = [
   { key: "lots", label: "今日張數" },
   { key: "amount", label: "金額(估)" },
   { key: "hold", label: "估計仍持有" },
+  { key: "gap", label: "現價對均價(低→高)" },
 ];
 
 export const HONESTY_NOTE =
-  "分點資料只有當天進入該股前 15 大買超或賣超才看得到;沒出現的日子是未知,不是 0。估計仍持有＝近 60 個交易日看得到的淨買超累計(賣超大於已知買超時歸 0),看不到的賣超扣不到,實際可能較少。金額＝張數 × 收盤 × 1,000,同屬估算。";
+  "分點資料只有當天進入該股前 15 大買超或賣超才看得到;沒出現的日子是未知,不是 0。估計仍持有＝近 60 個交易日看得到的淨買超累計(賣超大於已知買超時歸 0),看不到的賣超扣不到,實際可能較少。金額＝張數 × 收盤 × 1,000,同屬估算。均價(估)＝這段持有裡每個看得到的買超日以當天收盤計價的平均成本(賣超不改均價,歸 0 後重算),不是成交均價。";
+
+/** 「含權證」開著時的規則句(docs/52 §8)。 */
+export const WARRANT_RULE =
+  "含權證:分點今天淨買某檔的認購權證(≥ 100 萬)也算同買;淨賣認購、或淨買認售算同賣;淨賣認售只列出、不計入(那是把先前的認售部位減掉)。牛熊證不算。";
+
+export const WARRANT_OFF = "不含權證:只看現股分點;權證進出仍列在卡片裡,但不算同買／同賣。";
+
+export const WARRANT_NOTE =
+  "權證分點同樣只有當天進入該權證前 15 大才看得到;金額＝權證淨張數 × 當日權證收盤 × 1,000,同一檔標的的所有認購(或認售)權證合計。權證仍持有與換算均價沿用權證分點頁的估算(仍持有成本 ≥ 500 萬才列)。";
+
+/** 權證那一格;金額單位元,null = 沒有或未達門檻。 */
+export interface WarrantCell {
+  call: number | null;
+  put: number | null;
+  callHeld: number | null;
+  callAvg: number | null;
+  putHeld: number | null;
+  putAvg: number | null;
+}
 
 export const PUSH_NOTE = "每天資料更新後自動換成最新一日;這裡不發手機通知。";
 
@@ -106,6 +144,8 @@ export interface Cell {
   obs: number;
   sum: number;
   last: string;
+  /** 均價(估);null = 沒有持有或有買超日缺收盤 */
+  avg: number | null;
 }
 
 export interface ComboRow {
@@ -117,9 +157,17 @@ export interface ComboRow {
   cells: Record<string, Cell>;
   /** 這檔今天的分點狀態(見 WatchStockMeta) */
   today: TodayState;
-  /** 今天淨買超的分點(依使用者選的順序) */
+  /** 今天現股淨買超的分點(依使用者選的順序) */
   buyers: string[];
   sellers: string[];
+  /** 今天權證算進買方／賣方的分點(認購淨買 → 買方;認購淨賣、認售淨買 → 賣方)。
+   *  權證資料日不是今天(counted=false)時一律空:舊的權證進出只列出、不算。 */
+  wBuyers: string[];
+  wSellers: string[];
+  /** 現股或(算進今天的)權證任一邊參與,依選的順序 */
+  allBuyers: string[];
+  allSellers: string[];
+  warrants: Record<string, WarrantCell>;
   holdTotal: number;
 }
 
@@ -188,41 +236,70 @@ export function searchBranches(index: WatchIndex, q: string, exclude: string[], 
     .slice(0, limit);
 }
 
-/** 把選的分點在各分片的列合成「一檔一列」。 */
-export function buildRows(set: BranchSet, shards: WatchShard[]): ComboRow[] {
+/** 把選的分點在各分片的列合成「一檔一列」。warrantCounted = index.warrant?.counted(權證那天是今天)。 */
+export function buildRows(set: BranchSet, shards: WatchShard[], warrantCounted = false): ComboRow[] {
   const byStock = new Map<string, ComboRow>();
   const meta: Record<string, WatchStockMeta> = {};
   for (const sh of shards) Object.assign(meta, sh.stocks);
+  const rowFor = (sid: string): ComboRow => {
+    let row = byStock.get(sid);
+    if (!row) {
+      const m = meta[sid];
+      row = {
+        stock_id: sid, name: m?.[0] ?? sid, close: m?.[1] ?? null, chg: m?.[2] ?? null, avgVol: m?.[3] ?? null,
+        today: m?.[4] === 0 ? "pending" : m?.[4] === 2 ? "nodata" : "rows",
+        cells: {}, buyers: [], sellers: [], wBuyers: [], wSellers: [], allBuyers: [], allSellers: [], warrants: {}, holdTotal: 0,
+      };
+      byStock.set(sid, row);
+    }
+    return row;
+  };
   for (const b of set.branches) {
     const rows = shards.find((sh) => sh.branches[b])?.branches[b] ?? [];
-    for (const [sid, buy, sell, net, hold, entry, obs, sum, last] of rows) {
-      let row = byStock.get(sid);
-      if (!row) {
-        const m = meta[sid];
-        row = {
-          stock_id: sid, name: m?.[0] ?? sid, close: m?.[1] ?? null, chg: m?.[2] ?? null, avgVol: m?.[3] ?? null,
-          today: m?.[4] === 0 ? "pending" : m?.[4] === 2 ? "nodata" : "rows",
-          cells: {}, buyers: [], sellers: [], holdTotal: 0,
-        };
-        byStock.set(sid, row);
-      }
-      row.cells[b] = { buy, sell, net, hold, entry, obs, sum, last };
+    for (const [sid, buy, sell, net, hold, entry, obs, sum, last, avg] of rows) {
+      const row = rowFor(sid);
+      row.cells[b] = { buy, sell, net, hold, entry, obs, sum, last, avg: avg ?? null };
       row.holdTotal += hold;
+    }
+    const wrows = shards.find((sh) => sh.warrants?.[b])?.warrants?.[b] ?? [];
+    for (const [sid, call, put, callHeld, callAvg, putHeld, putAvg] of wrows) {
+      rowFor(sid).warrants[b] = { call, put, callHeld, callAvg, putHeld, putAvg };
     }
   }
   for (const row of byStock.values()) {
     for (const b of set.branches) {
       const net = row.cells[b]?.net;
-      if (net == null) continue;
-      if (net > 0) row.buyers.push(b);
-      else if (net < 0) row.sellers.push(b);
+      if (net != null) {
+        if (net > 0) row.buyers.push(b);
+        else if (net < 0) row.sellers.push(b);
+      }
+      const w = row.warrants[b];
+      if (w && warrantCounted) {
+        if (w.call != null && w.call > 0) row.wBuyers.push(b);
+        if ((w.call != null && w.call < 0) || (w.put != null && w.put > 0)) row.wSellers.push(b);
+      }
+      if ((net != null && net > 0) || row.wBuyers.includes(b)) row.allBuyers.push(b);
+      if ((net != null && net < 0) || row.wSellers.includes(b)) row.allSellers.push(b);
     }
   }
   return [...byStock.values()];
 }
 
-function sideList(row: ComboRow, side: "buy" | "sell"): string[] {
-  return side === "buy" ? row.buyers : row.sellers;
+/** 今天這一邊參與的分點(依選的順序);withWarrants = 「含權證」開關。 */
+export function participants(row: ComboRow, side: "buy" | "sell", withWarrants = true): string[] {
+  if (side === "buy") return withWarrants ? row.allBuyers : row.buyers;
+  return withWarrants ? row.allSellers : row.sellers;
+}
+
+/** 只靠權證參與(現股那邊沒有)的分點數。 */
+export function warrantOnlyCount(row: ComboRow, side: "buy" | "sell"): number {
+  const stock = side === "buy" ? row.buyers : row.sellers;
+  const w = side === "buy" ? row.wBuyers : row.wSellers;
+  return w.filter((b) => !stock.includes(b)).length;
+}
+
+function sideList(row: ComboRow, side: "buy" | "sell", withWarrants = true): string[] {
+  return participants(row, side, withWarrants);
 }
 
 export function isBigHold(hold: number, avgVol: number | null): boolean {
@@ -235,12 +312,13 @@ export function holdQualifies(hold: number, avgVol: number | null, holdMin = 100
   return hold >= holdMin || isBigHold(hold, avgVol);
 }
 
-export function filterRows(rows: ComboRow[], set: BranchSet, side: Side, mode: ComboMode, holdMin = 100): ComboRow[] {
+/** withWarrants =「含權證」開關:開著時,分點今天的權證進出(只限算進今天的)也算參與,主分點只買認購也符合「主分點買超」。 */
+export function filterRows(rows: ComboRow[], set: BranchSet, side: Side, mode: ComboMode, holdMin = 100, withWarrants = true): ComboRow[] {
   if (side === "hold") {
     return rows.filter((r) => set.branches.some((b) => holdQualifies(r.cells[b]?.hold ?? 0, r.avgVol, holdMin)));
   }
   return rows.filter((r) => {
-    const list = sideList(r, side);
+    const list = sideList(r, side, withWarrants);
     switch (mode) {
       case "anchor": return list.includes(set.anchor);
       case "anchor_plus": return list.includes(set.anchor) && list.length >= 2;
@@ -250,7 +328,7 @@ export function filterRows(rows: ComboRow[], set: BranchSet, side: Side, mode: C
   });
 }
 
-/** 今天這一邊的張數合計(買超取正、賣超取絕對值;只算選的分點)。 */
+/** 今天這一邊的現股張數合計(買超取正、賣超取絕對值;只算選的分點)。 */
 export function sideLots(row: ComboRow, side: Side): number {
   if (side === "hold") return row.holdTotal;
   let s = 0;
@@ -262,16 +340,54 @@ export function sideLots(row: ComboRow, side: Side): number {
   return s;
 }
 
+/** 今天這一邊算進來的權證金額(元):買方 = 認購淨買;賣方 = 認購淨賣 + 認售淨買。
+ *  只算 wBuyers／wSellers(權證那天是今天);認售淨賣不算。 */
+export function sideWarrantAmount(row: ComboRow, side: Side): number {
+  if (side === "hold") return 0;
+  let s = 0;
+  for (const b of side === "buy" ? row.wBuyers : row.wSellers) {
+    const w = row.warrants[b];
+    if (!w) continue;
+    if (side === "buy") s += w.call != null && w.call > 0 ? w.call : 0;
+    else s += (w.call != null && w.call < 0 ? -w.call : 0) + (w.put != null && w.put > 0 ? w.put : 0);
+  }
+  return s;
+}
+
 /** 張數 × 收盤 × 1,000(元);沒有收盤 → null。 */
 export function amountEst(lots: number, close: number | null): number | null {
   return close == null ? null : lots * close * 1000;
 }
 
-export function sortRows(rows: ComboRow[], side: Side, key: SortKey): ComboRow[] {
-  const amt = (r: ComboRow) => amountEst(sideLots(r, side), r.close) ?? -1;
+/** (現價 ÷ 均價 − 1) × 100;任一缺 → null。 */
+export function gapPct(close: number | null, avg: number | null): number | null {
+  if (close == null || avg == null || avg <= 0) return null;
+  return (close / avg - 1) * 100;
+}
+
+/** 選的分點合計的均價(估):有持有、均價已知的分點依張數加權;partial = 有持有的分點裡有均價未知的。 */
+export function combinedAvg(row: ComboRow, branches: string[]): { avg: number | null; partial: boolean } {
+  let lots = 0, cost = 0, partial = false;
+  for (const b of branches) {
+    const c = row.cells[b];
+    if (!c || c.hold <= 0) continue;
+    if (c.avg == null) { partial = true; continue; }
+    lots += c.hold;
+    cost += c.hold * c.avg;
+  }
+  return { avg: lots > 0 ? cost / lots : null, partial };
+}
+
+export function sortRows(rows: ComboRow[], side: Side, key: SortKey, withWarrants = true, branches?: string[]): ComboRow[] {
+  const amt = (r: ComboRow) => {
+    const a = amountEst(sideLots(r, side), r.close);
+    const w = withWarrants ? sideWarrantAmount(r, side) : 0;
+    return a == null && !w ? -1 : (a ?? 0) + w;
+  };
   const co = (r: ComboRow) => (side === "hold"
     ? Object.values(r.cells).filter((c) => c.hold > 0).length
-    : sideList(r, side).length);
+    : sideList(r, side, withWarrants).length);
+  const gap = (r: ComboRow) => gapPct(r.close, combinedAvg(r, branches ?? Object.keys(r.cells)).avg);
   return [...rows].sort((a, b) => {
     let d = 0;
     switch (key) {
@@ -279,14 +395,78 @@ export function sortRows(rows: ComboRow[], side: Side, key: SortKey): ComboRow[]
       case "lots": d = sideLots(b, side) - sideLots(a, side); break;
       case "amount": d = amt(b) - amt(a); break;
       case "hold": d = b.holdTotal - a.holdTotal; break;
+      case "gap": {
+        // 現價低於均價最多的在前;沒有均價的排最後
+        const ga = gap(a), gb = gap(b);
+        d = ga == null && gb == null ? 0 : ga == null ? 1 : gb == null ? -1 : ga - gb;
+        break;
+      }
     }
     return d || a.stock_id.localeCompare(b.stock_id);
   });
 }
 
-/** 分頁徽章:今天選的分點有任何一家出現(買超或賣超)的檔數。 */
-export function todayCount(rows: ComboRow[]): number {
-  return rows.filter((r) => r.buyers.length + r.sellers.length > 0).length;
+/** 分頁徽章:今天選的分點有任何一家出現(現股買超或賣超,含權證時也算權證)的檔數。 */
+export function todayCount(rows: ComboRow[], withWarrants = true): number {
+  return rows.filter((r) => participants(r, "buy", withWarrants).length + participants(r, "sell", withWarrants).length > 0).length;
+}
+
+/** 元 → 「320萬」「1.2億」,帶正負號(+/−)。 */
+export function fmtWan(n: number, signed = true): string {
+  const abs = Math.abs(n);
+  const body = abs >= 1e8 ? `${(abs / 1e8).toFixed(1)}億` : `${Math.round(abs / 1e4).toLocaleString("zh-TW")}萬`;
+  return signed ? `${n > 0 ? "+" : n < 0 ? "−" : ""}${body}` : body;
+}
+
+function fmtPrice(p: number): string {
+  return p.toLocaleString("zh-TW", { minimumFractionDigits: 1, maximumFractionDigits: p >= 100 ? 1 : 2 });
+}
+
+/** 均價(估)與現價差的一句話;沒有均價 → null。 */
+export function avgLine(avg: number | null, close: number | null): string | null {
+  if (avg == null) return null;
+  const g = gapPct(close, avg);
+  const head = `均價(估) ${fmtPrice(avg)}`;
+  if (g == null) return head;
+  if (Math.abs(g) < 0.05) return `${head} · 現價約等於均價`;
+  return `${head} · 現價${g > 0 ? "高於" : "低於"}均價 ${g > 0 ? "+" : "−"}${Math.abs(g).toFixed(1)}%`;
+}
+
+export interface WarrantChip {
+  text: string;
+  /** 算進今天的哪一邊;null = 只列出不計(舊日期、或認售淨賣) */
+  side: "buy" | "sell" | null;
+}
+
+/** 一個分點在一檔標的上的權證進出膠囊。counted=false(權證資料日不是今天)時一律標日期、不計。 */
+export function warrantChips(w: WarrantCell | undefined, meta: WatchWarrantMeta | null | undefined): WarrantChip[] {
+  if (!w || !meta) return [];
+  const pre = meta.counted ? "權證" : `權證分點 ${fmtMD(meta.day)}`;
+  const out: WarrantChip[] = [];
+  if (w.call != null) out.push({ text: `${pre} 認購 ${fmtWan(w.call)}`, side: meta.counted ? (w.call > 0 ? "buy" : "sell") : null });
+  if (w.put != null) out.push({ text: `${pre} 認售 ${fmtWan(w.put)}`, side: meta.counted && w.put > 0 ? "sell" : null });
+  return out;
+}
+
+/** 權證仍持有(估)的一句話(docs/51 的估算);沒有 → []。 */
+export function warrantHeldLines(w: WarrantCell | undefined, meta: WatchWarrantMeta | null | undefined): string[] {
+  if (!w || !meta) return [];
+  const date = meta.counted && meta.data_date === meta.day ? "" : `(${fmtMD(meta.data_date)})`;
+  const out: string[] = [];
+  const one = (kind: string, cost: number | null, avg: number | null) => {
+    if (cost == null || cost <= 0) return;
+    out.push(`權證 ${kind} 仍持有(估)${date} ${fmtWan(cost, false)}${avg != null ? ` · 換算均價 ${fmtPrice(avg)}` : ""}`);
+  };
+  one("認購", w.callHeld, w.callAvg);
+  one("認售", w.putHeld, w.putAvg);
+  return out;
+}
+
+/** 權證分點比現股分點舊時的提示;沒有權證資料或同一天 → null。 */
+export function warrantStaleText(index: WatchIndex): string | null {
+  const w = index.warrant;
+  if (!w || w.counted) return null;
+  return `權證分點資料日 ${fmtMD(w.day)},比現股分點 ${fmtMD(index.as_of)} 舊:權證進出只列出(標日期),不算進今天的同買／同賣,待下一輪更新。`;
 }
 
 export function fmtMD(d: string | null | undefined): string {
