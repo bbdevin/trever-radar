@@ -27,6 +27,7 @@ from ..market_index import latest_indices, write_indices_hist
 from .insti_stocks import FILE_1D as INSTI_STOCKS_FILE_1D, write_insti_stocks
 from .spark_day import attach_spark_day
 from .branch_days import encode_branch_days
+from .branch_watch import make_collector as make_watch_collector
 from .intraday_bars import export_intraday_safe
 from .indices_intraday import export_indices_intraday_safe, tx_month_from_db
 from .stock_parts import (
@@ -2702,16 +2703,23 @@ def export_json(
         branch_names_by_id = _BranchNames(conn)
         # 當日有成交的認購/認售,依標的分組一次讀齊(docs/44 §3.5;以前每檔一條查詢、每條都掃整張 warrants)。
         active_by_stock = _active_warrant_candidates(conn, d)
+        # 自選「特定分點」(docs/52):搭個股迴圈已讀的分點列,不另掃 branch_trades_raw。
+        t_sec = time.perf_counter()
+        watch = make_watch_collector(conn, d)
+        t_watch = time.perf_counter() - t_sec
         # 各段累計秒數(docs/43):只印一行 log,輸出的 JSON 一個位元都不變。
         # 前 8 個鍵是原本的(順序不動,舊 log 可直接比);之後是 2026-10-15 補的(docs/44 §3.5):
         # radar = 開頭到 radar.json／meta.json 寫完(不含 intraday)、intraday = spark_day＋分K、
         # side = 排行／法人族群／指數／搜尋索引與個股迴圈前的讀表、loop 內的 warrant_q／margin／
         # holders／payload、loop_other = 迴圈內其餘未分段的部分、branches = rankings／today／
-        # warrant_movers、total = 整個 export_json。
+        # warrant_movers、total = 整個 export_json。watch(2026-10-19,docs/52)排在 total 之後:
+        # 自選特定分點的找日期＋迴圈內摘要＋寫檔,不含在 loop_other 裡。
         timing = {k: 0.0 for k in ("branch_history", "candles", "pctile", "pnl",
                                    "levels", "warrant_shards", "tracked", "write",
                                    "radar", "intraday", "side", "warrant_q", "margin",
-                                   "holders", "payload", "loop_other", "branches", "total")}
+                                   "holders", "payload", "loop_other", "branches", "total",
+                                   "watch")}
+        timing["watch"] = t_watch
         timing["intraday"] = t_intraday
         timing["radar"] = t_radar_done - t_start - t_intraday
         t_loop = time.perf_counter()
@@ -2786,6 +2794,9 @@ def export_json(
             # 一邊倒的日子另一側整個不見——2026-10-10 使用者決定全站改成「前 15 大」一致)。
             branch_days = encode_branch_days(branch_history_rows)
             timing["branch_history"] += time.perf_counter() - t_sec
+            t_sec = time.perf_counter()
+            watch.add_stock(sid, s["name"], branch_history_rows, candles)
+            timing["watch"] += time.perf_counter() - t_sec
             t_sec = time.perf_counter()
             margin_hist, margin_meta = _margin_history_payload(conn, sid, d)
             timing["margin"] += time.perf_counter() - t_sec
@@ -2916,7 +2927,7 @@ def export_json(
         parts_writer.finish()
         timing["loop_other"] = (time.perf_counter() - t_loop) - sum(
             timing[k] for k in ("branch_history", "candles", "pctile", "pnl", "levels", "write",
-                                "warrant_q", "margin", "holders", "payload"))
+                                "warrant_q", "margin", "holders", "payload", "watch")) + t_watch
         if size_report is not None:
             Path(size_report).write_text(json.dumps({
                 "data_date": d, "generated_at": now, "cut": cut,
@@ -2938,9 +2949,15 @@ def export_json(
     t_sec = time.perf_counter()
     _export_tracked_branch_history(out, engine, d)
     timing["tracked"] += time.perf_counter() - t_sec
+    t_sec = time.perf_counter()
+    watch_info = watch.write(out)
+    timing["watch"] += time.perf_counter() - t_sec
     timing["total"] = time.perf_counter() - t_start
     # 一行、固定鍵序,正式機 radar-cron.log 可直接 grep 'export timing:' 比較前後。
     print("export timing: " + " ".join(f"{k}={v:.1f}s" for k, v in timing.items()), flush=True)
+    print(f"export watch: as_of={watch.as_of} branches={watch_info['branches']} "
+          f"rows={watch_info['rows']} shard_bytes={watch_info['shard_bytes']} "
+          f"index_bytes={watch_info['index_bytes']}", flush=True)
     print(f"export parts: hist_written={parts_writer.hist_written} "
           f"hist_reused={parts_writer.hist_reused} hist_total={len(parts_writer.index)} "
           f"legacy={'on' if legacy_stocks else 'off'} unchanged={parts_writer.unchanged}", flush=True)
