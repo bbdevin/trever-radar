@@ -17,14 +17,18 @@ export interface WatchWarrantMeta {
   data_date: string;
   day: string;
   counted: boolean;
+  /** 那天權證分點匯入完整(import_logs branch_warrant_pool 最後一輪 ok;沒有紀錄也算);舊檔沒有 */
+  complete?: boolean;
   min_amount: number;
+  /** 夜間權證池的成交金額門檻;舊檔沒有 */
+  pool_turnover_min?: number;
 }
 
 /** [名稱, 收盤, 漲跌%(還原價), 近 20 日均量(張), 今天狀態]
  *  今天狀態:1 = 這檔今天有分點列(選的分點沒列 = 未進前 15 大);0 = 匯入池的股票、今天的匯入還沒完成
  *  (晚上第二輪才補齊)→ 尚未匯入;2 = 今天沒有列也不會再補(匯入已完成的確認空,或 ETF 等不在匯入池)
  *  → 無分點資料。舊檔沒有這欄 → 當作 1。 */
-export type WatchStockMeta = [string, number | null, number | null, number | null, (0 | 1 | 2)?];
+export type WatchStockMeta = [string, number | null, number | null, number | null, (0 | 1 | 2)?, (0 | 1)?];
 
 export type TodayState = "rows" | "pending" | "nodata";
 
@@ -116,12 +120,12 @@ export const HONESTY_NOTE =
 
 /** 「含權證」開著時的規則句(docs/52 §8)。 */
 export const WARRANT_RULE =
-  "含權證:分點今天淨買某檔的認購權證(≥ 100 萬)也算同買;淨賣認購、或淨買認售算同賣;淨賣認售只列出、不計入(那是把先前的認售部位減掉)。牛熊證不算。";
+  "含權證:分點今天淨買某檔的認購權證(≥ 100 萬)也算同買;淨賣認購、或淨買認售算同賣;認售淨賣方向不明確,只列出不計。牛熊證不算。只算收集得到的權證:當天成交 ≥ 100 萬的認購／認售(上市＋上櫃),且分點進入該權證當天前 15 大;收集不到的標「權證:未收集」。";
 
 export const WARRANT_OFF = "不含權證:只看現股分點;權證進出仍列在卡片裡,但不算同買／同賣。";
 
 export const WARRANT_NOTE =
-  "權證分點同樣只有當天進入該權證前 15 大才看得到;金額＝權證淨張數 × 當日權證收盤 × 1,000,同一檔標的的所有認購(或認售)權證合計。權證仍持有與換算均價沿用權證分點頁的估算(仍持有成本 ≥ 500 萬才列)。";
+  "權證分點只收集當天成交 ≥ 100 萬的認購／認售權證(上市＋上櫃),而且同樣只有當天進入該權證前 15 大才看得到;成交較小的權證、或沒進前 15 大的分點,這裡看不到,不代表沒有進出。金額＝權證淨張數 × 當日權證收盤 × 1,000,同一檔標的的所有認購(或認售)權證合計。權證仍持有與換算均價沿用權證分點頁的估算(仍持有成本 ≥ 500 萬才列)。";
 
 /** 權證那一格;金額單位元,null = 沒有或未達門檻。 */
 export interface WarrantCell {
@@ -168,6 +172,8 @@ export interface ComboRow {
   allBuyers: string[];
   allSellers: string[];
   warrants: Record<string, WarrantCell>;
+  /** 這檔那天有沒有權證進夜間權證池(個股摘要第 6 欄);null = 不知道(舊檔/沒有權證資料) */
+  warrantPooled: boolean | null;
   holdTotal: number;
 }
 
@@ -248,7 +254,8 @@ export function buildRows(set: BranchSet, shards: WatchShard[], warrantCounted =
       row = {
         stock_id: sid, name: m?.[0] ?? sid, close: m?.[1] ?? null, chg: m?.[2] ?? null, avgVol: m?.[3] ?? null,
         today: m?.[4] === 0 ? "pending" : m?.[4] === 2 ? "nodata" : "rows",
-        cells: {}, buyers: [], sellers: [], wBuyers: [], wSellers: [], allBuyers: [], allSellers: [], warrants: {}, holdTotal: 0,
+        cells: {}, buyers: [], sellers: [], wBuyers: [], wSellers: [], allBuyers: [], allSellers: [], warrants: {},
+        warrantPooled: m?.[5] === 1 ? true : m?.[5] === 0 ? false : null, holdTotal: 0,
       };
       byStock.set(sid, row);
     }
@@ -441,7 +448,7 @@ export interface WarrantChip {
 /** 一個分點在一檔標的上的權證進出膠囊。counted=false(權證資料日不是今天)時一律標日期、不計。 */
 export function warrantChips(w: WarrantCell | undefined, meta: WatchWarrantMeta | null | undefined): WarrantChip[] {
   if (!w || !meta) return [];
-  const pre = meta.counted ? "權證" : `權證分點 ${fmtMD(meta.day)}`;
+  const pre = meta.counted ? "權證" : `權證分點 ${fmtMD(meta.day)}${meta.complete === false ? " 未完整" : ""}`;
   const out: WarrantChip[] = [];
   if (w.call != null) out.push({ text: `${pre} 認購 ${fmtWan(w.call)}`, side: meta.counted ? (w.call > 0 ? "buy" : "sell") : null });
   if (w.put != null) out.push({ text: `${pre} 認售 ${fmtWan(w.put)}`, side: meta.counted && w.put > 0 ? "sell" : null });
@@ -466,7 +473,21 @@ export function warrantHeldLines(w: WarrantCell | undefined, meta: WatchWarrantM
 export function warrantStaleText(index: WatchIndex): string | null {
   const w = index.warrant;
   if (!w || w.counted) return null;
+  if (w.complete === false && w.day === index.as_of) {
+    return `權證分點尚未完整:${fmtMD(w.day)} 權證分點有一部分還沒抓到,權證進出只列出(標「未完整」),不算進今天的同買／同賣,待下一輪更新。`;
+  }
   return `權證分點資料日 ${fmtMD(w.day)},比現股分點 ${fmtMD(index.as_of)} 舊:權證進出只列出(標日期),不算進今天的同買／同賣,待下一輪更新。`;
+}
+
+/** 卡片上的權證覆蓋說明(取代沉默):這檔今天的權證沒收集到、或權證資料不是今天的完整資料 → 一句話;否則 null。 */
+export function warrantCoverageLine(row: ComboRow, index: WatchIndex): string | null {
+  const w = index.warrant;
+  if (!w) return null;
+  const asOf = fmtMD(index.as_of);
+  if (w.day !== index.as_of) return `權證:${asOf} 未收集(權證分點只到 ${fmtMD(w.day)})`;
+  if (w.complete === false) return `權證:${asOf} 分點尚未完整,只列出不計`;
+  if (row.warrantPooled === false) return `權證:未收集(${asOf} 這檔沒有成交 ≥ 100 萬的認購／認售)`;
+  return null;
 }
 
 export function fmtMD(d: string | null | undefined): string {

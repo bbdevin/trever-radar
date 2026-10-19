@@ -43,6 +43,7 @@ import {
   WARRANT_OFF,
   WARRANT_RULE,
   warrantChips,
+  warrantCoverageLine,
   warrantHeldLines,
   warrantOnlyCount,
   warrantStaleText,
@@ -208,7 +209,10 @@ export default function WatchedBranchesPanel({
           ) : (
             <div className="flex flex-col gap-2">
               {list.slice(0, shown).map((r) => (
-                <ComboCard key={r.stock_id} row={r} set={set} side={side} withWarrants={withWarrants} wMeta={wMeta} />
+                <ComboCard
+                  key={r.stock_id} row={r} set={set} side={side} withWarrants={withWarrants} wMeta={wMeta}
+                  wCoverage={warrantCoverageLine(r, ready.index)}
+                />
               ))}
               {list.length > shown && (
                 <button
@@ -341,12 +345,14 @@ function BranchSetEditor({ set, onChange, index }: { set: BranchSet; onChange: (
   );
 }
 
-function ComboCard({ row, set, side, withWarrants, wMeta }: {
+function ComboCard({ row, set, side, withWarrants, wMeta, wCoverage }: {
   row: ComboRow;
   set: BranchSet;
   side: Side;
   withWarrants: boolean;
   wMeta: WatchWarrantMeta | null;
+  /** 權證沒收集到／不完整的說明(warrantCoverageLine);null = 正常 */
+  wCoverage: string | null;
 }) {
   const cls = chgClass(row.chg);
   const lots = sideLots(row, side);
@@ -392,6 +398,9 @@ function ComboCard({ row, set, side, withWarrants, wMeta }: {
         {wAmt > 0 && <span className="num text-muted-foreground">{`${amt != null && lots > 0 ? "＋" : ""}權證 ${fmtWan(wAmt, false)}`}</span>}
         {row.avgVol != null && row.avgVol > 0 && (
           <span className="num text-muted-foreground">{`20 日均量 ${row.avgVol.toLocaleString("zh-TW")} 張`}</span>
+        )}
+        {wCoverage && (
+          <span className="num basis-full text-[11.5px] text-muted-foreground" data-testid="watched-warrant-coverage">{wCoverage}</span>
         )}
         {comboLine && (
           <span className="num basis-full text-muted-foreground">

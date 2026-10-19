@@ -7,7 +7,8 @@
 - **需求**:「富邦新店買雙鴻、永豐金內湖買權證雙鴻,這樣也算同買」;「可以預估平均成本更好」。
 - **做了什麼**:①export:`_export_warrant_branches` 多一個 `on_window` 回呼,把 `_WarrantWindowScan` 已算好的逐日認購／認售金額與 docs/51 持有摘要交給 `BranchWatchCollector.add_warrants`(不另掃),取「現股分點日」那一天、|金額| ≥ 100 萬才留;分片新鍵 `warrants`、index 新鍵 `warrant`(資料日、`counted`)。現股列加第 10 欄均價(估)(pnl-avgcost-v1,缺收盤 → null)。②前端:認購淨買 → 同買;認購淨賣、認售淨買 → 同賣;認售淨賣只列不計;牛熊不算。「含權證」鈕(預設開,記本機);主分點只買認購也符合主分點買超。權證膠囊「權證 認購 +320萬」,權證日比現股舊時標日期、不計、上方琥珀提示。金額排序含權證金額。均價(估)與現價差、權證仍持有(估)與換算均價(沿用 docs/51)、估計仍持有檢視可依「現價對均價」排序。
 - **驗證**:見 `docs/52` §8.8;其他 export 檔逐位元相同(`export_parity.py` 新舊 code 同合成庫)。
-- **待人類**:合 main;第一輪看 `export watch: … warrant_rows=… warrant_day=…`。
+- **verifier 修正(同日)**:①夜間權證池加入上櫃(`importer.import_branch_trades` 的 `--warrant-turnover-min` 池 `w.market IN ('twse','tpex')`;正式機 10-19 上櫃 ≥100 萬 171 檔,+~3–5 分,只延後第二段上線,`docs/47` §8.10 第 5 點)。②權證段 `branch_warrant_pool` 最後一輪不是 ok → 權證「未完整」、不計。③畫面寫明收集範圍(成交 ≥100 萬、上市＋上櫃、進前 15 大),沒收集到的標「權證:未收集」。④認售淨賣改中性文案「方向不明確,只列出不計」。
+- **待人類**:合 main;第一輪看 `[warrants] branch trades pool:` targets(≈ 上市＋上櫃)與 `export watch: … warrant_rows=… warrant_day=…`。
 
 ## 2026-10-20 分點輪兩段式抓取:現股先上線、權證背景補(`docs/47` §8.10;程式完成於分支、未合 main、未上線;不動 crontab)
 

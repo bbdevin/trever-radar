@@ -55,6 +55,9 @@ AVG_VOL_DAYS = 20
 # 權證:當天認購(或認售)淨額 |金額| ≥ 這個數才列出、才算參與。與權證分點明細門檻
 # (json_export.WARRANT_BRANCH_DETAIL_MIN_AMOUNT)同值——低於它的配對,上游掃描本來就不一定留。
 WARRANT_MIN_AMOUNT = 1_000_000
+# 夜間權證分點池的成交金額門檻(vps/scripts/daily-branches.sh `--warrant-turnover-min 1000000`):
+# 當天成交 < 這個數的權證不抓分點。
+NIGHTLY_WARRANT_TURNOVER_MIN = 1_000_000
 
 
 def shard_of(branch_name: str) -> int:
@@ -142,6 +145,29 @@ def import_complete(conn, as_of: str, pool_size: int) -> bool | None:
     return False
 
 
+def warrant_pool_status(conn, day: str) -> str | None:
+    """``day`` 權證分點那一段的匯入狀態(``import_logs`` dataset='branch_warrant_pool',最後一輪):
+    'ok' / 'incomplete' / 'error';沒有紀錄 → None。"""
+    row = conn.execute(text(
+        "SELECT status FROM import_logs WHERE source = 'fubon' "
+        "AND dataset = 'branch_warrant_pool' AND date = :d ORDER BY run_at DESC LIMIT 1"),
+        {"d": day}).fetchone()
+    return row[0] if row else None
+
+
+def warrant_pool_underlyings(conn, day: str) -> set[str]:
+    """``day`` 夜間權證池(importer ``import_branch_trades`` 的 warrant_turnover_min 那條)涵蓋的標的:
+    當天成交金額 ≥ NIGHTLY_WARRANT_TURNOVER_MIN 的上市／上櫃認購、認售。不在裡面的標的,那天沒有
+    權證分點可看(畫面「權證:未收集」)。條件與匯入端那條 SQL 相同。"""
+    return {r[0] for r in conn.execute(text(
+        "SELECT DISTINCT w.stock_id FROM warrant_daily d "
+        "JOIN warrants w ON w.id = d.warrant_id "
+        "JOIN stocks s ON s.id = w.stock_id AND s.type = 'stock' AND s.is_active = 1 "
+        "WHERE d.date = :d AND d.turnover >= :m "
+        "AND w.market IN ('twse', 'tpex') AND w.kind IN ('call', 'put')"),
+        {"d": day, "m": NIGHTLY_WARRANT_TURNOVER_MIN})}
+
+
 def make_collector(conn, d: str) -> "BranchWatchCollector":
     """export 用:找 as_of、視窗、匯入池與完成與否,建好收集器(迴圈前幾條小查詢)。"""
     from ..importer import _branch_stock_pool
@@ -186,6 +212,8 @@ class BranchWatchCollector:
         # (分點, 標的) → [認購仍持有成本, 認購換算現股均價, 認售仍持有成本, 認售換算現股均價](docs/51)
         self.w_held: dict[tuple[str, str], list] = {}
         self.warrant_secs = 0.0
+        # 那一天夜間權證池裡有權證的標的(None = 不知道:沒給 conn);不在裡面 → 前端「權證:未收集」
+        self.w_pooled: set[str] | None = None
 
     def add_stock(self, sid: str, name: str, rows: list[tuple], candles) -> None:
         """rows = ``_branch_history_rows`` 的輸出 (date, branch_name, buy, sell, net),date DESC。
@@ -280,7 +308,7 @@ class BranchWatchCollector:
             # 第 5 欄 TODAY_*:當日三欄 null 是「未進前 15 大」(1)、「尚未匯入」(0)或「無分點資料」(2)。
             self.stocks[sid] = self._meta_all[sid]
 
-    def add_warrants(self, data_date: str | None, daily: dict, summaries=()) -> None:
+    def add_warrants(self, data_date: str | None, daily: dict, summaries=(), conn=None) -> None:
         """權證分點那段掃完後呼叫(``json_export._export_warrant_branches``)。
 
         daily = ``_WarrantWindowScan.daily``:{(標的, 分點): [[日, 認購淨額, 認售淨額], …]}(日期遞增,
@@ -296,8 +324,16 @@ class BranchWatchCollector:
         if as_of is None or data_date is None:
             return
         day = as_of if data_date >= as_of else data_date
-        self.warrant = {"data_date": data_date, "day": day, "counted": day == as_of,
-                        "min_amount": WARRANT_MIN_AMOUNT}
+        # 權證那一段的匯入完整嗎(docs/47 §8.10 的 branch_warrant_pool,最後一輪的狀態):
+        # 沒有紀錄(本機/測試庫、兩段式之前的日子)→ 當作完整,沒有證據時不宣稱「未完整」。
+        status = None
+        if conn is not None:
+            status = warrant_pool_status(conn, day)
+            self.w_pooled = warrant_pool_underlyings(conn, day)
+        complete = status in (None, "ok")
+        self.warrant = {"data_date": data_date, "day": day, "counted": day == as_of and complete,
+                        "complete": complete, "min_amount": WARRANT_MIN_AMOUNT,
+                        "pool_turnover_min": NIGHTLY_WARRANT_TURNOVER_MIN}
         lo = WARRANT_MIN_AMOUNT
         for (u, branch), series in daily.items():
             if _closed(branch):
@@ -342,6 +378,12 @@ class BranchWatchCollector:
                 got = out.setdefault(branch, {})[u] = [u, None, None, None, None, None, None]
             got[3:7] = held
         return {b: [v[k] for k in sorted(v)] for b, v in out.items()}
+
+    def _stock_payload(self, sid: str) -> list:
+        m = self._meta_all.get(sid) or [sid, None, None, None, TODAY_NO_DATA]
+        if self.w_pooled is None:
+            return m
+        return [*m, 1 if sid in self.w_pooled else 0]
 
     def payloads(self) -> tuple[dict, list[dict]]:
         """(index, [shard 0..SHARDS-1]),全部已排序、可逐位元重現。"""
@@ -399,8 +441,8 @@ class BranchWatchCollector:
                 #       認售換算現股均價](元;null = 沒有/未達門檻)。哪一天見 index.warrant。
                 "warrants": {b: warrants[b] for b in sorted(warrants)},
                 # 代號 → [名稱, 收盤, 漲跌%(還原價), 近 20 日均量(張), TODAY_* (1 有列/0 尚未匯入/2 無分點資料)]
-                "stocks": {sid: self._meta_all.get(sid) or [sid, None, None, None, TODAY_NO_DATA]
-                           for sid in used},
+                # 有權證資料(index.warrant)時多第 6 欄:1 = 這檔當天有權證進夜間權證池;0 = 沒有(權證:未收集)
+                "stocks": {sid: self._stock_payload(sid) for sid in used},
             })
         return index, out
 

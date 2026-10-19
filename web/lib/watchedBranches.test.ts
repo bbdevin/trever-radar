@@ -19,6 +19,7 @@ import {
   WARRANT_OFF,
   WARRANT_RULE,
   warrantChips,
+  warrantCoverageLine,
   warrantHeldLines,
   warrantOnlyCount,
   warrantStaleText,
@@ -294,6 +295,23 @@ test("權證:資料日比現股舊 → 只列出、不算同買／同賣", () =>
   assert.equal(warrantStaleText(INDEX), null);
 });
 
+test("權證:匯入未完整 → 不計、標未完整;未收集的標的有一句話", () => {
+  const inc = { ...WMETA, counted: false, complete: false };
+  assert.deepEqual(warrantChips(row(W_STALE, "4444").warrants[A], inc), [{ text: "權證分點 10/16 未完整 認購 +320萬", side: null }]);
+  assert.equal(
+    warrantStaleText({ ...INDEX, warrant: inc }),
+    "權證分點尚未完整:10/16 權證分點有一部分還沒抓到,權證進出只列出(標「未完整」),不算進今天的同買／同賣,待下一輪更新。",
+  );
+  const pooled = buildRows(SET, [SHARDS[1], { ...W_SHARDS[0], stocks: { ...W_SHARDS[0].stocks, "1111": ["甲", 10, 1.5, 500, 1, 0], "4444": ["丁", 30, 1, 2000, 1, 1] } }], true);
+  const idx = { ...INDEX, warrant: WMETA };
+  assert.equal(row(pooled, "1111").warrantPooled, false);
+  assert.equal(warrantCoverageLine(row(pooled, "1111"), idx), "權證:未收集(10/16 這檔沒有成交 ≥ 100 萬的認購／認售)");
+  assert.equal(warrantCoverageLine(row(pooled, "4444"), idx), null);
+  assert.equal(warrantCoverageLine(row(pooled, "4444"), { ...INDEX, warrant: inc }), "權證:10/16 分點尚未完整,只列出不計");
+  assert.equal(warrantCoverageLine(row(pooled, "4444"), { ...INDEX, warrant: { ...WMETA, day: "2026-10-15", counted: false } }), "權證:10/16 未收集(權證分點只到 10/15)");
+  assert.equal(warrantCoverageLine(row(pooled, "4444"), INDEX), null);
+});
+
 test("權證:膠囊與持有文案", () => {
   assert.deepEqual(warrantChips(row(W_ROWS, "4444").warrants[A], WMETA), [{ text: "權證 認購 +320萬", side: "buy" }]);
   assert.deepEqual(warrantChips(row(W_ROWS, "1111").warrants[A], WMETA), [{ text: "權證 認購 −150萬", side: "sell" }]);
@@ -364,6 +382,12 @@ test("禁用詞不出現在任何文案", () => {
       ...warrantHeldLines(w, WMETA),
     ])),
     avgLine(100, 104.2) ?? "", avgLine(100, 96.9) ?? "", avgLine(100, 100) ?? "",
+    warrantStaleText({ ...INDEX, warrant: { ...WMETA, counted: false, complete: false } }) ?? "",
+    ...W_ROWS.flatMap((r) => [
+      warrantCoverageLine({ ...r, warrantPooled: false }, { ...INDEX, warrant: WMETA }) ?? "",
+      warrantCoverageLine(r, { ...INDEX, warrant: { ...WMETA, counted: false, complete: false } }) ?? "",
+      warrantCoverageLine(r, { ...INDEX, warrant: { ...WMETA, day: "2026-10-15", counted: false } }) ?? "",
+    ]),
   ];
   for (const t of texts) for (const w of banned) assert.ok(!t.includes(w), `「${t}」含禁用詞 ${w}`);
 });

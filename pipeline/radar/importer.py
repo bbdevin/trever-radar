@@ -2118,13 +2118,16 @@ def import_branch_trades(date: str | None = None, top: int = 80,
         elif not ids and warrant_turnover_min is not None:
             # The threshold pool deliberately replaces (rather than augments)
             # legacy --warrants, so one warrant can never be queued twice.
+            # 上市＋上櫃(2026-10-20,docs/47 §8.10、docs/52 §8):以前只抓 market='twse',上櫃
+            # 標的(例 雙鴻 3324,權證全在 tpex)當晚沒有權證分點列。來源頁同一條 zco URL、
+            # 不帶市場參數(market=all 的回補早就這樣抓),鏡像站與節流不變。
             targets += [r[0] for r in conn.execute(text(
                 "SELECT d.warrant_id FROM warrant_daily d "
                 "JOIN warrants w ON w.id = d.warrant_id "
                 "JOIN stocks s ON s.id = w.stock_id "
                 "AND s.type = 'stock' AND s.is_active = 1 "
                 "WHERE d.date = :d AND d.turnover >= :turnover_min "
-                "AND w.market = 'twse' AND w.kind IN ('call','put') "
+                "AND w.market IN ('twse', 'tpex') AND w.kind IN ('call','put') "
                 "ORDER BY d.turnover DESC, d.warrant_id ASC"),
                 {"d": iso_d, "turnover_min": warrant_turnover_min})]
         elif warrants > 0 and not ids:

@@ -3064,7 +3064,7 @@ def _export_branches(out: Path, engine, date: str):
             json.dumps(movers, ensure_ascii=False), encoding="utf-8")
 
 def _export_warrant_branches(out: Path, engine, date: str, base20: list[str], on_window=None):
-    """on_window(權證分點資料日, 逐日序列 {(標的, 券商): [[日, 認購, 認售]]}, 持有摘要):給自選特定分點
+    """on_window(權證分點資料日, 逐日序列 {(標的, 券商): [[日, 認購, 認售]]}, 持有摘要, conn):給自選特定分點
     (docs/52 §8)取一天用;不影響這裡寫出的任何檔。"""
     branches_dir = out / "branches"
     branches_dir.mkdir(exist_ok=True)
@@ -3126,7 +3126,7 @@ def _export_warrant_branches(out: Path, engine, date: str, base20: list[str], on
             stream.finish()
             pairs, daily_by_pair, under_last = scan.pairs, scan.daily, scan.under_last
             if on_window is not None:
-                on_window(bd1, daily_by_pair, stream.summaries)
+                on_window(bd1, daily_by_pair, stream.summaries, conn)
         stock_names = {r[0]: r[1] for r in conn.exec_driver_sql("SELECT id, name FROM stocks")} if pairs else {}
 
         # Keep the full-market contract strict.  Individual stock detail is

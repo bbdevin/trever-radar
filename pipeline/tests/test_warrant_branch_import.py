@@ -76,7 +76,7 @@ class WarrantBranchImportTests(unittest.TestCase):
                                          state_file=self.state, dry_run=True)
 
     def test_legacy_warrant_top_n_and_turnover_threshold_pool(self):
-        """Threshold mode is inclusive, active-stock TWSE call/put-only, and replaces Top-N."""
+        """Threshold mode is inclusive, active-stock TWSE+TPEx call/put-only, and replaces Top-N."""
         with db.get_engine().begin() as conn:
             conn.execute(schema.warrants.insert(), [
                 {"id": "BELOW", "name": "below", "market": "twse", "kind": "call", "stock_id": "1111"},
@@ -105,9 +105,10 @@ class WarrantBranchImportTests(unittest.TestCase):
             import_branch_trades("20260828", top=0, warrants=200, sleep_s=0,
                                  warrant_turnover_min=1_000_000)
         threshold_targets = [call.args[0] for call in fetch.call_args_list]
-        self.assertEqual(set(threshold_targets), {"CALL_EQ", "PUT_ABOVE", "TW_TO_TPEX"})
+        # 上櫃權證(TPEX_HIGH)也在夜間池裡(2026-10-20,docs/47 §8.10)
+        self.assertEqual(set(threshold_targets), {"TPEX_HIGH", "CALL_EQ", "PUT_ABOVE", "TW_TO_TPEX"})
+        self.assertEqual(len(threshold_targets), 4)
         self.assertNotIn("BELOW", threshold_targets)  # 999,999 is below the inclusive floor.
-        self.assertNotIn("TPEX_HIGH", threshold_targets)
         for excluded in ("ETF_HIGH", "INACTIVE_HIGH", "UNMAPPED_HIGH", "NULL_STOCK_HIGH"):
             self.assertNotIn(excluded, threshold_targets)
 

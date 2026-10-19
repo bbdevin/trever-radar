@@ -196,7 +196,7 @@ class BranchWatchWarrantExportTests(unittest.TestCase):
                 {"id": "030003", "name": "台積電統一5C牛01", "market": "twse", "kind": "bull", "stock_id": "2330"},
             ])
             conn.execute(schema.warrant_daily.insert(), [
-                {"warrant_id": w, "date": dt, "close": 1.0, "volume": 1, "turnover": 1000}
+                {"warrant_id": w, "date": dt, "close": 1.0, "volume": 1, "turnover": 2_000_000 if w == "030001" else 1000}
                 for w in ("030001", "030002", "030003") for dt in days
             ])
             upsert_branch_trades(conn, rows)
@@ -225,8 +225,13 @@ class BranchWatchWarrantExportTests(unittest.TestCase):
             _row("030001", AS_OF, "z1", "元大-西門(停)", 5000, 0),
         ])
         idx, shards, w = self._watch()
-        self.assertEqual(idx["warrant"], {"data_date": AS_OF, "day": AS_OF, "counted": True,
-                                          "min_amount": branch_watch.WARRANT_MIN_AMOUNT})
+        self.assertEqual(idx["warrant"], {"data_date": AS_OF, "day": AS_OF, "counted": True, "complete": True,
+                                          "min_amount": branch_watch.WARRANT_MIN_AMOUNT,
+                                          "pool_turnover_min": branch_watch.NIGHTLY_WARRANT_TURNOVER_MIN})
+        # 個股摘要第 6 欄:2330 當天有成交 ≥ 100 萬的認購 → 在夜間權證池(1);2317 沒有權證 → 0(權證:未收集)
+        s0 = shards[names_of(idx)["富邦-新店"][1]]
+        self.assertEqual(s0["stocks"]["2330"][5], 1)
+        self.assertEqual(s0["stocks"]["2317"][5], 0)
         fb = w["富邦-新店"]["2330"]
         self.assertEqual(fb[1:3], [6_000_000, None])
         # 認購仍持有成本 600 萬 ≥ docs/51 篩選門檻 → 帶持有估算
@@ -262,9 +267,54 @@ class BranchWatchWarrantExportTests(unittest.TestCase):
         ])
         idx, _shards, w = self._watch()
         self.assertEqual(idx["as_of"], DAYS[-3])
-        self.assertEqual(idx["warrant"], {"data_date": AS_OF, "day": DAYS[-3], "counted": True,
-                                          "min_amount": branch_watch.WARRANT_MIN_AMOUNT})
+        self.assertEqual(idx["warrant"], {"data_date": AS_OF, "day": DAYS[-3], "counted": True, "complete": True,
+                                          "min_amount": branch_watch.WARRANT_MIN_AMOUNT,
+                                          "pool_turnover_min": branch_watch.NIGHTLY_WARRANT_TURNOVER_MIN})
         self.assertEqual(w["富邦-新店"]["2330"][1], 2_000_000)
+
+
+    def test_incomplete_warrant_pool_not_counted(self):
+        # 權證那一段最後一輪 incomplete(有權證抓失敗)→ 列出但不算今天;之後一輪 ok → 算
+        self._seed_warrants([_row("030001", AS_OF, "a1", "富邦-新店", 3200, 0)])
+        with db.get_engine().begin() as conn:
+            conn.execute(schema.import_logs.insert(), [
+                {"run_at": "2026-10-16T19:48:00+08:00", "source": "fubon", "dataset": "branch_warrant_pool",
+                 "date": AS_OF, "rows": 10, "status": "incomplete", "error": "targets=3 done=2 empty=0 failed=1"}])
+        idx, _shards, w = self._watch()
+        self.assertEqual((idx["warrant"]["counted"], idx["warrant"]["complete"]), (False, False))
+        self.assertEqual(w["富邦-新店"]["2330"][1], 3_200_000)
+        with db.get_engine().begin() as conn:
+            conn.execute(schema.import_logs.insert(), [
+                {"run_at": "2026-10-16T22:44:00+08:00", "source": "fubon", "dataset": "branch_warrant_pool",
+                 "date": AS_OF, "rows": 10, "status": "ok", "error": "targets=3 done=3 empty=0 failed=0"}])
+        idx, _shards, _w = self._watch()
+        self.assertEqual((idx["warrant"]["counted"], idx["warrant"]["complete"]), (True, True))
+
+
+def names_of(idx):
+    return {b[0]: b for b in idx["branches"]}
+
+
+    def test_incomplete_warrant_pool_not_counted(self):
+        # 權證那一段最後一輪 incomplete(有權證抓失敗)→ 列出但不算今天;之後一輪 ok → 算
+        self._seed_warrants([_row("030001", AS_OF, "a1", "富邦-新店", 3200, 0)])
+        with db.get_engine().begin() as conn:
+            conn.execute(schema.import_logs.insert(), [
+                {"run_at": "2026-10-16T19:48:00+08:00", "source": "fubon", "dataset": "branch_warrant_pool",
+                 "date": AS_OF, "rows": 10, "status": "incomplete", "error": "targets=3 done=2 empty=0 failed=1"}])
+        idx, _shards, w = self._watch()
+        self.assertEqual((idx["warrant"]["counted"], idx["warrant"]["complete"]), (False, False))
+        self.assertEqual(w["富邦-新店"]["2330"][1], 3_200_000)
+        with db.get_engine().begin() as conn:
+            conn.execute(schema.import_logs.insert(), [
+                {"run_at": "2026-10-16T22:44:00+08:00", "source": "fubon", "dataset": "branch_warrant_pool",
+                 "date": AS_OF, "rows": 10, "status": "ok", "error": "targets=3 done=3 empty=0 failed=0"}])
+        idx, _shards, _w = self._watch()
+        self.assertEqual((idx["warrant"]["counted"], idx["warrant"]["complete"]), (True, True))
+
+
+def names_of(idx):
+    return {b[0]: b for b in idx["branches"]}
 
 
 class BranchWatchWarrantUnitTests(unittest.TestCase):

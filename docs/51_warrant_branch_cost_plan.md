@@ -1,6 +1,7 @@
 # 51 權證分點：左買右賣、持有成本與帳面估算 `wpos-avgcost-v1`
 
 > 版本：2026-10-12（Planner+Executor：Fable）。決策來源：使用者 2026-10-12「權證分點的 UI 我想要優化……分成左邊買超 右邊賣超……這個分點買的權證位置對應現股的平均價格多少……粗估現在賺多少……如果有一個大戶買了很多錢在這個股票的權證 如果現在賠很多 還沒賣 就代表我現在進場成本可以比他低……並優化手機畫面」；同日追加「大戶買進權證也幫我寫日期……兩三天進場也要寫」與「點進去該股票可以直接跳轉到該股票對應的分點權證詳細走勢那個頁籤」。
+> **資料涵蓋(2026-10-20 更新)**:夜間權證分點池(`daily-branches.sh` 權證段,`docs/47` §8.10)改為**上市＋上櫃**當天成交 ≥ 100 萬的認購／認售(以前只有上市;上櫃標的只有 `backfill-warrant-branches --market all` 晚幾天回補)。程式完成於分支、未合 main;合 main 前的上櫃標的仍是回補時程。
 > 治理前提：`docs/37` §7 2026-10-03 反轉已允許**平均成本法估算**損益（`docs/42` `pnl-avgcost-v1`）；本文件沿用同一套方法與誠實文案，不宣稱帳戶損益、不稱勝率、不給方向。KB2（反推庫藏股執行分點）與本文件無關，維持不實作。
 > 程式：`pipeline/radar/compute/warrant_position_est.py`（純函式）、`pipeline/radar/export/json_export.py::_export_warrant_branches`（串流接線）、`web/lib/warrantPositions.ts`、`web/lib/warrantDeepLink.ts`、`web/components/WarrantBranchPanel.tsx`、`web/components/WarrantSplitCard.tsx`、`web/components/WarrantHoldersList.tsx`、`web/app/branch/page.tsx`。測試：`pipeline/tests/test_warrant_position_est.py`、`pipeline/tests/test_warrant_branch_export.py`、`web/lib/warrantPositions.test.ts`、`web/lib/warrantDeepLink.test.ts`。
 
