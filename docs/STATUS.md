@@ -2,6 +2,15 @@
 
 > 單一進度真相。每完成一個里程碑就更新本檔。規格細節看各編號文件,別寫在這裡。
 
+## 2026-10-20 分點輪兩段式抓取:現股先上線、權證背景補(`docs/47` §8.10;程式完成於分支、未合 main、未上線;不動 crontab)
+
+- **為什麼**:10-19 一次抓 2,743 檔(≈1,960 股票 + ≈783 權證)18:31→19:47,第一段 20:02 才上線;使用者主要等的是現股分點,而權證一直排在抓取的最後 ~14 分鐘。
+- **做了什麼**:`import-branch-trades --phase {all,stocks,warrants}`(預設 all = 舊行為);`daily-branches.sh` 前景只抓股票池 → 寫入 → 評分 → **第一段上線**,權證池在股票抓完時於背景抓(子 shell 關 fd 9、留來源鎖、同一套確認空/checkpoint/SIGTERM/硬上限),第一段之後 `warrant_phase_finish` 收回來寫入,再算排行統計、第二段上線、完成標記。權證段任何失敗只 warn(權證頁錨在前一個有列的日子,自述資料日),不擋現股。股票段照舊寫 `branch`/`branch_coverage`(failed 現在只算股票,`docs/52` import_complete 不再被權證失敗誤判);權證段另記 `branch_warrant_pool`。22:30:股票(標記 ratio=1.0)與權證(`branch_warrant_pool` 最新一列 ok)各自判斷,兩段都完整才收工、只缺權證就只抓權證並在評分前寫入刷新上線。本輪中止時 EXIT trap 先 TERM 背景抓取(checkpoint 給下一輪續抓)。個股頁權證表空狀態文案改「尚無今日分點資料…約 20 分鐘後補上」。
+- **評分/多方榜**:不讀權證分點列(評分 `LENGTH=4`、權證分項讀成交;多方榜 v2 的輸入鍵不含 `active_warrants`),第一段與以前的第一段同義;排行統計在權證寫入之後算,第二段與紀錄版 r(t) 是同一份最終資料。
+- **驗證**:新 `test_daily_branches_two_phase.py`(**實際執行**腳本、stub 外界:第一段 deploy 早於權證抓完、權證寫入在統計之前、背景子 shell 沒有 fd 9、權證抓取 124/寫入 76 只 warn 且兩段照上線、股票不合格時背景抓取被 TERM、22:30 四種組合);`test_branch_crawl_parity.py` `TwoPhaseCrawl`(兩段寫入的 raw/branch_dim 與一口氣抓位元級相同、log 列、權證失敗不碰股票完成列、CLI 離開碼、續抓只接同段);既有鎖相位/計時/離開碼文字測試更新;pytest 全套 1831 passed。
+- **預估**:股票抓完 ~19:33 → **第一段 ~19:48(早 ~13–15 分)**;權證 ~19:48 抓完 → 第二段 ~20:11(早 ~13 分)。
+- **待人類**:合 main(VPS `sync_code` 即生效);第一個交易日依 `docs/47` §8.10「核對」grep 回填。換版當晚 22:30 會因為還沒有 `branch_warrant_pool` 列而多抓一次權證(~15 分)並刷新上線,一次性。
+
 ## 2026-10-19 Fugle 抓取搬出 export-json 的 DB 鎖(`docs/50` §3.1、`docs/44` §3.5;程式完成於分支、未合 main、未上線;不動 crontab)
 
 - **為什麼**:`export timing:` 的 `intraday` 段(spark_day 當日 1 分 K + 分K 補缺日,逐檔打 Fugle)在握 `/tmp/radar-db.lock` 時跑:14:05 輪 242 s、晚上第一次 export 71–122 s。

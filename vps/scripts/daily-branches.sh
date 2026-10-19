@@ -5,8 +5,12 @@
 # 第一輪先探測分點來源(probe-branch-day,每 ~5 分鐘**每站各**抽 12 檔),任一站連續兩次達門檻
 # 或到 20:30 才全量爬;爬是**五站平行、不握 DB 鎖、只抓不寫**(暫存檔),抓完再拿鎖
 # 照順序寫入、分級、評分、先上線(分點原始資料),再算分點排行統計、第二次上線。
+# 兩段式抓取(docs/47 §8.10,2026-10-20):先只抓**股票池**(~1,960 檔)、寫入、第一段上線;
+# **權證池**(~780 檔)在股票抓完之後於背景抓(與第一段上線重疊),第二段之前寫入。
+# 權證這一段失敗只 warn:權證頁自己標資料日(前一日),股票的上線不受影響。
 # 收工時若已過 21:00 順手匯入資券。
-# 22:30 由 crontab 設 BRANCH_ROUND_MODE=import:第一輪覆蓋率已是 100% → 直接收工;
+# 22:30 由 crontab 設 BRANCH_ROUND_MODE=import:第一輪覆蓋率已是 100% 且權證段 ok → 直接收工
+# (只缺權證 → 只抓權證、刷新上線);
 # 否則匯入,並在第一輪沒上線的日子接手完整鏈(該變數的名字比行為窄,見下面的說明)。
 # 融資融券主輪仍是 daily-margin(20:45 起輪詢;TWSE ~21:00 產製)。
 # 非交易日(今天沒有日K)兩輪都直接收工,不再重爬 2,672 檔。
@@ -65,8 +69,29 @@ ROUND_DATE="$(taipei_date +%F)"
 # 寫進資料庫之後刪;不合格那一支留著給第二輪續抓;別天的在開輪時清掉。.tmp 一律清。
 STAGE_FILE="/app/data/branch-stage-${ROUND_DATE}.json"
 STAGE_FILE_HOST="$REPO/data/branch-stage-${ROUND_DATE}.json"
+# 權證池(兩段式抓取的後段,docs/47 §8.10)自己一份暫存檔:續抓只接同一段(importer 比對 phase)。
+# 背景抓取的輸出先落 log 檔,收回來時加 `[warrants] ` 前綴倒進本輪 log(不與前景交錯)。
+WARRANT_STAGE_FILE="/app/data/branch-stage-${ROUND_DATE}-warrants.json"
+WARRANT_STAGE_FILE_HOST="$REPO/data/branch-stage-${ROUND_DATE}-warrants.json"
+WARRANT_FETCH_LOG="/tmp/radar-branch-warrant-fetch-${ROUND_DATE}.log"
+WARRANT_FETCH_RC="/tmp/radar-branch-warrant-fetch-${ROUND_DATE}.rc"
+WARRANT_FETCH_PID=""
+# 本輪不論怎麼結束(含 run_step_or_fail 中止、不合格 exit),背景的權證抓取都要先收掉:
+# 對 `timeout` 送 TERM(它轉給容器,CLI 寫 checkpoint 以 143 離開,下一輪從暫存檔續抓),等它結束,
+# 本輪才放掉分點來源鎖。不收的話它帶著來源鎖(fd 8)活過本輪,而 .tmp 會被下面的清理刪掉。
+warrant_fetch_stop() {
+  [ -n "$WARRANT_FETCH_PID" ] || return 0
+  if kill -0 "$WARRANT_FETCH_PID" 2>/dev/null; then
+    echo "warrant pool fetch: round is ending, stopping pid=${WARRANT_FETCH_PID} (its checkpoint is resumed next round)"
+    pkill -TERM -P "$WARRANT_FETCH_PID" 2>/dev/null || true
+    wait "$WARRANT_FETCH_PID" 2>/dev/null || true
+    sed 's/^/[warrants] /' "$WARRANT_FETCH_LOG" 2>/dev/null || true
+  fi
+  WARRANT_FETCH_PID=""
+}
 branch_stage_cleanup() {
-  rm -f "${STAGE_FILE_HOST}.tmp" 2>/dev/null || true
+  warrant_fetch_stop
+  rm -f "${STAGE_FILE_HOST}.tmp" "${WARRANT_STAGE_FILE_HOST}.tmp" 2>/dev/null || true
 }
 # ⚠️ 清理(trap 與 find)都在**拿到分點來源鎖之後**才做(見下面):鎖拿到之前,今天的
 # .tmp 可能正是還在抓的第一輪在寫的檔(2026-10-07 第二次驗證抓到的競賽)。
@@ -124,7 +149,7 @@ acquire_branch_source_lock_wait 5400
 trap 'branch_stage_cleanup' EXIT
 branch_stage_cleanup
 find "$REPO/data" -maxdepth 1 -name 'branch-stage-*.json*' ! -name "branch-stage-${ROUND_DATE}.json" \
-  -delete 2>/dev/null || true
+  ! -name "branch-stage-${ROUND_DATE}-warrants.json" -delete 2>/dev/null || true
 # 探測的連勝數檔(內容帶日期,別天的會被程式自己作廢;這裡只清 .tmp)。
 rm -f "$REPO/data/branch-probe-state-latest.json.tmp" 2>/dev/null || true
 acquire_db_lock_wait 3600
@@ -179,12 +204,30 @@ fi
 # 照舊重爬並刷新評分;沒有標記 → 照舊接手完整鏈。
 # 放在日K/法人與期貨當日**之後**:第二輪仍是期貨當日的最後一次重試,也要補晚到的法人。
 # (條件順序刻意把模式判斷放後面:測試以 `if [ "$BRANCH_ROUND_MODE" = "import" ]` 字面定位模式守衛。)
+# 兩段式抓取(docs/47 §8.10)之後,第二輪分兩段各自判斷:
+#   股票池:標記的 coverage_ratio=1.0 → 不再抓(STOCK_PHASE=0);否則照舊重抓。
+#   權證池:今天最新一次 branch_warrant_pool 匯入是 ok → 不再抓(WARRANT_PHASE=0);否則
+#           (第一輪的權證段失敗、被砍、有個別失敗,或第一輪根本沒走到)→ 抓。
+#   兩段都完整 → 直接收工(= 兩段式之前「覆蓋率 1.0 就收工」)。只缺權證 → 只抓權證、
+#   寫入,然後走「只刷新評分」那條路重新上線(標記一定在:ratio 來自標記)。
+# 第一輪與手動執行(非 import)兩段都抓。
 FIRST_ROUND_RATIO="$(branch_marker_coverage_ratio "$ROUND_DATE")"
+STOCK_PHASE=1
+WARRANT_PHASE=1
+if [ "$BRANCH_ROUND_MODE" != "import" ]; then
+  :
+elif branch_warrant_pool_ok "$ROUND_DATE"; then
+  WARRANT_PHASE=0
+fi
 if awk -v r="${FIRST_ROUND_RATIO:-0}" 'BEGIN { exit !(r + 0 >= 1) }' && [ "$BRANCH_ROUND_MODE" = "import" ]; then
-  echo "publish skipped: first round complete (coverage_ratio=${FIRST_ROUND_RATIO})"
+  STOCK_PHASE=0
+fi
+if [ "$STOCK_PHASE" = 0 ] && [ "$WARRANT_PHASE" = 0 ]; then
+  echo "publish skipped: first round complete (coverage_ratio=${FIRST_ROUND_RATIO}, warrant pool ok)"
   echo "=== daily-branches done $(taipei_date -Is) ==="
   exit 0
 fi
+echo "branch phases this round: stocks=${STOCK_PHASE} warrants=${WARRANT_PHASE} (mode=${BRANCH_ROUND_MODE})"
 # 指標:今天的早在 14:05/14:45/16:00 三輪算過(indicators_daily 有今天)→ 這裡失敗只 warn 續跑;
 # 今天的指標不在庫才中止(評分會缺技術分)。
 run_step_or_fail_unless "compute-indicators" round_indicators_present radar compute-indicators --all --days 5
@@ -224,6 +267,29 @@ branch_fetch_timeout() {
   left=$(( (dl_min - now_min) * 60 ))
   if [ "$left" -gt "$floor" ]; then echo "$left"; else echo "$floor"; fi
 }
+# 權證池的背景抓取(docs/47 §8.10):股票池抓完、寫入之前起跑,與「寫入 → 評分 → 第一段上線」
+# 重疊(那一段 ~15 分,權證 ~780 檔在五站 ~0.95 檔/s 下 ~14 分),第二段之前由
+# warrant_phase_finish 收回來寫入。同一條抓取路徑(五站、單站 5 秒、確認空、checkpoint、SIGTERM)。
+# * 不碰 DB 鎖:子 shell 第一件事 `exec 9>&-`——flock 鎖在 open file description 上,子程序
+#   留著 fd 9 的話,本輪結束後鎖還會掛在它身上(test_vps_lock_discipline 的同一個理由)。
+#   開跑時讀一次權證池(唯讀,WAL 下不擋寫入者;與以前抓取期間資券輪在寫是同一種並行)。
+# * 留著分點來源鎖(fd 8):它還在打鏡像站,鎖就該在。本輪結束時 warrant_fetch_stop 會收掉它。
+# * 硬上限同股票段(branch_fetch_timeout:最晚 23:00、至少 9000 秒)。
+warrant_fetch_start() {
+  rm -f "$WARRANT_FETCH_RC" 2>/dev/null || true
+  (
+    exec 9>&-
+    wrc=0
+    if run_step "fetch-warrant-branches" radar_timeout "$(branch_fetch_timeout)" import-branch-trades --date "${ROUND_DATE//-/}" --phase warrants --warrant-turnover-min 1000000 --sleep 1.0 --workers 5 --stage-to "$WARRANT_STAGE_FILE"; then
+      wrc=0
+    else
+      wrc=$?
+    fi
+    echo "$wrc" > "$WARRANT_FETCH_RC"
+  ) > "$WARRANT_FETCH_LOG" 2>&1 &
+  WARRANT_FETCH_PID=$!
+  echo "warrant pool fetch started in the background pid=${WARRANT_FETCH_PID} log=${WARRANT_FETCH_LOG}"
+}
 # 等待期間放掉 DB 鎖,只握著分點來源鎖;探測出錯 = 照舊直接爬。
 # 抓取(fetch-branch-trades):五站平行、每站一個 worker、單站間隔 = 1.0 × 5 = 5 秒
 # (單站節奏與循序輪替相同,來源負載不變),只抓不寫、結果落暫存檔(每 50 檔 checkpoint)。
@@ -246,9 +312,16 @@ if [ "$BRANCH_ROUND_MODE" != "import" ] && [ "${BRANCH_PROBE:-1}" != "0" ]; then
   fi
 fi
 # top=0: 當日有報價的全部 type=stock(不含 ETF),成交金額大的先抓。
+# --phase stocks:只抓股票池(docs/47 §8.10);權證池在下面另起背景抓取。
 # 全市場權證輪尚未通過容量/時間 PoC;過渡池只含標的是 active 普通股的
-# 上市認購/認售、當日成交金額至少 100 萬的權證。此模式取代 legacy --warrants Top-N,不能疊加。
-run_step_or_fail "fetch-branch-trades" radar_timeout "$(branch_fetch_timeout)" import-branch-trades --date "${ROUND_DATE//-/}" --top 0 --warrant-turnover-min 1000000 --sleep 1.0 --workers 5 --stage-to "$STAGE_FILE"
+# 上市認購/認售、當日成交金額至少 100 萬的權證(warrant_fetch_start)。取代 legacy --warrants Top-N。
+if [ "$STOCK_PHASE" = 1 ]; then
+  run_step_or_fail "fetch-branch-trades" radar_timeout "$(branch_fetch_timeout)" import-branch-trades --date "${ROUND_DATE//-/}" --top 0 --phase stocks --sleep 1.0 --workers 5 --stage-to "$STAGE_FILE"
+fi
+# 股票抓完(或本輪不抓股票)才開始抓權證:同一時間只有一條抓取在打鏡像站,單站節奏不變。
+if [ "$WARRANT_PHASE" = 1 ]; then
+  warrant_fetch_start
+fi
 acquire_db_lock_wait 3600
 
 # ── 寫入 + 分級:握著 DB 鎖,只要一兩分鐘 ─────────────────────────────────
@@ -275,11 +348,14 @@ acquire_db_lock_wait 3600
 # 註解一直在對抗的「把一個正常結果講成故障」,而警報疲勞的代價是真的故障被忽略。
 # 第二輪掉到地板以下才是要叫醒人的事:今天沒有任何一輪上線,而 00:05 的夜間作業
 # 只重算、不上線,所以網站要停在昨天的內容直到明天第一輪。
+# warrant_tail:權證段(warrant_phase_finish)沒寫進去時,誰會補。
 case "$BRANCH_ROUND_MODE" in
   import) unfit_pri="high"    ; unfit_kind="失敗"
-          unfit_tail="；今天沒有任何一輪上線,00:05 夜間作業會重算但不會上線" ;;
+          unfit_tail="；今天沒有任何一輪上線,00:05 夜間作業會重算但不會上線"
+          warrant_tail="今天沒有下一輪會再抓,權證分點停在前一日(要補就人工重跑本輪)" ;;
   *)      unfit_pri="default" ; unfit_kind="注意"
-          unfit_tail="；今天的第二輪(22:30)會在資料填齊後接手完整鏈" ;;
+          unfit_tail="；今天的第二輪(22:30)會在資料填齊後接手完整鏈"
+          warrant_tail="22:30 第二輪會重抓權證分點" ;;
 esac
 
 # 用 if/then/else 取離開碼,不用 `set +e; …; rc=$?; set -e`。兩者都拿得到碼,
@@ -297,21 +373,65 @@ esac
 # 每一種結果都已經有自己的通知(75 一般、76 high、不合格按輪次分級)。套上會
 # 自己發通知的 helper,等於每一次非零都先被 helper 報成「本輪中止」再走 case,
 # 同一件事送兩則、而且第一則對 75/76 是錯的(它們本來就繼續上線)。
-if run_step "import-branch-trades" radar import-branch-trades --from-stage "$STAGE_FILE"; then
-  branch_rc=0
-else
-  branch_rc=$?
+# 只缺權證的第二輪(STOCK_PHASE=0)跳過整段股票匯入與分級(股票早已完整寫入)。
+if [ "$STOCK_PHASE" = 1 ]; then
+  if run_step "import-branch-trades" radar import-branch-trades --from-stage "$STAGE_FILE"; then
+    branch_rc=0
+  else
+    branch_rc=$?
+  fi
+  case "$branch_rc" in
+    0) ;;
+    75) notify_warn "分點匯入有個別標的失敗（碼 75），當日覆蓋率仍在帶內，照常上線；次日第一輪會重抓" ;;
+    76) notify "分點來源本輪一筆都沒抓到（碼 76），當日資料沿用前一輪，仍照常上線" high "注意" ;;
+    *)  notify "分點匯入不合格（碼 ${branch_rc}），本輪不重算也不上線${unfit_tail}" \
+               "$unfit_pri" "$unfit_kind"
+        exit "$branch_rc" ;;
+  esac
+  # 寫進去了,暫存檔就功成身退(不合格那一支留著給第二輪續抓;容器以 root 寫,目錄是使用者的,刪得掉)。
+  rm -f "$STAGE_FILE_HOST" 2>/dev/null || true
 fi
-case "$branch_rc" in
-  0) ;;
-  75) notify_warn "分點匯入有個別標的失敗（碼 75），當日覆蓋率仍在帶內，照常上線；次日第一輪會重抓" ;;
-  76) notify "分點來源本輪一筆都沒抓到（碼 76），當日資料沿用前一輪，仍照常上線" high "注意" ;;
-  *)  notify "分點匯入不合格（碼 ${branch_rc}），本輪不重算也不上線${unfit_tail}" \
-             "$unfit_pri" "$unfit_kind"
-      exit "$branch_rc" ;;
-esac
-# 寫進去了,暫存檔就功成身退(不合格那一支留著給第二輪續抓;容器以 root 寫,目錄是使用者的,刪得掉)。
-rm -f "$STAGE_FILE_HOST" 2>/dev/null || true
+
+# ── 權證段收尾(docs/47 §8.10):等背景抓取、寫入;失敗一律只 warn ──────────────
+# 呼叫點:第一段上線之後、compute-branch-stats 之前(第一段上線**不等**權證);只刷新評分的
+# 第二輪則在 compute-scores 之前(它只上線一次,這一次就要帶著權證)。沒起背景抓取 → 什麼都不做。
+# 抓取還在跑 → 放 DB 鎖等(等鎖的資券輪可以先做),收回來再拿鎖寫入——與抓取相位同一個鎖序。
+# 抓取或寫入失敗 → warn 一則、不寫、不中止:權證頁的資料日錨在實際有列的最大日期(前一日),
+# 股票的分點、評分、排行統計都不讀權證分點列(LENGTH(stock_id)=4 / type='stock')。
+# 離開碼分級與股票段同義(0 / 75 個別失敗 / 76 一筆都沒有 / 其他),但沒有不合格這回事。
+warrant_phase_finish() {
+  local frc="" wrc=0
+  [ -n "$WARRANT_FETCH_PID" ] || return 0
+  if kill -0 "$WARRANT_FETCH_PID" 2>/dev/null; then
+    echo "warrant pool fetch still running pid=${WARRANT_FETCH_PID}: releasing the DB lock while waiting"
+    release_db_lock
+    wait "$WARRANT_FETCH_PID" 2>/dev/null || true
+    WARRANT_FETCH_PID=""
+    acquire_db_lock_wait 3600
+  else
+    wait "$WARRANT_FETCH_PID" 2>/dev/null || true
+    WARRANT_FETCH_PID=""
+  fi
+  sed 's/^/[warrants] /' "$WARRANT_FETCH_LOG" 2>/dev/null || true
+  frc="$(cat "$WARRANT_FETCH_RC" 2>/dev/null || true)"
+  if [ "${frc:-none}" != "0" ]; then
+    notify_warn "權證分點抓取未完成（碼 ${frc:-unknown}），今天的權證分點暫用前一日；${warrant_tail}"
+    return 0
+  fi
+  if run_step "import-warrant-branches" radar import-branch-trades --from-stage "$WARRANT_STAGE_FILE"; then
+    wrc=0
+  else
+    wrc=$?
+  fi
+  case "$wrc" in
+    0) ;;
+    75) notify_warn "權證分點有個別權證抓取失敗（碼 75），其餘已寫入；${warrant_tail}" ;;
+    76) notify_warn "權證分點這一段一筆都沒抓到（碼 76），今天的權證分點暫用前一日；${warrant_tail}" ;;
+    *)  notify_warn "權證分點寫入失敗（碼 ${wrc}），今天的權證分點暫用前一日；${warrant_tail}"
+        return 0 ;;
+  esac
+  rm -f "$WARRANT_STAGE_FILE_HOST" 2>/dev/null || true
+}
 
 # 以上(匯入 + 上面那個 case)是兩個模式共用的**同一份**實作:離開碼 0/75/76/其他
 # 的分級只寫在上面那一個 case 裡,絕不為了 import 模式複製第二份——兩份遲早會漂移,
@@ -354,10 +474,12 @@ if awk -v r="${COVERAGE_RATIO:-0}" -v m="$BRANCH_FAST_PUBLISH_MIN_RATIO" 'BEGIN 
 fi
 
 SCORES_REFRESH=0
+WARRANT_FINISH_BEFORE_SCORES=0
 if [ "$BRANCH_ROUND_MODE" = "import" ]; then
   if [ -s "$(branch_round_marker "$ROUND_DATE")" ]; then
     SCORES_REFRESH=1
     FAST_PUBLISH=1
+    WARRANT_FINISH_BEFORE_SCORES=1
     set_round_consequence "$REFRESH_CONSEQUENCE"
     # 只寫 log,不發成功通知:此刻什麼都還沒重算,成功通知在 deploy 之後才發。
     echo "本輪不重算分點統計（BRANCH_ROUND_MODE=import，今天第一輪已上線）：只以補齊的分點重算當日評分並重新上線"
@@ -393,6 +515,10 @@ fi
 # compute-scores 帶 $ROUND_DATE(跨午夜仍算資料日);compute-performance 不帶:它的預設模式是
 # 「補所有還缺 20 日報酬的列」,與日曆日無關,帶日期反而會縮成只補一天。
 # compute-indicators / compute-branch-stats / export-json / prune 都不看日曆日。
+# 只刷新評分的第二輪只上線這一次:權證段在評分之前收回來(compute-scores 本身不讀權證分點列)。
+if [ "$WARRANT_FINISH_BEFORE_SCORES" = 1 ]; then
+  warrant_phase_finish
+fi
 run_step_or_fail "compute-scores" radar compute-scores --date "${ROUND_DATE//-/}"
 run_step_or_fail "compute-performance" radar compute-performance
 # prune 與其他步驟同一個待遇(high + 中止),理由是**順序**:它排在第一段的 publish_site
@@ -411,13 +537,16 @@ if [ "$FAST_PUBLISH" = 1 ]; then
     echo "=== daily-branches done $(taipei_date -Is) ==="
     exit 0
   fi
-  notify_ok "分點籌碼已更新並上線（覆蓋率 ${COVERAGE_RATIO:-unknown}，含法人補抓）；分點排行統計約 25 分鐘後更新"
+  notify_ok "現股分點已更新並上線（覆蓋率 ${COVERAGE_RATIO:-unknown}，含法人補抓）；權證分點與分點排行統計約 25 分鐘後更新"
 else
   echo "fast publish skipped: coverage_ratio=${COVERAGE_RATIO:-unknown} < ${BRANCH_FAST_PUBLISH_MIN_RATIO}"
   notify_warn "分點覆蓋率 ${COVERAGE_RATIO:-unknown} 未達 ${BRANCH_FAST_PUBLISH_MIN_RATIO}，不先上線；算完分點排行統計後一併上線（第二輪會再補抓）"
 fi
 
-# ── 第二段:分點排行統計 → 上線 → 完成標記(第一段略過時這是本輪唯一一次上線)────
+# ── 第二段:權證段收尾 → 分點排行統計 → 上線 → 完成標記(第一段略過時這是本輪唯一一次上線)────
+# 權證先寫進去再算排行統計:compute-branch-stats 與第二段匯出看到的是與兩段式之前相同的
+# 最終資料(股票＋權證),完成標記、多方榜紀錄版(docs/48 §1.1,09:00 前最後一行)都是這一版。
+warrant_phase_finish
 run_step_or_fail "compute-branch-stats" radar compute-branch-stats
 publish_site
 # 只有走到這裡才算「整輪跑完」。夜間備援作業讀這個標記決定今晚要不要重算,

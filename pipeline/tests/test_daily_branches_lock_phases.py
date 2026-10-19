@@ -329,8 +329,55 @@ class LockPhasesInTheScript(unittest.TestCase):
         self.assertLess(release, fetch, "抓取前先放 DB 鎖")
         self.assertLess(fetch, reacquire, "抓取期間不拿鎖")
         self.assertLess(reacquire, commit, "寫入前重新拿鎖")
-        self.assertEqual(self.code.count("release_db_lock"), 1, "整輪只放一次鎖")
-        self.assertEqual(self.code.count("acquire_db_lock_wait"), 2, "開輪一次、寫入前一次")
+        # docs/47 §8.10:主流程只放一次鎖(抓股票);另一次在 warrant_phase_finish 裡——權證背景抓取
+        # 還沒結束時放鎖等、收回來再拿鎖寫入。開輪一次、股票寫入前一次、權證寫入前一次。
+        self.assertEqual(self.code.count("release_db_lock"), 2)
+        self.assertEqual(self.code.count("acquire_db_lock_wait"), 3)
+        fin = self._idx("warrant_phase_finish() {")
+        body = self.code[fin:self.code.index("\n}\n", fin)]
+        self.assertLess(body.index("release_db_lock"), body.index('wait "$WARRANT_FETCH_PID"'))
+        self.assertLess(body.index('wait "$WARRANT_FETCH_PID"'), body.index("acquire_db_lock_wait 3600"))
+        self.assertLess(body.index("acquire_db_lock_wait 3600"),
+                        body.index('radar import-branch-trades --from-stage "$WARRANT_STAGE_FILE"'),
+                        "權證寫入前一定握著 DB 鎖")
+
+    def test_warrant_fetch_runs_in_the_background_without_the_db_lock(self):
+        """§8.10:權證池在股票抓完之後、股票寫入之前於背景起跑;子 shell 先關 fd 9(flock 鎖在
+        open file description 上,帶著它就會讓鎖活過本輪);不放分點來源鎖(fd 8)。"""
+        start = self._idx("warrant_fetch_start() {")
+        body = self.code[start:self.code.index("\n}\n", start)]
+        sub = body[body.index("(\n"):]
+        first = next(ln.strip() for ln in sub.splitlines()[1:] if ln.strip())
+        self.assertEqual(first, "exec 9>&-", "子 shell 的第一件事是關 DB 鎖的 fd")
+        self.assertNotIn("exec 8>&-", body, "來源鎖跟著抓取走")
+        self.assertIn(") > \"$WARRANT_FETCH_LOG\" 2>&1 &", body)
+        self.assertIn('radar_timeout "$(branch_fetch_timeout)"', body, "權證段一樣有硬上限")
+        self.assertIn("--phase warrants --warrant-turnover-min 1000000", body)
+        self.assertIn('--stage-to "$WARRANT_STAGE_FILE"', body)
+        call = self.code.index("\n  warrant_fetch_start\n")
+        self.assertLess(self._idx('run_step_or_fail "fetch-branch-trades"'), call, "股票抓完才抓權證")
+        self.assertLess(call, self.code.index("acquire_db_lock_wait 3600", self._idx("release_db_lock")))
+        # 本輪怎麼結束都先收掉背景抓取(EXIT trap → branch_stage_cleanup → warrant_fetch_stop)。
+        cleanup = self.code[self._idx("branch_stage_cleanup() {"):]
+        self.assertIn("warrant_fetch_stop", cleanup[:cleanup.index("\n}\n")])
+        stop = self.code[self._idx("warrant_fetch_stop() {"):]
+        stop = stop[:stop.index("\n}\n")]
+        self.assertIn('pkill -TERM -P "$WARRANT_FETCH_PID"', stop)
+        self.assertIn('wait "$WARRANT_FETCH_PID"', stop)
+
+    def test_warrant_phase_is_finished_before_stats_and_before_scores_on_the_refresh_round(self):
+        stats = self._idx('run_step_or_fail "compute-branch-stats"')
+        first_publish = self._publish_calls()[0]
+        calls = [m.start() for m in re.finditer(r"(?m)^[ \t]*warrant_phase_finish$", self.code)]
+        self.assertEqual(len(calls), 2, "刷新輪(評分前)一次、其他(第一段上線後、統計前)一次")
+        self.assertLess(calls[0], self._idx('run_step_or_fail "compute-scores"'))
+        guard = self.code.rfind("\n", 0, calls[0])
+        self.assertIn('if [ "$WARRANT_FINISH_BEFORE_SCORES" = 1 ]; then',
+                      self.code[self.code.rfind("\n", 0, guard - 1):guard])
+        self.assertGreater(calls[1], first_publish, "第一段上線不等權證")
+        self.assertLess(calls[1], stats, "排行統計看到的是含權證的最終資料")
+        self.assertEqual(self.code[calls[1]:self.code.index("\n", calls[1])], "warrant_phase_finish",
+                         "第二個呼叫點在頂層、無條件")
 
     def test_fetch_is_bounded_and_writes_nothing(self):
         line = next(ln for ln in self.lines if 'run_step_or_fail "fetch-branch-trades"' in ln)
@@ -338,6 +385,8 @@ class LockPhasesInTheScript(unittest.TestCase):
         self.assertIn("--workers 5", line)
         self.assertIn('--stage-to "$STAGE_FILE"', line, "只抓不寫:結果落暫存檔")
         self.assertIn("--sleep 1.0", line, "全域間隔不變(單站 = 1.0 × 5 秒)")
+        self.assertIn("--top 0 --phase stocks", line, "§8.10:前景只抓股票池")
+        self.assertNotIn("--warrant-turnover-min", line, "權證池由背景那一段抓")
         commit = next(ln for ln in self.lines if "import-branch-trades --from-stage" in ln)
         self.assertNotIn("--workers", commit)
         self.assertNotIn("--sleep", commit, "寫入步驟不碰網路")

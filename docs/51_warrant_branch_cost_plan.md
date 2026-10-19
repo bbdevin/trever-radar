@@ -160,6 +160,8 @@ Agg = { lots, cost, buy_lots, sell_lots_attributed, sell_lots_unattributed, real
 - 修正後正式機（2026-10-13 00:34 手動 export，`97b9dc9`）：`wpos: rows=2167728 pairs=8166 stocks=517 json_kib=7203 summaries=1843 secs=52.7`——列數／配對／輸出與修正前一致，**1,306 s → 52.7 s**；整段 export 910 s（修正前同日他輪不含 wpos 約 847 s）。超過原訂 +15 s 預算，但不再佔鎖拖輪；若要再省，下一步是把持有估算併進逐日序列那次掃描。
 - **2026-10-15（分支，未合 main）**：區間彙總、逐日序列、持有估算三條窗口查詢合成**一次**掃描（`_WARRANT_WINDOW_SQL` / `_WarrantWindowScan`，計畫同本節修正後的持有估算查詢，沒有 TEMP JOIN），輸出逐位元不變；`wpos: secs=` 自此是整個窗口掃描的秒數。量測與等價理由見 `docs/44` §3.5。
 
+**更新時刻(2026-10-20,`docs/47` §8.10)**:晚上的分點輪改兩段式之後,當日權證分點在**第二段**(排行統計那次)才寫入並上線;第一段上線時本頁所有輸出照 `bd1` 錨在前一個交易日、自述資料日。權證段失敗時停在前一日,22:30 第二輪重抓。
+
 ## 6. 待人類／上線後
 
 1. 合 main → VPS 下一輪 export 自動產生 `positions` 與 `warrant_positions.json`；之前新前端讀舊分片只是沒有持有估算段。

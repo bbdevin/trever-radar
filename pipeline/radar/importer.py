@@ -1789,6 +1789,9 @@ def _confirm_empties(results: list[dict], targets: list[str], stats: dict, fetch
 BRANCH_STAGE_CHECKPOINT_EVERY = 50
 # 收到 SIGTERM 中止抓取時的離開碼(與 `timeout` 殺掉的 124 區分)。
 BRANCH_FETCH_STOPPED_EXIT = 143
+# import_branch_trades 的 ``phase``(docs/47 §8.10):all = 股票＋權證一起(舊行為);
+# stocks / warrants = 兩段式抓取的前段(先上線)與後段。
+BRANCH_PHASES = ("all", "stocks", "warrants")
 
 
 def _fetch_branch_targets(targets: list[str], date: str, sleep_s: float,
@@ -1943,8 +1946,9 @@ def _commit_branch_results(engine, results: list[dict]) -> tuple[int, int, int, 
 _STAGE_OUTCOMES = {"done", "empty", "failed", "pending"}
 
 
-def _load_branch_stage(path: Path, iso_d: str) -> dict | None:
-    """同一天**未完成**的暫存檔(續抓用);不存在、壞掉、不是這一天、形狀不對、或已完成 → None。
+def _load_branch_stage(path: Path, iso_d: str, phase: str = "all") -> dict | None:
+    """同一天**未完成**的暫存檔(續抓用);不存在、壞掉、不是這一天、不是同一段(``phase``)、
+    形狀不對、或已完成 → None。舊格式(沒有 ``phase`` 鍵)算 ``all``。
 
     續抓只接 ``complete=false``(被硬上限/SIGTERM 砍掉的那種)。已完成的暫存檔代表那一輪
     抓完了:寫入成功的會被腳本刪掉;留下來的是不合格(覆蓋率掉出地板)那一支——這時
@@ -1957,6 +1961,10 @@ def _load_branch_stage(path: Path, iso_d: str) -> dict | None:
     except (OSError, ValueError):
         return None
     if not isinstance(stage, dict) or stage.get("date") != iso_d:
+        return None
+    if stage.get("phase", "all") != phase:
+        print(f"branch stage {path}: phase {stage.get('phase', 'all')!r} != {phase!r}, ignored",
+              flush=True)
         return None
     if stage.get("complete", True):
         print(f"branch stage {path}: complete stage ignored, crawling everything again",
@@ -1991,8 +1999,21 @@ def import_branch_trades(date: str | None = None, top: int = 80,
                          min_market_fraction: float = 0.5,
                          workers: int = 1,
                          stage_to: str | os.PathLike | None = None,
-                         from_stage: str | os.PathLike | None = None) -> dict:
+                         from_stage: str | os.PathLike | None = None,
+                         phase: str = "all") -> dict:
     """富邦公開頁抓分點進出(每筆一請求,節流)。
+
+    ``phase``(docs/47 §8.10,兩段式抓取):
+    - ``all``(預設):股票池 + 權證池一起(改動前的行為,逐字不變)。
+    - ``stocks``:只有股票池(不接任何權證,``warrants`` 與 ``warrant_turnover_min`` 都不看)。
+      匯入記的 ``branch`` / ``branch_coverage`` 兩列與 ``all`` 同義,只是 failed 只算股票。
+    - ``warrants``:只有權證池(必須給 ``warrant_turnover_min``)。沒有覆蓋率閘門(權證不進
+      ``_branch_coverage``),匯入記一列 ``branch_warrant_pool``,**不寫** ``branch`` /
+      ``branch_coverage``(那兩列是股票池的完成與覆蓋率,docs/52 的 import_complete 與
+      daily-branches.sh 的 0.98 門檻都讀它們)。
+    暫存檔帶 ``phase``;續抓只接同一段的暫存檔,``--from-stage`` 依暫存檔的 ``phase`` 收尾。
+    兩段依序寫入(股票全部、再權證)時,寫進資料庫的列與 ``all`` 位元級相同
+    (``all`` 的目標順序本來就是股票在前、權證在後;test_branch_crawl_parity.py)。
 
     三種跑法(docs/47 §8):
     - 預設:抓完就寫(改動前的行為;``workers > 1`` 時抓的部分改成每站一個 worker)。
@@ -2032,12 +2053,16 @@ def import_branch_trades(date: str | None = None, top: int = 80,
         raise ValueError("warrant_turnover_min must be >= 0")
     if stage_to is not None and from_stage is not None:
         raise ValueError("stage_to and from_stage are exclusive")
+    if phase not in BRANCH_PHASES:
+        raise ValueError(f"phase must be one of {BRANCH_PHASES}")
+    if phase == "warrants" and from_stage is None and (ids or warrant_turnover_min is None):
+        raise ValueError("phase 'warrants' needs warrant_turnover_min and no ids")
 
     init_db()
     engine = get_engine()
 
     if from_stage is not None:
-        # 只寫不抓:目標清單、分母、結果全部來自暫存檔(與抓的那一步同一份)。
+        # 只寫不抓:目標清單、分母、結果、哪一段全部來自暫存檔(與抓的那一步同一份)。
         stage = json.loads(Path(from_stage).read_text(encoding="utf-8"))
         date = stage["date"].replace("-", "")
         iso_d = iso(date)
@@ -2045,8 +2070,11 @@ def import_branch_trades(date: str | None = None, top: int = 80,
         expected = int(stage["expected"])
         results = stage["results"]
         print(f"branch trades from stage {from_stage}: {len(targets)} targets, "
+              f"phase={stage.get('phase', 'all')}, "
               f"fetched at {stage.get('fetched_at')}, mirrors={stage.get('report', {}).get('mirrors')}",
               flush=True)
+        if stage.get("phase", "all") == "warrants":
+            return _finish_warrant_pool_import(engine, date, iso_d, targets, results)
         return _finish_branch_import(engine, date, iso_d, targets, expected, results,
                                      min_market_fraction)
 
@@ -2057,7 +2085,9 @@ def import_branch_trades(date: str | None = None, top: int = 80,
     iso_d = iso(date)
 
     with engine.connect() as conn:
-        if ids:
+        if phase == "warrants":
+            targets = []          # 只有權證池:股票那一段已經(或將會)由 phase=stocks 抓
+        elif ids:
             targets = ids
         elif top <= 0:
             # 成交金額大的先抓(docs/47 §8):抓到一半被硬上限砍掉時,留在暫存檔外的是
@@ -2083,7 +2113,9 @@ def import_branch_trades(date: str | None = None, top: int = 80,
         # 接在後面的權證不進 `_branch_coverage` 的分子(那邊 JOIN 了
         # `type='stock'`),所以把它們算進分母會靜默灌水,讓比例永遠偏低。
         expected = len(targets)
-        if not ids and warrant_turnover_min is not None:
+        if phase == "stocks":
+            pass                  # 只有股票池:權證留給 phase=warrants(docs/47 §8.10)
+        elif not ids and warrant_turnover_min is not None:
             # The threshold pool deliberately replaces (rather than augments)
             # legacy --warrants, so one warrant can never be queued twice.
             targets += [r[0] for r in conn.execute(text(
@@ -2106,15 +2138,18 @@ def import_branch_trades(date: str | None = None, top: int = 80,
         f"turnover_min={warrant_turnover_min}"
         if warrant_turnover_min is not None else f"warrants={warrants}"
     )
+    if phase == "stocks":
+        warrant_pool = "warrants=0 (phase=stocks)"
     print(f"branch trades pool: {len(targets)} targets "
-          f"(top={top}, {warrant_pool if not ids else 'warrants=0 (ids override)'})", flush=True)
+          f"(top={top}, {warrant_pool if not ids else 'warrants=0 (ids override)'}, "
+          f"phase={phase})", flush=True)
     t0 = time.monotonic()
     prior: dict[str, dict] = {}
     checkpoint = None
     stop: threading.Event | None = None
     old_handler = None
     if stage_to is not None:
-        existing = _load_branch_stage(Path(stage_to), iso_d)
+        existing = _load_branch_stage(Path(stage_to), iso_d, phase)
         if existing is not None:
             prior = {r["sid"]: r for r in existing["results"] if isinstance(r, dict)}
 
@@ -2122,7 +2157,7 @@ def import_branch_trades(date: str | None = None, top: int = 80,
             n_done = sum(1 for r in results if r["outcome"] == "done")
             n_empty = sum(1 for r in results if r["outcome"] == "empty")
             return {
-                "date": iso_d, "complete": complete,
+                "date": iso_d, "complete": complete, "phase": phase,
                 "fetched_at": datetime.now(ZoneInfo(config.TZ)).isoformat(timespec="seconds"),
                 "targets": list(targets), "expected": expected,
                 "results": list(results),
@@ -2163,9 +2198,40 @@ def import_branch_trades(date: str | None = None, top: int = 80,
             raise SystemExit(BRANCH_FETCH_STOPPED_EXIT)
         return {"staged": True, "path": str(stage_to), "done": n_done, "empty": n_empty,
                 "failed": n_failed, "targets": len(targets), "expected": expected,
-                "resumed": report.get("resumed", 0)}
+                "resumed": report.get("resumed", 0), "phase": phase}
+    if phase == "warrants":
+        return _finish_warrant_pool_import(engine, date, iso_d, targets, results)
     return _finish_branch_import(engine, date, iso_d, targets, expected, results,
                                  min_market_fraction)
+
+
+def _finish_warrant_pool_import(engine, date: str, iso_d: str, targets: list[str],
+                                results: list[dict]) -> dict:
+    """``phase=warrants`` 的收尾:照順序寫入 + 記**一列** ``branch_warrant_pool``。
+
+    不寫 ``branch`` / ``branch_coverage``:那兩列講的是股票池(覆蓋率、完成與否),
+    docs/52 的 ``import_complete``、daily-branches.sh 的第一段門檻與完成標記都讀它們;
+    權證不進 ``_branch_coverage`` 的分子,寫一列 expected=0 的覆蓋率只會讓
+    「最新一列」的讀者讀到假的比例。
+
+    權證沒有覆蓋率閘門(``fit`` 永遠 True):這一段的資料只影響權證分點頁,而權證頁的
+    資料日錨在實際有列的最大日期(json_export ``_export_warrant_branches`` 的 bd1),
+    沒寫進來的那一天頁面自己會說是前一天。狀態:ok = 一檔都沒失敗;incomplete = 有失敗;
+    error = 一檔都沒抓到(來源掛了)。daily-branches.sh 的 22:30 第二輪只在最新一列是
+    ok 時才不重抓權證。
+    """
+    done, empty, failed, written = _commit_branch_results(engine, results)
+    dead_feed = done == 0 and bool(targets)
+    status = "error" if dead_feed else ("incomplete" if failed else "ok")
+    note = (f"targets={len(targets)} done={done} empty={empty} failed={failed}")
+    with engine.begin() as conn:
+        _log(conn, "fubon", "branch_warrant_pool", date, written, status, error=note)
+    print(f"branch warrant pool {iso_d}: {done} ok, {empty} empty, {failed} failed, "
+          f"{written} rows → {status}", flush=True)
+    return {"done": done, "empty": empty, "failed": failed, "rows": written,
+            "status": status, "fit": True, "dead_feed": dead_feed,
+            "coverage": None, "expected": 0, "ratio": None,
+            "targets": len(targets), "phase": "warrants"}
 
 
 def _finish_branch_import(engine, date: str, iso_d: str, targets: list[str], expected: int,
