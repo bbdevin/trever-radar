@@ -86,7 +86,17 @@ fi
 # 不複製第二份——兩份會漂移,漂移的結果是某一次上線悄悄少做一步。
 # 裡面每一步都是 run_step_or_fail(失敗 high 通知 + 原碼 exit,函式內 exit 一樣結束整輪);
 # build_bull_board 是 warn-and-continue(見 lib.sh),不可包進 run_step_or_fail。
+#
+# 當日分時／分K 的 Fugle 抓取(docs/50 §3.1;lib.sh prefetch_intraday:放 DB 鎖抓進快取、再拿回鎖)
+# 每輪只做一次——第一次上線之前。第二段之前只多跑了 compute-branch-stats,它不改聯集的任何
+# 輸入(評分/行情/指標/權證),所以聯集與快取都與第一段相同;再放一次鎖只會讓等鎖的
+# 資券輪在兩段之間插隊。鎖序不變:握著分點來源鎖時放/拿 DB 鎖,與抓分點那一段相同。
+INTRADAY_PREFETCHED=0
 publish_site() {
+  if [ "$INTRADAY_PREFETCHED" = 0 ]; then
+    prefetch_intraday
+    INTRADAY_PREFETCHED=1
+  fi
   run_step_or_fail "export-json" radar export-json
   build_bull_board
   run_step_or_fail "deploy" deploy_data

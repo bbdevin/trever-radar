@@ -91,6 +91,15 @@ from ..compute.futures_volume_battery import (
     oi_change,
 )
 
+
+def export_fetch_from_env() -> bool:
+    """``RADAR_EXPORT_FETCH=1`` = export 自己打 Fugle(2026-10-19 以前的行為,回滾用;docs/50 §3.1)。
+    VPS 上由 lib.sh 從 vps/.env 帶進容器;未設 = 只讀 fetch-intraday 先抓好的快取。"""
+    import os
+
+    return os.environ.get("RADAR_EXPORT_FETCH", "").strip() == "1"
+
+
 # A2 strategy lifecycle export contract.  This is source-controlled metadata,
 # not a database migration and does not alter any score, selector data, or
 # historical reason code.  A new lifecycle decision must increment `version`.
@@ -1711,8 +1720,16 @@ def export_json(
     legacy_stocks: bool = False,
     verify_split: bool = False,
     size_report: Path | None = None,
+    fetch: bool | None = None,
+    union_only: bool = False,
 ) -> dict:
     """匯出全部前端 JSON。
+
+    ``fetch``(docs/50 §3.1,2026-10-19):Fugle 當日分時(spark_day)與 5 分 K 要不要在 export
+    裡抓。預設 ``None`` = 看環境變數 ``RADAR_EXPORT_FETCH``(``1`` = 抓,舊行為;其他 = 不抓、
+    只讀快取)。抓取改由 ``radar fetch-intraday`` 在 export 之前、不握 DB 鎖時做。
+    ``union_only=True``:只算出榜單聯集就回 ``{"date", "union"}``——不 init_db、不寫任何檔,
+    給 fetch-intraday 用(唯讀;聯集與 export 由**同一段程式**選出)。
 
     個股檔(docs/44 P1,§3.2)每檔寫三份:``stocks/core/{id}.json``、
     ``stocks/chips/{id}.json``、(聯集股)``stocks/hist/{id}.{hash}.json``;
@@ -1724,8 +1741,11 @@ def export_json(
     """
     t_start = time.perf_counter()
     out = Path(out_dir) if out_dir else DEFAULT_OUT
-    out.mkdir(parents=True, exist_ok=True)
-    init_db()
+    if fetch is None:
+        fetch = export_fetch_from_env()
+    if not union_only:
+        out.mkdir(parents=True, exist_ok=True)
+        init_db()
     engine = get_engine()
     with engine.connect() as conn:
         dates = [r[0] for r in conn.execute(text(
@@ -2069,14 +2089,17 @@ def export_json(
         for s in all_stocks:
             if s["state"] is not None:
                 union[s["id"]] = s
+        if union_only:
+            return {"date": d, "union": list(union)}
         for s in union.values():
             s["spark"] = [row[0] for row in conn.execute(text(
                 "SELECT close FROM (SELECT close, date FROM daily_prices "
                 "WHERE stock_id = :s AND close IS NOT NULL AND date <= :d "
                 "ORDER BY date DESC LIMIT 30) ORDER BY date"), {"s": s["id"], "d": d})]
         t_intraday = time.perf_counter()
-        attach_spark_day(union, d)
-        export_intraday_safe(out, union, d)  # 分K(docs/50):同一閘門、失敗只記 warning
+        # fetch=False(預設):只讀 fetch-intraday 先抓好的快取,export 握鎖期間不連 Fugle(docs/50 §3.1)
+        attach_spark_day(union, d, allow_fetch=fetch)
+        export_intraday_safe(out, union, d, fetch=fetch)  # 分K(docs/50):同一閘門、失敗只記 warning
         t_intraday = time.perf_counter() - t_intraday
 
         # ── 族群資金流(官方產業別;題材標籤之後人工維護再加) ──

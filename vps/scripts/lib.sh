@@ -194,11 +194,15 @@ radar_secret_env_new() {
   {
     printf 'RADAR_FINMIND_TOKEN=%s\n' "${RADAR_FINMIND_TOKEN:-}"
     printf 'FUGLE_API_KEY=%s\n' "${FUGLE_API_KEY:-}"
+    # 不是金鑰,只是開關(docs/50 §3.1):1 = export-json 自己打 Fugle(舊行為,回滾用)。
+    # 寫在 vps/.env(本檔開頭 set -a 載入)即對所有腳本生效,不必改 crontab。
+    printf 'RADAR_EXPORT_FETCH=%s\n' "${RADAR_EXPORT_FETCH:-}"
   } > "$RADAR_SECRET_ENV_FILE"
 }
 
 # 跑管線一個指令。容器內 /app = repo 根;第三個 -v 必掛,export-json 產物才會落地主機。
-# 只傳 RADAR_FINMIND_TOKEN / FUGLE_API_KEY 進容器(deploy 憑證留在主機,權限分離)。
+# 只傳 RADAR_FINMIND_TOKEN / FUGLE_API_KEY(+ 非機密開關 RADAR_EXPORT_FETCH)進容器
+# (deploy 憑證留在主機,權限分離)。
 # --init(docs/47 §8.7):容器內 python 是 PID 1,沒有 init 時 SIGTERM 會被核心忽略——
 # `timeout --signal=TERM` 只殺得掉 docker CLI,容器裡的爬蟲變孤兒、沒人握來源鎖還在打
 # 鏡像站(2026-10-07 驗證者抓到)。--init 讓 tini 當 PID 1 轉送 SIGTERM;docker run 前景
@@ -399,6 +403,68 @@ acquire_db_lock_wait() {
   fi
   notify "資料庫鎖等滿 ${secs} 秒仍未釋放（前一輪疑似卡住），本輪未執行" high "失敗"
   exit 0
+}
+
+# ── Fugle 抓取不握 DB 鎖(docs/50 §3.1,2026-10-19)──────────────────────────
+#
+# 以前 export-json 在握著 DB 鎖時逐檔打 Fugle(spark_day 當日分時 + 分K 缺日):正式機
+# 14:05 那輪 242 s、晚上第一次 export 71–122 s。現在 export 預設只讀快取,抓取由
+# `radar fetch-intraday` 在 export **之前**、**放掉 DB 鎖**時做:
+#
+#   ... compute-scores / import-index(握鎖)→ prefetch_intraday → export-json(握鎖)
+#   prefetch_intraday = release_db_lock → fetch-intraday → acquire_db_lock_wait
+#
+# * 聯集:fetch-intraday 用 export 同一段程式唯讀選出(本輪 compute 之後的 DB),所以 export
+#   看到的就是它自己會抓的那一批。放鎖的 1–4 分鐘裡若有別的寫入者(等鎖的下一輪)插進來,
+#   它的 export 會帶著本輪已寫入的資料上線;本輪 export 拿回鎖後聯集若多出幾檔,那幾檔
+#   只是沿用舊快取(與以前抓失敗相同),下一輪補。
+# * 失敗/逾時:warn 一則、照常 export(用較舊的快取)——與以前在 export 裡抓失敗相同。
+# * 並行:抓取彼此用 $INTRADAY_FETCH_LOCK_FILE 排隊(fd 6;兩輪同時抓會把 Fugle 速率疊成兩倍、
+#   且 spark_day.json 讀-併-寫會互蓋)。export 不抓時快取**唯讀**、快取檔都是 tmp+rename,
+#   所以一輪在抓、另一輪在 export 不會讀到半個檔、也不會蓋掉對方新抓的。
+#   鎖序:抓取鎖只在**不握 DB 鎖**時拿、拿回 DB 鎖之前就放,不可能與 DB 鎖互等。
+# * fd 9 全程開著(只 flock -u):`fuser /tmp/radar-db.lock` 仍看得到本輪,mid-backfill-publish
+#   照舊略過、bf-cron-guard 照舊暫停回補容器(與分點輪抓取相位同一個保守行為)。
+# * 回滾:RADAR_EXPORT_FETCH=1(vps/.env 或 crontab 前綴)→ 本函式不放鎖、不抓,export 自己抓。
+INTRADAY_FETCH_LOCK_FILE="${INTRADAY_FETCH_LOCK_FILE:-/tmp/radar-intraday-fetch.lock}"
+INTRADAY_FETCH_LOCK_WAIT_SECS="${INTRADAY_FETCH_LOCK_WAIT_SECS:-900}"
+FETCH_INTRADAY_TIMEOUT_SECS="${FETCH_INTRADAY_TIMEOUT_SECS:-900}"
+PREFETCH_RELOCK_WAIT_SECS="${PREFETCH_RELOCK_WAIT_SECS:-3600}"
+
+# 抓取本體:先排隊拿抓取鎖(等滿 → 75,不抓),再跑有硬上限的 fetch-intraday。
+fetch_intraday_queued() {
+  local rc=0
+  exec 6>"$INTRADAY_FETCH_LOCK_FILE"
+  if ! flock -w "$INTRADAY_FETCH_LOCK_WAIT_SECS" 6; then
+    exec 6>&-
+    echo "fetch-intraday: ${INTRADAY_FETCH_LOCK_FILE} still held after ${INTRADAY_FETCH_LOCK_WAIT_SECS}s, not fetching"
+    return 75
+  fi
+  radar_timeout "$FETCH_INTRADAY_TIMEOUT_SECS" fetch-intraday || rc=$?
+  exec 6>&-
+  return "$rc"
+}
+
+# 呼叫端:握著 DB 鎖、在 export-json 之前裸呼叫(不包 run_step_or_fail;永遠 return 0)。
+# 回來時一定握著 DB 鎖;等滿 $PREFETCH_RELOCK_WAIT_SECS 仍拿不回 → acquire_db_lock_wait 的
+# high 通知 + exit 0(與分點輪抓完要寫入時同一個處置)。
+prefetch_intraday() {
+  local rc=0
+  if [ "${RADAR_EXPORT_FETCH:-}" = "1" ]; then
+    echo "fetch-intraday skipped: RADAR_EXPORT_FETCH=1 (export-json fetches inside the DB lock)"
+    return 0
+  fi
+  release_db_lock
+  if run_step "fetch-intraday" fetch_intraday_queued; then
+    :
+  else
+    rc=$?
+  fi
+  if [ "$rc" -ne 0 ]; then
+    notify_warn "當日分時／分K 抓取未完成（碼 ${rc}），本輪照常匯出，分時與分K沿用較舊的快取" || true
+  fi
+  acquire_db_lock_wait "$PREFETCH_RELOCK_WAIT_SECS"
+  return 0
 }
 
 # poll_until LABEL DEADLINE_HHMM INTERVAL_SEC CMD...

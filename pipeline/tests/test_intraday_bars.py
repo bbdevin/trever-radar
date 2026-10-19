@@ -319,7 +319,9 @@ class IsolationTests(unittest.TestCase):
 
     def test_json_export_calls_safe_wrapper_once(self):
         src = (Path(ib.__file__).parent / "json_export.py").read_text(encoding="utf-8")
-        self.assertEqual(src.count("export_intraday_safe(out, union, d)"), 1)
+        # docs/50 §3.1:export 帶 fetch 開關(預設不抓,只讀 fetch-intraday 先抓好的快取)。
+        self.assertEqual(src.count("export_intraday_safe(out, union, d, fetch=fetch)"), 1)
+        self.assertEqual(src.count("attach_spark_day(union, d, allow_fetch=fetch)"), 1)
         self.assertNotIn("update_intraday(", src)
 
 

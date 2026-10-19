@@ -881,8 +881,19 @@ def cmd_export_json(args):
         legacy_stocks=args.legacy_stocks,
         verify_split=args.verify_split,
         size_report=args.size_report,
+        fetch=True if args.fetch else None,
     )
     print(f"exported {info['stocks']} stocks for {info['date']} -> {info['out']}")
+
+
+def cmd_fetch_intraday(args):
+    """docs/50 §3.1:export 之前、不握 DB 鎖把 spark_day/分K 抓進快取。有一段失敗 → exit 1
+    (VPS 腳本 warn 一則、照常 export,export 用較舊的快取)。"""
+    from .export.intraday_prefetch import prefetch_intraday
+
+    stats = prefetch_intraday(args.out)
+    if not stats["ok"]:
+        sys.exit(1)
 
 
 def cmd_export_intraday(args):
@@ -1463,7 +1474,19 @@ def main(argv=None):
                      help="assert core+hist+chips merge back to the single payload for every stock")
     exp.add_argument("--size-report", default=None, metavar="PATH",
                      help="write per-key size distribution (union vs other) to PATH")
+    # docs/50 §3.1(2026-10-19):Fugle 抓取預設不在 export 裡做(改由 fetch-intraday 在 export 前、
+    # 不握 DB 鎖時做),export 只讀快取。--fetch 或環境變數 RADAR_EXPORT_FETCH=1 = 舊行為(回滾)。
+    exp.add_argument("--fetch", action="store_true",
+                     help="fetch Fugle spark_day/5-min bars inside the export (pre-2026-10-19 "
+                          "behaviour; same as RADAR_EXPORT_FETCH=1). Default: read the caches only")
     exp.set_defaults(fn=cmd_export_json)
+
+    fid = sub.add_parser("fetch-intraday",
+                         help="fetch Fugle spark_day + 5-min bars for the export union into the "
+                              "data/ caches, without writing any export file (run before "
+                              "export-json, outside the DB lock; docs/50)")
+    fid.add_argument("--out", default=None, help="export dir (default web/public/data); nothing is written there")
+    fid.set_defaults(fn=cmd_fetch_intraday)
 
     eid = sub.add_parser("export-intraday",
                          help="5-min K bars for the radar.json union -> stocks/intraday/ (docs/50)")

@@ -296,6 +296,18 @@ home/stocks.json       {version:1, data_date, generated_at, stocks:[逐檔投影
   - **較大一步**:第二段只重算 chips 的 `branch_tags`、core 的 `pocket_*` 與 radar/home、branches 三份,其餘沿用第一段的檔。省下大半個 export(~600 s),但要把「哪些輸出依賴哪些表」寫成可測的清單並逐位元比對兩段;改動面大,建議等本節上線、新計時看清楚後再議。
   - 兩者都會動 `vps/scripts/daily-branches.sh` 的上線流程,屬「仍須人工確認」範圍,這裡只提案。
 
+**Fugle 抓取搬出 DB 鎖(2026-10-19;程式在分支,未合 main;詳見 `docs/50` §3.1)**:新計時(2026-10-15 起的 `export timing:`)看得出 `intraday` 段(spark_day 當日 1 分 K + 分K 補缺日,逐檔打 Fugle)是握鎖時間裡唯一的網路等待:14:05 輪 242 s、晚上第一次 export 71–122 s、沒東西可抓時 ~5 s(整個 export 660–973 s)。現在各日更輪在 export 前一步放 DB 鎖跑 `radar fetch-intraday`(唯讀選聯集 → 抓進 `data/spark_day.json`、`data/intraday5/`),export 預設只讀快取。同一個快取狀態下輸出逐位元相同(`test_intraday_prefetch.py`)。
+
+| 輪 | 以前 export 裡的 intraday 段 | 預估每輪少握鎖 | 這輪多出來的牆鐘時間(不握鎖) |
+|---|---|---|---|
+| 14:05 daily-market(當天第一次抓,~150–200 檔分時 + 新進聯集補缺日) | 242 s | **~235 s**(該輪 export 少約 235 s) | fetch-intraday 的聯集選取(與 export 開頭同一段唯讀查詢,`radar` 段的一部分)+ 容器啟動,估 20–60 s;分時/分K 本身的 ~240 s 只是從鎖內搬到鎖外 |
+| 16:30 分點輪第一次上線(晚上第一次 export) | 71–122 s | **~65–115 s** | 同上 20–60 s |
+| 14:45 / 16:00 / 20:45、分點輪第二段 | ~5 s(只有新進聯集的幾檔) | ~0–20 s | 同上;分點輪第二段不再抓(每輪只在第一次上線前抓一次) |
+
+- 合計一個交易日約少握 **~5–6 分鐘**的 DB 鎖,主要在 14:05(上櫃輪 14:45 起等鎖時最直接受益)與分點輪第一段(20:45 資券輪等鎖)。
+- 代價:每輪多一次聯集選取(不握鎖)與一次放/拿鎖。放鎖的 1–4 分鐘裡等鎖的下一輪可能先跑——它的 export 一樣帶著本輪已寫入的資料上線;本輪 export 因此晚一點。`flock -n` 型的伺機寫入者(warrant-backfill、adjust-*、repair-window)都先問安靜窗/距下一個排程寫入者,與既有的輪詢放鎖、分點抓取放鎖是同一種暴露,沒有新增種類。
+- 以第一個交易日的 `step fetch-intraday … elapsed=` 與 `export timing: … intraday=` 回填本表。
+
 ## 4. 明確不做
 
 - 不換 DB 引擎、不引入任何需綁卡或常駐服務(Postgres、D1、R2、KV、SSR)。

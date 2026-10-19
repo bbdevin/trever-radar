@@ -130,6 +130,8 @@ fi
 # 其餘非 0 已經自己發 high 並帶原碼中止。以下各步才是原本裸呼叫、失敗沒聲音的部分。
 run_step_or_fail "compute-scores" radar compute-scores
 run_step_or_fail "compute-performance" radar compute-performance
+# 當日分時／分K 的 Fugle 抓取:放 DB 鎖抓進快取,再拿回鎖 export(docs/50 §3.1;lib.sh)。
+prefetch_intraday
 run_step_or_fail "export-json" radar export-json
 build_bull_board
 run_step_or_fail "deploy" deploy_data

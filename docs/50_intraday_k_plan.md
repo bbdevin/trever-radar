@@ -1,7 +1,8 @@
 # 50 個股分K(5/30/60 分)MVP
 
 > 狀態:**程式完成於分支(2026-10-09),未合 main、未上線**。規劃 = Fable MVP 計畫,使用者已核准。
-> 動 `pipeline/radar/export/intraday_bars.py`、`providers/fugle.py`、`web/lib/resample.ts`、`web/components/KChart.tsx` 的分K部分前先讀本檔。
+> 2026-10-19:Fugle 抓取搬出 export-json(放 DB 鎖時由 `radar fetch-intraday` 抓進快取,export 只讀快取),見 §3.1;程式在分支,未合 main。
+> 動 `pipeline/radar/export/intraday_bars.py`、`intraday_prefetch.py`、`spark_day.py`、`vps/scripts/lib.sh` 的 `prefetch_intraday`、`providers/fugle.py`、`web/lib/resample.ts`、`web/components/KChart.tsx` 的分K部分前先讀本檔。
 
 ## 1. 範圍
 
@@ -22,7 +23,7 @@
 
 | 項目 | 定案 |
 |---|---|
-| 呼叫點 | `json_export` 在 `attach_spark_day(union, d)` 下一行 `export_intraday_safe(out, union, d)`;同一個「台北今天 = 價格日」閘門才打 Fugle,其餘輪只用快取重寫/到期刪檔 |
+| 呼叫點 | `json_export` 在 `attach_spark_day(union, d, allow_fetch=fetch)` 下一行 `export_intraday_safe(out, union, d, fetch=fetch)`;**2026-10-19 起 export 預設 `fetch=False`,只讀快取**,抓取搬到 export 之前的 `radar fetch-intraday`(§3.1)。抓取仍是同一個「台北今天 = 價格日」閘門;其餘輪只用快取重寫/到期刪檔 |
 | 隔離 | `export_intraday_safe` 任何例外只記 warning(`intraday bars export failed; previous files kept`),不中斷 export;舊檔保留 |
 | 快取 | `DATA_DIR/intraday5/{id}.json` = `{id, days:{日期: bars}}`;`[]` = 問過、那天真的沒有(停牌/未上市),不再重問;**最新交易日例外**,沒拿到下輪再問 |
 | 保留 | 交易日取 `daily_prices` 最近 60 個日期;視窗外的日子從快取與輸出一起裁掉 |
@@ -32,6 +33,32 @@
 | 每輪 log | `intraday: union= requests= fetched_days= today= written= files= deleted= cap= fetch=`;第一次抓到歷史時另印 `intraday label check …` 一行(§4) |
 
 CLI:`radar export-intraday [--out DIR] [--backfill]` —— 讀 `--out`(預設 `web/public/data`)底下 `radar.json` 的聯集與資料日,補抓並重寫;`--backfill` 不設每輪上限。歷史端點任何日子都能抓,所以 CLI 不套「今天 = 價格日」閘門。
+
+### 3.1 抓取與寫檔分開:Fugle 不在 DB 鎖裡打(2026-10-19;程式在分支,未合 main)
+
+**問題**:export-json 全程握 `/tmp/radar-db.lock`,而 spark_day(當日 1 分 K)與分K 補缺日(historical 5 分 K)都在 export 裡逐檔打 Fugle。正式機 `export timing:` 的 `intraday` 段:14:05 那輪 **242 s**、晚上第一次 export **71–122 s**、沒東西可抓時 ~5 s(整個 export 660–973 s)。這段時間別的輪次在等鎖,而它只需要「聯集是哪些股票」。
+
+**新流程**(每一支日更輪,`vps/scripts/lib.sh` 的 `prefetch_intraday`,裸呼叫在 `export-json` 的前一行):
+
+```
+… compute-scores / import-index(握鎖)
+→ release_db_lock
+→ radar fetch-intraday           (不握鎖;硬上限 900 s;抓取之間排隊 /tmp/radar-intraday-fetch.lock)
+     聯集:export_json(union_only=True)——與 export **同一段程式**唯讀選出,不 init_db、不寫檔
+     spark_day:attach_spark_day(閘門/金鑰/節流不變)→ data/spark_day.json(現在 tmp+rename)
+     分K:update_intraday(write_out=False)——用這一輪的 1 分 K 聚當日、補缺日(每輪 ≤120 次)→ data/intraday5/
+→ acquire_db_lock_wait 3600
+→ radar export-json             (fetch=False:只讀兩個快取、快取唯讀;寫輸出與到期刪檔照舊)
+```
+
+- 五支輪:14:05 `daily-market`、14:45 `daily-tpex-quotes`、16:00 `daily-insti`、20:45 `daily-margin`、16:30/22:30 `daily-branches`(兩段式上線只在**第一次**上線前抓一次:第二段前只多了 compute-branch-stats,不改聯集的任何輸入)。
+- **新鮮度不變**:聯集是在本輪 compute 之後、export 之前從同一個 DB 選的,所以 export 用到的正是它自己會抓的那一批;請求的檔、順序、次數與以前在 export 裡抓完全相同(同一組函式、同一個 120 次上限、同一個 fugle 節流 ~57 次/分 + 429 退避)。
+- **等價**:同一個快取狀態下,「fetch-intraday → export(fetch=False)」與「export(fetch=True)」的每一個輸出檔與快取逐位元相同(`generated_at` 除外),見 `pipeline/tests/test_intraday_prefetch.py`(假 Fugle,含分時失敗與歷史失敗的檔)。
+- **失敗**:fetch-intraday 任何一段丟例外 → exit 1 → 腳本 `notify_warn` 一則、照常 export(用較舊的快取),與以前在 export 裡抓失敗的結果相同;逾時(124)、排隊等滿(75)同樣只 warn。拿不回 DB 鎖(等滿 3600 s)→ 與分點輪寫入前同一個處置:high 通知、本輪不上線。
+- **並行與競賽**:放鎖的 1–4 分鐘裡,等鎖的下一輪可能先拿到鎖跑完(它的 export 帶著本輪已寫入的資料上線,不是壞事);本輪拿回鎖時聯集若因此多出幾檔,那幾檔只是沿用舊快取,下一輪補。兩輪同時抓會把 Fugle 速率疊成兩倍、`spark_day.json` 讀-併-寫互蓋 → 抓取彼此以 `/tmp/radar-intraday-fetch.lock`(fd 6,`flock -w 900`)排隊。一輪在抓、另一輪在 export:export 不抓時**不寫快取**(以前非今天的輪會把裁過 60 日視窗的快取寫回,可能蓋掉並行抓取剛寫的),而兩個快取檔都是 tmp+rename,讀不到半個檔。鎖序:抓取鎖只在不握 DB 鎖時拿、拿回 DB 鎖前就放,不會與 DB 鎖互等;分點輪是握著分點來源鎖放/拿 DB 鎖,與抓分點那一段同一個順序。fd 9 全程開著(只 `flock -u`),`fuser /tmp/radar-db.lock` 仍看得到本輪:mid-backfill-publish 照舊略過、bf-cron-guard 照舊暫停回補容器。
+- **沒接的 export 呼叫者**:00:05 夜間、mid-publish、週六 TDCC、月董監、手動 catchup/backfill 腳本不加這一步,export 也不再抓——它們除了「交易日 20:00 的 mid-publish(現在無回補容器時是 noop)」與「當天手動補跑」之外,跑的時候台北今天 ≠ 價格日,以前本來就不抓。要補就先手動 `radar fetch-intraday`。
+- **回滾**:`RADAR_EXPORT_FETCH=1`(寫進 `vps/.env`,lib.sh `set -a` 載入並經 `--env-file` 帶進容器;或 crontab 前綴)→ `prefetch_intraday` 不放鎖、不抓,export 自己抓(= 改動前)。單次手動:`radar export-json --fetch`。
+- **log**:`step fetch-intraday start/done rc= elapsed=`、`fetch-intraday: date= today= union= spark_day= intraday={requests,fetched_days,today} ok=`;export 那一輪的 `intraday:` 行多 `cache=read-only`,`spark_day:` 行多 `fetch=off`。`export timing:` 的 `intraday=` 應從 71–242 s 掉到 ~5 s 以下(只剩讀快取+寫檔)。
 
 ## 4. 第一次正式跑要核對的事(Fugle 實際回應)
 
@@ -74,7 +101,7 @@ CLI:`radar export-intraday [--out DIR] [--backfill]` —— 讀 `--out`(預設 `
 ## 7. VPS 上線步驟(待人類)
 
 1. 合 main(Pages 先上前端;沒有資料時選分K一律顯示「此股未提供分K」,不壞)。
-2. VPS `git pull` 後,第一次回補(可選;不跑的話交易日的 export 每輪自動補 120 檔,當天幾輪就補完):
+2. VPS `git pull` 後,第一次回補(可選;不跑的話交易日每輪 export 前的 fetch-intraday(§3.1)自動補 120 檔,當天幾輪就補完):
    ```bash
    docker run … radar-pipeline python -m radar export-intraday --backfill   # ~275 次請求 ≈ 5 分鐘
    ```

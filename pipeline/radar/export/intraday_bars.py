@@ -17,6 +17,11 @@
 才刪檔(榜單每天進出,不讓檔案跟著閃)。
 
 這一步在 export 裡**隔離**:``export_intraday_safe`` 任何例外只記 warning,不中斷整輪 export。
+
+抓取與寫檔分開(2026-10-19,docs/50 §3.1):``radar fetch-intraday``(``intraday_prefetch``)在
+**不握 DB 鎖**時更新快取(``write_out=False``,不寫輸出、不刪檔);export 預設只讀快取
+(``fetch=False``:不打 Fugle、**也不寫快取**——快取只有抓取那一步寫,並行的抓取不會被
+export 用舊內容蓋掉),由快取寫輸出與到期刪檔。``RADAR_EXPORT_FETCH=1`` = 舊行為。
 """
 from __future__ import annotations
 
@@ -194,11 +199,15 @@ def update_intraday(
     fetch_hist: Callable[[str, str, str], list[dict] | None] | None = None,
     cdir: Path | None = None,
     label: str = FUGLE_HIST_LABEL,
+    write_out: bool = True,
+    save: bool = True,
 ) -> dict:
     """更新快取並寫 ``out/stocks/intraday/{id}.json``。回傳統計(也印一行 log)。
 
     ``cap=None`` 不設上限(``export-intraday --backfill``)。``fetch_hist`` 缺省時用 Fugle
     (沒有 ``FUGLE_API_KEY`` 就不抓)。``minute_rows_by_id`` 缺省時讀 spark_day 這一輪抓到的 1 分 K。
+    ``write_out=False``:只更新快取(fetch-intraday),不寫輸出檔、不做到期刪檔。
+    ``save=False``:快取唯讀(export 不抓時),輸出照樣由記憶體裡同一份 days 寫出。
     """
     union = list(dict.fromkeys(union_ids))
     cdir = cdir or cache_dir()
@@ -255,9 +264,11 @@ def update_intraday(
                     elif d < latest:
                         days[d] = []   # 問過、真的沒有;最新一天不記,下輪再問
 
-        if dumps_compact(dict(sorted(days.items()))) != before:
+        if save and dumps_compact(dict(sorted(days.items()))) != before:
             save_cache(sid, days, cdir)
 
+        if not write_out:
+            continue
         payload = build_payload(sid, days)
         if payload is None:
             continue
@@ -273,9 +284,12 @@ def update_intraday(
             write_atomic(target, text)
             stats["written"] += 1
 
-    stats["deleted"] = _expire_left(set(union), price_date, tdays, out_dir, cdir)
+    if write_out:
+        stats["deleted"] = _expire_left(set(union), price_date, tdays, out_dir, cdir)
     print("intraday: " + " ".join(f"{k}={v}" for k, v in stats.items())
-          + f" cap={cap} fetch={'on' if fetch_hist else 'off'}", flush=True)
+          + f" cap={cap} fetch={'on' if fetch_hist else 'off'}"
+          + ("" if write_out else " write_out=off") + ("" if save else " cache=read-only"),
+          flush=True)
     return stats
 
 
@@ -313,12 +327,19 @@ def _expire_left(union: set[str], price_date: str, tdays: list[str],
 
 
 def export_intraday_safe(out: Path, union_ids: Iterable[str], price_date: str, *,
-                         today: str | None = None, **kw) -> dict | None:
+                         today: str | None = None, fetch: bool = True, **kw) -> dict | None:
     """json_export 用的入口:與 spark_day 同一個「今天 = 價格日」閘門才打 Fugle;
-    其餘照常(用快取重寫/到期刪檔)。任何例外只記 warning,不讓整輪 export 失敗。"""
+    其餘照常(用快取重寫/到期刪檔)。任何例外只記 warning,不讓整輪 export 失敗。
+
+    ``fetch=False``(export 預設,抓取已由 fetch-intraday 做完):不打 Fugle、快取唯讀。"""
     try:
         today = today if today is not None else taipei_today()
-        kw.setdefault("allow_fetch", today == price_date)
+        if fetch:
+            kw.setdefault("allow_fetch", today == price_date)
+        else:
+            kw["allow_fetch"] = False
+            kw.setdefault("save", False)
+            kw.setdefault("minute_rows_by_id", {})   # 輸出只來自快取
         return update_intraday(out, union_ids, price_date, **kw)
     except Exception:  # noqa: BLE001 — 分K 是附加檔,壞了不能拖垮 export
         _log.warning("intraday bars export failed; previous files kept", exc_info=True)

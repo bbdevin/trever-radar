@@ -2,6 +2,14 @@
 
 > 單一進度真相。每完成一個里程碑就更新本檔。規格細節看各編號文件,別寫在這裡。
 
+## 2026-10-19 Fugle 抓取搬出 export-json 的 DB 鎖(`docs/50` §3.1、`docs/44` §3.5;程式完成於分支、未合 main、未上線;不動 crontab)
+
+- **為什麼**:`export timing:` 的 `intraday` 段(spark_day 當日 1 分 K + 分K 補缺日,逐檔打 Fugle)在握 `/tmp/radar-db.lock` 時跑:14:05 輪 242 s、晚上第一次 export 71–122 s。
+- **做了什麼**:新 CLI `radar fetch-intraday`(`export/intraday_prefetch.py`):用 export 同一段程式唯讀選聯集(`export_json(union_only=True)`,不 init_db、不寫檔),抓進 `data/spark_day.json`(改 tmp+rename)與 `data/intraday5/`(`update_intraday(write_out=False)`),閘門/120 次上限/節流不變。`export-json` 預設 `fetch=False`:只讀快取、快取唯讀;`--fetch` 或 `RADAR_EXPORT_FETCH=1` = 舊行為。`lib.sh` 新 `prefetch_intraday`(放 DB 鎖 → 排隊 `/tmp/radar-intraday-fetch.lock` → `fetch-intraday` 硬上限 900 s → 拿回鎖 ≤3600 s;失敗只 warn),接在五支日更輪 `export-json` 的前一行(分點輪只在第一次上線前一次)。`RADAR_EXPORT_FETCH` 經 `--env-file` 帶進容器。
+- **驗證**:`test_intraday_prefetch.py`(同一 DB、同一組假 Fugle:先抓再 export 與 export 自己抓的每個輸出檔逐位元相同(`generated_at` 除外)、快取相同、請求序列相同;export 預設零請求零快取寫入;union_only 不寫檔且與 radar.json 聯集相同;開關與 CLI)、`test_prefetch_intraday_script.py`(真的 lib.sh:抓取那刻 DB 鎖空著、抓取鎖握著、回來握回 DB 鎖;失敗/逾時/排隊等滿只 warn;拿不回鎖 high + exit 0;回滾開關不放鎖不抓;五支腳本接線位置)、`test_tpex_http_resilience` 的 daily-insti harness 順序;pytest 全套 1801 passed。
+- **預估**:14:05 輪少握鎖 ~235 s、分點輪第一段 ~65–115 s,其餘輪 0–20 s;每輪多一次不握鎖的聯集選取(估 20–60 s 牆鐘)。
+- **待人類**:合 main(VPS `sync_code` 即生效,不動 crontab);第一個交易日看 `step fetch-intraday … elapsed=` 與 `export timing: … intraday=` 回填 `docs/44` §3.5。出事回滾:`vps/.env` 加 `RADAR_EXPORT_FETCH=1`。
+
 ## 2026-10-15 長回補讓路平日 08:00／13:15(`docs/49` §12.6.5「事故」;已 commit、未 push;VPS 需 `sync_code` 後生效,不動 crontab)
 
 - **事故**:10-14／10-15 `warrant-backfill`(`~/warrant-driver.sh`)06:36 開的塊握 `/tmp/radar-db.lock` 跨過 08:00,`morning-index` 兩天等鎖 300 s 逾時沒上線;10-14 13:15 `adjust-incremental` 也因鎖被占略過。根因:`minutes_until_next_scheduled_writer` 的 overlay 不認得這兩輪(mid 已清空時 06:36 答 449 分 → 預算封頂 240、握到 10:36)。

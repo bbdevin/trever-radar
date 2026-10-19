@@ -57,6 +57,8 @@ run_step_or_fail "compute-indicators" radar compute-indicators --all --days 5
 run_step_or_fail "compute-scores" radar compute-scores
 # 加權/櫃買指數與台指期近月(docs/49 §11.3/§12):冪等 upsert;尚未公布回 75 只 warn,不擋上線。
 run_step_or_warn "import-index" radar import-index
+# 當日分時／分K 的 Fugle 抓取:放 DB 鎖抓進快取,再拿回鎖 export(docs/50 §3.1;lib.sh)。
+prefetch_intraday
 run_step_or_fail "export-json" radar export-json
 build_bull_board
 run_step_or_fail "deploy" deploy_data

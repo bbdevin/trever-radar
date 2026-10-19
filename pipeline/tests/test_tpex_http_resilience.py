@@ -270,6 +270,9 @@ notify_ok() { record \"ok:$1\"; }
 taipei_date() { echo 20260901; }
 deploy_data() { guard_locked deploy; record deploy; }
 build_bull_board() { record bull-board; }
+# docs/50 §3.1:真的那一份放鎖抓 Fugle 再拿回鎖(test_prefetch_intraday_script.py 對真的 lib.sh 量);
+# 這裡只記順序,並確認呼叫時握著鎖(回來時一定也握著)。
+prefetch_intraday() { guard_locked prefetch; record prefetch-intraday; }
 radar() {
   guard_locked \"radar:$*\"
   record \"radar:$*\"
@@ -426,6 +429,10 @@ ROUND_FAIL_CONSEQUENCE=""
         self.assertTrue(any(event.startswith("ok:") for event in events))
         # 多方榜(docs/48)在 export-json 之後、deploy 之前建置。
         export = next(i for i, e in enumerate(events) if "export-json" in e)
+        # 當日分時／分K 抓取(docs/50 §3.1)緊接在 export 之前、評分之後。
+        self.assertEqual(events.index("prefetch-intraday"), export - 1)
+        self.assertLess(next(i for i, e in enumerate(events) if "compute-scores" in e),
+                        events.index("prefetch-intraday"))
         self.assertLess(export, events.index("bull-board"))
         self.assertLess(events.index("bull-board"), events.index("deploy"))
         # 期貨量異常推播(docs/38 §7.19)在上線之後才送。

@@ -1,6 +1,8 @@
 """把 Fugle 當日分時掛上榜單聯集,並以 data/spark_day.json 當日快取。
 
-14:10 第一次 export 會抓 ~150–200 檔(約 3–4 分鐘);同日後續 export 走快取。
+抓取(2026-10-19 起,docs/50 §3.1):每輪 export 之前,``radar fetch-intraday`` 在**不握 DB 鎖**
+的情況下把缺的檔抓進快取(第一輪 ~150–200 檔,約 3–4 分鐘);export 本身預設只讀快取
+(``allow_fetch=False``)。``RADAR_EXPORT_FETCH=1`` = 舊行為,export 自己抓。
 台北日 != 價格日(假日/隔日)且快取對得上價格日時沿用快取;對不上就跳過,前端退回 30 日線。
 """
 from __future__ import annotations
@@ -50,11 +52,14 @@ def load_cache(path: Path | None = None) -> dict:
 
 
 def save_cache(date: str, stocks: dict[str, dict], path: Path | None = None) -> None:
+    """tmp+rename:fetch-intraday 寫這個檔時,另一輪的 export 可能正在讀(不握同一把鎖)。
+    以前直接 write_text,讀到寫一半的檔 → JSONDecodeError → 整個聯集掉回 30 日線。"""
+    from .stock_parts import write_atomic
+
     p = path or cache_path()
     p.parent.mkdir(parents=True, exist_ok=True)
     payload = {"date": date, "stocks": stocks}
-    p.write_text(json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
-                 encoding="utf-8")
+    write_atomic(p, json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
 
 
 def _row_ok(row: dict | None) -> bool:
@@ -72,8 +77,12 @@ def attach_spark_day(
     cache: dict | None = None,
     fetch_fn=None,
     persist: bool = True,
+    allow_fetch: bool = True,
 ) -> int:
-    """在 union 各股掛 spark_day / spark_open。回傳成功掛上的檔數。"""
+    """在 union 各股掛 spark_day / spark_open。回傳成功掛上的檔數。
+
+    ``allow_fetch=False``:只讀快取、絕不打 Fugle(export 的預設,抓取由 fetch-intraday 先做)。
+    """
     global _minute_rows, _minute_rows_date
     if not union:
         return 0
@@ -85,7 +94,7 @@ def attach_spark_day(
 
     missing = [sid for sid in union if not _row_ok(stocks.get(sid))]
     fetched = 0
-    if missing and today == price_date and os.environ.get("FUGLE_API_KEY"):
+    if missing and allow_fetch and today == price_date and os.environ.get("FUGLE_API_KEY"):
         fn = fetch_fn or fetch_intraday_sparks
         raw = fn(missing) or {}
         _minute_rows, _minute_rows_date = {}, price_date
@@ -100,9 +109,11 @@ def attach_spark_day(
             save_cache(price_date, stocks)
         print(f"spark_day: fetched {fetched}/{len(missing)} missing, cache={len(stocks)}")
     elif cached.get("date") == price_date:
-        print(f"spark_day: cache hit date={price_date} n={len(stocks)}")
+        print(f"spark_day: cache hit date={price_date} n={len(stocks)} missing={len(missing)}"
+              + ("" if allow_fetch else " fetch=off"))
     else:
-        print(f"spark_day: skip (today={today} price={price_date} missing={len(missing)})")
+        print(f"spark_day: skip (today={today} price={price_date} missing={len(missing)}"
+              + ("" if allow_fetch else " fetch=off") + ")")
 
     n = 0
     for sid, s in union.items():
