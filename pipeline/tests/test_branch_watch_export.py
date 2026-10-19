@@ -123,8 +123,8 @@ class BranchWatchExportTests(unittest.TestCase):
         self.assertEqual(idx["window_days"], WINDOW_TRADING_DAYS)
         self.assertEqual(idx["shards"], SHARDS)
         self.assertEqual(entry, ["富邦-新店", shard_of("富邦-新店"), 1, 1, 1, 1])
-        # 2454 有報價、今天沒有任何分點列 → 尚未匯入;覆蓋 2 / 3
-        self.assertEqual(idx["coverage"], {"covered": 2, "expected": 3})
+        # 沒有匯入紀錄(測試庫)→ 不宣稱待補:complete,2454 今天沒列 = 無分點資料
+        self.assertEqual(idx["coverage"], {"covered": 2, "expected": 3, "complete": True})
         rows = {r[0]: r for r in shard["branches"]["富邦-新店"]}
         self.assertEqual(sorted(rows), ["2317", "2330", "2454"])
         # 2330:300 → 賣 500 歸 0 → 200 → +120(兩來源合併)= 320;進場日 = 歸 0 後再轉正那天
@@ -136,8 +136,7 @@ class BranchWatchExportTests(unittest.TestCase):
         # 個股摘要:收盤、還原漲跌、20 日均量張
         self.assertEqual(shard["stocks"]["2330"], ["台積電", 1069.0, round(1 / 1068 * 100, 2), 30000, 1])
         self.assertEqual(shard["stocks"]["2317"], ["鴻海", 190.0, 0.0, 10000, 1])
-        # 2454 今天整檔沒匯入:第 5 欄 0,前端顯示「尚未匯入」而不是「未進前 15 大」
-        self.assertEqual(shard["stocks"]["2454"], ["聯發科", 1200.0, 0.0, 2000, 0])
+        self.assertEqual(shard["stocks"]["2454"], ["聯發科", 1200.0, 0.0, 2000, branch_watch.TODAY_NO_DATA])
 
     def test_warrant_rows_do_not_define_today(self):
         # 權證分點先到、現股分點還沒到的那段時間:今天仍是最後一個有現股列的日子。
@@ -222,16 +221,109 @@ class BranchWatchThresholdTests(unittest.TestCase):
         self.assertEqual(len(self._rows_for(15, 10)), 0)     # 達均量但低於 20 張地板
         self.assertEqual(len(self._rows_for(100, 5000)), 1)  # 100 張絕對門檻
 
-    def test_coverage_counts_only_priced_stocks(self):
-        col = BranchWatchCollector(AS_OF, WF)
-        priced = [(AS_OF, 1, 1, 1, 10.0, 1000, 1, 1.0)]
-        stale = [(DAYS[-2], 1, 1, 1, 10.0, 1000, 1, 1.0)]
-        col.add_stock("1", "a", [(AS_OF, "B", 1, 0, 1)], priced)       # 有報價、已匯入
-        col.add_stock("2", "b", [(DAYS[-3], "B", 1, 0, 1)], priced)    # 有報價、未匯入
-        col.add_stock("3", "c", [], priced)                            # 有報價、完全沒分點列
-        col.add_stock("4", "d", [(AS_OF, "B", 1, 0, 1)], stale)        # 今天沒報價:不算分母
-        index, _ = col.payloads()
-        self.assertEqual(index["coverage"], {"covered": 1, "expected": 3})
+    def test_coverage_uses_pool_and_complete_flag(self):
+        candles = [(AS_OF, 1, 1, 1, 10.0, 1000, 1, 1.0)]
+        for complete, pending_state in ((False, branch_watch.TODAY_PENDING), (True, branch_watch.TODAY_NO_DATA)):
+            col = BranchWatchCollector(AS_OF, WF, pool={"1", "2", "3"}, complete=complete)
+            col.add_stock("1", "a", [(AS_OF, "B", 1, 0, 1)], candles)          # 池內、今天有列
+            col.add_stock("2", "b", [(DAYS[-3], "B", 500, 0, 500)], candles)   # 池內、今天沒列
+            col.add_stock("3", "c", [], candles)                               # 池內、完全沒分點列
+            col.add_stock("0050", "ETF", [(DAYS[-3], "B", 500, 0, 500)], candles)  # 不在池(ETF)
+            index, shards = col.payloads()
+            self.assertEqual(index["coverage"], {"covered": 1, "expected": 3, "complete": complete})
+            stocks = shards[shard_of("B")]["stocks"]
+            self.assertEqual(stocks["1"][4], branch_watch.TODAY_HAS_ROWS)
+            self.assertEqual(stocks["2"][4], pending_state)
+            # ETF 永遠不是「尚未匯入」:匯入端從不抓 ETF
+            self.assertEqual(stocks["0050"][4], branch_watch.TODAY_NO_DATA)
+
+
+class BranchWatchImportStatusTests(unittest.TestCase):
+    """完成與否照匯入端的 import_logs(_finish_branch_import 一輪寫 branch＋branch_coverage 兩列)。"""
+
+    def setUp(self):
+        self._tmp = TemporaryDirectory()
+        tmp = Path(self._tmp.name)
+        self._old_url, self._old_dir = config.DB_URL, config.DATA_DIR
+        config.DATA_DIR = tmp
+        config.DB_URL = "sqlite:///" + (tmp / "t.db").as_posix()
+        db._engine = None
+        db.init_db()
+        with db.get_engine().begin() as conn:
+            conn.execute(schema.stocks.insert(), [
+                {"id": "2330", "name": "台積電", "market": "twse", "type": "stock", "is_active": 1},
+                {"id": "2454", "name": "聯發科", "market": "twse", "type": "stock", "is_active": 1},
+                {"id": "0050", "name": "元大台灣50", "market": "twse", "type": "etf", "is_active": 1},
+            ])
+            conn.execute(schema.daily_prices.insert(), [
+                {"stock_id": sid, "date": dt, "close": 100.0, "volume": 1_000_000, "turnover": 1, "adj_factor": 1.0}
+                for sid in ("2330", "2454", "0050") for dt in DAYS[-25:]
+            ])
+            upsert_branch_trades(conn, [
+                _row("2330", AS_OF, "a1", "富邦-新店", 100, 0),
+                # 2454:池內,今天沒列(確認空或尚未匯入,由匯入紀錄決定)
+                _row("2454", DAYS[-5], "a1", "富邦-新店", 300, 0),
+                # 0050:ETF,窗口內有舊列、今天沒列;匯入端不抓 ETF
+                _row("0050", DAYS[-5], "a1", "富邦-新店", 300, 0),
+            ])
+
+    def tearDown(self):
+        if db._engine is not None:
+            db._engine.dispose()
+        db._engine = None
+        config.DB_URL, config.DATA_DIR = self._old_url, self._old_dir
+        self._tmp.cleanup()
+
+    def _log_round(self, status, expected, run_at="2026-10-16T21:20:05+08:00", cov_run_at=None):
+        with db.get_engine().begin() as conn:
+            conn.execute(schema.import_logs.insert(), [
+                {"run_at": run_at, "source": "fubon", "dataset": "branch", "date": AS_OF,
+                 "rows": 30, "status": status, "error": None},
+                {"run_at": cov_run_at or run_at, "source": "fubon", "dataset": "branch_coverage",
+                 "date": AS_OF, "rows": 1, "status": "ok",
+                 "error": f"expected={expected} ratio=0.5000 done=1 empty=1"},
+            ])
+
+    def _export(self):
+        out = Path(self._tmp.name) / "out"
+        export_json(out)
+        wdir = out / "branches" / "watch"
+        idx = json.loads((wdir / "index.json").read_text(encoding="utf-8"))
+        entry = next(b for b in idx["branches"] if b[0] == "富邦-新店")
+        shard = json.loads((wdir / f"s{entry[1]:02d}.json").read_text(encoding="utf-8"))
+        return idx, shard
+
+    def test_full_import_with_etf_and_confirmed_empty_has_no_banner(self):
+        # 整池那一輪 status=ok(每個目標都有答案)→ 完成:分母不含 ETF,2454 是確認空,不是待補
+        self._log_round("ok", 2, cov_run_at="2026-10-16T21:20:06+08:00")
+        idx, shard = self._export()
+        self.assertEqual(idx["coverage"], {"covered": 1, "expected": 2, "complete": True})
+        self.assertEqual(shard["stocks"]["2454"][4], branch_watch.TODAY_NO_DATA)
+        self.assertEqual(shard["stocks"]["0050"][4], branch_watch.TODAY_NO_DATA)
+        self.assertEqual(shard["stocks"]["2330"][4], branch_watch.TODAY_HAS_ROWS)
+
+    def test_partial_import_marks_pool_stocks_pending(self):
+        self._log_round("incomplete", 2)
+        idx, shard = self._export()
+        self.assertEqual(idx["coverage"], {"covered": 1, "expected": 2, "complete": False})
+        self.assertEqual(shard["stocks"]["2454"][4], branch_watch.TODAY_PENDING)
+        # ETF 不在匯入池:匯入未完成也不是「尚未匯入」
+        self.assertEqual(shard["stocks"]["0050"][4], branch_watch.TODAY_NO_DATA)
+
+    def test_ok_round_that_did_not_target_whole_pool_is_not_complete(self):
+        self._log_round("ok", 1)   # --top/--ids 那種局部輪
+        idx, _ = self._export()
+        self.assertFalse(idx["coverage"]["complete"])
+
+    def test_import_complete_reads_logs(self):
+        with db.get_engine().connect() as conn:
+            self.assertIsNone(branch_watch.import_complete(conn, AS_OF, 2))
+        self._log_round("error", 2)
+        with db.get_engine().connect() as conn:
+            self.assertFalse(branch_watch.import_complete(conn, AS_OF, 2))
+        self._log_round("ok", 2, run_at="2026-10-16T22:44:00+08:00")
+        with db.get_engine().connect() as conn:
+            self.assertTrue(branch_watch.import_complete(conn, AS_OF, 2))
 
 
 if __name__ == "__main__":

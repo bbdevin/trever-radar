@@ -25,7 +25,7 @@ import {
   modeDefinition,
   modeLabel,
   PUSH_NOTE,
-  PENDING_TODAY,
+  nullTodayText,
   removeBranch,
   SEARCH_EMPTY,
   searchBranches,
@@ -342,7 +342,7 @@ function ComboCard({ row, set, side }: { row: ComboRow; set: BranchSet; side: Si
       <ul className="flex flex-col divide-y divide-border">
         {set.branches.map((b) => {
           const c = row.cells[b];
-          const line = cellLine(c, row.pending);
+          const line = cellLine(c, row.today);
           const big = isBigHold(c?.hold ?? 0, row.avgVol);
           const net = c?.net ?? null;
           return (
@@ -355,7 +355,7 @@ function ComboCard({ row, set, side }: { row: ComboRow; set: BranchSet; side: Si
                 "num text-right text-[12.5px] font-semibold",
                 net == null ? "font-normal text-muted-foreground" : net > 0 ? "text-up" : net < 0 ? "text-down" : "text-foreground",
               )}>
-                {net == null ? (row.pending ? PENDING_TODAY : c ? "未進前 15 大" : "—") : `${net > 0 ? "+" : net < 0 ? "−" : ""}${Math.abs(net).toLocaleString("zh-TW")} 張`}
+                {net == null ? (c || row.today !== "rows" ? nullTodayText(row.today).replace(/^今天/, "") : "—") : `${net > 0 ? "+" : net < 0 ? "−" : ""}${Math.abs(net).toLocaleString("zh-TW")} 張`}
               </span>
               {c && (
                 <span className="col-span-2 mt-0.5 flex flex-wrap items-center gap-1.5 text-[11.5px] text-muted-foreground">

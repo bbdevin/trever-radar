@@ -22,6 +22,8 @@ import {
   modeLabel,
   normalizeSet,
   PUSH_NOTE,
+  NO_DATA_TODAY,
+  NOT_TOP15_TODAY,
   PENDING_TODAY,
   removeBranch,
   SEARCH_EMPTY,
@@ -59,6 +61,8 @@ const SHARDS: WatchShard[] = [
       ["6666", null, null, null, 3000, "2026-08-01", 4, 3000, "2026-10-10"],
       // 7777:小型股,這檔今天整檔還沒匯入;持有 80 張 ≥ 20 日均量 30 張
       ["7777", null, null, null, 80, "2026-09-20", 2, 80, "2026-10-15"],
+      // 8888:今天沒列但不會再補(確認空或 ETF):無分點資料;持有 60 < 100 且 < 均量 → 不進持有檢視
+      ["8888", null, null, null, 60, "2026-09-25", 1, 60, "2026-09-25"],
     ],
     [C]: [
       ["1111", 10, 0, 10, 10, "2026-10-16", 1, 10, "2026-10-16"],
@@ -66,7 +70,7 @@ const SHARDS: WatchShard[] = [
     ],
   }, {
     "1111": ["甲", 10, 1.5, 500], "2222": ["乙", 100, -2, 1000], "3333": ["丙", 5, 0, 10],
-    "5555": ["戊", 50, null, 100], "6666": ["己", 20, 3, 5000, 1], "7777": ["庚", 12, 1, 30, 0],
+    "5555": ["戊", 50, null, 100], "6666": ["己", 20, 3, 5000, 1], "7777": ["庚", 12, 1, 30, 0], "8888": ["辛", 40, 0, 80, 2],
   }),
   shard(7, {
     [B]: [
@@ -79,7 +83,7 @@ const SHARDS: WatchShard[] = [
 
 const INDEX: WatchIndex = {
   version: 1, as_of: "2026-10-16", window_days: 60, window_from: "2026-07-22", shards: 64, hold_min: 100, hold_top: 60,
-  coverage: { covered: 1500, expected: 1956 },
+  coverage: { covered: 1500, expected: 1956, complete: false },
   branches: [[A, 1, 3, 1, 60, 85], [B, 7, 3, 0, 0, 0], [C, 1, 1, 1, 0], ["富邦-新竹", 9, 0, 0, 0], ["凱基-台北", 3, 5, 2, 0], ["華南永昌-臺中", 4, 0, 0, 0]],
 };
 
@@ -151,20 +155,27 @@ test("isBigHold:≥1,000 張或 ≥ 20 日均量", () => {
   assert.equal(holdQualifies(100, 5000), true);
 });
 
-test("尚未匯入:整檔今天沒分點列 ≠ 未進前 15 大", () => {
+test("今天狀態:未進前 15 大／尚未匯入／無分點資料", () => {
   const r7 = ROWS.find((r) => r.stock_id === "7777")!;
-  assert.equal(r7.pending, true);
-  assert.equal(ROWS.find((r) => r.stock_id === "6666")!.pending, false);
-  assert.equal(ROWS.find((r) => r.stock_id === "5555")!.pending, false); // 舊檔沒有第 5 欄 → 視為已匯入
-  assert.equal(cellLine(r7.cells[A], r7.pending).today, PENDING_TODAY);
-  assert.equal(cellLine(undefined, true).today, PENDING_TODAY);
+  assert.equal(r7.today, "pending");
+  assert.equal(ROWS.find((r) => r.stock_id === "6666")!.today, "rows");
+  assert.equal(ROWS.find((r) => r.stock_id === "5555")!.today, "rows"); // 舊檔沒有第 5 欄 → 視為有列
+  const r8 = ROWS.find((r) => r.stock_id === "8888")!;
+  assert.equal(r8.today, "nodata");
+  assert.equal(cellLine(r7.cells[A], r7.today).today, PENDING_TODAY);
+  assert.equal(cellLine(r8.cells[A], r8.today).today, NO_DATA_TODAY);
+  assert.equal(cellLine(ROWS.find((r) => r.stock_id === "6666")!.cells[A], "rows").today, NOT_TOP15_TODAY);
+  assert.equal(cellLine(undefined, "pending").today, PENDING_TODAY);
   // 今天的篩選不會把未匯入的股票當成主分點沒動
   assert.ok(!ids(filterRows(ROWS, SET, "buy", "any")).includes("7777"));
 });
 
 test("coverageText / holdCapText", () => {
   assert.equal(coverageText(INDEX), "10/16 分點已匯入 1,500 / 1,956 檔,其餘待下一輪更新;還沒匯入的股票今天的進出未知(標「尚未匯入」),不會出現在買超／賣超篩選裡。");
-  assert.equal(coverageText({ ...INDEX, coverage: { covered: 1956, expected: 1956 } }), null);
+  assert.equal(coverageText({ ...INDEX, coverage: { covered: 1956, expected: 1956, complete: false } }), null);
+  // 匯入端記為完成:確認空的 ~2% 不是待補,不出提示
+  assert.equal(coverageText({ ...INDEX, coverage: { covered: 1910, expected: 1956, complete: true } }), null);
+  assert.equal(coverageText({ ...INDEX, coverage: null }), null);
   assert.equal(coverageText({ ...INDEX, coverage: undefined }), null);
   assert.equal(holdCapText(INDEX, [A, B, C]), "今天沒進出的估計仍持有:富邦-新店 共 85 檔,只列持有最多的 60 檔。");
   assert.equal(holdCapText(INDEX, [B, C]), null);
@@ -220,10 +231,10 @@ test("禁用詞不出現在任何文案", () => {
   assert.equal(banned.length, 21);
   const modes: ComboMode[] = ["anchor", "anchor_plus", "all", "any"];
   const texts = [
-    HONESTY_NOTE, PUSH_NOTE, PENDING_TODAY, SEARCH_EMPTY, coverageText(INDEX) ?? "", holdCapText(INDEX, [A]) ?? "", ...Object.values(SIDE_LABEL), ...SORT_OPTIONS.map((s) => s.label),
+    HONESTY_NOTE, PUSH_NOTE, PENDING_TODAY, NO_DATA_TODAY, NOT_TOP15_TODAY, SEARCH_EMPTY, coverageText(INDEX) ?? "", holdCapText(INDEX, [A]) ?? "", ...Object.values(SIDE_LABEL), ...SORT_OPTIONS.map((s) => s.label),
     ...modes.flatMap((m) => (["buy", "sell"] as const).flatMap((s) => [modeLabel(m, s), modeDefinition(m, s, A, 3), emptyText(s, m, "2026-10-16")])),
     emptyText("hold", "anchor", "2026-10-16"), emptyText("buy", "anchor", null),
-    ...ROWS.flatMap((r) => Object.values(r.cells).flatMap((c) => Object.values(cellLine(c)))),
+    ...ROWS.flatMap((r) => Object.values(r.cells).flatMap((c) => Object.values(cellLine(c, r.today)))),
   ];
   for (const t of texts) for (const w of banned) assert.ok(!t.includes(w), `「${t}」含禁用詞 ${w}`);
 });

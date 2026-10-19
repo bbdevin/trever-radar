@@ -14,10 +14,13 @@
 資料誠實(與 docs/42、docs/51 同一套):分點列只有「當天在該股前 15 大買超或前 15 大
 賣超」才存在。沒有列的日子是**未知**,不是 0。所以:
 
-* 當日欄位(buy/sell/net)只有當天真的有列才給數字;沒有列 → ``null``(不寫 0)。null 有兩種
-  意思,由個股摘要第 5 欄分辨:這檔 as_of 已匯入任何分點列(1)→ 該分點「未進前 15 大」;
-  這檔還沒匯入(0,17:40 那輪可能只匯一半)→「尚未匯入」。index 的 ``coverage`` 給頁面
-  說「今日分點已匯入 X / Y 檔」。
+* 當日欄位(buy/sell/net)只有當天真的有列才給數字;沒有列 → ``null``(不寫 0)。null 的意思
+  由個股摘要第 5 欄分辨(見 :data:`TODAY_HAS_ROWS` 等三個值):這檔今天有分點列 → 該分點
+  「未進前 15 大」;這檔是匯入池裡的股票、今天沒有列、而且當日匯入**沒有**被記為完成 →
+  「尚未匯入」;其餘(匯入已完成的確認空、或根本不在匯入池的 ETF 等)→「無分點資料」。
+  覆蓋的分子分母與「完成」與否都照匯入端:池 = ``importer._branch_stock_pool``(普通股、
+  不含 ETF),完成 = ``import_logs`` 有當日整池那一輪的 ``branch`` status=ok(見
+  :func:`import_complete`)。
 * 同名不同 branch_id(不同來源頁)同一天加總,與 ``branches/track`` 同口徑。進場日只看得到
   視窗內:60 交易日以前就持有的部位,進場日最早只會是視窗起點那段。
 * 估計仍持有 = 視窗起點從 0 開始的累計淨買超,賣超超過已知買超時歸 0(更早的部位未知,
@@ -74,13 +77,68 @@ def holding_worth_listing(hold: int, avg_vol: int | None) -> bool:
     return bool(avg_vol) and hold >= HOLD_FLOOR_LOTS and hold >= avg_vol
 
 
-def _has_candle(candles, as_of: str) -> bool:
-    for c in reversed(candles):
-        if c[0] == as_of:
+# 個股摘要第 5 欄
+TODAY_PENDING = 0    # 匯入池的股票、今天沒有列、當日匯入未完成 → 尚未匯入(未知)
+TODAY_HAS_ROWS = 1   # 今天有分點列 → 選的分點沒列 = 未進前 15 大
+TODAY_NO_DATA = 2    # 今天沒有列,但不是待補:匯入已完成(確認空)或不在匯入池(ETF 等)
+
+_RUN_PAIR_SECONDS = 10   # 同一輪的 branch 與 branch_coverage 兩列在同一個交易裡相繼寫入
+
+
+def import_complete(conn, as_of: str, pool_size: int) -> bool | None:
+    """as_of 的現股分點匯入有沒有被匯入端記為「完成」。
+
+    匯入端每一輪收尾(``importer._finish_branch_import``)在同一個交易裡寫兩列 import_logs:
+    ``dataset='branch'``(status ok／incomplete／error)與 ``dataset='branch_coverage'``
+    (error 欄 ``expected=N ...``,N = 這一輪要的股票檔數)。status=ok 表示這一輪**每一個目標
+    都有答案**(有列,或經別站確認的空;failed=0)且覆蓋率不低於警報線。所以「完成」=
+    有一輪 status=ok、而且那一輪要的是整個池(expected ≥ 池大小;``--top 80``、``--ids``
+    那種局部輪不算)。
+
+    回傳 None = 當日沒有任何分點匯入紀錄(本機/測試庫、或 import_logs 已被 prune):不知道,
+    呼叫端當作完成——沒有證據時不宣稱「待補」。
+    """
+    import re
+    from datetime import datetime
+
+    rows = conn.execute(text(
+        "SELECT run_at, dataset, status, error FROM import_logs "
+        "WHERE source = 'fubon' AND dataset IN ('branch', 'branch_coverage') AND date = :d"),
+        {"d": as_of}).fetchall()
+    if not rows:
+        return None
+
+    def ts(v):
+        try:
+            return datetime.fromisoformat(v)
+        except (TypeError, ValueError):
+            return None
+
+    ok_runs = [ts(r[0]) for r in rows if r[1] == "branch" and r[2] == "ok"]
+    ok_runs = [t for t in ok_runs if t is not None]
+    for run_at, dataset, _status, error in rows:
+        if dataset != "branch_coverage":
+            continue
+        m = re.search(r"expected=(\d+)", error or "")
+        t = ts(run_at)
+        if not m or t is None or int(m.group(1)) < pool_size:
+            continue
+        if any(abs((t - o).total_seconds()) <= _RUN_PAIR_SECONDS for o in ok_runs):
             return True
-        if c[0] < as_of:
-            return False
     return False
+
+
+def make_collector(conn, d: str) -> "BranchWatchCollector":
+    """export 用:找 as_of、視窗、匯入池與完成與否,建好收集器(迴圈前幾條小查詢)。"""
+    from ..importer import _branch_stock_pool
+
+    as_of = latest_stock_branch_date(conn, d)
+    if as_of is None:
+        return BranchWatchCollector(None, None)
+    pool = set(_branch_stock_pool(conn, as_of))
+    complete = import_complete(conn, as_of, len(pool))
+    return BranchWatchCollector(as_of, window_start(conn, as_of), pool=pool,
+                                complete=complete is not False)
 
 
 def _closed(name: str) -> bool:
@@ -90,18 +148,20 @@ def _closed(name: str) -> bool:
 class BranchWatchCollector:
     """個股迴圈逐檔餵入,結束後 :meth:`write`。as_of 為 None(沒有分點資料)時什麼都不收。"""
 
-    def __init__(self, as_of: str | None, window_from: str | None):
+    def __init__(self, as_of: str | None, window_from: str | None,
+                 pool: set[str] | None = None, complete: bool = True):
         self.as_of = as_of
         self.window_from = window_from
         # 分點名稱 → [(sid, buy, sell, net, hold, entry, obs, sum, last)]
         self.rows: dict[str, list[tuple]] = {}
         self.names: set[str] = set()
-        # sid → [name, close, chg_pct, avg_vol20_lots, today_imported(1/0)]
+        # sid → [name, close, chg_pct, avg_vol20_lots, TODAY_*]
         self.stocks: dict[str, list] = {}
-        # 當日分點匯入覆蓋:expected = as_of 有報價的檔數(與 importer._branch_date_fit 的
-        # 分母同一個宇宙),covered = 其中 as_of 已有任何分點列的檔數。17:40 那輪可能只匯了一半
-        # (2026-09-17 46%),22:00 第二輪才補齊——沒匯到的股票「今天」是未知,不是沒進前 15 大。
-        self.expected = 0
+        # 當日分點匯入覆蓋,照匯入端:pool = _branch_stock_pool(as_of);covered = 池裡今天已有
+        # 分點列的檔數。17:40 那輪 ≥50% 就上線(2026-09-17 46% 被扣、09-16 86% 上線),22:00
+        # 第二輪才補齊;complete = 匯入端記為完成(import_complete),那時沒列的是確認空。
+        self.pool = pool or set()
+        self.complete = complete
         self.covered = 0
 
     def add_stock(self, sid: str, name: str, rows: list[tuple], candles) -> None:
@@ -110,16 +170,17 @@ class BranchWatchCollector:
         as_of, wf = self.as_of, self.window_from
         if as_of is None:
             return
-        priced = _has_candle(candles, as_of)
         imported = False
         for r in rows:
             if r[0] <= as_of:
                 imported = r[0] == as_of
                 break
-        if priced:
-            self.expected += 1
-            if imported:
-                self.covered += 1
+        in_pool = sid in self.pool
+        if in_pool and imported:
+            self.covered += 1
+        today_state = (TODAY_HAS_ROWS if imported
+                       else TODAY_PENDING if in_pool and not self.complete
+                       else TODAY_NO_DATA)
         if not rows:
             return
         # rows 依日期遞減:先跳過 as_of 之後的列(分點比報價新時才會有),再取到視窗下緣為止。
@@ -179,9 +240,8 @@ class BranchWatchCollector:
             ))
             emitted = True
         if emitted:
-            # 第 5 欄:這檔 as_of 已有任何分點列(1)或還沒匯入(0)。0 時當日三欄 null 的意思是
-            # 「尚未匯入」,不是「未進前 15 大」。
-            self.stocks[sid] = [name, *meta, 1 if imported else 0]
+            # 第 5 欄 TODAY_*:當日三欄 null 是「未進前 15 大」(1)、「尚未匯入」(0)或「無分點資料」(2)。
+            self.stocks[sid] = [name, *meta, today_state]
 
     def payloads(self) -> tuple[dict, list[dict]]:
         """(index, [shard 0..SHARDS-1]),全部已排序、可逐位元重現。"""
@@ -210,8 +270,9 @@ class BranchWatchCollector:
             "hold_min": HOLD_MIN_LOTS,
             "hold_floor": HOLD_FLOOR_LOTS,
             "hold_top": HOLD_TOP_PER_BRANCH,
-            # 當日分點匯入覆蓋:as_of 有報價的檔數裡,已有任何分點列的檔數
-            "coverage": {"covered": self.covered, "expected": self.expected},
+            # 當日分點匯入覆蓋(照匯入端的池):complete=false 時頁面說「已匯入 X / Y 檔,其餘待下一輪」
+            "coverage": ({"covered": self.covered, "expected": len(self.pool),
+                          "complete": bool(self.complete)} if self.as_of else None),
             # [名稱, 分片, 當日買超檔數, 當日賣超檔數, 當日沒出現但估計仍持有(已輸出)檔數, 同上(截斷前)]
             "branches": index_rows,
         }
@@ -224,7 +285,7 @@ class BranchWatchCollector:
                 # 每列 [代號, 當日買張, 當日賣張, 當日淨張, 估計仍持有, 進場日, 視窗內出現天數,
                 #       視窗內淨張合計, 最後出現日];當日三欄 null = 當日不在前 15 大(未知,不是 0)。
                 "branches": {b: branches[b] for b in sorted(branches)},
-                # 代號 → [名稱, 收盤, 漲跌%(還原價), 近 20 日均量(張), 當日分點已匯入 1/0]
+                # 代號 → [名稱, 收盤, 漲跌%(還原價), 近 20 日均量(張), TODAY_* (1 有列/0 尚未匯入/2 無分點資料)]
                 "stocks": {sid: self.stocks[sid] for sid in used},
             })
         return index, out

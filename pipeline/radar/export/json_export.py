@@ -27,7 +27,7 @@ from ..market_index import latest_indices, write_indices_hist
 from .insti_stocks import FILE_1D as INSTI_STOCKS_FILE_1D, write_insti_stocks
 from .spark_day import attach_spark_day
 from .branch_days import encode_branch_days
-from .branch_watch import BranchWatchCollector, latest_stock_branch_date, window_start as watch_window_start
+from .branch_watch import make_collector as make_watch_collector
 from .intraday_bars import export_intraday_safe
 from .indices_intraday import export_indices_intraday_safe, tx_month_from_db
 from .stock_parts import (
@@ -2682,9 +2682,7 @@ def export_json(
         active_by_stock = _active_warrant_candidates(conn, d)
         # 自選「特定分點」(docs/52):搭個股迴圈已讀的分點列,不另掃 branch_trades_raw。
         t_sec = time.perf_counter()
-        watch_as_of = latest_stock_branch_date(conn, d)
-        watch = BranchWatchCollector(
-            watch_as_of, watch_window_start(conn, watch_as_of) if watch_as_of else None)
+        watch = make_watch_collector(conn, d)
         t_watch = time.perf_counter() - t_sec
         # 各段累計秒數(docs/43):只印一行 log,輸出的 JSON 一個位元都不變。
         # 前 8 個鍵是原本的(順序不動,舊 log 可直接比);之後是 2026-10-15 補的(docs/44 §3.5):

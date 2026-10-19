@@ -6,9 +6,13 @@
  *  當日三欄 null = 當天不在該股前 15 大買超／賣超(未知,不是 0)。 */
 export type WatchRow = [string, number | null, number | null, number | null, number, string | null, number, number, string];
 
-/** [名稱, 收盤, 漲跌%(還原價), 近 20 日均量(張), 當日分點已匯入 1/0]
- *  第 5 欄 0 = 這檔今天的分點還沒匯入(晚上第二輪才補齊):當日 null 是「尚未匯入」,不是「未進前 15 大」。 */
-export type WatchStockMeta = [string, number | null, number | null, number | null, (0 | 1)?];
+/** [名稱, 收盤, 漲跌%(還原價), 近 20 日均量(張), 今天狀態]
+ *  今天狀態:1 = 這檔今天有分點列(選的分點沒列 = 未進前 15 大);0 = 匯入池的股票、今天的匯入還沒完成
+ *  (晚上第二輪才補齊)→ 尚未匯入;2 = 今天沒有列也不會再補(匯入已完成的確認空,或 ETF 等不在匯入池)
+ *  → 無分點資料。舊檔沒有這欄 → 當作 1。 */
+export type WatchStockMeta = [string, number | null, number | null, number | null, (0 | 1 | 2)?];
+
+export type TodayState = "rows" | "pending" | "nodata";
 
 /** [名稱, 分片, 當日買超檔數, 當日賣超檔數, 當日沒出現但估計仍持有(已輸出)檔數, 同上(截斷前)] */
 export type WatchIndexEntry = [string, number, number, number, number, number?];
@@ -23,8 +27,8 @@ export interface WatchIndex {
   /** 小型股相對門檻的地板(≥ 20 日均量且 ≥ 這個張數);舊檔沒有 → 20 */
   hold_floor?: number;
   hold_top: number;
-  /** 今日分點匯入覆蓋:有報價的檔數裡已有分點列的檔數;舊檔沒有 */
-  coverage?: { covered: number; expected: number };
+  /** 今日分點匯入覆蓋,照匯入端:池(普通股、不含 ETF)裡已有分點列的檔數;complete = 匯入端記為完成。 */
+  coverage?: { covered: number; expected: number; complete: boolean } | null;
   branches: WatchIndexEntry[];
 }
 
@@ -111,8 +115,8 @@ export interface ComboRow {
   chg: number | null;
   avgVol: number | null;
   cells: Record<string, Cell>;
-  /** 這檔今天的分點還沒匯入(今天的進出未知) */
-  pending: boolean;
+  /** 這檔今天的分點狀態(見 WatchStockMeta) */
+  today: TodayState;
   /** 今天淨買超的分點(依使用者選的順序) */
   buyers: string[];
   sellers: string[];
@@ -197,7 +201,7 @@ export function buildRows(set: BranchSet, shards: WatchShard[]): ComboRow[] {
         const m = meta[sid];
         row = {
           stock_id: sid, name: m?.[0] ?? sid, close: m?.[1] ?? null, chg: m?.[2] ?? null, avgVol: m?.[3] ?? null,
-          pending: m?.[4] === 0,
+          today: m?.[4] === 0 ? "pending" : m?.[4] === 2 ? "nodata" : "rows",
           cells: {}, buyers: [], sellers: [], holdTotal: 0,
         };
         byStock.set(sid, row);
@@ -292,12 +296,19 @@ export function fmtMD(d: string | null | undefined): string {
 }
 
 export const PENDING_TODAY = "今天尚未匯入";
+export const NO_DATA_TODAY = "今天無分點資料";
+export const NOT_TOP15_TODAY = "今天未進前 15 大";
 
-/** 單一分點在一檔上的一句話:今天 + 估計仍持有。pending = 這檔今天的分點還沒匯入。 */
-export function cellLine(c: Cell | undefined, pending = false): { today: string; hold: string } {
-  if (!c) return { today: pending ? PENDING_TODAY : "近 60 日未見", hold: "" };
+/** 當日 null 的說法:依這檔今天的狀態,不依分點。 */
+export function nullTodayText(state: TodayState): string {
+  return state === "pending" ? PENDING_TODAY : state === "nodata" ? NO_DATA_TODAY : NOT_TOP15_TODAY;
+}
+
+/** 單一分點在一檔上的一句話:今天 + 估計仍持有。 */
+export function cellLine(c: Cell | undefined, state: TodayState = "rows"): { today: string; hold: string } {
+  if (!c) return { today: state === "rows" ? "近 60 日未見" : nullTodayText(state), hold: "" };
   const today = c.net == null
-    ? (pending ? PENDING_TODAY : "今天未進前 15 大")
+    ? nullTodayText(state)
     : c.net > 0 ? `今天買超 ${c.net.toLocaleString("zh-TW")} 張`
     : c.net < 0 ? `今天賣超 ${(-c.net).toLocaleString("zh-TW")} 張`
     : "今天買賣相抵";
@@ -310,7 +321,7 @@ export function cellLine(c: Cell | undefined, pending = false): { today: string;
 /** 今日分點只匯入一部分時的提示;齊了(或舊檔沒有覆蓋資訊)→ null。 */
 export function coverageText(index: WatchIndex): string | null {
   const c = index.coverage;
-  if (!c || c.expected <= 0 || c.covered >= c.expected) return null;
+  if (!c || c.complete !== false || c.expected <= 0 || c.covered >= c.expected) return null;
   return `${fmtMD(index.as_of)} 分點已匯入 ${c.covered.toLocaleString("zh-TW")} / ${c.expected.toLocaleString("zh-TW")} 檔,其餘待下一輪更新;還沒匯入的股票今天的進出未知(標「尚未匯入」),不會出現在買超／賣超篩選裡。`;
 }
 
