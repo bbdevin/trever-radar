@@ -37,10 +37,12 @@ import { currentParams, replaceQuery } from "@/lib/urlState";
 
 const PAGE = 30;
 
-/** 方向切換的選中樣式沿用全站漲跌色(紅＝帳面為正、綠＝帳面為負),淡底＋描邊,不整塊填滿。 */
+/** 方向切換的選中樣式沿用全站漲跌色(紅＝帳面為正、綠＝帳面為負),淡底＋描邊,不整塊填滿。
+ *  基底是 pillTabClass(false)(未選樣式),它的 hover:bg/hover:text 會在桌機滑過時蓋掉選中色,
+ *  所以選中時連 hover 也指定成同色(twMerge 以後者取代同一 variant)。 */
 const DIR_ACTIVE: Record<ScreenDir, string> = {
-  down: "bg-down/12 text-down ring-1 ring-inset ring-down/45",
-  up: "bg-up/12 text-up ring-1 ring-inset ring-up/45",
+  down: "bg-down/12 text-down ring-1 ring-inset ring-down/45 hover:bg-down/12 hover:text-down",
+  up: "bg-up/12 text-up ring-1 ring-inset ring-up/45 hover:bg-up/12 hover:text-up",
 };
 
 /**
