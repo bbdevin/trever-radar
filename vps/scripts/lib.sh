@@ -312,7 +312,7 @@ futures_digest() {
 # * 去重:狀態檔 $WATCH_PUSH_STATE_FILE(主機端寫;經 stdin 給容器讀),**只在 ntfy 確認收到
 #   之後**才寫——送失敗那一輪不寫,下一次上線重試。同一個資料日最多三則(第一則／權證算進今天
 #   後名單有變／之後名單又有變),名單沒變就不送(規則在 radar watch-push)。
-# * 這一步**絕不影響本輪**:硬上限 60 秒;可能非零的指令都在 `|| …` 或 `if` 裡;永遠 return 0。
+# * 這一步**絕不影響本輪**:60 秒送 TERM(容器 --init,python 收得到)、再 10 秒強制結束,最長約 70 秒;可能非零的指令都在 `|| …` 或 `if` 裡;永遠 return 0。
 # 參數:$1 = 本輪資料日(YYYY-MM-DD;資料日不是這天就不送),或 --force(人工測試:不看狀態與
 #   日期、不寫狀態檔)。
 WATCH_PUSH_STATE_FILE="${WATCH_PUSH_STATE_FILE:-$REPO/data/watch-push-state.json}"
@@ -339,7 +339,7 @@ watch_push() {
   local state_in="$WATCH_PUSH_STATE_FILE"
   [ -r "$state_in" ] || state_in=/dev/null
   out="$(timeout --signal=TERM --kill-after=10s 60s \
-    docker run --rm -i \
+    docker run --rm -i --init \
       -v "$REPO/pipeline":/app/pipeline \
       -v "$REPO/web/public/data":/app/web/public/data:ro \
       radar-pipeline python -m radar watch-push --data /app/web/public/data --state - \

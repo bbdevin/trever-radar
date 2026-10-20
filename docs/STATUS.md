@@ -5,7 +5,7 @@
 ## 2026-10-20 特定分點晚間手機推播(ntfy)(`docs/52` §9;程式完成於分支、未合 main;預設關,要人類加主題)
 
 - **需求**:每個交易日晚上不開 App 就知道 富邦-新店／永豐金-內湖／元大-松江 今天有沒有動作。
-- **做了什麼**:`radar watch-push`(`pipeline/radar/export/watch_push.py`)只讀已匯出的 `branches/watch/`、不開 DB,規則同前端(含權證):標題資料日＋主分點,內文 ≤6 行(主分點買超/全部同買/主分點賣超檔數、同步最多的 3 檔買超＋1 檔賣超與各分點張數/權證金額、持有量大、說明行:單位/權證是否算進今天/分點已匯入 X/Y),點通知開 `/watchlist?tab=branches`;`--dry-run` 預覽、`--force` 測試。`lib.sh` `watch_push`(同 futures_digest 形狀:唯讀掛載、60 s、永不失敗)接在 `daily-branches.sh` `publish_site` 的 deploy 之後;送到 **另一個** ntfy 主題 `WATCH_PUSH_NTFY_TOPIC`(vps/.env,沒設 = 關);組合 `WATCH_PUSH_BRANCHES`(選填)。同一資料日最多三則(第一則／權證算進今天後名單有變／之後名單又變),名單沒變不送;狀態 `data/watch-push-state.json` 只在 ntfy 確認後寫。
+- **做了什麼**:`radar watch-push`(`pipeline/radar/export/watch_push.py`)只讀已匯出的 `branches/watch/`、不開 DB,規則同前端(含權證):標題資料日＋主分點,內文 ≤6 行(主分點買超/全部同買/主分點賣超檔數、同步最多的 3 檔買超＋1 檔賣超與各分點張數/權證金額、持有量大、說明行:單位/權證是否算進今天/分點已匯入 X/Y),點通知開 `/watchlist?tab=branches`;`--dry-run` 預覽、`--force` 測試。`lib.sh` `watch_push`(同 futures_digest 形狀:唯讀掛載、`--init`、60 s TERM＋10 s 強制結束(最長約 70 s)、永不失敗)接在 `daily-branches.sh` `publish_site` 的 deploy 之後;送到 **另一個** ntfy 主題 `WATCH_PUSH_NTFY_TOPIC`(vps/.env,沒設 = 關);組合 `WATCH_PUSH_BRANCHES`(選填)。同一資料日最多三則(第一則／權證算進今天後名單有變／之後名單又變),名單沒變不送;狀態 `data/watch-push-state.json` 只在 ntfy 確認後寫。
 - **驗證**:`pipeline/tests/test_watch_push.py` 39 項(訊息逐字、排序、截斷、誠實行、禁用詞、去重三則上限、CLI 協定、假 docker/curl 實跑 helper、接線);相關腳本測試 643 項通過。
 - **待人類**:合 main;照 `docs/52` §9.4 產生主題、加進 vps/.env、手機訂閱、`--dry-run` 預覽、`watch_push --force` 送一則測試。App 裡改組合不會改推播(推播用 VPS 的 `WATCH_PUSH_BRANCHES`,§9.1)。
 

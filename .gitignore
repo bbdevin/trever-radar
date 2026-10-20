@@ -14,6 +14,9 @@ data/spark_day.json
 data/branch-stage-*.json*
 data/branch-probe-state-*.json*
 data/warrant-branch-state-*.json
+# 特定分點推播的去重狀態(docs/52 §9.3;VPS 主機端寫,不進 git)
+data/watch-push-state.json
+data/watch-push-state.json.tmp
 # 多方榜紀錄(docs/48 §2 事前登記的唯一資料來源;VPS 追加,不進 git)
 data/bull_board_log/
 # 容器工作目錄是 /app/pipeline,所以 CLI 收到的相對 --state-file 落在這裡

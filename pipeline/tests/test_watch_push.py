@@ -297,6 +297,54 @@ class DedupeTests(_Tmp):
         self.assertEqual(lines[1], "權證算進今天之後名單有變動:")
         self.assertEqual(lines[5], "另有 2 檔名單變動,詳見頁面")
 
+    def test_first_already_with_warrants_later_change_is_not_blamed_on_warrants(self):
+        """第一段沒上線(覆蓋率 < 0.98):第一則已含權證;之後的變動是 late、標頭不提權證。"""
+        self.export()
+        first = self.push()
+        self.assertTrue(first["state"]["counted"])
+        index, branches, warrants = realistic_day()
+        branches[SINOPAC].append(_row("6669", 40))
+        write_export(self.root, index, branches, warrants)
+        upd = self.push(state=first["state"])
+        self.assertEqual(upd["kind"], "late")
+        self.assertEqual(upd["body"].splitlines()[1], "名單有變動:")
+        self.assertNotIn("權證算進今天", upd["body"])
+
+    def test_malformed_state_counts_as_none(self):
+        self.export()
+        good = self.push()["state"]
+        bad_states = [
+            [], 0, "x", 1.5, True, {},
+            {**good, "sent": ["first"]}, {**good, "sent": "first"},
+            {**good, "sent": {"other": "x"}}, {**good, "sent": {"first": 1}},
+            {**good, "moves": "x"}, {**good, "moves": [["buy", "3324"]]},
+            {**good, "moves": [["buy", 3324, []]]}, {**good, "moves": [["up", "3324", []]]},
+            {**good, "moves": [["buy", "3324", "富邦-新店"]]}, {**good, "moves": [None]},
+            {**good, "branches": "富邦-新店"}, {**good, "branches": [1]},
+            {**good, "fp": None}, {**good, "data_date": 20261020}, {**good, "version": 2},
+            {**good, "counted": "yes"},
+        ]
+        for st in bad_states:
+            with self.subTest(state=str(st)[:60]):
+                res = self.push(state=st)
+                self.assertTrue(res["send"])
+                self.assertEqual(res["kind"], "first")
+
+    def test_malformed_state_through_the_cli(self):
+        for raw in ("[]", "0", '"x"', '{"version":1,"sent":[]}'):
+            with self.subTest(raw=raw):
+                self.export()
+                buf = io.StringIO()
+                import sys
+                old = sys.stdin
+                sys.stdin = io.StringIO(raw)
+                try:
+                    with redirect_stdout(buf):
+                        main(["watch-push", "--data", str(self.root), "--state", "-"])
+                finally:
+                    sys.stdin = old
+                self.assertTrue(buf.getvalue().startswith("STATE "))
+
     def test_warrants_counted_without_change_is_skipped(self):
         index, branches, _w = realistic_day(warrant=WARRANT_STALE)
         write_export(self.root, index, branches, {})
@@ -443,6 +491,7 @@ echo ROUND_CONTINUES
         self.assertIn("--expect-date 2026-10-20", docker)
         self.assertIn("--branches 元大-松江,富邦-新店", docker)
         self.assertIn("/app/web/public/data:ro", docker)
+        self.assertIn("run --rm -i --init", docker, "timeout 的 TERM 要真的停得掉容器裡的 python")
         self.assertNotIn("/app/data", docker, "不掛資料庫目錄")
 
     def test_state_is_fed_back_on_stdin(self):
@@ -502,6 +551,12 @@ class WiringTests(unittest.TestCase):
         self.assertRegex(body, r"timeout\s+.*?\s60s\s")
         self.assertIn('[ -n "${WATCH_PUSH_NTFY_TOPIC:-}" ] || return 0', body)
         self.assertNotIn("${NTFY}", body, "不送到維運主題")
+        self.assertIn("docker run --rm -i --init", body)
+
+    def test_state_file_is_gitignored(self):
+        gi = (REPO_ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
+        self.assertIn("data/watch-push-state.json", gi)
+        self.assertIn("data/watch-push-state.json.tmp", gi)
 
 
 if __name__ == "__main__":

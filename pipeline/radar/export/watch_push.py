@@ -9,8 +9,9 @@
 這裡只決定「要不要送、送什麼」,並把送成功之後要寫的狀態交給呼叫端:
 
 * stdout 第一行 ``STATE {json}``、``TITLE …``、``CLICK …``,其後是內文;不送時只有一行 ``SKIP 原因``。
-* 去重(:func:`decide`):同一個資料日最多三則——當晚第一則(``first``)、權證算進今天之後
-  名單有變的一則(``warrants``)、之後名單又有變的一則(``late``,例如 22:30 那輪補齊覆蓋)。
+* 去重(:func:`decide`):同一個資料日最多三則——當晚第一則(``first``)、權證**這一次才**算進
+  今天且名單有變的一則(``warrants``;第一則已含權證的日子沒有這一則)、之後名單又有變的一則
+  (``late``,例如 22:30 那輪補齊覆蓋)。狀態形狀不對(:func:`valid_state`)當作沒有狀態。
   「名單有變」只看 :func:`moves`(主分點參與、或至少兩家同步的 (邊, 股, 參與分點));
   張數、金額變了但名單相同不算,不再送。
 """
@@ -243,6 +244,34 @@ def message_lines(rows: list[dict], branches: list[str], only: set | None = None
     return lines
 
 
+PUSH_KINDS = ("first", "warrants", "late")
+
+
+def valid_state(state) -> bool:
+    """狀態檔形狀對不對。任何不對(合法 JSON 但不是這個形狀,例如 []、0、"x"、sent 是 list、
+    moves 壞掉)→ 呼叫端當作沒有狀態(新的一天):最壞多送一則,不會讓這一步每次都失敗。"""
+    if not isinstance(state, dict) or state.get("version") != STATE_VERSION:
+        return False
+    if not isinstance(state.get("data_date"), str) or not isinstance(state.get("fp"), str):
+        return False
+    br = state.get("branches")
+    if not isinstance(br, list) or not all(isinstance(b, str) for b in br):
+        return False
+    sent = state.get("sent")
+    if not isinstance(sent, dict) or not all(k in PUSH_KINDS and isinstance(v, str)
+                                             for k, v in sent.items()):
+        return False
+    mv = state.get("moves")
+    if not isinstance(mv, list):
+        return False
+    for m in mv:
+        if not (isinstance(m, list) and len(m) == 3 and m[0] in ("buy", "sell")
+                and isinstance(m[1], str) and isinstance(m[2], list)
+                and all(isinstance(b, str) for b in m[2])):
+            return False
+    return isinstance(state.get("counted", False), bool)
+
+
 def decide(index: dict, rows: list[dict], branches: list[str], state: dict | None,
            force: bool = False) -> dict:
     """要不要送、送哪一則。回 {"send": bool, "reason", "kind", "title", "body", "state"}。"""
@@ -251,14 +280,18 @@ def decide(index: dict, rows: list[dict], branches: list[str], state: dict | Non
     mv = moves(rows, anchor)
     fp = fingerprint(mv)
     counted = bool((index.get("warrant") or {}).get("counted"))
-    same_day = (not force and state is not None and state.get("version") == STATE_VERSION
-                and state.get("data_date") == as_of and state.get("branches") == branches)
-    sent = dict(state.get("sent") or {}) if same_day else {}
-    if same_day and state.get("fp") == fp:
+    state = state if valid_state(state) else None
+    same_day = (not force and state is not None
+                and state["data_date"] == as_of and state["branches"] == branches)
+    sent = dict(state["sent"]) if same_day else {}
+    if same_day and state["fp"] == fp:
         return {"send": False, "reason": f"{as_of} 名單與上一則相同,不再送"}
+    # 權證是不是「這一次才」算進今天:上一則送出時還沒算(第一段上線)、現在算了。
+    # 第一段沒上線的日子(覆蓋率 < 0.98),第一則就已含權證,之後的變動不是權證帶來的。
+    newly_counted = same_day and counted and not state.get("counted")
     if not sent:
         kind = "first"
-    elif counted and "warrants" not in sent:
+    elif newly_counted and "warrants" not in sent:
         kind = "warrants"
     elif "late" not in sent:
         kind = "late"
@@ -269,15 +302,15 @@ def decide(index: dict, rows: list[dict], branches: list[str], state: dict | Non
         lines = message_lines(rows, branches)
     else:
         title += " · 更新"
-        prev = {(m[0], m[1]): m[2] for m in (state or {}).get("moves") or []}
+        prev = {(m[0], m[1]): m[2] for m in state["moves"]}
         changed = {(m[0], m[1]) for m in mv if prev.get((m[0], m[1])) != m[2]}
         lines = message_lines(rows, branches, only=changed)
-        head = "權證算進今天之後名單有變動:" if kind == "warrants" else "名單有變動:"
+        head = "權證算進今天之後名單有變動:" if newly_counted else "名單有變動:"
         lines = [head] + (lines or ["(有股票移出名單,詳見頁面)"])
     body = "\n".join([counts_line(rows, branches), *lines, note_line(index)])
     sent[kind] = fp
     new_state = {"version": STATE_VERSION, "data_date": as_of, "branches": branches,
-                 "fp": fp, "sent": sent, "moves": mv}
+                 "fp": fp, "sent": sent, "moves": mv, "counted": counted}
     return {"send": True, "kind": kind, "title": title, "body": body, "state": new_state}
 
 
