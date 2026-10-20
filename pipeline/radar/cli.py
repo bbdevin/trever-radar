@@ -948,6 +948,47 @@ def cmd_futures_anomaly_digest(args):
     print(body)
 
 
+def cmd_watch_push(args):
+    """自選「特定分點」晚間推播(docs/52 §9):只讀已匯出的 branches/watch/,不開資料庫。
+
+    一般模式(給 lib.sh 的 watch_push 解析):要送 → ``STATE {json}`` / ``TITLE …`` / ``CLICK …`` /
+    內文;不送 → 一行 ``SKIP 原因``。``--dry-run``:給人看的版本(含不送的原因),不輸出 STATE。
+    ``--state -`` 從 stdin 讀上一次送成功後寫下的狀態(空 = 沒有)。
+    """
+    import json
+    import sys
+    from pathlib import Path
+
+    from .export.watch_push import SITE_URL, parse_branches, run
+
+    state = None
+    if args.state:
+        raw = sys.stdin.read() if args.state == "-" else (
+            Path(args.state).read_text(encoding="utf-8") if Path(args.state).exists() else "")
+        try:
+            state = json.loads(raw) if raw.strip() else None
+        except ValueError:
+            state = None   # 壞掉的狀態檔當作沒有:最壞多送一則,不會不送
+    branches = parse_branches(args.branches)
+    res = run(Path(args.data), branches, state, expect_date=args.expect_date, force=args.force)
+    if args.dry_run:
+        print(f"分點組合(第一個為主): {'、'.join(branches)}")
+        if not res["send"]:
+            print(f"不送: {res['reason']}")
+            return
+        print(f"會送({res['kind']}) → {SITE_URL}")
+        print(res["title"])
+        print(res["body"])
+        return
+    if not res["send"]:
+        print(f"SKIP {res['reason']}")
+        return
+    print("STATE " + json.dumps(res["state"], ensure_ascii=False, separators=(",", ":")))
+    print(f"TITLE {res['title']}")
+    print(f"CLICK {SITE_URL}")
+    print(res["body"])
+
+
 def cmd_status(_args):
     init_db()
     with get_engine().connect() as conn:
@@ -1516,6 +1557,23 @@ def main(argv=None):
     )
     fad.add_argument("--out", required=True, help="the export dir holding radar.json")
     fad.set_defaults(fn=cmd_futures_anomaly_digest)
+
+    wpu = sub.add_parser(
+        "watch-push",
+        help="build the evening phone push for the watched branch set (docs/52 §9) from the exported "
+             "branches/watch/ files; never opens the database",
+    )
+    wpu.add_argument("--data", required=True, help="the export dir holding branches/watch/")
+    wpu.add_argument("--branches", default=None,
+                     help="comma-separated branch names, first = anchor (default 富邦-新店,永豐金-內湖,元大-松江)")
+    wpu.add_argument("--state", default=None,
+                     help="previous push state (JSON file, or '-' for stdin); missing/empty = none")
+    wpu.add_argument("--expect-date", default=None,
+                     help="YYYY-MM-DD: send nothing unless the export's data date is this day")
+    wpu.add_argument("--force", action="store_true",
+                     help="ignore the state and --expect-date (one-off test send)")
+    wpu.add_argument("--dry-run", action="store_true", help="print a human-readable preview only")
+    wpu.set_defaults(fn=cmd_watch_push)
 
     pr = sub.add_parser("prune", help="delete old history to keep DB slim")
     pr.add_argument("--indicators", type=int, default=400, help="days to keep in indicators_daily")

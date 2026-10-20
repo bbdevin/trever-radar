@@ -303,6 +303,78 @@ futures_digest() {
   return 0
 }
 
+# docs/52 §9 自選「特定分點」晚間推播:daily-branches.sh 的 publish_site 在 deploy_data
+# **之後**呼叫(講的必須是已上線的那一份)。與 futures_digest 同一個形狀:只讀剛匯出的
+# web/public/data/branches/watch/(唯讀掛載),不開資料庫、不帶金鑰、不走 radar()。
+#
+# * 開關:vps/.env 的 WATCH_PUSH_NTFY_TOPIC(**另一個**、猜不到的 ntfy 主題,不是維運的 NTFY);
+#   沒設 → 什麼都不做。WATCH_PUSH_BRANCHES(選填)= 逗號分隔的分點名,第一個是主分點。
+# * 去重:狀態檔 $WATCH_PUSH_STATE_FILE(主機端寫;經 stdin 給容器讀),**只在 ntfy 確認收到
+#   之後**才寫——送失敗那一輪不寫,下一次上線重試。同一個資料日最多三則(第一則／權證算進今天
+#   後名單有變／之後名單又有變),名單沒變就不送(規則在 radar watch-push)。
+# * 這一步**絕不影響本輪**:硬上限 60 秒;可能非零的指令都在 `|| …` 或 `if` 裡;永遠 return 0。
+# 參數:$1 = 本輪資料日(YYYY-MM-DD;資料日不是這天就不送),或 --force(人工測試:不看狀態與
+#   日期、不寫狀態檔)。
+WATCH_PUSH_STATE_FILE="${WATCH_PUSH_STATE_FILE:-$REPO/data/watch-push-state.json}"
+watch_push_send() {
+  curl -sf -m 10 \
+    -H "Priority: default" \
+    -H "Title: $2" \
+    -H "Click: $3" \
+    -d "$1" "https://ntfy.sh/${WATCH_PUSH_NTFY_TOPIC}" >/dev/null
+}
+
+watch_push() {
+  local arg="${1:-}" out="" rc=0 first="" title="" click="" body="" state=""
+  local -a extra=()
+  [ -n "${WATCH_PUSH_NTFY_TOPIC:-}" ] || return 0
+  if [ "$arg" = "--force" ]; then
+    extra+=(--force)
+  elif [ -n "$arg" ]; then
+    extra+=(--expect-date "$arg")
+  fi
+  if [ -n "${WATCH_PUSH_BRANCHES:-}" ]; then
+    extra+=(--branches "$WATCH_PUSH_BRANCHES")
+  fi
+  local state_in="$WATCH_PUSH_STATE_FILE"
+  [ -r "$state_in" ] || state_in=/dev/null
+  out="$(timeout --signal=TERM --kill-after=10s 60s \
+    docker run --rm -i \
+      -v "$REPO/pipeline":/app/pipeline \
+      -v "$REPO/web/public/data":/app/web/public/data:ro \
+      radar-pipeline python -m radar watch-push --data /app/web/public/data --state - \
+      ${extra[@]+"${extra[@]}"} < "$state_in")" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    notify_warn "特定分點推播產生失敗（exit ${rc}），本輪照常；網站已上線" || true
+    return 0
+  fi
+  first="$(printf '%s\n' "$out" | head -n 1 || true)"
+  case "$first" in
+    "STATE "*) ;;
+    *) echo "watch-push: ${first:-沒有輸出}" || true; return 0 ;;
+  esac
+  state="${first#STATE }"
+  title="$(printf '%s\n' "$out" | sed -n '2s/^TITLE //p' || true)"
+  click="$(printf '%s\n' "$out" | sed -n '3s/^CLICK //p' || true)"
+  body="$(printf '%s\n' "$out" | tail -n +4 || true)"
+  if [ -z "$title" ] || [ -z "$body" ]; then
+    echo "watch-push: 輸出格式不對,略過" || true
+    return 0
+  fi
+  if watch_push_send "$body" "$title" "$click"; then
+    echo "watch-push: sent ${title}" || true
+    if [ "$arg" != "--force" ]; then
+      { printf '%s\n' "$state" > "${WATCH_PUSH_STATE_FILE}.tmp" \
+        && mv -f "${WATCH_PUSH_STATE_FILE}.tmp" "$WATCH_PUSH_STATE_FILE"; } 2>/dev/null \
+        || echo "watch-push: 狀態檔寫入失敗(${WATCH_PUSH_STATE_FILE}),下一次上線可能重送" || true
+    fi
+  else
+    echo "watch-push: 推送沒有成功,不寫狀態,下一次上線重試" || true
+    notify_warn "特定分點推播送出失敗（ntfy），本輪照常；下一次上線會重試" || true
+  fi
+  return 0
+}
+
 # JSON 上線:wrangler 讀 vps/.env 的 CLOUDFLARE_API_TOKEN/ACCOUNT_ID(已 set -a 載入),
 # 資產 hash 去重只傳變動檔,deploy 完即生效(影子期只掛 /data-preview/*)。
 #
