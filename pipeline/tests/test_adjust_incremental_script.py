@@ -309,6 +309,11 @@ class AdjustIncrementalBudgetTests(unittest.TestCase):
                     self.assertGreater(minutes_until_writer(dow, 1315, dom, env=env), 30)
                     self.assertEqual(minutes_until_writer(dow, 1315, dom, env=env), 50)
 
+    def test_exclusion_still_reserves_the_16_00_and_20_45_rounds(self):
+        # 2026-10-21 新增的兩段也要留在 adjust-incremental 的排除清單裡(只拿掉自己 13:15)。
+        self.assertIn("1600-1605", _adjust_exclusion().split())
+        self.assertIn("2045-2115", _adjust_exclusion().split())
+
     def test_long_jobs_see_13_15_as_a_writer(self):
         # 對其他呼叫者(warrant-backfill 等)13:15 就是寫入者在跑。
         for dow in range(1, 6):

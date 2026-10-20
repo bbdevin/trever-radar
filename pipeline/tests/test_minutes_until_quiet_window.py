@@ -312,12 +312,56 @@ class WeekdayShortJobsTest(unittest.TestCase):
         self.assertEqual(until, 55)
         self.assertLessEqual(12 * 60 + 20 + until - self.WARRANT_SAFETY, 13 * 60 + 15)
 
+    def test_16_00_insti_and_20_45_margin_starts_are_writers(self):
+        # 2026-10-21:cron 起點早於安靜窗(16:05、21:15)的兩輪補進 overlay,只補到窗起點。
+        for dow in range(1, 6):
+            with self.subTest(dow=dow):
+                self.assertEqual(minutes_until_writer(dow, 1600, env=self.NO_MID), 0)
+                self.assertEqual(minutes_until_writer(dow, 1604, env=self.NO_MID), 0)
+                self.assertEqual(minutes_until_writer(dow, 2045, env=self.NO_MID), 0)
+                self.assertEqual(minutes_until_writer(dow, 2114, env=self.NO_MID), 0)
+                # 只問安靜窗的答案不變(quiet_window_at 沒動)。
+                self.assertEqual(minutes_until(dow, 1600), 5)
+                self.assertEqual(minutes_until(dow, 2045), 30)
+
+    def test_weekday_19_55_chunk_ends_before_the_20_45_margin_round(self):
+        # 2026-10-20 事故:19:55(mid 清空)舊版答 80(→ 21:15),預算 65,握鎖到 21:00,
+        # 20:45 資券輪 21:02 才開工。新版答 50(→ 20:45),預算 35,20:30 收工。
+        until = minutes_until_writer(2, 1955, env=self.NO_MID)
+        self.assertEqual(until, 50)
+        old = minutes_until_writer(
+            2, 1955, env=dict(self.NO_MID, WEEKDAY_SHORT_JOBS="0800-0845 1315-1335"))
+        self.assertEqual(old, 80)
+        self.assertLessEqual(19 * 60 + 55 + until - self.WARRANT_SAFETY, 20 * 60 + 45)
+
+    def test_weekday_15_40_is_inside_the_window_and_15_46_no_longer_gets_a_chunk(self):
+        # 15:40 在 1405-1545 安靜窗內:warrant-backfill 先被 in_radar_quiet_window 擋,前後皆 0。
+        self.assertEqual(minutes_until_writer(3, 1540, env=self.NO_MID), 0)
+        # 15:46 出窗:舊版答 19(→ 16:05,預算 4,低於 MIN_CHUNK 20 已略過);
+        # 新版答 14(→ 16:00)。行為一樣是略過,但答案對齊真正的 16:00 起點。
+        self.assertEqual(minutes_until_writer(3, 1546, env=self.NO_MID), 14)
+        old = minutes_until_writer(
+            3, 1546, env=dict(self.NO_MID, WEEKDAY_SHORT_JOBS="0800-0845 1315-1335"))
+        self.assertEqual(old, 19)
+
+    def test_monday_11_00_refdata_is_a_writer_only_on_monday(self):
+        # weekly-refdata `0 11 * * 1` 等鎖上限 30 分;週一 09:20(mid 清空)舊版答 235(→ 13:15),
+        # 預算 220、握鎖到 13:00;新版答 100(→ 11:00),預算 85,10:45 收工。
+        self.assertEqual(minutes_until_writer(1, 920, env=self.NO_MID), 100)
+        self.assertEqual(minutes_until_writer(1, 1100, env=self.NO_MID), 0)
+        self.assertEqual(minutes_until_writer(1, 1129, env=self.NO_MID), 0)
+        # 11:30 出槽 → 13:15 adjust-incremental:105
+        self.assertEqual(minutes_until_writer(1, 1130, env=self.NO_MID), 105)
+        # 週二沒有這一輪:09:20 → 13:15 = 235
+        self.assertEqual(minutes_until_writer(2, 920, env=self.NO_MID), 235)
+        self.assertEqual(minutes_until(1, 1100), 185)  # 安靜窗表沒動:11:00 → 14:05
+
     def test_weekends_are_unaffected(self):
         # 週六 06:36 本來就在週六安靜窗 04:50–07:30 裡 → 0。
         self.assertEqual(minutes_until_writer(6, 636, env=self.NO_MID), 0)
         no_short = dict(self.NO_MID, WEEKDAY_SHORT_JOBS="")
         for dow in (6, 7):
-            for hhmm in (636, 731, 800, 1200, 1315):
+            for hhmm in (636, 731, 800, 1100, 1200, 1315, 1600, 1955, 2045):
                 with self.subTest(dow=dow, hhmm=hhmm):
                     self.assertEqual(
                         minutes_until_writer(dow, hhmm, env=self.NO_MID),
@@ -325,6 +369,54 @@ class WeekdayShortJobsTest(unittest.TestCase):
                     )
         # 週六 07:31 出安靜窗、mid 清空 → 一路到週日 00:05 的分點排行:(1440-451)+5 = 994
         self.assertEqual(minutes_until_writer(6, 731, env=self.NO_MID), 994)
+
+
+_NON_DB_WRITERS = ("disk-cleanup.sh", "radar-worker", "bf-cron-guard.sh", "bf-supervisor.sh")
+
+
+def _crontab_writer_starts():
+    """crontab.example 每一條會寫 DB 的固定時刻排程 → [(dow, hhmm, dom, line)]。"""
+    out = []
+    text = (REPO_ROOT / "vps" / "scripts" / "crontab.example").read_text(encoding="utf-8")
+    for line in text.splitlines():
+        s = line.strip()
+        if not s or s.startswith("#") or s.startswith("@") or "=" in s.split()[0]:
+            continue
+        minute, hour, dom, _mon, dow = s.split()[:5]
+        if any(n in s for n in _NON_DB_WRITERS) or not minute.isdigit():
+            continue
+        if dow == "*":
+            dows = range(1, 8)
+        elif "-" in dow:
+            a, b = (int(x) for x in dow.split("-"))
+            dows = range(a, b + 1)
+        else:
+            dows = [int(x) for x in dow.split(",")]
+        for h in hour.split(","):
+            for d in dows:
+                out.append((7 if d == 0 else d, int(h) * 100 + int(minute),
+                            int(dom) if dom.isdigit() else None, s))
+    return out
+
+
+@unittest.skipUnless(
+    BASH_OK,
+    "no usable bash (this test drives the real shell function; on Windows it needs WSL)",
+)
+class EveryCrontabWriterIsKnownTest(unittest.TestCase):
+    """crontab.example 每條會寫 DB 的排程,起點那一分鐘都必須被 overlay ∪ 安靜窗認得。
+
+    2026-10-20:20:45 daily-margin 起點早於 21:15 安靜窗、overlay 也沒有,warrant-backfill
+    19:55 的塊握鎖到 21:00,資券輪晚 17 分。新增排程輪而忘了加 overlay,這條會失敗。
+    """
+
+    def test_every_writer_start_is_a_scheduled_writer_minute(self):
+        starts = _crontab_writer_starts()
+        self.assertGreater(len(starts), 10)
+        for dow, hhmm, dom, line in starts:
+            with self.subTest(dow=dow, hhmm=hhmm, line=line):
+                args = {} if dom is None else {"dom": dom}
+                self.assertEqual(minutes_until_writer(dow, hhmm, **args), 0)
 
 
 class DriverSanityTest(unittest.TestCase):
