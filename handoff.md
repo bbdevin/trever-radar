@@ -1,5 +1,9 @@
 # Handoff — 2026-09-24（期貨切片從未真的渲染過的結構性 bug 已修、四輪日更補上失敗語音（過程自己又生一個更嚴重的）、期貨補到每契約每天、兩道守門缺口補上、一個記成已出貨卻沒上畫面的按鈕、一次自己的效能預測被實測打臉 2.5 倍、「隔天大漲」事前登記落地）
 
+## 2026-10-21 補記(第二段上線提速,分支未合)
+
+- `compute_branch_stats.py` 逐檔迴圈逐位元不變地提速(合成庫 144–152 s → 50 s),讀取改背景執行緒預讀;`branch stats timing:` 多 `read-wait=`。`daily-branches.sh` 第二段改「統計 → 權證收尾 → 匯出」(統計不讀權證列)。合 main 後第一個交易日 grep `branch stats timing` 與兩次 `deploy done`,回填 `docs/44` §3.6。第二段 export 只重算會變的部分是提案(§3.6「沒做的」第 1 點)。
+
 ## 2026-10-20 補記(特定分點晚間推播,分支未合;預設關)
 
 - 新 CLI `radar watch-push`(只讀 `branches/watch/`)＋ `lib.sh` `watch_push`,接在 `daily-branches.sh` `publish_site` 的 deploy 之後;沒設 `WATCH_PUSH_NTFY_TOPIC` 就不做事。開通步驟、內容、去重規則見 `docs/52` §9.4/§9.3。合 main 並開通後第一個交易日看 log `watch-push: sent …`/`SKIP …`(第一段一則、第二段只在權證讓名單變動時一則)。

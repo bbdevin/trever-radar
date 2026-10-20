@@ -365,17 +365,22 @@ class LockPhasesInTheScript(unittest.TestCase):
         self.assertIn('pkill -TERM -P "$WARRANT_FETCH_PID"', stop)
         self.assertIn('wait "$WARRANT_FETCH_PID"', stop)
 
-    def test_warrant_phase_is_finished_before_stats_and_before_scores_on_the_refresh_round(self):
+    def test_warrant_phase_is_finished_after_stats_and_before_scores_on_the_refresh_round(self):
         stats = self._idx('run_step_or_fail "compute-branch-stats"')
-        first_publish = self._publish_calls()[0]
+        publishes = self._publish_calls()
+        first_publish, second_publish = publishes[0], publishes[-1]
         calls = [m.start() for m in re.finditer(r"(?m)^[ \t]*warrant_phase_finish$", self.code)]
-        self.assertEqual(len(calls), 2, "刷新輪(評分前)一次、其他(第一段上線後、統計前)一次")
+        self.assertEqual(len(calls), 2, "刷新輪(評分前)一次、其他(統計後、第二段上線前)一次")
         self.assertLess(calls[0], self._idx('run_step_or_fail "compute-scores"'))
         guard = self.code.rfind("\n", 0, calls[0])
         self.assertIn('if [ "$WARRANT_FINISH_BEFORE_SCORES" = 1 ]; then',
                       self.code[self.code.rfind("\n", 0, guard - 1):guard])
         self.assertGreater(calls[1], first_publish, "第一段上線不等權證")
-        self.assertLess(calls[1], stats, "排行統計看到的是含權證的最終資料")
+        # docs/44 §3.6:排行統計不讀權證列 → 先算(與還在跑的權證抓取重疊),
+        # 第二段匯出仍在權證寫入之後。
+        self.assertGreater(stats, first_publish)
+        self.assertLess(stats, calls[1], "排行統計不空等權證抓取")
+        self.assertLess(calls[1], second_publish, "第二段上線看到含權證的最終資料")
         self.assertEqual(self.code[calls[1]:self.code.index("\n", calls[1])], "warrant_phase_finish",
                          "第二個呼叫點在頂層、無條件")
 
