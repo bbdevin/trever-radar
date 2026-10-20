@@ -164,6 +164,8 @@ export class BranchSetSync {
   private uid: string | null = null;
   private saving: Promise<void> | null = null;
   private again = false;
+  /** 成功寫進雲端的次數;讀雲端期間有寫成功 → 讀回的那列可能比本機舊,丟掉不合併 */
+  private saved = 0;
   private readonly now: () => number;
   private readonly deps: { kv: KeyValue; api: CloudApi; now?: () => number; warn?: (msg: string) => void };
 
@@ -205,6 +207,7 @@ export class BranchSetSync {
     this.uid = uid;
     if (!uid || this.cloudOff) return this.current();
     let res: Awaited<ReturnType<CloudApi["load"]>>;
+    const savedBefore = this.saved;
     try {
       res = await this.deps.api.load(uid);
     } catch (e) {
@@ -215,6 +218,9 @@ export class BranchSetSync {
       this.fail(res.error);
       return this.current();
     }
+    // 讀雲端期間本機改動已寫成功:讀回的可能是改動前的舊列(本機已乾淨,合併會誤判雲端勝)。
+    // 剛寫上去的就是本機這份,直接用本機;別台裝置的改動下次載入再拿。
+    if (this.saved !== savedBefore) return this.current();
     // 重新讀本機:讀雲端期間使用者若改過,那份是 dirty 且較新,合併時會勝出
     const { record, push } = mergeOnLoad(this.local(), res.row, uid);
     if (record) this.store(record);
@@ -266,6 +272,7 @@ export class BranchSetSync {
           this.fail(error);
           break;
         }
+        this.saved += 1;
         const cur = this.local();
         if (cur && this.uid === uid && cur.editedAt === rec.editedAt && sameSet(cur.set, rec.set)) {
           this.store({ ...cur, dirty: false, uid });

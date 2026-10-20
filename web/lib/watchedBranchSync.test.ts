@@ -176,9 +176,13 @@ class FakeCloud implements CloudApi {
   loads = 0;
   saves: CloudWrite[] = [];
   gate: Promise<void> | null = null;
+  loadGate: Promise<void> | null = null;
   async load(_uid: string) {
     this.loads += 1;
-    return this.loadError ? { row: null, error: this.loadError } : { row: this.row, error: null };
+    // 讀的那一刻的列(模擬 GET 先送出、回應晚到)
+    const snapshot = this.row ? structuredClone(this.row) : null;
+    if (this.loadGate) await this.loadGate;
+    return this.loadError ? { row: null, error: this.loadError } : { row: snapshot, error: null };
   }
   async save(w: CloudWrite) {
     if (this.gate) await this.gate;
@@ -311,6 +315,25 @@ test("sync: an edit made while the cloud read is in flight is not overwritten", 
   await sync.idle();
   assert.deepEqual(api.row?.branches, [A, D]);
   assert.equal(parseLocal(kv.get(LOCAL_KEY))?.dirty, false);
+});
+
+test("sync: edit saved before the first cloud read returns is not reverted by the stale row", async () => {
+  const { api, sync, kv, tick } = setup(T_CLOUD + 60_000);
+  api.row = row([C], C);
+  let releaseLoad!: () => void;
+  api.loadGate = new Promise((r) => (releaseLoad = r));
+  const p = sync.attach(UID); // GET 送出(讀到的是舊列 [C])
+  tick(1);
+  sync.edit({ branches: [A, D], anchor: D });
+  await sync.idle(); // upsert 先完成:雲端 = 新,本機乾淨
+  assert.equal(parseLocal(kv.get(LOCAL_KEY))?.dirty, false);
+  releaseLoad(); // 舊的 GET 才回來
+  assert.deepEqual(await p, { branches: [A, D], anchor: D });
+  assert.deepEqual(parseLocal(kv.get(LOCAL_KEY))?.set, { branches: [A, D], anchor: D });
+  assert.deepEqual(api.row?.branches, [A, D]);
+  // 下一次載入(沒有改動)照常採用雲端
+  api.loadGate = null;
+  assert.deepEqual(await sync.attach(UID), { branches: [A, D], anchor: D });
 });
 
 test("sync: switching account mid-read discards the stale result", async () => {
