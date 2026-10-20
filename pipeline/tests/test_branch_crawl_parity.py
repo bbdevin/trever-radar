@@ -225,10 +225,26 @@ class BranchCrawlParity(unittest.TestCase):
 
     def test_resume_refetches_only_what_the_previous_stage_did_not_get(self):
         """HIGH 1(c):同一天已有暫存檔 → done 的不重抓;pending/failed/empty 重抓;
-        最後寫進資料庫的列與一口氣抓完的循序爬位元級相同。"""
+        最後寫進資料庫的列與一口氣抓完的循序爬位元級相同。
+
+        鏡像站拓撲釘死成「開跑時只有 H0 就緒、其餘待命且永遠不過」(2026-10-20):以前五站全開、
+        零延遲,哪幾站分到工作由執行緒排程決定;兩個活站剛好都分到真空(或唯一活站以外的站只分到
+        一檔真空)時,空的確認依規則標 failed(docs/47 §8.8 第 7 點,見
+        test_dirty_hosts_without_a_second_opinion_mark_failed_by_design)→ status incomplete,
+        約 0.1–10% 失敗(依機器)。本測試驗的是續抓,不是確認空的規則(那些在
+        FalseEmptiesFromAPartialMirror 用決定性的情境測);一站時真空走 self-confirm,結果固定。"""
+        from radar import mirror_crawl
+
         seq = _run(1, False, [])
         calls = []
-        with _Runner() as r, mock.patch.object(fubon, "get_text", side_effect=_http_stub(calls)):
+        h0 = fubon.MIRROR_HOSTS[0]
+
+        def one_ready(picks, date, hosts, per_host):
+            return {h: (len(picks) if h == h0 and len(hosts) > 1 else 0) for h in hosts}
+
+        with _Runner() as r, mock.patch.object(fubon, "get_text", side_effect=_http_stub(calls)), \
+             mock.patch("radar.importer.probe_mirrors", side_effect=one_ready), \
+             mock.patch.object(mirror_crawl, "STANDBY_RECHECK_SECONDS", 0.01):
             stage = r.dir / "stage.json"
             targets = sorted(STOCKS)
             prior = []
@@ -249,9 +265,11 @@ class BranchCrawlParity(unittest.TestCase):
             for p in prior:
                 with self.subTest(sid=p["sid"]):
                     self.assertEqual(p["sid"] in fetched, p["outcome"] != "done")
+            self.assertEqual({c[1] for c in calls}, {h0}, "拓撲釘死:只有 H0 抓")
             final = import_branch_trades(from_stage=stage, top=0, warrants=0, sleep_s=0)
             snap = r.snapshot()
         self.assertEqual(final["status"], "ok")
+        self.assertEqual((final["done"], final["empty"], final["failed"]), (37, len(EMPTY), 0))
         self.assertEqual(snap["raw"], seq["raw"])
         self.assertEqual(snap["dim"], seq["dim"])
 
@@ -527,6 +545,40 @@ class FalseEmptiesFromAPartialMirror(unittest.TestCase):
                 self.assertEqual(wrong_done, [])
                 self.assertEqual(sum(1 for r in results if r["outcome"] == "done"),
                                  n - len(true_empty))
+
+    def test_dirty_hosts_without_a_second_opinion_mark_failed_by_design(self):
+        """2026-10-20 定格 resume 測試偶發失敗(~0.1–10%,依機器)的兩種排程,鎖住**刻意保守**的現行規則
+        (docs/47 §8.8 第 7 點「維持現狀」):
+        (a) 兩個活站都回過空 → 彼此的空都只有一站的說法 → failed;
+        (b) 零延遲時一條 worker 把佇列抓光,另一站只分到一檔真空(done=0、不算活站),唯一的活站
+            也回過空 → 那一檔同樣 failed(不由不乾淨的唯一活站確認)。
+        failed 交給覆蓋率閘門與 22:30 重爬;正式機合法的空幾乎不存在(§8.8:10-07 全市場 empty=0),
+        所以這條路只在真有空的日子多一次重爬,不會把半公布站的假空寫進去。"""
+        from radar.importer import _confirm_empties
+        from radar.mirror_crawl import HostStats
+        from radar.providers import NoDataError
+
+        def fetch(sid, host, interval):
+            raise NoDataError("really empty")
+
+        # (a) 兩個活站、兩站都髒。
+        results = [{"sid": "T", "outcome": "empty", "rows": None, "host": "A"},
+                   {"sid": "U", "outcome": "empty", "rows": None, "host": "B"}]
+        stats = {"A": HostStats(done=20, empty=1), "B": HostStats(done=8, empty=1),
+                 "C": HostStats(), "D": HostStats(), "E": HostStats()}
+        tally = _confirm_empties(results, ["T", "U"], stats, fetch, 0, None, None)
+        self.assertEqual([r["outcome"] for r in results], ["failed", "failed"])
+        self.assertEqual(tally["failed"], 2)
+
+        # (b) 唯一活站 A 髒;B 一檔都沒抓到列(不是活站),它回的空 → failed;A 自己的空 → self-confirm。
+        results = [{"sid": "T", "outcome": "empty", "rows": None, "host": "A"},
+                   {"sid": "U", "outcome": "empty", "rows": None, "host": "B"}]
+        stats = {"A": HostStats(done=30, empty=1), "B": HostStats(empty=1),
+                 "C": HostStats(), "D": HostStats(), "E": HostStats()}
+        tally = _confirm_empties(results, ["T", "U"], stats, fetch, 0, None, None)
+        self.assertEqual([r["outcome"] for r in results], ["empty", "failed"])
+        self.assertEqual(results[0]["confirmed_by"], ["A", "A"])
+        self.assertEqual((tally["failed"], tally["self_confirmed"]), (1, 1))
 
     def test_single_live_host_confirms_on_itself_rather_than_not_at_all(self):
         from radar.importer import _confirm_empties
