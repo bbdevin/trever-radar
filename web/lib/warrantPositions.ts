@@ -247,8 +247,9 @@ export type ScreenRow = {
 /**
  * 一種(認購或認售)的一邊:帳面為負(down,最差在前,估不出值的接在最後)或帳面為正
  * (up,最好在前,不含估不出值的)。rows 最多 max_rows_per_side 列,total 是這一邊門檻內全部筆數。
+ * excluded_self(2026-10-20 起匯出端才有):這一邊被排除的自家發行筆數;缺鍵 = 舊檔,只有整種合計。
  */
-export type ScreenSide = { rows: ScreenRow[]; total: number };
+export type ScreenSide = { rows: ScreenRow[]; total: number; excluded_self?: number };
 export type ScreenDir = "down" | "up";
 export type ScreenBucket = { excluded_self: number; down: ScreenSide; up: ScreenSide };
 
@@ -266,7 +267,9 @@ function sideOf(raw: unknown): ScreenSide {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { rows: [], total: 0 };
   const s = raw as Partial<ScreenSide>;
   const rows = Array.isArray(s.rows) ? (s.rows as ScreenRow[]) : [];
-  return { rows, total: typeof s.total === "number" ? s.total : rows.length };
+  const out: ScreenSide = { rows, total: typeof s.total === "number" ? s.total : rows.length };
+  if (typeof s.excluded_self === "number") out.excluded_self = s.excluded_self;
+  return out;
 }
 
 function bucketOf(raw: unknown): ScreenBucket {
@@ -369,13 +372,19 @@ export function filterScreenRows(rows: ScreenRow[], f: ScreenFilter): ScreenRow[
 /**
  * 「N 筆符合（檔內只保留帳面最差的前 400 / 共 M 筆，門檻與排序只在這 400 筆內）；另有 X 筆自家發行占過半未列」
  * 截斷訊息只在匯出端那一邊真的截掉時出現(total > rows.length)。
+ * 自家發行筆數:檔裡有這一邊自己的數(side.excluded_self)就只講這一邊;舊檔只有整種合計,
+ * 照實說是兩邊合計(2026-10-20:以前兩邊都顯示同一個合計,讀起來像是這一邊被排除的)。
  */
 export function screenSummary(shown: number, bucket: ScreenBucket, dir: ScreenDir): string {
   const side = bucket[dir];
   const cut = side.total > side.rows.length
     ? `（檔內只保留帳面${dir === "up" ? "最高" : "最差"}的前 ${side.rows.length} / 共 ${side.total} 筆，門檻與排序只在這 ${side.rows.length} 筆內）`
     : "";
-  const self = bucket.excluded_self > 0 ? `；另有 ${bucket.excluded_self} 筆自家發行占過半（發行商造市／避險）未列` : "";
+  const perSide = typeof side.excluded_self === "number";
+  const n = perSide ? side.excluded_self! : bucket.excluded_self;
+  const self = n > 0
+    ? `；另有 ${n} 筆自家發行占過半（發行商造市／避險）未列${perSide ? "" : "（帳面為負、為正兩邊合計）"}`
+    : "";
   return `${shown} 筆符合${cut}${self}`;
 }
 

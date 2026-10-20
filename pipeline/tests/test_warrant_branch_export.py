@@ -374,8 +374,11 @@ class WarrantBranchDetailExportTests(unittest.TestCase):
         self.assertEqual((up["branch_name"], up["cost"], up["unrealized"], up["unrealized_pct"]),
                          ("帳面為正分點", 8_000_000, 4_000_000, 50.0))
         self.assertEqual(up["buy_days"], [[self.DATES[1], 1000, 8_000_000, 1000.0]])
-        self.assertEqual(screen["kinds"]["put"], {"excluded_self": 0, "down": {"rows": [], "total": 0},
-                                                  "up": {"rows": [], "total": 0}})
+        self.assertEqual(call["down"]["excluded_self"] + call["up"]["excluded_self"], call["excluded_self"],
+                         "每邊各自的排除筆數加起來 = 該種合計")
+        self.assertEqual(screen["kinds"]["put"], {"excluded_self": 0,
+                                                  "down": {"rows": [], "total": 0, "excluded_self": 0},
+                                                  "up": {"rows": [], "total": 0, "excluded_self": 0}})
         row = call["down"]["rows"][0]
         self.assertEqual((row["branch_name"], row["underlying_id"], row["underlying_name"], row["kind"]),
                          ("套牢分點", "2330", "台積電", "call"))
@@ -528,7 +531,8 @@ class WarrantBranchDetailExportTests(unittest.TestCase):
         self.assertEqual(screen, {
             "version": 3, "definitions_version": "wpos-avgcost-v1", "data_date": None, "window_from": None,
             "min_cost": 5_000_000, "max_rows_per_side": 400,
-            "kinds": {k: {"excluded_self": 0, "down": {"rows": [], "total": 0}, "up": {"rows": [], "total": 0}}
+            "kinds": {k: {"excluded_self": 0, "down": {"rows": [], "total": 0, "excluded_self": 0},
+                          "up": {"rows": [], "total": 0, "excluded_self": 0}}
                       for k in ("call", "put")},
         })
 

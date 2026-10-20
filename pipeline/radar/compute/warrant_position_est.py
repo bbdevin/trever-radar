@@ -475,7 +475,9 @@ def screening_rows(
 
     每邊各留前 max_rows 列,`total` 是該邊門檻內全部筆數,畫面寫「顯示前 N / 共 M 筆」。
     排除:自家發行占仍持有成本 ≥ 50%(發行商造市／避險),以及總公司席位且有任何自家發行
-    持有;被排除的筆數每種各自回在 `excluded_self`(兩邊共用,排除與帳面正負無關)。
+    持有;被排除的筆數每種各自回在 `excluded_self`(兩邊合計),每邊另有自己的
+    `excluded_self`(2026-10-20:依那一筆的帳面正負分邊,規則同 rows——估不出值的歸 down),
+    畫面每邊只講自己那邊的筆數。
     entry_days(branch, sid, kind) → (buy_days, buy_days_rest|None):只對留下來的列呼叫。
     """
     kinds: dict[str, dict] = {k: _empty_screen_bucket() for k in POSITION_KINDS}
@@ -485,8 +487,11 @@ def screening_rows(
         if kind not in kinds or agg["lots"] <= 0 or agg["cost"] < min_cost:
             continue
         self_pct = int(agg["self_cost"] * 100 // agg["cost"]) if agg["cost"] else 0
+        pct = agg.get("unrealized_pct")
+        side = "up" if pct is not None and pct > 0 else "down"
         if self_pct >= SCREEN_SELF_MAX_PCT or (agg["self_cost"] > 0 and is_hq(branch)):
             kinds[kind]["excluded_self"] += 1
+            kinds[kind][side]["excluded_self"] += 1
             continue
         row = {
             "branch_name": branch,
@@ -505,8 +510,7 @@ def screening_rows(
                 row[k] = agg[k]
         if underlying in under_last:
             row["under_last_date"], row["under_last"] = under_last[underlying]
-        pct = row.get("unrealized_pct")
-        kinds[kind]["up" if pct is not None and pct > 0 else "down"]["rows"].append(row)
+        kinds[kind][side]["rows"].append(row)
     for bucket in kinds.values():
         down, up = bucket["down"], bucket["up"]
         down["rows"].sort(key=lambda r: (
@@ -531,7 +535,8 @@ def screening_rows(
 
 
 def _empty_screen_bucket() -> dict:
-    return {"excluded_self": 0, "down": {"rows": [], "total": 0}, "up": {"rows": [], "total": 0}}
+    return {"excluded_self": 0, "down": {"rows": [], "total": 0, "excluded_self": 0},
+            "up": {"rows": [], "total": 0, "excluded_self": 0}}
 
 
 def empty_screening() -> dict[str, dict]:

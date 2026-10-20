@@ -271,12 +271,21 @@ test("篩選清單 payload(v3,認購／認售 × 帳面為負／為正)與摘要
   assert.deepEqual(q?.kinds.put, { excluded_self: 0, down: { rows: [], total: 0 }, up: { rows: [], total: 0 } });
   assert.deepEqual(q?.kinds.call.up, { rows: [], total: 0 });
   assert.equal(q?.kinds.call.down.total, 1);
-  assert.equal(screenSummary(1, p.kinds.call, "down"), "1 筆符合（檔內只保留帳面最差的前 1 / 共 2 筆，門檻與排序只在這 1 筆內）；另有 1 筆自家發行占過半（發行商造市／避險）未列");
-  assert.equal(screenSummary(1, p.kinds.call, "up"), "1 筆符合（檔內只保留帳面最高的前 1 / 共 5 筆，門檻與排序只在這 1 筆內）；另有 1 筆自家發行占過半（發行商造市／避險）未列");
+  // 舊檔(每邊沒有自己的 excluded_self):照實說是兩邊合計。
+  assert.equal(screenSummary(1, p.kinds.call, "down"), "1 筆符合（檔內只保留帳面最差的前 1 / 共 2 筆，門檻與排序只在這 1 筆內）；另有 1 筆自家發行占過半（發行商造市／避險）未列（帳面為負、為正兩邊合計）");
+  assert.equal(screenSummary(1, p.kinds.call, "up"), "1 筆符合（檔內只保留帳面最高的前 1 / 共 5 筆，門檻與排序只在這 1 筆內）；另有 1 筆自家發行占過半（發行商造市／避險）未列（帳面為負、為正兩邊合計）");
   const plain = { excluded_self: 0, down: side([srow()]), up: side([]) };
   assert.equal(screenSummary(1, plain, "down"), "1 筆符合");
   assert.equal(screenSummary(0, plain, "up"), "0 筆符合");
-  assert.equal(screenSummary(0, { ...plain, excluded_self: 2 }, "up"), "0 筆符合；另有 2 筆自家發行占過半（發行商造市／避險）未列");
+  assert.equal(screenSummary(0, { ...plain, excluded_self: 2 }, "up"), "0 筆符合；另有 2 筆自家發行占過半（發行商造市／避險）未列（帳面為負、為正兩邊合計）");
+  // 新檔(2026-10-20):每邊只講自己那邊;那一邊是 0 就不提。
+  const r = normalizeScreening({
+    version: 3, definitions_version: "wpos-avgcost-v1",
+    kinds: { call: { excluded_self: 3, down: { rows: [srow()], total: 1, excluded_self: 3 }, up: { rows: [], total: 0, excluded_self: 0 } } },
+  });
+  assert.equal(r?.kinds.call.down.excluded_self, 3);
+  assert.equal(screenSummary(1, r!.kinds.call, "down"), "1 筆符合；另有 3 筆自家發行占過半（發行商造市／避險）未列");
+  assert.equal(screenSummary(0, r!.kinds.call, "up"), "0 筆符合");
   assert.equal(screenEmptyText("down"), "沒有帳面估算為負、符合門檻的券商 × 標的。涵蓋已匯入權證池、每檔權證只有前 15 大分點；沒有資料不代表沒有持有。");
   assert.equal(screenEmptyText("up"), "沒有帳面估算為正、符合門檻的券商 × 標的。涵蓋已匯入權證池、每檔權證只有前 15 大分點；沒有資料不代表沒有持有。");
   assert.deepEqual(SCREEN_DIR_LABEL, { down: "帳面為負", up: "帳面為正" });

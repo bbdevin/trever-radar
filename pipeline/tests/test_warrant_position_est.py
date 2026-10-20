@@ -328,7 +328,11 @@ class ScreeningTests(unittest.TestCase):
         self.assertEqual([r["branch_name"] for r in call["up"]["rows"]], ["乙-分點"])
         self.assertEqual((call["down"]["total"], call["up"]["total"], call["excluded_self"]), (2, 1, 2))
         self.assertEqual([r["branch_name"] for r in put["down"]["rows"]], ["乙-分點"])
-        self.assertEqual((put["down"]["total"], put["up"], put["excluded_self"]), (1, {"rows": [], "total": 0}, 1))
+        self.assertEqual((put["down"]["total"], put["up"], put["excluded_self"]),
+                         (1, {"rows": [], "total": 0, "excluded_self": 0}, 1))
+        # 排除的兩筆認購(凱基 −66.7%、凱基-台北 −66.7%)都在 down;認售那筆 −10% 也在 down。
+        self.assertEqual((call["down"]["excluded_self"], call["up"]["excluded_self"]), (2, 0))
+        self.assertEqual(put["down"]["excluded_self"], 1)
         first = call["down"]["rows"][0]
         self.assertEqual(first["underlying_name"], "台積電")
         self.assertEqual((first["under_last"], first["under_last_date"]), (580.0, AS_OF))
@@ -369,6 +373,8 @@ class ScreeningTests(unittest.TestCase):
         # 0% 進 down(不是「為正」),估不出值的接在 down 最後,不進 up。
         self.assertEqual([r["branch_name"] for r in call["down"]["rows"]], ["戊", "己", "庚"])
         self.assertEqual(call["excluded_self"], 2)
+        # 每邊只算自己那邊被排除的:辛 +50% → up、壬 −30% → down(2026-10-20)。
+        self.assertEqual((call["up"]["excluded_self"], call["down"]["excluded_self"]), (1, 1))
         self.assertEqual([r["branch_name"] for r in kinds["put"]["up"]["rows"]], ["癸", "子"])
         self.assertEqual((kinds["put"]["down"]["total"], kinds["put"]["excluded_self"]), (0, 0))
 
@@ -392,8 +398,9 @@ class ScreeningTests(unittest.TestCase):
         from radar.compute.warrant_position_est import empty_screening
         empty = empty_screening()
         self.assertEqual(empty, screening_rows([], names={}, under_last={}, is_hq=lambda _b: False))
-        self.assertEqual(empty["call"], {"excluded_self": 0, "down": {"rows": [], "total": 0},
-                                         "up": {"rows": [], "total": 0}})
+        self.assertEqual(empty["call"], {"excluded_self": 0,
+                                         "down": {"rows": [], "total": 0, "excluded_self": 0},
+                                         "up": {"rows": [], "total": 0, "excluded_self": 0}})
 
     def test_entry_days_lookup_reads_back_from_stock_json(self):
         from radar.compute.warrant_position_est import entry_days_lookup
