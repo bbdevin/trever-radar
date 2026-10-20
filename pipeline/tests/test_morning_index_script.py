@@ -178,12 +178,30 @@ class MorningIndexHarness(unittest.TestCase):
         self.assertIn("morning-index: no tx_night for 2026-10-13 by 0840", r.stdout)
         self.assertRegex(r.stdout, r"poll tx-night deadline at=")
 
-    def test_import_error_warns_and_stops(self):
-        r, ev = self.run_script(IMPORT_RC=1)
+    def test_import_error_without_night_warns_and_stops(self):
+        r, ev = self.run_script(IMPORT_RC=1, NIGHT_AT=99)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertFalse([e for e in ev if e.startswith(("radar:export", "deploy", "ok:", "notify:"))], ev)
         self.assertEqual(len([e for e in ev if e.startswith("warn:")]), 1, ev)
-        self.assertIn("碼 1", next(e for e in ev if e.startswith("warn:")))
+        self.assertIn("夜盤早上匯入失敗（碼 1）", next(e for e in ev if e.startswith("warn:")))
+        self.assertIn("present=no import_rc=1", r.stdout)
+
+    def test_import_error_but_night_written_still_publishes_and_warns_once(self):
+        """2026-10-20:加權或櫃買錯誤 → import-index 回 1,但期交所的 tx_night 已寫入。
+        這一輪只要 tx_night:照常匯出上線,另外 warn 一次其他來源的錯誤。"""
+        r, ev = self.run_script(IMPORT_RC=1, NIGHT_AT=1)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(ev, [
+            "lock-wait:300", "sync",
+            "radar:import-index --date 20261013:locked=1",
+            "warn:早上指數匯入有其他來源錯誤（碼 1，加權／櫃買），台指期夜盤已寫入、本輪照常上線；"
+            "加權／櫃買由 14:05 收盤輪補",
+            "radar:export-index:locked=1",
+            "deploy:locked=1",
+            "ok:台指期夜盤（2026-10-13 05:00 收）已上線：48946.0",
+        ])
+        self.assertIn("present=yes close=48946.0", r.stdout)
+        self.assertRegex(r.stdout, r"poll tx-night ready at=08:00 attempts=1")
 
     def test_export_failure_warns_and_does_not_deploy(self):
         r, ev = self.run_script(NIGHT_AT=1, EXPORT_RC=2)

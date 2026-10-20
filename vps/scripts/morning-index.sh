@@ -37,8 +37,13 @@ night_close_today() {
   radar_ro_sql "SELECT close FROM market_indices WHERE market = 'tx_night' AND date = ?" "$TODAY" 2>/dev/null || true
 }
 
-# 一次嘗試:匯入後看今天的 tx_night 在不在。在 → 0;不在 → 75(poll_until 放鎖再試);匯入錯誤 → 原碼。
-# 0/75 都是 import-index 的正常碼(早上一般時段一定還沒有,所以多半是 75)。
+# 一次嘗試:匯入後看今天的 tx_night 在不在。在 → 0;不在 → 75(poll_until 放鎖再試);
+# 匯入錯誤且 tx_night 不在 → 原碼。0/75 都是 import-index 的正常碼(早上一般時段一定還沒有,
+# 所以多半是 75)。
+# 2026-10-20:import-index 只要任一來源錯誤就回 1(加權/櫃買/期交所都跑完才判),所以加權或櫃買
+# 掛掉時夜盤其實已經寫進去了。這一輪只需要 tx_night:錯誤碼之後照樣查,有就照常匯出上線,
+# 另外 warn 一次其他來源的錯誤(IMPORT_ERR_RC)。
+IMPORT_ERR_RC=""
 import_night() {
   local rc=0 close=""
   if run_step "import-index" radar import-index --date "$TODAY8"; then
@@ -46,10 +51,14 @@ import_night() {
   else
     rc=$?
   fi
-  if [ "$rc" -ne 0 ] && [ "$rc" -ne 75 ]; then
-    return "$rc"
-  fi
   close="$(night_close_today)"
+  if [ "$rc" -ne 0 ] && [ "$rc" -ne 75 ]; then
+    if [ -z "$close" ]; then
+      echo "morning-index tx_night date=${TODAY} present=no import_rc=${rc} at=$(taipei_date +%H:%M)"
+      return "$rc"
+    fi
+    IMPORT_ERR_RC="$rc"
+  fi
   if [ -n "$close" ]; then
     echo "morning-index tx_night date=${TODAY} present=yes close=${close} at=$(taipei_date +%H:%M)"
     return 0
@@ -68,6 +77,10 @@ else
   fi
   notify_warn "夜盤早上匯入失敗（碼 ${rc}），本輪不上線；${ROUND_FAIL_CONSEQUENCE}"
   exit 0
+fi
+
+if [ -n "$IMPORT_ERR_RC" ]; then
+  notify_warn "早上指數匯入有其他來源錯誤（碼 ${IMPORT_ERR_RC}，加權／櫃買），台指期夜盤已寫入、本輪照常上線；加權／櫃買由 14:05 收盤輪補"
 fi
 
 if run_step "export-index" radar export-index; then
