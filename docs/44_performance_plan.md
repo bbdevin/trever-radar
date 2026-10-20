@@ -308,6 +308,53 @@ home/stocks.json       {version:1, data_date, generated_at, stocks:[逐檔投影
 - 代價:每輪多一次聯集選取(不握鎖)與一次放/拿鎖。放鎖的 1–4 分鐘裡等鎖的下一輪可能先跑——它的 export 一樣帶著本輪已寫入的資料上線;本輪 export 因此晚一點。`flock -n` 型的伺機寫入者(warrant-backfill、adjust-*、repair-window)都先問安靜窗/距下一個排程寫入者,與既有的輪詢放鎖、分點抓取放鎖是同一種暴露,沒有新增種類。
 - 以第一個交易日的 `step fetch-intraday … elapsed=` 與 `export timing: … intraday=` 回填本表。
 
+### 3.6 compute-branch-stats 提速＋第二段順序(2026-10-21;程式在分支,未合 main)
+
+**問題**:晚上分點輪第二段上線(權證＋排行統計)之前,第一段上線之後還要走 `import-warrant-branches`(5 s)→ `compute-branch-stats`(**658 s**)→ 第二次 `export-json`(660 s)→ deploy。正式機 2026-10-20:第一段 deploy 19:29、統計 19:29:07 起 658 s、export 19:40→19:51、第二段 19:52。權證抓取 19:13→19:28(第一段上線之前就收工)。
+
+**這一步讀什麼、寫什麼**(`pipeline/radar/compute/compute_branch_stats.py`):
+- 讀:`branch_trades`(view)的 `MAX(date)` 當 as_of;`tracked_branches`;`stocks`(`type='stock'`、名稱不含「指」、有分點列)逐檔:`daily_prices` 主鍵範圍＋`branch_trades WHERE stock_id=?`(`SEARCH r USING PRIMARY KEY (stock_id=?)`＋`branch_dim` 整數主鍵,沒有 TEMP 表、沒有日期索引)。逐檔依 stock_id 遞增 = 沿著 WITHOUT ROWID 表的主鍵順序掃一遍**全部現股歷史**(正式 ~3,300 萬列)。**不讀權證分點列**(6 碼的 stock_id 不在 `type='stock'` 裡)。
+- 寫:`branch_stock_stats`(整表刪除重寫,入榜 ∪ 追蹤分點 ~114 萬列)、`branch_rankings`(只換 as_of 那一天的快照)、`tracked_branches`(自動增減)。
+- **每天全量重算,不做增量**:每個 (分點, 個股) 的事件數、勝率、隔日沖觀察都是全期歷史的函式;as_of 每天往前走(90 日／2 年 cutoff、近 90 日金額),前 5 日事件的前瞻報酬每天補齊,除權息會讓整段還原價改變。要增量就得把這些逐一做成可更新的狀態,正確性風險遠大於剩下的時間,不做。
+
+**改了什麼**(結果逐位元不變;SQL 與改前逐字相同)
+1. **逐列不再組 dict、不再每列走 `merge_by_date`**(`_merge_rows_by_branch`):每列直接存成 `(net, sell, pct)`;只有「同名同日多列」才收集起來走同一個 `combine`(依讀取順序,fsum/sum 與改前同一份)。分點先後 = 第一次出現的順序(改前 `defaultdict` 的順序;它決定兩張表的寫入順序)。
+2. **隔日沖觀察**仍呼叫唯一那份 `daytrade_observations`,吃一個 `_DaytradeView`:只對資格日與次一交易日組 `{"net","sell"}`。
+3. **前瞻報酬與買點分位依 (個股, 事件日) 快取**(`_StockPrices`):同一檔的各分點常在同一天成為事件,改前每個分點各算一次。算法本身不動(照舊呼叫 `forward_returns`,同一份 candle;分位同一個 20 日視窗)。
+4. **讀取在背景執行緒預讀**(`_read_stocks`,最多先讀 2 檔):sqlite3 在 step(含等磁碟)時放掉 GIL,主執行緒算這一檔、背景讀下一檔。正式機 1.7 GB RAM、表 ~5 GB,讀取大半是等磁碟,改前讀與算輪流、時間直接相加。背景用 engine 自己的連線(同一組 PRAGMA);改前的 SELECT 本來就各自是自動交易(pysqlite 不為 SELECT 開交易),所以快照語意與改前相同,而這一步在 DB 鎖內跑、沒有其他寫者。背景出錯在主執行緒重新拋出;主執行緒出錯時背景會被叫停、不會卡住。
+5. **計時**:`branch stats timing:` 原本的鍵不動,`read=` 仍是讀取總時間(現在是背景執行緒的,可與歷史比),多一個 `read-wait=`(主執行緒真的停下來等讀取的時間);`per-stock-compute=` 改成扣 `read-wait`。`read − read-wait` 就是重疊省下的時間。
+
+**量測**(本機 Windows,Python 3.11 / SQLite 3.38.4;合成庫 `make_synthetic_branch_db.py --stocks 800 --days 500 --branches 300 --warrants-per-stock 10 --stock-rows 22 30 --warrant-branch-days 150` → `convert_branch_raw_without_rowid.py --analyze`:現股分點 1,040 萬列＋權證 240 萬列,1.8 GiB;每次獨立行程、各自一份 DB 副本、`PYTHONHASHSEED=0`)
+
+| 段(秒) | 舊(73c5401)兩次 | 只做 1–3 | 1–4(最終) |
+|---|---|---|---|
+| read | 38 / 36 | 25 | 48(背景;GIL 競爭讓它變長,但與計算重疊) |
+| read-wait | — | — | 19 |
+| per-stock-compute | 112 / 106 | 35 | 29 |
+| write | 2 / 2 | 2 | 2 |
+| **total** | **152 / 144** | **62** | **50(−65%)** |
+| 行程記憶體峰值(Peak Working Set) | 300 MiB | 296 MiB | 299 MiB |
+
+- **逐位元一致**:三張寫入的表依**實體(rowid)順序**逐列比對(`branch_stock_stats` 240,000 列、`branch_rankings` 300、`tracked_branches` 80,`updated_at`/`added_at` 除外)PASS;`tools/compute_parity.py` 的全庫 PK 順序雜湊 PASS;兩份 DB 各跑一次 `export-json` 再 `export_parity.py`:3,439 檔 IDENTICAL,0 TIMESTAMP/ORDER-ONLY/VALUE/MISSING。
+- **單元層**(`pipeline/tests/test_branch_stats_parity.py`):把改前的逐檔迴圈原文當基準,在刻意帶麻煩的隨機庫(同名不同 branch_key 同日多列、NULL 淨額/pct/賣張、缺開盤與開盤 0、還原因子、沒有日K的分點日、停業分點、追蹤/自動/muted)三個種子上比 `last_seen`、`branch_aggs`(插入順序＋每個累加欄位)、`stock_stats`(插入順序＋值)全等;`_merge_rows_by_branch` 對 `merge_by_date` 隨機 200 組(含型別);背景讀取的錯誤傳遞與提前關閉。突變測試(同名同日改成「留最後一列」)會被抓到。
+- 合成庫的資格比例偏高(pct 均勻 0–8%),同名同日多列也比正式機多;正式機逐列的固定成本(第 1 點)佔比更大。
+
+**正式機預估(誠實區間;以合併後第一輪 `branch stats timing:` 為準)**:10-20 的 658 s 怎麼分成 read / compute / write,要看當晚那一行(本工作沒有連正式機)。本機舊程式 compute ≈ 3 × read(全在 OS 快取);正式機讀取是冷的。
+- 偏 CPU(read ~150、compute ~480、write ~25):compute ×0.27 ≈ 130 s,與讀取重疊 → **約 170–220 s**。
+- 偏 I/O(read ~400、compute ~230):讀取本身省不了,compute 被讀取蓋掉 → **約 420–450 s**。
+- 所以 **658 s → 約 170–450 s(省 3.5–8 分)**;`read-wait` 小 = 讀取已被計算蓋住,`read-wait` ≈ `read` = 純等磁碟(那時下一步只能是減少讀取量,見下面「沒做的」)。
+
+**第二段順序(`daily-branches.sh`)**:`compute-branch-stats` 改排在 `warrant_phase_finish` **之前**(第一段上線之後)。它不讀權證分點列,as_of = `MAX(branch_trades.date)` 此時已是今天(今天的現股列已寫入,權證列的日期不會更晚),所以先算後算結果相同;好處是背景的權證抓取還沒收工時,統計與它重疊,而不是先空等權證(等的時候放 DB 鎖)再算統計。10-20 權證 19:28 收工、第一段 19:29 才上線,這種日子省 0;加了上櫃權證(+171 檔,~+3 分,`docs/47` §8.10 第 5 點)之後權證約晚於第一段 1–3 分收工 → 省 1–3 分;只剩 3 站的慢夜(權證 ~22 分)省到統計的全長。第二段匯出照舊在權證寫入之後。代價:統計失敗中止本輪時,權證這一輪不寫(EXIT trap 收掉抓取,暫存檔留著),由 22:30 續抓寫入——以前統計失敗時權證已經寫進去了。邊界:股票段離開碼 76(這一輪一筆現股都沒抓到)而權證段抓到今天的列時,以前 as_of 會被權證列推到今天、現在是前一個有現股列的日子(現在的比較對:當天沒有現股列);兩個來源是同一批鏡像站,幾乎不會只死一半。
+
+**預期第二段上線時間**:19:29 第一段 + 統計(3–7.5 分,與權證尾段重疊)+ 權證寫入 5 s + export 660 s + deploy ~1 分 ≈ **19:44–19:49**(以前 19:52;省 3.5–8 分)。
+
+**沒做的(提案;需人類決定)**
+1. **第二段匯出只重算會變的部分**(省最多):第一段與第二段之間只有兩件事改了資料——今天的權證分點列、三張統計表。export 讀它們的地方:權證分點輸出全部(`warrant_branches.json`、`warrant-stock-details/*`、`warrant_positions.json`、`warrant_movers.json`、`branches/watch/*` 的權證欄)、個股 chips 的 `branch_tags`(追蹤＋`branch_stock_stats` 的隔日沖配對)、個股 `active_warrants[].branches`(當天權證列)、口袋名單(`pocket_*`,radar/home/core)、`branches/rankings.json`、`branches/track/*`、`branches/today.json`。**一個位元都不會變的大項**:`branch_history`(10-14 實測 220 s)、`pnl`(116 s)、`pctile`(78 s,那張表 00:05 才算)、`candles`/`levels`(22 s)、hist。做法:第一次 export 把每檔這幾項的中間結果落一份快取(`data/` 下,以「現股分點列＋日K」的指紋為鍵,例如 `branch` 那列 import_logs 的 id＋`daily_prices` 的 MAX(date)＋筆數),第二次 export 指紋相同就直接用。估計第二段 export 660 → **約 220–300 s(再省 6–7 分;第二段約 19:38–19:42)**。風險在「依賴清單」寫漏:要用 `export_parity.py` 對「快取路徑」與「全量」兩棵樹逐位元比對,並把依賴清單寫成測試。改動面在 `json_export` 的個股主迴圈,不小,這次不做。
+   - `docs/44` §3.5 舊提案的 `--skip-warrant-shards` 在兩段式之後**不成立**:第一段與第二段之間權證列會變。
+2. **排行統計移出晚上那條鏈**(產品決定):第二段只帶權證,統計留給 00:05 夜間作業算＋上線 → 第二段 ≈ 19:29 + 11 分 ≈ 19:41,代價是排行榜晚幾小時才含今天。
+3. **統計與第一段 export 並行**(唯讀計算,寫入延到第一段上線之後):要先量 VPS 的 `nproc` 與兩者同時的記憶體峰值(export ~700 MB＋統計 ~300 MB,1.7 GB RAM);單核機上會拖慢第一段,不建議在沒量之前做。
+4. **再減讀取量**(若 `read-wait` ≈ `read`):讀取的是全部現股歷史;唯一的辦法是讓分點×個股的全期統計可增量更新(見上面「不做增量」),目前不值得。
+
 ## 4. 明確不做
 
 - 不換 DB 引擎、不引入任何需綁卡或常駐服務(Postgres、D1、R2、KV、SSR)。

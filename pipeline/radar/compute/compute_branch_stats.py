@@ -12,8 +12,10 @@ credibility_score 可單元測試;compute_all() 負責取數、彙總與落地�
 from __future__ import annotations
 
 import math
+import queue
+import threading
 import time
-from collections import defaultdict
+from contextlib import closing
 from datetime import date as date_cls
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -23,7 +25,7 @@ from sqlalchemy import text
 from .. import config, schema
 from ..db import get_engine, init_db, upsert
 from ..branch_names import is_closed
-from .branch_same_day import merge_by_date
+from .branch_same_day import combine
 from .performance import forward_returns
 
 # 事件資格
@@ -260,6 +262,228 @@ class _BranchAgg:
         return (self.dt_pairs_flagged / self.dt_pairs_determined) >= DAYTRADE_PAIR_SHARE
 
 
+def _merge_rows_by_branch(rows) -> dict[str, dict[str, tuple]]:
+    """(branch_name, date, net, sell, pct) 列 → {分點: {date: (net, sell, pct)}}。
+
+    與 ``merge_by_date(…, ("net", "sell", "pct"))`` 逐值相同(docs/44 §3.6):只有一列的
+    (分點, 日) 原值不動(= ``combine`` 對單一值的結果);同名同日多列才走同一個
+    ``combine``,依讀取順序收集,與改前同序。分點的先後 = 第一次出現的順序(與改前
+    ``defaultdict`` 相同,它決定 stock_stats / branch_aggs 的插入序)。
+    內層 dict 不保證依日期排序——讀者只用 max() / sorted() / 查表。
+    """
+    by_branch: dict[str, dict[str, tuple]] = {}
+    multi: dict[tuple[str, str], list[tuple]] = {}
+    for br, d, net, sell, pct in rows:
+        datemap = by_branch.get(br)
+        if datemap is None:
+            by_branch[br] = {d: (net, sell, pct)}
+            continue
+        prev = datemap.get(d)
+        if prev is None:
+            datemap[d] = (net, sell, pct)
+            continue
+        same_day = multi.get((br, d))
+        if same_day is None:
+            multi[(br, d)] = [prev, (net, sell, pct)]
+        else:
+            same_day.append((net, sell, pct))
+    for (br, d), same_day in multi.items():
+        by_branch[br][d] = tuple(combine(r[i] for r in same_day) for i in range(3))
+    return by_branch
+
+
+class _DaytradeView:
+    """給 ``daytrade_observations`` 的唯讀視圖:``get(d)`` 回 {"net","sell"} 或 None。
+
+    它只對資格日與次一交易日呼叫 get,所以只在那時才組 dict(改前是每一列都組)。
+    """
+
+    __slots__ = ("_datemap",)
+
+    def __init__(self, datemap: dict[str, tuple]) -> None:
+        self._datemap = datemap
+
+    def get(self, d):
+        row = self._datemap.get(d)
+        return None if row is None else {"net": row[0], "sell": row[1]}
+
+
+class _StockPrices:
+    """一檔的還原 candle 與每個事件日的 (fwd5, 買點分位),依事件日快取。
+
+    兩者都只看 (個股, 事件日):同一檔的各分點常在同一天成為事件,改前每個分點各算
+    一次。算法本身不動——前瞻報酬照舊呼叫 ``forward_returns``(同一份 candle),分位
+    照舊取近 20 日還原收盤 min/max 呼叫 ``price_percentile``。
+    """
+
+    __slots__ = ("candles", "adj_close", "_cache")
+
+    def __init__(self, prows) -> None:
+        self.candles = [
+            {"date": r[0], "open": (r[1] or 0) * (r[3] or 1.0),
+             "close": (r[2] or 0) * (r[3] or 1.0)}
+            for r in prows
+        ]
+        self.adj_close = [(r[2] or 0) * (r[3] or 1.0) for r in prows]
+        self._cache: dict[str, tuple] = {}
+
+    def event(self, ed: str, date_index: dict[str, int]) -> tuple:
+        hit = self._cache.get(ed)
+        if hit is not None:
+            return hit
+        perf = forward_returns(self.candles, ed)
+        fwd5 = perf["fwd_5d"] if perf else None
+        idx = date_index.get(ed)
+        pctile = 0.5
+        if idx is not None:
+            adj_close = self.adj_close
+            window = [c for c in adj_close[max(0, idx - 19):idx + 1] if c is not None]
+            if window:
+                pctile = price_percentile(adj_close[idx], min(window), max(window))
+        hit = self._cache[ed] = (fwd5, pctile)
+        return hit
+
+
+# 背景執行緒最多先讀好幾檔(每檔正式機約 1.7 萬列,幾 MB)。
+_READ_AHEAD = 2
+_READ_DONE = object()
+
+
+def _read_stocks(engine, stock_ids: list[str]):
+    """逐檔產出 (sid, 價格列, 分點列, 讀取秒數, 主執行緒等待秒數);讀取在背景執行緒。
+
+    為什麼(docs/44 §3.6):正式機 1.7 GB RAM、表 ~5 GB,這一步的讀取大半是等磁碟,
+    改前讀與算一檔一檔輪流,兩者的時間直接相加。sqlite3 在 step(含等磁碟)時放掉
+    GIL,所以背景讀下一檔時主執行緒可以算這一檔。
+
+    結果不變:兩句 SQL 與改前逐字相同、同樣依 stock_ids 的順序;背景執行緒用 engine
+    自己的連線(同一組 PRAGMA)。改前的 SELECT 本來就各自是自動交易(pysqlite 不為
+    SELECT 開交易),所以「每句各自的快照」這一點也與改前相同;而這一步在 DB 鎖內跑,
+    沒有其他寫者。
+    """
+    q: queue.Queue = queue.Queue(maxsize=_READ_AHEAD)
+    stop = threading.Event()
+
+    def worker() -> None:
+        try:
+            raw = engine.raw_connection()
+            try:
+                cur = raw.cursor()
+                for sid in stock_ids:
+                    if stop.is_set():
+                        return
+                    t0 = time.monotonic()
+                    prows = cur.execute(
+                        "SELECT date, open, close, adj_factor FROM daily_prices "
+                        "WHERE stock_id = :sid AND close IS NOT NULL ORDER BY date", {"sid": sid}
+                    ).fetchall()
+                    strade_rows = cur.execute(
+                        "SELECT branch_name, date, net_lots, sell_lots, pct "
+                        "FROM branch_trades WHERE stock_id = :sid", {"sid": sid}
+                    ).fetchall()
+                    q.put((sid, prows, strade_rows, time.monotonic() - t0))
+                cur.close()
+            finally:
+                raw.close()
+            q.put(_READ_DONE)
+        except BaseException as exc:  # noqa: BLE001 — 交給主執行緒重新拋出
+            q.put(exc)
+
+    thread = threading.Thread(target=worker, name="branch-stats-reader", daemon=True)
+    thread.start()
+    try:
+        while True:
+            t_w = time.monotonic()
+            item = q.get()
+            wait = time.monotonic() - t_w
+            if item is _READ_DONE:
+                return
+            if isinstance(item, BaseException):
+                raise item
+            sid, prows, strade_rows, read_secs = item
+            yield sid, prows, strade_rows, read_secs, wait
+    finally:
+        # 正常結束或主執行緒出錯:叫背景停下,清空佇列讓它不卡在 put,再等它收工。
+        stop.set()
+        while thread.is_alive():
+            try:
+                q.get(timeout=0.1)
+            except queue.Empty:
+                pass
+        thread.join()
+
+
+def _accumulate_stock(sid: str, prows, strade_rows, cutoff90: str, cutoff2y: str,
+                      last_seen: dict[str, str], branch_aggs: dict[str, "_BranchAgg"],
+                      stock_stats: dict[tuple[str, str], tuple]) -> None:
+    """一檔的價格列與分點列 → 打進分點累加器與 stock_stats(就地修改後三者)。"""
+    # 每股價格序列:交易日曆(判連續)、還原 candle(前瞻報酬/買點分位)、未還原收盤(金額)。
+    trading_dates = [r[0] for r in prows]
+    date_index = {d: i for i, d in enumerate(trading_dates)}
+    adj_candles = _StockPrices(prows)
+    close_by_date = {r[0]: r[2] for r in prows}
+
+    # 同名同日多個 branch_key → 加總(branch_same_day);以前是「留最後一列」,
+    # 最後一列是誰取決於讀取順序(docs/43)。
+    by_branch = _merge_rows_by_branch(strade_rows)
+
+    for br, datemap in by_branch.items():
+        # 停業判定用:分點在任一檔股票最後出現的日子(資料已在手上,不另查)。
+        seen = max(datemap)
+        if seen > last_seen.get(br, ""):
+            last_seen[br] = seen
+        # datemap 的值是 (net, sell, pct)。
+        qual_dates = sorted(
+            d for d, row in datemap.items()
+            if (row[0] or 0) > 0 and row[2] is not None and row[2] >= QUAL_PCT
+        )
+        if not qual_dates:
+            continue
+
+        agg = branch_aggs.get(br)
+        if agg is None:
+            agg = _BranchAgg()
+            branch_aggs[br] = agg
+
+        # 隔日沖觀察:每個資格買超日 → 次一交易日同分點賣出張(無紀錄=0)。
+        # 觀察建構仍是 daytrade_observations 那唯一一份;它只查資格日與其次一
+        # 交易日,給它一份只含這些日子、形狀與改前相同的 {"net","sell"} 視圖。
+        obs = daytrade_observations(
+            qual_dates, _DaytradeView(datemap), trading_dates, date_index)
+        # pair 層判定用「合併連續段之前」的觀察數(obs 逐資格日,未合併)。
+        st_daytrade, _ = daytrade_flag(obs)
+        dt_obs, dt_paybacks = daytrade_counts(obs)
+        agg.add_pair(st_daytrade)
+
+        # 合併事件 + 前瞻報酬 + 買點分位 → 直接打進累加器。
+        # 兩者都只是 (個股, 事件日) 的函式,同一檔的各分點共用一份快取。
+        events = merge_consecutive_events(qual_dates, date_index)
+        matured_vals: list[float] = []
+        for ed in events:
+            fwd5, pctile = adj_candles.event(ed, date_index)
+            agg.add_event(ed, fwd5, pctile, cutoff90, cutoff2y)
+            if fwd5 is not None:
+                matured_vals.append(fwd5)
+
+        win_rate = (100.0 * sum(1 for f in matured_vals if f > 0) / len(matured_vals)) if matured_vals else None
+        avg_ret5 = (sum(matured_vals) / len(matured_vals)) if matured_vals else None
+
+        # 近 90 日資格買超日金額(未還原價):net_lots * 1000 股 * 當日收盤。
+        amt = 0.0
+        for qd in qual_dates:
+            if qd >= cutoff90:
+                cl = close_by_date.get(qd)
+                if cl:
+                    amt += (datemap[qd][0] or 0) * 1000 * cl
+        agg.amount += amt
+
+        # 緊湊 tuple:(events, win, ret5, daytrade, last_active, dt_obs, dt_paybacks)
+        stock_stats[(br, sid)] = (
+            len(events), _r1(win_rate), _r2(avg_ret5), st_daytrade, qual_dates[-1],
+            dt_obs, dt_paybacks,
+        )
+
+
 def compute_all():
     """計算 branch_stock_stats + branch_rankings,並自動增減 tracked_branches。"""
     init_db()
@@ -269,8 +493,12 @@ def compute_all():
     # 分段計時(2026-09-30)。這一步正式機實測 1,702 秒,而先後兩份 profile 對「時間
     # 花在哪」給出相反的答案——第二份說讀取(fetchall)約佔 69%,但直接量讀取全市場
     # 只要約 3 分鐘。不再從 profile 外推:讓正式 log 自己說四段各花多少。
+    # 2026-10-21 讀取改在背景執行緒(_read_stocks):read= 是背景讀取的總時間(與以前
+    # 同義,可與歷史 log 比),read-wait= 是主執行緒真的停下來等讀取的時間;
+    # per-stock-compute= 扣的是 read-wait。兩者之差就是重疊省下的時間。
     t_start = time.monotonic()
     t_read = 0.0
+    t_wait = 0.0
     last_seen: dict[str, str] = {}
 
     # 分點層級 pool:增量累加(OOM 修復 2026-08-25:不再保留全事件 list)。
@@ -308,99 +536,15 @@ def compute_all():
 
         # 逐檔處理:載入單股價格序列與其 branch_trades 列 → 算完累加 → 迭代結束即釋放。
         # branch_trades PK 前導為 stock_id,WHERE b.stock_id=:sid 走 PK,不需額外索引。
-        for n_done, sid in enumerate(stock_ids, 1):
-            t_q = time.monotonic()
-            prows = conn.execute(text(
-                "SELECT date, open, close, adj_factor FROM daily_prices "
-                "WHERE stock_id = :sid AND close IS NOT NULL ORDER BY date"
-            ), {"sid": sid}).fetchall()
-            # 每股價格序列:交易日曆(判連續)、還原 candle(前瞻報酬/買點分位)、未還原收盤(金額)。
-            trading_dates = [r[0] for r in prows]
-            date_index = {d: i for i, d in enumerate(trading_dates)}
-            adj_candles = [
-                {"date": r[0], "open": (r[1] or 0) * (r[3] or 1.0),
-                 "close": (r[2] or 0) * (r[3] or 1.0)}
-                for r in prows
-            ]
-            adj_close = [(r[2] or 0) * (r[3] or 1.0) for r in prows]
-            close_by_date = {r[0]: r[2] for r in prows}
-
-            strade_rows = conn.execute(text(
-                "SELECT branch_name, date, net_lots, sell_lots, pct "
-                "FROM branch_trades WHERE stock_id = :sid"
-            ), {"sid": sid}).fetchall()
-            t_read += time.monotonic() - t_q
-
-            # 同名同日多個 branch_key → 加總(branch_same_day);以前是「留最後一列」,
-            # 最後一列是誰取決於讀取順序(docs/43)。
-            rows_by_branch: dict[str, list[dict]] = defaultdict(list)
-            for br, d, net, sell, pct in strade_rows:
-                rows_by_branch[br].append({"date": d, "net": net, "sell": sell, "pct": pct})
-            by_branch: dict[str, dict[str, dict]] = {
-                br: merge_by_date(rs, ("net", "sell", "pct"))
-                for br, rs in rows_by_branch.items()
-            }
-
-            for br, datemap in by_branch.items():
-                # 停業判定用:分點在任一檔股票最後出現的日子(資料已在手上,不另查)。
-                seen = max(datemap)
-                if seen > last_seen.get(br, ""):
-                    last_seen[br] = seen
-                qual_dates = sorted(
-                    d for d, row in datemap.items()
-                    if (row["net"] or 0) > 0 and row["pct"] is not None and row["pct"] >= QUAL_PCT
-                )
-                if not qual_dates:
-                    continue
-
-                agg = branch_aggs.get(br)
-                if agg is None:
-                    agg = _BranchAgg()
-                    branch_aggs[br] = agg
-
-                # 隔日沖觀察:每個資格買超日 → 次一交易日同分點賣出張(無紀錄=0)。
-                obs = daytrade_observations(qual_dates, datemap, trading_dates, date_index)
-                # pair 層判定用「合併連續段之前」的觀察數(obs 逐資格日,未合併)。
-                st_daytrade, _ = daytrade_flag(obs)
-                dt_obs, dt_paybacks = daytrade_counts(obs)
-                agg.add_pair(st_daytrade)
-
-                # 合併事件 + 前瞻報酬 + 買點分位 → 直接打進累加器。
-                events = merge_consecutive_events(qual_dates, date_index)
-                matured_vals: list[float] = []
-                for ed in events:
-                    perf = forward_returns(adj_candles, ed)
-                    fwd5 = perf["fwd_5d"] if perf else None
-                    idx = date_index.get(ed)
-                    pctile = 0.5
-                    if idx is not None:
-                        window = [c for c in adj_close[max(0, idx - 19):idx + 1] if c is not None]
-                        if window:
-                            pctile = price_percentile(adj_close[idx], min(window), max(window))
-                    agg.add_event(ed, fwd5, pctile, cutoff90, cutoff2y)
-                    if fwd5 is not None:
-                        matured_vals.append(fwd5)
-
-                win_rate = (100.0 * sum(1 for f in matured_vals if f > 0) / len(matured_vals)) if matured_vals else None
-                avg_ret5 = (sum(matured_vals) / len(matured_vals)) if matured_vals else None
-
-                # 近 90 日資格買超日金額(未還原價):net_lots * 1000 股 * 當日收盤。
-                amt = 0.0
-                for qd in qual_dates:
-                    if qd >= cutoff90:
-                        cl = close_by_date.get(qd)
-                        if cl:
-                            amt += (datemap[qd]["net"] or 0) * 1000 * cl
-                agg.amount += amt
-
-                # 緊湊 tuple:(events, win, ret5, daytrade, last_active, dt_obs, dt_paybacks)
-                stock_stats[(br, sid)] = (
-                    len(events), _r1(win_rate), _r2(avg_ret5), st_daytrade, qual_dates[-1],
-                    dt_obs, dt_paybacks,
-                )
-
-            if n_done % 400 == 0:
-                print(f"branch stats progress: {n_done}/{len(stock_ids)} stocks", flush=True)
+        # 讀取由背景執行緒預讀(_read_stocks),與這裡的計算重疊。
+        with closing(_read_stocks(engine, stock_ids)) as reads:
+            for n_done, (sid, prows, strade_rows, read_secs, wait_secs) in enumerate(reads, 1):
+                t_read += read_secs
+                t_wait += wait_secs
+                _accumulate_stock(sid, prows, strade_rows, cutoff90, cutoff2y,
+                                  last_seen, branch_aggs, stock_stats)
+                if n_done % 400 == 0:
+                    print(f"branch stats progress: {n_done}/{len(stock_ids)} stocks", flush=True)
 
     t_loop_end = time.monotonic()
 
@@ -521,7 +665,8 @@ def compute_all():
     print(
         "branch stats timing: "
         f"read={t_read:.0f}s "
-        f"per-stock-compute={t_loop_end - t_start - t_read:.0f}s "
+        f"read-wait={t_wait:.0f}s "
+        f"per-stock-compute={t_loop_end - t_start - t_wait:.0f}s "
         f"aggregate={t_write_start - t_loop_end:.0f}s "
         f"write={t_end - t_write_start:.0f}s "
         f"total={t_end - t_start:.0f}s "

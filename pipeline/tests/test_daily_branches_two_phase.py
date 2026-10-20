@@ -8,7 +8,8 @@
 斷言事件的**先後**:
 
 * 第一輪:股票抓 → 權證背景抓起跑 → 股票寫入 → 評分 → **第一段上線**(權證還在抓)→
-  等權證 → 權證寫入 → 排行統計 → 第二段上線 → 完成標記。
+  排行統計(docs/44 §3.6:不讀權證列,與還在跑的抓取重疊)→ 等權證 → 權證寫入 →
+  第二段上線 → 完成標記。
 * 權證段失敗(抓取 124、寫入 76)→ 第一段、第二段照常上線,只 warn,不寫權證。
 * 股票不合格 → 中止;背景的權證抓取被 TERM 收掉(不帶著來源鎖活過本輪)。
 * 22:30:兩段都完整 → 收工;只缺權證 → 不抓股票、權證在評分之前寫入、上線一次;
@@ -161,8 +162,14 @@ class TwoPhaseRound(unittest.TestCase):
         self.assertLess(deploys[0], w_end, "第一段上線不等權證")
         self.assertLess(w_end, w_import)
         self.assertLess(deploys[0], w_import)
-        self.assertLess(w_import, stats, "權證先寫進去,排行統計與第二段看到最終資料")
-        self.assertLess(stats, deploys[1])
+        # docs/44 §3.6:排行統計不讀權證列,排在權證收尾之前,與還在跑的權證抓取重疊;
+        # 第二段匯出仍在權證寫入之後,看到最終資料。
+        self.assertLess(deploys[0], stats, "排行統計不在第一段上線的路徑上")
+        self.assertLess(stats, w_import, "排行統計先算,不空等權證抓取")
+        exports = self._all(ev, lambda e: e.startswith("radar export-json"))
+        self.assertEqual(len(exports), 2, ev)
+        self.assertLess(w_import, exports[1], "第二段匯出看到權證")
+        self.assertLess(exports[1], deploys[1])
         self.assertIn("bg-fd9=closed", ev, "背景抓取不得帶著 DB 鎖的 fd 9")
         self.assertIn("releasing the DB lock while waiting", out)
         self.assertIn("[warrants] ", out, "背景抓取的 log 收回來時加前綴倒進本輪 log")
