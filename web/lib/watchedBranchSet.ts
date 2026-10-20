@@ -2,13 +2,15 @@
 
 // 自選「特定分點」(docs/52)的分點組合與資料讀取。
 //
-// TODO(docs/52 §6):分點組合目前只存本機(localStorage),換裝置不會跟著走。綁帳號需要新的
-// Supabase 表 `watched_branch_sets`,SQL 草稿在 docs/sql/20261019160000_create_watched_branch_sets.sql
-// (未執行,須人類審過再貼到 Supabase SQL Editor)。表建好後比照 lib/userPrefs.tsx 的 user_ui_prefs:
-// 登入時讀雲端、改動時 upsert,表不存在時退回本機。
+// 組合綁帳號(docs/52 §6):本機 localStorage(watched_branch_set_v1)永遠有一份;登入且已核准時
+// 讀 Supabase `watched_branch_sets` 自己那一列並依 lib/watchedBranchSync.ts 的規則合併,改動時 upsert。
+// 表還沒建(SQL docs/sql/20261019160000_create_watched_branch_sets.sql 由人類執行)或請求失敗 → 安靜退回本機。
+// 只用 lib/supabase.ts 的 publishable key 客戶端;一切權限由 RLS 決定。
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { dataFetch } from "@/lib/dataFetch";
+import { supabase } from "@/lib/supabase";
+import { useSession } from "@/lib/useSession";
 import {
   buildRows,
   normalizeSet,
@@ -18,32 +20,66 @@ import {
   type WatchIndex,
   type WatchShard,
 } from "@/lib/watchedBranches";
+import { BranchSetSync, CLOUD_TABLE, type CloudApi, type KeyValue } from "@/lib/watchedBranchSync";
 
-const LOCAL_KEY = "watched_branch_set_v1";
-
-function readLocal(): BranchSet {
-  try {
-    const raw = localStorage.getItem(LOCAL_KEY);
-    return normalizeSet(raw ? JSON.parse(raw) : null);
-  } catch {
-    return normalizeSet(null);
-  }
-}
-
-/** [組合, 更新];第一次 render 用預設值,mount 後換成本機存的。 */
-export function useWatchedBranchSet(): [BranchSet, (next: BranchSet) => void] {
-  const [set, setState] = useState<BranchSet>(() => normalizeSet(null));
-  useEffect(() => {
-    setState(readLocal());
-  }, []);
-  const update = useCallback((next: BranchSet) => {
-    const clean = normalizeSet(next);
-    setState(clean);
+const storage: KeyValue = {
+  get(key) {
     try {
-      localStorage.setItem(LOCAL_KEY, JSON.stringify(clean));
+      return localStorage.getItem(key);
+    } catch {
+      return null; // 私密模式等
+    }
+  },
+  set(key, value) {
+    try {
+      localStorage.setItem(key, value);
     } catch {
       /* 私密模式等:留在記憶體 */
     }
+  },
+};
+
+const cloud: CloudApi = {
+  async load(uid) {
+    const { data, error, status } = await supabase
+      .from(CLOUD_TABLE)
+      .select("branches, anchor, updated_at")
+      .eq("user_id", uid)
+      .maybeSingle();
+    return { row: data ?? null, error: error ? { code: error.code, message: error.message, status } : null };
+  },
+  async save(row) {
+    const { error, status } = await supabase.from(CLOUD_TABLE).upsert(row, { onConflict: "user_id" });
+    return { error: error ? { code: error.code, message: error.message, status } : null };
+  },
+};
+
+/** 一個頁面載入共用一個:表不存在時只試一次,站內換頁回來也不再打。 */
+let shared: BranchSetSync | null = null;
+function getSync(): BranchSetSync {
+  shared ??= new BranchSetSync({ kv: storage, api: cloud, warn: (m) => console.warn(m) });
+  return shared;
+}
+
+/** [組合, 更新];第一次 render 用預設值,mount 後換成本機存的,登入(已核准)後再依雲端合併。 */
+export function useWatchedBranchSet(): [BranchSet, (next: BranchSet) => void] {
+  const { session, approved, loading } = useSession();
+  // 只用 user id:TOKEN_REFRESHED 換 session 物件時不重讀雲端
+  const uid = !loading && approved ? session?.user?.id ?? null : null;
+  const [set, setState] = useState<BranchSet>(() => normalizeSet(null));
+  useEffect(() => {
+    let alive = true;
+    const sync = getSync();
+    setState(sync.current());
+    void sync.attach(uid).then((s) => {
+      if (alive) setState(s);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [uid]);
+  const update = useCallback((next: BranchSet) => {
+    setState(getSync().edit(next));
   }, []);
   return [set, update];
 }

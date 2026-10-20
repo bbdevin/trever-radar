@@ -2,6 +2,13 @@
 
 > 單一進度真相。每完成一個里程碑就更新本檔。規格細節看各編號文件,別寫在這裡。
 
+## 2026-10-20 特定分點組合綁帳號(`docs/52` §6;前端完成於分支、未合 main;SQL 已審、待人類執行;併入 v3.11)
+
+- **需求**:自選「特定分點」選的分點組合(原本只存本機 `watched_branch_set_v1`)換裝置也跟著帳號走。
+- **做了什麼**:①SQL `docs/sql/20261019160000_create_watched_branch_sets.sql` 資安審查並就地修正(update `using` 補 approved、函式 NULL → false、整檔交易、限制 drop/add 可收斂、函式 execute 先全收回再給 authenticated、加回滾);審查紀錄 `docs/52` §6.2。②前端 `web/lib/watchedBranchSync.ts`(本機格式、合併、錯誤分類、序列化 upsert)＋`watchedBranchSet.ts` hook 接 Supabase(同一個 publishable key 客戶端,只在 approved 時讀寫);表不存在／沒權限 → 本次載入停用雲端、不重試不洗 console,組合照存本機。合併:雲端優先,本機較新的未上傳改動勝出並上傳(`docs/52` §6.1)。③`normalizeSet` 改為也濾掉控制字元(與 SQL 同一條規則)。
+- **驗證**:web node `watchedBranchSync.test.ts` 24 項(驗證與 SQL 同規則、舊格式、合併各情境、錯誤分類、表不存在不重試、斷線只 warn 一次、連續改動只留最新、讀雲端期間的改動不被蓋、換帳號、時間戳單調);本機 PostgreSQL 16＋最小 Supabase 環境實跑 SQL 兩次 46 項 RLS／權限／限制／回滾檢查全過;`tsc`、`next build`(bundle 無 secret／service_role);Playwright 390px `web/scripts/verify-watched-branch-sync.mjs` 22 項(表不存在 → 本機可改、重新整理保留、每次載入一個 GET 零 POST、無 console 訊息;假表 → 載入雲端、upsert `on_conflict=user_id` merge-duplicates、body 只有本人 user_id＋組合、空本機的另一台拿到雲端版;離線較新改動載入時上傳),截圖 `docs/evidence/52_watched_branches/watchlist-390-dark-sync-*.png`。
+- **待人類**:在 Supabase SQL Editor 執行上述 SQL(步驟、驗證、回滾見 `docs/52` §6.3;建議在合 main 前或同一天,changelog 3.11 已寫「跟著帳號走」);合 main。
+
 ## 2026-10-20 特定分點:權證同買／同賣＋均價(估)(`docs/52` §8;程式完成於分支、未合 main、未上線;v3.11)
 
 - **需求**:「富邦新店買雙鴻、永豐金內湖買權證雙鴻,這樣也算同買」;「可以預估平均成本更好」。
