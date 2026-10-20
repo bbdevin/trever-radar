@@ -495,6 +495,13 @@ class WarrantBranchDetailExportTests(unittest.TestCase):
         self.assertTrue(_is_self_issued("國泰綜合-敦南", "台積電國泰5D購04"))
         self.assertTrue(_is_self_issued("台北富邦-建國", "台積電富邦5E售05"))
         self.assertTrue(_is_self_issued("群益金鼎-板橋", "台積電群益59購03"))
+        # 摩根大通(2026-10-20):發行商簡稱離線無法確認,「摩通」「摩根」都對到摩根大通。
+        self.assertEqual(_branch_broker_group("摩根大通"), ("摩根大通", True))
+        self.assertEqual(_branch_broker_group("美商摩根大通"), ("摩根大通", True))
+        self.assertEqual(_branch_broker_group("摩根大通證券"), ("摩根大通", True))
+        self.assertTrue(_is_self_issued("摩根大通", "台積電摩通5F購06"))
+        self.assertTrue(_is_self_issued("美商摩根大通", "台積電摩根5F售07"))
+        self.assertFalse(_is_self_issued("摩根士丹利", "台積電摩通5F購06"))
         self.assertFalse(_is_self_issued("港商麥格理", "台積電凱基5C購02"))
         self.assertFalse(_is_self_issued("凱基-台北", "兩百萬購"))     # 解不出發行商 → 不猜
 

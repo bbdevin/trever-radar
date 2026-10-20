@@ -64,6 +64,16 @@
 
 沿用 2026-10-02 的 `_warrant_issuer_group`（權證簡稱 2 字發行商）× `_branch_broker_group`（分點名的券商段）判定，2026-10-12 補**明確的別名表**（`json_export._ISSUER_TO_BROKER`、`_BRANCH_HEAD_ALIASES`、`_BRANCH_COUNTRY_PREFIX_RE`，測試 `test_issuer_alias_table`）：麥證→麥格理（分點「港商麥格理」）、法興→法國興業（「法商法國興業」）、匯豐→匯豐（「港商匯豐」）、國泰綜合→國泰、台北富邦→富邦，國別前綴（港商／法商／美商／英商／新加坡商／瑞士商／德商／荷商／日商／澳商／加商／韓商）先剝掉；解不出發行商 → 不算自家（不猜）。每塊 `self_cost`；篩選清單排除 `self_cost / cost ≥ 50%` 或「總公司席位且有任何自家持有」，排除筆數**每種各自**在 `excluded_self`，畫面摘要句說出來。
 
+**摩根大通(2026-10-20)**：分點「摩根大通」「美商摩根大通」原本永遠不算自家。離線 fixtures 沒有任何 JPMorgan 發行的權證簡稱，無法確認兩字簡稱，所以「摩通」（港股權證慣用）與「摩根」都對到摩根大通（兩者原本都對不到任何分點；摩根士丹利分點的券商段是「摩根士丹利」，不受影響）。**待 VPS 確認**（唯讀）：
+
+```sql
+SELECT substr(name,-7,2) AS issuer, COUNT(*) AS n, MIN(name) AS sample
+FROM warrants WHERE substr(name,-7,2) LIKE '摩%' OR substr(name,-7,2) LIKE '%通' GROUP BY 1;
+SELECT branch_name FROM branch_dim WHERE branch_name LIKE '%摩根%';
+```
+
+查出的簡稱若不是這兩個，改 `_ISSUER_TO_BROKER` 與 `test_issuer_alias_table`；若查無 JPMorgan 發行的權證，這條別名無作用、可留著。
+
 ### 2.7 缺權證收盤的腿
 
 任一交易日沒有權證收盤 → 整腿 `cost_unknown`：**連買超／賣超張數都不進該塊的總計**（否則卡上「買超 N 張」與持有對不起來），只計 `n_cost_unknown` 並在註記說「N 檔有交易日缺權證收盤價，整檔不列入估算」。
