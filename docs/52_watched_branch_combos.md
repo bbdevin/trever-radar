@@ -290,3 +290,6 @@ export-json 的個股迴圈本來就逐檔讀 2 年分點列(`_branch_history_ro
 - **當天最後一輪是 incomplete 時**,`complete` 會一直是 false,直到資料日往前推:提醒持續顯示,真的沒資料的股票會被標「尚未匯入」。
 - **池在 export 時重算**:若匯入之後才補進 as_of 的報價,池變大、那一輪的 expected 不足,當天永遠不算完成(邊角情況)。
 - `import_logs.run_at` 若混到沒帶時區的列,當台北時間處理(不再讓整個 export 因 TypeError 中止)。
+
+
+> **2026-10-20 已執行**:使用者在 Supabase 跑完 `20261019160000_create_watched_branch_sets.sql`。orchestrator 以公開 publishable key 匿名探測:`watched_branch_sets` 回 `42501 permission denied`(與既有 `user_ui_prefs` 相同),不存在的表回 `PGRST205`——表已建立、anon 被擋。
