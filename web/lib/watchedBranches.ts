@@ -177,7 +177,26 @@ export interface ComboRow {
   holdTotal: number;
 }
 
-/** 從儲存值還原分點組合;壞值退回預設。anchor 一定在 branches 裡。 */
+/** C0／DEL／C1 控制字元;與 Supabase watched_branch_names_ok、branch_track_list 的 check 同一條。 */
+const CONTROL_CHARS = /[\u0001-\u001f\u007f-\u009f]/;
+export const MAX_NAME_LEN = 64;
+
+/** 分點名稱可以存(本機與雲端同一套,比 SQL 嚴):字串、1–64 字(UTF-16 單位,不少於 SQL 的字元數)、
+ *  無前後空白、無控制字元。 */
+export function isValidBranchName(s: unknown): s is string {
+  return typeof s === "string" && s.length >= 1 && s.length <= MAX_NAME_LEN && s === s.trim() && !CONTROL_CHARS.test(s);
+}
+
+/** 整組可以寫進雲端:1–6 個合法名稱、不重複、主分點是其中之一(與 SQL check 相同)。 */
+export function isValidBranchSet(v: unknown): v is BranchSet {
+  if (!v || typeof v !== "object") return false;
+  const { branches, anchor } = v as { branches?: unknown; anchor?: unknown };
+  if (!Array.isArray(branches) || branches.length < 1 || branches.length > MAX_BRANCHES) return false;
+  if (!branches.every(isValidBranchName) || new Set(branches).size !== branches.length) return false;
+  return typeof anchor === "string" && branches.includes(anchor);
+}
+
+/** 從儲存值還原分點組合;壞值退回預設。anchor 一定在 branches 裡。結果一定通過 isValidBranchSet。 */
 export function normalizeSet(raw: unknown): BranchSet {
   if (!raw || typeof raw !== "object") return { ...DEFAULT_BRANCH_SET, branches: [...DEFAULT_BRANCH_SET.branches] };
   const r = raw as { branches?: unknown; anchor?: unknown };
@@ -187,7 +206,7 @@ export function normalizeSet(raw: unknown): BranchSet {
     for (const b of r.branches) {
       if (typeof b !== "string") continue;
       const t = b.trim();
-      if (!t || t.length > 64 || seen.has(t)) continue;
+      if (!isValidBranchName(t) || seen.has(t)) continue;
       seen.add(t);
       branches.push(t);
       if (branches.length >= MAX_BRANCHES) break;

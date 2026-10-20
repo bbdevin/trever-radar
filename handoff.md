@@ -4,6 +4,10 @@
 
 - 新 CLI `radar watch-push`(只讀 `branches/watch/`)＋ `lib.sh` `watch_push`,接在 `daily-branches.sh` `publish_site` 的 deploy 之後;沒設 `WATCH_PUSH_NTFY_TOPIC` 就不做事。開通步驟、內容、去重規則見 `docs/52` §9.4/§9.3。合 main 並開通後第一個交易日看 log `watch-push: sent …`/`SKIP …`(第一段一則、第二段只在權證讓名單變動時一則)。
 
+## 2026-10-20 補記(特定分點組合綁帳號,分支未合)
+
+- 前端 `web/lib/watchedBranchSync.ts`＋`watchedBranchSet.ts` 已接 Supabase `watched_branch_sets`(approved 才讀寫;表不存在 → 本次載入只存本機、不重試)。SQL `docs/sql/20261019160000_create_watched_branch_sets.sql` 已資安審查與實跑測試,**待人類在 SQL Editor 執行**,步驟／驗證／回滾在 `docs/52` §6.3。合併規則 §6.1。重跑 smoke:`node web/scripts/verify-watched-branch-sync.mjs --out out`(在 `web/`,需 playwright 與 chromium,見檔頭)。
+
 ## 2026-10-20 補記(分點輪兩段式抓取,分支未合)
 
 - `daily-branches.sh`:前景 `import-branch-trades --phase stocks` → 寫入 → 第一段上線;權證池 `--phase warrants` 在背景抓(`warrant_fetch_start`),第一段之後 `warrant_phase_finish` 寫入,再統計、第二段。權證失敗只 warn。新 import_logs 列 `branch_warrant_pool`。22:30 股票/權證各自判斷要不要再抓。預估第一段早 ~14 分(~19:48)。合 main 後第一個交易日照 `docs/47` §8.10「核對」回填。

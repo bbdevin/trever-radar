@@ -7,7 +7,14 @@
 - **需求**:每個交易日晚上不開 App 就知道 富邦-新店／永豐金-內湖／元大-松江 今天有沒有動作。
 - **做了什麼**:`radar watch-push`(`pipeline/radar/export/watch_push.py`)只讀已匯出的 `branches/watch/`、不開 DB,規則同前端(含權證):標題資料日＋主分點,內文 ≤6 行(主分點買超/全部同買/主分點賣超檔數、同步最多的 3 檔買超＋1 檔賣超與各分點張數/權證金額、持有量大、說明行:單位/權證是否算進今天/分點已匯入 X/Y),點通知開 `/watchlist?tab=branches`;`--dry-run` 預覽、`--force` 測試。`lib.sh` `watch_push`(同 futures_digest 形狀:唯讀掛載、60 s、永不失敗)接在 `daily-branches.sh` `publish_site` 的 deploy 之後;送到 **另一個** ntfy 主題 `WATCH_PUSH_NTFY_TOPIC`(vps/.env,沒設 = 關);組合 `WATCH_PUSH_BRANCHES`(選填)。同一資料日最多三則(第一則／權證算進今天後名單有變／之後名單又變),名單沒變不送;狀態 `data/watch-push-state.json` 只在 ntfy 確認後寫。
 - **驗證**:`pipeline/tests/test_watch_push.py` 39 項(訊息逐字、排序、截斷、誠實行、禁用詞、去重三則上限、CLI 協定、假 docker/curl 實跑 helper、接線);相關腳本測試 643 項通過。
-- **待人類**:合 main;照 `docs/52` §9.4 產生主題、加進 vps/.env、手機訂閱、`--dry-run` 預覽、`watch_push --force` 送一則測試。App 裡改組合不會改推播(VPS 讀不到每人的組合,§9.1)。
+- **待人類**:合 main;照 `docs/52` §9.4 產生主題、加進 vps/.env、手機訂閱、`--dry-run` 預覽、`watch_push --force` 送一則測試。App 裡改組合不會改推播(推播用 VPS 的 `WATCH_PUSH_BRANCHES`,§9.1)。
+
+## 2026-10-20 特定分點組合綁帳號(`docs/52` §6;前端完成於分支、未合 main;SQL 已審、待人類執行;併入 v3.11)
+
+- **需求**:自選「特定分點」選的分點組合(原本只存本機 `watched_branch_set_v1`)換裝置也跟著帳號走。
+- **做了什麼**:①SQL `docs/sql/20261019160000_create_watched_branch_sets.sql` 資安審查並就地修正(update `using` 補 approved、函式 NULL → false、整檔交易、限制 drop/add 可收斂、函式 execute 先全收回再給 authenticated、加回滾);審查紀錄 `docs/52` §6.2。②前端 `web/lib/watchedBranchSync.ts`(本機格式、合併、錯誤分類、序列化 upsert)＋`watchedBranchSet.ts` hook 接 Supabase(同一個 publishable key 客戶端,只在 approved 時讀寫);表不存在／沒權限 → 本次載入停用雲端、不重試不洗 console,組合照存本機。合併:雲端優先,本機較新的未上傳改動勝出並上傳(`docs/52` §6.1)。③`normalizeSet` 改為也濾掉控制字元(與 SQL 同一條規則)。
+- **驗證**:web node `watchedBranchSync.test.ts` 25 項(驗證與 SQL 同規則、舊格式、合併各情境、錯誤分類、表不存在不重試、斷線只 warn 一次、連續改動只留最新、讀雲端期間的改動不被蓋、讀雲端期間已寫成功時丟掉舊列(verifier 回報的競態)、換帳號、時間戳單調);本機 PostgreSQL 16＋最小 Supabase 環境實跑 SQL 兩次 46 項 RLS／權限／限制／回滾檢查全過;`tsc`、`next build`(bundle 無 secret／service_role);Playwright 390px `web/scripts/verify-watched-branch-sync.mjs` 22 項(表不存在 → 本機可改、重新整理保留、每次載入一個 GET 零 POST、無 console 訊息;假表 → 載入雲端、upsert `on_conflict=user_id` merge-duplicates、body 只有本人 user_id＋組合、空本機的另一台拿到雲端版;離線較新改動載入時上傳),截圖 `docs/evidence/52_watched_branches/watchlist-390-dark-sync-*.png`。
+- **待人類**:在 Supabase SQL Editor 執行上述 SQL(步驟、驗證、回滾見 `docs/52` §6.3;建議在合 main 前或同一天,changelog 3.11 已寫「跟著帳號走」);合 main。
 
 ## 2026-10-20 特定分點:權證同買／同賣＋均價(估)(`docs/52` §8;程式完成於分支、未合 main、未上線;v3.11)
 

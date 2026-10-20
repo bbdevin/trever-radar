@@ -1,6 +1,6 @@
 # 52 自選「特定分點」組合(2026-10-19)
 
-> 狀態:✅ v3.10 已上線(2026-10-19 第一輪 export 見 §5)。**§8 權證同買／同賣＋均價(估)(v3.11)程式完成於分支,未合 main、未上線。**組合綁帳號需要的 Supabase 表只有**草稿 SQL、未執行**(§6)。**§9 晚間手機推播(ntfy)程式完成於分支,預設關;要人類在 vps/.env 加主題才會送。**
+> 狀態:✅ v3.10 已上線(2026-10-19 第一輪 export 見 §5)。**§8 權證同買／同賣＋均價(估)(v3.11)程式完成於分支,未合 main、未上線。**組合綁帳號:前端已接(2026-10-20,分支、未合 main),SQL 已資安審查、**待人類在 Supabase 執行**(§6.3);執行前自動退回只存本機。**§9 晚間手機推播(ntfy)程式完成於分支,預設關;要人類在 vps/.env 加主題才會送。**
 > 相關:`docs/42`(區間估算的誠實文案)、`docs/51`(權證仍持有估算)、`docs/13`(分點追蹤)、`docs/19`(UI)、`docs/25`(自選頁 IA)。
 
 ## 1. 需求(使用者原話,2026-10-19)
@@ -82,10 +82,74 @@ export-json 的個股迴圈本來就逐檔讀 2 年分點列(`_branch_history_ro
 - 正式機推估(~2,400 檔、每檔每日 ~30 列、~900 分點):`watch` 段約 10–20 s(export 660–780 s 的 ~2%);總量約 10 MB(gzip ~3 MB),分片約 150 KB(gzip ~45 KB)。使用者只抓 index＋選的分點所在分片(預設 3 片,~150 KB gzip)。Workers 檔數 +65(~9,500 / 20,000)。
 - **正式機第一輪(2026-10-19 20:51 daily-margin)**:`export watch: as_of=2026-10-19 branches=822 rows=74551 shard_bytes=5898422 index_bytes=27608`,`watch=14.8s`(整段 export 647 s)。分片平均 ~92 KB、index 27 KB;預設三家 ≈ index＋3 片 ≈ 300 KB(未壓縮)。暫不需要調 `SHARDS`。
 
-## 6. 組合存放(待人類)
+## 6. 組合存放:本機＋綁帳號(2026-10-20 前端已接;SQL 已審、**待人類執行**)
 
-- 現在:只存本機 `localStorage`(`watched_branch_set_v1`),換手機/瀏覽器不會跟著走;壞值退回預設。
-- 綁帳號需要新表 `watched_branch_sets`(每人一列:`branches text[]` 1–6 個、`anchor`;RLS 本人;寫入需 approved;名稱長度/控制字元/不重複檢查)。SQL 草稿 `docs/sql/20261019160000_create_watched_branch_sets.sql`,**未執行**,建議資安審查後由人類貼到 Supabase。執行後再另案接前端讀寫(比照 `lib/userPrefs.tsx` 的 `user_ui_prefs`:登入讀雲端、改動 upsert、表不存在退回本機)。
+- 本機永遠有一份 `localStorage` `watched_branch_set_v1`;登入且 `app_profiles.status = 'approved'` 時再讀寫 Supabase `watched_branch_sets` 自己那一列(每人一列:`branches text[]` 1–6 個、`anchor`、`updated_at`)。程式:`web/lib/watchedBranchSync.ts`(純邏輯＋同步器,`node --test` 可測)、`web/lib/watchedBranchSet.ts`(React hook,接 `lib/supabase.ts` 同一個 publishable key 客戶端與 `useSession`)。
+- **SQL 執行前**:讀那張表會拿到 404(`PGRST205`)→ 這次頁面載入停用雲端、不重試、不寫 console,組合照舊存本機。每次整頁載入只會多一個 GET(瀏覽器自己會記一行 404 網路錯誤;站內換頁不再打)。
+
+### 6.1 合併規則(`watchedBranchSync.ts` 檔頭;測試 `watchedBranchSync.test.ts`)
+
+本機紀錄 = `{branches, anchor, edited_at, dirty, uid}`(`branches`／`anchor` 留在最上層,舊版程式照樣讀得懂)。`dirty` = 本機改動還沒確認寫上雲端;`uid` = 這份組合屬於哪個帳號(null = 從沒和帳號同步過)。
+
+| 登入時的情況 | 結果 |
+|---|---|
+| 雲端有一列,本機沒有未上傳的改動 | **雲端勝**,覆蓋本機 |
+| 雲端有一列,本機有未上傳的改動(本人或從沒同步過),且本機改動時間 > 雲端 `updated_at` | **本機勝**,立刻 upsert(離線、表還沒建、寫入失敗時的改動不會丟) |
+| 同上但本機改動比雲端舊 | 雲端勝 |
+| 雲端沒有這一列,本機有存過(本人或從沒同步過) | 用本機並上傳(第一次綁帳號;舊格式也是) |
+| 本機是**別的帳號**留下的(同一台換人登入) | 雲端有 → 用雲端;沒有 → 照樣顯示、**不上傳**;本人改過之後才上傳本人的 |
+| 本機什麼都沒存、雲端也沒有 | 預設組合,什麼都不寫 |
+
+- 改動時間一定比它所根據的版本新(`max(現在, 上一版 + 1 ms)`),所以本機時鐘比別台慢也不會把新改動判成舊的。跨裝置的先後仍以各裝置時鐘為準(只影響本人那一列)。
+- 寫雲端一次只送一個請求;送的時候又改了,送完再送最新那份。讀雲端期間改的,合併時以那份為準(不被讀回的舊值蓋掉)。
+- 讀雲端期間有任何一次寫入成功(例如第一次 GET 還在飛,使用者改了、upsert 先完成)→ 讀回的那列可能是改動前的舊列,**整個丟掉不合併**,畫面與本機維持剛寫上去的那份;別台裝置的改動下次載入再拿(verifier 2026-10-20 回報,測試 `edit saved before the first cloud read returns…`)。
+- 錯誤:表不存在(`PGRST205`／`42P01`／404)或沒權限(`42501`／401／403,例如帳號被改回 pending)→ 這次載入停用雲端;其他(斷線、5xx)→ 改動維持 dirty、下次改動或下次載入再試,整次載入最多 `console.warn` 一次。
+已知取捨(皆低,只影響使用者自己的組合,不跨帳號讀到別人雲端的資料):
+
+- **同一台換帳號丟未上傳改動**:A 帳號登出後有未上傳的改動、接著 B 帳號登入且 B 雲端已有組合 → 本機改成 B 的,A 那份未上傳的改動丟失(A 雲端仍是上次同步的版本)。登出不清本機(比照字級／主題)。
+- **沒有主人的本機組合歸第一個登入的帳號**:舊格式(上線前存的)或登出狀態下改的組合 `uid = null`,這台裝置上第一個登入的已核准帳號會把它當成自己的——雲端沒有列就上傳到他的帳號,本機較新就蓋過他的雲端。共用裝置上,前一個人留下的組合可能被下一個人帶走(本來就在這台的 localStorage 裡、誰都看得到)。之後 `uid` 綁定該帳號,別的帳號不會再上傳它。
+- **`updated_at` 由前端帶入(裝置時鐘)**:跨裝置的先後以各自時鐘判斷。時鐘偏快的裝置寫的列時間較晚,另一台時鐘正常的裝置之後**離線**改的組合可能被判為較舊、登入時被雲端蓋掉(線上的改動不受影響:改了就立刻 upsert,last-write-wins)。改由 DB trigger 蓋 `now()` 也只是把比較對象換成伺服器時鐘對本機時鐘,沒有本質更好,未採用。
+- **空白判定兩邊不同**:SQL 用 `btrim`(只去半形空白),前端用 JS `trim()`(含全形空白 U+3000、NBSP 等 Unicode 空白)。前端比較嚴:前端存得下的,DB 一定收;反過來,有人繞過前端直接打 API 寫進「前後帶全形空白」的名稱,DB 會收,但前端讀回判為不合法 → 當作雲端沒有這列,用本機覆蓋上傳。只影響那個人自己的列。
+
+### 6.2 SQL 資安審查(2026-10-20)
+
+`docs/sql/20261019160000_create_watched_branch_sets.sql`(沿用原檔名:從沒執行過、名稱也沒有誤導,就地修正)。在本機 PostgreSQL 16 搭最小 Supabase 環境(anon／authenticated／service_role、`auth.uid()`、Supabase 的 default privileges,真的跑 `20260819171000_create_app_profiles.sql`)把整檔連跑兩次,46 項檢查全過:本人讀寫與 upsert、不能替別人寫／upsert／改／刪、不能把自己的列搬給別人、看不到別人的列、pending 讀得到也刪得掉自己的列但寫不進去、anon 對表與函式都 permission denied、每條輸入限制、重跑冪等、回滾後可重建。
+
+| # | 草稿的問題 | 嚴重度 | 修正 |
+|---|---|---|---|
+| 1 | update policy 的 `using` 沒有 approved 條件(只在 `with check`),和既有三張表(`20261003181600`)寫法不同 | 低(`with check` 已擋住寫入;差在 pending 更新時是報錯而不是 0 列) | `using` 與 `with check` 都加 approved 子查詢,與既有寫法逐字相同 |
+| 2 | 驗證函式 NULL／空陣列時回 NULL,check constraint 遇 NULL 會放行 | 低(`branches not null` 擋住了) | 整個判斷包 `coalesce(…, false)`,NULL 一律不合法 |
+| 3 | 沒有 begin/commit,中途失敗會留半套 | 低 | 整檔包在一個交易裡 |
+| 4 | 限制寫在 `create table if not exists` 裡,重跑時改過的限制不會生效 | 低 | 限制改成 `drop constraint if exists` + `add constraint`,重跑一定收斂 |
+| 5 | 函式 execute 只收回 `public, anon`,沒照既有慣例先收回 authenticated 再授權 | 資訊 | 改成先全收回再只給 authenticated;已實測 check constraint 求值時寫入者需要 execute(收回後 insert 得 `42501 permission denied for function`) |
+| 6 | 沒有回滾語句 | 資訊 | 檔頭加回滾(drop table＋drop function,交易包住) |
+
+確認沒問題的:四條 policy 都 `to authenticated`、`auth.uid() = user_id`;寫入的 approved 檢查是 exists 子查詢、以呼叫者身分執行(受 `app_profiles` RLS 限制只看得到本人列,使用者無法自行改成 approved);主鍵 user_id → 每人一列,單列最多 6 × 64 字,不需列數 trigger;`watched_branch_names_ok` 是 SECURITY INVOKER、IMMUTABLE、`search_path = ''`、不讀任何表,沒有提權面——它因此也是 authenticated 可呼叫的 RPC,只回 true/false;anon 對表與函式皆無權限;`updated_at` 由前端帶入只影響本人那列的合併,不是稽核欄位。
+
+剩下的低風險(不修):①名稱只擋控制字元,沒擋零寬字元或雙向控制字元(U+200B、U+202E 等);資料只有本人看得到、只以 React 文字節點渲染,最多讓自己的畫面怪,不跨使用者。②函式在 `public`,PostgREST 會把它列成 RPC;要藏就得搬到不對外的 schema,和現有慣例不同,不值得。
+
+### 6.3 人類執行步驟(複製貼上)
+
+1. 開 Supabase Dashboard → 專案 `eroycvbgfitvyulfbbnw` → 左側 **SQL Editor** → New query。
+2. 打開 repo 的 `docs/sql/20261019160000_create_watched_branch_sets.sql`,**整檔**複製貼上 → Run。預期 `Success. No rows returned`(Dashboard 若提示含 `drop policy` 的 destructive 警告,確認後執行;那是 `drop policy if exists`,表是新的、沒有東西會被刪)。
+3. 驗證(新開一個 query 逐段貼,都在檔尾註解裡):
+   ```sql
+   select relrowsecurity from pg_class where oid = 'public.watched_branch_sets'::regclass;           -- true
+   select policyname, cmd, roles from pg_policies where tablename = 'watched_branch_sets' order by 1; -- 4 列,roles 全是 {authenticated}
+   select grantee, privilege_type from information_schema.role_table_grants
+     where table_schema = 'public' and table_name = 'watched_branch_sets' order by 1, 2;             -- 沒有 anon
+   begin; set local role anon; select count(*) from public.watched_branch_sets; rollback;            -- ERROR: permission denied
+   ```
+   需要更細的(本人寫入、替別人寫被擋、各輸入限制)見檔尾 (4)–(8),`<MY_UUID>` 用 `select user_id, email, status from public.app_profiles;` 查。
+4. 網站驗收:手機登入 → 自選 → 特定分點,改一下主分點;另一台(或無痕視窗)登入同帳號開同一頁,看到同一組。Supabase → Table Editor → `watched_branch_sets` 應有你那一列。
+5. 回滾(會刪掉所有人雲端上的組合;各裝置本機那份還在,網站自動退回只存本機):
+   ```sql
+   begin;
+   drop table if exists public.watched_branch_sets;
+   drop function if exists public.watched_branch_names_ok(text[]);
+   commit;
+   ```
+6. 執行後在 `docs/sql/README.md` 那一列與本節標題、`docs/STATUS.md` 打勾(寫日期)。
 
 ## 7. 後續可做(未授權)
 
@@ -170,7 +234,7 @@ export-json 的個股迴圈本來就逐檔讀 2 年分點列(`_branch_history_ro
 
 - 目的:每個交易日晚上不開 App 就知道 富邦-新店／永豐金-內湖／元大-松江 今天有沒有動作。
 - 通道:**ntfy.sh**(免費、免綁卡,使用者手機已裝 ntfy App 收維運通知)。用**另一個、猜不到的主題** `WATCH_PUSH_NTFY_TOPIC`(vps/.env,不進 git),不與維運 `NTFY` 混在一起。沒設 → 整個功能不做事(不跑容器、不寫 log 以外的東西)。
-- 分點組合:VPS 讀不到每個人在 App 裡選的組合(組合只在瀏覽器 localStorage;§6 的 Supabase 表未建,VPS 也沒有、**不加** service-role key),所以推播用 `WATCH_PUSH_BRANCHES`(選填,逗號分隔、第一個是主分點;沒設 = 富邦-新店,永豐金-內湖,元大-松江;名稱要與網站上的分點名稱一字不差,最多 6 個)。**在 App 裡改組合不會改推播**;要同步得等 §6 綁帳號之後另案(VPS 端讀一份唯讀的組合匯出,不是 service-role)。
+- 分點組合:VPS 讀不到每個人在 App 裡選的組合(組合在瀏覽器 localStorage,以及綁帳號後的 Supabase `watched_branch_sets`(§6,RLS 只有本人讀得到);VPS 沒有、也**不加** service-role key),所以推播用 `WATCH_PUSH_BRANCHES`(選填,逗號分隔、第一個是主分點;沒設 = 富邦-新店,永豐金-內湖,元大-松江;名稱要與網站上的分點名稱一字不差,最多 6 個)。**在 App 裡改組合不會改推播**;要同步得另案(例如 VPS 端讀一份唯讀的組合匯出,不是 service-role)。
 
 ### 9.2 內容(`pipeline/radar/export/watch_push.py`)
 

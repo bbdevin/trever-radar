@@ -39,4 +39,4 @@ YYYYMMDDHHMMSS_snake_case_description.sql
 | `20261003145606_create_branch_track_prefs.sql` | ~~分點追蹤／靜音偏好（綁帳號）~~ **已作廢（未執行），改用 `20261003181500_create_branch_track_list.sql`；請勿執行** |
 | `20261003181500_create_branch_track_list.sql` | 全站分點追蹤名單（只有管理員可寫、approved 可讀；`branch_track_list_public()` 供 VPS 夜間管線以 publishable key 唯讀；含原 30 分點種子）**✅ 2026-10-03 已執行** |
 | `20261003181600_harden_user_tables_approved_writes.sql` | watchlist／search_history／user_ui_prefs 加固：insert／update 限本人且 approved（讀、刪不變，被拒者仍可讀刪自己資料）；每人列數上限 watchlist 500、search_history 200（trigger）；stock_id ≤16、note ≤500 字；收回 anon 權限。可重跑；回滾步驟見檔頭 **✅ 已執行(2026-10-05,使用者手動)** |
-| `20261019160000_create_watched_branch_sets.sql` | 自選「特定分點」組合綁帳號(每人一列:分點 1–6 個＋主分點;RLS 本人、寫入需 approved)。**草稿,未執行**;執行後前端仍需接上讀寫(docs/52 §6),在那之前組合只存本機 |
+| `20261019160000_create_watched_branch_sets.sql` | 自選「特定分點」組合綁帳號(每人一列:分點 1–6 個＋主分點;RLS 本人、寫入需 approved,寫法同 `20261003181600`;名稱長度／控制字元／不重複、主分點在清單內)。**資安審查已過(2026-10-20,docs/52 §6.2),未執行**;前端已接好,表不存在時自動只存本機。可重跑;執行／驗證／回滾見 docs/52 §6.3 |
