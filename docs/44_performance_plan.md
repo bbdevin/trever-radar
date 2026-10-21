@@ -308,7 +308,9 @@ home/stocks.json       {version:1, data_date, generated_at, stocks:[逐檔投影
 - 代價:每輪多一次聯集選取(不握鎖)與一次放/拿鎖。放鎖的 1–4 分鐘裡等鎖的下一輪可能先跑——它的 export 一樣帶著本輪已寫入的資料上線;本輪 export 因此晚一點。`flock -n` 型的伺機寫入者(warrant-backfill、adjust-*、repair-window)都先問安靜窗/距下一個排程寫入者,與既有的輪詢放鎖、分點抓取放鎖是同一種暴露,沒有新增種類。
 - 以第一個交易日的 `step fetch-intraday … elapsed=` 與 `export timing: … intraday=` 回填本表。
 
-### 3.6 compute-branch-stats 提速＋第二段順序(2026-10-21;程式在分支,未合 main)
+### 3.6 compute-branch-stats 提速＋第二段順序(2026-10-21;verifier CONFIRMED,已合 main)
+
+> **正式機第一輪(2026-10-21)**:`branch stats timing: read=219s read-wait=83s per-stock-compute=138s aggregate=2s write=17s total=240s`(前三日 638–656 s)。分點輪:股票抓 18:32→19:13、第一段上線 19:30、統計 19:30→19:34、權證寫入 19:34、第二段 export 720 s、第二段上線 19:47:57(10-20 為 19:52、10-19 為 20:24)。20:45 資券輪準時開工(只等資料公布)。
 
 **問題**:晚上分點輪第二段上線(權證＋排行統計)之前,第一段上線之後還要走 `import-warrant-branches`(5 s)→ `compute-branch-stats`(**658 s**)→ 第二次 `export-json`(660 s)→ deploy。正式機 2026-10-20:第一段 deploy 19:29、統計 19:29:07 起 658 s、export 19:40→19:51、第二段 19:52。權證抓取 19:13→19:28(第一段上線之前就收工)。
 
