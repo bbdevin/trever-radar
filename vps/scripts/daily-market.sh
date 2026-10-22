@@ -55,8 +55,9 @@ fi
 run_step_or_fail "aggregate-warrants" radar aggregate-warrants --date "$(taipei_date +%Y%m%d)"
 run_step_or_fail "compute-indicators" radar compute-indicators --all --days 5
 run_step_or_fail "compute-scores" radar compute-scores
-# 加權/櫃買指數與台指期近月(docs/49 §11.3/§12):冪等 upsert;尚未公布回 75 只 warn,不擋上線。
-run_step_or_warn "import-index" radar import-index
+# 加權/櫃買指數與台指期近月(docs/49 §11.3/§12):冪等 upsert;不擋上線。
+# 14:05 台指期一般時段/櫃買指數常常還沒出 → 75 只寫 log(14:45、16:00 兩輪會再匯);其他錯誤 warn。
+run_step_or_warn_pending "import-index" radar import-index
 # 當日分時／分K 的 Fugle 抓取:放 DB 鎖抓進快取,再拿回鎖 export(docs/50 §3.1;lib.sh)。
 prefetch_intraday
 run_step_or_fail "export-json" radar export-json

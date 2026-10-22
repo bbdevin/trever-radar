@@ -4,7 +4,8 @@
 1. 唯讀的發布時間量測 `probe-futures-day`(14:10/15:00/16:10 三輪取鎖前、寫
    ~/futures-probe.log)已量完,2026-10-07 依計畫整段移除:腳本、lib.sh 與 CLI 都不再有。
 2. 會寫資料庫的 `import-futures-day` 自 2026-10-02 起接進 daily-insti.sh(16:10)與
-   daily-branches.sh(17:40／22:00),裸呼叫、75 只記 log、其他非 0 只 warn、不擋本輪。
+   daily-branches.sh(16:30／22:30),裸呼叫、75 只記 log、不擋本輪。2026-10-22 起其他非 0
+   也只在當天最後一次(22:30 第二輪)warn,法人輪與分點第一輪只記 log(後面還有輪會再試)。
 """
 import re
 import unittest
@@ -43,14 +44,13 @@ class ProbeIsGone(unittest.TestCase):
 class ImportFuturesDayIsWired(unittest.TestCase):
     CALLERS = {"daily-branches.sh", "daily-insti.sh"}
 
-    def _branch_blocks(self, name: str) -> tuple[str, str, str]:
-        code = "\n".join(_code_lines(SCRIPTS_DIR / name))
-        # docs/47 起這段可能包在函式(daily-insti 的 try_futures_day)或 if 裡,允許縮排。
-        m = re.search(
-            r'if \[ "\$fd_rc" -eq 75 \]; then\n(.*?)\n\s*elif \[ "\$fd_rc" -ne 0 \]; then\n(.*?)\n\s*fi\n',
-            code, re.S)
-        self.assertIsNotNone(m, f"{name} 找不到 75 / 其他非 0 的分級區塊")
-        return code, m.group(1), m.group(2)
+    def _block(self, code: str, start: str) -> str:
+        """從 start 那一行起,到同一層的 `fi` 為止(含)。"""
+        i = code.index(start)
+        indent = len(code[:i].rsplit("\n", 1)[-1])
+        m = re.compile(rf"\n {{{indent}}}fi\n").search(code, i)
+        self.assertIsNotNone(m)
+        return code[i:m.end()]
 
     def test_exactly_these_scripts_call_it(self):
         callers = {p.name for p in sorted(SCRIPTS_DIR.glob("*.sh"))
@@ -67,14 +67,23 @@ class ImportFuturesDayIsWired(unittest.TestCase):
                 self.assertRegex(lines[0], r'if radar import-futures-day( --date "\$ROUND_DATE")?; then')
                 self.assertNotIn("run_step_or_fail", lines[0])
 
-    def test_75_is_quiet_and_other_failures_only_warn(self):
-        for name in sorted(self.CALLERS):
-            with self.subTest(script=name):
-                _, pending, failed = self._branch_blocks(name)
-                self.assertNotIn("notify", pending)
-                self.assertNotRegex(pending, r"(?m)^\s*exit\b")
-                self.assertIn("notify_warn", failed)
-                self.assertNotRegex(failed, r"(?m)^\s*exit\b")
+    def test_insti_round_never_notifies_and_never_exits(self):
+        """2026-10-22 降噪:法人輪不是最後一次機會(分點輪兩輪都會再試),75 與錯誤都只記 log。"""
+        code = "\n".join(_code_lines(SCRIPTS_DIR / "daily-insti.sh"))
+        m = re.search(r"^try_futures_day\(\) \{.*?^\}", code, re.S | re.M)
+        self.assertIsNotNone(m)
+        self.assertNotIn("notify", m.group(0))
+        self.assertNotRegex(m.group(0), r"(?m)^\s*exit\b")
+
+    def test_branch_rounds_75_is_quiet_and_only_the_last_round_warns(self):
+        code = "\n".join(_code_lines(SCRIPTS_DIR / "daily-branches.sh"))
+        block = self._block(code, 'if [ "$fd_rc" -eq 75 ]; then')
+        pending, first_round, last_round = re.split(r"\n\s*elif [^\n]*\n", block)
+        self.assertNotIn("notify", pending)
+        self.assertNotIn("notify", first_round)
+        self.assertIn("notify_warn", last_round)
+        self.assertNotRegex(block, r"(?m)^\s*exit\b")
+        self.assertIn('[ "$fd_rc" -ne 0 ] && [ "$BRANCH_ROUND_MODE" != "import" ]', block)
 
     def test_insti_calls_it_before_the_exit_75(self):
         lines = _code_lines(SCRIPTS_DIR / "daily-insti.sh")
