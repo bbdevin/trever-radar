@@ -89,6 +89,7 @@
 #                              到本機磁碟,2 GB 左右就開始失敗。
 #   MIN_MEM_MB=900
 source "$(dirname "$0")/lib.sh"
+source "$(dirname "$0")/warrant-throughput.sh"
 
 FLAG="${MID_PUBLISH_FLAG:-/tmp/radar-mid-publish.flag}"
 DAYS="${WARRANT_DAYS:-90}"
@@ -310,6 +311,8 @@ FETCHED="$(grep -oE 'fetched=[0-9]+' "$RUN_LOG" 2>/dev/null | tail -n 1 | cut -d
 FETCHED="${FETCHED:-0}"
 EMPTY="$(grep -oE 'empty=[0-9]+' "$RUN_LOG" 2>/dev/null | tail -n 1 | cut -d= -f2 || true)"
 EMPTY="${EMPTY:-0}"
+EMPTY_EXPIRED="$(grep -oE 'empty_expired=[0-9]+' "$RUN_LOG" 2>/dev/null | tail -n 1 | cut -d= -f2 || true)"
+EMPTY_EXPIRED="${EMPTY_EXPIRED:-0}"
 
 # CLI 的離開碼語意(見 cli.py 的 `cmd_backfill_warrant_branches`):
 #   rc=0  → 這個 days 深度內每一個日期都已完整。
@@ -380,13 +383,23 @@ fi
 # 它也沒多給資訊:鏡像節流 → 抓取變慢 → 列數同步變少;鏡像餵佔位頁 → fetched
 # 照增但列數不增。兩種故障 rows/s 都看得見,而它來自資料庫列數,不依賴任何字串。
 # fetched / empty 仍然印出來給人看,只是不參與判決。
-if [ "$ELAPSED" -gt "$THROUGHPUT_MIN_ELAPSED" ] && awk \
-    -v rows="$ROWS_DELTA" -v e="$ELAPSED" -v minr="$MIN_ROWS_PER_SEC" \
-    'BEGIN { exit !(rows / e < minr) }'; then
-  RPS="$(awk -v r="$ROWS_DELTA" -v e="$ELAPSED" 'BEGIN { printf "%.2f", r / e }')"
-  echo "!!! throughput collapse: ${RPS} rows/s (floor ${MIN_ROWS_PER_SEC}) over ${ELAPSED}s; fetched=${FETCHED} empty=${EMPTY}"
+# 例外(2026-10-22,docs/30 §5.3):已到期權證的空(`empty_expired=`)所花的時間從分母
+# 扣掉——舊日期剩下的大多是它們,三站確認過是來源沒有頁,不是錯誤頁。這是唯一讀
+# stdout 欄位的地方,而解析不到時是 0 = 不扣 = 舊判決,失敗方向是誤報不是漏報
+# (見 warrant-throughput.sh)。
+TP_LINE="$(warrant_throughput_verdict \
+  "$ROWS_DELTA" "$ELAPSED" "$EMPTY_EXPIRED" "$SLEEP" "$THROUGHPUT_MIN_ELAPSED" "$MIN_ROWS_PER_SEC")"
+read -r TP_VERDICT RPS LIVE_ELAPSED <<< "$TP_LINE"
+# 本塊走過的日期(新→舊),給告警裡的報表指令用。
+CHUNK_DATES="$(grep -oE '^backfill-warrant-branches [0-9]{4}-[0-9]{2}-[0-9]{2}:' "$RUN_LOG" 2>/dev/null \
+  | cut -d' ' -f2 | tr -d ':' || true)"
+CHUNK_NEWEST="$(printf '%s\n' "$CHUNK_DATES" | head -n 1)"
+CHUNK_OLDEST="$(printf '%s\n' "$CHUNK_DATES" | tail -n 1)"
+echo "throughput: ${TP_VERDICT} ${RPS} rows/s over ${LIVE_ELAPSED}s excluding ${EMPTY_EXPIRED} expired-warrant empties (floor ${MIN_ROWS_PER_SEC}, total ${ELAPSED}s)"
+if [ "$TP_VERDICT" = "collapse" ]; then
+  echo "!!! throughput collapse: ${RPS} rows/s (floor ${MIN_ROWS_PER_SEC}) over ${LIVE_ELAPSED}s; fetched=${FETCHED} empty=${EMPTY} empty_expired=${EMPTY_EXPIRED}"
   : > "$PAUSE_FILE"
-  notify "權證分點回補：吞吐塌陷（${RPS} 列/秒，基準 6.8;本塊 fetched=${FETCHED} empty=${EMPTY}），疑似鏡像回錯誤頁被記成永久 empty；已建立暫停檔 ${PAUSE_FILE}，不再開新塊，請人工確認來源後刪除該檔" high "失敗"
+  notify "權證分點回補：吞吐低於地板（${RPS} 列/秒，已扣已到期權證；本塊 fetched=${FETCHED} empty=${EMPTY}，其中已到期 ${EMPTY_EXPIRED}）。過去多半是已到期權證來源沒頁（真空，不是中毒，見 docs/30 §5.3）；先跑唯讀報表確認：docker run --rm -v \$REPO/pipeline:/app/pipeline:ro -v \$REPO/data:/app/data -w /app/pipeline radar-pipeline python tools/probe_backfill_empties.py report --from ${CHUNK_OLDEST:-<起>} --to ${CHUNK_NEWEST:-<迄>}。已建立暫停檔 ${PAUSE_FILE}，確認後刪除該檔" high "失敗"
 fi
 
 case "$VERDICT" in

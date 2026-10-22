@@ -312,7 +312,18 @@ while bash vps/scripts/warrant-backfill.sh; do sleep 180; done
 3. 訊息帶 `@host bytes=N`;摘要行多 `empty_expired=`、`recovered=`(`empty=` 原樣,腳本的 grep 不受影響)。
 4. 調查工具(唯讀):`pipeline/tools/probe_backfill_empties.py`(`report` 不連網、`probe` 每站 ≥5 秒);撤銷工具 `pipeline/tools/unrecord_warrant_empties.py`(**預設 dry-run**,`--apply` 須人類核准、`flock -n /tmp/radar-db.lock` 包住、自動備份)。
 
-**未做(待 probe 結果決定)**:錯誤頁的明確判別(需先看到真實錯誤頁長什麼樣);若「已到期不供頁」成立,`warrant-backfill.sh` 的 1.5 列/秒地板在舊日期會一直誤觸,要改成看 `empty=` 扣 `empty_expired=`,或回補目標排除已到期權證(兩者都是行為變更,需人類決定)。
+**VPS probe 結果(2026-10-22,唯讀,`5fab3af` 的工具)**:
+- `report` 2026-08-06..08-12:targets 83,398、ok 79,340、empty 3,390(上市 2,462／上櫃 928;**今天已到期 3,331、未到期 59**)、error 0;各日 empty 比例 1.4–5.1%。
+- `probe`(每對三站):EMPTY 已到期 20 對三站全零列;EMPTY 未到期 10 對也三站全零列;CTRL 未到期 5/5 有列;CTRL 已到期 2 有列、3 零列。同一頁各站回傳位元組數完全相同;有列的頁 title 為 `主力賣買超-<代號>`。
+- **結論:記下的 empty 是真空,沒有中毒,不需撤銷。** 主要是已到期權證,鏡像對它們的歷史頁多半已不供(不是每一檔都不供)。12:46 那則是地板誤報:舊日期剩下的待抓目標以已到期權證為主,它們回空、不寫列。
+
+**後續修正(同分支)**:
+1. 地板扣掉已到期空的時間:`vps/scripts/warrant-throughput.sh` `warrant_throughput_verdict`,分母 = 經過秒數 − `empty_expired` × 2 × `WARRANT_SLEEP`(每個已到期空兩站確認至少兩個 sleep);剩下不到 600 秒不判(`skip`)。`empty_expired=` 解析不到 = 0 = 舊判決(失敗方向是誤報,不是漏報)。每塊 log 多一行 `throughput: <ok|skip|collapse> …`。斷路器本來就只看未到期。
+2. 每個日期**未到期的先抓**(同組內維持成交金額序)。
+3. 已到期權證在較新的日期**連續 2 天** empty(`WARRANT_EXPIRED_SKIP_STREAK`;修正前的單站 empty 也算,probe 已證實是真空)→ 更舊的日期不抓,直接記 `empty` + `skipped_expired: true`,摘要行 `skipped_expired=`(不花請求,不算進 `empty_expired=`)。中間任一天有列就歸零。撤銷工具 `--scope expired` 可以清掉它們,但只清跳過的那幾天沒用——較新兩天的 empty 還在,下一塊會再跳過;要連較新的日期一起撤銷(重抓仍空就會再跳過,那是正確結果)。代價:鏡像對同一檔只缺某幾天的頁時會漏(probe 沒看到這種形狀)。
+4. 告警文字改成「多半是已到期權證來源沒頁」,附本塊日期範圍的 `report` 指令。
+
+**未做**:錯誤頁的明確判別(這次沒看到錯誤頁;正常頁的 title 是 `主力賣買超-<代號>`,將來要做可以從這裡下手)。
 
 ## 6. 與現行排程共存
 

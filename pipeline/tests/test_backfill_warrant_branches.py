@@ -222,6 +222,79 @@ class BackfillWarrantBranchesDateScopedTests(unittest.TestCase):
         entry = json.loads(self._state_path(NEW).read_text(encoding="utf-8"))["results"]["WB"]
         self.assertEqual(entry["status"], "error")
 
+    def test_unexpired_warrants_are_fetched_first_within_a_date(self):
+        with db.get_engine().begin() as conn:
+            conn.execute(schema.warrants.insert(), [
+                {"id": "EXP", "name": "e", "market": "twse", "kind": "call", "stock_id": "2330",
+                 "maturity_date": "2026-02-01"},
+                {"id": "LIV", "name": "l", "market": "tpex", "kind": "put", "stock_id": "2330",
+                 "maturity_date": "2099-01-01"}])
+            conn.execute(schema.warrant_daily.insert(), [
+                {"warrant_id": "EXP", "date": NEW, "close": 1, "volume": 1, "turnover": 9000},
+                {"warrant_id": "LIV", "date": NEW, "close": 1, "volume": 1, "turnover": 10}])
+        calls = []
+        with patch("radar.providers.fubon.fetch_branch_trades",
+                   side_effect=lambda sid, *a, **k: calls.append(sid) or []):
+            backfill_warrant_branches(top=200, days=1, sleep_s=0, market="all",
+                                      state_file=self.state_base)
+        # WB 到期日未知 = 未到期;成交金額序在同組內保留。
+        self.assertEqual(calls, ["WB", "LIV", "EXP"])
+
+    def test_expired_warrant_with_two_newer_empties_is_skipped_on_older_dates(self):
+        d1, d2, d3 = "2026-01-02", "2026-01-05", "2026-01-06"   # d3 = NEW
+        with db.get_engine().begin() as conn:
+            conn.execute(schema.daily_prices.insert(), {
+                "stock_id": "2330", "date": d1, "close": 100, "volume": 1, "turnover": 1})
+            conn.execute(schema.warrants.insert(), [
+                {"id": "GONE", "name": "g", "market": "twse", "kind": "call", "stock_id": "2330",
+                 "maturity_date": "2026-02-01"},
+                {"id": "LIVE", "name": "l", "market": "twse", "kind": "call", "stock_id": "2330",
+                 "maturity_date": "2099-01-01"}])
+            conn.execute(schema.warrant_daily.insert(), [
+                {"warrant_id": w, "date": d, "close": 1, "volume": 1, "turnover": 100}
+                for w in ("GONE", "LIVE") for d in (d1, d2, d3)])
+        calls = []
+        with patch("radar.providers.fubon.fetch_branch_trades",
+                   side_effect=lambda sid, date, **k: calls.append((sid, date))
+                   or (_ for _ in ()).throw(NoDataError("none"))):
+            result = backfill_warrant_branches(top=200, days=3, sleep_s=0,
+                                               state_file=self.state_base)
+        self.assertNotIn(("GONE", "20260102"), calls, "較新兩天都兩站確認空 → 最舊那天不抓")
+        self.assertEqual(calls.count(("GONE", "20260105")), 2)
+        self.assertEqual(calls.count(("LIVE", "20260102")), 2, "未到期的永遠照抓")
+        self.assertEqual(result["skipped_expired"], 1)
+        entry = json.loads(self._state_path(d1).read_text(encoding="utf-8"))["results"]["GONE"]
+        self.assertEqual(entry["status"], "empty")
+        self.assertTrue(entry["skipped_expired"])
+        self.assertEqual(result["empty_expired"], 2, "跳過的不花請求,不算進 empty_expired")
+
+    def test_rows_on_a_newer_date_reset_the_expired_streak(self):
+        d1, d2, d3 = "2026-01-02", "2026-01-05", "2026-01-06"
+        with db.get_engine().begin() as conn:
+            conn.execute(schema.daily_prices.insert(), {
+                "stock_id": "2330", "date": d1, "close": 100, "volume": 1, "turnover": 1})
+            conn.execute(schema.warrants.insert(), {
+                "id": "GONE", "name": "g", "market": "twse", "kind": "call", "stock_id": "2330",
+                "maturity_date": "2026-02-01"})
+            conn.execute(schema.warrant_daily.insert(), [
+                {"warrant_id": "GONE", "date": d, "close": 1, "volume": 1, "turnover": 100}
+                for d in (d1, d2, d3)])
+        row = {"stock_id": "GONE", "date": d2, "branch_key": "b1", "branch_name": "x",
+               "broker_id": "1", "buy_lots": 1, "sell_lots": 0, "net_lots": 1, "pct": 1.0}
+        calls = []
+
+        def fake(sid, date, **k):
+            calls.append((sid, date))
+            if sid == "GONE" and date == "20260105":
+                return [row]
+            raise NoDataError("none")
+
+        with patch("radar.providers.fubon.fetch_branch_trades", side_effect=fake):
+            result = backfill_warrant_branches(top=200, days=3, sleep_s=0,
+                                               state_file=self.state_base)
+        self.assertIn(("GONE", "20260102"), calls)
+        self.assertEqual(result["skipped_expired"], 0)
+
     def test_fubon_empty_message_names_host_and_page_size(self):
         """state 檔只存例外訊息;事後分辨哪一站、正常空頁還是錯誤頁全靠它。"""
         from radar.providers import fubon

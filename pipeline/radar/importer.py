@@ -1210,6 +1210,11 @@ def _backfill_warrant_branches_legacy(top: int = 200, days: int = 120,
 #: 已下市代號是否還供歷史頁未證實(docs/30 §5.3),它們的空不能拿來判斷來源健康。
 WARRANT_EMPTY_SPIKE_WINDOW = 200
 WARRANT_EMPTY_SPIKE_RATIO = 0.5
+#: 已到期權證在較新的日期**連續**這麼多天都是 empty(兩站確認,或修正前的單站 empty——
+#: 10-22 probe 證實那批是真空)就不再抓更舊的日期,直接記 empty 並標 ``skipped_expired``
+#: (撤銷工具 ``--scope expired`` 連同較新日期一起撤銷才會重抓)。理由:鏡像不供頁是跟著代號走的(probe:已到期
+#: 對照 3/5 三站全空、2/5 仍有),同一檔往回抓多半每天都是兩次白跑的請求。
+WARRANT_EXPIRED_SKIP_STREAK = 2
 
 
 def _fetch_warrant_branch_confirmed(fubon, sid: str, date: str, sleep_s: float):
@@ -1241,7 +1246,9 @@ def _backfill_warrant_branches_with_state(
 
     ``empty`` 是終端狀態(下次不重抓),所以寫進去之前要兩站都說空
     (:func:`_fetch_warrant_branch_confirmed`),而且未到期權證的空比例爆量時整塊
-    停下、把窗口裡的空改回 ``error``(見 ``WARRANT_EMPTY_SPIKE_*``)。
+    停下、把窗口裡的空改回 ``error``(見 ``WARRANT_EMPTY_SPIKE_*``)。每個日期未到期的
+    先抓;已到期且較新日期連續 empty 的直接記 empty 不抓(``WARRANT_EXPIRED_SKIP_STREAK``,
+    摘要行 ``skipped_expired=``,不花請求所以不算進 ``empty_expired=``)。
     """
     import collections
     import time as time_mod
@@ -1263,9 +1270,12 @@ def _backfill_warrant_branches_with_state(
         return bool(m) and m < today_iso      # 未知到期日 = 當成未到期(進斷路器窗口)
 
     fetched = failed = completed_dates = empty = 0
-    empty_expired = recovered = 0
+    empty_expired = recovered = skipped_expired = 0
     stopped = None
     state_files: list[str] = []
+    # 已到期權證「較新日期連續幾天是 empty」(日期由新往舊走;那天不在目標裡不算中斷,
+    # 有列就歸零)。>= WARRANT_EXPIRED_SKIP_STREAK 的就不再抓更舊的日期。
+    empty_streak: dict[str, int] = {}
     for d_iso in trade_dates:
         date = d_iso.replace("-", "")
         with engine.connect() as conn:
@@ -1295,6 +1305,19 @@ def _backfill_warrant_branches_with_state(
                 continue
             if state["results"].get(sid, {}).get("status") not in {"ok", "empty"}:
                 pending.append(sid)
+        # 未到期的先抓(穩定排序,同組內維持成交金額序):有列的工作先做完,斷路器窗口
+        # 也先被未到期的結果填滿。已到期的空是來源限制(docs/30 §5.3),排在後面。
+        pending.sort(key=expired_now)
+        for sid in pending:
+            if (expired_now(sid)
+                    and empty_streak.get(sid, 0) >= WARRANT_EXPIRED_SKIP_STREAK):
+                state["results"][sid] = {
+                    "status": "empty", "expired_now": True, "skipped_expired": True,
+                    "error": (f"skipped: expired warrant, {empty_streak[sid]} consecutive "
+                              "confirmed empties on newer dates"),
+                }
+                skipped_expired += 1
+        pending = [sid for sid in pending if state["results"].get(sid, {}).get("status") != "empty"]
         _atomic_json_write(state_path, state)
 
         since_checkpoint = 0
@@ -1358,6 +1381,11 @@ def _backfill_warrant_branches_with_state(
 
         _atomic_json_write(state_path, state)
         statuses = [state["results"].get(sid, {}).get("status") for sid in targets]
+        for sid, status in zip(targets, statuses):
+            if status == "empty":
+                empty_streak[sid] = empty_streak.get(sid, 0) + 1
+            elif status == "ok":
+                empty_streak[sid] = 0
         if not targets or all(status in {"ok", "empty"} for status in statuses):
             completed_dates += 1
         print(f"backfill-warrant-branches {d_iso}: targets={len(targets)} "
@@ -1382,9 +1410,11 @@ def _backfill_warrant_branches_with_state(
     # 非零就代表單站的空確實會說謊。
     print(f"backfill-warrant-branches: fetched={fetched}, complete_dates={completed_dates}/"
           f"{len(trade_dates)}, empty={empty}, empty_expired={empty_expired}, "
+          f"skipped_expired={skipped_expired}, "
           f"recovered={recovered}, failed={failed}, stopped={stopped}", flush=True)
     return {
         "fetched": fetched, "empty": empty, "empty_expired": empty_expired,
+        "skipped_expired": skipped_expired,
         "recovered": recovered, "failed": failed, "stopped": stopped,
         "state_files": state_files,
     }
