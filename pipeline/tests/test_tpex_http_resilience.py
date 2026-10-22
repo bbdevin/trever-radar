@@ -373,7 +373,7 @@ ROUND_FAIL_CONSEQUENCE=""
         self.assertEqual(len(highs), 1, f"恰好一則 high,實際:{highs}")
         self.assertIn("import-insti", highs[0], "要指名是哪一步")
         self.assertIn("42", highs[0], "要帶上離開碼")
-        self.assertIn("17:40", highs[0], "要說誰會接手(16:10 的補救者是 17:40 那輪)")
+        self.assertIn("16:30", highs[0], "要說誰會接手(16:00 的補救者是 16:30 起的分點輪)")
         self.assertNotIn("完成標記", highs[0],
                          "那是 daily-branches 的收尾契約,這一輪沒有完成標記")
 
@@ -412,9 +412,12 @@ ROUND_FAIL_CONSEQUENCE=""
 
     def test_all_daily_scripts_run_import_index_before_export_json(self):
         scripts = Path(__file__).parents[2] / "vps" / "scripts"
-        for name in ("daily-market.sh", "daily-tpex-quotes.sh", "daily-insti.sh"):
+        # 14:05／14:45 用 _pending 版(75 只寫 log,後面還有輪會再匯);16:00 是當天最後一次,75 照舊 warn。
+        for name, helper in (("daily-market.sh", "run_step_or_warn_pending"),
+                             ("daily-tpex-quotes.sh", "run_step_or_warn_pending"),
+                             ("daily-insti.sh", "run_step_or_warn")):
             text = (scripts / name).read_text(encoding="utf-8")
-            warn = text.index('run_step_or_warn "import-index" radar import-index')
+            warn = text.index(f'{helper} "import-index" radar import-index')
             export = text.index('run_step_or_fail "export-json" radar export-json')
             self.assertLess(warn, export, name)
 

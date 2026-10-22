@@ -7,12 +7,12 @@
 source "$(dirname "$0")/lib.sh"
 
 # 本輪失敗的後果(接在 run_step_or_fail 的「本輪中止、未上線」之後)。
-# 依據:17:30(舊排程 17:40)的 daily-branches.sh 第一步就是
+# 依據:16:30(docs/47 §8 現行 crontab;更舊的排程是 17:30／17:40)的 daily-branches.sh 第一步就是
 # `radar import-daily --datasets quotes,insti`,而且那一輪會跑完 compute → export
 # → deploy_data。所以本輪掛掉 = 法人晚幾個小時上線,不需要人工介入。注意
 # aggregate-warrants 不在分點輪裡,但上櫃日K輪已經用同一個 --date 跑過同一天的彙總
 # (冪等),本輪那一次是刷新而非唯一機會。
-set_round_consequence "網站停在上櫃日K那輪的內容，三大法人未上線；17:30（舊排程 17:40）分點輪會再匯入一次三大法人並重算上線"
+set_round_consequence "網站停在上櫃日K那輪的內容，三大法人未上線；16:30 起的分點輪會再匯入一次三大法人並重算上線"
 
 acquire_db_lock_wait 2700
 sync_code
@@ -29,25 +29,36 @@ if [ "$quotes_rc" -ne 0 ] && [ "$quotes_rc" -ne 75 ]; then
   notify "日K匯入失敗（exit ${quotes_rc}），請查看 ~/radar-cron.log" high "失敗"
   exit "$quotes_rc"
 fi
+# 只寫 log:同一個狀況在本輪結尾那則「部分已入庫…本輪不發布」會講一次(一個狀況一則通知)。
 if [ "$quotes_rc" -eq 75 ]; then
-  notify_warn "TWSE 行情已入庫；TPEx HTTP 520，先續跑三大法人與權證主檔"
+  echo "TWSE 行情已入庫；TPEx HTTP 520，先續跑三大法人與權證主檔（本輪結尾不發布並通知一次）"
 fi
 
 # 個股期貨當日(docs/38 §7.18;2026-10-02 起接上)。資料不齊時 import-futures-day 回 75 且一列都不寫;
-# 本輪輪詢法人的每一次嘗試都順手試一次,75 只記 log 不通知,拿到 0 就不再試;
-# 其他失敗只 warn,不擋法人上線。本輪結束仍未齊 → 17:30 分點輪重試。
+# 本輪輪詢法人的每一次嘗試都順手試一次,拿到 0 就不再試。
+# 75 與其他失敗(期交所瞬時逾時/5xx,provider 自己已重試兩次)**都只記 log、不通知**,下一次
+# 嘗試再試:本輪不是最後一次機會——分點輪(16:30 起,兩輪)開頭會再匯一次,真正的最後一次
+# (22:30 第二輪)失敗才 warn(daily-branches.sh)。2026-10-22 16:12 那則 ReadTimeout 通知就是這類。
+# 錯誤最多試 FD_MAX_ERRORS 次(預設 2)就留給分點輪:每次嘗試握著 DB 鎖,期交所整段掛掉時
+# 不要每 5 分鐘都再等一輪逾時。
 FD_DONE=0
+FD_ERRORS=0
+FD_MAX_ERRORS="${FD_MAX_ERRORS:-2}"
 try_futures_day() {
   local fd_rc=0
   if radar import-futures-day; then :; else fd_rc=$?; fi
-  if [ "$fd_rc" -eq 75 ]; then
-    echo "個股期貨當日尚未公布齊全(exit 75),下次嘗試再試;本輪結束仍未齊則 17:30 分點輪重試"
-  elif [ "$fd_rc" -ne 0 ]; then
-    notify_warn "個股期貨當日匯入失敗（exit ${fd_rc}），本輪續跑；17:30 分點輪會重試"
-    FD_DONE=1
-  fi
   if [ "$fd_rc" -eq 0 ]; then
     FD_DONE=1
+  elif [ "$fd_rc" -eq 75 ]; then
+    echo "個股期貨當日尚未公布齊全(exit 75),下次嘗試再試;本輪結束仍未齊則分點輪重試"
+  else
+    FD_ERRORS=$(( FD_ERRORS + 1 ))
+    if [ "$FD_ERRORS" -ge "$FD_MAX_ERRORS" ]; then
+      FD_DONE=1
+      echo "個股期貨當日匯入失敗(exit ${fd_rc}),本輪已失敗 ${FD_ERRORS} 次、不再試;分點輪重試(不通知)"
+    else
+      echo "個股期貨當日匯入失敗(exit ${fd_rc}),下次嘗試再試;本輪結束仍失敗則分點輪重試(不通知)"
+    fi
   fi
 }
 
@@ -97,7 +108,7 @@ if ! radar import-buybacks --days 365; then
   notify_warn "庫藏股公告暫時抓不到，已略過，沿用既有資料"
 fi
 if [ "$quotes_rc" -eq 75 ]; then
-  notify_warn "部分已入庫，因TPEx行情未完整，本輪不發布（不做aggregate/compute/export/deploy），待17:30"
+  notify_warn "TPEx 行情 HTTP 520 未完整：三大法人等已入庫，本輪不發布（不做 aggregate/compute/export/deploy）；分點輪（16:30 起）會再抓日K並上線"
   exit 75
 fi
 if [ "$insti_rc" -eq 75 ]; then
@@ -107,7 +118,10 @@ if [ "$insti_rc" -eq 75 ]; then
   fi
   # 截止仍缺上市(或上櫃)法人:已到的(通常是上櫃法人、期貨、權證主檔)照舊上線,
   # 不讓它們陪著等到分點輪 20:30 以後——舊 16:10 輪也是這樣先上線上櫃法人。
-  notify_warn "三大法人至 17:10 仍未公布齊全，先上線已到的部分；17:30 分點輪會再抓"
+  # 仍然 warn(2026-10-22 核對):分點第一輪只在**開頭**(~16:30,多半早於這裡的截止)匯一次
+  # quotes,insti,之後不再匯;下一次匯法人是 22:30 第二輪,而第二輪在第一輪覆蓋率 1.0 且權證段 ok
+  # 時直接收工、不重新上線——缺的法人可能要到隔天 14:05 才上網站。所以這不是「會自己好」的狀況。
+  notify_warn "三大法人至 17:10 仍未公布齊全，先上線已到的部分；22:30 分點第二輪會再匯入（該輪若不需重爬就不重新上線，網站要到隔天 14:05 才帶上）"
 fi
 run_step_or_fail "aggregate-warrants" radar aggregate-warrants --date "$(taipei_date +%Y%m%d)"
 run_step_or_fail "compute-indicators" radar compute-indicators --all --days 5

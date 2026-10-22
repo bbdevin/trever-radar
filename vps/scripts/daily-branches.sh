@@ -178,14 +178,21 @@ run_step_or_fail_unless "import-daily" round_prices_present radar import-daily -
 # 不能在匯入之前就判斷:前面幾輪若壞掉(sync_code/docker/來源),本輪自己的日K
 # 匯入就是當天唯一的補救,先判斷會把整天靜默丟掉(2026-10-04 驗證者抓到)。
 # 用 warn 而不是只寫 log:休市日一則提醒,遠好過真的出事卻沒人知道。
+# 第二輪(22:30)只寫 log:同一天第一輪已就同一件事通知過一次(2026-10-22 降噪)。
 if ! price_date_is_today "$ROUND_DATE"; then
-  notify_warn "匯入後仍沒有 ${ROUND_DATE} 的日K（休市或交易所未出表），分點輪不爬、不上線"
+  # (寫成 `!=`:測試以 `= "import"` 的 if 與 `case "$BRANCH_ROUND_MODE"` 字面定位模式守衛。)
+  if [ "$BRANCH_ROUND_MODE" != "import" ]; then
+    notify_warn "匯入後仍沒有 ${ROUND_DATE} 的日K（休市或交易所未出表），分點輪不爬、不上線"
+  else
+    echo "匯入後仍沒有 ${ROUND_DATE} 的日K（休市或交易所未出表），第二輪不爬、不上線（第一輪已通知）"
+  fi
   echo "=== daily-branches done $(taipei_date -Is) ==="
   exit 0
 fi
 # 個股期貨當日(docs/38 §7.18;2026-10-02 起接上)。資料不齊時 import-futures-day 回 75 且一列都不寫;
 # 本輪尚未齊全只記 log 不通知;第二輪是當天最後一次重試,其後資券輪的官方日報會在下個交易日補上。
-# 其他失敗只 warn,不擋本輪。法人輪(16:00 起)已拿到今天的就不再重抓(docs/47)。
+# 其他失敗(期交所瞬時錯誤;provider 已自己重試兩次)不擋本輪:第一輪只記 log(22:30 第二輪會再試),
+# 第二輪(當天最後一次)才 warn(2026-10-22 通知降噪)。法人輪(16:00 起)已拿到今天的就不再重抓(docs/47)。
 futures_day_done() {
   local n=""
   n="$(radar_ro_sql "SELECT COUNT(*) FROM import_logs WHERE dataset = 'futures-day' AND status = 'ok' AND date = ?" "$ROUND_DATE" 2>/dev/null || true)"
@@ -198,6 +205,8 @@ else
   if radar import-futures-day --date "$ROUND_DATE"; then :; else fd_rc=$?; fi
   if [ "$fd_rc" -eq 75 ]; then
     echo "個股期貨當日尚未公布齊全(exit 75),第二輪重試;仍未齊則資券輪的官方日報會在下個交易日補上"
+  elif [ "$fd_rc" -ne 0 ] && [ "$BRANCH_ROUND_MODE" != "import" ]; then
+    echo "個股期貨當日匯入失敗(exit ${fd_rc}),本輪續跑;22:30 第二輪會再試(不通知)"
   elif [ "$fd_rc" -ne 0 ]; then
     notify_warn "個股期貨當日匯入失敗（exit ${fd_rc}），本輪續跑；資券輪的官方日報會在下個交易日補上"
   fi

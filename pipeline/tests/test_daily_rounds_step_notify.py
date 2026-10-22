@@ -287,7 +287,8 @@ class TestDailyRoundsStepNotify(unittest.TestCase):
         # docs/47 新排程(14:45 / 16:00 / 17:30);舊時刻仍寫在括號裡,crontab 套用前也準。
         self.assertIn("14:45", self._consequence_line("daily-market.sh"))
         self.assertIn("16:00", self._consequence_line("daily-tpex-quotes.sh"))
-        self.assertIn("17:30", self._consequence_line("daily-insti.sh"))
+        # 2026-10-22:分點第一輪已是 16:30(crontab.example),後果句跟著改。
+        self.assertIn("16:30", self._consequence_line("daily-insti.sh"))
         margin = self._consequence_line("daily-margin.sh")
         self.assertRegex(margin, r"沒有任何排程|沒有人",
                          "21:20 是四輪裡唯一沒有後續補救者的")

@@ -387,14 +387,41 @@ watch_push() {
 #   run_step "deploy" deploy_data  rc=0  繼續(!)   ← 舊寫法,失敗被吃掉
 # 修好之後兩者都是 9。收尾 `( exit "$rc" ); return "$rc"` 與 radar() 同一個形狀,
 # 理由也相同:裸呼叫時就地帶著原碼中止(逐位元同於改動前),被 if 包住時忠實回傳。
+#
+# 重試(2026-10-22):Cloudflare API 偶發瞬時錯誤——10-22 08:00 `assets-upload-session`
+# 請求失敗、10-12 夜 `Received a malformed response from the API`——一次失敗就整輪報
+# 「上線失敗」。現在 `wrangler deploy` 失敗才重試,最多 DEPLOY_ATTEMPTS 次(預設 3),
+# 兩次之間睡 DEPLOY_RETRY_SLEEPS(預設 20、40 秒);每次嘗試都印一行
+# `deploy attempt N/M rc=…`。用完仍失敗 → 回傳最後一次的碼,呼叫端的處置與改動前相同。
+# npm install 失敗不重試(那不是瞬時 API 錯)。
+# 握鎖代價:呼叫端都握著 DB 鎖(deploy 讀的是 web/public/data,下一輪的 export-json 會寫
+# 同一個目錄,所以這把鎖也在保護「上傳中的檔案不被改寫」,不能在 deploy 前放掉)。成功的
+# 輪不受影響;失敗的輪多握 = 失敗嘗試的耗時 + 60 秒。實測的兩種錯誤都在建立上傳 session
+# 那一步、幾秒內就失敗 → 多約 1–1.5 分鐘;最壞(每次都在 ~3 分鐘的全量上傳尾端失敗)
+# 約多 7 分鐘。
+DEPLOY_ATTEMPTS="${DEPLOY_ATTEMPTS:-3}"
+DEPLOY_RETRY_SLEEPS="${DEPLOY_RETRY_SLEEPS:-20 40}"
 deploy_data() {
-  local rc=0
+  local rc=0 attempt=0 pause="" s
   cd "$REPO/cloudflare-data-worker" || return $?
   if [ ! -d node_modules ]; then
     npm install --no-audit --no-fund || rc=$?
   fi
   if [ "$rc" -eq 0 ]; then
-    npx wrangler deploy || rc=$?
+    while :; do
+      attempt=$(( attempt + 1 ))
+      rc=0
+      npx wrangler deploy || rc=$?
+      echo "deploy attempt ${attempt}/${DEPLOY_ATTEMPTS} rc=${rc}"
+      if [ "$rc" -eq 0 ] || [ "$attempt" -ge "$DEPLOY_ATTEMPTS" ]; then
+        break
+      fi
+      # 第 N 次失敗睡清單的第 N 個;清單用完就沿用最後一個。
+      pause=30
+      for s in $(echo "$DEPLOY_RETRY_SLEEPS" | cut -d' ' -f"1-${attempt}"); do pause="$s"; done
+      echo "deploy: wrangler failed (rc=${rc}), retrying in ${pause}s"
+      sleep "$pause"
+    done
   fi
   cd "$REPO" || true
   ( exit "$rc" )
@@ -812,6 +839,27 @@ run_step_or_warn() {
     return 0
   else
     rc=$?
+  fi
+  notify_warn "${label} 失敗（碼 ${rc}），本輪續跑，沿用既有資料"
+  return 0
+}
+
+# run_step_or_warn_pending LABEL CMD…:同 run_step_or_warn,但 75(「來源還沒公布」,
+# IMPORT_DAILY_PENDING_EXIT)只寫一行 log、不通知。給「後面還有輪會再跑同一步」的地方:
+# 14:05／14:45 的 import-index(台指期一般時段、櫃買指數那時常常還沒出,16:00 法人輪會再匯)。
+# 2026-10-22 這兩輪各送了一則「import-index 失敗（碼 75）」——那是預期內的「還沒到」,不是失敗。
+# 其他非零照舊 warn。log 行:`<label> pending (rc=75): …`,可 grep。
+run_step_or_warn_pending() {
+  local label="$1"
+  local rc=0
+  if run_step "$@"; then
+    return 0
+  else
+    rc=$?
+  fi
+  if [ "$rc" -eq 75 ]; then
+    echo "${label} pending (rc=75): a source has not published yet; a later round re-runs it"
+    return 0
   fi
   notify_warn "${label} 失敗（碼 ${rc}），本輪續跑，沿用既有資料"
   return 0

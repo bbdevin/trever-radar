@@ -135,8 +135,8 @@ cat /tmp/radar-branch-round-$(date +%F).done                            # 第二
 | 步驟 | 失敗時 | 理由 |
 |---|---|---|
 | `import-daily quotes,insti` | 今天的日K已在庫(`price_date_is_today`)→ **warn 續跑**;不在庫 → high + 原碼中止 | 只是補抓(14:05/16:00 早進庫);不在庫時它是當天唯一補救 |
-| 休市判斷(`if ! price_date_is_today`) | 不變:先匯入再判斷,休市 warn 收工 | |
-| `import-futures-day` | 不變:75 只記 log、其他 warn | |
+| 休市判斷(`if ! price_date_is_today`) | 不變:先匯入再判斷,休市 warn 收工(2026-10-22 起第二輪只寫 log:第一輪已通知) | |
+| `import-futures-day` | 75 只記 log;其他:第一輪只記 log、22:30 第二輪(當天最後一次)warn(2026-10-22 降噪,`docs/08` §0.1) | |
 | `compute-indicators --all --days 5` | 今天的指標已在庫(`indicators_date_is_today`)→ warn 續跑;不在庫 → 中止 | 三輪早算過;缺今天的指標評分會缺技術分 |
 | `seed-branches` | **永遠 warn 續跑** | 追蹤名單沿用上次;CLI 本身設計成永不失敗 |
 | `fetch-branch-trades`(抓) | high + 中止(什麼都沒進庫;暫存檔留著已抓到的,第二輪續抓) | 超時 124 / SIGTERM 143 |

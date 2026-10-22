@@ -64,6 +64,8 @@ from __future__ import annotations
 import csv
 import io
 import json
+import sys
+import time
 from dataclasses import dataclass
 from datetime import date as date_cls
 
@@ -90,6 +92,44 @@ _TRUE_MARKS = ("●", "◎")
 _MISSING = frozenset({"", "-", "--", "---", "N/A", "NULL"})
 
 _REQUEST_HEADERS = {"User-Agent": config.USER_AGENT}
+
+# 瞬時錯誤的小重試(2026-10-22):10-22 16:12 stockLists ReadTimeout(30 s)、16:15 futDataDown
+# HTTP 520,兩次都是期交所那一端的瞬時錯,幾分鐘後同一個請求就好了。只重試逾時/連線中斷/
+# 5xx,**4xx 與解析錯誤不重試**(那是請求或官網改版的問題,重試只會一樣錯)。
+# 兩次重試、間隔 5 → 15 秒:對期交所禮貌(一次失敗最多多打 2 個請求),而且每次呼叫的
+# 最壞耗時有界——stockLists 30×3+20 ≈ 110 s、futDataDown 120×3+20 ≈ 380 s(全逾時才會到)。
+_RETRY_DELAYS = (5.0, 15.0)
+
+
+def _retryable(exc: Exception) -> bool:
+    if isinstance(exc, (requests.Timeout, requests.ConnectionError,
+                        requests.exceptions.ChunkedEncodingError)):
+        return True
+    if isinstance(exc, requests.HTTPError):
+        code = getattr(exc.response, "status_code", None)
+        return isinstance(code, int) and code >= 500
+    return False
+
+
+def _request(method: str, url: str, **kwargs) -> requests.Response:
+    """``requests.get``/``post`` + ``raise_for_status``,瞬時錯誤照 ``_RETRY_DELAYS`` 重試。
+
+    重試用完仍失敗 → 原例外原樣往上丟(呼叫端與改動前看到的是同一種例外)。
+    """
+    attempt = 0
+    while True:
+        try:
+            response = requests.request(method, url, **kwargs)
+            response.raise_for_status()
+            return response
+        except Exception as exc:  # noqa: BLE001 - 分類在 _retryable
+            if attempt >= len(_RETRY_DELAYS) or not _retryable(exc):
+                raise
+            delay = _RETRY_DELAYS[attempt]
+            attempt += 1
+            print(f"taifex: {method} {url} failed ({type(exc).__name__}: {exc}); "
+                  f"retry {attempt}/{len(_RETRY_DELAYS)} in {delay:.0f}s", file=sys.stderr, flush=True)
+            time.sleep(delay)
 
 
 class TaifexParseError(RuntimeError):
@@ -354,8 +394,7 @@ def parse_stock_list(html: str) -> list[FuturesContractRow]:
 
 
 def fetch_stock_list() -> list[FuturesContractRow]:
-    response = requests.get(STOCK_LIST_URL, headers=_REQUEST_HEADERS, timeout=config.HTTP_TIMEOUT)
-    response.raise_for_status()
+    response = _request("GET", STOCK_LIST_URL, headers=_REQUEST_HEADERS, timeout=config.HTTP_TIMEOUT)
     response.encoding = response.apparent_encoding or "utf-8"
     rows = parse_stock_list(response.text)
     if not rows:
@@ -457,10 +496,9 @@ def fetch_history(start: str, end: str) -> list[FuturesDailyRow]:
         "queryStartDate": start.replace("-", "/"),
         "queryEndDate": end.replace("-", "/"),
     }
-    response = requests.post(
-        HISTORY_URL, data=form, headers=_REQUEST_HEADERS, timeout=config.HTTP_TIMEOUT * 4
+    response = _request(
+        "POST", HISTORY_URL, data=form, headers=_REQUEST_HEADERS, timeout=config.HTTP_TIMEOUT * 4
     )
-    response.raise_for_status()
     rows = parse_history_csv(response.content)
     if not rows:
         raise NoDataError(f"taifex futDataDown {start}..{end}: empty parse")
