@@ -79,7 +79,10 @@ def fetch_branch_trades(stock_id: str, date: str, throttle: float | None = None,
                     throttle_key=host)
     matches = _ROW.findall(html)
     if not matches:
-        raise NoDataError(f"fubon zco {stock_id} {date}: no branch rows")
+        # host 與頁面大小進訊息(2026-10-22):權證回補把這句原樣存進 state 檔,事後要分辨
+        # 「哪一站回的空」「是正常空頁還是錯誤／限流頁」只剩這一行。
+        raise NoDataError(f"fubon zco {stock_id} {date}: no branch rows "
+                          f"@{base} bytes={len(html)}")
     iso = f"{date[:4]}-{date[4:6]}-{date[6:8]}"
     rows = []
     seen = set()

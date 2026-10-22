@@ -296,6 +296,24 @@ BUDGET < WARRANT_MIN_CHUNK_MINUTES（預設 20 分鐘）→ 略過，不值得�
 while bash vps/scripts/warrant-backfill.sh; do sleep 180; done
 ```
 
+### 5.3 終端 `empty` 的可信度(2026-10-22 吞吐塌陷事故)
+
+**事故**:10-22 12:46 一塊(240 分預算,08-06..08-12)跑 14,403 s,`fetched=7964 empty=5770 failed=0`,1.24 列/秒(基準 6.8),腳本自建暫停檔。10-19/10-20 兩天 3,710 檔 empty=0。請求節奏正常(13,734 次 / 14,403 s ≈ 1.05 s),所以不是來源變慢,是**四成請求解析出零列**。
+
+**程式事實**:
+- 回補 `empty` = `fubon.fetch_branch_trades` 零列 → `NoDataError` → state 檔 `{"status":"empty"}`,**終端狀態、永不重抓**(只有 target hash 變才重置)。HTTP 200 的錯誤／限流／佔位頁同樣解析成零列,與真的沒有分點**分不出來**;`raise_for_status` 只擋 4xx/5xx。
+- 10-22 以前**沒有**第二站確認(每日輪有 `_confirm_empties`,回補沒有),訊息也不記是哪一站回的。
+- state 檔實際位置:`WARRANT_STATE_BASE=data/warrant-branch-backfill.json` 是相對容器工作目錄 `/app/pipeline`,所以在主機 `$REPO/pipeline/data/warrant-branch-backfill-YYYY-MM-DD-all.json`(不是 `$REPO/data/`)。
+- 未證實的假說:鏡像不再供**已到期／下市**權證代號的歷史頁(08 月成交的活躍權證很多已到期;10-19/20 全是存續中的)。若成立,那批 empty 是來源限制、不是中毒,撤銷重抓也拿不回來。
+
+**修正(程式,分支)**:
+1. 回補的 `empty` 必須**兩站都說零列**(`_fetch_warrant_branch_confirmed`,靠輪替換站、全域節流不變);第一站空、第二站有列 → ok 並記 `recovered_from_empty`;第二站失敗 → `error`(下次重抓)。代價:每個 empty 多一次請求(~1 秒)。
+2. 斷路器:同一日期最近 200 個**未到期**目標(到期日未知也算)裡 ≥50% 兩站都空 → 整塊停、窗口裡的 empty 改回 `error`、離開碼 1(`empty spike at …`,不是可續跑的 75)、import_logs 記 `error`。已到期權證不進窗口。
+3. 訊息帶 `@host bytes=N`;摘要行多 `empty_expired=`、`recovered=`(`empty=` 原樣,腳本的 grep 不受影響)。
+4. 調查工具(唯讀):`pipeline/tools/probe_backfill_empties.py`(`report` 不連網、`probe` 每站 ≥5 秒);撤銷工具 `pipeline/tools/unrecord_warrant_empties.py`(**預設 dry-run**,`--apply` 須人類核准、`flock -n /tmp/radar-db.lock` 包住、自動備份)。
+
+**未做(待 probe 結果決定)**:錯誤頁的明確判別(需先看到真實錯誤頁長什麼樣);若「已到期不供頁」成立,`warrant-backfill.sh` 的 1.5 列/秒地板在舊日期會一直誤觸,要改成看 `empty=` 扣 `empty_expired=`,或回補目標排除已到期權證(兩者都是行為變更,需人類決定)。
+
 ## 6. 與現行排程共存
 
 ### 6.1 歷史回補期間

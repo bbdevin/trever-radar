@@ -1203,12 +1203,47 @@ def _backfill_warrant_branches_legacy(top: int = 200, days: int = 120,
     return {"fetched": fetched, "empty": empty, "failed": failed, "stopped": stopped}
 
 
+#: 權證回補的「空」爆量斷路器(2026-10-22 事故):對**尚未到期**的權證,當天有成交卻
+#: 抓不到任何分點列幾乎不可能(10-19/10-20 兩天 3,710 檔 empty=0),所以同一日期最近
+#: ``WARRANT_EMPTY_SPIKE_WINDOW`` 個未到期目標裡空的比例 ≥ ``WARRANT_EMPTY_SPIKE_RATIO``
+#: 就代表來源在回錯誤／限流／佔位頁,而不是資料真的沒有。已到期的權證不進窗口:鏡像對
+#: 已下市代號是否還供歷史頁未證實(docs/30 §5.3),它們的空不能拿來判斷來源健康。
+WARRANT_EMPTY_SPIKE_WINDOW = 200
+WARRANT_EMPTY_SPIKE_RATIO = 0.5
+
+
+def _fetch_warrant_branch_confirmed(fubon, sid: str, date: str, sleep_s: float):
+    """抓一檔權證一天的分點;第一站回零列時**換一站再問一次**才認定是空。
+
+    回傳 ``(rows, recovered)``。兩站都零列 → 丟 ``NoDataError``(訊息帶兩站的說法);
+    第二站其他失敗照原樣往上丟(呼叫端記 ``error``,下次續跑重抓——寧可多抓一次,
+    不可把單站的說法寫成永久 empty)。
+
+    「換一站」靠 ``fetch_branch_trades`` 的輪替:回補是單執行緒循序呼叫,下一次呼叫
+    一定落在下一個鏡像站;節流仍是全域的 ``sleep_s``,不增加任何一站的請求密度。
+    與 ``_confirm_empties``(每日輪)同一條原則:空不信單一站(docs/47 §8.8)。
+    """
+    try:
+        return fubon.fetch_branch_trades(sid, date, throttle=sleep_s), False
+    except NoDataError as first:
+        try:
+            return fubon.fetch_branch_trades(sid, date, throttle=sleep_s), True
+        except NoDataError as second:
+            raise NoDataError(f"confirmed by 2 mirrors: {first} | {second}") from second
+
+
 def _backfill_warrant_branches_with_state(
     top: int, days: int, sleep_s: float, max_minutes: int | None,
     market: str, state_file: str | Path,
     min_age_days: int = WARRANT_BRANCH_MIN_AGE_DAYS,
 ) -> dict:
-    """Resume each historical warrant pool from its own bounded state file."""
+    """Resume each historical warrant pool from its own bounded state file.
+
+    ``empty`` 是終端狀態(下次不重抓),所以寫進去之前要兩站都說空
+    (:func:`_fetch_warrant_branch_confirmed`),而且未到期權證的空比例爆量時整塊
+    停下、把窗口裡的空改回 ``error``(見 ``WARRANT_EMPTY_SPIKE_*``)。
+    """
+    import collections
     import time as time_mod
     from sqlalchemy import text
     from .providers import fubon
@@ -1218,8 +1253,17 @@ def _backfill_warrant_branches_with_state(
     engine = get_engine()
     deadline = time_mod.monotonic() + max_minutes * 60 if max_minutes else None
     trade_dates = _warrant_branch_trade_dates(engine, days, min_age_days)
+    today_iso = datetime.now(ZoneInfo(config.TZ)).date().isoformat()
+    with engine.connect() as conn:
+        maturity = {r[0]: r[1] for r in conn.execute(text(
+            "SELECT id, maturity_date FROM warrants"))}
+
+    def expired_now(sid: str) -> bool:
+        m = maturity.get(sid)
+        return bool(m) and m < today_iso      # 未知到期日 = 當成未到期(進斷路器窗口)
 
     fetched = failed = completed_dates = empty = 0
+    empty_expired = recovered = 0
     stopped = None
     state_files: list[str] = []
     for d_iso in trade_dates:
@@ -1254,20 +1298,50 @@ def _backfill_warrant_branches_with_state(
         _atomic_json_write(state_path, state)
 
         since_checkpoint = 0
+        # 只放未到期目標:(sid, 這次是否記成 empty)。每個日期各自一個窗口——前一個
+        # 日期的 state 已經寫完,斷路器只改得動這個日期的。
+        live_window: collections.deque = collections.deque(maxlen=WARRANT_EMPTY_SPIKE_WINDOW)
         for sid in pending:
             if deadline and time_mod.monotonic() > deadline:
                 stopped = f"time budget reached at {d_iso}"
                 break
             state["results"][sid] = {"status": "pending"}
+            is_expired = expired_now(sid)
             try:
-                rows = fubon.fetch_branch_trades(sid, date, throttle=sleep_s)
+                rows, was_recovered = _fetch_warrant_branch_confirmed(fubon, sid, date, sleep_s)
                 with engine.begin() as conn:
                     rows_written = upsert_branch_trades(conn, rows)
                 state["results"][sid] = {"status": "ok", "rows": rows_written}
+                if was_recovered:
+                    state["results"][sid]["recovered_from_empty"] = True
+                    recovered += 1
                 fetched += 1
+                if not is_expired:
+                    live_window.append((sid, False))
             except NoDataError as exc:
-                state["results"][sid] = {"status": "empty", "error": str(exc)[:200]}
+                state["results"][sid] = {"status": "empty", "error": str(exc)[:400],
+                                         "expired_now": is_expired}
                 empty += 1
+                if is_expired:
+                    empty_expired += 1
+                else:
+                    live_window.append((sid, True))
+                    n_empty = sum(1 for _, e in live_window if e)
+                    if (len(live_window) >= WARRANT_EMPTY_SPIKE_WINDOW
+                            and n_empty >= WARRANT_EMPTY_SPIKE_RATIO * len(live_window)):
+                        # 窗口裡的空不可信:改回 error,下次續跑重抓(不是永久 empty)。
+                        for wsid, was_empty in live_window:
+                            if was_empty and state["results"].get(wsid, {}).get("status") == "empty":
+                                state["results"][wsid] = {
+                                    "status": "error",
+                                    "error": "suspect empty (spike): "
+                                             + state["results"][wsid].get("error", "")[:300],
+                                }
+                                empty -= 1
+                        stopped = (f"empty spike at {d_iso}: {n_empty}/{len(live_window)} "
+                                   "unexpired warrants empty on 2 mirrors; suspect error/limit "
+                                   "pages, window reverted to retry")
+                        break
             except Exception as exc:  # retry this target on the next invocation
                 state["results"][sid] = {"status": "error", "error": str(exc)[:200]}
                 failed += 1
@@ -1303,10 +1377,15 @@ def _backfill_warrant_branches_with_state(
     # `empty=` 是「終端 empty 中毒」這一類故障唯一看得見的訊號(鏡像回錯誤頁／
     # 佔位頁會解析成零列 → NoDataError → 永久 empty,而整塊仍回報成功),
     # 所以它必須出現在摘要行上,不能只躺在各日 state 檔裡。
+    # empty_expired = 其中權證今天已過到期日的檔數(鏡像可能不再供已下市代號的頁,
+    # 那種空與「來源回錯誤頁」意義不同);recovered = 第一站說空、第二站有列的檔數,
+    # 非零就代表單站的空確實會說謊。
     print(f"backfill-warrant-branches: fetched={fetched}, complete_dates={completed_dates}/"
-          f"{len(trade_dates)}, empty={empty}, failed={failed}, stopped={stopped}", flush=True)
+          f"{len(trade_dates)}, empty={empty}, empty_expired={empty_expired}, "
+          f"recovered={recovered}, failed={failed}, stopped={stopped}", flush=True)
     return {
-        "fetched": fetched, "empty": empty, "failed": failed, "stopped": stopped,
+        "fetched": fetched, "empty": empty, "empty_expired": empty_expired,
+        "recovered": recovered, "failed": failed, "stopped": stopped,
         "state_files": state_files,
     }
 

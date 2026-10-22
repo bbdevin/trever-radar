@@ -192,7 +192,92 @@ class BackfillWarrantBranchesDateScopedTests(unittest.TestCase):
         with patch("radar.providers.fubon.fetch_branch_trades") as retry:
             backfill_warrant_branches(top=200, days=1, sleep_s=0, state_file=self.state_base)
         retry.assert_not_called()
-        self.assertEqual(fetch.call_count, 1)
+        # 兩站都說空才記 empty(2026-10-22):第一站 + 換一站確認 = 2 次。
+        self.assertEqual(fetch.call_count, 2)
+
+    def test_single_mirror_empty_is_recovered_by_the_next_mirror(self):
+        """第一站回零列、第二站有列 → ok,不可以記成永久 empty。"""
+        row = {"stock_id": "WB", "date": NEW, "branch_key": "b1", "branch_name": "分點1",
+               "broker_id": "999", "buy_lots": 1, "sell_lots": 0, "net_lots": 1, "pct": 1.0}
+        with patch("radar.providers.fubon.fetch_branch_trades",
+                   side_effect=[NoDataError("error page @a bytes=10"), [row]]) as fetch:
+            result = backfill_warrant_branches(
+                top=200, days=1, sleep_s=0, state_file=self.state_base,
+            )
+        self.assertEqual(fetch.call_count, 2)
+        self.assertEqual(result["empty"], 0)
+        self.assertEqual(result["recovered"], 1)
+        entry = json.loads(self._state_path(NEW).read_text(encoding="utf-8"))["results"]["WB"]
+        self.assertEqual(entry["status"], "ok")
+        self.assertTrue(entry["recovered_from_empty"])
+
+    def test_confirmation_failure_is_retryable_error_not_empty(self):
+        with patch("radar.providers.fubon.fetch_branch_trades",
+                   side_effect=[NoDataError("empty @a"), RuntimeError("HTTP 503")]):
+            result = backfill_warrant_branches(
+                top=200, days=1, sleep_s=0, state_file=self.state_base,
+            )
+        self.assertEqual(result["empty"], 0)
+        self.assertEqual(result["failed"], 1)
+        entry = json.loads(self._state_path(NEW).read_text(encoding="utf-8"))["results"]["WB"]
+        self.assertEqual(entry["status"], "error")
+
+    def test_fubon_empty_message_names_host_and_page_size(self):
+        """state 檔只存例外訊息;事後分辨哪一站、正常空頁還是錯誤頁全靠它。"""
+        from radar.providers import fubon
+
+        with patch("radar.providers.fubon.get_text", return_value="<html>busy</html>"):
+            with self.assertRaisesRegex(NoDataError, r"@https://x\.example bytes=17"):
+                fubon.fetch_branch_trades("03000P", "20260812", host="https://x.example")
+
+    def _seed_many(self, n, d_iso, maturity):
+        with db.get_engine().begin() as conn:
+            conn.execute(schema.warrants.insert(), [
+                {"id": f"S{i:04d}", "name": "w", "market": "twse", "kind": "call",
+                 "stock_id": "2330", "maturity_date": maturity} for i in range(n)])
+            conn.execute(schema.warrant_daily.insert(), [
+                {"warrant_id": f"S{i:04d}", "date": d_iso, "close": 1, "volume": 1,
+                 "turnover": 10 + i} for i in range(n)])
+
+    def test_empty_spike_on_unexpired_warrants_stops_and_reverts_window(self):
+        """未到期權證成批「兩站都空」= 來源在回錯誤／限流頁:整塊停、窗口改回 error、
+        離開碼 1(不是可續跑的 75),import_logs 記 error。"""
+        from radar import cli
+        from radar.importer import WARRANT_EMPTY_SPIKE_WINDOW
+
+        self._seed_many(WARRANT_EMPTY_SPIKE_WINDOW + 50, NEW, "2099-12-31")
+        with patch("radar.providers.fubon.fetch_branch_trades",
+                   side_effect=NoDataError("limit page")) as fetch:
+            with self.assertRaises(SystemExit) as cm:
+                cli.main(["backfill-warrant-branches", "--market", "all", "--top", "1000",
+                          "--days", "1", "--sleep", "0", "--state-file", str(self.state_base)])
+        self.assertEqual(cm.exception.code, 1)
+        self.assertEqual(fetch.call_count, 2 * WARRANT_EMPTY_SPIKE_WINDOW,
+                         "第 200 個空就停,不再往下抓")
+        results = json.loads(self._state_path(NEW, "all").read_text(encoding="utf-8"))["results"]
+        statuses = [r.get("status") for r in results.values()]
+        self.assertNotIn("empty", statuses, "窗口裡的空全部改回 error,下次重抓")
+        self.assertEqual(statuses.count("error"), WARRANT_EMPTY_SPIKE_WINDOW)
+        with db.get_engine().connect() as conn:
+            row = conn.exec_driver_sql(
+                "SELECT status, error FROM import_logs "
+                "WHERE dataset='warrant_branch_hist' ORDER BY id DESC LIMIT 1").fetchone()
+        self.assertEqual(row[0], "error")
+        self.assertIn("empty spike", row[1])
+
+    def test_expired_warrant_empties_do_not_trip_the_breaker(self):
+        from radar.importer import WARRANT_EMPTY_SPIKE_WINDOW
+
+        self._seed_many(WARRANT_EMPTY_SPIKE_WINDOW + 50, NEW, "2026-01-30")
+        with patch("radar.providers.fubon.fetch_branch_trades",
+                   side_effect=NoDataError("gone")):
+            result = backfill_warrant_branches(
+                top=1000, days=1, sleep_s=0, state_file=self.state_base,
+            )
+        self.assertIsNone(result["stopped"])
+        self.assertEqual(result["empty_expired"], WARRANT_EMPTY_SPIKE_WINDOW + 50)
+        results = json.loads(self._state_path(NEW).read_text(encoding="utf-8"))["results"]
+        self.assertTrue(results["S0000"]["expired_now"])
 
     def test_state_error_retries_and_existing_db_rows_are_ok(self):
         with patch("radar.providers.fubon.fetch_branch_trades", side_effect=RuntimeError("temporary")) as first:

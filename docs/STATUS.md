@@ -2,6 +2,13 @@
 
 > 單一進度真相。每完成一個里程碑就更新本檔。規格細節看各編號文件,別寫在這裡。
 
+## 2026-10-22 權證分點回補:empty 要兩站確認＋空爆量斷路器＋調查/撤銷工具(`docs/30` §5.3;分支,未合 main;不動 crontab)
+
+- **事故**:12:46 吞吐塌陷告警(08-06..08-12 那塊 empty=5770/13,734 請求),暫停檔已建。回補的 empty 是終端狀態、單站說了算,HTTP 200 錯誤頁與真空分不出來。
+- **做了什麼**:empty 須兩站零列;未到期權證 200 窗口 ≥50% 空 → 停塊、窗口改回 error、exit 1;NoDataError 訊息帶 host/bytes;摘要加 `empty_expired=`/`recovered=`;`tools/probe_backfill_empties.py`(唯讀)、`tools/unrecord_warrant_empties.py`(預設 dry-run)。
+- **驗證**:新測試(換站救回、確認失敗=error、爆量斷路、已到期不觸發、訊息帶 host、工具 dry-run/apply/備份/範圍);pytest 全套見 commit。
+- **待人類**:VPS 跑 probe(`docs/30` §5.3 指令);依結果決定是否撤銷(要核准)與是否排除已到期權證;合 main 後才拿掉暫停檔。
+
 ## 2026-10-21 長回補讓路平日 16:00／20:45、週一 11:00(分支,未合 main;VPS `sync_code` 後生效,不動 crontab)
 
 - **事故**:10-20 `warrant-backfill` 19:55 開的塊握 DB 鎖到 21:00,20:45 `daily-margin` 等鎖、21:02 才開工(晚 ~17 分)。根因同 10-15:overlay 不認得 cron 起點早於安靜窗的輪(20:45 vs 窗 21:15;16:00 `daily-insti` vs 窗 16:05;週一 11:00 `weekly-refdata` 完全沒有)。
