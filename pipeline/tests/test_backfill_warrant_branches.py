@@ -267,6 +267,7 @@ class BackfillWarrantBranchesDateScopedTests(unittest.TestCase):
         self.assertEqual(entry["status"], "empty")
         self.assertTrue(entry["skipped_expired"])
         self.assertEqual(result["empty_expired"], 2, "跳過的不花請求,不算進 empty_expired")
+        self.assertEqual(result["requests"], len(calls), "requests= 就是實際發出的次數,跳過的 0 次")
 
     def test_rows_on_a_newer_date_reset_the_expired_streak(self):
         d1, d2, d3 = "2026-01-02", "2026-01-05", "2026-01-06"
@@ -499,6 +500,34 @@ class BackfillWarrantBranchesDateScopedTests(unittest.TestCase):
             legacy = backfill_warrant_branches(top=200, days=1, sleep_s=0)
         self.assertEqual(state["empty"], 1)
         self.assertEqual(legacy["empty"], 1)
+        self.assertEqual(state["requests"], 2, "兩站確認的空 = 2 次請求")
+
+    def test_requests_counts_every_request_actually_sent(self):
+        """`requests=` 是吞吐地板量每次請求成本的分母(docs/30 §5.3):有列 1 次、
+        第一站空第二站有列 2 次、兩站都空 2 次、跳過的已到期 0 次。"""
+        def row(stock_id, date):
+            return [{"stock_id": stock_id, "date": OLD if date == "20260105" else NEW,
+                     "branch_key": "b1", "branch_name": "分點1", "broker_id": "999",
+                     "buy_lots": 1, "sell_lots": 0, "net_lots": 1, "pct": 1.0}]
+
+        answers = iter([NoDataError("first"), None])
+
+        def first_empty_then_rows(stock_id, date, throttle=None):
+            a = next(answers)
+            if a is not None:
+                raise a
+            return row(stock_id, date)
+
+        with patch("radar.providers.fubon.fetch_branch_trades", side_effect=first_empty_then_rows):
+            rec = backfill_warrant_branches(top=200, days=1, sleep_s=0,
+                                            state_file=self.tmp_path / "rec.json")
+        self.assertEqual((rec["recovered"], rec["requests"]), (1, 2))
+        # NEW 的 WB 已在庫(0 次請求),只剩 OLD 的 WA:有列 = 1 次。
+        with patch("radar.providers.fubon.fetch_branch_trades",
+                   side_effect=lambda sid, date, throttle=None: row(sid, date)):
+            ok = backfill_warrant_branches(top=200, days=2, sleep_s=0,
+                                           state_file=self.tmp_path / "ok.json")
+        self.assertEqual((ok["fetched"], ok["requests"]), (1, 1))
 
     def test_state_base_rejects_database_and_sidecars(self):
         db_path = Path(config.DB_URL.removeprefix("sqlite:///"))
