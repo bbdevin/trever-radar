@@ -43,6 +43,8 @@ STEPS = (
     # docs/47 §8.10 兩段式抓取的後段(權證池):背景抓、第二段之前寫入,各自計時。
     ("fetch-warrant-branches", "--phase warrants --warrant-turnover-min"),
     ("import-warrant-branches", 'radar import-branch-trades --from-stage "$WARRANT_STAGE_FILE"'),
+    # 2026-10-24:評分之前補匯晚到的三大法人(insti_catch_up;只在今天的法人仍缺時跑)。
+    ("import-insti-retry", "--datasets insti --require twse:insti,tpex:insti"),
     ("compute-branch-stats", "radar compute-branch-stats"),
     ("compute-scores", "radar compute-scores"),
     ("compute-performance", "radar compute-performance"),
@@ -165,8 +167,9 @@ class TestDailyBranchesTiming(unittest.TestCase):
                          f"每一步各一行,實際:{shaped}")
         self.assertTrue(any(s.startswith("if run_step ") for s in shaped),
                         "分點匯入要保留 `if run_step …` 自己分級")
-        # 股票匯入、權證抓取(背景子 shell)、權證匯入:三處自己用 if 接碼(權證段失敗只 warn)。
-        self.assertEqual(sum(1 for s in shaped if s.startswith("if run_step ")), 3)
+        # 股票匯入、權證抓取(背景子 shell)、權證匯入:三處自己用 if 接碼(權證段失敗只 warn);
+        # 法人補匯(insti_catch_up):0 到齊 / 75 還沒 / 其他 warn,永不中止。
+        self.assertEqual(sum(1 for s in shaped if s.startswith("if run_step ")), 4)
         self.assertEqual(
             sum(1 for s in shaped if s.startswith("run_step_or_fail ")), 7,
             "抓取、統計、評分、績效、匯出、prune、deploy 七步用會中止的 run_step_or_fail")

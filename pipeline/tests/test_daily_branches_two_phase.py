@@ -71,12 +71,14 @@ radar_ro_sql() {
     *futures-day*) echo 1 ;;
     *branch_coverage*) echo "expected=1960 ratio=${COV_RATIO:-1.0000} done=1960 empty=0" ;;
     *branch_warrant_pool*) echo "${WPOOL_STATUS:-}" ;;
+    *"dataset = 'insti'"*) ev "insti-check"; echo "${INSTI_SOURCES:-2}" ;;
     *) echo "" ;;
   esac
 }
 radar() {
   ev "radar $*"
   case "$*" in
+    *"--datasets insti --require"*) return "${STUB_INSTI_RC:-0}" ;;
     *"--from-stage"*warrants*) return "${STUB_WIMPORT_RC:-0}" ;;
     *"--from-stage"*) return "${STUB_SIMPORT_RC:-0}" ;;
   esac
@@ -103,7 +105,8 @@ radar_timeout() {
 
 @unittest.skipUnless(_bash_available(), "需要 bash + flock + pkill")
 class TwoPhaseRound(unittest.TestCase):
-    def _run(self, env: dict | None = None, marker: str | None = None) -> tuple[list[str], str]:
+    def _run(self, env: dict | None = None, marker: str | None = None,
+             insti_missing: bool = False) -> tuple[list[str], str]:
         tmp = Path(tempfile.mkdtemp(prefix="radar-2phase-"))
         try:
             scripts = tmp / "vps" / "scripts"
@@ -119,6 +122,8 @@ class TwoPhaseRound(unittest.TestCase):
             if marker is not None:
                 pre = (f'printf "%s\\ncoverage_ratio={marker}\\n" "$(date -Is)" > '
                        f'"{t}/marker-$(TZ=Asia/Taipei date +%F).done"\n')
+            if insti_missing:
+                pre += f'echo first-round > "{t}/marker-$(TZ=Asia/Taipei date +%F).done.insti-missing"\n'
             runner = tmp / "run.sh"
             runner.write_text(
                 exports + "export BRANCH_PROBE=0\n" + pre
@@ -130,6 +135,7 @@ class TwoPhaseRound(unittest.TestCase):
             events = ev_path.read_text(encoding="utf-8").splitlines() if ev_path.exists() else []
             markers = list(tmp.glob("marker-*.done"))
             self.marker_text = markers[0].read_text(encoding="utf-8") if markers else None
+            self.insti_marker = bool(list(tmp.glob("marker-*.done.insti-missing")))
             return events, r.stdout + r.stderr
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
@@ -244,6 +250,94 @@ class TwoPhaseRound(unittest.TestCase):
         self.assertIn("warrant-fetch-start", ev)
         self.assertEqual(len(self._all(ev, lambda e: e == "deploy")), 2)
         self.assertIsNotNone(self.marker_text)
+
+    # ── 三大法人晚到(2026-10-24):評分前補匯一次;22:30 法人晚到就重新上線 ──────────
+    @staticmethod
+    def _is_insti_retry(e: str) -> bool:
+        return e.startswith("radar import-daily") and "--datasets insti --require twse:insti,tpex:insti" in e
+
+    def test_insti_already_present_means_no_extra_import(self):
+        ev, out = self._run({"STUB_WFETCH_SECS": "0"})
+        self.assertIn("RC=0", out, out)
+        self.assertIn("insti-check", ev, "先做唯讀檢查")
+        self.assertFalse([e for e in ev if self._is_insti_retry(e)], ev)
+        self.assertFalse(self.insti_marker)
+        self.assertEqual(len(self._all(ev, lambda e: e == "deploy")), 2)
+
+    def test_missing_insti_is_imported_once_after_the_crawl_and_before_scores(self):
+        ev, out = self._run({"STUB_WFETCH_SECS": "0", "INSTI_SOURCES": "1"})
+        self.assertIn("RC=0", out, out)
+        retries = self._all(ev, self._is_insti_retry)
+        self.assertEqual(len(retries), 1, ev)
+        self.assertIn(f'--date {self._today_compact()}', ev[retries[0]], "帶 ROUND_DATE")
+        stock_import = self._first(ev, lambda e: e.startswith("radar import-branch-trades --from-stage")
+                                   and "warrants" not in e)
+        scores = self._first(ev, lambda e: e.startswith("radar compute-scores"))
+        deploys = self._all(ev, lambda e: e == "deploy")
+        self.assertLess(stock_import, retries[0], "抓完、寫入分點之後")
+        self.assertLess(retries[0], scores, "評分之前,第一段上線就帶著它")
+        self.assertLess(retries[0], deploys[0])
+        self.assertEqual(len(deploys), 2)
+        self.assertIn("step import-insti-retry done rc=0", out)
+        self.assertFalse(self.insti_marker, "補到了 → 不留標記")
+        self.assertFalse([e for e in ev if e.startswith("NOTIFY") and "三大法人" in e], ev)
+
+    def test_insti_still_pending_logs_only_and_leaves_the_marker(self):
+        ev, out = self._run({"STUB_WFETCH_SECS": "0", "INSTI_SOURCES": "1", "STUB_INSTI_RC": "75"})
+        self.assertIn("RC=0", out, out)
+        self.assertEqual(len(self._all(ev, self._is_insti_retry)), 1)
+        self.assertIn("補匯後仍未公布齊全(exit 75)", out)
+        self.assertFalse([e for e in ev if e.startswith("NOTIFY") and "三大法人" in e], "75 只寫 log")
+        self.assertTrue(self.insti_marker, "評分時法人仍缺 → 留標記給 22:30")
+        self.assertEqual(len(self._all(ev, lambda e: e == "deploy")), 2)
+
+    def test_insti_import_error_warns_and_the_round_continues(self):
+        ev, out = self._run({"STUB_WFETCH_SECS": "0", "INSTI_SOURCES": "1", "STUB_INSTI_RC": "1"})
+        self.assertIn("RC=0", out, out)
+        warn = [e for e in ev if e.startswith("NOTIFY") and "三大法人補匯失敗（碼 1）" in e]
+        self.assertEqual(len(warn), 1, ev)
+        self.assertIn("pri=default kind=注意", warn[0])
+        self.assertIn("22:30", warn[0])
+        self.assertFalse([e for e in ev if "pri=high" in e], ev)
+        self.assertIn("radar compute-scores --date", " ".join(ev))
+        self.assertEqual(len(self._all(ev, lambda e: e == "deploy")), 2)
+        self.assertIsNotNone(self.marker_text, "照常寫完成標記")
+        self.assertTrue(self.insti_marker)
+
+    def test_second_round_republishes_when_insti_arrived_after_the_first_publish(self):
+        ev, out = self._run({"BRANCH_ROUND_MODE": "import", "WPOOL_STATUS": "ok",
+                             "INSTI_SOURCES": "2"}, marker="1.0000", insti_missing=True)
+        self.assertIn("RC=0", out, out)
+        self.assertNotIn("publish skipped", out)
+        self.assertFalse([e for e in ev if "fetch" in e], "不重爬")
+        self.assertFalse([e for e in ev if self._is_insti_retry(e)], "開頭那次已拿到,不再補匯")
+        self.assertNotIn("radar compute-branch-stats", ev)
+        self.assertEqual(len(self._all(ev, lambda e: e.startswith("radar compute-scores"))), 1)
+        self.assertEqual(len(self._all(ev, lambda e: e == "deploy")), 1)
+        ok = [e for e in ev if e.startswith("NOTIFY") and "kind=成功" in e]
+        self.assertEqual(len(ok), 1, ev)
+        self.assertIn("晚到的三大法人", ok[0])
+        self.assertFalse(self.insti_marker, "到齊並重算之後刪掉標記")
+        self.assertIn("1.0000", self.marker_text, "不重寫完成標記")
+
+    def test_second_round_still_skips_when_insti_is_still_missing(self):
+        ev, out = self._run({"BRANCH_ROUND_MODE": "import", "WPOOL_STATUS": "ok",
+                             "INSTI_SOURCES": "1"}, marker="1.0000", insti_missing=True)
+        self.assertIn("RC=0", out, out)
+        self.assertIn("publish skipped: first round complete", out)
+        self.assertNotIn("deploy", ev)
+        self.assertTrue(self.insti_marker)
+
+    def test_second_round_without_insti_marker_skips_as_before(self):
+        ev, out = self._run({"BRANCH_ROUND_MODE": "import", "WPOOL_STATUS": "ok"}, marker="1.0000")
+        self.assertIn("publish skipped: first round complete", out)
+        self.assertNotIn("insti-check", ev, "沒有標記就不必查")
+
+    @staticmethod
+    def _today_compact() -> str:
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        return datetime.now(ZoneInfo("Asia/Taipei")).strftime("%Y%m%d")
 
 
 if __name__ == "__main__":

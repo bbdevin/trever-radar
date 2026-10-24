@@ -25,9 +25,9 @@
 | 平日 14:05(舊 14:10) | VPS `vps/scripts/daily-market.sh` | 每 3 分輪詢上市日K(`--require twse:quotes`)至 14:40 → 當日權證彙總 → 指標增量(--days 5)→ 綜合分 → fetch-intraday(**放 DB 鎖抓 Fugle 當日 1 分 K spark_day + 5 分 K**,2026-10-19 起,見下方)→ export-json → `wrangler deploy`。截止仍沒到 → warn、不上線。週一題材/地緣已搬到 11:00 |
 | 平日 14:45(舊 15:00) | VPS `vps/scripts/daily-tpex-quotes.sh` | 等鎖(≤45 分)→ 每 3 分輪詢**上櫃日K**(`--require tpex:quotes:0.8`,≥前一交易日 80% 列數)至 15:30 → 權證彙總 + 指標增量 + 分數 → export-json → deploy |
 | 平日 16:00(舊 16:10) | VPS `vps/scripts/daily-insti.sh` | **上櫃日K 保底再抓** → 每 5 分輪詢法人(上市＋上櫃都要到)至 17:10,每次順手試個股期貨當日 → 權證主檔(失敗不擋)/庫藏股 → **當日權證重新彙總** → 指標 → 分數 → export → deploy。截止仍缺 → 有其他變動先上線已到部分、否則略過。TPEx HTTP 520(TWSE 已成功)仍 exit 75 不發布,留給分點輪;非 75 仍 High fail |
-| 平日 17:30(舊 17:40) | VPS `vps/scripts/daily-branches.sh` | 非交易日收工 → **再補日K** + 法人補抓 + 期貨當日(已有則略過)+ 指標增量 → **探測分點來源**(`probe-branch-day`,每 15 分抽 24 檔、≥22 檔有資料或到 20:30 才爬;等待期間不握 DB 鎖)→ **分點全股票 `--top 0`（不含 ETF）＋標的是 active 普通股的上市認購／認售、當日成交金額 `>=1,000,000` 元權證過渡池** + 分點統計 →(已過 21:00 順手匯入資券)→ 分數 + 績效回填 → export-json → prune → deploy → 完成標記(第二行 `coverage_ratio=`) |
+| 平日 17:30(舊 17:40) | VPS `vps/scripts/daily-branches.sh` | 非交易日收工 → **再補日K** + 法人補抓 + 期貨當日(已有則略過)+ 指標增量 → **探測分點來源**(`probe-branch-day`,每 15 分抽 24 檔、≥22 檔有資料或到 20:30 才爬;等待期間不握 DB 鎖)→ **分點全股票 `--top 0`（不含 ETF）＋標的是 active 普通股的上市認購／認售、當日成交金額 `>=1,000,000` 元權證過渡池** + 分點統計 →(已過 21:00 順手匯入資券)→ **今天上市／上櫃法人仍缺則補匯一次**(2026-10-24;唯讀檢查、`--require`、錯誤只 warn)→ 分數 + 績效回填 → export-json → prune → deploy → 完成標記(第二行 `coverage_ratio=`) |
 | 平日 20:45(舊 21:20) | VPS `vps/scripts/daily-margin.sh` | **融資券主輪**:非交易日/資券已是今天(分點輪帶入)→ 收工;否則等鎖(≤90 分)→ 每 5 分輪詢資券(上市＋上櫃)至 22:15 → 期貨官方覆核 → 分數 → 績效 → export → deploy;若仍落後價格日則對齊再抓 + ntfy warn |
-| 平日 22:30(舊 22:00) | VPS `vps/scripts/daily-branches.sh`(第二輪,`BRANCH_ROUND_MODE=import`) | 第一輪覆蓋率 100%(標記 `coverage_ratio=1.0000`)→ `publish skipped: first round complete`;<100% → 重爬並跳過 `compute-branch-stats`、**重算當日評分**並重新上線、不重寫完成標記;無標記 → 接手完整鏈 |
+| 平日 22:30(舊 22:00) | VPS `vps/scripts/daily-branches.sh`(第二輪,`BRANCH_ROUND_MODE=import`) | 第一輪覆蓋率 100%(標記 `coverage_ratio=1.0000`)且權證段 ok → `publish skipped: first round complete`,**除非**第一輪評分時三大法人還缺(`/tmp/radar-branch-round-<日>.done.insti-missing`)而本輪開頭匯入後到齊 → 不重爬、只重算當日評分並重新上線(2026-10-24);<100% → 重爬並跳過 `compute-branch-stats`、**重算當日評分**並重新上線、不重寫完成標記;無標記 → 接手完整鏈 |
 | 每天 01:10 | VPS `vps/scripts/data-backfill.sh` | 深歷史增量(已拉深自動跳過 → 日常近零請求,只補新上市/缺漏) |
 | 每天 03/09/12/20:00 | VPS `mid-backfill-publish.sh` | 回補中途上線:pause bf → 預設只 export → deploy(docs/33) |
 | 週二–六 00:05 | VPS `safe-branch-stats.sh` | 前一日非交易日 → 收工;pause bf → compute-branch-stats → 帳本/分位 → **compute-scores** → export → deploy(evening ok 時只在帳本或分位有算出才 export+deploy,docs/47) |
@@ -75,7 +75,9 @@
 | ~~TWSE 行情已入庫；TPEx HTTP 520…~~ | 16:00 開頭(2026-10-22 起只寫 log) | 不通知 | 同一件事由下一則講 |
 | TPEx 行情 HTTP 520 未完整：…本輪不發布…分點輪（16:30 起）會再抓 | 16:00 結尾 | 注意 | 不用動 |
 | ~~個股期貨當日匯入失敗…17:30 分點輪會重試~~ | 16:00(2026-10-22 起只寫 log;錯誤最多試 2 次就留給分點輪) | 不通知 | — |
-| 三大法人至 17:10 仍未公布齊全，先上線已到的部分；22:30 分點第二輪會再匯入… | 16:00 截止(刻意**保留**:分點第一輪只在 ~16:30 開頭匯一次法人,下一次是 22:30,且第二輪不需重爬時不重新上線) | 注意 | 要當晚看到就手動跑一次匯入＋匯出;否則隔天 14:05 帶上 |
+| 三大法人至 17:10 仍未公布齊全，先上線已到的部分；晚間分點輪上線前會再補匯一次，仍缺則 22:30 第二輪再試… | 16:00 截止(一個狀況一則;2026-10-24 起分點輪評分前補匯、22:30 法人晚到就重新上線,補到了只寫 log) | 注意 | 不用動;22:30 之後仍缺才查 TWSE/TPEx |
+| ~~(分點輪補匯法人仍缺,exit 75)~~ → log `補匯後仍未公布齊全(exit 75)` | 分點輪評分前(2026-10-24 起) | 不通知 | 同一件事上一則已講 |
+| 三大法人補匯失敗（碼 N），本輪照常評分上線；… | 分點輪評分前的補匯(`insti_catch_up`)非 0/75 | 注意 | 第一輪:不用動(22:30 再匯);第二輪:要當晚補就人工 `radar import-daily --date … --datasets insti` 再匯出 |
 | 權證主檔暫時抓不到／庫藏股公告暫時抓不到 | 16:00 | 注意 | 不用動 |
 | 匯入後仍沒有 YYYY-MM-DD 的日K（休市…）分點輪不爬 | 16:30 第一輪(22:30 第二輪 2026-10-22 起只寫 log) | 注意 | 休市日忽略 |
 | 個股期貨當日匯入失敗（exit N）…資券輪的官方日報會在下個交易日補上 | **只有 22:30 第二輪**(第一輪 2026-10-22 起只寫 log) | 注意 | 不用動 |

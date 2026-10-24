@@ -9,8 +9,9 @@
 # **權證池**(~780 檔)在股票抓完之後於背景抓(與第一段上線重疊),第二段之前寫入。
 # 權證這一段失敗只 warn:權證頁自己標資料日(前一日),股票的上線不受影響。
 # 收工時若已過 21:00 順手匯入資券。
+# 評分之前若今天的上市/上櫃法人仍缺 → 再補匯一次(開頭那次常早於上市法人公布;見 insti_catch_up)。
 # 22:30 由 crontab 設 BRANCH_ROUND_MODE=import:第一輪覆蓋率已是 100% 且權證段 ok → 直接收工
-# (只缺權證 → 只抓權證、刷新上線);
+# (只缺權證 → 只抓權證、刷新上線;第一輪評分時法人還缺、現在到齊 → 只刷新評分重新上線);
 # 否則匯入,並在第一輪沒上線的日子接手完整鏈(該變數的名字比行為窄,見下面的說明)。
 # 融資融券主輪仍是 daily-margin(20:45 起輪詢;TWSE ~21:00 產製)。
 # 非交易日(今天沒有日K)兩輪都直接收工,不再重爬 2,672 檔。
@@ -235,7 +236,67 @@ fi
 if awk -v r="${FIRST_ROUND_RATIO:-0}" 'BEGIN { exit !(r + 0 >= 1) }' && [ "$BRANCH_ROUND_MODE" = "import" ]; then
   STOCK_PHASE=0
 fi
-if [ "$STOCK_PHASE" = 0 ] && [ "$WARRANT_PHASE" = 0 ]; then
+
+# ── 三大法人晚到(2026-10-24 修 2026-10-22 記下的缺口)────────────────────────
+# 本輪開頭那一次 `import-daily quotes,insti`(~16:30)常早於上市法人公布(實測 16:10 只有 5/12 天
+# 到、17:40 12/12);16:00 法人輪輪詢到 17:10 仍缺時,以前下一次匯入是 22:30 第二輪,而第二輪在
+# 兩段都完整時直接收工 → 晚到的法人要到隔天才上網站。所以:
+#   1. 每一輪在 compute-scores **之前**(抓完分點、握著 DB 鎖)先唯讀問一次今天上市＋上櫃的法人
+#      在不在庫;缺 → 補匯一次(--require,只試一次;錯誤只 warn、照常評分上線)。
+#   2. 評分時法人仍缺 → 寫這個標記;到齊 → 刪掉。22:30 第二輪看到標記、而且法人現在到齊了
+#      (它開頭那次匯入拿到的)→ 即使兩段都完整也不收工,走「只刷新評分」那條路重新上線。
+# 標記跟著完成標記的路徑慣例(同一個 /tmp、同一個資料日;測試把它換到暫存目錄)。
+INSTI_MISSING_MARKER="$(branch_round_marker "$ROUND_DATE").insti-missing"
+# 今天(ROUND_DATE)上市與上櫃的法人都有一列 ok 且 rows>0 → 0。查詢失敗 → 視為缺(多補匯一次無害)。
+round_insti_complete() {
+  local n=""
+  n="$(radar_ro_sql "SELECT COUNT(DISTINCT source) FROM import_logs WHERE dataset = 'insti' AND status = 'ok' AND rows > 0 AND source IN ('twse','tpex') AND date = ?" "$ROUND_DATE" 2>/dev/null)" || n=""
+  [ "${n:-0}" -ge 2 ] 2>/dev/null
+}
+# 評分之前呼叫一次。永遠 return 0:法人補不到不擋評分與上線(缺法人時 combine() 把權重重分給其他分項,
+# 與以前「開頭那次沒拿到」的結果相同)。
+insti_catch_up() {
+  local rc=0
+  if round_insti_complete; then
+    echo "三大法人 ${ROUND_DATE}:上市＋上櫃已在庫,不補匯"
+    rm -f "$INSTI_MISSING_MARKER" 2>/dev/null || true
+    return 0
+  fi
+  if run_step "import-insti-retry" radar import-daily --date "${ROUND_DATE//-/}" --datasets insti --require twse:insti,tpex:insti; then
+    rc=0
+  else
+    rc=$?
+  fi
+  if [ "$rc" -eq 0 ]; then
+    echo "三大法人 ${ROUND_DATE}:補匯到齊,本輪評分與上線帶著它"
+    rm -f "$INSTI_MISSING_MARKER" 2>/dev/null || true
+    return 0
+  fi
+  if [ "$rc" -eq 75 ]; then
+    echo "三大法人 ${ROUND_DATE}:補匯後仍未公布齊全(exit 75),本輪照常評分上線(17:10 法人輪已通知過)"
+  elif [ "$BRANCH_ROUND_MODE" != "import" ]; then
+    notify_warn "三大法人補匯失敗（碼 ${rc}），本輪照常評分上線；22:30 第二輪會再匯入，到齊就重算評分並重新上線"
+  else
+    notify_warn "三大法人補匯失敗（碼 ${rc}），本輪照常評分上線；今天沒有下一輪會再匯，要補就人工跑 import-daily --datasets insti 再匯出"
+  fi
+  printf '%s\n' "$(taipei_date -Is)" > "$INSTI_MISSING_MARKER" 2>/dev/null || true
+  return 0
+}
+
+# 三大法人晚到(見 INSTI_MISSING_MARKER):上一次評分時法人還缺、現在(本輪開頭那次匯入後)到齊了
+# → 兩段都完整也不收工,只重算當日評分並重新上線(標記一定在:STOCK_PHASE=0 的 ratio 來自標記)。
+INSTI_LATE=0
+REFRESH_WHAT="補齊的分點"
+if [ -e "$INSTI_MISSING_MARKER" ] && [ "$BRANCH_ROUND_MODE" = "import" ] && round_insti_complete; then
+  INSTI_LATE=1
+  if [ "$STOCK_PHASE" = 0 ] && [ "$WARRANT_PHASE" = 0 ]; then
+    REFRESH_WHAT="晚到的三大法人"
+  else
+    REFRESH_WHAT="補齊的分點與晚到的三大法人"
+  fi
+  echo "三大法人 ${ROUND_DATE} 在上一次評分之後才到齊:本輪重算當日評分並重新上線"
+fi
+if [ "$STOCK_PHASE" = 0 ] && [ "$WARRANT_PHASE" = 0 ] && [ "$INSTI_LATE" = 0 ]; then
   echo "publish skipped: first round complete (coverage_ratio=${FIRST_ROUND_RATIO}, warrant pool ok)"
   echo "=== daily-branches done $(taipei_date -Is) ==="
   exit 0
@@ -532,6 +593,8 @@ fi
 if [ "$WARRANT_FINISH_BEFORE_SCORES" = 1 ]; then
   warrant_phase_finish
 fi
+# 三大法人晚到的補匯(見 insti_catch_up):評分之前、握著 DB 鎖;已在庫只花一次唯讀查詢。
+insti_catch_up
 run_step_or_fail "compute-scores" radar compute-scores --date "${ROUND_DATE//-/}"
 run_step_or_fail "compute-performance" radar compute-performance
 # prune 與其他步驟同一個待遇(high + 中止),理由是**順序**:它排在第一段的 publish_site
@@ -546,7 +609,7 @@ if [ "$FAST_PUBLISH" = 1 ]; then
   set_round_consequence "分點明細與當日評分已於第一段上線；本輪不寫完成標記，今日權證分點未寫入（22:30 輪續抓），00:05 夜間作業會重算排行統計並上線"
   # 只刷新評分的那一輪到此為止:標記早已由第一輪寫下,內容是第一次上線的時刻,不重寫。
   if [ "$SCORES_REFRESH" = 1 ]; then
-    notify_ok "當日評分已用補齊的分點重算並上線（分點統計仍是第一輪版本）"
+    notify_ok "當日評分已用${REFRESH_WHAT}重算並上線（分點統計仍是第一輪版本）"
     echo "=== daily-branches done $(taipei_date -Is) ==="
     exit 0
   fi

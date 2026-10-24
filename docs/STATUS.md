@@ -2,6 +2,13 @@
 
 > 單一進度真相。每完成一個里程碑就更新本檔。規格細節看各編號文件,別寫在這裡。
 
+## 2026-10-24 晚到的三大法人當晚上線(`docs/47` §8.10、`docs/08` §0.1;分支,未合 main;VPS `sync_code` 後生效,不動 crontab)
+
+- **缺口**(下方 2026-10-22 記下):分點輪只在開頭(~16:30)匯一次法人;17:10 仍缺時下一次是 22:30,而 22:30 兩段都完整就 `publish skipped` → 晚到的上市法人隔天才上網站。
+- **修正**:`daily-branches.sh` `insti_catch_up`:每輪 `compute-scores` 之前(抓完分點、握鎖)唯讀查今天上市＋上櫃法人;缺 → 補匯一次(`--require`;75 只寫 log、其他碼 warn、永遠續跑),第一次上線就帶著它。評分時仍缺 → `/tmp/radar-branch-round-<日>.done.insti-missing`;22:30 看到標記且法人已到齊 → 不收工,只刷新評分重新上線。`daily-insti.sh` 17:10 那則改寫成「晚間分點輪上線前會再補匯一次，仍缺則 22:30 第二輪再試…」。
+- **驗證**:`test_daily_branches_two_phase.py` 新增 7 個 bash 實跑情境;`test_daily_branches_timing.py` 步驟表加 `import-insti-retry`;pytest 全套見 commit。
+- **待人類**:合 main、VPS `sync_code`;第一個上市法人晚到的交易日 `grep -E 'step import-insti-retry|三大法人 [0-9-]+' ~/radar-cron.log`。
+
 ## 2026-10-22 權證分點回補:empty 要兩站確認＋空爆量斷路器＋調查/撤銷工具(`docs/30` §5.3;分支,未合 main;不動 crontab)
 
 - **事故**:12:46 吞吐塌陷告警(08-06..08-12 那塊 empty=5770/13,734 請求),暫停檔已建。回補的 empty 是終端狀態、單站說了算,HTTP 200 錯誤頁與真空分不出來。
@@ -16,7 +23,7 @@
 - **事故**:10-22 ops 主題一天收到 5 則「注意」,全是預期內或瞬時:08:00 夜盤上線失敗(Cloudflare `assets-upload-session` API 瞬時錯,10-12 夜也有一次 malformed response);14:07／14:56 `import-index` 碼 75(台指期一般時段／櫃買指數還沒出);16:12 個股期貨當日 TAIFEX `stockLists` ReadTimeout;16:15 `import-index` 碼 1(TAIFEX `futDataDown` 520)。
 - **修正**:①`lib.sh` `deploy_data`:`wrangler deploy` 失敗才重試,最多 3 次、20→40 秒,每次一行 `deploy attempt N/3 rc=`;用完回傳最後的碼(呼叫端處置不變)。DB 鎖**不**在 deploy 前放(下一輪 export 會改寫上傳中的目錄);最壞多握鎖約 7 分,實測那類錯誤約多 1–1.5 分。②`providers/taifex.py`:`stockLists`/`futDataDown` 逾時/連線中斷/5xx 重試 2 次(5→15 秒),4xx/解析錯誤不重試。③新 `run_step_or_warn_pending`:14:05／14:45 的 `import-index` 碼 75 只寫 log;16:00 法人輪是當天最後一次匯指數,75 照舊 warn。④法人輪:個股期貨當日錯誤只寫 log(每輪最多試 2 次錯誤),TPEx 520 開頭那則併入結尾一則;過時的「17:30 分點輪」全改 16:30(含後果句)。「三大法人至 17:10 仍未齊」**刻意保留 warn** 並改寫成實話(見下方已知缺口)。⑤分點輪:個股期貨當日錯誤只在 22:30 第二輪 warn;休市那則第二輪只寫 log。通知一覽表 `docs/08` §0.1。
 - **驗證**:`test_notify_noise.py`(bash 實跑真的 `deploy_data`/`run_step_or_warn_pending`/`try_futures_day`)、`test_taifex_http_retry.py`(mock requests);既有腳本測試同步新文案;pytest 全套見 commit。
-- **已知缺口(未修,待決定)**:分點輪(16:30 起)只在**開頭**匯一次 `quotes,insti`,常早於上市法人公布;法人輪 17:10 截止仍缺時,下一次匯入是 22:30 第二輪,而第二輪在第一輪覆蓋率 1.0 且權證段 ok 時 `publish skipped` 直接收工 → 晚到的上市法人可能要到隔天 14:05 才上網站。可能的修法(未做):分點第一輪寫入前再匯一次 insti,或第二輪「有法人變動就刷新上線」。
+- **已知缺口(2026-10-24 已修,見上方同名條目)**:分點輪(16:30 起)只在**開頭**匯一次 `quotes,insti`,常早於上市法人公布;法人輪 17:10 截止仍缺時,下一次匯入是 22:30 第二輪,而第二輪在第一輪覆蓋率 1.0 且權證段 ok 時 `publish skipped` 直接收工 → 晚到的上市法人可能要到隔天 14:05 才上網站。可能的修法(未做):分點第一輪寫入前再匯一次 insti,或第二輪「有法人變動就刷新上線」。
 - **待人類**:合 main;決定上面那個缺口要不要修。
 
 ## 2026-10-21 長回補讓路平日 16:00／20:45、週一 11:00(分支,未合 main;VPS `sync_code` 後生效,不動 crontab)
