@@ -323,6 +323,13 @@ while bash vps/scripts/warrant-backfill.sh; do sleep 180; done
 3. 已到期權證在較新的日期**連續 2 天** empty(`WARRANT_EXPIRED_SKIP_STREAK`;修正前的單站 empty 也算,probe 已證實是真空)→ 更舊的日期不抓,直接記 `empty` + `skipped_expired: true`,摘要行 `skipped_expired=`(不花請求,不算進 `empty_expired=`)。中間任一天有列就歸零。撤銷工具 `--scope expired` 可以清掉它們,但只清跳過的那幾天沒用——較新兩天的 empty 還在,下一塊會再跳過;要連較新的日期一起撤銷(重抓仍空就會再跳過,那是正確結果)。代價:鏡像對同一檔只缺某幾天的頁時會漏(probe 沒看到這種形狀)。
 4. 告警文字改成「多半是已到期權證來源沒頁」,附本塊日期範圍的 `report` 指令。
 
+**2026-10-23 又一次誤報與修正**:正式一塊 `clean-stop: rc=75, 14402s, fetched=2407, empty=5805`(`empty_expired=5458`)→ `throughput: collapse 1.48 rows/s over 3486s` → 又建暫停檔。原因(verifier 事先預測過):後續修正 1 每個已到期空只扣 2 × `WARRANT_SLEEP` = 2 秒,但一次請求實際是 sleep + 延遲 + 寫庫(10-22 實測 13,734 次 / 14,403 s ≈ 1.05 s),5,458 × 2 次 × 每次少扣的那一點,累積起來足以把剩下的分母撐大到低於地板。修正:
+1. CLI 摘要行多 `requests=`(實際發出的請求數:有列 1、兩站確認的空或第一站空第二站有列 2、失敗照實際次數;`skipped_expired` 不發請求、0 次)。回傳 dict 也多 `requests`。
+2. `warrant_throughput_verdict ROWS ELAPSED EMPTY_EXPIRED REQUESTS SLEEP MIN_ELAPSED MIN_RPS`:每次請求成本 = 本塊自己量的 `ELAPSED / REQUESTS`,分母 = `ELAPSED − empty_expired × 2 × 成本` = 只在未到期部分(含有列的已到期)的請求所佔時間上判 rows/s,非請求開銷按比例攤。輸出多第 4 欄 `sec_per_request`,log 行印 `x2 requests x <成本>s (requests=N …)`。
+3. 退路(方向一律誤報、不漏報):`requests=` 解析不到或 < 2 × `empty_expired`(對不上)→ 每次請求當 `SLEEP` 秒(下界,= 上一版);`empty_expired=` 解析不到 → 不扣(= 最舊判決)。
+4. 10-23 那塊重算(列數由 1.48 × 3486 反推取下界 5,142,requests 取下界 fetched + 2 × empty = 14,017):成本 1.027 s,分母 3,186 s,1.61 列/秒 → `ok`。同總量但只有 1,000 個是已到期空(其餘是未到期的空 = 中毒)→ 0.42 列/秒 → `collapse`。皆在 `pipeline/tests/test_warrant_throughput_floor.py`。
+5. 餘裕提醒:未到期部分在舊日期本來就只有 ~2 列/檔(冷門權證),10-23 算出來 1.61 只比地板 1.5 高一點;若 recovered/failed 很多讓 requests 比下界多 ~320 以上,同一塊仍會落在地板下。若再誤報,該調的是舊日期的地板(`WARRANT_MIN_ROWS_PER_SEC`),不是再扣更多時間。**2026-10-24 orchestrator 已把預設地板由 1.5 調為 1.0**(中毒的第一道防線是 importer 的雙站確認＋empty-spike 斷路器;近期日期基準約 6.8 列/秒,仍遠高於 1.0)。
+
 **未做**:錯誤頁的明確判別(這次沒看到錯誤頁;正常頁的 title 是 `主力賣買超-<代號>`,將來要做可以從這裡下手)。
 
 ## 6. 與現行排程共存

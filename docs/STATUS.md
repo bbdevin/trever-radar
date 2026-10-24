@@ -9,6 +9,14 @@
 - **驗證**:`test_daily_branches_two_phase.py` 新增 7 個 bash 實跑情境;`test_daily_branches_timing.py` 步驟表加 `import-insti-retry`;pytest 全套見 commit。
 - **待人類**:合 main、VPS `sync_code`;第一個上市法人晚到的交易日 `grep -E 'step import-insti-retry|三大法人 [0-9-]+' ~/radar-cron.log`。
 
+## 2026-10-24 權證回補吞吐地板:已到期空改用實測每次請求成本扣除(`docs/30` §5.3;分支,未合 main;不動 crontab)
+
+- **事故**:10-23 正式一塊 `14402s, fetched=2407, empty=5805, empty_expired=5458` → `collapse 1.48 rows/s over 3486s` → 暫停檔又建。地板每個已到期空只扣 2 × SLEEP,實際一次請求 ~1.03–1.05 s,扣不夠。
+- **做了什麼**:CLI 摘要行多 `requests=`(實際請求數,skipped_expired 為 0);`warrant_throughput_verdict` 多 `REQUESTS` 參數,扣 `empty_expired × 2 × (ELAPSED/REQUESTS)`;`requests=` 解析不到/對不上 → 退回 SLEEP 下界,`empty_expired=` 解析不到 → 不扣(都是誤報方向)。
+- **驗證**:bash 測試以 10-23 原數字:無 requests 逐字重現 `collapse 1.48 / 3486s`;有 requests(下界 14,017)→ `ok 1.61 / 3186s`;同總量但多數空是未到期 → `collapse 0.42`。importer 測試釘 `requests` 計數(有列 1、救回 2、兩站空 2、跳過 0)。
+- **提醒**:10-23 的 1.61 只比地板 1.5 高一點(舊日期冷門權證 ~2 列/檔);若再誤報,調舊日期地板,不是再多扣時間。
+- **待人類**:合 main 後 VPS `sync_code`,再刪 `/tmp/radar-warrant-backfill.pause`。
+
 ## 2026-10-22 權證分點回補:empty 要兩站確認＋空爆量斷路器＋調查/撤銷工具(`docs/30` §5.3;分支,未合 main;不動 crontab)
 
 - **事故**:12:46 吞吐塌陷告警(08-06..08-12 那塊 empty=5770/13,734 請求),暫停檔已建。回補的 empty 是終端狀態、單站說了算,HTTP 200 錯誤頁與真空分不出來。

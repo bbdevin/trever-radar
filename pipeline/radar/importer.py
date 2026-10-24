@@ -1217,7 +1217,8 @@ WARRANT_EMPTY_SPIKE_RATIO = 0.5
 WARRANT_EXPIRED_SKIP_STREAK = 2
 
 
-def _fetch_warrant_branch_confirmed(fubon, sid: str, date: str, sleep_s: float):
+def _fetch_warrant_branch_confirmed(fubon, sid: str, date: str, sleep_s: float,
+                                    tally: dict | None = None):
     """抓一檔權證一天的分點;第一站回零列時**換一站再問一次**才認定是空。
 
     回傳 ``(rows, recovered)``。兩站都零列 → 丟 ``NoDataError``(訊息帶兩站的說法);
@@ -1227,12 +1228,19 @@ def _fetch_warrant_branch_confirmed(fubon, sid: str, date: str, sleep_s: float):
     「換一站」靠 ``fetch_branch_trades`` 的輪替:回補是單執行緒循序呼叫,下一次呼叫
     一定落在下一個鏡像站;節流仍是全域的 ``sleep_s``,不增加任何一站的請求密度。
     與 ``_confirm_empties``(每日輪)同一條原則:空不信單一站(docs/47 §8.8)。
+
+    ``tally["requests"]`` 每發一次請求加一(成功或失敗都算),給摘要行的 ``requests=``。
     """
+    def fetch():
+        if tally is not None:
+            tally["requests"] = tally.get("requests", 0) + 1
+        return fubon.fetch_branch_trades(sid, date, throttle=sleep_s)
+
     try:
-        return fubon.fetch_branch_trades(sid, date, throttle=sleep_s), False
+        return fetch(), False
     except NoDataError as first:
         try:
-            return fubon.fetch_branch_trades(sid, date, throttle=sleep_s), True
+            return fetch(), True
         except NoDataError as second:
             raise NoDataError(f"confirmed by 2 mirrors: {first} | {second}") from second
 
@@ -1271,6 +1279,9 @@ def _backfill_warrant_branches_with_state(
 
     fetched = failed = completed_dates = empty = 0
     empty_expired = recovered = skipped_expired = 0
+    # 實際發出的請求數(含兩站確認的第二次、失敗的那次)。吞吐地板用「本塊總秒數 /
+    # requests」量出每次請求的真實成本,再扣掉 empty_expired × 2 次(docs/30 §5.3)。
+    tally = {"requests": 0}
     stopped = None
     state_files: list[str] = []
     # 已到期權證「較新日期連續幾天是 empty」(日期由新往舊走;那天不在目標裡不算中斷,
@@ -1331,7 +1342,8 @@ def _backfill_warrant_branches_with_state(
             state["results"][sid] = {"status": "pending"}
             is_expired = expired_now(sid)
             try:
-                rows, was_recovered = _fetch_warrant_branch_confirmed(fubon, sid, date, sleep_s)
+                rows, was_recovered = _fetch_warrant_branch_confirmed(
+                    fubon, sid, date, sleep_s, tally)
                 with engine.begin() as conn:
                     rows_written = upsert_branch_trades(conn, rows)
                 state["results"][sid] = {"status": "ok", "rows": rows_written}
@@ -1407,14 +1419,16 @@ def _backfill_warrant_branches_with_state(
     # 所以它必須出現在摘要行上,不能只躺在各日 state 檔裡。
     # empty_expired = 其中權證今天已過到期日的檔數(鏡像可能不再供已下市代號的頁,
     # 那種空與「來源回錯誤頁」意義不同);recovered = 第一站說空、第二站有列的檔數,
-    # 非零就代表單站的空確實會說謊。
+    # 非零就代表單站的空確實會說謊。requests = 實際發出的請求數(skipped_expired 不花
+    # 請求,不在裡面;每個 empty_expired 恰好 2 次)。
     print(f"backfill-warrant-branches: fetched={fetched}, complete_dates={completed_dates}/"
           f"{len(trade_dates)}, empty={empty}, empty_expired={empty_expired}, "
           f"skipped_expired={skipped_expired}, "
-          f"recovered={recovered}, failed={failed}, stopped={stopped}", flush=True)
+          f"recovered={recovered}, failed={failed}, requests={tally['requests']}, "
+          f"stopped={stopped}", flush=True)
     return {
         "fetched": fetched, "empty": empty, "empty_expired": empty_expired,
-        "skipped_expired": skipped_expired,
+        "skipped_expired": skipped_expired, "requests": tally["requests"],
         "recovered": recovered, "failed": failed, "stopped": stopped,
         "state_files": state_files,
     }
