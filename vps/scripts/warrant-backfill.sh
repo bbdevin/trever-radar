@@ -107,7 +107,9 @@ RUN_LOG="${WARRANT_RUN_LOG:-/tmp/radar-warrant-backfill.run.log}"
 # = 0.81 抓取/秒。低於下列值代表鏡像在餵錯誤頁／佔位頁(解析成零列 → NoDataError
 # → 永久 empty,而整塊仍會回報成功),必須停手而不是繼續把資料庫寫成空的。
 THROUGHPUT_MIN_ELAPSED="${WARRANT_THROUGHPUT_MIN_ELAPSED:-600}"
-MIN_ROWS_PER_SEC="${WARRANT_MIN_ROWS_PER_SEC:-1.5}"
+# 2026-10-24:1.5 → 1.0。舊日期冷門權證約 2 列/檔,10-23 未到期部分只有 1.61;中毒的第一道
+# 防線是 importer 的雙站確認＋empty-spike 斷路器,這裡是第二道(近期日期基準約 6.8 列/秒)。
+MIN_ROWS_PER_SEC="${WARRANT_MIN_ROWS_PER_SEC:-1.0}"
 MIN_FREE_GB="${MIN_FREE_GB:-3}"
 MIN_MEM_MB="${MIN_MEM_MB:-900}"
 MARKET="all"
