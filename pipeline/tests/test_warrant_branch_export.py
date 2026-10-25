@@ -102,6 +102,40 @@ class WarrantBranchDetailExportTests(unittest.TestCase):
             )
             self.assertNotIn("五十萬分點", [row["branch_name"] for row in detail["timeframes"][timeframe]])
 
+    def test_per_timeframe_files_match_the_legacy_market_payload(self):
+        """docs/51 §3.5:/branch 只抓目前區間的 warrant_branches_{tf}.json(列不含 breakdown),
+        點列才抓該股 {id}.breakdown.json;兩者合起來必須與舊的全市場檔逐字相同。"""
+        out = Path(self._tmp.name) / "out"
+        out.mkdir(parents=True, exist_ok=True)
+        export_json(out)
+        branches = out / "branches"
+        legacy = json.loads((branches / "warrant_branches.json").read_text(encoding="utf-8"))
+        breakdowns: dict[str, dict] = {}
+        for timeframe, legacy_rows in legacy["timeframes"].items():
+            text = (branches / f"warrant_branches_{timeframe}.json").read_text(encoding="utf-8")
+            payload = json.loads(text)
+            self.assertEqual(list(payload), ["version", "threshold", "data_date", "timeframe", "rows"])
+            self.assertEqual(
+                (payload["version"], payload["threshold"], payload["data_date"], payload["timeframe"]),
+                (1, 5_000_000, self.DATES[-1], timeframe),
+            )
+            stripped = [{k: v for k, v in row.items() if k != "breakdown"} for row in legacy_rows]
+            # 逐字:同一份列去掉 breakdown,鍵序與列序不變。
+            self.assertEqual(
+                json.dumps(payload["rows"], ensure_ascii=False),
+                json.dumps(stripped, ensure_ascii=False),
+            )
+            self.assertTrue(payload["rows"])
+            self.assertTrue(all("breakdown" not in row for row in payload["rows"]))
+            for row in legacy_rows:
+                sid = row["underlying_id"]
+                if sid not in breakdowns:
+                    breakdowns[sid] = json.loads(
+                        (branches / "warrant-stock-details" / f"{sid}.breakdown.json").read_text(encoding="utf-8"))
+                split = breakdowns[sid]
+                self.assertEqual(split["data_date"], payload["data_date"])
+                self.assertEqual(split["timeframes"][timeframe][row["branch_name"]], row["breakdown"])
+
     def test_data_date_and_windows_follow_branch_trades_not_price_date(self):
         """分點比報價晚一輪時,資料日必須是實際分點日,1d 桶不可被清空。
 

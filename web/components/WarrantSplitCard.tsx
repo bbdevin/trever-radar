@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useState, type ReactNode } from "react";
+import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
 export type SplitBreakdownRow = {
@@ -21,6 +22,12 @@ export type SplitItem = {
   /** 淨額(元),>0 進左欄「買超」、<0 進右欄「賣超」;0 不列。 */
   amount: number;
   breakdown?: SplitBreakdownRow[];
+  /**
+   * 可選:明細要另外抓(docs/51 §3.5,/branch 的區間檔不內嵌 breakdown)。列一律可展開,
+   * 展開時呼叫;breakdownState 是抓的進度(breakdown 到了就不看它)。
+   */
+  onExpand?: () => void;
+  breakdownState?: "loading" | "error";
   /** 列的第二行(例「仍持有(估) …」),可選。 */
   line2?: string | null;
   /** 可選:個股權證分頁深連結(選中這家券商);列右側多一顆「›」連結,列本身仍是展開明細。 */
@@ -59,7 +66,12 @@ export default function WarrantSplitCard({
   const sells = items.filter((i) => i.amount < 0).sort((a, b) => a.amount - b.amount);
   const buyTotal = buys.reduce((s, i) => s + i.amount, 0);
   const sellTotal = sells.reduce((s, i) => s + i.amount, 0);
-  const open = items.find((i) => i.key === expanded && i.breakdown && i.breakdown.length > 0) ?? null;
+  const open = items.find((i) => i.key === expanded && (i.onExpand || (i.breakdown && i.breakdown.length > 0))) ?? null;
+  const toggle = (key: string | null) => {
+    setExpanded(key);
+    const item = key ? items.find((i) => i.key === key) : undefined;
+    if (item?.onExpand && !item.breakdown) item.onExpand();
+  };
 
   return (
     <div className="flex min-w-0 flex-col overflow-hidden rounded-[var(--r-lg)] border border-border bg-card shadow-sm transition-colors duration-300 hover:border-border-strong">
@@ -77,11 +89,37 @@ export default function WarrantSplitCard({
       </div>
 
       <div className="grid min-w-0 grid-cols-2 gap-2 bg-background p-2.5" data-testid="warrant-split-columns">
-        <SplitColumn tone="up" title="買超" total={buyTotal} items={buys} expanded={expanded} onToggle={setExpanded} />
-        <SplitColumn tone="down" title="賣超" total={sellTotal} items={sells} expanded={expanded} onToggle={setExpanded} />
+        <SplitColumn tone="up" title="買超" total={buyTotal} items={buys} expanded={expanded} onToggle={toggle} />
+        <SplitColumn tone="down" title="賣超" total={sellTotal} items={sells} expanded={expanded} onToggle={toggle} />
       </div>
 
-      {open && open.breakdown && (
+      {open && !open.breakdown && (
+        <div className="border-t border-border/60 bg-secondary/20 px-2.5 py-2" data-testid="warrant-breakdown-pending">
+          <p className="mb-1 px-1 text-[11px] font-semibold text-foreground">{open.text} 的權證明細</p>
+          {open.breakdownState === "error" ? (
+            <div className="flex flex-wrap items-center gap-2 px-1 py-1 text-[11.5px] text-muted-foreground">
+              <span>明細載入失敗,區間合計不受影響。</span>
+              <button
+                type="button"
+                onClick={() => open.onExpand?.()}
+                className="min-h-9 rounded-md border border-border px-3 text-[12px] font-semibold text-foreground transition-colors hover:bg-secondary"
+              >
+                重試
+              </button>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-1" role="status" aria-label="權證明細載入中">
+              {[0, 1, 2].map((n) => <Skeleton key={n} className="h-8" />)}
+            </div>
+          )}
+        </div>
+      )}
+      {open && open.breakdown && open.breakdown.length === 0 && (
+        <p className="border-t border-border/60 bg-secondary/20 px-3.5 py-2 text-[11.5px] text-muted-foreground">
+          {open.text} 沒有逐檔權證明細。
+        </p>
+      )}
+      {open && open.breakdown && open.breakdown.length > 0 && (
         <div className="border-t border-border/60 bg-secondary/20 px-2.5 py-2">
           <p className="mb-1 px-1 text-[11px] font-semibold text-foreground">{open.text} 的權證明細</p>
           <div className="mb-1 grid grid-cols-[1.5fr_1fr_0.7fr] px-1 text-[10px] font-semibold text-muted-foreground">
@@ -145,7 +183,7 @@ function SplitColumn({
       ) : (
         <ol className="divide-y divide-[color:var(--line)]">
           {items.map((i) => {
-            const hasBreakdown = !!i.breakdown && i.breakdown.length > 0;
+            const hasBreakdown = !!i.onExpand || (!!i.breakdown && i.breakdown.length > 0);
             const isOpen = expanded === i.key;
             return (
               <li key={i.key} className={cn("flex min-w-0 items-stretch", isOpen && "bg-secondary/70")}>

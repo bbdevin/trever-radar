@@ -1,5 +1,9 @@
 # Handoff — 2026-09-24（期貨切片從未真的渲染過的結構性 bug 已修、四輪日更補上失敗語音（過程自己又生一個更嚴重的）、期貨補到每契約每天、兩道守門缺口補上、一個記成已出貨卻沒上畫面的按鈕、一次自己的效能預測被實測打臉 2.5 倍、「隔天大漲」事前登記落地）
 
+## 2026-10-25 補記(/branch 權證分點近 1、2 日空白,分支未合)
+
+- 根因是前端把「21.6 MB 還沒下載完／下載失敗」顯示成「此區間內無…」,不是資料缺。export 多寫五個區間小檔 `branches/warrant_branches_{tf}.json`,頁面只抓目前區間、展開才抓該股 breakdown 檔,loading/error/empty 分開(`docs/51` §3.5)。舊全市場檔仍寫一個版本;確認新檔上線後另案移除 `warrant_branches.json` 的寫出與 `/branch`、`WarrantBranchPanel` 兩處 fallback。重跑驗證:`node web/scripts/verify-branch-warrant-load.mjs --out out --data <含 branches/ 的目錄>`(在 `web/`)。
+
 ## 2026-10-21 補記(第二段上線提速,分支未合)
 
 - `compute_branch_stats.py` 逐檔迴圈逐位元不變地提速(合成庫 144–152 s → 50 s),讀取改背景執行緒預讀;`branch stats timing:` 多 `read-wait=`。`daily-branches.sh` 第二段改「統計 → 權證收尾 → 匯出」(統計不讀權證列)。合 main 後第一個交易日 grep `branch stats timing` 與兩次 `deploy done`,回填 `docs/44` §3.6。第二段 export 只重算會變的部分是提案(§3.6「沒做的」第 1 點)。

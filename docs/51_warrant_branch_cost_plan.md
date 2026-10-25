@@ -99,6 +99,16 @@ SELECT branch_name FROM branch_dim WHERE branch_name LIKE '%摩根%';
 
 禁用：勝率 獲利 報酬 關鍵分點 大漲 噴 極品 機率 目標價 買進 賣出 看多 看空 將會 有效支撐 壓力沉重 做多 做空 建議 喊單 套牢（`warrantPositions.test.ts` 以字碼組字檢查，避免 `test_label_honesty.py` 掃到字面）。中性用語：「帳面估算 +X／−X」「估算成本」「仍持有(估)」「進場 MM/DD N 張」「找不到對應的買超」。
 
+### 3.5 /branch 權證分點異動的載入：區間檔、三種狀態（2026-10-25 修正）
+
+- **使用者回報**：「權證分點近 1、2 日都沒有資訊」。**根因**不是資料：正式 `branches/warrant_branches.json`（2026-10-22）1d 有 41 列、2d 80 列。是前端——分點頁**一進站**（不論哪個分頁）就以 `cache: no-store` 抓整份全市場檔，**21.6 MB**（gzip 約 2.57 MB，九成以上是逐檔 `breakdown`：120d 一個區間就 12.3 MB），抓完之前、以及抓失敗（`.catch(() => {})`）時，`timeframes` 都是空的預設值，畫面顯示「此區間內無淨買賣超 500 萬以上之權證大戶」。手機上使用者先看 近 1 日、再點 近 2 日，都還在下載；點到 5 日時剛好下載完，所以「只有 1、2 日沒資料」。
+- **重現**（`web/scripts/verify-branch-warrant-load.mjs`，正式機真檔、390px、Fast 3G 1.6 Mbps）：修正前分頁列 7.3 s 出現時顯示「無資料」，直到 24.4 s 才出卡（17 秒的錯誤空狀態）；500 時永遠顯示「無資料」。截圖 `docs/evidence/51_warrant_positions/branch-390-dark-warrant-before-fix-empty-copy.png`。修正後同條件 7.7 s 出 2d 卡、從未出現錯誤空狀態。
+- **匯出**（`_export_warrant_branches`）：另寫五個 `branches/warrant_branches_{1d,2d,5d,30d,120d}.json` = `{version:1, threshold:5000000, data_date, timeframe, rows}`；`rows` 是同一份全市場列**去掉 `breakdown`**，其餘鍵、鍵序、列序逐字相同（`test_per_timeframe_files_match_the_legacy_market_payload`）。逐檔明細不另開檔：點列時抓該股 `warrant-stock-details/{id}.breakdown.json`，其 `timeframes[tf][券商]` 就是同一個 item 的 `breakdown`（500 萬列必在 100 萬分片內，同一測試逐列比對）。
+- **大小**（2026-10-22 正式檔換算；原始 / gzip）：1d 6.4 KB / 1.2 KB、2d 12.5 KB / 1.9 KB、5d 25.2 KB / 3.5 KB、30d 124 KB / 15.5 KB、120d 244 KB / 31 KB；修正前任何區間都要 21.6 MB / 2.57 MB。明細檔每股一個、點了才抓（僅 500 萬列換算中位數 17 KB，最大 1.8 MB；正式檔含 100 萬列會更大，與個股權證分頁共用、本來就存在）。
+- **前端**（`web/lib/warrantMarket.ts` + `app/branch/page.tsx`）：只在權證分頁、且非「仍持有(估)」檢視時抓**目前區間**的檔；每個區間各自 `loading / error / ready`——載入中是骨架卡（`data-testid="warrant-tf-loading"`），失敗是「權證分點資料載入失敗,這不代表此區間沒有權證大戶。」＋**重試**（`warrant-tf-error`，離線時用 `OFFLINE_DATA_COPY`），只有檔案真的回空陣列才顯示「此區間內無…」。資料日一行只在 ready 時顯示。`WarrantSplitCard` 加 `onExpand / breakdownState`：展開時明細骨架、失敗「明細載入失敗,區間合計不受影響」＋重試；明細檔資料日必須等於區間檔（兩次匯出之間對不上就算失敗，不拼不同日子）。
+- **相容**：區間檔 **404**（程式碼先於下一次 VPS 匯出上線）才退回舊全市場檔，一次填滿五個區間、明細內嵌（只下載一次）；500／斷線／格式錯不退回，直接顯示錯誤＋重試。舊全市場檔**保留一個版本**（舊前端與 `WarrantBranchPanel` 的 index 404 fallback 還讀它）；下一輪確認新檔都在正式機後，另案移除寫出與兩處 fallback。注意 Workers 靜態資產單檔上限 25 MiB，舊檔 21.6 MB 已接近，120d 再長就可能部署失敗——這也是要儘快移除它的理由。
+- **驗證**：pytest `test_warrant_branch_export.py`；web node `warrantMarket.test.ts`（區間檔／舊檔解析、404 才退回且只抓一次、500/斷線/格式錯 reject 不退回、舊檔失敗可重試、狀態合併不蓋掉 ready、明細檔日期與股號、列明細各狀態）；`tsc`、`next build`；Playwright 25 項（不限速出卡且不下載舊檔、展開明細、Fast 3G 從未顯示錯誤空狀態、500 → 錯誤＋重試成功、卡住 → 骨架、404 → 舊檔 fallback 與內嵌明細、真的空 → 空文案）。截圖 `branch-390-{dark,light}-warrant-{1d,loading,error}.png`、`branch-390-dark-warrant-1d-expanded.png`。
+
 ## 4. 篩選清單契約 `branches/warrant_positions.json`（v3，2026-10-13）
 
 ```

@@ -3394,6 +3394,20 @@ def _export_warrant_branches(out: Path, engine, date: str, base20: list[str], on
                 "data_date": bd1,
                 "timeframes": results,
             }, ensure_ascii=False), encoding="utf-8")
+        # 每個區間一個小檔(2026-10-25,docs/51 §3.5):上面的全市場檔 2026-10-22 已 21.6 MB,
+        # 九成以上是逐檔 breakdown;/branch 一進站整份下載,手機抓完前「近 1/2 日」都顯示無資料。
+        # 分頁只抓目前區間的 warrant_branches_{tf}.json(列不含 breakdown,其餘鍵與順序與上面
+        # 同一份列逐字相同);點列展開時才抓該股 warrant-stock-details/{id}.breakdown.json——
+        # 那裡的 timeframes[tf][券商] 就是同一個 item 的 breakdown(500 萬列必在 100 萬分片內)。
+        # 舊的全市場檔保留一個版本給尚未更新的前端與 WarrantBranchPanel 的 404 fallback。
+        for tf, rows in results.items():
+            (branches_dir / f"warrant_branches_{tf}.json").write_text(json.dumps({
+                "version": 1,
+                "threshold": WARRANT_BRANCH_MARKET_MIN_AMOUNT,
+                "data_date": bd1,
+                "timeframe": tf,
+                "rows": [{k: v for k, v in x.items() if k != "breakdown"} for x in rows],
+            }, ensure_ascii=False), encoding="utf-8")
         detail_dir = branches_dir / "warrant-stock-details"
         detail_dir.mkdir(exist_ok=True)
         # Remove stale per-stock shards before writing the current index. The

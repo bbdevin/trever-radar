@@ -1,12 +1,23 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, Search, Info, TrendingUp, TrendingDown, Building2, User, Star, Wallet } from "lucide-react";
 import WarrantHoldersList from "@/components/WarrantHoldersList";
 import { SCREEN_PARAM_KEYS } from "@/lib/warrantPositions";
-import WarrantSplitCard from "@/components/WarrantSplitCard";
+import WarrantSplitCard, { type SplitItem } from "@/components/WarrantSplitCard";
+import {
+  applyMarketResult,
+  breakdownPath,
+  createMarketLoader,
+  parseStockBreakdowns,
+  rowBreakdown,
+  type BreakdownEntry,
+  type MarketRow,
+  type MarketTfState,
+  type MarketTimeframe,
+} from "@/lib/warrantMarket";
 import { warrantTabHref } from "@/lib/warrantDeepLink";
 import { currentParams, replaceQuery } from "@/lib/urlState";
 import { IconFlame, IconTrend, IconZap } from "@/components/Icons";
@@ -259,51 +270,33 @@ function normalizeTodayPayload(payload: unknown): TodayPayload {
   };
 }
 
-type WarrantBreakdown = {
-  warrant_id: string;
-  warrant_name: string;
-  kind: "call" | "put";
-  net_lots: number;
-  net_amount: number;
-};
+/** 一列的逐檔明細怎麼來:舊檔內嵌,或展開時另抓該股的 breakdown 檔(docs/51 §3.5)。 */
+type RowDetail = (row: MarketRow) => Pick<SplitItem, "breakdown" | "breakdownState" | "onExpand">;
 
-type WarrantBranch = {
-  branch_name: string;
-  underlying_id: string;
-  underlying_name: string;
-  net_amount: number;
-  breakdown?: WarrantBreakdown[];
-};
+/** 權證分頁「此區間載入中」:骨架卡,不顯示「無資料」(docs/51 §3.5)。 */
+function WarrantTfLoading() {
+  return (
+    <div data-testid="warrant-tf-loading" role="status" aria-label="權證分點資料載入中" className="grid grid-cols-1 items-start gap-4 md:grid-cols-2 xl:grid-cols-3">
+      {[0, 1, 2].map((i) => (
+        <Skeleton key={i} className="h-[188px] rounded-[var(--r-lg)]" />
+      ))}
+    </div>
+  );
+}
 
-type WarrantTimeframes = Record<string, WarrantBranch[]>;
-
-type WarrantBranchPayload = {
-  data_date: string | null;
-  timeframes: WarrantTimeframes;
-};
-
-const EMPTY_WARRANT_TIMEFRAMES: WarrantTimeframes = { "1d": [], "2d": [], "5d": [], "30d": [], "120d": [] };
-
-function normalizeWarrantBranchPayload(payload: unknown): WarrantBranchPayload {
-  if (payload && typeof payload === "object" && !Array.isArray(payload)) {
-    const wrapper = payload as { version?: unknown; data_date?: unknown; timeframes?: unknown };
-    if (wrapper.version === 1 && "timeframes" in wrapper) {
-      return {
-        data_date: typeof wrapper.data_date === "string" ? wrapper.data_date : null,
-        timeframes: wrapper.timeframes && typeof wrapper.timeframes === "object" && !Array.isArray(wrapper.timeframes)
-          ? wrapper.timeframes as WarrantTimeframes
-          : EMPTY_WARRANT_TIMEFRAMES,
-      };
-    }
-  }
-  // 同 normalizeTodayPayload:程式碼可能早於下一次 export 上線,舊的裸 mapping
-  // 仍要能讀,且不替它捏造資料日。
-  return {
-    data_date: null,
-    timeframes: payload && typeof payload === "object" && !Array.isArray(payload)
-      ? payload as WarrantTimeframes
-      : EMPTY_WARRANT_TIMEFRAMES,
-  };
+function WarrantTfError({ onRetry }: { onRetry: () => void }) {
+  return (
+    <div data-testid="warrant-tf-error" role="alert" className="flex flex-col items-center gap-3 py-[38px] text-center text-sm text-muted-foreground">
+      <span>{isBrowserOffline() ? OFFLINE_DATA_COPY : "權證分點資料載入失敗,這不代表此區間沒有權證大戶。"}</span>
+      <button
+        type="button"
+        onClick={onRetry}
+        className="min-h-11 rounded-full border border-border bg-card px-5 text-[13.5px] font-semibold text-foreground transition-colors hover:bg-secondary"
+      >
+        重試
+      </button>
+    </div>
+  );
 }
 
 function EmptyNotice({ tag, children }: { tag: string; children: React.ReactNode }) {
@@ -404,7 +397,7 @@ function TabPill({ active, onClick, title, icon: Icon, label }: { active: boolea
 }
 
 /** 依標的:一張卡 = 一檔標的,左買右賣兩欄列券商(docs/51 §3.2;原本單欄混列買賣)。 */
-function StockGroupCard({ stockId, stockName, totalAmt, branches }: { stockId: string, stockName: string, totalAmt: number, branches: WarrantBranch[] }) {
+function StockGroupCard({ stockId, stockName, totalAmt, branches, detail }: { stockId: string, stockName: string, totalAmt: number, branches: MarketRow[], detail: RowDetail }) {
   return (
     <WarrantSplitCard
       title={(
@@ -415,7 +408,7 @@ function StockGroupCard({ stockId, stockName, totalAmt, branches }: { stockId: s
       )}
       totalAmt={totalAmt}
       items={branches.map((b) => ({
-        key: b.branch_name, label: b.branch_name, text: b.branch_name, amount: b.net_amount, breakdown: b.breakdown,
+        key: b.branch_name, label: b.branch_name, text: b.branch_name, amount: b.net_amount, ...detail(b),
         href: warrantTabHref(stockId, b.branch_name),
       }))}
     />
@@ -423,7 +416,7 @@ function StockGroupCard({ stockId, stockName, totalAmt, branches }: { stockId: s
 }
 
 /** 依分點:一張卡 = 一家券商,左買右賣兩欄列標的。 */
-function BranchGroupCard({ branchName, totalAmt, stocks }: { branchName: string, totalAmt: number, stocks: WarrantBranch[] }) {
+function BranchGroupCard({ branchName, totalAmt, stocks, detail }: { branchName: string, totalAmt: number, stocks: MarketRow[], detail: RowDetail }) {
   return (
     <WarrantSplitCard
       title={<span className="block truncate text-lg font-semibold tracking-tight text-foreground">{branchName}</span>}
@@ -437,7 +430,7 @@ function BranchGroupCard({ branchName, totalAmt, stocks }: { branchName: string,
         ),
         text: s.underlying_name,
         amount: s.net_amount,
-        breakdown: s.breakdown,
+        ...detail(s),
         href: warrantTabHref(s.underlying_id, branchName),
       }))}
     />
@@ -456,10 +449,12 @@ export default function BranchPage() {
   const [tab, setTabState] = useState<BranchTab>("rankings");
   const [rankingsData, setRankingsData] = useState<RankingsData | null>(null);
   const [today, setToday] = useState<TodayPayload | null>(null);
-  const [warrantBranches, setWarrantBranches] = useState<WarrantBranchPayload>({
-    data_date: null, timeframes: EMPTY_WARRANT_TIMEFRAMES,
-  });
-  const [warrantTimeframe, setWarrantTimeframe] = useState<"1d" | "2d" | "5d" | "30d" | "120d">("1d");
+  // 權證分點異動(docs/51 §3.5):每個區間各自 loading / error / ready,點到那個區間才抓那個檔。
+  const [warrantStates, setWarrantStates] = useState<Partial<Record<MarketTimeframe, MarketTfState>>>({});
+  const [warrantTimeframe, setWarrantTimeframe] = useState<MarketTimeframe>("1d");
+  // 逐檔明細:鍵 = `${資料日}|${股號}`,展開列時才抓 warrant-stock-details/{id}.breakdown.json。
+  const [breakdowns, setBreakdowns] = useState<Record<string, BreakdownEntry>>({});
+  const loadMarket = useMemo(() => createMarketLoader(dataFetch), []);
   // holders = 「仍持有(估)」全市場篩選清單(docs/51 §4),點了才抓檔。
   const [viewMode, setViewModeState] = useState<WarrantView>("by_stock");
   // 分頁與檢視放網址(?tab=warrant&view=holders,replaceState):返回鍵回來還在(docs/51 §3.2)。
@@ -510,12 +505,6 @@ export default function BranchPage() {
       .then(setToday)
       .catch(() => setError(true));
 
-    dataFetch("/data/branches/warrant_branches.json")
-      .then((r) => (r.ok ? r.json() : null))
-      .then(normalizeWarrantBranchPayload)
-      .then(setWarrantBranches)
-      .catch(() => {});
-
     dataFetch("/data/branches/track/index.json")
       .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
       .then(normalizeTrackIndex)
@@ -531,6 +520,33 @@ export default function BranchPage() {
         setTrackIndexStatus("error");
       });
   }, []);
+
+  const requestWarrantTf = useCallback((tf: MarketTimeframe) => {
+    setWarrantStates((s) => ({ ...s, [tf]: { status: "loading" } }));
+    loadMarket(tf)
+      .then((result) => setWarrantStates((s) => applyMarketResult(s, result)))
+      .catch(() => setWarrantStates((s) => ({ ...s, [tf]: { status: "error" } })));
+  }, [loadMarket]);
+  // 只有在權證分頁、且不是「仍持有(估)」檢視時才抓(以前分點頁一進站就抓整份 21.6 MB)。
+  const warrantActive = tab === "warrant" && viewMode !== "holders";
+  useEffect(() => {
+    if (warrantActive && !warrantStates[warrantTimeframe]) requestWarrantTf(warrantTimeframe);
+  }, [warrantActive, warrantTimeframe, warrantStates, requestWarrantTf]);
+
+  const loadBreakdown = (stockId: string, dataDate: string | null) => {
+    const key = `${dataDate}|${stockId}`;
+    const cur = breakdowns[key];
+    if (cur !== undefined && cur !== "error") return;
+    setBreakdowns((b) => ({ ...b, [key]: "loading" }));
+    dataFetch(breakdownPath(stockId))
+      .then(async (r) => {
+        if (!r.ok) throw r.status;
+        const parsed = parseStockBreakdowns(await r.json(), stockId, dataDate);
+        if (!parsed) throw new Error("權證分點明細格式錯誤");
+        setBreakdowns((b) => ({ ...b, [key]: parsed }));
+      })
+      .catch(() => setBreakdowns((b) => ({ ...b, [key]: "error" })));
+  };
 
   if (error) {
     if (isBrowserOffline()) {
@@ -859,11 +875,24 @@ export default function BranchPage() {
       })()}
 
       {tab === "warrant" && (() => {
-        const data = warrantBranches.timeframes[warrantTimeframe] || [];
-        
+        const tfState = warrantStates[warrantTimeframe];
+        const ready = tfState?.status === "ready" ? tfState : null;
+        const data = ready?.rows ?? [];
+        const dataDate = ready?.data_date ?? null;
+        const detail: RowDetail = (row) => {
+          if (row.breakdown) return { breakdown: row.breakdown };   // 舊全市場檔(fallback)內嵌
+          const b = rowBreakdown(row, warrantTimeframe, breakdowns[`${dataDate}|${row.underlying_id}`]);
+          const onExpand = () => loadBreakdown(row.underlying_id, dataDate);
+          return Array.isArray(b) ? { breakdown: b, onExpand } : { onExpand, breakdownState: b ?? "loading" };
+        };
+
         let content;
         if (viewMode === "holders") {
           content = <WarrantHoldersList />;
+        } else if (!tfState || tfState.status === "loading") {
+          content = <WarrantTfLoading />;
+        } else if (tfState.status === "error") {
+          content = <WarrantTfError onRetry={() => requestWarrantTf(warrantTimeframe)} />;
         } else if (data.length === 0) {
           content = (
             <div className="py-[46px] text-center text-sm text-muted-foreground">
@@ -883,7 +912,7 @@ export default function BranchPage() {
             acc[curr.underlying_id].totalAmt += curr.net_amount;
             acc[curr.underlying_id].branches.push(curr);
             return acc;
-          }, {} as Record<string, { stockId: string, stockName: string, totalAmt: number, branches: WarrantBranch[] }>);
+          }, {} as Record<string, { stockId: string, stockName: string, totalAmt: number, branches: MarketRow[] }>);
           
           const sortedStocks = Object.values(grouped).sort((a, b) => Math.abs(b.totalAmt) - Math.abs(a.totalAmt));
           sortedStocks.forEach(s => s.branches.sort((a, b) => Math.abs(b.net_amount) - Math.abs(a.net_amount)));
@@ -891,7 +920,7 @@ export default function BranchPage() {
           content = (
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 items-start">
               {sortedStocks.map(s => (
-                <StockGroupCard key={s.stockId} stockId={s.stockId} stockName={s.stockName} totalAmt={s.totalAmt} branches={s.branches} />
+                <StockGroupCard key={s.stockId} stockId={s.stockId} stockName={s.stockName} totalAmt={s.totalAmt} branches={s.branches} detail={detail} />
               ))}
             </div>
           );
@@ -907,7 +936,7 @@ export default function BranchPage() {
             acc[curr.branch_name].totalAmt += curr.net_amount;
             acc[curr.branch_name].stocks.push(curr);
             return acc;
-          }, {} as Record<string, { branchName: string, totalAmt: number, stocks: WarrantBranch[] }>);
+          }, {} as Record<string, { branchName: string, totalAmt: number, stocks: MarketRow[] }>);
           
           const sortedBranches = Object.values(grouped).sort((a, b) => Math.abs(b.totalAmt) - Math.abs(a.totalAmt));
           sortedBranches.forEach(b => b.stocks.sort((a, b) => Math.abs(b.net_amount) - Math.abs(a.net_amount)));
@@ -915,7 +944,7 @@ export default function BranchPage() {
           content = (
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 items-start">
               {sortedBranches.map(b => (
-                <BranchGroupCard key={b.branchName} branchName={b.branchName} totalAmt={b.totalAmt} stocks={b.stocks} />
+                <BranchGroupCard key={b.branchName} branchName={b.branchName} totalAmt={b.totalAmt} stocks={b.stocks} detail={detail} />
               ))}
             </div>
           );
@@ -972,10 +1001,10 @@ export default function BranchPage() {
                 </button>
               </div>
             </div>
-            {viewMode !== "holders" && (
+            {viewMode !== "holders" && ready && (
               <p className="text-[11.5px] text-muted-foreground">
-                {warrantBranches.data_date
-                  ? `分點資料日 ${warrantBranches.data_date}；各區間由該日往前推算,不含更新的分點資料。`
+                {dataDate
+                  ? `分點資料日 ${dataDate}；各區間由該日往前推算,不含更新的分點資料。`
                   : "此快照未提供分點資料日。"}
                 {" "}每張卡左欄買超、右欄賣超,點一列看它的逐檔權證。
               </p>
