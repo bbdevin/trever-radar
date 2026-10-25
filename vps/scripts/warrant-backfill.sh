@@ -58,7 +58,11 @@
 # 任何一次略過都回 0,只有真正的失敗才回非 0。
 #
 # ── 環境變數 ────────────────────────────────────────────────────────────
-#   WARRANT_DAYS=90            深度(交易日);收到 90 日完成通知後改 120
+#   WARRANT_DAYS=70            深度(交易日)。2026-10-25 由 90 改 70:回補到約 74 個交易日前
+#                              (2026-07 上旬)時,連「現在仍未到期」的權證也幾乎全空
+#                              (10-24 塊 fetched=67、未到期空 389、rows/s 0.25),是鏡像的
+#                              歷史保存上限,不是中毒;再往前只是白費請求。原「90 完成後改
+#                              120」的計畫作廢(docs/30 §5.3)
 #   WARRANT_CAP=30000          單日目標數安全上限(超過即 fail closed,不截斷)
 #   WARRANT_SLEEP=1.0          請求間隔。1.0 是實測值(1.23 秒/標的 = 1.0 sleep
 #                              + 0.23 實際工作),**不要再往下調**:這是本專案對
@@ -92,7 +96,7 @@ source "$(dirname "$0")/lib.sh"
 source "$(dirname "$0")/warrant-throughput.sh"
 
 FLAG="${MID_PUBLISH_FLAG:-/tmp/radar-mid-publish.flag}"
-DAYS="${WARRANT_DAYS:-90}"
+DAYS="${WARRANT_DAYS:-70}"
 CAP="${WARRANT_CAP:-30000}"
 SLEEP="${WARRANT_SLEEP:-1.0}"
 SAFETY_MINUTES="${WARRANT_SAFETY_MINUTES:-15}"
