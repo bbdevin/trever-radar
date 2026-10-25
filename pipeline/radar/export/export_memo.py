@@ -41,6 +41,7 @@ import marshal
 import os
 import sys
 import time
+import uuid
 from pathlib import Path
 
 from .. import config
@@ -55,21 +56,27 @@ def memo_enabled() -> bool:
     return os.environ.get(ENV_FLAG, "1").strip() != "0"
 
 
-_SALT: str | None = None
+def disk_salt() -> str:
+    """磁碟上整個 radar 套件的原始碼 + Python 版本 + MEMO_VERSION 的雜湊。"""
+    h = hashlib.blake2b(digest_size=16)
+    h.update(f"{MEMO_VERSION}|{sys.version}".encode())
+    for p in sorted(_PKG_ROOT.rglob("*.py")):
+        h.update(p.relative_to(_PKG_ROOT).as_posix().encode())
+        h.update(b"\0")
+        h.update(p.read_bytes())
+        h.update(b"\0")
+    return h.hexdigest()
+
+
+# 程式雜湊在**匯入時**算(json_export 匯入本模組 = export 開跑前,與其他 radar 模組同一刻載入),
+# 不是建 ExportMemo 時才讀磁碟:正式機 $REPO/pipeline 是 bind mount,sync_code(git pull)可能
+# 在本行程跑到一半時換掉原始碼(不持鎖的 mid-backfill export 尤其如此)。存檔前再讀一次磁碟,
+# 對不上 = 這一輪跑的程式(至少一部分)與磁碟上的不同 → 不存(save),下一輪全算(verifier 2026-10-25)。
+_SALT: str = disk_salt()
 
 
 def code_salt() -> str:
-    """整個 radar 套件的原始碼 + Python 版本 + MEMO_VERSION:程式改了(含任何常數)就全部不命中。"""
-    global _SALT
-    if _SALT is None:
-        h = hashlib.blake2b(digest_size=16)
-        h.update(f"{MEMO_VERSION}|{sys.version}".encode())
-        for p in sorted(_PKG_ROOT.rglob("*.py")):
-            h.update(p.relative_to(_PKG_ROOT).as_posix().encode())
-            h.update(b"\0")
-            h.update(p.read_bytes())
-            h.update(b"\0")
-        _SALT = h.hexdigest()
+    """程式改了(含任何常數)就全部不命中。"""
     return _SALT
 
 
@@ -138,22 +145,53 @@ class ExportMemo:
         if self.enabled:
             self.new[sid] = entry
 
-    def save(self, *, reloaded: bool) -> None:
-        """整份覆寫(tmp + rename)。這一輪分點名重讀過 → 不寫、刪掉舊檔(下一次全算)。"""
+    def save(self, *, reloaded: bool) -> str:
+        """整份覆寫(tmp + rename),回傳結果(``saved`` / ``off`` / ``reloaded`` / ``code_changed`` /
+        ``error``)。**永不擲例外**:記憶只是加速,存不了(磁碟滿、路徑被佔成目錄/檔案…)只寫一行
+        warning,export 照常把後面的檔寫完;存不了時順手刪掉舊檔(下一次全算)。
+        這一輪分點名重讀過、或磁碟上的程式與匯入時不同 → 不寫。"""
         if not self.enabled:
-            return
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        if reloaded:
+            return "off"
+        try:
+            if reloaded:
+                self._drop()
+                return "reloaded"
+            if disk_salt() != self.salt:
+                print("export memo WARNING: radar/ source changed on disk during this export; "
+                      "memo not saved", flush=True)
+                self._drop()
+                return "code_changed"
+            self._write()
+            return "saved"
+        except (OSError, ValueError, TypeError) as exc:
+            print(f"export memo WARNING: save failed ({type(exc).__name__}: {exc}); memo dropped",
+                  flush=True)
             try:
-                self.path.unlink()
-            except FileNotFoundError:
+                self._drop()
+            except OSError:
                 pass
-            return
+            return "error"
+
+    def _drop(self) -> None:
+        try:
+            self.path.unlink()
+        except FileNotFoundError:
+            pass
+
+    def _write(self) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
         doc = {"version": MEMO_VERSION, "salt": self.salt, "d": self.d,
                "names": {str(k): v for k, v in self._names.items()}, "entries": self.new}
-        tmp = self.path.with_name(f"{self.path.name}.tmp-{os.getpid()}")
-        tmp.write_text(json.dumps(doc, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
-        os.replace(tmp, self.path)
+        # 容器以 docker --init 跑,每個容器裡的 PID 都一樣 → tmp 名再加亂數,兩個並行 export 不會互踩。
+        tmp = self.path.with_name(f"{self.path.name}.tmp-{os.getpid()}-{uuid.uuid4().hex}")
+        try:
+            tmp.write_text(json.dumps(doc, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+            os.replace(tmp, self.path)
+        finally:
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
         now = time.time()
         for p in self.path.parent.iterdir():
             if p == self.path:

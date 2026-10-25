@@ -3082,7 +3082,7 @@ def export_json(
             timing["write"] += time.perf_counter() - t_sec
         parts_writer.finish()
         t_sec = time.perf_counter()
-        memo.save(reloaded=branch_names_by_id.reloads > 0)
+        memo_saved = memo.save(reloaded=branch_names_by_id.reloads > 0)
         timing["memo"] += time.perf_counter() - t_sec
         timing["loop_other"] = (time.perf_counter() - t_loop) - sum(
             timing[k] for k in ("branch_history", "candles", "pctile", "pnl", "levels", "write",
@@ -3125,7 +3125,7 @@ def export_json(
     print(f"export memo: enabled={int(memo.enabled)} loaded={ms['loaded']} "
           f"names_ok={int(memo.names_ok)} stocks={len(memo.new)} branch={ms['branch']} "
           f"pnl={ms['pnl']} pctile={ms['pctile']} levels={ms['levels']} "
-          f"chips_bad={ms['chips_bad']} reloads={branch_names_by_id.reloads}", flush=True)
+          f"chips_bad={ms['chips_bad']} reloads={branch_names_by_id.reloads} saved={memo_saved}", flush=True)
     print(f"export parts: hist_written={parts_writer.hist_written} "
           f"hist_reused={parts_writer.hist_reused} hist_total={len(parts_writer.index)} "
           f"legacy={'on' if legacy_stocks else 'off'} unchanged={parts_writer.unchanged}", flush=True)

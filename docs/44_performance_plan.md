@@ -416,6 +416,7 @@ home/stocks.json       {version:1, data_date, generated_at, stocks:[逐檔投影
 - 摘要碰撞:blake2b-128,可忽略。
 - 並行 export(`mid-backfill-publish.sh`,不持鎖、同一輸出目錄、同一份記憶檔):各自記自己讀到的摘要與自己寫的 chips 雜湊,最後寫的那份記憶檔生效;另一個 export 改寫過的 chips 雜湊對不上 → 不命中。最壞是少命中,不會沿用錯的。
 - 磁碟:每個輸出目錄一個檔(正式 ~3 MB),7 天沒更新的自動刪。
+- **verifier 修正(2026-10-25,ca8e708 之後)**:①程式雜湊原本在建 `ExportMemo` 時才讀磁碟;正式機 `$REPO/pipeline` 是 bind mount,`sync_code`(git pull)若落在「模組已匯入、記憶還沒建」之間,舊程式的輸出會被存在新程式的雜湊下,下一輪沿用(verifier 以 price_levels/pnl 版本號重現,44 檔不同)。改成**匯入時**快照雜湊,`save()` 前再讀一次磁碟,不同就不存並刪掉舊檔、印 `export memo WARNING:`,`export memo:` 行的 `saved=code_changed`;下一個行程(新雜湊)全算。②`save()` 失敗(磁碟滿、路徑被目錄佔住、`export-memo` 是檔案、rename 衝突)原本會讓整個 export 在寫 groups/branches/rankings 之前中止;改成永不擲例外,印 warning、刪舊檔、`saved=error`,export 照常寫完。tmp 名加 uuid(`docker --init` 下每個容器 PID 相同)。測試:`test_source_changed_on_disk_mid_run_is_not_saved`(開跑前與迴圈中途各改一次磁碟上的原始碼)、`test_save_failure_never_aborts_export`、`test_tmp_names_are_unique_per_save`;4 個對應突變全被抓。
 
 ## 4. 明確不做
 

@@ -167,7 +167,8 @@ class ExportMemoEndToEnd(unittest.TestCase):
 
     @staticmethod
     def _stats(line: str) -> dict:
-        return {k: int(v) for k, v in (kv.split("=") for kv in line.split(":", 1)[1].split())}
+        return {k: (int(v) if v.lstrip("-").isdigit() else v)
+                for k, v in (kv.split("=") for kv in line.split(":", 1)[1].split())}
 
     def _evening_phase_two(self):
         """第一段與第二段之間:今天的權證分點列(含一個新分點名)寫入、分點排行統計重算。"""
@@ -356,6 +357,97 @@ class ExportMemoEndToEnd(unittest.TestCase):
         full = self.case / "full"
         self._export(full, memo=False)
         compare_trees(self, live, full)
+
+    def test_source_changed_on_disk_mid_run_is_not_saved(self):
+        """verifier 2026-10-25:正式機 pipeline 是 bind mount,sync_code(git pull)可能在 export 跑到一半
+        換掉原始碼。程式雜湊是匯入時的快照;存檔前磁碟上的不同 → 不存,下一個行程(新雜湊)全算。"""
+        import shutil
+        from radar.export import json_export as je
+        tree = self.case / "radar_src"
+        shutil.copytree(Path(export_memo.__file__).resolve().parents[1], tree,
+                        ignore=shutil.ignore_patterns("__pycache__"))
+        live, full = self.case / "live", self.case / "full"
+        with mock.patch.object(export_memo, "_PKG_ROOT", tree):
+            with mock.patch.object(export_memo, "_SALT", export_memo.disk_salt()):   # 匯入時的快照
+                st = self._stats(self._export(live))
+                self.assertEqual(st["saved"], "saved")
+                # 匯入之後、export 開跑之前就 pull 了(verifier 的重現:雜湊若在建 ExportMemo 時才讀
+                # 磁碟,舊程式的輸出會被存在新程式的雜湊下)
+                f0 = tree / "compute" / "branch_interval_pnl.py"
+                f0.write_text(f0.read_text("utf-8").replace('"pnl-avgcost-v1"', '"pnl-avgcost-v2"'),
+                              encoding="utf-8")
+                st = self._stats(self._export(live))
+                self.assertEqual(st["saved"], "code_changed")
+                self.assertFalse(export_memo.memo_path(live).exists())
+                f0.write_text(f0.read_text("utf-8").replace('"pnl-avgcost-v2"', '"pnl-avgcost-v1"'),
+                              encoding="utf-8")
+                self.assertEqual(self._stats(self._export(live))["saved"], "saved")
+                real_levels = je.compute_price_levels
+                edited = []
+
+                def pull_mid_run(*a, **kw):
+                    if not edited:      # 迴圈第一檔時「git pull」:價格位置的版本號改了
+                        f = tree / "compute" / "price_levels.py"
+                        f.write_text(f.read_text("utf-8") + "\n# VERSION bumped by a pull\n", encoding="utf-8")
+                        edited.append(f)
+                    return real_levels(*a, **kw)
+
+                self._x("UPDATE daily_prices SET close = close * 1.01 WHERE date = ?", (self.d,))
+                with mock.patch.object(je, "compute_price_levels", pull_mid_run):
+                    st = self._stats(self._export(live))
+                self.assertTrue(edited)
+                self.assertEqual(st["saved"], "code_changed")
+                self.assertFalse(export_memo.memo_path(live).exists())
+            # 下一個行程:匯入時看到的是新程式
+            with mock.patch.object(export_memo, "_SALT", export_memo.disk_salt()):
+                st = self._stats(self._export(live))
+                self.assertEqual((st["loaded"], st["branch"], st["levels"]), (0, 0, 0))
+        self._export(full, memo=False)
+        compare_trees(self, live, full)
+
+    def test_save_failure_never_aborts_export(self):
+        live, full = self.case / "live", self.case / "full"
+        self._export(full, memo=False)
+        # ① 記憶檔的路徑被一個目錄佔住
+        export_memo.memo_path(live).mkdir(parents=True)
+        st = self._stats(self._export(live))
+        self.assertEqual(st["saved"], "error")
+        compare_trees(self, live, full)          # 後面的 groups/branches/rankings 照樣寫完
+        export_memo.memo_path(live).rmdir()
+        # ② export-memo 本身是一個檔案
+        memo_dir = export_memo.memo_path(live).parent
+        memo_dir.rmdir()
+        memo_dir.write_text("not a dir", encoding="utf-8")
+        st = self._stats(self._export(live))
+        self.assertEqual((st["saved"], st["loaded"]), ("error", 0))
+        compare_trees(self, live, full)
+        # ③ 寫入時出錯(磁碟滿):tmp 不留下,舊記憶檔刪掉
+        memo_dir.unlink()
+        self._export(live)
+        self.assertTrue(export_memo.memo_path(live).exists())
+        with mock.patch("pathlib.Path.write_text", side_effect=OSError(28, "No space left on device")):
+            from radar.export.export_memo import ExportMemo
+            m = ExportMemo(live, d=self.d, names={})
+            self.assertEqual(m.save(reloaded=False), "error")
+        self.assertFalse(export_memo.memo_path(live).exists())
+        self.assertEqual([p.name for p in memo_dir.iterdir() if ".tmp-" in p.name], [])
+
+    def test_tmp_names_are_unique_per_save(self):
+        """docker --init:每個容器的 PID 都一樣,tmp 名不可只靠 PID。"""
+        from radar.export.export_memo import ExportMemo
+        live = self.case / "live"
+        seen = []
+        real_replace = os.replace
+
+        def spy(src, dst):
+            seen.append(Path(src).name)
+            return real_replace(src, dst)
+
+        with mock.patch("os.replace", spy):
+            for _ in range(2):
+                ExportMemo(live, d=self.d, names={}).save(reloaded=False)
+        self.assertEqual(len(seen), 2)
+        self.assertNotEqual(seen[0], seen[1])
 
     def test_disabled_writes_nothing(self):
         live = self.case / "live"
