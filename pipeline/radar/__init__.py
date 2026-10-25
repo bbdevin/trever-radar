@@ -21,4 +21,10 @@ def source_hash(root: "_Path | None" = None) -> str:
     return h.hexdigest()
 
 
-SOURCE_HASH: str = source_hash()
+try:
+    SOURCE_HASH: str = source_hash()
+except OSError:
+    # git pull 正好刪／改名一個 .py(或檔案讀不到):不可讓所有 radar 指令在匯入時就掛掉。
+    # 給一個不會與任何磁碟雜湊相等的值 → 記憶一律不命中、存檔前複查也必不相符 → 不存。
+    import uuid as _uuid
+    SOURCE_HASH = "unhashable-" + _uuid.uuid4().hex
