@@ -359,6 +359,8 @@ home/stocks.json       {version:1, data_date, generated_at, stocks:[逐檔投影
 
 ### 3.7 export 記憶:第二段匯出沿用第一段的純計算(2026-10-25;程式在分支,未合 main;不動 crontab、不動 VPS 腳本)
 
+> **2026-10-25 驗證三輪後合併**:程式鹽改在 `radar/__init__.py` 套件第一次匯入時(任何子模組載入前)取 `SOURCE_HASH`,存檔前再比對磁碟;單次 git pull 落在任何時點都會 `saved=code_changed`。**已接受的殘餘**:同一次 export 期間原始碼 A→B→A(位元組完全還原)時,舊輸出可能被記成目前版本;精確解是改為雜湊實際載入的程式物件(import hook),未做。`import radar` 時若有 .py 剛好被刪,SOURCE_HASH 改用隨機值(一律不命中、不存),不會讓指令掛掉。
+
 **問題**:正式機 2026-10-21 第一段 export 728 s(19:16→19:28)、統計 240 s、權證寫入 5 s、第二段 export **720 s**(19:34→19:46)、19:48 上線。兩次 export 之間只變了今天的權證分點列(＋新分點名)、`branch_stock_stats`/`branch_rankings`/`tracked_branches`;現股分點列、日 K、`branch_stock_pctile_counts`(00:05 才換)都沒變,但個股迴圈裡最貴的純計算每次從頭算:`export timing:` 正式機 branch_history≈170–190、pnl≈93、pctile≈66–74、levels≈6、write≈50。
 
 **做法(輸入照讀,只省計算)**:`pipeline/radar/export/export_memo.py`。每一段的輸入**每次照舊從 DB 讀出來**,對讀到的值算摘要(blake2b-128 over `marshal` 版本 2:同值同型別 → 同位元組,int/float/str/None 分得開),與上一次 export 記下的相同就沿用上一次的輸出,不同就照算。所以不必猜「誰可能寫過」(rowid/筆數/MAX(date) 這類表層指紋抓不到 UPDATE、`adj_factor` 改寫、修復窗重寫)——讀到的列本身就是指紋。依賴清單(每段另加:整個 `radar/` 套件原始碼雜湊＋Python 版本,程式一改全部不命中):
