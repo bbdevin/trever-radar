@@ -59,6 +59,35 @@ def chips_file_name(sid: str) -> str:
     return f"chips/{sid}.json"
 
 
+class RawJSON(str):
+    """已經是 ``dumps_compact`` 輸出的 JSON 片段(export 記憶從上一次的 chips 檔切下來的,
+    docs/44 §3.7):``compose_chips`` 原樣放進去,不再解析、不再序列化。"""
+
+    __slots__ = ()
+
+
+def compose_chips(sid: str, chips: dict) -> tuple[str, dict[str, list[int]]]:
+    """chips 檔文字 + 每個鍵的值在文字裡的 [起, 迄)。
+
+    與 ``dumps_compact({"version": CHIPS_VERSION, "id": sid, **chips})`` 逐位元相同:緊湊模式的
+    物件就是 ``{`` + 逐項 ``鍵:值`` 以 ``,`` 相接 + ``}``,值的文字與它單獨序列化時相同
+    (``RawJSON`` 值本來就是那份文字)。test_export_memo 以隨機 payload 與真實匯出逐位元比對。
+    """
+    pieces = ['{"version":', dumps_compact(CHIPS_VERSION), ',"id":', dumps_compact(sid)]
+    pos = sum(len(p) for p in pieces)
+    offsets: dict[str, list[int]] = {}
+    for key, value in chips.items():
+        head = "," + dumps_compact(key) + ":"
+        body = value if type(value) is RawJSON else dumps_compact(value)
+        pos += len(head)
+        offsets[key] = [pos, pos + len(body)]
+        pos += len(body)
+        pieces.append(head)
+        pieces.append(body)
+    pieces.append("}")
+    return "".join(pieces), offsets
+
+
 def split_stock_payload(payload: dict, *, cut: str | None) -> dict:
     """把一檔的完整 payload 拆成 core / hist / chips。
 
@@ -189,7 +218,7 @@ class StockPartsWriter:
     檔會被重寫。
     """
 
-    def __init__(self, stock_dir: Path, *, now: float | None = None):
+    def __init__(self, stock_dir: Path, *, now: float | None = None, digest_chips: bool = False):
         self.stock_dir = stock_dir
         (stock_dir / "core").mkdir(exist_ok=True)
         (stock_dir / "chips").mkdir(exist_ok=True)
@@ -199,6 +228,11 @@ class StockPartsWriter:
         self.hist_reused = 0
         self.unchanged = 0      # core/chips 內容與磁碟相同、沒有重寫的檔數
         self._now = time.time() if now is None else now
+        # export 記憶(docs/44 §3.7)要知道上一次寫出的 chips 文字是哪一份:digest_chips 時記下摘要。
+        self._digest_chips = digest_chips
+        self.last_chips_digest: str | None = None
+        self.last_chips_offsets: dict[str, list[int]] = {}
+        self.last_chips_text: str | None = None
 
     def write(self, parts: dict) -> None:
         core = parts["core"]
@@ -227,8 +261,14 @@ class StockPartsWriter:
                 "file": name, "hash": target.name.split(".")[1], "bars": parts["hist"]["bars"],
                 "cut": parts["hist"]["cut"], "first": parts["hist"]["candles"][0]["t"],
             }
-        if not write_atomic_if_changed(self.stock_dir / "chips" / f"{sid}.json",
-                                       dumps_compact({"version": CHIPS_VERSION, "id": sid, **parts["chips"]})):
+        if self._digest_chips:
+            from .export_memo import text_digest
+            chips_text, self.last_chips_offsets = compose_chips(sid, parts["chips"])
+            self.last_chips_digest = text_digest(chips_text)
+            self.last_chips_text = chips_text
+        else:
+            chips_text = dumps_compact({"version": CHIPS_VERSION, "id": sid, **parts["chips"]})
+        if not write_atomic_if_changed(self.stock_dir / "chips" / f"{sid}.json", chips_text):
             self.unchanged += 1
         if not write_atomic_if_changed(self.stock_dir / "core" / f"{sid}.json", dumps_compact(core)):
             self.unchanged += 1

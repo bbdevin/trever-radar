@@ -153,7 +153,9 @@ class SplitFetchParityTests(_DbCase):
         cache_before_export = _tree(data_new)
         export_json(out_new)          # 預設 = fetch off(RADAR_EXPORT_FETCH 未設)
         self.assertEqual(self.fugle.calls, calls_new, "export 不發任何請求")
-        self.assertEqual(_tree(data_new), cache_before_export, "export 不寫快取")
+        # export 記憶(docs/44 §3.7,data/export-memo/)是 export 自己的記錄,不是分時/分K 快取。
+        after_export = {k: v for k, v in _tree(data_new).items() if not k.startswith("export-memo/")}
+        self.assertEqual(after_export, cache_before_export, "export 不寫快取")
 
         old, new = _tree(out_old), _tree(out_new)
         self.assertEqual(sorted(old), sorted(new))

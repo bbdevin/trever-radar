@@ -2,6 +2,14 @@
 
 > 單一進度真相。每完成一個里程碑就更新本檔。規格細節看各編號文件,別寫在這裡。
 
+## 2026-10-25 export 記憶:第二段匯出沿用第一段的純計算(`docs/44` §3.7、`docs/47` §8.10;分支,未合 main;不動 crontab、不動腳本)
+
+- **問題**:晚上分點輪第二段 export 720 s(10-21:19:34→19:46),但兩段之間現股分點列、日 K、分位表都沒變,branch_history/pnl/pctile/levels(正式 ~180+93+70+6 s)每次重算。
+- **做法**:`radar/export/export_memo.py`:各段輸入照讀,對讀到的值算摘要(含程式雜湊、資料日),與上一次相同就沿用上一次的輸出(chips 檔切文字,雜湊核對;price_levels 存記憶檔);分點名查表變了/中途重讀 → 分點段不沿用。記憶檔 `data/export-memo/*.json`(~3 MB,每次覆寫,7 天清)。`RADAR_EXPORT_MEMO=0` 關。
+- **驗證**:`test_export_memo.py` 12 項(晚上兩段情境＋9 種失效情境,每項與全量重算逐檔比:位元組或只差 `generated_at`、鍵序保留);7 個突變全被抓。合成大庫:第二段 112 → 77 s(−31%),3,423 檔 3,415 相同＋8 只差 generated_at,0 差異;記憶體 +~5 MiB。`test_intraday_prefetch`「export 不寫快取」排除 `export-memo/`;`test_export_speedups` 的 sqlite 連線改成明確關閉(原本靠 GC,排在新測試後面時 Windows 刪不掉庫檔)。pytest 全套見 commit。
+- **正式機預估**:第二段 export 720 → 約 500–540 s,第一段 +10–20 s;第二段上線 ~19:44–19:45(原 19:48)。剩下的是讀現股分點列本身;再省要「信任 DB 鎖不讀」或 DB 加變更計數(需人類決定)。
+- **待人類**:合 main、VPS `sync_code`;第一個分點輪 `grep -E 'export (timing|memo):' ~/radar-cron.log` 回填 `docs/44` §3.7。
+
 ## 2026-10-24 晚到的三大法人當晚上線(`docs/47` §8.10、`docs/08` §0.1;分支,未合 main;VPS `sync_code` 後生效,不動 crontab)
 
 - **缺口**(下方 2026-10-22 記下):分點輪只在開頭(~16:30)匯一次法人;17:10 仍缺時下一次是 22:30,而 22:30 兩段都完整就 `publish skipped` → 晚到的上市法人隔天才上網站。

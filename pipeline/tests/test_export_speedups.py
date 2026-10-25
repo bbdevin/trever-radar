@@ -16,6 +16,7 @@ import random
 import sqlite3
 import unittest
 from bisect import bisect_left
+from contextlib import closing
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -192,7 +193,9 @@ class _SyntheticDb(unittest.TestCase):
         cls._tmp = TemporaryDirectory()
         cls.db_path = Path(cls._tmp.name) / "s.db"
         build(cls.db_path, stocks=12, days=60, branches=24, warrants_per_stock=8, seed=7)
-        with sqlite3.connect(cls.db_path) as c:
+        # closing:sqlite3 的 with 只 commit 不關;沒關的連線要等 GC,Windows 上 tearDownClass 刪不掉庫檔
+        # (前面的測試配置記憶體的多寡會改變 GC 時機,2026-10-25 test_export_memo 排在前面時重現)。
+        with closing(sqlite3.connect(cls.db_path)) as c, c:
             # 一列 branch_dim 沒有的 branch_id:舊 JOIN 會丟掉它,新路徑也必須丟。
             c.execute("INSERT INTO branch_trades_raw (stock_id, date, branch_id, buy_lots, sell_lots, net_lots, pct, source) "
                       "SELECT '2330', MAX(date), 99999, 5, 0, 5, 0, 'x' FROM daily_prices")

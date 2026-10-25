@@ -27,11 +27,14 @@ from ..market_index import latest_indices, write_indices_hist
 from .insti_stocks import FILE_1D as INSTI_STOCKS_FILE_1D, write_insti_stocks
 from .spark_day import attach_spark_day
 from .branch_days import encode_branch_days
+from .export_memo import ExportMemo, digest as memo_digest, read_chips_text
 from .branch_watch import make_collector as make_watch_collector
 from .intraday_bars import export_intraday_safe
 from .indices_intraday import export_indices_intraday_safe, tx_month_from_db
 from .stock_parts import (
+    RawJSON,
     StockPartsWriter,
+    dumps_compact,
     hist_cut,
     merge_stock_parts,
     size_entry,
@@ -376,25 +379,40 @@ def _branch_pctile_payload(conn, sid: str, meta: dict | None, table_exists: bool
       * ``lookup``:其餘至少有一次已知分位 episode 的分點,精簡成陣列(欄位順序
         見 ``lookup_fields``),讓前端搜尋得到任何分點。
     """
-    rows: list[dict] = []
-    if table_exists:
-        columns = (
-            ("branch_name",)
-            + tuple(f"{field}{suffix}" for _c, suffix, _d in _BRANCH_PCTILE_CAMPS
-                    for field in _BRANCH_PCTILE_CAMP_FIELDS + _BRANCH_PCTILE_CAMP_STOCK_FIELDS)
-            + _BRANCH_PCTILE_DAYTRADE_COLUMNS + _BRANCH_PCTILE_STOCK_DAYTRADE_COLUMNS
-            + _BRANCH_PCTILE_WINDOW_COLUMNS
-        )
-        # DBAPI cursor + zip:與 .mappings() 的 dict 同鍵、同序、同值,少掉 SQLAlchemy 每列的開銷。
-        cur = conn.connection.cursor()
-        try:
-            cur.execute(f"""
-                SELECT {", ".join(columns)}
-                FROM branch_stock_pctile_counts WHERE stock_id = ?
-            """, (sid,))
-            rows = [dict(zip(columns, row)) for row in cur.fetchall()]
-        finally:
-            cur.close()
+    return _branch_pctile_payload_from_rows(_branch_pctile_rows(conn, sid, table_exists), meta)
+
+
+def _branch_pctile_columns() -> tuple[str, ...]:
+    return (
+        ("branch_name",)
+        + tuple(f"{field}{suffix}" for _c, suffix, _d in _BRANCH_PCTILE_CAMPS
+                for field in _BRANCH_PCTILE_CAMP_FIELDS + _BRANCH_PCTILE_CAMP_STOCK_FIELDS)
+        + _BRANCH_PCTILE_DAYTRADE_COLUMNS + _BRANCH_PCTILE_STOCK_DAYTRADE_COLUMNS
+        + _BRANCH_PCTILE_WINDOW_COLUMNS
+    )
+
+
+def _branch_pctile_rows(conn, sid: str, table_exists: bool) -> list[tuple]:
+    """該檔在 ``branch_stock_pctile_counts`` 的原始列(欄位順序 = ``_branch_pctile_columns()``;
+    export 記憶的摘要輸入)。表不存在 → []。"""
+    if not table_exists:
+        return []
+    # DBAPI cursor:少掉 SQLAlchemy 每列的開銷;下面 zip 成 dict 與 .mappings() 同鍵、同序、同值。
+    cur = conn.connection.cursor()
+    try:
+        cur.execute(f"""
+            SELECT {", ".join(_branch_pctile_columns())}
+            FROM branch_stock_pctile_counts WHERE stock_id = ?
+        """, (sid,))
+        return cur.fetchall()
+    finally:
+        cur.close()
+
+
+def _branch_pctile_payload_from_rows(raw_rows: list[tuple], meta: dict | None) -> dict:
+    """``_branch_pctile_payload`` 的計算部分(輸入 = ``_branch_pctile_rows`` + 快照中繼資料)。"""
+    columns = _branch_pctile_columns()
+    rows: list[dict] = [dict(zip(columns, row)) for row in raw_rows]
     window = dict(rows[0]) if rows else (dict(meta) if meta else {})
     stock_totals = rows[0] if rows else {}
     # 整份快照同一個版本:有列就看列,沒有列就看快照中繼資料。
@@ -1386,6 +1404,8 @@ class _BranchNames:
     def __init__(self, conn):
         self.by_id: dict[int, str] = {}
         self._missing: set = set()
+        # 開頭那次之後又重讀了幾次(export 記憶,docs/44 §3.7:重讀過 → 分點段不再沿用上一次)。
+        self.reloads = 0
         self._load(conn)
 
     def _load(self, conn) -> None:
@@ -1395,11 +1415,59 @@ class _BranchNames:
     def lookup_missing(self, conn, bid) -> str | None:
         if bid in self._missing:
             return None
+        self.reloads += 1
         self._load(conn)
         name = self.by_id.get(bid)
         if name is None:
             self._missing.add(bid)
         return name
+
+
+class _PrevChips:
+    """上一次 export 寫的 chips 檔(export 記憶,docs/44 §3.7):第一次要用時才讀,內容摘要與記憶檔
+    記的不同 → 讀不到(該檔的 chips 段全部照算)。沿用的段直接切文字,不解析。"""
+
+    __slots__ = ("_memo", "_stock_dir", "_sid", "_old", "_text", "_read")
+
+    def __init__(self, memo: ExportMemo, stock_dir: Path, sid: str, old: dict | None):
+        self._memo, self._stock_dir, self._sid, self._old = memo, stock_dir, sid, old
+        self._text = None
+        self._read = False
+
+    def ok(self) -> bool:
+        if not self._read:
+            self._read = True
+            expected = self._old.get("x") if self._old else None
+            self._text = read_chips_text(self._stock_dir, self._sid, expected)
+            if self._text is None and expected:
+                self._memo.stats["chips_bad"] += 1
+        return self._text is not None
+
+    def segment(self, key: str) -> RawJSON | None:
+        """上一次這個鍵的值的文字;上一次沒有這個鍵 → None。先 ``ok()``。"""
+        span = (self._old.get("o") or {}).get(key)
+        return None if span is None else RawJSON(self._text[span[0]:span[1]])
+
+    def branch_names(self) -> list[str] | None:
+        """上一次 branch_days 的 ``names``(只解析那一段);沒記位置 → None。"""
+        span, inner = (self._old.get("o") or {}).get("branch_days"), self._old.get("n")
+        if span is None or inner is None:
+            return None
+        return json.loads(self._text[span[0] + inner[0]:span[0] + inner[1]])
+
+
+def _branch_names_span(branch_days: dict, chips_text: str, bd_span: list[int] | None) -> list[int] | None:
+    """branch_days 文字裡 ``names`` 值的 [起, 迄)(相對 branch_days 段的開頭);寫出的文字對不上 → None。"""
+    if bd_span is None:
+        return None
+    names_text = dumps_compact(branch_days["names"])
+    start = chips_text.find('"names":', bd_span[0], bd_span[1])
+    if start < 0:
+        return None
+    start += len('"names":')
+    if not chips_text.startswith(names_text, start):
+        return None
+    return [start - bd_span[0], start - bd_span[0] + len(names_text)]
 
 
 _BRANCH_HISTORY_SQL = """
@@ -1416,12 +1484,30 @@ def _branch_history_rows(conn, sid: str, d: str, names: _BranchNames) -> list[tu
     與以前 ``branch_trades_raw JOIN branch_dim`` 的查詢逐列相同:同一個主鍵範圍、同一個 ORDER BY
     (主鍵倒走,不排序),名字改在 Python 查表;``branch_dim`` 沒有的 id 照 JOIN 的語意丟掉。
     """
+    return _name_branch_rows(conn, _branch_history_raw(conn, sid, d), names)
+
+
+def _branch_history_raw(conn, sid: str, d: str) -> list[tuple]:
+    """``_BRANCH_HISTORY_SQL`` 的原始列 (date, branch_id, buy, sell, net)(export 記憶的摘要輸入)。"""
     cur = conn.connection.cursor()
     try:
         cur.execute(_BRANCH_HISTORY_SQL, (sid, d))
-        rows = cur.fetchall()
+        return cur.fetchall()
     finally:
         cur.close()
+
+
+def _name_branch_rows(conn, rows: list[tuple], names: _BranchNames,
+                      window_from: str | None = None) -> list[tuple]:
+    """原始列 → (date, branch_name, buy, sell, net)。``window_from`` 給了就只做日期 ≥ 它的前綴
+    (列是日期遞減;自選特定分點只看近 60 交易日,docs/44 §3.7 記憶命中時不必整串查名)。"""
+    if window_from is not None:
+        n = 0
+        for r in rows:
+            if r[0] < window_from:
+                break
+            n += 1
+        rows = rows[:n]
     get = names.by_id.get
     out = []
     append = out.append
@@ -2724,14 +2810,23 @@ def export_json(
                                    "levels", "warrant_shards", "tracked", "write",
                                    "radar", "intraday", "side", "warrant_q", "margin",
                                    "holders", "payload", "loop_other", "branches", "total",
-                                   "watch")}
+                                   "watch", "memo")}
         timing["watch"] = t_watch
         timing["intraday"] = t_intraday
         timing["radar"] = t_radar_done - t_start - t_intraday
         t_loop = time.perf_counter()
         timing["side"] = t_loop - t_radar_done
         # 拆檔(docs/44 §3.2):聯集股的 K 線以 cut 切出 hist;其餘不切。
-        parts_writer = StockPartsWriter(stock_dir)
+        # export 記憶(docs/44 §3.7):各段輸入照讀,摘要與上一次相同就沿用上一次的輸出(chips 檔
+        # 裡的 branch_days／branch_pctile_counts／branch_pnl_est、記憶檔裡的 price_levels)。
+        # memo 鍵(排在 watch 之後)= 載入＋存檔;摘要本身算在各段裡。沿用的段以 RawJSON 文字放進
+        # payload,所以要拿完整 payload 物件的三個除錯選項(舊單一檔／拆檔驗證／大小報告)時關掉。
+        memo = ExportMemo(out, d=d, names=branch_names_by_id.by_id,
+                          enabled=False if (legacy_stocks or verify_split or size_report is not None)
+                          else None)
+        timing["memo"] = memo.stats["load_secs"]
+        pctile_meta_key = tuple(branch_pctile_meta.items()) if branch_pctile_meta else None
+        parts_writer = StockPartsWriter(stock_dir, digest_chips=memo.enabled)
         cut = hist_cut(d)
         size_entries: dict[str, dict[str, int]] = {}
         for sid in export_ids:
@@ -2760,6 +2855,9 @@ def export_json(
                     "SELECT p.date, p.open, p.high, p.low, p.close, p.volume, p.turnover, p.adj_factor "
                     "FROM daily_prices p WHERE p.stock_id = :s AND p.close IS NOT NULL "
                     "ORDER BY p.date DESC LIMIT 600"), {"s": sid}).fetchall()))
+            old_memo = memo.get(sid)
+            c_key = memo_digest(memo.salt, d, [tuple(c) for c in candles]) if memo.enabled else None
+            prev_chips = _PrevChips(memo, stock_dir, sid, old_memo)
             timing["candles"] += time.perf_counter() - t_sec
             t_sec = time.perf_counter()
             warrant_history = conn.execute(text("""
@@ -2787,7 +2885,21 @@ def export_json(
             # 只讀 raw 主鍵範圍、不 JOIN branch_dim,名字在 Python 查表(查不到 = JOIN 會丟掉的列,
             # 照丟);DBAPI cursor 直接拿 tuple。以前先問「這檔有沒有任何分點列」再查——沒有列時
             # 這條查詢本來就回空,所以那一問拿掉,結果相同。
-            branch_history_rows = _branch_history_rows(conn, sid, d, branch_names_by_id)
+            raw_history = _branch_history_raw(conn, sid, d)
+            b_key = memo_digest(memo.salt, d, raw_history) if memo.enabled else None
+            # 記憶命中(docs/44 §3.7):原始列與上一次相同、分點名查表沒變、這一輪沒重讀過查表。
+            branch_hit = (old_memo is not None and memo.names_ok
+                          and branch_names_by_id.reloads == 0 and old_memo.get("b") == b_key)
+            branch_days = branch_history_rows = branch_day_names = None
+            if branch_hit:
+                branch_day_names = prev_chips.branch_names() if prev_chips.ok() else None
+                if branch_day_names is not None:
+                    branch_days = prev_chips.segment("branch_days")
+                    memo.stats["branch"] += 1
+                else:
+                    branch_hit = False
+            if branch_days is None:
+                branch_history_rows = _name_branch_rows(conn, raw_history, branch_names_by_id)
             insti_history_rows = conn.execute(text("""
                 SELECT date, foreign_net, trust_net, dealer_net, total_net
                 FROM daily_institutional
@@ -2798,18 +2910,35 @@ def export_json(
             # 2 年深度、最多 480 個交易日;每一列都留(來源每日買超前 15 + 賣超前 15),
             # 以名字查表的緊湊格式輸出(branch_days v2;以前每天只留 |淨額| 前 12 列,
             # 一邊倒的日子另一側整個不見——2026-10-10 使用者決定全站改成「前 15 大」一致)。
-            branch_days = encode_branch_days(branch_history_rows)
+            if branch_days is None:
+                branch_days = encode_branch_days(branch_history_rows)
+                branch_day_names = branch_days["names"]
             timing["branch_history"] += time.perf_counter() - t_sec
             t_sec = time.perf_counter()
-            watch.add_stock(sid, s["name"], branch_history_rows, candles)
+            if branch_history_rows is not None:
+                watch_rows = branch_history_rows
+            elif watch.window_from is None:
+                watch_rows = []          # as_of 為 None:add_stock 一列都不看
+            else:
+                # 命中時只查近 60 交易日的名字:add_stock 只讀日期 ≥ window_from 的前綴(列是日期遞減)。
+                watch_rows = _name_branch_rows(conn, raw_history, branch_names_by_id,
+                                               window_from=watch.window_from)
+            watch.add_stock(sid, s["name"], watch_rows, candles)
             timing["watch"] += time.perf_counter() - t_sec
             t_sec = time.perf_counter()
             margin_hist, margin_meta = _margin_history_payload(conn, sid, d)
             timing["margin"] += time.perf_counter() - t_sec
             t_sec = time.perf_counter()
-            branch_pctile_counts = _branch_pctile_payload(
-                conn, sid, branch_pctile_meta, branch_pctile_exists,
-            )
+            pctile_raw = _branch_pctile_rows(conn, sid, branch_pctile_exists)
+            p_key = (memo_digest(memo.salt, pctile_raw, pctile_meta_key, branch_pctile_exists)
+                     if memo.enabled else None)
+            branch_pctile_counts = None
+            if old_memo is not None and old_memo.get("p") == p_key and prev_chips.ok():
+                branch_pctile_counts = prev_chips.segment("branch_pctile_counts")
+                if branch_pctile_counts is not None:
+                    memo.stats["pctile"] += 1
+            if branch_pctile_counts is None:
+                branch_pctile_counts = _branch_pctile_payload_from_rows(pctile_raw, branch_pctile_meta)
             timing["pctile"] += time.perf_counter() - t_sec
             t_sec = time.perf_counter()
             holders_hist, holders_meta = _holders_history_payload(conn, sid, d)
@@ -2817,10 +2946,14 @@ def export_json(
             timing["holders"] += time.perf_counter() - t_sec
             # 價格位置(docs/45):只給顯示用事實,刻意不進 technical(Armed 判定讀 technical.risks)。
             t_sec = time.perf_counter()
-            price_levels = compute_price_levels(
-                ((c[0], c[1], c[2], c[3], c[4], c[5], c[7]) for c in candles),
-                as_of_limit=d,
-            )
+            if old_memo is not None and old_memo.get("c") == c_key and "l" in old_memo:
+                price_levels = old_memo["l"]
+                memo.stats["levels"] += 1
+            else:
+                price_levels = compute_price_levels(
+                    ((c[0], c[1], c[2], c[3], c[4], c[5], c[7]) for c in candles),
+                    as_of_limit=d,
+                )
             timing["levels"] += time.perf_counter() - t_sec
             t_sec = time.perf_counter()
             payload = {
@@ -2857,7 +2990,7 @@ def export_json(
                 "branch_pctile_counts": branch_pctile_counts,
                 "branch_tags": _branch_tags_payload(
                     as_of=d,
-                    names=set(branch_days["names"]) | {r[0] for r in stock_branches},
+                    names=set(branch_day_names) | {r[0] for r in stock_branches},
                     profile=company_profiles.get(sid),
                     geo_by_key=branch_geo,
                     tracked_keys=tracked_keys,
@@ -2894,11 +3027,18 @@ def export_json(
             timing["payload"] += time.perf_counter() - t_sec
             # 區間損益(估算,docs/42):用全部分點列(與 branch_days 同一批,730 日不限 480 天);沒有分點列 → 鍵不輸出。
             t_sec = time.perf_counter()
-            branch_pnl = branch_pnl_payload(
-                ((r[0], r[1], r[4]) for r in branch_history_rows),
-                ((c[0], c[4], c[7]) for c in candles),
-                as_of_limit=d,
-            )
+            if branch_hit and old_memo.get("c") == c_key:
+                # branch_hit 時 chips 已讀過、雜湊對得上;上一次沒有這個鍵 = 上一次就是 None。
+                branch_pnl = prev_chips.segment("branch_pnl_est")
+                memo.stats["pnl"] += 1
+            else:
+                if branch_history_rows is None:
+                    branch_history_rows = _name_branch_rows(conn, raw_history, branch_names_by_id)
+                branch_pnl = branch_pnl_payload(
+                    ((r[0], r[1], r[4]) for r in branch_history_rows),
+                    ((c[0], c[4], c[7]) for c in candles),
+                    as_of_limit=d,
+                )
             timing["pnl"] += time.perf_counter() - t_sec
             if branch_pnl is not None:
                 payload["branch_pnl_est"] = branch_pnl
@@ -2927,13 +3067,27 @@ def export_json(
                 if merged != payload:
                     raise RuntimeError(f"split/merge mismatch for {sid}")
             parts_writer.write(parts)
+            if memo.enabled:
+                offsets = parts_writer.last_chips_offsets
+                if type(branch_days) is RawJSON:
+                    names_span = old_memo.get("n")      # 同一段文字 → 段內位置不變
+                else:
+                    names_span = _branch_names_span(branch_days, parts_writer.last_chips_text,
+                                                    offsets.get("branch_days"))
+                memo.record(sid, {"b": b_key, "c": c_key, "p": p_key,
+                                  "x": parts_writer.last_chips_digest, "o": offsets,
+                                  "n": names_span, "l": price_levels})
             if size_report is not None:
                 size_entries[sid] = size_entry(payload)
             timing["write"] += time.perf_counter() - t_sec
         parts_writer.finish()
+        t_sec = time.perf_counter()
+        memo.save(reloaded=branch_names_by_id.reloads > 0)
+        timing["memo"] += time.perf_counter() - t_sec
         timing["loop_other"] = (time.perf_counter() - t_loop) - sum(
             timing[k] for k in ("branch_history", "candles", "pctile", "pnl", "levels", "write",
-                                "warrant_q", "margin", "holders", "payload", "watch")) + t_watch
+                                "warrant_q", "margin", "holders", "payload", "watch",
+                                "memo")) + t_watch
         if size_report is not None:
             Path(size_report).write_text(json.dumps({
                 "data_date": d, "generated_at": now, "cut": cut,
@@ -2967,6 +3121,11 @@ def export_json(
           f"rows={watch_info['rows']} shard_bytes={watch_info['shard_bytes']} "
           f"index_bytes={watch_info['index_bytes']} warrant_rows={watch_info['warrant_rows']} "
           f"warrant_day={(watch.warrant or {}).get('day')}", flush=True)
+    ms = memo.stats
+    print(f"export memo: enabled={int(memo.enabled)} loaded={ms['loaded']} "
+          f"names_ok={int(memo.names_ok)} stocks={len(memo.new)} branch={ms['branch']} "
+          f"pnl={ms['pnl']} pctile={ms['pctile']} levels={ms['levels']} "
+          f"chips_bad={ms['chips_bad']} reloads={branch_names_by_id.reloads}", flush=True)
     print(f"export parts: hist_written={parts_writer.hist_written} "
           f"hist_reused={parts_writer.hist_reused} hist_total={len(parts_writer.index)} "
           f"legacy={'on' if legacy_stocks else 'off'} unchanged={parts_writer.unchanged}", flush=True)
