@@ -6,7 +6,7 @@
 
 - **根因**:正式資料有(10-22:1d 41 列、2d 80 列)。分點頁一進站就抓 21.6 MB 的 `warrant_branches.json`(gzip 2.57 MB,九成是逐檔 breakdown;`no-store` 每次重抓),抓完前與抓失敗時都顯示「此區間內無淨買賣超 500 萬以上之權證大戶」。Playwright 正式真檔 390px Fast 3G:修正前 7.3→24.4 s 之間 1d/2d 都顯示「無資料」;500 時永遠「無資料」。
 - **修正**:export 另寫 `branches/warrant_branches_{1d,2d,5d,30d,120d}.json`(列去掉 breakdown,其餘逐字相同;1d 6.4 KB、120d 244 KB);頁面只在權證分頁抓目前區間,展開列才抓該股既有的 `warrant-stock-details/{id}.breakdown.json`;每區間 loading(骨架)/error(錯誤＋重試)/ready 分開,只有真的空陣列才顯示空文案。新檔 404 才退回舊檔。舊全市場檔保留一個版本,下一輪另案移除(Workers 單檔 25 MiB 上限已近)。
-- **驗證**:pytest 全套 1974 passed(新 `test_per_timeframe_files_match_the_legacy_market_payload`);web node 全套 472 passed(新 `warrantMarket.test.ts` 10 項);`tsc`、`next build`;`web/scripts/verify-branch-warrant-load.mjs` 25/25;截圖 `docs/evidence/51_warrant_positions/branch-390-{dark,light}-warrant-*.png`。
+- **驗證**:pytest 全套 1974 passed(新 `test_per_timeframe_files_match_the_legacy_market_payload`);web node 全套 473 passed(新 `warrantMarket.test.ts` 11 項);`tsc`、`next build`;`web/scripts/verify-branch-warrant-load.mjs` 31/31(含 verifier 指出的「畫面開著時又部署」兩情境:明細較新 → 重抓區間檔收斂;展開中切區間 → 自動補抓不留骨架);截圖 `docs/evidence/51_warrant_positions/branch-390-{dark,light}-warrant-*.png`。
 - **待人類**:合 main(前端走 Pages)＋VPS 下一輪 export 後,確認正式機有 `branches/warrant_branches_1d.json`;手機開 `/branch?tab=warrant` 看 1d/2d 立即出卡。
 
 ## 2026-10-25 週備份上傳失敗會等候重試,且上傳期間不握 DB 鎖(`docs/31` §4;分支,未合 main;VPS `sync_code` 後生效,不動 crontab)

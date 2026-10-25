@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
@@ -67,14 +67,22 @@ export default function WarrantSplitCard({
   const buyTotal = buys.reduce((s, i) => s + i.amount, 0);
   const sellTotal = sells.reduce((s, i) => s + i.amount, 0);
   const open = items.find((i) => i.key === expanded && (i.onExpand || (i.breakdown && i.breakdown.length > 0))) ?? null;
+  // 展開中的列還沒抓明細(例:切區間後同一張卡留著展開,新區間的資料日不同、快取沒有)→ 自己補抓,
+  // 不讓骨架永遠轉。onExpand 是冪等的(載入中不重抓),每次 render 都是新函式,所以不放進 deps。
+  const needFetch = !!open && !open.breakdown && !!open.onExpand && open.breakdownState === undefined;
+  useEffect(() => {
+    if (needFetch) open?.onExpand?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [needFetch, open?.key]);
   const toggle = (key: string | null) => {
     setExpanded(key);
     const item = key ? items.find((i) => i.key === key) : undefined;
-    if (item?.onExpand && !item.breakdown) item.onExpand();
+    // 失敗後再點一次列也算重試;未抓的列交給上面的 effect。
+    if (item?.onExpand && !item.breakdown && item.breakdownState === "error") item.onExpand();
   };
 
   return (
-    <div className="flex min-w-0 flex-col overflow-hidden rounded-[var(--r-lg)] border border-border bg-card shadow-sm transition-colors duration-300 hover:border-border-strong">
+    <div data-testid="warrant-split-card" className="flex min-w-0 flex-col overflow-hidden rounded-[var(--r-lg)] border border-border bg-card shadow-sm transition-colors duration-300 hover:border-border-strong">
       <div className="flex items-center justify-between gap-2 border-b border-border bg-card px-3.5 py-3">
         <div className="min-w-0">
           {title}
@@ -120,7 +128,7 @@ export default function WarrantSplitCard({
         </p>
       )}
       {open && open.breakdown && open.breakdown.length > 0 && (
-        <div className="border-t border-border/60 bg-secondary/20 px-2.5 py-2">
+        <div className="border-t border-border/60 bg-secondary/20 px-2.5 py-2" data-testid="warrant-breakdown-list">
           <p className="mb-1 px-1 text-[11px] font-semibold text-foreground">{open.text} 的權證明細</p>
           <div className="mb-1 grid grid-cols-[1.5fr_1fr_0.7fr] px-1 text-[10px] font-semibold text-muted-foreground">
             <span>權證</span>

@@ -11,7 +11,8 @@ import {
   marketTfPath,
   parseLegacyMarket,
   parseMarketTimeframe,
-  parseStockBreakdowns,
+  breakdownKey,
+  classifyStockBreakdowns,
   rowBreakdown,
   type FetchLike,
   type MarketRow,
@@ -111,13 +112,22 @@ test("狀態合併:區間檔只填自己;舊檔填滿五個區間但不蓋掉已
   assert.equal(s["120d"]?.status, "ready");
 });
 
-test("明細檔:版本、股號、資料日都要對上畫面上的區間檔", () => {
+test("明細檔:同一天 ok;畫面載入後又部署(資料日不同)是 stale 並帶回它自己的資料日;格式錯 bad", () => {
   const file = { version: 1, data_date: "2026-10-22", stock_id: "2330", timeframes: { "1d": { "凱基-台北": BRK } } };
-  assert.deepEqual(parseStockBreakdowns(file, "2330", "2026-10-22"), file.timeframes);
-  assert.equal(parseStockBreakdowns(file, "2330", "2026-10-23"), null);
-  assert.equal(parseStockBreakdowns(file, "2317", "2026-10-22"), null);
-  assert.equal(parseStockBreakdowns({ ...file, version: 2 }, "2330", "2026-10-22"), null);
-  assert.equal(parseStockBreakdowns({ ...file, data_date: null }, "2330", null)?.["1d"]?.["凱基-台北"], BRK);
+  assert.deepEqual(classifyStockBreakdowns(file, "2330", "2026-10-22"), { kind: "ok", timeframes: file.timeframes });
+  // 區間檔還是 10-21、明細已是 10-22:頁面要重抓區間檔,明細存在 10-22 鍵底下。
+  assert.deepEqual(classifyStockBreakdowns(file, "2330", "2026-10-21"), { kind: "stale", data_date: "2026-10-22", timeframes: file.timeframes });
+  assert.deepEqual(classifyStockBreakdowns(file, "2317", "2026-10-22"), { kind: "bad" });
+  assert.deepEqual(classifyStockBreakdowns({ ...file, version: 2 }, "2330", "2026-10-22"), { kind: "bad" });
+  assert.deepEqual(classifyStockBreakdowns({ ...file, data_date: 5 }, "2330", "2026-10-22"), { kind: "bad" });
+  assert.deepEqual(classifyStockBreakdowns({ ...file, timeframes: [] }, "2330", "2026-10-22"), { kind: "bad" });
+  assert.equal(classifyStockBreakdowns({ ...file, data_date: null }, "2330", null).kind, "ok");
+});
+
+test("明細快取鍵含資料日:不同資料日的明細不互用(不拼兩個日子)", () => {
+  assert.equal(breakdownKey("2026-10-22", "2330"), "2026-10-22|2330");
+  assert.notEqual(breakdownKey("2026-10-22", "2330"), breakdownKey("2026-10-23", "2330"));
+  assert.equal(breakdownKey(null, "2330"), "null|2330");
 });
 
 test("列的明細:內嵌優先;否則依該股快取 → 未抓/載入中/失敗/找到/找不到([])", () => {

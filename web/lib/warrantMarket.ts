@@ -121,14 +121,28 @@ export function applyMarketResult(
 export type StockBreakdowns = Record<string, Record<string, MarketBreakdown[]>>;
 
 /**
- * 驗證 {id}.breakdown.json:版本、股號,且資料日必須與畫面上的區間檔相同
- * (兩次匯出之間點開會對不上,寧可顯示失敗也不要拼出不同日子的明細)。
+ * 抓回來的明細檔怎麼處理:
+ *   ok    = 資料日與畫面上的區間檔相同,直接用;
+ *   stale = 檔本身沒問題,但資料日不同(畫面載入後 VPS 又部署了一次)——頁面要重抓區間檔,
+ *           並把這份明細存在**它自己的**資料日底下,區間檔換成同一天後就直接命中;
+ *   bad   = 格式錯。
+ * 不論哪種,畫面都不會把兩個資料日的列與明細拼在一起(快取鍵含資料日)。
  */
-export function parseStockBreakdowns(payload: unknown, stockId: string, dataDate: string | null): StockBreakdowns | null {
-  if (!isObj(payload) || payload.version !== 1 || payload.stock_id !== stockId) return null;
-  if ((payload.data_date ?? null) !== dataDate || !isObj(payload.timeframes)) return null;
-  return payload.timeframes as StockBreakdowns;
+export type BreakdownFetchResult =
+  | { kind: "ok"; timeframes: StockBreakdowns }
+  | { kind: "stale"; data_date: string | null; timeframes: StockBreakdowns }
+  | { kind: "bad" };
+
+export function classifyStockBreakdowns(payload: unknown, stockId: string, dataDate: string | null): BreakdownFetchResult {
+  if (!isObj(payload) || payload.version !== 1 || payload.stock_id !== stockId || !isObj(payload.timeframes)) return { kind: "bad" };
+  const fileDate = (payload.data_date ?? null) as unknown;
+  if (fileDate !== null && typeof fileDate !== "string") return { kind: "bad" };
+  const timeframes = payload.timeframes as StockBreakdowns;
+  return fileDate === dataDate ? { kind: "ok", timeframes } : { kind: "stale", data_date: fileDate, timeframes };
 }
+
+/** 明細快取鍵:資料日 + 股號(不同資料日的明細絕不互用)。 */
+export const breakdownKey = (dataDate: string | null, stockId: string) => `${dataDate}|${stockId}`;
 
 export type BreakdownEntry = "loading" | "error" | StockBreakdowns;
 

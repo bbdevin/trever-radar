@@ -9,9 +9,10 @@ import { SCREEN_PARAM_KEYS } from "@/lib/warrantPositions";
 import WarrantSplitCard, { type SplitItem } from "@/components/WarrantSplitCard";
 import {
   applyMarketResult,
+  breakdownKey,
   breakdownPath,
+  classifyStockBreakdowns,
   createMarketLoader,
-  parseStockBreakdowns,
   rowBreakdown,
   type BreakdownEntry,
   type MarketRow,
@@ -533,19 +534,36 @@ export default function BranchPage() {
     if (warrantActive && !warrantStates[warrantTimeframe]) requestWarrantTf(warrantTimeframe);
   }, [warrantActive, warrantTimeframe, warrantStates, requestWarrantTf]);
 
-  const loadBreakdown = (stockId: string, dataDate: string | null) => {
-    const key = `${dataDate}|${stockId}`;
+  const loadBreakdown = (stockId: string, dataDate: string | null, tf: MarketTimeframe) => {
+    const key = breakdownKey(dataDate, stockId);
     const cur = breakdowns[key];
     if (cur !== undefined && cur !== "error") return;
     setBreakdowns((b) => ({ ...b, [key]: "loading" }));
     dataFetch(breakdownPath(stockId))
       .then(async (r) => {
         if (!r.ok) throw r.status;
-        const parsed = parseStockBreakdowns(await r.json(), stockId, dataDate);
-        if (!parsed) throw new Error("權證分點明細格式錯誤");
-        setBreakdowns((b) => ({ ...b, [key]: parsed }));
+        const result = classifyStockBreakdowns(await r.json(), stockId, dataDate);
+        if (result.kind === "bad") throw new Error("權證分點明細格式錯誤");
+        if (result.kind === "ok") {
+          setBreakdowns((b) => ({ ...b, [key]: result.timeframes }));
+          return;
+        }
+        // 畫面載入後 VPS 又部署了一次:明細存到它自己的資料日底下,舊鍵維持載入中,背景重抓目前區間。
+        // 新區間檔到了就與這份明細同一天、展開中的列直接命中;其間舊列照舊顯示、明細是骨架,不拼兩個日子。
+        setBreakdowns((b) => ({ ...b, [breakdownKey(result.data_date, stockId)]: result.timeframes }));
+        refreshForNewerData(tf, dataDate, key);
       })
       .catch(() => setBreakdowns((b) => ({ ...b, [key]: "error" })));
+  };
+  /** 明細比區間檔新:其他區間丟掉(下次點到再抓),目前區間背景重抓;重抓後仍是舊資料日 → 舊鍵標失敗(可重試)。 */
+  const refreshForNewerData = (tf: MarketTimeframe, oldDate: string | null, oldKey: string) => {
+    setWarrantStates((s) => (s[tf] ? { [tf]: s[tf] } : {}));
+    loadMarket(tf)
+      .then((result) => {
+        setWarrantStates((s) => applyMarketResult(result.kind === "tf" ? s : {}, result));
+        if (result.data_date === oldDate) setBreakdowns((b) => ({ ...b, [oldKey]: "error" }));
+      })
+      .catch(() => setBreakdowns((b) => ({ ...b, [oldKey]: "error" })));
   };
 
   if (error) {
@@ -881,9 +899,10 @@ export default function BranchPage() {
         const dataDate = ready?.data_date ?? null;
         const detail: RowDetail = (row) => {
           if (row.breakdown) return { breakdown: row.breakdown };   // 舊全市場檔(fallback)內嵌
-          const b = rowBreakdown(row, warrantTimeframe, breakdowns[`${dataDate}|${row.underlying_id}`]);
-          const onExpand = () => loadBreakdown(row.underlying_id, dataDate);
-          return Array.isArray(b) ? { breakdown: b, onExpand } : { onExpand, breakdownState: b ?? "loading" };
+          const b = rowBreakdown(row, warrantTimeframe, breakdowns[breakdownKey(dataDate, row.underlying_id)]);
+          const onExpand = () => loadBreakdown(row.underlying_id, dataDate, warrantTimeframe);
+          // b === undefined = 還沒抓:卡片看到展開中的列處於這個狀態就會自己呼叫 onExpand。
+          return Array.isArray(b) ? { breakdown: b, onExpand } : { onExpand, breakdownState: b };
         };
 
         let content;

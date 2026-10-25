@@ -30,6 +30,8 @@ const args = Object.fromEntries(
 );
 const OUT_DIR = path.resolve(args.out ?? "out");
 const DATA_DIR = path.resolve(args.data ?? "data");
+/** 可選:模擬「畫面載入後 VPS 又部署一次」——同一批檔,資料日較新(G/H 情境)。 */
+const DEPLOY_DIR = args["deploy-data"] ? path.resolve(args["deploy-data"]) : null;
 const SHOTS_DIR = args.shots ? path.resolve(args.shots) : null;
 const PREFIX = args.prefix ?? "branch-390";
 const EXPECT_FIX = (args["expect-fix"] ?? "1") !== "0";
@@ -56,7 +58,7 @@ const FIXTURES = {
 // ---------- 伺服器 ----------
 const TYPES = { ".html": "text/html; charset=utf-8", ".js": "application/javascript", ".css": "text/css", ".json": "application/json", ".txt": "text/plain; charset=utf-8", ".svg": "image/svg+xml", ".png": "image/png", ".woff2": "font/woff2", ".webmanifest": "application/manifest+json" };
 /** 測試情境改這裡:fail = 這些 /data 路徑回 500;override = 路徑 → 改回的 body。 */
-const ctl = { fail: null, notFound: null, override: new Map(), hits: [] };
+const ctl = { fail: null, notFound: null, override: new Map(), hits: [], dataDir: DATA_DIR };
 const gzCache = new Map();
 function resolveFile(root, urlPath) {
   const p = decodeURIComponent(urlPath.split("?")[0]);
@@ -96,7 +98,7 @@ const server = http.createServer((req, res) => {
     }
     if (ctl.override.has(p)) return sendJson(req, res, Buffer.from(JSON.stringify(ctl.override.get(p))));
     if (FIXTURES[p]) return sendJson(req, res, Buffer.from(JSON.stringify(FIXTURES[p])));
-    const f = resolveFile(DATA_DIR, p.slice("/data".length));
+    const f = resolveFile(ctl.dataDir, p.slice("/data".length));
     if (!f) {
       res.writeHead(404, { "content-type": "text/plain" });
       res.end("not found");
@@ -184,7 +186,24 @@ async function shot(page, name) {
   fs.mkdirSync(SHOTS_DIR, { recursive: true });
   await page.screenshot({ path: path.join(SHOTS_DIR, `${PREFIX}-${name}.png`), fullPage: false });
 }
-const noHorizontalOverflow = (page) => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1);
+/** 卡片內明細清單真的有列(不是載入中／失敗面板)的列數;等不到回 0。 */
+async function breakdownRows(card, timeout = 15_000) {
+  const items = card.locator('[data-testid="warrant-breakdown-list"] li');
+  await items.first().waitFor({ state: "visible", timeout }).catch(() => {});
+  return items.count();
+}
+const dataDateLine = (page) => page.evaluate(() => (document.body.innerText.match(/分點資料日 (\d{4}-\d{2}-\d{2})/) ?? [])[1] ?? null);
+/** 某檔股票的卡片(依標的檢視:標題連結 = 個股權證分頁)。 */
+const stockCard = (page, sid) =>
+  page.locator('[data-testid="warrant-split-card"]', { has: page.locator(`a[href="/stock?id=${sid}&tab=warrant"]`) });
+/** 1d 與 2d 都有、且金額同向(同一欄)的 (股號, 券商):切區間時同一張卡、同一列仍在。 */
+function sharedRow() {
+  const read = (tf) => JSON.parse(fs.readFileSync(path.join(DATA_DIR, "branches", `warrant_branches_${tf}.json`), "utf8")).rows;
+  const one = new Map(read("1d").map((r) => [`${r.underlying_id}|${r.branch_name}`, r.net_amount]));
+  const hit = read("2d").find((r) => Math.sign(one.get(`${r.underlying_id}|${r.branch_name}`) ?? 0) === Math.sign(r.net_amount) && r.net_amount !== 0);
+  return hit ? { sid: hit.underlying_id, branch: hit.branch_name } : null;
+}
+const noHorizontalOverflow =(page) => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1);
 const tfButton = (page, label) => page.getByRole("button", { name: label, exact: true });
 
 /** 這一輪 /data/branches 下載的權證分點檔 → 解壓後位元組(看真正下了哪些檔)。 */
@@ -229,9 +248,8 @@ try {
       // E. 點買超第一列 → 逐檔權證明細
       const firstRow = page.locator('[data-testid="warrant-split-columns"]').first().locator("li button").first();
       await firstRow.click();
-      const detail = page.locator("text=的權證明細").first();
-      await detail.waitFor({ state: "visible", timeout: 30_000 }).catch(() => {});
-      check("E: expanding a row shows its per-warrant breakdown", await detail.isVisible(), warrantFilesHit());
+      const populated = await breakdownRows(page.locator('[data-testid="warrant-split-card"]').first());
+      check("E: expanding a row shows a populated per-warrant breakdown", populated > 0, { populated, files: warrantFilesHit() });
       await page.waitForTimeout(200);
       await shot(page, `${theme}-warrant-1d-expanded`);
       // 切 近 2 日
@@ -320,11 +338,62 @@ try {
     const s5 = await screenState(page);
     check("F: legacy fills every timeframe (no second legacy download)", s5.cards > 0 && ctl.hits.filter((p) => p === "/data/branches/warrant_branches.json").length === 1, { s5, hits: warrantFilesHit() });
     await page.locator('[data-testid="warrant-split-columns"]').first().locator("li button").first().click();
-    const detail = page.locator("text=的權證明細").first();
-    await detail.waitFor({ state: "visible", timeout: 10_000 }).catch(() => {});
-    check("F: inline breakdown expands without fetching a breakdown file", await detail.isVisible() && !ctl.hits.some((p) => p.includes(".breakdown.json")), warrantFilesHit());
+    const n = await breakdownRows(page.locator('[data-testid="warrant-split-card"]').first(), 10_000);
+    check("F: inline breakdown expands without fetching a breakdown file", n > 0 && !ctl.hits.some((p) => p.includes(".breakdown.json")), { n, files: warrantFilesHit() });
     ctl.notFound = null;
     await context.close();
+  }
+
+  // ---------- G. 畫面載入後 VPS 又部署(明細檔資料日較新)→ 展開列會收斂到新資料,不永久失敗 ----------
+  if (EXPECT_FIX && DEPLOY_DIR) {
+    const context = await newContext(browser, { theme: "dark" });
+    const page = await context.newPage();
+    ctl.dataDir = DATA_DIR;
+    await page.goto(URL_WARRANT, { waitUntil: "load" });
+    await cards(page).first().waitFor({ state: "visible", timeout: 60_000 });
+    const before = await dataDateLine(page);
+    ctl.dataDir = DEPLOY_DIR;   // 部署
+    ctl.hits = [];
+    const card = page.locator('[data-testid="warrant-split-card"]').first();
+    await card.locator("li button").first().click();
+    const n = await breakdownRows(card);
+    const after = await dataDateLine(page);
+    const s = await screenState(page);
+    check("G: newer breakdown after a deploy → row converges to populated detail (no reload)", n > 0, { n, files: warrantFilesHit() });
+    check("G: timeframe file refetched; date line moved to the deployed date", before !== after && after !== null && warrantFilesHit().includes("/data/branches/warrant_branches_1d.json"), { before, after });
+    check("G: no error panel left behind", !s.error && (await page.locator('[data-testid="warrant-breakdown-pending"]').count()) === 0, s);
+    await shot(page, "dark-warrant-after-deploy-expanded");
+    ctl.dataDir = DATA_DIR;
+    await context.close();
+  }
+
+  // ---------- H. 同一張卡展開中切區間,而兩個區間的資料日不同 → 不會永遠骨架 ----------
+  if (EXPECT_FIX && DEPLOY_DIR) {
+    const shared = sharedRow();
+    if (!shared) {
+      check("H: found a (stock, branch) present in both 1d and 2d", false, null);
+    } else {
+      const context = await newContext(browser, { theme: "dark" });
+      const page = await context.newPage();
+      ctl.dataDir = DATA_DIR;
+      await page.goto(URL_WARRANT, { waitUntil: "load" });
+      await cards(page).first().waitFor({ state: "visible", timeout: 60_000 });   // 1d @ 舊資料日
+      ctl.dataDir = DEPLOY_DIR;                                                     // 部署
+      await tfButton(page, "近 2 日").click();                                       // 2d @ 新資料日
+      await cards(page).first().waitFor({ state: "visible", timeout: 60_000 });
+      const card2 = stockCard(page, shared.sid);
+      await card2.getByRole("button", { name: `${shared.branch} 權證明細`, exact: true }).click();
+      const n2 = await breakdownRows(card2);
+      check("H: 2d (new date) row expands populated", n2 > 0, { shared, n2 });
+      await tfButton(page, "近 1 日").click();                                       // 1d 快取仍是舊資料日,卡片仍展開
+      const n1 = await breakdownRows(stockCard(page, shared.sid));
+      const pending = await page.locator('[data-testid="warrant-breakdown-pending"]').count();
+      const date1 = await dataDateLine(page);
+      check("H: switching back to 1d never leaves an infinite skeleton", n1 > 0 && pending === 0, { n1, pending, date1 });
+      check("H: 1d converged to the deployed date (no mixed dates)", date1 === "2026-10-23", { date1 });
+      ctl.dataDir = DATA_DIR;
+      await context.close();
+    }
   }
 
   // ---------- D. 真的沒有資料 ----------
