@@ -23,6 +23,8 @@ REMOTE="gdrive:trever-radar-backup"
 # 上傳需要的額外餘裕:Drive 的 free 是估計值,貼著邊界上傳會在最後一段失敗。
 MARGIN_BYTES=$((200 * 1024 * 1024))
 UPLOAD_ATTEMPTS="${BACKUP_UPLOAD_ATTEMPTS:-3}"
+# 非數字(.env 打錯)會讓 `[ -ge ]` 永遠為假、重試迴圈停不下來並一直握著備份鎖:退回 3。
+case "$UPLOAD_ATTEMPTS" in ''|*[!0-9]*) UPLOAD_ATTEMPTS=3 ;; esac
 UPLOAD_RETRY_SLEEPS="${BACKUP_UPLOAD_RETRY_SLEEPS:-300 600}"
 
 # 備份自己的互斥鎖(fd 7):放掉 DB 鎖之後,仍不能讓第二個 weekly-backup(例如
