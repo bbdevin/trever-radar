@@ -44,6 +44,8 @@ import time
 import uuid
 from pathlib import Path
 
+import radar
+
 from .. import config
 
 MEMO_VERSION = 1
@@ -56,23 +58,23 @@ def memo_enabled() -> bool:
     return os.environ.get(ENV_FLAG, "1").strip() != "0"
 
 
-def disk_salt() -> str:
-    """磁碟上整個 radar 套件的原始碼 + Python 版本 + MEMO_VERSION 的雜湊。"""
+def _salt_from(source_hash: str) -> str:
     h = hashlib.blake2b(digest_size=16)
-    h.update(f"{MEMO_VERSION}|{sys.version}".encode())
-    for p in sorted(_PKG_ROOT.rglob("*.py")):
-        h.update(p.relative_to(_PKG_ROOT).as_posix().encode())
-        h.update(b"\0")
-        h.update(p.read_bytes())
-        h.update(b"\0")
+    h.update(f"{MEMO_VERSION}|{sys.version}|{source_hash}".encode())
     return h.hexdigest()
 
 
-# 程式雜湊在**匯入時**算(json_export 匯入本模組 = export 開跑前,與其他 radar 模組同一刻載入),
-# 不是建 ExportMemo 時才讀磁碟:正式機 $REPO/pipeline 是 bind mount,sync_code(git pull)可能
-# 在本行程跑到一半時換掉原始碼(不持鎖的 mid-backfill export 尤其如此)。存檔前再讀一次磁碟,
-# 對不上 = 這一輪跑的程式(至少一部分)與磁碟上的不同 → 不存(save),下一輪全算(verifier 2026-10-25)。
-_SALT: str = disk_salt()
+def disk_salt() -> str:
+    """磁碟上**現在**整個 radar 套件的原始碼 + Python 版本 + MEMO_VERSION 的雜湊(存檔前複查用)。"""
+    return _salt_from(radar.source_hash(_PKG_ROOT))
+
+
+# 程式雜湊取自 radar/__init__.py 在**套件第一次匯入時**(任何子模組載入前)記下的 SOURCE_HASH,
+# 不是本模組匯入時才讀磁碟:正式機 $REPO/pipeline 是 bind mount,sync_code(git pull)可能在本行程
+# 載入子模組途中或跑到一半時換掉原始碼(不持鎖的 mid-backfill export 尤其如此)。存檔前再讀一次
+# 磁碟,對不上 = 這一輪跑的程式(至少一部分)與磁碟上的不同 → 不存(save),下一輪全算
+# (verifier 2026-10-25 兩輪:先是建 ExportMemo 時才算,後是本模組匯入時才算,都留有窗口)。
+_SALT: str = _salt_from(radar.SOURCE_HASH)
 
 
 def code_salt() -> str:
