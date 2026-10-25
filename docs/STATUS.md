@@ -2,6 +2,13 @@
 
 > 單一進度真相。每完成一個里程碑就更新本檔。規格細節看各編號文件,別寫在這裡。
 
+## 2026-10-25 週備份上傳失敗會等候重試,且上傳期間不握 DB 鎖(`docs/31` §4;分支,未合 main;VPS `sync_code` 後生效,不動 crontab)
+
+- **事故**:10-24 05:17 保留策略永久刪掉 `radar-20261003.db.gz`(2.1 GB)後,`rclone copyto radar-20261024.db.gz`(1.45 GB)一秒內失敗 4 次 `403 storageQuotaExceeded`;本機留 1.4 GB 快照,VPS 磁碟剩 3.7 GB。10-25 手動重跑同一行立即成功(Drive 13.06 / 15 GiB)→ Google 配額帳在永久刪除後有延遲。
+- **修正**(`vps/scripts/weekly-backup.sh`):上傳失敗 → 等 5、10 分鐘重試,共 3 次(`BACKUP_UPLOAD_ATTEMPTS` / `BACKUP_UPLOAD_RETRY_SLEEPS` 可調),每次重試前 `rclone about` 記 Drive 剩餘;gzip 完就關 fd 9 放 DB 鎖,上傳/重試改由 `/tmp/radar-backup.lock` 防重入。最終失敗 high 通知寫明原因、本機保留檔與 MiB、VPS 磁碟剩餘 MiB、已刪哪些舊快照、手動補傳指令(exit 4)。checkpoint → integrity_check → gzip 順序與「大小比對通過才刪本機」不變。
+- **驗證**:`test_weekly_backup_retention.py` 新增 bash 實跑 harness(假 docker/rclone/curl/sleep,暫存 repo):403 兩次後成功(3 次 copyto、睡 300/600、about 3 次、上傳時 DB 鎖空著、本機刪除、一則成功)、永遠失敗(exit 4、一則 high 含 storageQuotaExceeded/MiB/磁碟/已刪檔、本機保留)、一次成功不睡、integrity 不過不碰 rclone;靜態測試鎖住放鎖位置。
+- **待人類**:合 main、VPS `sync_code`;下週六 05:00 後 `grep -E 'upload attempt|drive free before retry|db lock released' ~/radar-cron.log`。
+
 ## 2026-10-24 晚到的三大法人當晚上線(`docs/47` §8.10、`docs/08` §0.1;分支,未合 main;VPS `sync_code` 後生效,不動 crontab)
 
 - **缺口**(下方 2026-10-22 記下):分點輪只在開頭(~16:30)匯一次法人;17:10 仍缺時下一次是 22:30,而 22:30 兩段都完整就 `publish skipped` → 晚到的上市法人隔天才上網站。

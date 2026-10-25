@@ -116,6 +116,8 @@ export-json 寫 web/public/data/(程式不改,輸出路徑照舊)
 **GitHub 零資料原則(2026-07-15 使用者定案)**:git repo 與 release 平時**都不存放任何資料庫檔案**;`db-backup` release 只在回滾/災難(§8)時臨時上傳、事後即刪。就算日後 repo 再轉 public,也不存在可外洩的資料 asset。
 
 - 備份腳本:`wal_checkpoint(TRUNCATE)` → `integrity_check` 必須 `ok` → gzip → 上傳;任一步失敗 ntfy High 告警。**integrity_check 不過的快照絕不上傳覆蓋舊版**。
+- **上傳重試與鎖範圍(2026-10-25)**:DB 鎖(fd 9)只握 checkpoint → integrity_check → gzip,快照落地後即 `exec 9>&-` 放掉;保留策略刪檔、上傳、重試都不握 DB 鎖(回補、週六 06:30 大戶持股不必等網路 I/O),改由備份自己的 `/tmp/radar-backup.lock`(fd 7,`flock -n`,整輪持有)防第二個 weekly-backup 插進來。上傳失敗(任何原因;10-24 是保留策略永久刪掉 10-03 那份後立刻 `403 storageQuotaExceeded`,隔天同一行手動重跑就成功——Google 配額帳在永久刪除後有延遲)→ 等 `BACKUP_UPLOAD_RETRY_SLEEPS`(預設 300、600 秒)後重試,共 `BACKUP_UPLOAD_ATTEMPTS`(預設 3)次;每次重試前重新 `rclone about` 並 log `upload: drive free before retry N: … bytes`。用完仍失敗 → 一則 high:原因(配額滿或 rclone 碼)、本機保留哪個檔與 MiB、VPS 磁碟剩多少 MiB、已從 Drive 永久刪了哪些、手動補傳指令;exit 4。上傳成功仍須 Drive 大小 = 本機大小才刪本機檔。
+- (保留策略已於 2026-09-30 改為「最近 2 份週快照 + 更舊者每月 1 份」,實作 `vps/scripts/backup_retention.py`;下一行的「4 份」是舊稿。)
 - Drive retention:快照保留最近 4 份 + 每月 1 份(約 400MB×5≈2GB,15GB 免費額度內有版本與安全餘裕),超標優先刪最舊週份快照。
 - **還原演練(WP-B4 必做)**:從 Google Drive 下載最新快照 → gunzip → integrity_check → 暫存目錄跑 `export-json` 比對線上 JSON。演練通過前,操作備份資料夾時不得刪除任何既有快照。
 - **災難恢復認知**(為何週備份的 RPO 可接受):快照之後那幾天的資料幾乎全部可重建——日K/法人/融資券/權證走官方 `backfill --days N`,分點走 MoneyDJ 鏡像按日期補抓,指標/分數/績效重算即可。VPS 全滅的實際代價=「還原快照+重跑數小時回補」,不是資料永久損失。
