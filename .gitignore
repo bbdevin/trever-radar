@@ -19,6 +19,8 @@ data/watch-push-state.json
 data/watch-push-state.json.tmp
 # 多方榜紀錄(docs/48 §2 事前登記的唯一資料來源;VPS 追加,不進 git)
 data/bull_board_log/
+# export 記憶(docs/44 §3.7;VPS export 每次覆寫,不進 git)
+data/export-memo/
 # 容器工作目錄是 /app/pipeline,所以 CLI 收到的相對 --state-file 落在這裡
 # (權證分點回補的每日 state 檔),不是 repo 根的 data/。
 pipeline/data/

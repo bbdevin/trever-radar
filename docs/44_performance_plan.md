@@ -351,11 +351,72 @@ home/stocks.json       {version:1, data_date, generated_at, stocks:[逐檔投影
 **預期第二段上線時間**:19:29 第一段 + 統計(3–7.5 分,與權證尾段重疊)+ 權證寫入 5 s + export 660 s + deploy ~1 分 ≈ **19:44–19:49**(以前 19:52;省 3.5–8 分)。
 
 **沒做的(提案;需人類決定)**
-1. **第二段匯出只重算會變的部分**(省最多):第一段與第二段之間只有兩件事改了資料——今天的權證分點列、三張統計表。export 讀它們的地方:權證分點輸出全部(`warrant_branches.json`、`warrant-stock-details/*`、`warrant_positions.json`、`warrant_movers.json`、`branches/watch/*` 的權證欄)、個股 chips 的 `branch_tags`(追蹤＋`branch_stock_stats` 的隔日沖配對)、個股 `active_warrants[].branches`(當天權證列)、口袋名單(`pocket_*`,radar/home/core)、`branches/rankings.json`、`branches/track/*`、`branches/today.json`。**一個位元都不會變的大項**:`branch_history`(10-14 實測 220 s)、`pnl`(116 s)、`pctile`(78 s,那張表 00:05 才算)、`candles`/`levels`(22 s)、hist。做法:第一次 export 把每檔這幾項的中間結果落一份快取(`data/` 下,以「現股分點列＋日K」的指紋為鍵,例如 `branch` 那列 import_logs 的 id＋`daily_prices` 的 MAX(date)＋筆數),第二次 export 指紋相同就直接用。估計第二段 export 660 → **約 220–300 s(再省 6–7 分;第二段約 19:38–19:42)**。風險在「依賴清單」寫漏:要用 `export_parity.py` 對「快取路徑」與「全量」兩棵樹逐位元比對,並把依賴清單寫成測試。改動面在 `json_export` 的個股主迴圈,不小,這次不做。
+1. **第二段匯出只重算會變的部分**(省最多;**2026-10-25 以「輸入照讀、只省計算」的方式實作,見 §3.7**——下面是當時的提案原文):第一段與第二段之間只有兩件事改了資料——今天的權證分點列、三張統計表。export 讀它們的地方:權證分點輸出全部(`warrant_branches.json`、`warrant-stock-details/*`、`warrant_positions.json`、`warrant_movers.json`、`branches/watch/*` 的權證欄)、個股 chips 的 `branch_tags`(追蹤＋`branch_stock_stats` 的隔日沖配對)、個股 `active_warrants[].branches`(當天權證列)、口袋名單(`pocket_*`,radar/home/core)、`branches/rankings.json`、`branches/track/*`、`branches/today.json`。**一個位元都不會變的大項**:`branch_history`(10-14 實測 220 s)、`pnl`(116 s)、`pctile`(78 s,那張表 00:05 才算)、`candles`/`levels`(22 s)、hist。做法:第一次 export 把每檔這幾項的中間結果落一份快取(`data/` 下,以「現股分點列＋日K」的指紋為鍵,例如 `branch` 那列 import_logs 的 id＋`daily_prices` 的 MAX(date)＋筆數),第二次 export 指紋相同就直接用。估計第二段 export 660 → **約 220–300 s(再省 6–7 分;第二段約 19:38–19:42)**。風險在「依賴清單」寫漏:要用 `export_parity.py` 對「快取路徑」與「全量」兩棵樹逐位元比對,並把依賴清單寫成測試。改動面在 `json_export` 的個股主迴圈,不小,這次不做。
    - `docs/44` §3.5 舊提案的 `--skip-warrant-shards` 在兩段式之後**不成立**:第一段與第二段之間權證列會變。
 2. **排行統計移出晚上那條鏈**(產品決定):第二段只帶權證,統計留給 00:05 夜間作業算＋上線 → 第二段 ≈ 19:29 + 11 分 ≈ 19:41,代價是排行榜晚幾小時才含今天。
 3. **統計與第一段 export 並行**(唯讀計算,寫入延到第一段上線之後):要先量 VPS 的 `nproc` 與兩者同時的記憶體峰值(export ~700 MB＋統計 ~300 MB,1.7 GB RAM);單核機上會拖慢第一段,不建議在沒量之前做。
 4. **再減讀取量**(若 `read-wait` ≈ `read`):讀取的是全部現股歷史;唯一的辦法是讓分點×個股的全期統計可增量更新(見上面「不做增量」),目前不值得。
+
+### 3.7 export 記憶:第二段匯出沿用第一段的純計算(2026-10-25;程式在分支,未合 main;不動 crontab、不動 VPS 腳本)
+
+**問題**:正式機 2026-10-21 第一段 export 728 s(19:16→19:28)、統計 240 s、權證寫入 5 s、第二段 export **720 s**(19:34→19:46)、19:48 上線。兩次 export 之間只變了今天的權證分點列(＋新分點名)、`branch_stock_stats`/`branch_rankings`/`tracked_branches`;現股分點列、日 K、`branch_stock_pctile_counts`(00:05 才換)都沒變,但個股迴圈裡最貴的純計算每次從頭算:`export timing:` 正式機 branch_history≈170–190、pnl≈93、pctile≈66–74、levels≈6、write≈50。
+
+**做法(輸入照讀,只省計算)**:`pipeline/radar/export/export_memo.py`。每一段的輸入**每次照舊從 DB 讀出來**,對讀到的值算摘要(blake2b-128 over `marshal` 版本 2:同值同型別 → 同位元組,int/float/str/None 分得開),與上一次 export 記下的相同就沿用上一次的輸出,不同就照算。所以不必猜「誰可能寫過」(rowid/筆數/MAX(date) 這類表層指紋抓不到 UPDATE、`adj_factor` 改寫、修復窗重寫)——讀到的列本身就是指紋。依賴清單(每段另加:整個 `radar/` 套件原始碼雜湊＋Python 版本,程式一改全部不命中):
+
+| 段 | 摘要涵蓋的輸入 | 沿用來源 |
+|---|---|---|
+| `branch_days` | 資料日 d ＋ `branch_trades_raw` 該檔 730 日主鍵範圍原始列 (date, branch_id, buy, sell, net) ＋ 分點名查表條件(下) | 上一次的 `chips/{id}.json` 切那段文字 |
+| `branch_pnl_est` | 同上 ＋ 該檔 K 線全欄位 | 同上(上一次沒有這鍵 = None) |
+| `branch_pctile_counts` | 該檔 `branch_stock_pctile_counts` 全部列(讀取順序)＋ 快照中繼資料 ＋ 表在不在(計算不看 d) | 同上 |
+| `price_levels` | d ＋ 該檔 K 線全欄位 | 記憶檔(很小,JSON 往返逐位元相同) |
+
+- **分點名**:摘要是 branch_id 不是名字。上一次記下的整份 id→名稱,在這一次開頭的查表裡任何一個改了或不見 → 這一輪分點段全部不命中(新增 id 不影響:新 id 若出現在某檔的列裡,那檔的原始列摘要就變了)。迴圈中途只要發生過一次查表重讀(有查不到的 id,`_BranchNames.reloads`)→ 之後的個股分點段不命中、記憶檔不寫(重讀可能帶進並行改名;測試 `test_rename_seen_by_mid_run_reload_stops_reuse` 模擬了這個時序)。沒重讀 ⇒ 上一次每一列的 id 都查得到 ⇒ 原始列相同時名字也相同。
+- **沿用的段不解析**:chips 檔的文字整份雜湊記在記憶檔,讀回來雜湊對得上才用(並行 export 改寫過、被截斷、被刪 → 當沒記錄,`chips_bad=` 計數);各段在文字裡的位置也記著,直接切下(`stock_parts.RawJSON`)原樣拼進這一次的 chips(`compose_chips`:緊湊模式的物件 = `{` + 逐項 `鍵:值` + `}`,與整份 `dumps` 逐位元相同,300 組隨機 payload 驗過)。`branch_tags` 要的分點名表只解析 `names` 那一小段(位置在寫出時就以「切下來的文字 == dumps(names)」核對過)。本機量到「讀回整份 chips 再 json.loads」與重新編碼一樣貴,所以才切文字。
+- **記憶檔**:`config.DATA_DIR/export-memo/<輸出目錄路徑雜湊>.json`,一個輸出目錄一份、每次整份 tmp+rename 覆寫(正式 ~2,400 檔約 3 MB;合成庫 800 檔 0.93 MB);同目錄超過 7 天沒更新的別份順手刪。export 中途失敗 → 不寫,舊記錄的 chips 雜湊對不上新檔 → 自動不命中。`RADAR_EXPORT_MEMO=0` 關掉(照舊全算、不寫);`--legacy-stocks`/`--verify-split`/`--size-report` 自動關(它們要完整 payload 物件)。
+- **不限第二段**:它是通用的「同輸入不重算」,任何一輪都可能命中:14:05 換日那輪分點/損益/價格位置全部重算(摘要含 d),但分位計數照樣沿用;14:45/16:00/20:45 同一資料日,現股分點列沒變 → branch_days 命中,K 線沒變的檔 → 損益/價格位置也命中。第一段 export 多付摘要成本(本機 +2–3 s/800 檔)。
+- **log**:`export timing:` 末尾多 `memo=`(載入＋存檔);新的一行 `export memo: enabled= loaded= names_ok= stocks= branch= pnl= pctile= levels= chips_bad= reloads=`(後四個是命中檔數)。
+
+**驗證**
+- `pipeline/tests/test_export_memo.py`(12 項):小合成庫照晚上分點輪跑——第一次 export → 寫入今天權證分點列(含新分點名 `branch_dim` 9001)＋刪自動追蹤後重算 `compute_all` → 第二次 export 寫同一目錄,與 `RADAR_EXPORT_MEMO=0` 在空目錄全量重算逐檔比:**位元組相同,或只差 `generated_at`(以保留鍵序的 (鍵,值) 串列比,鍵序不同也算錯)**,並斷言每檔四段全部命中;第三次(沒變)仍全命中。失效:改一列舊現股分點列(只有那檔 branch_days/損益重算)、改一天收盤(那檔損益/價格位置重算)、改 `adj_factor`、改分位表一列、分點改名(`names_ok=0`,分點段全重算)、孤兒列觸發重讀(記憶檔刪掉)、中途重讀時並行改名、竄改 chips 檔、程式雜湊不同、新的資料日;每一項都與全量重算逐檔比對。另有 compose_chips 與 dumps 逐位元相同、摘要對型別/順序敏感。
+- 突變測試(各自單獨套用、跑一次測試檔):拿掉 names_ok、拿掉重讀守衛、價格位置不看 K 線摘要、分位不看摘要、chips 不驗雜湊、分點摘要不含 d、損益不看 K 線摘要 → 全部有測試失敗。
+- **合成大庫**(§3.5 同一份:`make_synthetic_branch_db.py --stocks 800 --days 500 --branches 300 --warrants-per-stock 10 --stock-rows 22 30 --warrant-branch-days 150` → `convert_branch_raw_without_rowid.py --analyze` → `compute-branch-stats` ＋ `branch-stock-pctile-counts`;現股分點 1,106 萬列/2 年窗、1.8 GiB;`PYTHONHASHSEED=0`、各自獨立行程)。今天的權證分點列(17,097 列)先移開 → 第一次 export → 放回＋刪自動追蹤＋`compute-branch-stats` → 第二次 export(同目錄)→ 空目錄全量(記憶關)＋舊程式(HEAD 3cb3499)空目錄全量:
+
+| 段(秒) | 第一次,記憶關 | 第一次,記憶開(兩次) | **第二次,記憶開(兩次)** | 全量重算,記憶關 | 舊程式全量 |
+|---|---|---|---|---|---|
+| branch_history | 28.1 | 30.6 / 27.1 | **17.2 / 17.5** | 24.9 | 26.3 |
+| pctile | 5.9 | 6.2 / 5.4 | **2.0 / 2.0** | 4.9 | 5.1 |
+| pnl | 23.2 | 20.4 / 17.5 | **0.0 / 0.0** | 17.0 | 16.5 |
+| levels | 1.0 | 1.0 / 0.9 | **0.0 / 0.0** | 0.8 | 0.9 |
+| write | 23.9 | 23.5 / 20.6 | **13.3 / 13.4** | 20.1 | 20.9 |
+| watch | 3.3 | 3.4 / 3.2 | **2.1 / 2.1** | 3.4 | 2.9 |
+| warrant_shards(不沿用) | 33.1 | 27.5 / 28.1 | 29.3 / 29.8 | 27.9 | 28.7 |
+| **total** | 134.6 | 126.8 / 116.8 | **77.4 / 78.7** | 112.3 / 114.8 | 114.4 |
+| 行程記憶體峰值 | — | — / 874 MiB | 885 / 886 MiB | 880 MiB | 878 MiB |
+
+  - **逐位元一致**:第二次(記憶)vs 全量(記憶關),兩輪各比一次:3,423 檔 = 3,415 IDENTICAL + 8 只差 `generated_at`(鍵序保留比),0 DIFF/MISSING/多出;全量(記憶關)vs 舊程式全量:同樣 3,415 + 8 / 0。第三次(什麼都沒變)`unchanged=1600`(core/chips 一個都沒重寫)。
+  - 第二次本機 **−31%(112 → 77 s)**:pnl/levels 歸零;branch_history 剩的是讀取本身(`fetchall` 1,100 萬列 ≈ 13–17 s,摘要 ≈ 2.6 s);pctile 剩讀取＋摘要;write 少了 chips 三段的序列化。記憶體 +~5 MiB(記憶檔的 dict;遠低於 50 MB 上限)。
+
+**正式機預估(誠實區間;以合併後第一個分點輪的 `export timing:` / `export memo:` 為準)**
+
+| 段 | 正式第二段(10-21) | 預估 | 依據 |
+|---|---|---|---|
+| pnl | ~93 s | ~0 | 純計算,全命中 |
+| levels | ~6 s | ~0 | 同上 |
+| pctile | 66–74 s | ~25–35 s(省 ~40) | 本機剩 ~40%(讀取＋摘要) |
+| branch_history | 170–190 s | ~120–150 s(省 ~30–60) | 本機剩 ~70%(讀取為主);正式機若更偏讀盤,省得更少 |
+| write | ~50 s | ~30–35 s(省 ~15–20) | 本機剩 ~66% |
+| watch | ~15 s | ~10 s | 命中時只查近 60 日名字 |
+| 其餘(warrant_shards、tracked、radar、side…) | ~300 s | 不變 | 權證列與統計表真的變了 |
+
+- 合計第二段 export **720 → 約 500–540 s(省 ~3–3.7 分)**;第一段 export 多付摘要成本,依本機比例約 +10–20 s。整輪淨省約 3–3.5 分 → 第二段上線約 **19:44–19:45**(10-21 是 19:48)。
+- 比 §3.6 提案估的「220–300 s」保守:那個估計假設 branch_history 整段可省,但不讀列就無法**確定**列沒變;剩下的 ~120–150 s 是讀 3,300 萬列本身。要再省只能**不讀**——例如由 `daily-branches.sh` 告訴第二段「兩段之間一直握著 DB 鎖、沒有別的寫者」就跳過讀取(信任鎖紀律,不是驗證),或在 DB 加變更計數(schema 變更)。兩者都屬「仍須人工確認」,本次不做。
+
+**風險**
+- **寫漏依賴**:每段的輸入清單在 `export_memo.py` 開頭與上表;任何人改這四段的計算,若引入新的輸入(新查詢、新表),必須同時加進摘要,否則會沿用舊結果。緩解:程式雜湊含整個 `radar/` 套件,**部署新程式後第一輪一定全算**;新輸入若是 DB 讀取,只要沒進摘要,同一程式版本內才會出事——`test_export_memo.py` 的失效測試是這份清單的守門員,改段落時要補對應測試。
+- 摘要碰撞:blake2b-128,可忽略。
+- 並行 export(`mid-backfill-publish.sh`,不持鎖、同一輸出目錄、同一份記憶檔):各自記自己讀到的摘要與自己寫的 chips 雜湊,最後寫的那份記憶檔生效;另一個 export 改寫過的 chips 雜湊對不上 → 不命中。最壞是少命中,不會沿用錯的。
+- 磁碟:每個輸出目錄一個檔(正式 ~3 MB),7 天沒更新的自動刪。
+- **verifier 修正(2026-10-25,ca8e708 之後)**:①程式雜湊原本在建 `ExportMemo` 時才讀磁碟;正式機 `$REPO/pipeline` 是 bind mount,`sync_code`(git pull)若落在「模組已匯入、記憶還沒建」之間,舊程式的輸出會被存在新程式的雜湊下,下一輪沿用(verifier 以 price_levels/pnl 版本號重現,44 檔不同)。改成**匯入時**快照雜湊,`save()` 前再讀一次磁碟,不同就不存並刪掉舊檔、印 `export memo WARNING:`,`export memo:` 行的 `saved=code_changed`;下一個行程(新雜湊)全算。②`save()` 失敗(磁碟滿、路徑被目錄佔住、`export-memo` 是檔案、rename 衝突)原本會讓整個 export 在寫 groups/branches/rankings 之前中止;改成永不擲例外,印 warning、刪舊檔、`saved=error`,export 照常寫完。tmp 名加 uuid(`docker --init` 下每個容器 PID 相同)。測試:`test_source_changed_on_disk_mid_run_is_not_saved`(開跑前與迴圈中途各改一次磁碟上的原始碼)、`test_save_failure_never_aborts_export`、`test_tmp_names_are_unique_per_save`;4 個對應突變全被抓。
 
 ## 4. 明確不做
 
