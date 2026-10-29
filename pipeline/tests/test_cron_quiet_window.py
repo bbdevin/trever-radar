@@ -141,9 +141,9 @@ def _cron_dow_to_date_u(values):
 def parse_cron_jobs(crontab_text):
     """解析 `bash .../scripts/x.sh` 形式的排程行,回傳 dict 列表。
 
-    跳過 `@reboot`、註解、空行、`CRON_TZ=Asia/Taipei` 這類賦值行,以及不是直接
-    `bash` 呼叫的行(docker run、pgrep 保活行)——這些不在「一次略過就是一整輪
-    工作沒跑」的語意範圍內。
+    跳過 `@reboot`、註解、空行、`CRON_TZ=Asia/Taipei` 這類賦值行、不是直接
+    `bash` 呼叫的行(docker run、pgrep 保活行),以及分鐘欄是 `*/N` 的輪詢行——
+    這些不在「一次略過就是一整輪工作沒跑」的語意範圍內。
     """
     jobs = []
     for raw_line in crontab_text.splitlines():
@@ -154,6 +154,10 @@ def parse_cron_jobs(crontab_text):
             continue
         m = JOB_LINE_RE.match(line)
         if not m:
+            continue
+        # `*/20` 這類輪詢呼叫(2026-10-29 warrant-backfill.sh)是伺機寫入者:落在安靜窗的
+        # 那幾次本來就該略過,下一次輪詢會再問,不是「一整輪工作沒跑」。
+        if "/" in m.group("min"):
             continue
         minutes = _parse_field(m.group("min"), 0, 59)
         hours = _parse_field(m.group("hour"), 0, 23)

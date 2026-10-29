@@ -31,7 +31,12 @@ CRON_TZ=Asia/Taipei
 # 不 export,14:05 輪上線。`flock -n`,搶不到就略過(窗內隔天會再處理)。
 15 13 * * 1-5  bash /home/huang/trever-radar/vps/scripts/adjust-incremental.sh >> /home/huang/radar-cron.log 2>&1
 
-# Disabled candidate — all-market TWSE+TPEx warrant branches need 6–8h at
+# 全市場權證分點每日增量(2026-10-29 使用者核准;docs/30 §6.2)。伺機寫入者:每次自己算
+# 「距下一輪排程還有多久」決定塊長、搶不到 DB 鎖／來源鎖就略過、今天已完成就略過;
+# 新的交易日(min-age 1 天)隔天由它補成全市場(~1.6 萬檔,約 4–5 小時,分散在空檔)。
+*/20 * * * *   bash /home/huang/trever-radar/vps/scripts/warrant-backfill.sh >> /home/huang/warrant-backfill.log 2>&1
+
+# (已由上一條取代) Disabled candidate — all-market TWSE+TPEx warrant branches need 6–8h at
 # sleep=1.0; VPS free space was only 7.6GB on 2026-08-28 (<20GB gate).
 # Enable only after 1/5-day + 3-trading-day PoC, capacity approval, and a
 # separately approved slot.  This PoC script never exports or deploys data.

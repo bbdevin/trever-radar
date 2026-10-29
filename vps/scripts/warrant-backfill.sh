@@ -52,10 +52,11 @@
 #      鎖語意(同一把 /tmp/radar-branch-source.lock、fd 8、非阻塞)逐字相同。
 #
 # ── 怎麼驅動 ────────────────────────────────────────────────────────────
-# 和 adjust-backfill.sh 一樣,本腳本**刻意不在 crontab 裡**,也不要在沒有維運者
-# 決定的情況下加進去(排程變更是高風險正式變更,docs/30 §6.2)。迴圈跑:
-#     while bash vps/scripts/warrant-backfill.sh; do sleep 180; done
-# 任何一次略過都回 0,只有真正的失敗才回非 0。
+# 2026-10-29 起由 crontab 每 20 分呼叫一次(使用者核准的每日增量,docs/30 §6.2;
+# 見 crontab.example)。以前是維運者手動起的迴圈(~/warrant-driver.sh),深度補完就
+# 自己結束,之後新的交易日沒人補。現在完成標記只代表「今天已完成」(warrant-done-flag.sh),
+# 隔天自動重問一次,把 min-age 剛放行的新交易日補成全市場。
+# 任何一次略過都回 0,只有真正的失敗才回非 0;重入由下方 DB 鎖／來源鎖 flock -n 擋。
 #
 # ── 環境變數 ────────────────────────────────────────────────────────────
 #   WARRANT_DAYS=70            深度(交易日)。2026-10-25 由 90 改 70:回補到約 74 個交易日前
@@ -94,6 +95,7 @@
 #   MIN_MEM_MB=900
 source "$(dirname "$0")/lib.sh"
 source "$(dirname "$0")/warrant-throughput.sh"
+source "$(dirname "$0")/warrant-done-flag.sh"
 
 FLAG="${MID_PUBLISH_FLAG:-/tmp/radar-mid-publish.flag}"
 DAYS="${WARRANT_DAYS:-70}"
@@ -213,8 +215,10 @@ if [ -f "$FLAG" ]; then
   exit 0
 fi
 
-if [ -f "$DONE_FLAG" ]; then
-  echo "already complete for days=${DAYS} (${DONE_FLAG}) — skip; raise WARRANT_DAYS to go deeper"
+# 今天的台北日期:完成時寫進標記的也是這個值(跨午夜的塊記開跑那天 → 隔天再問一次,保守)。
+TODAY="$(taipei_date +%F)"
+if warrant_done_for_today "$DONE_FLAG" "$TODAY"; then
+  echo "already complete today ${TODAY} for days=${DAYS} (${DONE_FLAG}) — skip; next check tomorrow picks up the new trading day"
   exit 0
 fi
 
@@ -415,10 +419,11 @@ fi
 case "$VERDICT" in
   complete)
     echo "all done — every date within days=${DAYS} is complete"
+    # 只有第一次補完深度時通知;之後每日增量完成不再通知(標記已存在,只更新日期)。
     if [ ! -f "$DONE_FLAG" ]; then
       notify_ok "權證分點回補完成：深度 ${DAYS} 個交易日、全市場（上市＋上櫃）；bytes/row 實測 ${BYTES_PER_ROW}，可據此決定下一段深度"
-      : > "$DONE_FLAG"
     fi
+    printf '%s\n' "$TODAY" > "$DONE_FLAG"
     ;;
   clean-stop)
     # 乾淨停下不是失敗:state 檔留著,下一次呼叫接著跑。不發高優先通知。

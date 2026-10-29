@@ -355,6 +355,14 @@ while bash vps/scripts/warrant-backfill.sh; do sleep 180; done
 - 先完成 3 個交易日 runtime benchmark，再提出確切 cron 時間；本文件不預先拍板移動 01:10 深歷史輪。
 - 修改 cron 屬高風險正式排程變更，必須另獲使用者確認。
 
+**落地(2026-10-29,使用者核准)**:不另做新輪,沿用 `warrant-backfill.sh`(已具備讓路預算、DB 鎖／來源鎖 `flock -n`、雙站確認空、空爆量斷路器、吞吐地板、磁碟地板 3 GB、暫停檔)。
+
+- **為什麼現在做**:10-25 12:36 補到 70 日深度後寫了空的完成標記 `~/.warrant-backfill.done-70d`,`~/warrant-driver.sh` 迴圈看到「all done」就結束,之後再也沒跑。VPS 唯讀實測 `branch_trades_raw` 每日涵蓋標的數:10-22 以前約 2.4 萬(股票＋全市場權證),**10-27 起只剩約 2,400–2,550**(股票＋日更輪成交 ≥ 100 萬權證池 ~580 檔)。單日 500 萬榜幾乎不受影響(成交 < 100 萬的權證不可能有單一分點淨額 ≥ 100 萬),但 5/30/120 日累計與「仍持有(估)」開始新舊混雜。
+- **改法**:完成標記的內容改成完成那天的台北日期(`vps/scripts/warrant-done-flag.sh`),同一天內略過、隔天重問;CLI 對已完成日期零請求跳過,`--min-age-days 1` 剛放行的新交易日就被補成全市場。舊的空標記 = 未完成 → 第一次 cron 呼叫就開始補 10-27 起的日期。第一次補完深度才 `notify_ok`,之後每日完成不通知。
+- **驅動**:`crontab` 新增 `*/20 * * * * bash …/warrant-backfill.sh >> ~/warrant-backfill.log`(取代手動迴圈;重入由 flock 擋)。`daily-warrant-branches-poc.sh` 那條停用候選作廢。
+- **量級**:每個新交易日 ~1.6 萬標的 × ~1.23 s ≈ **4–5.5 小時**,落在安靜窗以外的空檔(主要是 22:35 之後的深夜);磁碟 +~19 MB/交易日。prune 保留權證分點 150 日,全市場日數會由 70 逐日長到 150(約 4 個月),期間 DB 約再長 **~1.5 GB**(10-29 剩 6.7 GB),之後持平。
+- **驗證**:`pipeline/tests/test_warrant_done_flag.py`(bash 實跑判定:無標記／舊空標記／昨天 → 跑、今天 → 略過;腳本接線、通知只在第一次、crontab 每 20 分)。上線後看 `~/warrant-backfill.log` 的 `already complete today` 與每日 `chunk complete`,以及 `branch_trades_raw` 10-27 起每日標的數回到 ~2 萬級。
+
 ## 7. ntfy 規格
 
 沿用 `vps/.env` 的 `NTFY`。未設定時拒絕啟動。通知至少包含：
