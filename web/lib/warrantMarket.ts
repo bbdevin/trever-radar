@@ -6,8 +6,8 @@
  * 回報「近 1、2 日都沒有資訊」就是手機上還沒下載完。現在:
  *   - 只抓目前區間的 warrant_branches_{tf}.json(列不含 breakdown,1d 約 6 KB);
  *   - 點列展開時才抓該股 warrant-stock-details/{id}.breakdown.json 取逐檔明細;
- *   - 新檔 404(程式碼先於下一次 VPS 匯出上線)才退回舊的全市場檔,一次填滿五個區間;
  *   - 載入中／失敗／真的沒有資料是三種不同狀態,失敗不再假裝成「無資料」。
+ * 舊全市場檔的 404 退路 2026-10-29 移除(正式機每輪都產出區間檔,舊檔已停寫):區間檔 404 就是失敗。
  */
 
 export const MARKET_TIMEFRAMES = ["1d", "2d", "5d", "30d", "120d"] as const;
@@ -26,8 +26,6 @@ export type MarketRow = {
   underlying_id: string;
   underlying_name: string;
   net_amount: number;
-  /** 只有舊的全市場檔內嵌;新的區間檔沒有,展開時另抓。 */
-  breakdown?: MarketBreakdown[];
 };
 
 export type MarketTfState =
@@ -39,7 +37,6 @@ export type MarketTfState =
 export type FetchLike = (path: string) => Promise<{ ok: boolean; status: number; json(): Promise<unknown> }>;
 
 export const marketTfPath = (tf: MarketTimeframe) => `/data/branches/warrant_branches_${tf}.json`;
-export const MARKET_LEGACY_PATH = "/data/branches/warrant_branches.json";
 export const breakdownPath = (stockId: string) =>
   `/data/branches/warrant-stock-details/${encodeURIComponent(stockId)}.breakdown.json`;
 
@@ -53,48 +50,12 @@ export function parseMarketTimeframe(payload: unknown, tf: MarketTimeframe): { d
   return { data_date: dateOrNull(payload.data_date), rows: payload.rows as MarketRow[] };
 }
 
-/**
- * 舊全市場檔:v1 wrapper {version:1, data_date, timeframes} 或更舊的裸 mapping(不替它捏造資料日)。
- * 不是物件 → null(載入失敗)。
- */
-export function parseLegacyMarket(payload: unknown): { data_date: string | null; timeframes: Record<MarketTimeframe, MarketRow[]> } | null {
-  if (!isObj(payload)) return null;
-  const wrapped = payload.version === 1 && "timeframes" in payload;
-  const src = wrapped ? payload.timeframes : payload;
-  if (!isObj(src)) return null;
-  const timeframes = Object.fromEntries(
-    MARKET_TIMEFRAMES.map((tf) => [tf, Array.isArray(src[tf]) ? (src[tf] as MarketRow[]) : []]),
-  ) as Record<MarketTimeframe, MarketRow[]>;
-  return { data_date: wrapped ? dateOrNull(payload.data_date) : null, timeframes };
-}
+export type MarketLoadResult = { kind: "tf"; tf: MarketTimeframe; data_date: string | null; rows: MarketRow[] };
 
-export type MarketLoadResult =
-  | { kind: "tf"; tf: MarketTimeframe; data_date: string | null; rows: MarketRow[] }
-  | { kind: "legacy"; data_date: string | null; timeframes: Record<MarketTimeframe, MarketRow[]> };
-
-/**
- * 載入器:load(tf) 抓該區間檔;只有 404 才退回舊全市場檔(同一個 promise 共用,失敗後可重試)。
- * 其他錯誤(500、斷線、格式錯)一律 reject,畫面顯示錯誤＋重試。
- */
+/** 載入器:load(tf) 抓該區間檔;404、500、斷線、格式錯一律 reject,畫面顯示錯誤＋重試。 */
 export function createMarketLoader(fetchJson: FetchLike) {
-  let legacy: Promise<MarketLoadResult> | null = null;
-  const loadLegacy = () => {
-    if (!legacy) {
-      const p = (async (): Promise<MarketLoadResult> => {
-        const res = await fetchJson(MARKET_LEGACY_PATH);
-        if (!res.ok) throw new Error(`warrant_branches.json ${res.status}`);
-        const parsed = parseLegacyMarket(await res.json());
-        if (!parsed) throw new Error("warrant_branches.json 格式錯誤");
-        return { kind: "legacy", ...parsed };
-      })();
-      legacy = p;
-      p.catch(() => { if (legacy === p) legacy = null; });
-    }
-    return legacy;
-  };
   return async function load(tf: MarketTimeframe): Promise<MarketLoadResult> {
     const res = await fetchJson(marketTfPath(tf));
-    if (res.status === 404) return loadLegacy();
     if (!res.ok) throw new Error(`warrant_branches_${tf}.json ${res.status}`);
     const parsed = parseMarketTimeframe(await res.json(), tf);
     if (!parsed) throw new Error(`warrant_branches_${tf}.json 格式錯誤`);
@@ -102,19 +63,12 @@ export function createMarketLoader(fetchJson: FetchLike) {
   };
 }
 
-/** 把一次載入結果併進各區間狀態。舊檔一次填滿五個區間;已經 ready 的區間不被舊檔蓋掉。 */
+/** 把一次載入結果併進該區間的狀態,其他區間不動。 */
 export function applyMarketResult(
   prev: Partial<Record<MarketTimeframe, MarketTfState>>,
   result: MarketLoadResult,
 ): Partial<Record<MarketTimeframe, MarketTfState>> {
-  if (result.kind === "tf") {
-    return { ...prev, [result.tf]: { status: "ready", data_date: result.data_date, rows: result.rows } };
-  }
-  const next = { ...prev };
-  for (const tf of MARKET_TIMEFRAMES) {
-    if (next[tf]?.status !== "ready") next[tf] = { status: "ready", data_date: result.data_date, rows: result.timeframes[tf] };
-  }
-  return next;
+  return { ...prev, [result.tf]: { status: "ready", data_date: result.data_date, rows: result.rows } };
 }
 
 /** {id}.breakdown.json 的 timeframe → 券商 → 逐檔明細。 */
@@ -147,7 +101,7 @@ export const breakdownKey = (dataDate: string | null, stockId: string) => `${dat
 export type BreakdownEntry = "loading" | "error" | StockBreakdowns;
 
 /**
- * 某一列此刻的明細:內嵌(舊檔)直接用;否則看該股的明細快取。
+ * 某一列此刻的明細:看該股的明細快取。
  * undefined = 還沒抓(點了才抓)。該股檔裡找不到這家 → [](不是載入中)。
  */
 export function rowBreakdown(
@@ -155,7 +109,6 @@ export function rowBreakdown(
   tf: MarketTimeframe,
   entry: BreakdownEntry | undefined,
 ): MarketBreakdown[] | "loading" | "error" | undefined {
-  if (row.breakdown) return row.breakdown;
   if (entry === undefined || entry === "loading" || entry === "error") return entry;
   return entry[tf]?.[row.branch_name] ?? [];
 }

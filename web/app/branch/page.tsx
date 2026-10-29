@@ -271,7 +271,7 @@ function normalizeTodayPayload(payload: unknown): TodayPayload {
   };
 }
 
-/** 一列的逐檔明細怎麼來:舊檔內嵌,或展開時另抓該股的 breakdown 檔(docs/51 §3.5)。 */
+/** 一列的逐檔明細怎麼來:展開時另抓該股的 breakdown 檔(docs/51 §3.5)。 */
 type RowDetail = (row: MarketRow) => Pick<SplitItem, "breakdown" | "breakdownState" | "onExpand">;
 
 /** 權證分頁「此區間載入中」:骨架卡,不顯示「無資料」(docs/51 §3.5)。 */
@@ -560,7 +560,7 @@ export default function BranchPage() {
     setWarrantStates((s) => (s[tf] ? { [tf]: s[tf] } : {}));
     loadMarket(tf)
       .then((result) => {
-        setWarrantStates((s) => applyMarketResult(result.kind === "tf" ? s : {}, result));
+        setWarrantStates((s) => applyMarketResult(s, result));
         if (result.data_date === oldDate) setBreakdowns((b) => ({ ...b, [oldKey]: "error" }));
       })
       .catch(() => setBreakdowns((b) => ({ ...b, [oldKey]: "error" })));
@@ -898,7 +898,6 @@ export default function BranchPage() {
         const data = ready?.rows ?? [];
         const dataDate = ready?.data_date ?? null;
         const detail: RowDetail = (row) => {
-          if (row.breakdown) return { breakdown: row.breakdown };   // 舊全市場檔(fallback)內嵌
           const b = rowBreakdown(row, warrantTimeframe, breakdowns[breakdownKey(dataDate, row.underlying_id)]);
           const onExpand = () => loadBreakdown(row.underlying_id, dataDate, warrantTimeframe);
           // b === undefined = 還沒抓:卡片看到展開中的列處於這個狀態就會自己呼叫 onExpand。

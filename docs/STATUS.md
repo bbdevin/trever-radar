@@ -2,6 +2,18 @@
 
 > 單一進度真相。每完成一個里程碑就更新本檔。規格細節看各編號文件,別寫在這裡。
 
+## 2026-10-29 待辦核對＋停寫舊權證全市場檔(`docs/51` §3.5、`docs/44` §3.5–3.7 回填)
+
+- **「分支,未合 main」標籤已過時**:以下 10-15〜10-25 各條目標「分支,未合 main」者,**全部已合 main**(`e45abfd`),VPS `~/trever-radar` 也在 `e45abfd`(10-29 唯讀核對)。各條「待人類」逐項狀態:
+  - VPS `sync_code`:已做。`/tmp/radar-warrant-backfill.pause`:已不存在。
+  - `adjust-incremental.sh` crontab(`15 13 * * 1-5`):已在正式 crontab,每日 `adjust-incremental summary: … failed=0 quota_hit=0`(~300–330 s)。
+  - Supabase `watched_branch_sets`:表已存在(anon 查詢回 42501 permission denied = RLS/權限如設計)。
+  - 特定分點晚間推播:已開通,10-20 起每交易日 `watch-push: sent … / SKIP 名單與上一則相同`;10-28 第一段推送失敗一次,第二段補送成功(重試設計如預期)。
+  - `docs/44` §3.5/§3.6/§3.7:正式機數字已回填(第二段 export 720 → 507 s、統計 658 → ~245 s、第二段上線 19:52 → 19:36)。
+  - 週備份重試、晚到法人補匯:尚未遇到觸發條件(log 無 `upload attempt`/`step import-insti-retry`),維持待觀察。
+- **舊 `branches/warrant_branches.json` 停寫**:正式機已每輪產出五個區間檔,export 改為不寫並刪除殘留(Workers 不再上傳 ~20 MB,也遠離單檔 25 MiB 上限);`/branch` 與個股權證面板的舊檔 fallback 移除,404 一律顯示錯誤＋重試。驗證:pytest 全套 1936 passed＋38 skipped、web node 471 passed、`tsc`、`next build`。
+- **待人類**:無。push 後 Pages 部署前端;VPS 每輪開頭 `sync_code` 自動 `git pull`,push 後第一輪 export 就會刪掉舊檔,確認 `ls ~/trever-radar/web/public/data/branches/warrant_branches.json` 不存在即可。
+
 ## 2026-10-25 /branch 權證分點「近 1、2 日沒有資訊」:載入中被當成無資料(`docs/51` §3.5;分支,未合 main;不動 crontab)
 
 - **根因**:正式資料有(10-22:1d 41 列、2d 80 列)。分點頁一進站就抓 21.6 MB 的 `warrant_branches.json`(gzip 2.57 MB,九成是逐檔 breakdown;`no-store` 每次重抓),抓完前與抓失敗時都顯示「此區間內無淨買賣超 500 萬以上之權證大戶」。Playwright 正式真檔 390px Fast 3G:修正前 7.3→24.4 s 之間 1d/2d 都顯示「無資料」;500 時永遠「無資料」。

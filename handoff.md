@@ -1,5 +1,10 @@
 # Handoff — 2026-09-24（期貨切片從未真的渲染過的結構性 bug 已修、四輪日更補上失敗語音（過程自己又生一個更嚴重的）、期貨補到每契約每天、兩道守門缺口補上、一個記成已出貨卻沒上畫面的按鈕、一次自己的效能預測被實測打臉 2.5 倍、「隔天大漲」事前登記落地）
 
+## 2026-10-29 補記(待辦核對;舊權證全市場檔停寫)
+
+- 10-15〜10-25 各「分支未合」補記**皆已合 main 且 VPS 已生效**;各項待人類事項逐項狀態與正式機數字見 `docs/STATUS.md` 2026-10-29 條目。仍待觀察的只有:週備份 403 重試、晚到法人補匯(條件尚未出現)。
+- `warrant_branches.json` 停寫並刪殘留,`/branch`、`WarrantBranchPanel` 的舊檔 fallback 移除(`docs/51` §3.5)。push 後下一輪(自動 pull)確認舊檔消失。
+
 ## 2026-10-25 補記(/branch 權證分點近 1、2 日空白,分支未合)
 
 - 根因是前端把「21.6 MB 還沒下載完／下載失敗」顯示成「此區間內無…」,不是資料缺。export 多寫五個區間小檔 `branches/warrant_branches_{tf}.json`,頁面只抓目前區間、展開才抓該股 breakdown 檔,loading/error/empty 分開(`docs/51` §3.5)。舊全市場檔仍寫一個版本;確認新檔上線後另案移除 `warrant_branches.json` 的寫出與 `/branch`、`WarrantBranchPanel` 兩處 fallback。重跑驗證:`node web/scripts/verify-branch-warrant-load.mjs --out out --data <含 branches/ 的目錄>`(在 `web/`)。

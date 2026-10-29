@@ -10,6 +10,30 @@ from radar import schema
 from radar.export.json_export import export_json
 from radar.importer import upsert_branch_trades
 
+TIMEFRAMES = ("1d", "2d", "5d", "30d", "120d")
+
+
+def _market_view(out: Path) -> dict:
+    """/branch 實際看到的全市場資料:各區間檔的列＋展開時另抓的 {id}.breakdown.json。
+
+    舊的單一 warrant_branches.json 2026-10-29 停寫(docs/51 §3.5);這裡把兩種新檔拼回
+    舊檔的形狀,既有斷言(門檻、資料日、排序、self、breakdown)照舊適用。"""
+    branches = out / "branches"
+    split: dict[str, dict] = {}
+    timeframes, data_date, threshold = {}, None, None
+    for tf in TIMEFRAMES:
+        payload = json.loads((branches / f"warrant_branches_{tf}.json").read_text(encoding="utf-8"))
+        data_date, threshold = payload["data_date"], payload["threshold"]
+        rows = []
+        for row in payload["rows"]:
+            sid = row["underlying_id"]
+            if sid not in split:
+                split[sid] = json.loads(
+                    (branches / "warrant-stock-details" / f"{sid}.breakdown.json").read_text(encoding="utf-8"))
+            rows.append({**row, "breakdown": split[sid]["timeframes"][tf][row["branch_name"]]})
+        timeframes[tf] = rows
+    return {"version": 1, "threshold": threshold, "data_date": data_date, "timeframes": timeframes}
+
 
 class WarrantBranchDetailExportTests(unittest.TestCase):
     """100–499 萬 is stock-detail-only; /branch remains at 500 萬."""
@@ -67,7 +91,7 @@ class WarrantBranchDetailExportTests(unittest.TestCase):
         detail_dir.mkdir(parents=True)
         (detail_dir / "stale.json").write_text("old shard", encoding="utf-8")
         export_json(out)
-        payload = json.loads((out / "branches" / "warrant_branches.json").read_text(encoding="utf-8"))
+        payload = _market_view(out)
         index = json.loads((detail_dir / "index.json").read_text(encoding="utf-8"))
         detail = json.loads((detail_dir / "2330.json").read_text(encoding="utf-8"))
 
@@ -102,39 +126,31 @@ class WarrantBranchDetailExportTests(unittest.TestCase):
             )
             self.assertNotIn("五十萬分點", [row["branch_name"] for row in detail["timeframes"][timeframe]])
 
-    def test_per_timeframe_files_match_the_legacy_market_payload(self):
+    def test_per_timeframe_files_replace_the_legacy_market_payload(self):
         """docs/51 §3.5:/branch 只抓目前區間的 warrant_branches_{tf}.json(列不含 breakdown),
-        點列才抓該股 {id}.breakdown.json;兩者合起來必須與舊的全市場檔逐字相同。"""
+        點列才抓該股 {id}.breakdown.json。舊的 21.6 MB 全市場檔停寫,殘留的要刪掉
+        (否則 Workers 每次部署照樣上傳它)。"""
         out = Path(self._tmp.name) / "out"
-        out.mkdir(parents=True, exist_ok=True)
-        export_json(out)
         branches = out / "branches"
-        legacy = json.loads((branches / "warrant_branches.json").read_text(encoding="utf-8"))
-        breakdowns: dict[str, dict] = {}
-        for timeframe, legacy_rows in legacy["timeframes"].items():
-            text = (branches / f"warrant_branches_{timeframe}.json").read_text(encoding="utf-8")
-            payload = json.loads(text)
+        branches.mkdir(parents=True, exist_ok=True)
+        (branches / "warrant_branches.json").write_text("{}", encoding="utf-8")
+        export_json(out)
+        self.assertFalse((branches / "warrant_branches.json").exists())
+        for timeframe in TIMEFRAMES:
+            payload = json.loads((branches / f"warrant_branches_{timeframe}.json").read_text(encoding="utf-8"))
             self.assertEqual(list(payload), ["version", "threshold", "data_date", "timeframe", "rows"])
             self.assertEqual(
                 (payload["version"], payload["threshold"], payload["data_date"], payload["timeframe"]),
                 (1, 5_000_000, self.DATES[-1], timeframe),
             )
-            stripped = [{k: v for k, v in row.items() if k != "breakdown"} for row in legacy_rows]
-            # 逐字:同一份列去掉 breakdown,鍵序與列序不變。
-            self.assertEqual(
-                json.dumps(payload["rows"], ensure_ascii=False),
-                json.dumps(stripped, ensure_ascii=False),
-            )
             self.assertTrue(payload["rows"])
             self.assertTrue(all("breakdown" not in row for row in payload["rows"]))
-            for row in legacy_rows:
-                sid = row["underlying_id"]
-                if sid not in breakdowns:
-                    breakdowns[sid] = json.loads(
-                        (branches / "warrant-stock-details" / f"{sid}.breakdown.json").read_text(encoding="utf-8"))
-                split = breakdowns[sid]
+            for row in payload["rows"]:
+                split = json.loads((branches / "warrant-stock-details"
+                                    / f"{row['underlying_id']}.breakdown.json").read_text(encoding="utf-8"))
+                # 每一列展開時都找得到自己的明細,且與區間檔同一個資料日。
                 self.assertEqual(split["data_date"], payload["data_date"])
-                self.assertEqual(split["timeframes"][timeframe][row["branch_name"]], row["breakdown"])
+                self.assertTrue(split["timeframes"][timeframe][row["branch_name"]])
 
     def test_data_date_and_windows_follow_branch_trades_not_price_date(self):
         """分點比報價晚一輪時,資料日必須是實際分點日,1d 桶不可被清空。
@@ -155,7 +171,7 @@ class WarrantBranchDetailExportTests(unittest.TestCase):
         index = json.loads((detail_dir / "index.json").read_text(encoding="utf-8"))
         detail = json.loads((detail_dir / "2330.json").read_text(encoding="utf-8"))
 
-        market = json.loads((out / "branches" / "warrant_branches.json").read_text(encoding="utf-8"))
+        market = _market_view(out)
         self.assertEqual(index["data_date"], self.DATES[-1])
         self.assertEqual(detail["data_date"], self.DATES[-1])
         self.assertEqual(market["data_date"], self.DATES[-1])
@@ -251,8 +267,8 @@ class WarrantBranchDetailExportTests(unittest.TestCase):
         # 每檔只多一個明細檔;沒進 index 的股票兩個檔都沒有。
         self.assertEqual(sorted(p.name for p in detail_dir.glob("*.json")),
                          ["2330.breakdown.json", "2330.json", "index.json"])
-        # /branch 的全市場檔不拆,明細仍內嵌。
-        market = json.loads((out / "branches" / "warrant_branches.json").read_text(encoding="utf-8"))
+        # /branch 區間列展開時拿得到同一份明細。
+        market = _market_view(out)
         self.assertIn("breakdown", market["timeframes"]["5d"][0])
 
     def test_issuer_and_branch_group_parsing(self):
@@ -305,8 +321,8 @@ class WarrantBranchDetailExportTests(unittest.TestCase):
         flags = {b["warrant_id"]: b.get("self", False) for b in split["timeframes"]["5d"]["凱基"]}
         self.assertEqual(flags, {"700001": True, "700002": False})
 
-        # /branch 全市場檔:self 只是新增的可選鍵,既有鍵與內嵌明細不變。
-        market = json.loads((out / "branches" / "warrant_branches.json").read_text(encoding="utf-8"))
+        # /branch 全市場列:self 只是新增的可選鍵,既有鍵與明細不變。
+        market = _market_view(out)
         kgi = next(r for r in market["timeframes"]["5d"] if r["branch_name"] == "凱基")
         self.assertEqual(set(kgi), {"branch_name", "underlying_id", "underlying_name",
                                     "net_amount", "breakdown", "self"})
@@ -554,7 +570,7 @@ class WarrantBranchDetailExportTests(unittest.TestCase):
 
         self.assertIsNone(index["data_date"])
         self.assertEqual(index["stocks"], [])
-        market = json.loads((out / "branches" / "warrant_branches.json").read_text(encoding="utf-8"))
+        market = _market_view(out)
         self.assertEqual(market, {
             "version": 1,
             "threshold": 5_000_000,

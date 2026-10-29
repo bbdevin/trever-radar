@@ -1101,7 +1101,7 @@ def _build_strategy_meta() -> dict[str, dict]:
     return out          # 榜單門檻:成交金額 1 億
 SURGE_MIN_RATIO = 1.5
 MIN_WARRANT_TURNOVER = 20_000_000
-# `warrant_branches.json` is the established full-market exploration contract.
+# `warrant_branches_{tf}.json` is the full-market exploration contract.
 # Detail shards are deliberately separate so stock pages can show useful
 # 100–499 萬 observations without widening the exploration result set.
 WARRANT_BRANCH_MARKET_MIN_AMOUNT = 5_000_000
@@ -3384,22 +3384,14 @@ def _export_warrant_branches(out: Path, engine, date: str, base20: list[str], on
                   f"summaries={len(stream.summaries)} secs={time.perf_counter() - t_wpos:.1f}")
         del stream, scan, warrant_info, pairs, daily_by_pair
 
-        # 與 warrant-stock-details 同一個誠實性契約:全市場檔也要說出自己的
-        # 資料日,否則五個 timeframe 錨在 bd1 卻無處可查。沿用 today.json 的
-        # v1 wrapper 形式,舊的裸 mapping 由前端 normalize 續讀。
-        (branches_dir / "warrant_branches.json").write_text(
-            json.dumps({
-                "version": 1,
-                "threshold": WARRANT_BRANCH_MARKET_MIN_AMOUNT,
-                "data_date": bd1,
-                "timeframes": results,
-            }, ensure_ascii=False), encoding="utf-8")
-        # 每個區間一個小檔(2026-10-25,docs/51 §3.5):上面的全市場檔 2026-10-22 已 21.6 MB,
-        # 九成以上是逐檔 breakdown;/branch 一進站整份下載,手機抓完前「近 1/2 日」都顯示無資料。
-        # 分頁只抓目前區間的 warrant_branches_{tf}.json(列不含 breakdown,其餘鍵與順序與上面
-        # 同一份列逐字相同);點列展開時才抓該股 warrant-stock-details/{id}.breakdown.json——
-        # 那裡的 timeframes[tf][券商] 就是同一個 item 的 breakdown(500 萬列必在 100 萬分片內)。
-        # 舊的全市場檔保留一個版本給尚未更新的前端與 WarrantBranchPanel 的 404 fallback。
+        # 每個區間一個小檔(2026-10-25,docs/51 §3.5):舊的全市場檔 warrant_branches.json 2026-10-22
+        # 已 21.6 MB,九成以上是逐檔 breakdown;/branch 一進站整份下載,手機抓完前「近 1/2 日」都顯示無資料。
+        # 分頁只抓目前區間的 warrant_branches_{tf}.json(列不含 breakdown);點列展開時才抓該股
+        # warrant-stock-details/{id}.breakdown.json——那裡的 timeframes[tf][券商] 就是同一列的
+        # breakdown(500 萬列必在 100 萬分片內)。每檔自報資料日,與 warrant-stock-details 同一個誠實性契約。
+        # 舊全市場檔 2026-10-29 停寫(區間檔已在正式機每輪產出、前端不再讀它);殘留的刪掉,
+        # 否則 Workers 每次部署照樣上傳 20 MB、也會撞單檔 25 MiB 上限。
+        (branches_dir / "warrant_branches.json").unlink(missing_ok=True)
         for tf, rows in results.items():
             (branches_dir / f"warrant_branches_{tf}.json").write_text(json.dumps({
                 "version": 1,

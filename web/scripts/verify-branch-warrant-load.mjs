@@ -2,7 +2,7 @@
  * /branch「權證分點異動」載入狀態 smoke(docs/51 §3.5),手機 390px。
  *
  * 2026-10-25 使用者回報「權證分點近 1、2 日都沒有資訊」:舊頁面一進站就抓 21.6 MB 的
- * branches/warrant_branches.json(cache: no-store),抓完之前與抓失敗時都顯示
+ * branches/warrant_branches.json(cache: no-store;2026-10-29 已停寫),抓完之前與抓失敗時都顯示
  * 「此區間內無淨買賣超 500 萬以上之權證大戶」。本腳本用**正式機那份真檔**重現並驗證修正:
  *   A. 不限速:第一張卡出現的時間、下載量。
  *   B. 限速(預設 Fast 3G 1.6 Mbps / 150 ms):第 2 秒畫面上是「載入中」還是「無資料」;資料到後切 近 2 日。
@@ -323,23 +323,22 @@ try {
     await context.close();
   }
 
-  // ---------- F. 程式碼先於匯出上線:區間檔 404 → 退回舊全市場檔,明細內嵌 ----------
+  // ---------- F. 區間檔 404:顯示錯誤＋重試,不退回舊全市場檔(2026-10-29 移除) ----------
   if (EXPECT_FIX) {
     const context = await newContext(browser, { theme: "dark" });
     const page = await context.newPage();
     ctl.notFound = /warrant_branches_(1d|2d|5d|30d|120d)\.json$/;
     ctl.hits = [];
     await page.goto(URL_WARRANT, { waitUntil: "load" });
-    await cards(page).first().waitFor({ state: "visible", timeout: 60_000 }).catch(() => {});
+    await page.locator('[data-testid="warrant-tf-error"]').first().waitFor({ state: "visible", timeout: 60_000 }).catch(() => {});
     const s = await screenState(page);
-    check("F: 404 on per-timeframe file falls back to the legacy file", s.cards > 0 && !s.error, s);
-    await tfButton(page, "近 5 日").click();
-    await page.waitForTimeout(300);
-    const s5 = await screenState(page);
-    check("F: legacy fills every timeframe (no second legacy download)", s5.cards > 0 && ctl.hits.filter((p) => p === "/data/branches/warrant_branches.json").length === 1, { s5, hits: warrantFilesHit() });
-    await page.locator('[data-testid="warrant-split-columns"]').first().locator("li button").first().click();
-    const n = await breakdownRows(page.locator('[data-testid="warrant-split-card"]').first(), 10_000);
-    check("F: inline breakdown expands without fetching a breakdown file", n > 0 && !ctl.hits.some((p) => p.includes(".breakdown.json")), { n, files: warrantFilesHit() });
+    check("F: 404 on per-timeframe file shows the error panel, not the empty copy", s.error && !s.empty && s.cards === 0, s);
+    check("F: never requests the removed legacy file", !ctl.hits.includes("/data/branches/warrant_branches.json"), { hits: warrantFilesHit() });
+    ctl.notFound = null;
+    await page.locator('[data-testid="warrant-tf-error"] button').first().click();
+    await cards(page).first().waitFor({ state: "visible", timeout: 60_000 }).catch(() => {});
+    const s2 = await screenState(page);
+    check("F: retry after the file appears renders cards", s2.cards > 0 && !s2.error, s2);
     ctl.notFound = null;
     await context.close();
   }

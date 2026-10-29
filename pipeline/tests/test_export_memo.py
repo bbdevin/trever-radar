@@ -214,8 +214,9 @@ class ExportMemoEndToEnd(unittest.TestCase):
         # 第二段確實有東西變了(不是兩次一模一樣的空測試)
         chips = json.loads((live / "stocks" / "chips" / f"{self._stock_with_rows()}.json").read_text("utf-8"))
         self.assertIn("branch_tags", chips)
-        wb = json.loads((live / "branches" / "warrant_branches.json").read_text("utf-8"))
-        self.assertIn("新分點-權證限定", json.dumps(wb, ensure_ascii=False))
+        wb = [(live / "branches" / f"warrant_branches_{tf}.json").read_text("utf-8")
+              for tf in ("1d", "2d", "5d", "30d", "120d")]
+        self.assertIn("新分點-權證限定", "".join(wb))
         # 第三次(沒有任何變動)仍全部命中,輸出不變
         third = self._stats(self._export(live))
         self.assertEqual(third["branch"], n_stocks)

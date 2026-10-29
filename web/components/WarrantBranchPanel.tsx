@@ -129,7 +129,6 @@ const DEEP_LINK_TF_ORDER: readonly Timeframe[] = ["5d", "30d", "120d", "2d", "1d
 const DETAIL_MIN_AMOUNT = 1_000_000;
 /** 明細預設只列金額最大的幾檔:熱門標的一個券商可以有上百檔權證。 */
 const BREAKDOWN_PREVIEW = 10;
-const LARGE_AMOUNT = 5_000_000;
 const DETAIL_CONTRACT_VERSION = 1;
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 /**
@@ -182,7 +181,6 @@ export default function WarrantBranchPanel({
   const [picked, setPicked] = useState<string | null>(null);
   const [showAllWarrants, setShowAllWarrants] = useState(false);
   const [error, setError] = useState(false);
-  const [usingMarketFallback, setUsingMarketFallback] = useState(false);
   const [dataDate, setDataDate] = useState<string | null>(null);
   // 拆檔明細:breakdownSplit = 分片宣告明細在第二個檔;split 載入後才有值。
   const [breakdownSplit, setBreakdownSplit] = useState(false);
@@ -206,38 +204,10 @@ export default function WarrantBranchPanel({
     setSplit(null);
     setSplitError(false);
     setError(false);
-    setUsingMarketFallback(false);
     setDataDate(null);
     dataFetch("/data/branches/warrant-stock-details/index.json")
       .then(async (indexResponse) => {
-        // A code deploy can precede the next VPS export. Only a missing index
-        // may use the established strict payload; other errors stay visible.
-        if (indexResponse.status === 404) {
-          const legacyResponse = await dataFetch("/data/branches/warrant_branches.json");
-          if (!legacyResponse.ok) throw legacyResponse.status;
-          // 全市場檔已改為 v1 wrapper，但程式碼可能早於下一次 export 上線，
-          // 舊的裸 mapping 仍要能讀，且不替它捏造資料日。
-          const legacy = await legacyResponse.json() as unknown;
-          const asMapping = (value: unknown): Record<string, WarrantBranchRow[]> =>
-            value && typeof value === "object" && !Array.isArray(value)
-              ? value as Record<string, WarrantBranchRow[]>
-              : {};
-          const wrapper = asMapping(legacy) as { version?: unknown; data_date?: unknown; timeframes?: unknown };
-          const isWrapped = wrapper.version === 1 && "timeframes" in wrapper;
-          return {
-            // 壞掉的 body 收斂成空 mapping,而不是 null——null 會讓面板永遠停在
-            // 骨架屏,既不顯示資料也不顯示錯誤。
-            rows: isWrapped ? asMapping(wrapper.timeframes) : asMapping(legacy),
-            fallback: true,
-            dataDate: isWrapped && typeof wrapper.data_date === "string" && ISO_DATE.test(wrapper.data_date)
-              ? wrapper.data_date
-              : null,
-            daily: undefined,
-            codes: {},
-            splitFile: false,
-            positions: null,
-          };
-        }
+        // 舊全市場檔的 404 退路 2026-10-29 移除(docs/51 §3.5):索引缺 = 錯誤,不是無資料。
         if (!indexResponse.ok) throw indexResponse.status;
         const index = await indexResponse.json() as WarrantBranchDetailIndex;
         if (
@@ -250,7 +220,7 @@ export default function WarrantBranchPanel({
         // The index is authoritative: never read an old shard for a stock
         // absent from the current snapshot.
         if (!index.stocks.includes(stockId)) {
-          return { rows: {} as Record<string, WarrantBranchRow[]>, fallback: false, dataDate: index.data_date, daily: undefined, codes: {}, splitFile: false, positions: null };
+          return { rows: {} as Record<string, WarrantBranchRow[]>, dataDate: index.data_date, daily: undefined, codes: {}, splitFile: false, positions: null };
         }
         const shardResponse = await dataFetch(`/data/branches/warrant-stock-details/${encodeURIComponent(stockId)}.json`);
         if (!shardResponse.ok) throw shardResponse.status;
@@ -271,15 +241,14 @@ export default function WarrantBranchPanel({
           ? shard.branch_codes
           : {};
         return {
-          rows: shard.timeframes, fallback: false, dataDate: index.data_date, daily: nextDaily, codes: nextCodes,
+          rows: shard.timeframes, dataDate: index.data_date, daily: nextDaily, codes: nextCodes,
           // 舊分片沒有這個鍵,明細仍內嵌在列上(程式碼可能先於下一次 VPS 匯出上線)。
           splitFile: shard.breakdown_split === true,
           positions: normalizePositions(shard.positions),
         };
       })
-      .then(({ rows, fallback, dataDate: nextDataDate, daily: nextDaily, codes: nextCodes, splitFile, positions: nextPositions }) => {
+      .then(({ rows, dataDate: nextDataDate, daily: nextDaily, codes: nextCodes, splitFile, positions: nextPositions }) => {
         if (!cancelled) {
-          setUsingMarketFallback(fallback);
           setDataDate(nextDataDate);
           setByTf(rows);
           setDaily(nextDaily);
@@ -302,7 +271,7 @@ export default function WarrantBranchPanel({
     return (byTf[tf] ?? []).filter((r) => r.underlying_id === stockId);
   }, [byTf, tf, stockId]);
 
-  const minAbs = usingMarketFallback ? LARGE_AMOUNT : DETAIL_MIN_AMOUNT;
+  const minAbs = DETAIL_MIN_AMOUNT;
   const canExclude = !!rows && hasSelfIssued(rows);
   const exclude = excludeSelf && canExclude;
   const buys = useMemo(
@@ -465,11 +434,6 @@ export default function WarrantBranchPanel({
             區間淨額 ≥ {threshold} 萬才列入。排行左買右賣;點選券商後,K 線下方有它的「{WPOS_HEADING}」。
           </p>
           {dataDate && <p className="mt-1 text-[11px] text-muted-foreground max-md:hidden">資料日 {dataDate}</p>}
-          {usingMarketFallback && (
-            <p className="mt-1 text-[11px] text-muted-foreground">
-              100 萬明細快照尚未發布,暫以既有 500 萬門檻快照顯示{dataDate ? "" : ";該快照未提供資料日"}。
-            </p>
-          )}
         </div>
       </div>
 

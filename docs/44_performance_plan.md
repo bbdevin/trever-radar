@@ -308,6 +308,8 @@ home/stocks.json       {version:1, data_date, generated_at, stocks:[逐檔投影
 - 代價:每輪多一次聯集選取(不握鎖)與一次放/拿鎖。放鎖的 1–4 分鐘裡等鎖的下一輪可能先跑——它的 export 一樣帶著本輪已寫入的資料上線;本輪 export 因此晚一點。`flock -n` 型的伺機寫入者(warrant-backfill、adjust-*、repair-window)都先問安靜窗/距下一個排程寫入者,與既有的輪詢放鎖、分點抓取放鎖是同一種暴露,沒有新增種類。
 - 以第一個交易日的 `step fetch-intraday … elapsed=` 與 `export timing: … intraday=` 回填本表。
 
+**正式機回填(2026-10-29 唯讀核對 `~/radar-cron.log`;本節與 Fugle 搬出鎖皆已合 main、VPS 已 sync)**:10-28 分點輪第一段 `export timing: … intraday=2.9s … total=736.7s`(`step fetch-intraday` 鎖外 68 s);同輪第二段 `intraday=3.6s`;10-29 14:05 輪 `intraday=2.8s`、`total=673.5s`。`intraday` 段每輪 ≤ ~4 s,符合上表「應 ≤ ~5 s」;14:05 輪 export 由以前 ~900 s 級降到 ~670 s。
+
 ### 3.6 compute-branch-stats 提速＋第二段順序(2026-10-21;verifier CONFIRMED,已合 main)
 
 > **正式機第一輪(2026-10-21)**:`branch stats timing: read=219s read-wait=83s per-stock-compute=138s aggregate=2s write=17s total=240s`(前三日 638–656 s)。分點輪:股票抓 18:32→19:13、第一段上線 19:30、統計 19:30→19:34、權證寫入 19:34、第二段 export 720 s、第二段上線 19:47:57(10-20 為 19:52、10-19 為 20:24)。20:45 資券輪準時開工(只等資料公布)。
@@ -356,6 +358,8 @@ home/stocks.json       {version:1, data_date, generated_at, stocks:[逐檔投影
 2. **排行統計移出晚上那條鏈**(產品決定):第二段只帶權證,統計留給 00:05 夜間作業算＋上線 → 第二段 ≈ 19:29 + 11 分 ≈ 19:41,代價是排行榜晚幾小時才含今天。
 3. **統計與第一段 export 並行**(唯讀計算,寫入延到第一段上線之後):要先量 VPS 的 `nproc` 與兩者同時的記憶體峰值(export ~700 MB＋統計 ~300 MB,1.7 GB RAM);單核機上會拖慢第一段,不建議在沒量之前做。
 4. **再減讀取量**(若 `read-wait` ≈ `read`):讀取的是全部現股歷史;唯一的辦法是讓分點×個股的全期統計可增量更新(見上面「不做增量」),目前不值得。
+
+**正式機回填(2026-10-29 唯讀核對)**:合 main 後四個分點輪 `branch stats timing:` 皆 `total=238–253s`(10-28:`read=226s read-wait=86s per-stock-compute=142s write=19s`,1,998 檔、114.9 萬列)——落在預估 170–450 s 的偏 CPU 側,`read-wait` 約 `read` 的 38%,讀取已大半被計算蓋住。第二段上線:10-27 19:40、10-28 **19:36:23**(以前 10-20 19:52、10-21 19:48),比預估 19:44–19:49 更早,另一半來自 §3.7。
 
 ### 3.7 export 記憶:第二段匯出沿用第一段的純計算(2026-10-25;程式在分支,未合 main;不動 crontab、不動 VPS 腳本)
 
@@ -419,6 +423,9 @@ home/stocks.json       {version:1, data_date, generated_at, stocks:[逐檔投影
 - 並行 export(`mid-backfill-publish.sh`,不持鎖、同一輸出目錄、同一份記憶檔):各自記自己讀到的摘要與自己寫的 chips 雜湊,最後寫的那份記憶檔生效;另一個 export 改寫過的 chips 雜湊對不上 → 不命中。最壞是少命中,不會沿用錯的。
 - 磁碟:每個輸出目錄一個檔(正式 ~3 MB),7 天沒更新的自動刪。
 - **verifier 修正(2026-10-25,ca8e708 之後)**:①程式雜湊原本在建 `ExportMemo` 時才讀磁碟;正式機 `$REPO/pipeline` 是 bind mount,`sync_code`(git pull)若落在「模組已匯入、記憶還沒建」之間,舊程式的輸出會被存在新程式的雜湊下,下一輪沿用(verifier 以 price_levels/pnl 版本號重現,44 檔不同)。改成**匯入時**快照雜湊,`save()` 前再讀一次磁碟,不同就不存並刪掉舊檔、印 `export memo WARNING:`,`export memo:` 行的 `saved=code_changed`;下一個行程(新雜湊)全算。②`save()` 失敗(磁碟滿、路徑被目錄佔住、`export-memo` 是檔案、rename 衝突)原本會讓整個 export 在寫 groups/branches/rankings 之前中止;改成永不擲例外,印 warning、刪舊檔、`saved=error`,export 照常寫完。tmp 名加 uuid(`docker --init` 下每個容器 PID 相同)。測試:`test_source_changed_on_disk_mid_run_is_not_saved`(開跑前與迴圈中途各改一次磁碟上的原始碼)、`test_save_failure_never_aborts_export`、`test_tmp_names_are_unique_per_save`;4 個對應突變全被抓。
+
+
+**正式機回填(2026-10-29 唯讀核對)**:10-28 分點輪——第一段 export 19:07→19:19 `total=736.7s`(資料日換、分點列變,`export memo: loaded=0 names_ok=0 … branch=0 pnl=0`,全算,與預期相同);第二段 19:26→19:34 **`total=507.3s`**,`export memo: branch=2428 pnl=2428 pctile=2428 levels=2428 chips_bad=0 reloads=0`(全命中),`pnl=0.1s levels=0.0s`、`branch_history=149.1s`(剩讀取)、`write=26.4s`;deploy 56 s → **19:36:23 上線**。第二段 export 720 → 507 s(−30%,與合成庫 −31% 一致、落在預估 500–540 s 內)。同日其他輪也命中:14:45/16:00 輪 `branch=2428 pctile=2428`、`pnl`/`levels` 只重算 K 線有變的 138–154 檔。
 
 ## 4. 明確不做
 
