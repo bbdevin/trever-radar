@@ -1154,6 +1154,10 @@ _ISSUER_TO_BROKER = {
     # 摩根大通。VPS 上確認的 SQL 見 docs/51 §2.6。
     "摩通": "摩根大通",
     "摩根": "摩根大通",
+    # 2026-10-29 元富:合併後分點只剩「台新」(元富代號 592x 已不在 branch_dim),但權證簡稱仍印「元富」
+    # (未到期 254 檔、到期到 2028)。VPS 唯讀實測 10 月起元富權證的分點列,第一名是「台新」總公司
+    # 854 列、次名國票證券 214——造市席位就是台新,所以元富權證的自家 = 台新。
+    "元富": "台新",
 }
 # 分點名稱的券商段 → 正規化券商名:「國泰綜合-敦南」→ 國泰、「台北富邦-建國」→ 富邦、
 # 「法商法國興業」→ 法國興業(國別前綴先剝掉)。
@@ -1185,6 +1189,8 @@ def _branch_broker_group(branch_name: str) -> tuple[str, bool]:
     name = re.sub(r"^\(.*?\)", "", branch_name.strip())
     head, sep, _ = name.partition("-")
     head = _BRANCH_COUNTRY_PREFIX_RE.sub("", head)
+    # 停業分點來源標「(停)」(「港商法國興業(停)」):券商仍是同一家,自家判定照算。
+    head = re.sub(r"\(停\)$", "", head)
     if head.endswith("證券") and len(head) > 2:
         head = head[:-2]
     return _BRANCH_HEAD_ALIASES.get(head, head), not sep

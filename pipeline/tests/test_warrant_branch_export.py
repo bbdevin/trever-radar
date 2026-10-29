@@ -555,6 +555,13 @@ class WarrantBranchDetailExportTests(unittest.TestCase):
         self.assertTrue(_is_self_issued("摩根大通", "台積電摩通5F購06"))
         self.assertTrue(_is_self_issued("美商摩根大通", "台積電摩根5F售07"))
         self.assertFalse(_is_self_issued("摩根士丹利", "台積電摩通5F購06"))
+        # 元富(2026-10-29):合併後造市席位是台新(VPS 實測);停業分點的「(停)」不影響券商名。
+        self.assertEqual(_warrant_issuer_group("A50正2元富44售01"), "台新")
+        self.assertTrue(_is_self_issued("台新", "台積電元富5G購08"))
+        self.assertTrue(_is_self_issued("台新-台北", "台積電台新5G售09"))
+        self.assertFalse(_is_self_issued("新光-台中", "台積電元富5G購08"))
+        self.assertEqual(_branch_broker_group("港商法國興業(停)"), ("法國興業", True))
+        self.assertTrue(_is_self_issued("港商法國興業(停)", "台積電法興5B售02"))
         self.assertFalse(_is_self_issued("港商麥格理", "台積電凱基5C購02"))
         self.assertFalse(_is_self_issued("凱基-台北", "兩百萬購"))     # 解不出發行商 → 不猜
 

@@ -12,23 +12,26 @@
   - `docs/44` §3.5/§3.6/§3.7:正式機數字已回填(第二段 export 720 → 507 s、統計 658 → ~245 s、第二段上線 19:52 → 19:36)。
   - 週備份重試、晚到法人補匯:尚未遇到觸發條件(log 無 `upload attempt`/`step import-insti-retry`),維持待觀察。
 - **舊 `branches/warrant_branches.json` 停寫**:正式機已每輪產出五個區間檔,export 改為不寫並刪除殘留(Workers 不再上傳 ~20 MB,也遠離單檔 25 MiB 上限);`/branch` 與個股權證面板的舊檔 fallback 移除,404 一律顯示錯誤＋重試。驗證:pytest 全套 1936 passed＋38 skipped、web node 471 passed、`tsc`、`next build`。
-- **待人類**:無。push 後 Pages 部署前端;VPS 每輪開頭 `sync_code` 自動 `git pull`,push 後第一輪 export 就會刪掉舊檔,確認 `ls ~/trever-radar/web/public/data/branches/warrant_branches.json` 不存在即可。
+- **標題標籤**:10 月各條目標題的「分支,未合 main」「crontab 待安裝/待人類套用」「SQL 待執行」已就地改為「已合 main(10-29 核對)」等;條目內文的「待人類」照原文保留作紀錄,現況以本條為準。
+- **權證自家發行對照補兩項**(`docs/51` §2.6):VPS 唯讀查 107,628 檔權證的發行商簡稱(15 家),逐一對到分點券商名。①**元富 → 台新**:合併後分點只剩「台新」(元富代號 592x 已不在 `branch_dim`),元富權證未到期仍 254 檔;10 月起元富權證分點列第一名是「台新」總公司 854 列(次名國票 214)= 造市席位,修正前元富權證一律不算自家。②停業分點「港商法國興業(停)」去掉「(停)」後才對得到法興權證。摩根大通:台灣無 JPMorgan 發行權證,「摩通/摩根」別名無作用、保留。
+- **VPS 磁碟**(唯讀盤點):剩 4.7 GB(8 月 7–8 GB、近週 5–7 GB);radar.db 5.7 GB、freelist 0(VACUUM 無可回收);docker 每日已 prune。**`/swapfile2` 2 GB 不在 fstab、未啟用(7/14 建立後沒用過)**,刪掉可回到 ~6.7 GB——需 sudo,見「待人類」。
+- **待人類**:①(建議)`sudo rm /swapfile2`(先 `cat /proc/swaps` 確認不在使用中)。②無其他。舊 `warrant_branches.json` 已於 10-29 16:37 那輪 export 刪除、deploy rc=0(已核對)。
 
-## 2026-10-25 /branch 權證分點「近 1、2 日沒有資訊」:載入中被當成無資料(`docs/51` §3.5;分支,未合 main;不動 crontab)
+## 2026-10-25 /branch 權證分點「近 1、2 日沒有資訊」:載入中被當成無資料(`docs/51` §3.5;已合 main(10-29 核對);不動 crontab)
 
 - **根因**:正式資料有(10-22:1d 41 列、2d 80 列)。分點頁一進站就抓 21.6 MB 的 `warrant_branches.json`(gzip 2.57 MB,九成是逐檔 breakdown;`no-store` 每次重抓),抓完前與抓失敗時都顯示「此區間內無淨買賣超 500 萬以上之權證大戶」。Playwright 正式真檔 390px Fast 3G:修正前 7.3→24.4 s 之間 1d/2d 都顯示「無資料」;500 時永遠「無資料」。
 - **修正**:export 另寫 `branches/warrant_branches_{1d,2d,5d,30d,120d}.json`(列去掉 breakdown,其餘逐字相同;1d 6.4 KB、120d 244 KB);頁面只在權證分頁抓目前區間,展開列才抓該股既有的 `warrant-stock-details/{id}.breakdown.json`;每區間 loading(骨架)/error(錯誤＋重試)/ready 分開,只有真的空陣列才顯示空文案。新檔 404 才退回舊檔。舊全市場檔保留一個版本,下一輪另案移除(Workers 單檔 25 MiB 上限已近)。
 - **驗證**:pytest 全套 1974 passed(新 `test_per_timeframe_files_match_the_legacy_market_payload`);web node 全套 473 passed(新 `warrantMarket.test.ts` 11 項);`tsc`、`next build`;`web/scripts/verify-branch-warrant-load.mjs` 31/31(含 verifier 指出的「畫面開著時又部署」兩情境:明細較新 → 重抓區間檔收斂;展開中切區間 → 自動補抓不留骨架);截圖 `docs/evidence/51_warrant_positions/branch-390-{dark,light}-warrant-*.png`。
 - **待人類**:合 main(前端走 Pages)＋VPS 下一輪 export 後,確認正式機有 `branches/warrant_branches_1d.json`;手機開 `/branch?tab=warrant` 看 1d/2d 立即出卡。
 
-## 2026-10-25 週備份上傳失敗會等候重試,且上傳期間不握 DB 鎖(`docs/31` §4;分支,未合 main;VPS `sync_code` 後生效,不動 crontab)
+## 2026-10-25 週備份上傳失敗會等候重試,且上傳期間不握 DB 鎖(`docs/31` §4;已合 main(10-29 核對);VPS `sync_code` 後生效,不動 crontab)
 
 - **事故**:10-24 05:17 保留策略永久刪掉 `radar-20261003.db.gz`(2.1 GB)後,`rclone copyto radar-20261024.db.gz`(1.45 GB)一秒內失敗 4 次 `403 storageQuotaExceeded`;本機留 1.4 GB 快照,VPS 磁碟剩 3.7 GB。10-25 手動重跑同一行立即成功(Drive 13.06 / 15 GiB)→ Google 配額帳在永久刪除後有延遲。
 - **修正**(`vps/scripts/weekly-backup.sh`):上傳失敗 → 等 5、10 分鐘重試,共 3 次(`BACKUP_UPLOAD_ATTEMPTS` / `BACKUP_UPLOAD_RETRY_SLEEPS` 可調),每次重試前 `rclone about` 記 Drive 剩餘;gzip 完就關 fd 9 放 DB 鎖,上傳/重試改由 `/tmp/radar-backup.lock` 防重入。最終失敗 high 通知寫明原因、本機保留檔與 MiB、VPS 磁碟剩餘 MiB、已刪哪些舊快照、手動補傳指令(exit 4)。checkpoint → integrity_check → gzip 順序與「大小比對通過才刪本機」不變。
 - **驗證**:`test_weekly_backup_retention.py` 新增 bash 實跑 harness(假 docker/rclone/curl/sleep,暫存 repo):403 兩次後成功(3 次 copyto、睡 300/600、about 3 次、上傳時 DB 鎖空著、本機刪除、一則成功)、永遠失敗(exit 4、一則 high 含 storageQuotaExceeded/MiB/磁碟/已刪檔、本機保留)、一次成功不睡、integrity 不過不碰 rclone;靜態測試鎖住放鎖位置。
 - **待人類**:合 main、VPS `sync_code`;下週六 05:00 後 `grep -E 'upload attempt|drive free before retry|db lock released' ~/radar-cron.log`。
 
-## 2026-10-25 export 記憶:第二段匯出沿用第一段的純計算(`docs/44` §3.7、`docs/47` §8.10;分支,未合 main;不動 crontab、不動腳本)
+## 2026-10-25 export 記憶:第二段匯出沿用第一段的純計算(`docs/44` §3.7、`docs/47` §8.10;已合 main(10-29 核對);不動 crontab、不動腳本)
 
 - **問題**:晚上分點輪第二段 export 720 s(10-21:19:34→19:46),但兩段之間現股分點列、日 K、分位表都沒變,branch_history/pnl/pctile/levels(正式 ~180+93+70+6 s)每次重算。
 - **做法**:`radar/export/export_memo.py`:各段輸入照讀,對讀到的值算摘要(含程式雜湊、資料日),與上一次相同就沿用上一次的輸出(chips 檔切文字,雜湊核對;price_levels 存記憶檔);分點名查表變了/中途重讀 → 分點段不沿用。記憶檔 `data/export-memo/*.json`(~3 MB,每次覆寫,7 天清)。`RADAR_EXPORT_MEMO=0` 關。
@@ -36,14 +39,14 @@
 - **正式機預估**:第二段 export 720 → 約 500–540 s,第一段 +10–20 s;第二段上線 ~19:44–19:45(原 19:48)。剩下的是讀現股分點列本身;再省要「信任 DB 鎖不讀」或 DB 加變更計數(需人類決定)。
 - **待人類**:合 main、VPS `sync_code`;第一個分點輪 `grep -E 'export (timing|memo):' ~/radar-cron.log` 回填 `docs/44` §3.7。
 
-## 2026-10-24 晚到的三大法人當晚上線(`docs/47` §8.10、`docs/08` §0.1;分支,未合 main;VPS `sync_code` 後生效,不動 crontab)
+## 2026-10-24 晚到的三大法人當晚上線(`docs/47` §8.10、`docs/08` §0.1;已合 main(10-29 核對);VPS `sync_code` 後生效,不動 crontab)
 
 - **缺口**(下方 2026-10-22 記下):分點輪只在開頭(~16:30)匯一次法人;17:10 仍缺時下一次是 22:30,而 22:30 兩段都完整就 `publish skipped` → 晚到的上市法人隔天才上網站。
 - **修正**:`daily-branches.sh` `insti_catch_up`:每輪 `compute-scores` 之前(抓完分點、握鎖)唯讀查今天上市＋上櫃法人;缺 → 補匯一次(`--require`;75 只寫 log、其他碼 warn、永遠續跑),第一次上線就帶著它。評分時仍缺 → `/tmp/radar-branch-round-<日>.done.insti-missing`;22:30 看到標記且法人已到齊 → 不收工,只刷新評分重新上線。`daily-insti.sh` 17:10 那則改寫成「晚間分點輪上線前會再補匯一次，仍缺則 22:30 第二輪再試…」。
 - **驗證**:`test_daily_branches_two_phase.py` 新增 7 個 bash 實跑情境;`test_daily_branches_timing.py` 步驟表加 `import-insti-retry`;pytest 全套見 commit。
 - **待人類**:合 main、VPS `sync_code`;第一個上市法人晚到的交易日 `grep -E 'step import-insti-retry|三大法人 [0-9-]+' ~/radar-cron.log`。
 
-## 2026-10-24 權證回補吞吐地板:已到期空改用實測每次請求成本扣除(`docs/30` §5.3;分支,未合 main;不動 crontab)
+## 2026-10-24 權證回補吞吐地板:已到期空改用實測每次請求成本扣除(`docs/30` §5.3;已合 main(10-29 核對);不動 crontab)
 
 - **事故**:10-23 正式一塊 `14402s, fetched=2407, empty=5805, empty_expired=5458` → `collapse 1.48 rows/s over 3486s` → 暫停檔又建。地板每個已到期空只扣 2 × SLEEP,實際一次請求 ~1.03–1.05 s,扣不夠。
 - **做了什麼**:CLI 摘要行多 `requests=`(實際請求數,skipped_expired 為 0);`warrant_throughput_verdict` 多 `REQUESTS` 參數,扣 `empty_expired × 2 × (ELAPSED/REQUESTS)`;`requests=` 解析不到/對不上 → 退回 SLEEP 下界,`empty_expired=` 解析不到 → 不扣(都是誤報方向)。
@@ -51,7 +54,7 @@
 - **提醒**:10-23 的 1.61 只比地板 1.5 高一點(舊日期冷門權證 ~2 列/檔);若再誤報,調舊日期地板,不是再多扣時間。
 - **待人類**:合 main 後 VPS `sync_code`,再刪 `/tmp/radar-warrant-backfill.pause`。
 
-## 2026-10-22 權證分點回補:empty 要兩站確認＋空爆量斷路器＋調查/撤銷工具(`docs/30` §5.3;分支,未合 main;不動 crontab)
+## 2026-10-22 權證分點回補:empty 要兩站確認＋空爆量斷路器＋調查/撤銷工具(`docs/30` §5.3;已合 main(10-29 核對);不動 crontab)
 
 - **事故**:12:46 吞吐塌陷告警(08-06..08-12 那塊 empty=5770/13,734 請求),暫停檔已建。回補的 empty 是終端狀態、單站說了算,HTTP 200 錯誤頁與真空分不出來。
 - **做了什麼**:empty 須兩站零列;未到期權證 200 窗口 ≥50% 空 → 停塊、窗口改回 error、exit 1;NoDataError 訊息帶 host/bytes;摘要加 `empty_expired=`/`recovered=`;`tools/probe_backfill_empties.py`(唯讀)、`tools/unrecord_warrant_empties.py`(預設 dry-run)。
@@ -60,7 +63,7 @@
 - **後續**:地板扣掉已到期空的時間(`vps/scripts/warrant-throughput.sh`,bash 測試);每日未到期先抓;已到期權證較新兩天連續空 → 更舊日期跳過(`skipped_expired`);告警文字指向唯讀報表。
 - **待人類**:合 main 後 VPS `sync_code`,再刪 `/tmp/radar-warrant-backfill.pause`。
 
-## 2026-10-22 維運通知降噪＋瞬時錯誤重試(分支,未合 main;VPS `sync_code` 後生效,不動 crontab)
+## 2026-10-22 維運通知降噪＋瞬時錯誤重試(已合 main(10-29 核對);VPS `sync_code` 後生效,不動 crontab)
 
 - **事故**:10-22 ops 主題一天收到 5 則「注意」,全是預期內或瞬時:08:00 夜盤上線失敗(Cloudflare `assets-upload-session` API 瞬時錯,10-12 夜也有一次 malformed response);14:07／14:56 `import-index` 碼 75(台指期一般時段／櫃買指數還沒出);16:12 個股期貨當日 TAIFEX `stockLists` ReadTimeout;16:15 `import-index` 碼 1(TAIFEX `futDataDown` 520)。
 - **修正**:①`lib.sh` `deploy_data`:`wrangler deploy` 失敗才重試,最多 3 次、20→40 秒,每次一行 `deploy attempt N/3 rc=`;用完回傳最後的碼(呼叫端處置不變)。DB 鎖**不**在 deploy 前放(下一輪 export 會改寫上傳中的目錄);最壞多握鎖約 7 分,實測那類錯誤約多 1–1.5 分。②`providers/taifex.py`:`stockLists`/`futDataDown` 逾時/連線中斷/5xx 重試 2 次(5→15 秒),4xx/解析錯誤不重試。③新 `run_step_or_warn_pending`:14:05／14:45 的 `import-index` 碼 75 只寫 log;16:00 法人輪是當天最後一次匯指數,75 照舊 warn。④法人輪:個股期貨當日錯誤只寫 log(每輪最多試 2 次錯誤),TPEx 520 開頭那則併入結尾一則;過時的「17:30 分點輪」全改 16:30(含後果句)。「三大法人至 17:10 仍未齊」**刻意保留 warn** 並改寫成實話(見下方已知缺口)。⑤分點輪:個股期貨當日錯誤只在 22:30 第二輪 warn;休市那則第二輪只寫 log。通知一覽表 `docs/08` §0.1。
@@ -68,14 +71,14 @@
 - **已知缺口(2026-10-24 已修,見上方同名條目)**:分點輪(16:30 起)只在**開頭**匯一次 `quotes,insti`,常早於上市法人公布;法人輪 17:10 截止仍缺時,下一次匯入是 22:30 第二輪,而第二輪在第一輪覆蓋率 1.0 且權證段 ok 時 `publish skipped` 直接收工 → 晚到的上市法人可能要到隔天 14:05 才上網站。可能的修法(未做):分點第一輪寫入前再匯一次 insti,或第二輪「有法人變動就刷新上線」。
 - **待人類**:合 main;決定上面那個缺口要不要修。
 
-## 2026-10-21 長回補讓路平日 16:00／20:45、週一 11:00(分支,未合 main;VPS `sync_code` 後生效,不動 crontab)
+## 2026-10-21 長回補讓路平日 16:00／20:45、週一 11:00(已合 main(10-29 核對);VPS `sync_code` 後生效,不動 crontab)
 
 - **事故**:10-20 `warrant-backfill` 19:55 開的塊握 DB 鎖到 21:00,20:45 `daily-margin` 等鎖、21:02 才開工(晚 ~17 分)。根因同 10-15:overlay 不認得 cron 起點早於安靜窗的輪(20:45 vs 窗 21:15;16:00 `daily-insti` vs 窗 16:05;週一 11:00 `weekly-refdata` 完全沒有)。
 - **修正**:`lib.sh` `WEEKDAY_SHORT_JOBS` 加 `1600-1605 2045-2115`;新增週一限定 `weekly_refdata_at`(11:00–11:29);`quiet_window_at` 不動;`adjust-incremental.sh` 排除清單同步(仍只拿掉自己的 13:15,13:15 預算維持 50 分)。warrant-backfill(mid 清空)預算:平日 19:55 **65 → 35 分**(21:00 → 20:30 收工);15:40 在安靜窗內前後皆略過,15:46 答 19 → 14 分(前後皆低於 20 分略過);週一 09:20 **220 → 85 分**(13:00 → 10:45 收工)。
 - **驗證**:新測試(16:00/20:45 槽、19:55/15:46/週一 09:20 前後預算、週末不變、`EveryCrontabWriterIsKnownTest` 逐條核對 `crontab.example` 寫 DB 排程起點、adjust 排除清單含新槽);pytest 全套見 commit。
 - **未處理(已知)**:16:30 分點輪探測到 20:30、16:00 法人輪輪詢到 17:10,輪詢期間放鎖;安靜窗 16:51–17:34、19:31–20:44 之間開的塊(mid 清空時預算 ≤29/≤59 分)仍可能讓輪詢到資料的那一輪等鎖數十分鐘(不略過)。
 
-## 2026-10-21 晚上第二段上線提速:compute-branch-stats 逐位元不變提速＋順序(`docs/44` §3.6、`docs/47` §8.10;分支,未合 main、未上線;不動 crontab)
+## 2026-10-21 晚上第二段上線提速:compute-branch-stats 逐位元不變提速＋順序(`docs/44` §3.6、`docs/47` §8.10;已合 main 並上線(10-29 核對);不動 crontab)
 
 - **為什麼**:10-20 第一段 19:29 上線後,`compute-branch-stats` 658 s ＋第二次 export 660 s,第二段 19:52 才上線。
 - **做了什麼**:①`compute_branch_stats.py` 逐檔迴圈改寫法(逐列不組 dict、只有同名同日多列才走 `combine`;隔日沖觀察吃按需組 dict 的視圖;前瞻報酬/買點分位依 (個股, 事件日) 快取;讀取由背景執行緒預讀、與計算重疊),SQL 逐字不變、全量重算不變(不做增量,理由見 §3.6)。`branch stats timing:` 多 `read-wait=`。②`daily-branches.sh` 第二段改「排行統計 → 權證收尾 → 匯出」:統計不讀權證列,先算結果相同,與還在跑的權證抓取重疊;第一段不受影響。
@@ -83,7 +86,7 @@
 - **預期**:正式機統計 658 → 約 170–450 s,第二段 ~19:44–19:49(省 3.5–8 分)。第二段 export 只重算會變的部分(再省 6–7 分)只提案(§3.6「沒做的」)。
 - **待人類**:合 main;第一個交易日 grep `branch stats timing`(`read=`/`read-wait=` 決定是 CPU 還是磁碟)與第二段 `deploy done` 時刻,回填 §3.6。
 
-## 2026-10-20 五項小修(分支,未合 main、未上線;不動 crontab)
+## 2026-10-20 五項小修(已合 main 並上線(10-29 核對);不動 crontab)
 
 - **①分點平行爬 resume 測試偶發失敗**(`'incomplete' != 'ok'`):零延遲時哪幾站分到工作由執行緒排程決定;兩個活站都抽到真空(或唯一活站髒、另一站 done=0 只分到一檔真空)時,`_confirm_empties` 依 `docs/47` §8.8 第 7 點的保守規則標 failed。判定為**只修測試**:正式機合法的空幾乎不存在、後果只是一次重爬,放寬會多一條假空寫入的路。resume 測試釘死成單站就緒;兩種排程以 `test_dirty_hosts_without_a_second_opinion_mark_failed_by_design` 定格。本機重現:修正前 8 程序併跑 800 次 1 次失敗(log 正是兩活站互落 failed;單程序 1,000 次 0),修正後併跑 800 次＋單程序 300 次 0 失敗。
 - **②摩根大通自家發行**:`_ISSUER_TO_BROKER` 加「摩通」「摩根」→ 摩根大通(離線無 JPMorgan 權證簡稱可驗;VPS 唯讀確認 SQL 見 `docs/51` §2.6)。
@@ -93,21 +96,21 @@
 - **驗證**:pytest 全套 1884 passed;web lib 測試 462 pass;`tsc`;`next build`。
 - **待人類**:合 main;②在 VPS 跑 `docs/51` §2.6 的 SQL 確認簡稱。
 
-## 2026-10-20 特定分點晚間手機推播(ntfy)(`docs/52` §9;程式完成於分支、未合 main;預設關,要人類加主題)
+## 2026-10-20 特定分點晚間手機推播(ntfy)(`docs/52` §9;已合 main(10-29 核對);已開通(10-29 核對))
 
 - **需求**:每個交易日晚上不開 App 就知道 富邦-新店／永豐金-內湖／元大-松江 今天有沒有動作。
 - **做了什麼**:`radar watch-push`(`pipeline/radar/export/watch_push.py`)只讀已匯出的 `branches/watch/`、不開 DB,規則同前端(含權證):標題資料日＋主分點,內文 ≤6 行(主分點買超/全部同買/主分點賣超檔數、同步最多的 3 檔買超＋1 檔賣超與各分點張數/權證金額、持有量大、說明行:單位/權證是否算進今天/分點已匯入 X/Y),點通知開 `/watchlist?tab=branches`;`--dry-run` 預覽、`--force` 測試。`lib.sh` `watch_push`(同 futures_digest 形狀:唯讀掛載、`--init`、60 s TERM＋10 s 強制結束(最長約 70 s)、永不失敗)接在 `daily-branches.sh` `publish_site` 的 deploy 之後;送到 **另一個** ntfy 主題 `WATCH_PUSH_NTFY_TOPIC`(vps/.env,沒設 = 關);組合 `WATCH_PUSH_BRANCHES`(選填)。同一資料日最多三則(第一則／權證算進今天後名單有變／之後名單又變),名單沒變不送;狀態 `data/watch-push-state.json` 只在 ntfy 確認後寫。
 - **驗證**:`pipeline/tests/test_watch_push.py` 39 項(訊息逐字、排序、截斷、誠實行、禁用詞、去重三則上限、CLI 協定、假 docker/curl 實跑 helper、接線);相關腳本測試 643 項通過。
 - **待人類**:合 main;照 `docs/52` §9.4 產生主題、加進 vps/.env、手機訂閱、`--dry-run` 預覽、`watch_push --force` 送一則測試。App 裡改組合不會改推播(推播用 VPS 的 `WATCH_PUSH_BRANCHES`,§9.1)。
 
-## 2026-10-20 特定分點組合綁帳號(`docs/52` §6;前端完成於分支、未合 main;SQL 已審、待人類執行;併入 v3.11)
+## 2026-10-20 特定分點組合綁帳號(`docs/52` §6;已合 main(10-29 核對);SQL 已執行(10-29 核對);併入 v3.11)
 
 - **需求**:自選「特定分點」選的分點組合(原本只存本機 `watched_branch_set_v1`)換裝置也跟著帳號走。
 - **做了什麼**:①SQL `docs/sql/20261019160000_create_watched_branch_sets.sql` 資安審查並就地修正(update `using` 補 approved、函式 NULL → false、整檔交易、限制 drop/add 可收斂、函式 execute 先全收回再給 authenticated、加回滾);審查紀錄 `docs/52` §6.2。②前端 `web/lib/watchedBranchSync.ts`(本機格式、合併、錯誤分類、序列化 upsert)＋`watchedBranchSet.ts` hook 接 Supabase(同一個 publishable key 客戶端,只在 approved 時讀寫);表不存在／沒權限 → 本次載入停用雲端、不重試不洗 console,組合照存本機。合併:雲端優先,本機較新的未上傳改動勝出並上傳(`docs/52` §6.1)。③`normalizeSet` 改為也濾掉控制字元(與 SQL 同一條規則)。
 - **驗證**:web node `watchedBranchSync.test.ts` 25 項(驗證與 SQL 同規則、舊格式、合併各情境、錯誤分類、表不存在不重試、斷線只 warn 一次、連續改動只留最新、讀雲端期間的改動不被蓋、讀雲端期間已寫成功時丟掉舊列(verifier 回報的競態)、換帳號、時間戳單調);本機 PostgreSQL 16＋最小 Supabase 環境實跑 SQL 兩次 46 項 RLS／權限／限制／回滾檢查全過;`tsc`、`next build`(bundle 無 secret／service_role);Playwright 390px `web/scripts/verify-watched-branch-sync.mjs` 22 項(表不存在 → 本機可改、重新整理保留、每次載入一個 GET 零 POST、無 console 訊息;假表 → 載入雲端、upsert `on_conflict=user_id` merge-duplicates、body 只有本人 user_id＋組合、空本機的另一台拿到雲端版;離線較新改動載入時上傳),截圖 `docs/evidence/52_watched_branches/watchlist-390-dark-sync-*.png`。
 - **待人類**:在 Supabase SQL Editor 執行上述 SQL(步驟、驗證、回滾見 `docs/52` §6.3;建議在合 main 前或同一天,changelog 3.11 已寫「跟著帳號走」);合 main。
 
-## 2026-10-20 特定分點:權證同買／同賣＋均價(估)(`docs/52` §8;程式完成於分支、未合 main、未上線;v3.11)
+## 2026-10-20 特定分點:權證同買／同賣＋均價(估)(`docs/52` §8;已合 main 並上線(10-29 核對);v3.11)
 
 - **需求**:「富邦新店買雙鴻、永豐金內湖買權證雙鴻,這樣也算同買」;「可以預估平均成本更好」。
 - **做了什麼**:①export:`_export_warrant_branches` 多一個 `on_window` 回呼,把 `_WarrantWindowScan` 已算好的逐日認購／認售金額與 docs/51 持有摘要交給 `BranchWatchCollector.add_warrants`(不另掃),取「現股分點日」那一天、|金額| ≥ 100 萬才留;分片新鍵 `warrants`、index 新鍵 `warrant`(資料日、`counted`)。現股列加第 10 欄均價(估)(pnl-avgcost-v1,缺收盤 → null)。②前端:認購淨買 → 同買;認購淨賣、認售淨買 → 同賣;認售淨賣只列不計;牛熊不算。「含權證」鈕(預設開,記本機);主分點只買認購也符合主分點買超。權證膠囊「權證 認購 +320萬」,權證日比現股舊時標日期、不計、上方琥珀提示。金額排序含權證金額。均價(估)與現價差、權證仍持有(估)與換算均價(沿用 docs/51)、估計仍持有檢視可依「現價對均價」排序。
@@ -115,7 +118,7 @@
 - **verifier 修正(同日)**:①夜間權證池加入上櫃(`importer.import_branch_trades` 的 `--warrant-turnover-min` 池 `w.market IN ('twse','tpex')`;正式機 10-19 上櫃 ≥100 萬 171 檔,+~3–5 分,只延後第二段上線,`docs/47` §8.10 第 5 點)。②權證段 `branch_warrant_pool` 最後一輪不是 ok → 權證「未完整」、不計。③畫面寫明收集範圍(成交 ≥100 萬、上市＋上櫃、進前 15 大),沒收集到的標「權證:未收集」。④認售淨賣改中性文案「方向不明確,只列出不計」。
 - **待人類**:合 main;第一輪看 `[warrants] branch trades pool:` targets(≈ 上市＋上櫃)與 `export watch: … warrant_rows=… warrant_day=…`。
 
-## 2026-10-20 分點輪兩段式抓取:現股先上線、權證背景補(`docs/47` §8.10;程式完成於分支、未合 main、未上線;不動 crontab)
+## 2026-10-20 分點輪兩段式抓取:現股先上線、權證背景補(`docs/47` §8.10;已合 main 並上線(10-29 核對);不動 crontab)
 
 - **為什麼**:10-19 一次抓 2,743 檔(≈1,960 股票 + ≈783 權證)18:31→19:47,第一段 20:02 才上線;使用者主要等的是現股分點,而權證一直排在抓取的最後 ~14 分鐘。
 - **做了什麼**:`import-branch-trades --phase {all,stocks,warrants}`(預設 all = 舊行為);`daily-branches.sh` 前景只抓股票池 → 寫入 → 評分 → **第一段上線**,權證池在股票抓完時於背景抓(子 shell 關 fd 9、留來源鎖、同一套確認空/checkpoint/SIGTERM/硬上限),第一段之後 `warrant_phase_finish` 收回來寫入,再算排行統計、第二段上線、完成標記。權證段任何失敗只 warn(權證頁錨在前一個有列的日子,自述資料日),不擋現股。股票段照舊寫 `branch`/`branch_coverage`(failed 現在只算股票,`docs/52` import_complete 不再被權證失敗誤判);權證段另記 `branch_warrant_pool`。22:30:股票(標記 ratio=1.0)與權證(`branch_warrant_pool` 最新一列 ok)各自判斷,兩段都完整才收工、只缺權證就只抓權證並在評分前寫入刷新上線。本輪中止時 EXIT trap 先 TERM 背景抓取(checkpoint 給下一輪續抓)。個股頁權證表空狀態文案改「尚無今日分點資料…約 20 分鐘後補上」。
@@ -124,7 +127,7 @@
 - **預估**:股票抓完 ~19:33 → **第一段 ~19:48(早 ~13–15 分)**;權證 ~19:48 抓完 → 第二段 ~20:11(早 ~13 分)。
 - **待人類**:合 main(VPS `sync_code` 即生效);第一個交易日依 `docs/47` §8.10「核對」grep 回填。換版當晚 22:30 會因為還沒有 `branch_warrant_pool` 列而多抓一次權證(~15 分)並刷新上線,一次性。
 
-## 2026-10-19 Fugle 抓取搬出 export-json 的 DB 鎖(`docs/50` §3.1、`docs/44` §3.5;程式完成於分支、未合 main、未上線;不動 crontab)
+## 2026-10-19 Fugle 抓取搬出 export-json 的 DB 鎖(`docs/50` §3.1、`docs/44` §3.5;已合 main 並上線(10-29 核對);不動 crontab)
 
 - **為什麼**:`export timing:` 的 `intraday` 段(spark_day 當日 1 分 K + 分K 補缺日,逐檔打 Fugle)在握 `/tmp/radar-db.lock` 時跑:14:05 輪 242 s、晚上第一次 export 71–122 s。
 - **做了什麼**:新 CLI `radar fetch-intraday`(`export/intraday_prefetch.py`):用 export 同一段程式唯讀選聯集(`export_json(union_only=True)`,不 init_db、不寫檔),抓進 `data/spark_day.json`(改 tmp+rename)與 `data/intraday5/`(`update_intraday(write_out=False)`),閘門/120 次上限/節流不變。`export-json` 預設 `fetch=False`:只讀快取、快取唯讀;`--fetch` 或 `RADAR_EXPORT_FETCH=1` = 舊行為。`lib.sh` 新 `prefetch_intraday`(放 DB 鎖 → 排隊 `/tmp/radar-intraday-fetch.lock` → `fetch-intraday` 硬上限 900 s → 拿回鎖 ≤3600 s;失敗只 warn),接在五支日更輪 `export-json` 的前一行(分點輪只在第一次上線前一次)。`RADAR_EXPORT_FETCH` 經 `--env-file` 帶進容器。
@@ -132,7 +135,7 @@
 - **預估**:14:05 輪少握鎖 ~235 s、分點輪第一段 ~65–115 s,其餘輪 0–20 s;每輪多一次不握鎖的聯集選取(估 20–60 s 牆鐘)。
 - **待人類**:合 main(VPS `sync_code` 即生效,不動 crontab);第一個交易日看 `step fetch-intraday … elapsed=` 與 `export timing: … intraday=` 回填 `docs/44` §3.5。出事回滾:`vps/.env` 加 `RADAR_EXPORT_FETCH=1`。
 
-## 2026-10-19 自選「特定分點」(`docs/52`;程式完成於分支、未合 main、未上線;v3.10)
+## 2026-10-19 自選「特定分點」(`docs/52`;已合 main 並上線(10-29 核對);v3.10)
 
 - **需求**:使用者要每天快速看到 富邦-新店(主)、永豐金-內湖、元大-松江 這組分點今天在哪些股票同步買超／賣超,以及仍持有很多的股票;可按鈕篩選、可增減分點。
 - **做了什麼**:①export 新增 `branches/watch/{index,s00..s63}.json`:搭個股迴圈已讀的分點列就地摘要,不另掃 `branch_trades_raw`;每分點當日列＋近 60 交易日估計仍持有(歸 0 不往負推)與進場日;當日沒列的寫 null(未知,不是 0)。②自選頁新增 `自選股｜特定分點 N` 分頁(`?tab=branches`):分點組合編輯(搜尋加入、移除、換主,最多 6)、買超／賣超／估計仍持有、四種組合按鈕＋可見定義句、四種排序、「持有量大」(≥1,000 張或 ≥20 日均量)、誠實註記。③組合目前只存本機;綁帳號的 Supabase SQL 只寫草稿 `docs/sql/20261019160000_create_watched_branch_sets.sql`(**未執行**)。不做手機通知。
@@ -140,13 +143,13 @@
 - **verifier 修正(2026-10-19)**:①分點只匯入一部分時(≥50% 就上線,22:00 才補齊),整檔還沒匯入的股票今天顯示「今天尚未匯入」而非「未進前 15 大」,頁面上方寫「分點已匯入 X / Y 檔,其餘待下一輪更新」(index `coverage`、個股摘要第 5 欄)。②搜尋寬鬆比對(「富邦新店」找得到「富邦-新店」)。③今天沒進出的估計仍持有改成 ≥100 張或 ≥20 日均量(且 ≥20 張)就輸出,與「持有量大」同規則;每分點上限截斷時畫面寫出總數。④自選股分頁時徽章資料延到閒置才抓。⑤(第二輪)覆蓋分母改用匯入端的 `_branch_stock_pool`(普通股、不含 ETF),「完成」照 `import_logs` 整池那一輪 `branch` status=ok;完成時確認空不標待補、不出提示,ETF 永遠不是「尚未匯入」(今天沒列標「無分點資料」)。測試、截圖已更新。
 - **待人類**:合 main(下一輪 export 才有資料,之前分頁顯示「還沒產生」);第一輪看 `export watch:` 行回填 `docs/52` §5;決定是否執行綁帳號 SQL(建議資安審查)。
 
-## 2026-10-15 長回補讓路平日 08:00／13:15(`docs/49` §12.6.5「事故」;已 commit、未 push;VPS 需 `sync_code` 後生效,不動 crontab)
+## 2026-10-15 長回補讓路平日 08:00／13:15(`docs/49` §12.6.5「事故」;已合 main(10-29 核對);VPS 需 `sync_code` 後生效,不動 crontab)
 
 - **事故**:10-14／10-15 `warrant-backfill`(`~/warrant-driver.sh`)06:36 開的塊握 `/tmp/radar-db.lock` 跨過 08:00,`morning-index` 兩天等鎖 300 s 逾時沒上線;10-14 13:15 `adjust-incremental` 也因鎖被占略過。根因:`minutes_until_next_scheduled_writer` 的 overlay 不認得這兩輪(mid 已清空時 06:36 答 449 分 → 預算封頂 240、握到 10:36)。
 - **修正**:`lib.sh` 新增 `WEEKDAY_SHORT_JOBS="0800-0845 1315-1335"`/`weekday_short_job_at`(只週一–五),只加在 overlay、**不進 `quiet_window_at`**;`adjust-incremental.sh` 問預算時用 `WEEKDAY_SHORT_JOBS="${ADJ_OTHER_SHORT_JOBS:-0800-0845}"` 拿掉自己的 13:15。warrant-backfill 平日 06:36 預算 240 → **69 分**(07:45 收工)、12:20 預算 90 → **40 分**(13:00 收工);週末不變;repair-window／build-branch-cover-index 同樣讓路。
 - **驗證**:pytest 新增 `WeekdayShortJobsTest`(槽邊界、06:36/12:20 預算、週末與無短輪逐點相同、安靜窗本身不變)、adjust-incremental 排除與 lib 清單防漂移、harness 證明不排除就會略過自己、morning-index 不問這些守衛且保留段涵蓋 08:40 截止;全套見 commit。
 
-## 2026-10-15 export-json 提速(`docs/44` §3.5;程式完成於分支、未合 main、未上線)
+## 2026-10-15 export-json 提速(`docs/44` §3.5;已合 main 並上線(10-29 核對))
 
 - **為什麼**:正式機每輪 export ~1,000 s 持鎖,晚上分點輪跑兩次;10-14 20:14 輪 `branch_history=220 warrant_shards=208 pnl=116 pctile=78 write=46`,另有 ~290 s 沒計時。
 - **做了什麼**:①計時補齊(`export timing:` 原 8 鍵不動,後加 radar/intraday/side/warrant_q/margin/holders/payload/loop_other/branches/total)。②權證分點 120 日窗口三條查詢合成一次掃描(`docs/51` §5.2 的下一步)。③個股 active_warrants 由「每檔整表掃 warrants」改一次預讀(同額才退回舊單檔查詢)。④分點日史不 JOIN branch_dim、DBAPI cursor。⑤區間損益/分位計數去重複計算(浮點式子不動)。⑥內容沒變的 core/chips 不重寫。第二段 export 增量(`--skip-warrant-shards` 等)只寫成提案,動上線流程需人類決定。
@@ -154,7 +157,7 @@
 - **正式機預估**:第一段 export 約省 180–300 s(1,000 → ~700–820 s),第二段再省 write 約一半;本機以 CPU 為主、低估 I/O,以合併後第一輪 `export timing:` 回填 §3.5。
 - **待人類**:合 main;第一輪看新計時行回填;(可選)用週備份快照在 VPS 跑一次 `export_parity.py --old-code/--new-code` 核對逐位元;第二段增量提案另行決定。
 
-## 2026-10-13 權證「仍持有(估)」加帳面為正(`docs/51` §3.2/§4;程式完成於分支、未合 main、未上線;v3.9)
+## 2026-10-13 權證「仍持有(估)」加帳面為正(`docs/51` §3.2/§4;已合 main 並上線(10-29 核對);v3.9)
 
 - **需求**:使用者「權證分點仍持有 賺錢幾%的也幫我新增」。
 - **做了什麼**:①`warrant_positions.json` 升 **v3**:每種(認購/認售)分 `down`(帳面 % ≤ 0 由差到好,估不出值的接在最後,與 v2 同序)與 `up`(帳面 % > 0 由高到低,不含估不出值的)兩邊,各 ≤ 400 列、各自 `total`;`excluded_self` 每種一個(兩邊共用);`max_rows_per_kind` → `max_rows_per_side`。前端只收 v3(v2 檔顯示「等下一次匯出」,與 v2 上線時同策略)。②`/branch` 仍持有(估):新增「帳面為負｜帳面為正」切換(預設為負;選中色沿用紅正綠負)、為正門檻 不限/+10/+20/+40% 以上(預設 +20,切方向時門檻回該邊預設)、排序兩邊共用(為正時 % 與金額由高到低)、卡片右上改以帳面 % 為主數字、金額在下一行;每邊各自的「檔內只保留前 N / 共 M 筆」與空狀態;網址加 `wdir`(預設不寫,`wpct` 依方向驗證)。
@@ -168,7 +171,7 @@
 - **驗證**:pytest 全套 1741 passed(新:單站開爬 + 待命加入 + 半公布站假空不以 empty 寫入、探測結果退路、寬限接手、平行檢查、23:00 上限 bash harness)。**待人類**:合 main 後第一個交易日照 §8.9「核對」看 log。
 - **追加修正(2026-10-13 下午,分支待合)**:全套偶發 2 個 subtest 失敗(`test_verifier_replay_partial_plus_flickering_mirror_seeds` seed 0/5)不是測試抖動,是 `_confirm_empties` 的真實洞(早於 17d0eab,父 commit 重播 2/1000 也會):半公布站剛好成了唯一的乾淨站時,會把別站的假空「確認」成 empty。改成乾淨站也說空時再問一站;見 §8.9「乾淨 ≠ 公布齊」。正式影響有界:漏網假空讓覆蓋率 < 1 → 22:30 輪重爬補回。
 
-## 2026-10-13 台指期夜盤早上上線(`docs/49` §12.6.5;verifier CONFIRMED,已合 main;**crontab 待安裝**)
+## 2026-10-13 台指期夜盤早上上線(`docs/49` §12.6.5;verifier CONFIRMED,已合 main;crontab 已安裝(10-29 核對))
 
 - **verifier 殘差(低)**:①`import-index` 對 TWSE/TPEx 任一錯誤回 1 → 早上這輪直接 warn 收工,即使 `tx_night` 已入庫(14:05 補上,只是晚)。②成功通知以 DB 有今天 `tx_night` 為準,若前一天 export 沒上線(data_date 落後兩日)網站顯示的會是較舊那一夜。③每月 16 日 07:00 monthly-directors 也拿 DB 鎖(§12.6.5 漏列;最壞是 300 s 等鎖逾時告警)。
 
@@ -177,7 +180,7 @@
 - **驗證**:pytest `test_index_export.py`(逐位元對照全量 export、DB 沒變不改位元組、鍵位置、缺 radar.json、CLI 行、夜盤選擇規則)、`test_morning_index_script.py`(原始碼守衛 + bash 實跑 8 條路徑:第一次就有、第二次才有且等待時放鎖、截止靜默、匯入/匯出/上線失敗 warn、週末)、`test_market_index.py`(週一早上規則更新)+ 全套;web node 全套(`marketBrief.test.ts` +1 早上狀態)、`TZ=America/Los_Angeles`、`tsc`。
 - **待人類/orchestrator**:①合 main(✅ 2026-10-13)。②(✅ 2026-10-13 12:34 已裝,備份 `~/crontab.bak.20261013123449`)安裝 crontab 行 `0  8 * * 1-5  bash /home/huang/trever-radar/vps/scripts/morning-index.sh >> /home/huang/radar-cron.log 2>&1`(理由與鎖分析見 `docs/49` §12.6.5、`docs/08` §0)。③上線後一週看 `grep 'morning-index tx_night' ~/radar-cron.log` 回填最早公布時刻;若 08:00 前就有,可把時刻提前(06:30–07:30)。
 
-## 2026-10-12 權證分點左買右賣 ＋ 持有成本／帳面估算／進場日 ＋ 仍持有(估)篩選 ＋ 深連結(`docs/51`;程式完成於分支、未合 main、未上線;v3.8)
+## 2026-10-12 權證分點左買右賣 ＋ 持有成本／帳面估算／進場日 ＋ 仍持有(估)篩選 ＋ 深連結(`docs/51`;已合 main 並上線(10-29 核對);v3.8)
 
 - **需求**:使用者「權證分點的 UI……分成左邊買超 右邊賣超……這個分點買的權證位置對應現股的平均價格……粗估現在賺多少……篩出買很多、賠很多、還沒賣的大戶……優化手機畫面」;追加「寫進場日期(兩三天也要寫)」「點進去直接跳到該股權證分點走勢頁籤」。
 - **做了什麼**:①新純函式 `compute/warrant_position_est.py`(`wpos-avgcost-v1`):每 (券商, 權證) 腿平均成本法(與 `docs/42` 同規則:當日權證收盤當成交價、窗口起點零持股、不放空),依 (券商, 標的, 認購/認售) 加總:仍持有張數／成本／估值／帳面(到期、近 5 日無收盤的腿「持有但不估值」)、換算現股均價(各筆買超當天現股收盤以金額加權)、進場日拆解(賣超把每個買超日剩餘等比例縮小,Σ = 仍持有)、自家發行成本。②export:`_export_warrant_branches` 的逐日序列查詢改成一條依 (券商, 標的, 權證, 日期) 排序的串流,同時餵逐日序列(結果不變)與累計器;分片 `{id}.json` 多可選鍵 `positions`;新檔 `branches/warrant_positions.json`(仍持有成本 ≥ 500 萬、排除自家過半/總公司造市,≤ 300 列,帳面由差到好)。③前端:個股權證分頁排行左買右賣並排(手機兩欄、列第二行「持有(估) 成本 · 帳面%」)、選中券商的「權證持有(估算)」卡(含進場日、條件註記、怎麼算、頁尾聲明);/branch 依標的／依分點改 `WarrantSplitCard`(左買右賣、下方展開明細、列尾「›」深連結)、第三檢視「仍持有(估)」(`WarrantHoldersList`,點了才抓);深連結 `/stock?id=X&tab=warrant&branch=券商`(`lib/warrantDeepLink.ts`:自動換到含有它的區間、選中、手機捲到切換列;不在資料裡 → 提示)。文案鎖定(`lib/warrantPositions.ts`),禁用詞以字碼檢查。
@@ -185,7 +188,7 @@
 - **verifier 後重做(同日,`docs/51` §5)**:VPS 實測 120 日窗口 4,884,497 列、1.7 GB RAM;第一版逐列串流外推 +520 MB／+45 s 不可接受 → ①逐日序列回到 main 的 SQL GROUP BY(逐字相同,牛熊證=0、鍵順序相同,`test_bull_bear_rows_keep_main_daily_semantics_byte_for_byte` 逐位元比對);②持有估算改為另一條只取分片配對(TEMP 表 JOIN)、只取認購/認售、SQL 先 GROUP BY 的查詢,`PositionStream` 一腿一組串流定稿,常駐記憶體只有輸出(進場日用縮放因子,賣超 O(1));③篩選清單 v2:認購/認售各一份、各 ≤ 400 列、`total`/`excluded_self` 每種各自,前端寫「檔內只保留前 N / 共 M 筆」;④進場日最大餘數法取整(Σ=仍持有)、分不到 1 張併入鄰日;⑤缺價腿不進任何張數總計;⑥排行第二行部分估值標「(部分)」;⑦/branch 分頁/檢視/篩選進 query(`lib/urlState.ts`,replaceState);⑧發行商別名表(麥證/法興/匯豐/國泰綜合/台北富邦/國別前綴)。**量測**(`docs/51` §5.1,合成 5.1M 列):最壞情境(所有配對入選、4.72M 列進估算)+35.5 s／tracemalloc 峰值 +73.5 MiB(其中 35 MB 是輸出 JSON;SQL 第二次掃描 ≈ 35 s 是固有成本)、較接近正式(707k 列)+10.0 s;記憶體達 verifier 的 ≤ +80 MB,時間在最壞情境**未達** ≤ +15 s(較接近正式情境達標),上線後以 log `wpos:` 行回填,備案是縮配對到排行前 N 名。
 - **待人類**:①合 main(VPS 下一輪 export 才有 `positions` 與 `warrant_positions.json`;之前新前端只是沒有持有估算段)。②第一輪後看分片體積與 export 耗時回填 `docs/51` §5,抽 3 檔熱門標的對照排行第二行與明細。③Phase 2(履約價損益兩平需先確認 `exercise_ratio` 單位、VWAP 成交價、首頁入口)另案確認。
 
-## 2026-10-10 分點日史改「每日全部列」chips v2 ＋ 全站前 15 大一致化 ＋ 多方榜 v2(`docs/44` §3.4、`docs/48` §8;程式完成於分支、未合 main、未上線;v3.7)
+## 2026-10-10 分點日史改「每日全部列」chips v2 ＋ 全站前 15 大一致化 ＋ 多方榜 v2(`docs/44` §3.4、`docs/48` §8;已合 main 並上線(10-29 核對);v3.7)
 
 - **需求**:使用者「為什麼我每日買賣超籌碼分點不是前15…盟立就沒有資料。鉅祥只有六筆」→ 決定「都改成前15大分點一致化」。
 - **根因(VPS 唯讀核對)**:`branch_trades_raw` 每檔每日有來源完整 30 列,但 export 的 `branch_history` 每天只留 |淨額| 前 12 列(兩側合計):2464 10/08 匯出 12 列全賣超 → 買超空白;2476 剩 6+6;2330 剩 3 買 9 賣。前端再拆買/賣各切 13。
@@ -193,7 +196,7 @@
 - **驗證**:pytest 全套 1704 passed(新 `test_branch_days_export.py`);web node 398 passed(新 `branchFlow.test.ts`、v2 解碼/載入、版本換代);`tsc`、`next build`;390px 深/淺色截圖 `docs/evidence/44_branch_days/`(2464 型 1日 買 0/賣 15、5日 14/15;2476 型 8/6;K 線 pane 標題)。合成 600 檔 before/after 建置器:入榜 33 → 64(32 同、1 只在前、32 只在後)— 方向性示意,正式差異待 VPS。
 - **待人類**:①合 main(Pages 先上新前端,VPS 下一輪 export 出 v2 chips;之間新前端讀舊 chips 正常、1日 已完整)。②上線後看 `radar-cron.log` 的 `export timing: branch_history=` 與 `du -sh web/public/data/stocks/chips`,以及第一行 `bull-board-v2` 紀錄的 `data_date`(= v2 生效日,寫回 `docs/48` §8)。③若要正式機 before/after 名單差異:同一天 radar.db 用 main 與本分支各 export 一次、各建一次多方榜比對(另案)。④2–3 個乾淨交易日後移除 chips v1 讀取相容(另案)。
 
-## 2026-10-09 台指期夜盤:卡第二行＋走勢圖 1日 日盤/夜盤(`docs/49` §12.6;程式完成於分支、未合 main、未上線;v3.6)
+## 2026-10-09 台指期夜盤:卡第二行＋走勢圖 1日 日盤/夜盤(`docs/49` §12.6;已合 main 並上線(10-29 核對);v3.6)
 
 - **需求**:使用者「還有夜盤」。
 - **事實(2026-10-09 實測)**:futDataDown 標 D 的「盤後」列 = **前一交易日 15:00 → D 05:00 那一夜**(10/08 盤後近月 49593 = 逐筆成交檔 10/08 04:59:57 最後一筆);漲跌基準與同日一般時段相同(前一交易日結算價)。夜盤**沒有免費分線來源**,逐筆成交檔 16:40 才公布且只含前一夜,所以站上的夜盤永遠是「上一夜」。10/09 為國慶補假休市,**期交所是否在早上就先公布前一夜的盤後列尚未量測**。
@@ -202,7 +205,7 @@
 - **verifier 後修正(同日)**:①週一／連假後的檔,凌晨列標週六／假日(不是 D),原本夜盤被切在 23:59 → 改為「由檔案自己定那一夜:傍晚日 E = 最早的 < D 且 ≥ 15:00 日期,凌晨 = E 次一日曆日 ≤ 05:00」;真實 `Daily_2026_10_05.zip` 夜盤 10/02 15:00 → 10/03 04:59、最後 49346 = futDataDown 10/05 盤後,10/08 檔輸出不變;新 fixture `taifex_daily_tx_20261005_trim.csv` 與連假合成列測試。②夜盤模式漏了 range 條件,選夜盤再切 1月以上時標頭卡在夜盤收盤、游標失效 → `nightActive` 三條件(台指期 × 1日 × 夜盤)。③`import-index` 只有盤後列時回 0(原 75),呼叫端皆 `run_step_or_warn`,無害。
 - **待人類**:①合 main(上線後第一輪 `indices_intraday:` 會多一次 zip 下載補 `tx_night`;`import-index` 自然多寫一列)。②下一個交易日早上 08:00–13:00 在 VPS 跑 `python tools/probe_index_intraday.py --night --date YYYY-MM-DD`:若 D 早上已有 D 的盤後列,再提案加一次早上 `import-index`＋export(目前早上沒有可靠掛點,本次不改 crontab/腳本);若沒有,維持下午上線。
 
-## 2026-10-09 大盤走勢圖「1日」當日 1 分線(`docs/49` §12.5;程式完成於分支、未合 main、未上線;v3.6)
+## 2026-10-09 大盤走勢圖「1日」當日 1 分線(`docs/49` §12.5;已合 main 並上線(10-29 核對);v3.6)
 
 - **需求**:使用者「我想增加一日的走勢」。
 - **做了什麼**:新模組 `export/indices_intraday.py`:加權/櫃買走 Fugle `stock/intraday/candles`(IX0001/IX0043)、加權備援 TWSE `MI_5MINS_INDEX`(5 秒聚成 1 分)、台指期走 TAIFEX 逐筆成交檔(見下);與 spark_day 同閘門(有金鑰且今天=價格日),同日三個齊了就不再抓、缺的下一輪補;輸出 `market/indices_intraday.json`(`{date, series:{twse|tpex|tx:[[epoch_s,close]…]}}`,只留最新一天,~17 KB raw),json_export 在 indices_hist 之後隔離呼叫。唯讀 probe `pipeline/tools/probe_index_intraday.py`。前端:範圍 chip 1日/1月/3月/6月/1年(預設仍 3月),選 1日 才抓;HH:MM 時間軸、昨收虛線、線色跟當日漲跌、游標 HH:MM＋值＋相對昨收、日高/日低/日漲跌;缺檔「尚無日內走勢」、缺台指期「台指期暫無日內走勢」。
@@ -211,7 +214,7 @@
 - **verifier 後補強(同日)**:TAIFEX zip 串流解析,10/08 實檔 tracemalloc 峰值 134.4 MiB → 0.3 MiB(輸出逐點相同、49349);每市場隔離(一個例外不丟掉已抓到的,壞 zip = 缺台指期);整步 45 秒總時限＋單次 10 s 逾時、不重試(Fugle 掛時不再卡 60–90 s);台指期閘門維持「有金鑰」(本機/parity 不打網路,理由見 `docs/49` §12.5);1日沒圖時說明行只留缺資料訊息;404 60 秒後再選 1日或重開 sheet 重抓。pytest `test_indices_intraday.py` 24 passed、相關子集 318 passed;web node 全套 387 passed;`tsc`、`next build`。
 - **待人類**:①合 main;②第一個交易日上線後看 `radar-cron.log` 的 `indices_intraday:` 行,確認台指期在 16:40 後的輪補上(`fetched=['tx']`;另有 `failed=`/`timed_out=` 欄)。不改 crontab/Worker/secret。
 
-## 2026-10-09 個股分K 5/30/60 分 MVP(`docs/50`;程式完成於分支、未合 main、未上線;v3.6)
+## 2026-10-09 個股分K 5/30/60 分 MVP(`docs/50`;已合 main 並上線(10-29 核對);v3.6)
 
 - **需求**:Fable MVP 計畫(使用者已核准):個股頁 K 線加 5/30/60 分。
 - **做了什麼**:`providers/fugle.py` 加 `fetch_historical_candles`(timeframe=5),`fetch_intraday_candles` 多回完整 1 分 K 列;新模組 `export/intraday_bars.py`:榜單聯集(~275 檔)近 60 個交易日 5 分 K,快取 `DATA_DIR/intraday5/`,當日由 spark_day 同一輪的 1 分 K 聚合(零額外請求),缺日以 historical 每檔一次補、每輪上限 120 次;桶以開始時間 09:00…13:25,13:30 收盤併入 13:25;輸出 `stocks/intraday/{id}.json`(緊湊、tmp+rename、內容沒變不重寫);離開聯集滿 10 個交易日才刪。json_export 在 `attach_spark_day` 下一行單一呼叫 `export_intraday_safe`(同一個今天=價格日閘門;失敗只記 warning)。CLI `export-intraday [--backfill]`。前端:週期列 5分/30分/60分/日/週/月(手機自成一列 ScrollHint)、第一次要畫分K才抓、30/60 分由 5 分依交易時段切桶(9/5 根)、UTCTimestamp 以台北牆上時間顯示 09:00、legend MM-DD HH:MM、MA5/MA20 命名、主力/分點 pane 與壓力支撐在分K不畫、說明列「分K · 原始價(未還原) · 盤後更新至 MM-DD」、沒有檔「此股未提供分K,改看日K」退回日K。
@@ -220,7 +223,7 @@
 - **驗證**:`test_intraday_bars.py`(聚合、13:30 併入、缺分鐘、標記平移、快取/補抓上限、確認空日、60 日裁切、刪檔寬限與重入、隔離、閘門、檔案格式、spark_day 轉交)、web `resample.test.ts`(5→30/60、時區標記、退回日K、404→null);pytest 全套 1641 passed、web node 測試 360 passed、`tsc`、`next build` 通過;390px 深/淺色 5分/60分/退回日K 截圖在 `docs/evidence/50_intraday_k/`(種子資料,Playwright 攔截 Supabase auth/rest,未動門禁;無水平溢出;選分K前不抓分K檔)。
 - **待人類**:①合 main;②(可選)VPS 跑一次 `radar export-intraday --backfill`(~275 次 ≈ 5 分鐘;不跑則交易日每輪 export 自動補 120 檔);③看 log `intraday label check` 核對 Fugle 歷史 5 分 K 標記語意、量單位(`docs/50` §4)並回寫。
 
-## 2026-10-09 除權息還原因子日增量(`docs/47` §3.2;程式完成於分支、未合 main;正式 crontab 待人類套用)
+## 2026-10-09 除權息還原因子日增量(`docs/47` §3.2;已合 main(10-29 核對);正式 crontab 已套用(10-29 核對))
 
 - **問題**:`adj_factor` 只在手動 `compute-adjustments` 時更新,最後一次正式跑 2026-09-04;之後除權息的個股還原序列在除權息日斷開,指標/分數/價格位置跟著錯(`docs/38` §7.21 的 `exdiv` 因此多數偵測不到)。
 - **做了什麼**:CLI `compute-adjustments --ex-dates-since [N|YYYY-MM-DD]`(裸旗標 = 10 天)、`--dry-run`、`--print-ids`;選股用證交所 TWT49U + 櫃買 `bulletin/exDailyQ`(各一次公開請求,**只當代號挑選器**,再與庫內 stock/etf 交集),之後原樣呼叫既有 `compute_adjustments(ids=…)`——因子邏輯未改;另印 `changed: K stocks, R rows` / `changed_ids=`。`compute-indicators --ids`(不帶 `--days`)本來就是全歷史重算,只補說明。新腳本 `vps/scripts/adjust-incremental.sh`(平日 13:15):守衛同 `adjust-backfill.sh`(安靜窗/mid flag/距下一個寫入者 >30 分/`flock -n`)→ 選股 → 因子 → 指標全歷史;每步 `radar_timeout`;不 export/deploy(14:05 輪上線);有變動才 `notify_ok`。`crontab.example`、`docs/08` §0、`docs/47` §3.2、`docs/38` §7.21、`adjust-backfill.sh` 註解、`project-context` 第 9 條同步。
@@ -228,7 +231,7 @@
 - **順帶修的效能**:`score_technical` 每根重算整段 `prev_ma5/prev_ma20`(O(n²)),全歷史指標 6,500 根 ~52 秒/檔 → ~0.9 秒;與 main 版 `compute_series` 在 5,460 列隨機資料(含 NULL、因子)上整列逐值相同,另加測試鎖等價與線性。
 - **驗證**:新測試 `test_adjust_incremental.py`(真實回應裁切 fixture 解析、去重/窗/庫內交集、dry-run 與 print-ids DB 檔 SHA-256 不變且不呼叫 FinMind、種子庫新除息 → 因子在除息日階梯、原始 OHLC 逐位元不變、指標全歷史重算且 MA20 跨除息日連續、重跑冪等)、`test_adjust_incremental_script.py`(原始碼接線 + WSL stub harness 真跑腳本 6 情境 + 13:15 距下一個寫入者 >30 分)、`test_indicators.py` +2;pytest 全套 1617 passed。
 - **待人類**:①合 main;②正式 crontab 加 `15 13 * * 1-5  bash /home/huang/trever-radar/vps/scripts/adjust-incremental.sh >> /home/huang/radar-cron.log 2>&1`;③一次性追補(使用者已核准):空檔(例平日 09:30)跑 `ADJUST_SINCE=2026-09-04 bash vps/scripts/adjust-incremental.sh >> ~/radar-cron.log 2>&1`,候選 ≤179 代號,估 ≤15 分;歷史 `daily_scores` 不回算。
-## 2026-10-09 市場概況 A 版:台指期近月、迷你走勢、走勢圖 bottom sheet(`docs/49` §12;程式完成於分支、未合 main、未上線;v3.6)
+## 2026-10-09 市場概況 A 版:台指期近月、迷你走勢、走勢圖 bottom sheet(`docs/49` §12;已合 main 並上線(10-29 核對);v3.6)
 
 - **需求**:使用者「上市上櫃 希望增加台指 然後可以可以看到走勢圖 點擊的時候放大展開跳出一個類似modal 要以手機優化為主 然後要表示可以點擊」+「上方還是要有緊湊感喔」,三個版面中選 A。
 - **做了什麼**:①台指期近月新序列 `market_indices(market='tx')`(表加 `contract_month`/`settlement`):來源 TAIFEX futDataDown(與 `import-futures-day` 同一支解析),近月＝當日一般時段、非價差、有收盤的 TX 列中到期月最小者(最後交易日當天仍是近月,次日來源不再列即換月);`import-index` 第三個來源,`--days N` 改走 `backfill_market_index`(TWSE 每日一請求 3 秒間隔、TPEx 每月一請求、TAIFEX 每 28 天一請求)。②export:`indices[]` 加 `spark`(40 個收盤)與 tx 的月份/結算;新檔 `market/indices_hist.json`(≤260 列/序列,27.7 KB,點開才抓)。③UI:`MarketBrief.tsx` 改 A 版(三格可點＋迷你走勢＋一行成交/法人;缺資料的格顯示「—」),`IndexTrendSheet.tsx` bottom sheet(base-ui Dialog:focus trap/ESC/背景關閉/鎖捲動;指數切換、1月/3月/6月/1年、lightweight-charts 十字游標讀值、區間高低漲跌)。④驗證者回報的 bug:上市盤中 MI_INDEX `stat=OK` 但 `data=[]` 原本當 error(exit 1)→ 改為 pending(75);`--days` 只有今天 pending 時回 0。
@@ -237,14 +240,14 @@
 - **待人類／維運**:排程接線同 §11.3(同一行 `radar import-index`,現在連台指期一起);上線前 VPS 跑 `radar import-index --days 370` 回補(約 20 分鐘,三個來源都回得到 250 個交易日)。
 - **驗證後修正(同日,`docs/49` §12.3b)**:最後交易日來源結算價 0 → 存 NULL、副標不顯示結算;`db._migrate_sqlite` 補 `market_indices` 兩欄,`latest_indices` 失敗只少鍵;卡片格只放 %、台指期整數到底、sheet 日期與軸刻度 MM/DD(月 M月)、游標吸附、台指期副標跟游標(歷史列帶當天近月)、提示加「近月連續、未調整換月價差」、區間漲跌只放 %、迷你走勢改中性描邊、TradingView 署名補 aria-label、完全沒有指數時不畫三格。
 
-## 2026-10-09 首頁「市場概況」卡＋大盤指數匯入;法人族群「個股」排序與手機版面(`docs/49` §11、`docs/25` §18;程式完成於分支、未合 main、未上線;v3.6)
+## 2026-10-09 首頁「市場概況」卡＋大盤指數匯入;法人族群「個股」排序與手機版面(`docs/49` §11、`docs/25` §18;已合 main 並上線(10-29 核對);v3.6)
 
 - **需求**:使用者「法人連續買賣超顯示功能很棒 但這邊ui是否能以手機畫面為優化 並且增加排序 / 還有首頁上方的 資料日 上櫃成交 上市成交 這些資訊 跟ui是否可以優化好看點 … 或是可以增加指數之類的 或是對使用者有用的資訊」。
 - **做了什麼**:①「法人族群 → 個股」加排序 chip(金額(估)／張數／連續日數／漲跌;買賣兩邊各自排;`sortStockRows` 確定性同分規則;偏好存 `localStorage` try/catch),列改兩行、連續日數膠囊前置、數字欄固定寬。② 首頁頂部三張卡換成一張「市場概況」卡(`MarketBrief.tsx` / `lib/marketBrief.ts`):加權指數、櫃買指數、成交額(兩市合計＋↑↓家數)、三大法人(估)(與法人族群 marketLine 同一組數字),資料日與「部分待更新」在標題列,主色 9% 漸層底、零新色票。③ 大盤指數**新資料**:`market_indices` 表、`providers/market_index.py`(TWSE MI_INDEX type=IND、TPEx afterTrading/tradingIndex;原始值逐筆照來源,TPEx 無百分比存 NULL、export 推算)、`radar/market_index.py`、`cli.py` 末尾 `import-index [--date] [--days]`(0/75/1);export 新鍵 `indices`、`insti_market`(無資料不出鍵;head.json +452 B)。
 - **驗證**:pytest `test_market_index.py`(12,含抓回的原始回應 fixture 逐值相同)+ 相關 export 測試 67 passed;web node 全套 359 passed(`marketBrief.test.ts` 7 新、排序 3 新);`tsc`、`next build`;390px 深／淺色截圖(Playwright 攔截 Supabase、假 session):市場概況卡、個股預設與連續日數排序(重整後仍在)、舊 payload 只畫成交額格。
 - **待人類／維運**:**排程接線未做**(另一 agent 正在改 `vps/scripts`):依 `docs/49` §11.3 在 `daily-market.sh` / `daily-tpex-quotes.sh` / `daily-insti.sh` 加 `run_step_or_warn "import-index" radar import-index`,並在 VPS 跑一次 `radar import-index --days 10`;沒接線時首頁兩個指數格不畫、其餘照常。合 main。
 
-## 2026-10-09 首頁「市場資金流向」面板併入「法人族群」分頁(`docs/49` §10、`docs/25` §17;程式完成於分支、未合 main、未上線;v3.6)
+## 2026-10-09 首頁「市場資金流向」面板併入「法人族群」分頁(`docs/49` §10、`docs/25` §17;已合 main 並上線(10-29 核對);v3.6)
 
 - **需求**:使用者「因為做了法人族群 感覺下面市場資金流向重複到了 可以整併或移除」,決定權交給 Planner。
 - **盤點**:兩者同族群名稱(`stocks.industry`／`themes`)、同對向條列版型、同「點族群看成員」下鑽,只差排序維度(成交量能 `vs20` vs 法人淨額);MoneyFlow 獨有的族群層訊號只有 `vs20`(成交金額排序、平均漲跌、子題材下鑽、族群層漲跌家數為次要;`share` 從未顯示;市場層漲跌家數在 Compact Brief 不受影響)。
@@ -253,7 +256,7 @@
 - **驗證**:web node 測試 349 passed(含 `lib/facts`;`instiGroupFlow.test.ts` +2、禁詞加 `VS20_LEGEND`);`tsc`、`next build` 通過;390px 深／淺色截圖(靜態 build + 種子資料,Playwright 攔截 Supabase auth/rest、假 session,未動 AuthGate):首頁多方榜、法人族群 產業／題材。
 - **待人類**:合 main;export 清理候選是否動。
 
-## 2026-10-09 期貨異常名單加現貨股價與漲跌(`docs/38` §7.21;程式完成於分支、未合 main、未上線;v3.6)
+## 2026-10-09 期貨異常名單加現貨股價與漲跌(`docs/38` §7.21;已合 main 並上線(10-29 核對);v3.6)
 
 - **需求**:使用者「期貨異常那邊可以顯示股價漲跌跟股價嗎」。
 - **做了什麼**:export 在 `futures_volume_anomalies[]` 每條目加選填 `spot_quote = {date, close, chg_pct?}`(`_futures_spot_quotes`,只讀舉旗的幾檔);首頁卡片標頭下一行「股價 1,245.0 ▲2.47%」,紅漲綠跌、0 中性;股價日(現貨資料日)與期貨行情日不同天時後面標 `(MM-DD)`。舊 payload 無此鍵 → 不畫。radar.json / home/head.json 只多這個鍵;個股 futures 區塊、舉旗紀錄、多方榜不變;不多抓任何檔。
@@ -262,7 +265,7 @@
 - **待人類**:合 main 後 VPS 下一輪 export 自動帶上,不改 crontab/Worker/腳本。
 - **驗證後補(同日)**:`spot_quote.exdiv: true`(前一日→當日 `adj_factor` 變動)時 % 後面加中性小字「除權息」;期貨表面閘門補認 `pct`/`percent`/`chg`,以完整路徑只放行 `spot_quote.chg_pct`(§7.21 例外)。**限制**:正式 `adj_factor` 只在手動 compute-adjustments 時更新,多數除權息當天偵測不到(例 1101 會照樣顯示 −5.00% 而不標);要可靠需排程 compute-adjustments 或除權息日表——待人類決定。
 
-## 2026-10-09 法人族群加「個股」模式:法人買賣超個股排行(`docs/49` §9;程式完成於分支、未合 main、未上線;v3.6)
+## 2026-10-09 法人族群加「個股」模式:法人買賣超個股排行(`docs/49` §9;已合 main 並上線(10-29 核對);v3.6)
 
 - **需求**:使用者「可以再增加 法人買賣超的股票嗎」。站上沒有全市場逐檔法人排行(卡片值只在候選股、MoneyFlow 是成交金額),新做。
 - **做了什麼**:「法人族群」分頁 產業/題材 旁加「個股」,身分切換共用;外資/投信/自營/合計 各列買超、賣超金額(估)前 30 檔(先列 10、可展開),每列 名稱/代號/市場/產業/張數(向零截斷)/金額(估)/漲跌/連 N 日同向,連 `/stock?id=…#insti`。資料另寫 `rankings/insti_stocks_1d.json`(`pipeline/radar/export/insti_stocks.py`),切到「個股」才抓;json_export 內獨立 try/except,失敗刪舊檔。
@@ -270,7 +273,7 @@
 - **未做**:390px 深/淺色截圖——本機 dev 有登入門禁,為截圖暫時繞過門禁被權限檢查擋下並已還原;需人類登入目視或另核准做法。
 - **待人類**:合 main 後 VPS 下一輪 export 自動產生檔案,不改 crontab/Worker/腳本。
 
-## 2026-10-08 法人族群 MVP(`docs/49` §6 MVP;程式完成於分支、未合 main、未上線;v3.5)
+## 2026-10-08 法人族群 MVP(`docs/49` §6 MVP;已合 main 並上線(10-29 核對);v3.5)
 
 - **做了什麼**:export 尾段(與 `_export_margin_usage` 同一個 `conn`)寫 `rankings/insti_flow_1d.json`(`pipeline/radar/export/insti_group_flow.py`,純函式 `aggregate` + `write_insti_flow`,緊湊序列化、tmp+rename、`i_date` 為 None 不寫);首頁新分頁「法人族群」(key `insti`,在「期貨異常」右邊,`?tab=insti`),元件 `web/components/InstiGroupFlow.tsx`、句子 `web/lib/instiGroupFlow.ts`;成員列連 `/stock?id=…#insti`,個股頁新增 `#insti` 直開三大法人分頁。
 - **口徑**:依 `docs/49` §2/§3 —— ETF 排除、逐檔 `淨股數//1000` 再相加(恆等式:族群 = Σ 成員、產業各組 + 其他 = 全市場)、停牌回退最近收盤、題材 (name, stock_id) 去重且排除未來 membership、最小族群 3 檔、題材 |金額| ≥ 1,000 萬且買賣各前 20、同分 金額→張數→名稱;`stale`/`coverage.partial`/`amt_missing_n`/題材 `cls_date`。另加預算保險:序列化 > 250 KB 時自動降為成員 3+2、再降題材前 10(§3.2 的砍法,前端讀長度、不必改)。
@@ -293,7 +296,7 @@
 - **驗證**:pytest 全套(含 `FalseEmptiesFromAPartialMirror` 七案、探測連勝數、FAST_PUBLISH 門檻與時刻門檻的文字/harness 測試);harness 綠。
 - **待人類**:合併;明天看 `branch crawl: empties checked= recovered=` 與 `branch-probe mirror=… streak=` 行;若正常日 recovered 持續為 0 可考慮把確認改成只對「該站 empty 比例異常」才做(現在成本已很低,先不做)。
 
-## 2026-10-07 分點輪提速:五站平行、逐站探測、抓寫分離、兩段式上線;修補抓失敗整輪中止(`docs/47` §8;程式完成於分支,crontab 待人類改)
+## 2026-10-07 分點輪提速:五站平行、逐站探測、抓寫分離、兩段式上線;修補抓失敗整輪中止(`docs/47` §8;已合 main,crontab 已改(10-29 核對:分點輪 16:30＋22:30))
 
 - **問題**:公布→上線 83 分(10-07:18:49 就緒、爬 54 分、stats 10、export 14、deploy 3 → 20:12);10-05 爬 102 分(一站 ReadTimeout 拖住循序爬);10-06 17:30 第一步補抓日K瞬時錯誤 → `run_step_or_fail` 整輪中止,分點拖到 ~00:00。免費無驗證碼來源只有 MoneyDJ 五鏡像(證交所/櫃買 16:00 有但要驗證碼;OpenAPI 無分點)。
 - **改動**:`import-branch-trades --workers 5`(每站一個 worker 釘站、單站 5 秒間隔 = 循序輪替的上限,總吞吐 1 req/s,2,000 檔 ~33 分、不隨來源變慢而變長;死站退出、重試輪只用活站;`radar/mirror_crawl.py`、`http.py` per-key 節流);`--stage-to/--from-stage` 抓寫分離(抓的 30–100 分**不握 DB 鎖**,寫入 1–2 分握鎖;0/75/76/1 分級不變);`probe-branch-day` 逐站探測、逐站 log,全量爬只用已公布的站;16:30 起每 10 分鐘每站 12 檔;兩段式上線(先分點明細+評分,再 stats+prune 第二次上線,`publish_site()` 一份呼叫兩次);前置步驟分級(`run_step_or_fail_unless`/`run_step_or_warn`:今天資料已在庫只 warn 續跑);`--top 0` 池依成交金額排序;bf-cron-guard 多看來源鎖;freshness 16:30;changelog v3.4。
@@ -323,7 +326,7 @@
 - **多方榜不變(docs/48 v1)**:合成母體 150 檔同一份 K 棒,main 舊 compute+main 建置器 vs 新 compute+本分支建置器:universe/qualified/入榜 22 檔順序/卡片多空 code/紀錄行完全相同,只有 20 張卡 `counts.tech` 多 1(F11 計數);新程式讀舊 JSON 建出的 `bull_board.json` 與 main 逐位元相同。`bullBear.test.ts` 鎖 `boardKeys` 有無新鍵相同。
 - **驗證**:pytest `test_price_levels.py` 25 passed(+9)、`test_bull_bear_codes`/`test_stock_parts`/`test_label_honesty` 綠;node 全套 321 passed(+5);tsc、next build 綠;390px 深/淺色截圖(合成股 1206,無橫向捲動)。
 - **待人類**:合併進 `main`;VPS 下一輪 export-json 後缺口才會出現在階梯與 K 線(其間舊 JSON 走回退路徑)。
-## 2026-10-06 首頁拆檔(`docs/44` P2,§3.3;程式完成於分支、未合 main、未上線)
+## 2026-10-06 首頁拆檔(`docs/44` P2,§3.3;已合 main 並上線(10-29 核對))
 
 - **做了什麼**:`export-json` 多寫 `home/head.json`(`radar.json` 扣掉 `stocks` 與首頁沒讀的 `concentration`/`summary_text`/`score_list_meta`)與 `home/stocks.json`(逐檔丟掉卡片沒畫的 `technical`/`volume_lots`/`transactions`/`margin_chg_lots`/`chg5_pct`/`pocket_score`/`pocket_families`,`warrant` 只留三鍵;其餘值與順序不變),兩檔同 `generated_at`、緊湊序列化、tmp+rename、stocks 先寫;**`radar.json` 照寫、逐位元不變**(分點頁、自選頁、盤中 worker、建置器、期貨推播都還讀它)。前端 `lib/homeLoad.ts`:首頁先抓 head,第一次切到未發動/策略/掃描/期貨等分頁才抓 stocks(等待時卡片區骨架,表頭與分頁檔數已畫好);不同輪夾到靠 `generated_at` 對齊,對不上或任一檔抓不到都退回 `radar.json`;舊資料(沒有 `home/`)自動退回。Worker、crontab、VPS 腳本都沒改。
 - **大小(本機 7 月 fixture,139 檔)**:`radar.json` 203 KB raw / 33.5 KB br → 預設分頁只要 head 34 KB / 7.2 KB br(**−83% / −78%**);股票分頁 head+stocks 112 KB / 24.2 KB br(−45% / −28%)。正式機 770 KB 本機拿不到(要金鑰),上線後 `radar-cron.log` 的 `export home:` 一行會印 raw bytes。
@@ -340,7 +343,7 @@
 - **原因**:`tpex.fetch_margin` 找 `資買進/資賣出/資現償/券買進/券賣出/券現償`,TPEx `margin/balance` 實際欄名是 `資買/資賣/現償/券賣/券買/券償`(2024–2026 皆同),欄位又是「選配」→ 對不到就靜默寫 NULL。上櫃全部列的 `margin_buy/sell/repay`、`short_buy/sell/repay` 從 A0 起都是 NULL(餘額/限額正常),上櫃個股資券頁「成本(估)」因此永遠空白。
 - **修正**:改正確欄名並列為必要欄(缺欄 RuntimeError,不再靜默 NULL)。測試 `test_tpex_margin_parse.py`:2026-10-02 真實回應 5 列(fixture)逐值比對＋融資/融券餘額恆等式。
 - **待人類**:合併後 VPS 跑 `FORCE=1 MARGIN_BF_DAYS=240 bash vps/scripts/backfill-margin.sh`(握 DB 鎖、約 30 分以上＋export/deploy;詳見 docs/34)。使用者已核准回補(2026-10-05)。不回補的話只有合併後的新日子有值。
-## 2026-10-05 個股 JSON 拆檔(`docs/44` P1-a/P1-b,§3.2;程式完成於分支、未合 main、未上線)
+## 2026-10-05 個股 JSON 拆檔(`docs/44` P1-a/P1-b,§3.2;已合 main 並上線(10-29 核對))
 
 - **做了什麼**:`export-json` 每檔多寫 `stocks/core/{id}.json`(舊檔扣掉四個籌碼鍵、K 線只留前兩年 1/1 起,多 `parts` 指標)、`stocks/chips/{id}.json`(branch_history/pctile/tags/pnl)、聯集股另有 `stocks/hist/{id}.{hash8}.json`(cut 以前的 K 線,內容不變不重寫、換雜湊刪舊檔、退出聯集刪檔)+ `hist/index.json`;**舊單一檔 `stocks/{id}.json` 過渡期照寫、逐位元不變**(`--no-legacy-stocks` 為清理步驟)。新旗標 `--verify-split`(每檔在記憶體內接回比對)、`--size-report PATH`。前端 `lib/stockParts.ts`(合併)+ `lib/stockLoad.ts`(core 優先、404 退舊檔、hist 雜湊換了重抓、最後退舊檔):個股頁 core+chips 到就畫,hist 到了多空摘要才算(之前骨架,不是 0·0);自選頁只抓 core;多方榜建置器看到 `stocks/core/` 就讀新佈局接回。Worker、crontab、VPS 腳本**都沒改**。
 - **一致性證據**:本機 968 檔真實舊 JSON(2026-07-08)用正式 `split_stock_payload` 拆開、用前端 `mergeStockParts` 接回 → **968/968 deepStrictEqual、0 mismatch**(`pipeline/tools/split_legacy_dir.py` + `web/scripts/verify-split-merge.mjs`);pytest 種子 DB 匯出三份接回 == 舊檔、舊檔仍是原本序列化;Playwright `parity-snapshot.mjs` 同一份 build 餵舊/新佈局,頁面文字相同(見下);建置器對拆檔 fixture 與舊 fixture 建出逐位元相同的 `bull_board.json`。

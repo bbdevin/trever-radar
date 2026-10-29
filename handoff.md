@@ -3,7 +3,7 @@
 ## 2026-10-29 補記(待辦核對;舊權證全市場檔停寫)
 
 - 10-15〜10-25 各「分支未合」補記**皆已合 main 且 VPS 已生效**;各項待人類事項逐項狀態與正式機數字見 `docs/STATUS.md` 2026-10-29 條目。仍待觀察的只有:週備份 403 重試、晚到法人補匯(條件尚未出現)。
-- `warrant_branches.json` 停寫並刪殘留,`/branch`、`WarrantBranchPanel` 的舊檔 fallback 移除(`docs/51` §3.5)。push 後下一輪(自動 pull)確認舊檔消失。
+- `warrant_branches.json` 停寫並刪殘留,`/branch`、`WarrantBranchPanel` 的舊檔 fallback 移除(`docs/51` §3.5)。10-29 16:37 那輪已刪除舊檔(已核對)。
 
 ## 2026-10-25 補記(/branch 權證分點近 1、2 日空白,分支未合)
 
